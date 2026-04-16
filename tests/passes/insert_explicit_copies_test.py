@@ -18,7 +18,6 @@ from dace.memlet import Memlet
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
-
 # ===================================================================
 # Helpers
 # ===================================================================
@@ -26,8 +25,7 @@ from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopi
 
 def _count_copy_nodes(sdfg):
     """Count CopyLibraryNode instances across all states (recursive)."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, CopyLibraryNode))
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode))
 
 
 def _count_direct_copy_edges(sdfg):
@@ -36,8 +34,7 @@ def _count_direct_copy_edges(sdfg):
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for e in state.edges():
-                if (isinstance(e.src, nodes.AccessNode)
-                        and isinstance(e.dst, nodes.AccessNode)
+                if (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
                         and not e.data.is_empty()):
                     count += 1
     return count
@@ -46,7 +43,6 @@ def _count_direct_copy_edges(sdfg):
 # ===================================================================
 # Part 1: Artificial SDFG builder tests
 # ===================================================================
-
 
 # --- Pattern 1: direct AccessNode -> AccessNode ---
 
@@ -315,10 +311,8 @@ def test_insert_map_staging_copies():
     t = st.add_tasklet("compute", {"_in"}, {"_out"}, "_out = _in * 2.0")
 
     st.add_memlet_path(a, me, li, memlet=dace.Memlet(f"A[bi:bi+{TILE}]"))
-    st.add_memlet_path(li, ime, t, dst_conn="_in",
-                       memlet=dace.Memlet("local_in[ti]"))
-    st.add_memlet_path(t, imx, lo, src_conn="_out",
-                       memlet=dace.Memlet("local_out[ti]"))
+    st.add_memlet_path(li, ime, t, dst_conn="_in", memlet=dace.Memlet("local_in[ti]"))
+    st.add_memlet_path(t, imx, lo, src_conn="_out", memlet=dace.Memlet("local_out[ti]"))
     st.add_memlet_path(lo, mx, b, memlet=dace.Memlet(f"B[bi:bi+{TILE}]"))
 
     sdfg.validate()
@@ -329,8 +323,7 @@ def test_insert_map_staging_copies():
     assert _count_copy_nodes(sdfg) == 2
 
     # Compute Tasklet must survive
-    tasklets = [n for n, _ in sdfg.all_nodes_recursive()
-                if isinstance(n, nodes.Tasklet) and "compute" in n.label]
+    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and "compute" in n.label]
     assert len(tasklets) == 1
 
     # Each CopyNode connects MapEntry/AccessNode on one side,
@@ -348,6 +341,35 @@ def test_insert_map_staging_copies():
     B = np.zeros(N, dtype=np.float64)
     exe(A=A, B=B)
     np.testing.assert_array_equal(B, A * 2.0)
+
+
+def test_insert_staging_requires_outer_access_node():
+    """Stage-in pattern must have an AccessNode feeding MapEntry on the
+    matching connector; a transient inside the map with no outer
+    AccessNode should NOT trigger the staging rewrite."""
+    N = 32
+    sdfg = dace.SDFG("no_staging_no_outer_an")
+    sdfg.add_array("B", [N], dace.float64, dace.StorageType.CPU_Heap)
+    sdfg.add_transient("local", [1], dace.float64)
+
+    st = sdfg.add_state("s")
+    b = st.add_access("B")
+    lo = st.add_access("local")
+    me, mx = st.add_map("m", {"i": f"0:{N}"})
+    # Tasklet writes a constant to a transient; no AccessNode feeds ME.
+    t = st.add_tasklet("produce", set(), {"_out"}, "_out = 3.14")
+    # Wire: me (entry, no incoming data) -> tasklet -> local -> mx -> B
+    st.add_edge(me, None, t, None, dace.Memlet())
+    st.add_edge(t, "_out", lo, None, dace.Memlet("local[0]"))
+    st.add_memlet_path(lo, mx, b, memlet=dace.Memlet("B[i]"))
+
+    # Stage-out is a valid pattern (lo -> MX -> B), but stage-in must NOT
+    # fire because there is no AccessNode feeding MapEntry for "local".
+    result = InsertExplicitCopies().apply_pass(sdfg, {})
+
+    # Only the stage-out side should have been rewritten.
+    assert result == 1, f"Expected 1 staging copy (stage-out only), got {result}"
+    assert _count_copy_nodes(sdfg) == 1
 
 
 # --- GPU structural tests ---
@@ -420,7 +442,6 @@ def test_insert_gpu_to_gpu():
 # Either way, numerical output must match the reference.
 # ===================================================================
 
-
 _ = None  # needed for dace.map range syntax
 datatype = dace.float64
 
@@ -442,10 +463,11 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     pass_exe(**{k: v for k, v in pass_arrays.items()}, **sizes)
 
     for arr_name in check_arrays:
-        np.testing.assert_allclose(
-            pass_arrays[arr_name], ref_values[arr_name],
-            rtol=1e-10, atol=1e-12,
-            err_msg=f"{name}: array '{arr_name}' mismatch after pass")
+        np.testing.assert_allclose(pass_arrays[arr_name],
+                                   ref_values[arr_name],
+                                   rtol=1e-10,
+                                   atol=1e-12,
+                                   err_msg=f"{name}: array '{arr_name}' mismatch after pass")
 
 
 # --- durbin ---
@@ -471,6 +493,7 @@ def durbin(r, y):
         out_b = datatype(1)
 
     for k in range(1, N_durbin, 1):
+
         @dace.tasklet
         def k_init():
             in_a << alpha
@@ -524,8 +547,7 @@ def _init_durbin(N_durbin):
 
 
 def test_polybench_durbin():
-    _run_and_compare(durbin, _init_durbin, ["y"],
-                     {"N_durbin": 40}, "durbin")
+    _run_and_compare(durbin, _init_durbin, ["y"], {"N_durbin": 40}, "durbin")
 
 
 # --- doitgen ---
@@ -537,6 +559,7 @@ NP_doitgen = dace.symbol('NP_doitgen')
 
 @dace.program(datatype[NR, NQ, NP_doitgen], datatype[NP_doitgen, NP_doitgen])
 def doitgen(A, C4):
+
     @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):
         sum_ = dace.define_local([NP_doitgen], dtype=datatype)
@@ -571,8 +594,7 @@ def _init_doitgen(NR, NQ, NP_doitgen):
 
 
 def test_polybench_doitgen():
-    _run_and_compare(doitgen, _init_doitgen, ["A"],
-                     {"NR": 10, "NQ": 8, "NP_doitgen": 12}, "doitgen")
+    _run_and_compare(doitgen, _init_doitgen, ["A"], {"NR": 10, "NQ": 8, "NP_doitgen": 12}, "doitgen")
 
 
 # --- fdtd-2d ---
@@ -582,10 +604,10 @@ NY = dace.symbol('NY')
 TMAX = dace.symbol('TMAX')
 
 
-@dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY],
-              datatype[TMAX])
+@dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY], datatype[TMAX])
 def fdtd2d(ex, ey, hz, _fict_):
     for t in range(TMAX):
+
         @dace.map
         def col0(j: _[0:NY]):
             fict << _fict_[t]
@@ -634,8 +656,7 @@ def _init_fdtd2d(NX, NY, TMAX):
 
 
 def test_polybench_fdtd2d():
-    _run_and_compare(fdtd2d, _init_fdtd2d, ["ex", "ey", "hz"],
-                     {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
+    _run_and_compare(fdtd2d, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
 
 
 # --- correlation ---
@@ -644,9 +665,9 @@ M_corr = dace.symbol('M_corr')
 N_corr = dace.symbol('N_corr')
 
 
-@dace.program(datatype[N_corr, M_corr], datatype[M_corr, M_corr],
-              datatype[M_corr], datatype[M_corr])
+@dace.program(datatype[N_corr, M_corr], datatype[M_corr, M_corr], datatype[M_corr], datatype[M_corr])
 def correlation(data, corr, mean, stddev):
+
     @dace.map
     def comp_mean(j: _[0:M_corr], i: _[0:N_corr]):
         inp << data[i, j]
@@ -689,8 +710,10 @@ def correlation(data, corr, mean, stddev):
 
     @dace.mapscope
     def comp_corr_row(i: _[0:M_corr - 1]):
+
         @dace.mapscope
         def comp_corr_col(j: _[i + 1:M_corr]):
+
             @dace.map
             def comp_cov_k(k: _[0:N_corr]):
                 indi << data[k, i]
@@ -700,6 +723,7 @@ def correlation(data, corr, mean, stddev):
 
     @dace.mapscope
     def symmetrize(i: _[0:M_corr - 1]):
+
         @dace.map
         def symmetrize_col(j: _[i + 1:M_corr]):
             corrin << corr[i, j]
@@ -720,8 +744,7 @@ def _init_correlation(N_corr, M_corr):
 
 
 def test_polybench_correlation():
-    _run_and_compare(correlation, _init_correlation, ["corr"],
-                     {"N_corr": 32, "M_corr": 28}, "correlation")
+    _run_and_compare(correlation, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
 
 
 # --- covariance ---
@@ -730,8 +753,7 @@ M_cov = dace.symbol('M_cov')
 N_cov = dace.symbol('N_cov')
 
 
-@dace.program(datatype[N_cov, M_cov], datatype[M_cov, M_cov],
-              datatype[M_cov])
+@dace.program(datatype[N_cov, M_cov], datatype[M_cov, M_cov], datatype[M_cov])
 def covariance(data, cov, mean):
     mean[:] = 0.0
 
@@ -756,6 +778,7 @@ def covariance(data, cov, mean):
 
     @dace.mapscope
     def comp_cov_row(i: _[0:M_cov]):
+
         @dace.mapscope
         def comp_cov_col(j: _[i:M_cov]):
             with dace.tasklet:
@@ -789,14 +812,12 @@ def _init_covariance(N_cov, M_cov):
 
 
 def test_polybench_covariance():
-    _run_and_compare(covariance, _init_covariance, ["cov"],
-                     {"N_cov": 32, "M_cov": 28}, "covariance")
+    _run_and_compare(covariance, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
 
 
 # ===================================================================
 # main
 # ===================================================================
-
 
 if __name__ == "__main__":
     # Pattern 1: direct edges
@@ -813,6 +834,7 @@ if __name__ == "__main__":
 
     # Pattern 2: map staging
     test_insert_map_staging_copies()
+    test_insert_staging_requires_outer_access_node()
 
     # Polybench correctness
     test_polybench_durbin()
@@ -821,4 +843,6 @@ if __name__ == "__main__":
     test_polybench_correlation()
     test_polybench_covariance()
 
-    print("All non-GPU tests passed.")
+    test_insert_gpu_to_gpu()
+    test_insert_cpu_to_gpu()
+    test_insert_gpu_to_cpu()

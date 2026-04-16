@@ -6,9 +6,11 @@ Pass that replaces implicit copy patterns with explicit
 Handles two patterns:
 
 1. **Direct copy edges**: ``AccessNode -> AccessNode``
-2. **Map boundary staging**: ``AccessNode -> MapEntry -> AccessNode(transient)`` and
-   ``AccessNode(transient) -> MapExit -> AccessNode`` where data is staged in/out of
-   a map scope through a transient buffer.
+2. **Map boundary staging**:
+   ``AccessNode -> MapEntry -> AccessNode(transient)`` (stage-in) and
+   ``AccessNode(transient) -> MapExit -> AccessNode`` (stage-out),
+   where data is staged in/out of a map scope through a transient
+   buffer.
 
 After this pass every data copy in the SDFG is represented by a library
 node that can be independently expanded (Layer 3) and specialized.
@@ -35,8 +37,8 @@ class InsertExplicitCopies(ppl.Pass):
     Detected patterns:
 
     - ``AccessNode -> AccessNode`` (direct copy edge)
-    - ``MapEntry -> AccessNode(transient)`` /
-      ``AccessNode(transient) -> MapExit`` (map boundary staging)
+    - ``AccessNode -> MapEntry -> AccessNode(transient)`` (stage-in)
+    - ``AccessNode(transient) -> MapExit -> AccessNode`` (stage-out)
 
     The pass sets ``src_storage`` and ``dst_storage`` on each new node
     from the array descriptors.
@@ -73,8 +75,7 @@ class InsertExplicitCopies(ppl.Pass):
         edges = list(state.edges())
         count = 0
         for edge in edges:
-            if not (isinstance(edge.src, nodes.AccessNode)
-                    and isinstance(edge.dst, nodes.AccessNode)):
+            if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
                 continue
 
             src_node: nodes.AccessNode = edge.src
@@ -119,27 +120,56 @@ class InsertExplicitCopies(ppl.Pass):
     @staticmethod
     def _replace_map_staging_copies(sdfg: SDFG, state: SDFGState) -> int:
         """
-        Detect edges ``MapEntry -> AccessNode(transient)`` and
-        ``AccessNode(transient) -> MapExit`` that stage data in/out of
-        a map scope.  Insert a CopyLibraryNode at each such boundary.
+        Detect map boundary staging paths:
+
+          ``AccessNode -> MapEntry -> AccessNode(transient)`` -- stage-in
+          ``AccessNode(transient) -> MapExit -> AccessNode`` -- stage-out
+
+        The map scope must be entered from (or exited to) an outer
+        AccessNode through a pass-through memlet; an inserted
+        CopyLibraryNode materializes the copy at the boundary.
         """
         edges_to_process = []
 
         for e in state.edges():
             if e.data.is_empty():
                 continue
-            # MapEntry -> AccessNode(transient)
-            if (isinstance(e.src, nodes.MapEntry)
-                    and isinstance(e.dst, nodes.AccessNode)):
+            # Stage-in: MapEntry -> AccessNode(transient)
+            # Require an outer AccessNode feeding the MapEntry with the
+            # same data name (i.e. a proper pass-through path).
+            if (isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode)):
                 desc = sdfg.arrays.get(e.dst.data)
-                if desc is not None and desc.transient:
-                    edges_to_process.append(('in', e))
-            # AccessNode(transient) -> MapExit
-            elif (isinstance(e.src, nodes.AccessNode)
-                  and isinstance(e.dst, nodes.MapExit)):
+                if desc is None or not desc.transient:
+                    continue
+                if e.src_conn is None or not e.src_conn.startswith("OUT_"):
+                    continue
+                in_conn = "IN_" + e.src_conn[len("OUT_"):]
+                outer_an = None
+                for oe in state.in_edges(e.src):
+                    if (oe.dst_conn == in_conn and isinstance(oe.src, nodes.AccessNode)):
+                        outer_an = oe.src
+                        break
+                if outer_an is None:
+                    continue
+                edges_to_process.append(('in', e))
+            # Stage-out: AccessNode(transient) -> MapExit
+            # Require the MapExit to feed an outer AccessNode on the
+            # matching OUT_ connector.
+            elif (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.MapExit)):
                 desc = sdfg.arrays.get(e.src.data)
-                if desc is not None and desc.transient:
-                    edges_to_process.append(('out', e))
+                if desc is None or not desc.transient:
+                    continue
+                if e.dst_conn is None or not e.dst_conn.startswith("IN_"):
+                    continue
+                out_conn = "OUT_" + e.dst_conn[len("IN_"):]
+                outer_an = None
+                for oe in state.out_edges(e.dst):
+                    if (oe.src_conn == out_conn and isinstance(oe.dst, nodes.AccessNode)):
+                        outer_an = oe.dst
+                        break
+                if outer_an is None:
+                    continue
+                edges_to_process.append(('out', e))
 
         count = 0
         for direction, edge in edges_to_process:
@@ -155,22 +185,17 @@ class InsertExplicitCopies(ppl.Pass):
                 outer_desc = sdfg.arrays[outer_memlet.data]
 
                 local_subset = dace.subsets.Range.from_array(local_desc)
-                local_memlet = Memlet(data=local_an.data,
-                                      subset=local_subset)
+                local_memlet = Memlet(data=local_an.data, subset=local_subset)
 
-                libnode = CopyLibraryNode(
-                    name=f"copy_{outer_memlet.data}_to_{local_an.data}",
-                    src_storage=outer_desc.storage,
-                    dst_storage=local_desc.storage)
+                libnode = CopyLibraryNode(name=f"copy_{outer_memlet.data}_to_{local_an.data}",
+                                          src_storage=outer_desc.storage,
+                                          dst_storage=local_desc.storage)
 
                 state.remove_edge(edge)
                 state.add_node(libnode)
                 state.add_edge(me, edge.src_conn, libnode, "_in",
-                               Memlet(data=outer_memlet.data,
-                                      subset=_copy.deepcopy(
-                                          outer_memlet.subset)))
-                state.add_edge(libnode, "_out", local_an, None,
-                               local_memlet)
+                               Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset)))
+                state.add_edge(libnode, "_out", local_an, None, local_memlet)
 
             else:  # direction == 'out'
                 # AN(local) --[outer_data[per_iter_subset]]--> MX(IN_Y)
@@ -181,22 +206,17 @@ class InsertExplicitCopies(ppl.Pass):
                 outer_desc = sdfg.arrays[outer_memlet.data]
 
                 local_subset = dace.subsets.Range.from_array(local_desc)
-                local_memlet = Memlet(data=local_an.data,
-                                      subset=local_subset)
+                local_memlet = Memlet(data=local_an.data, subset=local_subset)
 
-                libnode = CopyLibraryNode(
-                    name=f"copy_{local_an.data}_to_{outer_memlet.data}",
-                    src_storage=local_desc.storage,
-                    dst_storage=outer_desc.storage)
+                libnode = CopyLibraryNode(name=f"copy_{local_an.data}_to_{outer_memlet.data}",
+                                          src_storage=local_desc.storage,
+                                          dst_storage=outer_desc.storage)
 
                 state.remove_edge(edge)
                 state.add_node(libnode)
-                state.add_edge(local_an, None, libnode, "_in",
-                               local_memlet)
+                state.add_edge(local_an, None, libnode, "_in", local_memlet)
                 state.add_edge(libnode, "_out", mx, edge.dst_conn,
-                               Memlet(data=outer_memlet.data,
-                                      subset=_copy.deepcopy(
-                                          outer_memlet.subset)))
+                               Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset)))
 
             count += 1
 
