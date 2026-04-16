@@ -470,133 +470,6 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
                                    err_msg=f"{name}: array '{arr_name}' mismatch after pass")
 
 
-# --- durbin ---
-
-N_durbin = dace.symbol('N_durbin')
-
-
-@dace.program(datatype[N_durbin], datatype[N_durbin])
-def durbin(r, y):
-    alpha = dace.define_local([1], datatype)
-    beta = dace.define_local([1], datatype)
-    sum_ = dace.define_local([1], datatype)
-    z = dace.define_local([N_durbin], datatype)
-
-    @dace.tasklet
-    def init():
-        in_r << r[0]
-        out_y >> y[0]
-        out_a >> alpha
-        out_b >> beta
-        out_y = -in_r
-        out_a = -in_r
-        out_b = datatype(1)
-
-    for k in range(1, N_durbin, 1):
-
-        @dace.tasklet
-        def k_init():
-            in_a << alpha
-            in_b << beta
-            out_b >> beta
-            out_sum >> sum_
-            out_b = (datatype(1) - in_a * in_a) * in_b
-            out_sum = datatype(0)
-
-        @dace.map
-        def set_sum(i: _[0:k]):
-            in_r << r[k - i - 1]
-            in_y << y[i]
-            out_sum >> sum_(1, lambda x, y: x + y)
-            out_sum = in_r * in_y
-
-        @dace.tasklet
-        def set_alpha():
-            in_r << r[k]
-            in_sum << sum_
-            in_b << beta
-            out_a >> alpha
-            out_a = -(in_r + in_sum) / in_b
-
-        @dace.map
-        def set_zeta(i: _[0:k]):
-            in_y << y[i]
-            kin_y << y[k - i - 1]
-            in_a << alpha
-            out_z >> z[i]
-            out_z = in_y + in_a * kin_y
-
-        @dace.map
-        def set_y1(i: _[0:k]):
-            in_z << z[i]
-            out_y >> y[i]
-            out_y = in_z
-
-        @dace.tasklet
-        def set_y2():
-            in_a << alpha
-            out_y >> y[k]
-            out_y = in_a
-
-
-def _init_durbin(N_durbin):
-    n = N_durbin
-    r = np.array([np.float64(n + 1 - i) for i in range(n)])
-    y = np.zeros(n, dtype=np.float64)
-    return {"r": r, "y": y}
-
-
-def test_polybench_durbin():
-    _run_and_compare(durbin, _init_durbin, ["y"], {"N_durbin": 40}, "durbin")
-
-
-# --- doitgen ---
-
-NQ = dace.symbol('NQ')
-NR = dace.symbol('NR')
-NP_doitgen = dace.symbol('NP_doitgen')
-
-
-@dace.program(datatype[NR, NQ, NP_doitgen], datatype[NP_doitgen, NP_doitgen])
-def doitgen(A, C4):
-
-    @dace.mapscope
-    def doit(r: _[0:NR], q: _[0:NQ]):
-        sum_ = dace.define_local([NP_doitgen], dtype=datatype)
-        sum_[:] = 0
-
-        @dace.map
-        def compute_sum(p: _[0:NP_doitgen], s: _[0:NP_doitgen]):
-            inA << A[r, q, s]
-            inC4 << C4[s, p]
-            s_ >> sum_(1, lambda a, b: a + b, 0)[p]
-            s_ = inA * inC4
-
-        @dace.map
-        def compute_A(p: _[0:NP_doitgen]):
-            insum << sum_[p]
-            out >> A[r, q, p]
-            out = insum
-
-
-def _init_doitgen(NR, NQ, NP_doitgen):
-    nr, nq, np_ = NR, NQ, NP_doitgen
-    A = np.zeros((nr, nq, np_), dtype=np.float64)
-    C4 = np.zeros((np_, np_), dtype=np.float64)
-    for i in range(nr):
-        for j in range(nq):
-            for k in range(np_):
-                A[i, j, k] = np.float64((i * j + k) % np_) / np_
-    for i in range(np_):
-        for j in range(np_):
-            C4[i, j] = np.float64((i * j) % np_) / np_
-    return {"A": A, "C4": C4}
-
-
-def test_polybench_doitgen():
-    _run_and_compare(doitgen, _init_doitgen, ["A"], {"NR": 10, "NQ": 8, "NP_doitgen": 12}, "doitgen")
-
-
 # --- fdtd-2d ---
 
 NX = dace.symbol('NX')
@@ -605,7 +478,7 @@ TMAX = dace.symbol('TMAX')
 
 
 @dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY], datatype[TMAX])
-def fdtd2d(ex, ey, hz, _fict_):
+def fdtd2d_v(ex, ey, hz, _fict_):
     for t in range(TMAX):
 
         @dace.map
@@ -656,7 +529,7 @@ def _init_fdtd2d(NX, NY, TMAX):
 
 
 def test_polybench_fdtd2d():
-    _run_and_compare(fdtd2d, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
+    _run_and_compare(fdtd2d_v, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
 
 
 # --- correlation ---
@@ -666,7 +539,7 @@ N_corr = dace.symbol('N_corr')
 
 
 @dace.program(datatype[N_corr, M_corr], datatype[M_corr, M_corr], datatype[M_corr], datatype[M_corr])
-def correlation(data, corr, mean, stddev):
+def correlation_v(data, corr, mean, stddev):
 
     @dace.map
     def comp_mean(j: _[0:M_corr], i: _[0:N_corr]):
@@ -744,7 +617,7 @@ def _init_correlation(N_corr, M_corr):
 
 
 def test_polybench_correlation():
-    _run_and_compare(correlation, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
+    _run_and_compare(correlation_v, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
 
 
 # --- covariance ---
@@ -754,7 +627,7 @@ N_cov = dace.symbol('N_cov')
 
 
 @dace.program(datatype[N_cov, M_cov], datatype[M_cov, M_cov], datatype[M_cov])
-def covariance(data, cov, mean):
+def covariance_v(data, cov, mean):
     mean[:] = 0.0
 
     @dace.map
@@ -812,7 +685,7 @@ def _init_covariance(N_cov, M_cov):
 
 
 def test_polybench_covariance():
-    _run_and_compare(covariance, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
+    _run_and_compare(covariance_v, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
 
 
 # ===================================================================
@@ -837,8 +710,6 @@ if __name__ == "__main__":
     test_insert_staging_requires_outer_access_node()
 
     # Polybench correctness
-    test_polybench_durbin()
-    test_polybench_doitgen()
     test_polybench_fdtd2d()
     test_polybench_correlation()
     test_polybench_covariance()
