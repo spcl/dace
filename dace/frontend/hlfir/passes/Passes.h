@@ -16,17 +16,11 @@
 namespace hlfir_bridge {
 
 // --- Individual pass constructors ---
-
-/// PropagateShapes: for every fir.call site, find the actual arguments'
-/// shape operands and stamp hlfir_bridge.shape_hint on the callee's
-/// assumed-shape dummy hlfir.declare ops.  Runs to a fixed point to
-/// handle transitive propagation through chains of calls.
 std::unique_ptr<mlir::Pass> createPropagateShapesPass();
-
+std::unique_ptr<mlir::Pass> createInlineAllPass();
 // --- Registry ---
 
 /// Register every bridge pass with MLIR's global pass registry.
-/// Call exactly once per process; safe to call again (idempotent).
 void registerAllBridgePasses();
 
 }  // namespace hlfir_bridge

@@ -15,10 +15,9 @@ void registerAllBridgePasses() {
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createPropagateShapesPass();
     });
-
-    // Add future passes here — e.g.:
-    //   mlir::registerPass([]() { return createSpecializeCalleesPass(); });
-    //   mlir::registerPass([]() { return createInjectNamelistConstantsPass(); });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createInlineAllPass();
+    });
 }
 
 }  // namespace hlfir_bridge

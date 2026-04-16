@@ -56,7 +56,7 @@ from build_bridge import hb
 # The default pipeline run before AST/variable extraction.  Shape
 # propagation fills in assumed-shape (:,:) dummies with real Fortran
 # names wherever callers supplied them.
-DEFAULT_PIPELINE = "builtin.module(hlfir-propagate-shapes)"
+DEFAULT_PIPELINE = "builtin.module(hlfir-inline-all,hlfir-propagate-shapes)"
 
 
 class SDFGBuilder:
