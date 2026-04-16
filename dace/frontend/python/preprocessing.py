@@ -584,12 +584,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                  resolve_functions: bool = False,
                  default_args: Set[str] = None,
                  preserve_object_attributes: bool = False,
-                 preserve_raises: bool = False):
+                 preserve_raises: bool = False,
+                 preserve_fstrings: bool = False):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
         self.preserve_object_attributes = preserve_object_attributes
         self.preserve_raises = preserve_raises
+        self.preserve_fstrings = preserve_fstrings
         self.current_scope = set()
         self.toplevel_function = True
         self.do_not_detect_callables = False
@@ -1120,6 +1122,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             global_val = astutils.evalnode(node, self.globals)
             return ast.copy_location(ast.Constant(kind='', value=global_val), node)
         except SyntaxError:
+            if self.preserve_fstrings:
+                return self.generic_visit(node)
             warnings.warn(f'f-string at line {node.lineno} could not '
                           'be fully evaluated in DaCe program, converting to '
                           'partially-evaluated string.')
@@ -2446,7 +2450,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             normalize_generic_for_loops: bool = False,
                             preserve_object_attributes: bool = False,
                             disallowed_stmts: Optional[Set[str]] = None,
-                            preserve_raises: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            preserve_raises: bool = False,
+                            preserve_fstrings: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -2469,6 +2474,9 @@ def preprocess_dace_program(f: Callable[..., Any],
     :param preserve_raises: If True, keep ``raise`` statements in the
                             preprocessed AST for downstream frontends to
                             handle explicitly.
+    :param preserve_fstrings: If True, keep non-constant f-string AST nodes
+                              in the preprocessed AST for downstream
+                              frontends to handle explicitly.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -2503,7 +2511,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                                       resolve_functions,
                                       default_args=default_args,
                                       preserve_object_attributes=preserve_object_attributes,
-                                      preserve_raises=preserve_raises)
+                                      preserve_raises=preserve_raises,
+                                      preserve_fstrings=preserve_fstrings)
 
     # Append element to call stack and handle max recursion depth
     if parent_closure is not None:

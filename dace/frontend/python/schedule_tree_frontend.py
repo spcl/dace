@@ -116,6 +116,10 @@ def _pyobject_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.pyobject(), transient=True)
 
 
+def _string_scalar_descriptor() -> data.Scalar:
+    return data.Scalar(dtypes.string, transient=True)
+
+
 def _binding_to_descriptor(value: Any) -> data.Data:
     if isinstance(value, data.Data):
         descriptor = _clone_descriptor(value)
@@ -275,6 +279,10 @@ def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) 
                              ast.IfExp, ast.JoinedStr, ast.Name, ast.NamedExpr, ast.UnaryOp, ast.Yield, ast.YieldFrom))
 
 
+def _requires_fstring_callback(node: ast.AST) -> bool:
+    return isinstance(node, (ast.JoinedStr, ast.FormattedValue))
+
+
 def build_schedule_tree(name: str,
                         parsed_ast: preprocessing.PreprocessedAST,
                         argtypes: Dict[str, data.Data],
@@ -407,6 +415,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                                                 materialize_root=False)
         if self._handle_expression(planned_value):
             return
+        if _requires_fstring_callback(planned_value):
+            callback_expr = ast.copy_location(ast.Expr(value=copy.deepcopy(planned_value)), planned_value)
+            self._wrap_as_callback(callback_expr, 'f-string')
+            return
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_runtime_expression(planned_value))))
 
     def visit_Return(self, node: ast.Return) -> None:
@@ -450,6 +462,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         transient's ``ast.Name`` is returned.  Otherwise *value* is returned
         unchanged so the caller can still emit it as opaque text.
         """
+        if _requires_fstring_callback(value):
+            return self._materialize_callback_expression(value,
+                                                         'f-string',
+                                                         _string_scalar_descriptor(),
+                                                         prefix='__stree_retval')
         if not isinstance(value, ast.Call):
             return value
         descriptor = self._infer_descriptor(value, '__probe')
@@ -609,6 +626,23 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             code = CodeBlock('pass')
         self._append_node(
             tn.PythonCallbackNode(code=code, reason=reason, input_names=known_inputs, output_names=sorted(outputs)))
+
+    def _emit_callback_assignment(self, name: str, value: ast.AST, reason: str, descriptor: data.Data) -> None:
+        kind = _binding_kind_for_descriptor(descriptor)
+        self._register_binding(name, descriptor, kind=kind)
+        callback_assign = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=copy.deepcopy(value))
+        callback_assign = ast.copy_location(callback_assign, value)
+        self._wrap_as_callback(callback_assign, reason)
+
+    def _materialize_callback_expression(self,
+                                         value: ast.AST,
+                                         reason: str,
+                                         descriptor: data.Data,
+                                         *,
+                                         prefix: str = '__stree_tmp') -> ast.AST:
+        name = self._fresh_transient_name(prefix)
+        self._emit_callback_assignment(name, value, reason, descriptor)
+        return ast.Name(id=name, ctx=ast.Load())
 
     # ------------------------------------------------------------------ #
     #  Category C visitors — always callback                              #
@@ -964,6 +998,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         if self._should_emit_external_reassign(name):
             self._handle_external_name_reassignment(name, value, source_access, annotated_descriptor)
+            return
+
+        if _requires_fstring_callback(value):
+            self._emit_callback_assignment(name, value, 'f-string', _string_scalar_descriptor())
             return
 
         existing = self.bindings.get(name)
@@ -1478,6 +1516,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if annotated_descriptor is not None and isinstance(annotated_descriptor, data.Scalar):
             return _clone_descriptor(annotated_descriptor)
 
+        if isinstance(node, (ast.JoinedStr, ast.FormattedValue)):
+            return _string_scalar_descriptor()
+
         scalar_types = {
             name: binding.descriptor.dtype
             for name, binding in self.bindings.items()
@@ -1491,6 +1532,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return data.Scalar(inferred_type, transient=True)
 
         value = try_resolve_static_value(node, self._evaluation_context())
+        if value is not UNRESOLVED and value is not None:
+            try:
+                descriptor = _clone_descriptor(data.create_datadescriptor(value))
+            except Exception:
+                descriptor = None
+            if isinstance(descriptor, data.Scalar):
+                descriptor.transient = True
+                return descriptor
+
         if isinstance(value, numbers.Number) or isinstance(value, bool):
             dtype = _normalize_dtype(type(value))
             if dtype is not None:

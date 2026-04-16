@@ -16,6 +16,11 @@ def _assert_pyobject_scalar(descriptor: data.Data) -> None:
     assert descriptor.dtype == dtypes.pyobject()
 
 
+def _assert_string_scalar(descriptor: data.Data) -> None:
+    assert isinstance(descriptor, data.Scalar)
+    assert descriptor.dtype == dtypes.string
+
+
 def _infer_schedule_tree_bindings(program):
     modules = {name: value.__name__ for name, value in program.global_vars.items() if dtypes.ismodule(value)}
     modules['builtins'] = ''
@@ -85,6 +90,55 @@ def test_python_frontend_schedule_tree_callback_outputs_use_pyobject_scalar():
     assert isinstance(stree.children[0], tn.PythonCallbackNode)
     _assert_pyobject_scalar(stree.containers['m'])
     _assert_pyobject_scalar(stree.containers['tmp'])
+
+
+def test_schedule_tree_type_inference_constant_scalars_use_literal_descriptors():
+
+    @dace.program
+    def prog(A: dace.float64[4]):
+        text = 'bla'
+        number = 5.03
+        A[0] = A[0]
+
+    bindings = _infer_schedule_tree_bindings(prog)
+
+    _assert_string_scalar(bindings['text'].descriptor)
+    assert isinstance(bindings['number'].descriptor, data.Scalar)
+    assert bindings['number'].descriptor.dtype == dace.float64
+
+
+def test_python_frontend_schedule_tree_constant_scalars_use_literal_descriptors():
+
+    @dace.program
+    def prog(A: dace.float64[4]):
+        text = 'bla'
+        number = 5.03
+        A[0] = A[0]
+
+    stree = prog.to_schedule_tree()
+
+    _assert_string_scalar(stree.containers['text'])
+    assert isinstance(stree.containers['number'], data.Scalar)
+    assert stree.containers['number'].dtype == dace.float64
+
+
+def test_python_frontend_schedule_tree_runtime_fstring_callback_outputs_use_string_scalar():
+
+    @dace.program
+    def prog(i: dace.int32):
+        return f'value={i}'
+
+    stree = prog.to_schedule_tree()
+
+    callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
+
+    assert len(callbacks) == 1
+    assert callbacks[0].reason == 'f-string'
+    assert len(callbacks[0].output_names) == 1
+    result_name = callbacks[0].output_names[0]
+    _assert_string_scalar(stree.containers[result_name])
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+    assert stree.children[-1].values[0].as_string == result_name
 
 
 def test_schedule_tree_type_inference_nested_generic_conflicts_do_not_leak():

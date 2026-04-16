@@ -411,6 +411,23 @@ def test_python_frontend_schedule_tree_return_materializes_array_expression():
     assert stree.children[1].values[0].as_string == '__stree_tmp'
 
 
+def test_python_frontend_schedule_tree_compile_time_fstring_stays_direct():
+
+    prefix = 'value='
+
+    @dace.program
+    def returned():
+        tmp = f'{prefix}5'
+        return tmp
+
+    stree = returned.to_schedule_tree()
+
+    assert stree.containers['tmp'].dtype == dace.dtypes.string
+    assert isinstance(stree.children[0], tn.AssignNode)
+    assert isinstance(stree.children[1], tn.ReturnNode)
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+
+
 def test_python_frontend_schedule_tree_matmul_chain_library_calls():
 
     @dace.program

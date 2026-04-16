@@ -57,6 +57,10 @@ def _pyobject_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.pyobject(), transient=True)
 
 
+def _string_scalar_descriptor() -> data.Scalar:
+    return data.Scalar(dtypes.string, transient=True)
+
+
 def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
     if value is None or isinstance(value, (str, bytes, numbers.Number, bool, type(Ellipsis))):
         return False
@@ -559,6 +563,9 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         if annotated_descriptor is not None and isinstance(annotated_descriptor, data.Scalar):
             return _clone_descriptor(annotated_descriptor)
 
+        if isinstance(node, (ast.JoinedStr, ast.FormattedValue)):
+            return _string_scalar_descriptor()
+
         scalar_types = {
             name: binding.descriptor.dtype
             for name, binding in self.bindings.items()
@@ -572,6 +579,15 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return data.Scalar(inferred_type, transient=True)
 
         value = try_resolve_static_value(node, self._evaluation_context())
+        if value is not UNRESOLVED and value is not None:
+            try:
+                descriptor = _clone_descriptor(data.create_datadescriptor(value))
+            except Exception:
+                descriptor = None
+            if isinstance(descriptor, data.Scalar):
+                descriptor.transient = True
+                return descriptor
+
         if isinstance(value, numbers.Number) or isinstance(value, bool):
             dtype = _normalize_dtype(type(value))
             if dtype is not None:
