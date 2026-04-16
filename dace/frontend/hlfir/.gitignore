@@ -1,0 +1,8 @@
+*.sdfg
+*.f90
+*.fir
+*.hlfir
+*.so
+*.sh
+build/
+*.mod
