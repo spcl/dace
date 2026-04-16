@@ -656,6 +656,59 @@ def test_flatten_view():
         assert num_after < num_before
 
 
+def test_view_in_interstate_edge():
+    """View referenced from an interstate-edge assignment, consumed later via a symbol.
+
+    Flow: state1 holds ``A -> V`` (flat reshape of A[M,N]). The interstate edge
+    assigns ``s = V[7]``. state2 writes ``B[0] = s``. After RemoveViews runs,
+    V must be folded into A and the interstate edge's RHS must be rewritten
+    to ``A[1, 2]`` (for M=4, N=5: 7 // 5 = 1, 7 % 5 = 2).
+    """
+    M, N = 4, 5
+    MN = M * N
+
+    sdfg = dace.SDFG('view_in_interstate_edge')
+    sdfg.add_array('A', [M, N], dace.int64)
+    sdfg.add_array('B', [1], dace.int64)
+    sdfg.add_view('V', [MN], dace.int64)
+
+    state1 = sdfg.add_state('entry')
+    a1 = state1.add_read('A')
+    v1 = state1.add_access('V')
+    state1.add_edge(a1, None, v1, 'views', Memlet(data='A', subset=f'0:{M}, 0:{N}', other_subset=f'0:{MN}'))
+
+    state2 = sdfg.add_state('consume')
+    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments={'s': 'V[7]'}))
+
+    t = state2.add_tasklet('write', {}, {'out'}, 'out = s')
+    b = state2.add_write('B')
+    state2.add_edge(t, 'out', b, None, Memlet('B[0]'))
+
+    sdfg.validate()
+
+    A = np.arange(MN, dtype=np.int64).reshape(M, N)
+    B_ref = np.zeros(1, dtype=np.int64)
+    sdfg(A=A.copy(), B=B_ref)
+    assert B_ref[0] == A.ravel()[7]
+
+    assert _count_views(sdfg) == 1
+    p = RemoveViews()
+    result = p.apply_pass(sdfg, {})
+    assert result is not None
+
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+
+    # Every interstate edge must now reference A, not V.
+    for e in sdfg.all_interstate_edges():
+        for rhs in e.data.assignments.values():
+            assert 'V[' not in rhs
+
+    B_new = np.zeros(1, dtype=np.int64)
+    sdfg(A=A.copy(), B=B_new)
+    np.testing.assert_allclose(B_new, B_ref)
+
+
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -674,3 +727,4 @@ if __name__ == '__main__':
     test_column_view_w_offset()
     test_strided_column_view()
     test_flatten_view()
+    test_view_in_interstate_edge()
