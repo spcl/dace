@@ -1,10 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import List
+
 import dace
 import copy
 
 
-# Compute collapsed shapes and strides, removing singleton dimensions (length == 1)
-def collapse_shape_and_strides(subset, strides):
+def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[dace.symbolic.SymExpr]):
+    """Remove singleton dimensions (length 1) from a subset/stride pair.
+
+    Returns collapsed lists of shapes and strides suitable for constructing
+    a data descriptor that elides trivial dimensions.
+    """
     collapsed_shape = []
     collapsed_strides = []
     for (b, e, s), stride in zip(subset, strides):
@@ -16,7 +22,15 @@ def collapse_shape_and_strides(subset, strides):
 
 
 def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Range, state: dace.SDFGState):
-    # Add dynamic inputs
+    """Promote dynamic map-range inputs to SDFG-level data descriptors.
+
+    For each dynamic input not already present in the SDFG (e.g., a
+    runtime-determined array dimension), the function adds the descriptor,
+    renames existing symbolic references with a ``sym_`` prefix, and
+    inserts a pre-assignment state that reads the concrete value into the
+    symbol.  If no promotion is needed, the SDFG is left unchanged.
+    Returns the collapsed (non-singleton) map lengths after substitution.
+    """
     pre_assignments = dict()
     map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in subset]
 

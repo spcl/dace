@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import warnings
 import dace
@@ -16,19 +16,36 @@ from typing import Dict, Iterable, List, Set
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
+    """Lift contiguous zero-assignments and element-wise copies out of maps
+    into Memset / Copy library nodes.
+
+    The pass walks every map in the SDFG, identifies data paths that perform
+    a constant-zero write or a direct element-wise copy over a contiguous
+    region, and replaces them with the corresponding library node.  When a
+    map mixes compute paths with pure data-movement paths, the map is
+    fissioned first so that the data-movement part can be extracted
+    independently.
+    """
+
     overapproximate_first_dimension = properties.Property(
         dtype=bool,
         default=False,
         desc=
         "If True, the first dimension of the map is overapproximated to be contiguous, even if it is not. This is useful for some cases where the first dimension is always contiguous, but the map range is not.",
     )
-    apply_only_on_labels = properties.ListProperty(element_type=str, default=[], allow_none=False)
+    node_label_whitelist = properties.ListProperty(
+        element_type=str,
+        default=[],
+        allow_none=False,
+        desc="If non-empty, only map entries whose label appears in this list "
+        "are considered for lifting. An empty list means all maps are eligible.",
+    )
 
     rmid = 0
 
-    def __init__(self, overapproximate_first_dimensions: bool = False, apply_only_on_labels: List[str] = list()):
+    def __init__(self, overapproximate_first_dimensions: bool = False, node_label_whitelist: List[str] = list()):
         self.overapproximate_first_dimension = overapproximate_first_dimensions
-        self.apply_only_on_labels = apply_only_on_labels
+        self.node_label_whitelist = node_label_whitelist
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modeifies.Everything
@@ -318,9 +335,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dst_access_node = memcpy_path[3].dst
             if src_access_node not in state.nodes() or map_entry not in state.nodes() or tasklet not in state.nodes(
             ) or map_exit not in state.nodes() or dst_access_node not in state.nodes():
-                raise Exception(
+                warnings.warn(
                     f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), "
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.", )
+                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
+                    UserWarning)
+                continue
 
             # If src and dst types are not the same, we can't do memcpy
             src_desc = state.sdfg.arrays[src_access_node.data]
@@ -410,9 +429,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # For now, we will just use the original range
             # Needs to be done before removing the memset path
             if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
-                raise Exception(
+                warnings.warn(
                     f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}).", )
+                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
+                    UserWarning)
+                continue
 
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
@@ -500,7 +521,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             assert node in state.nodes(), f"Map entry {node} not in state {state}"
             assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
 
-            if self.apply_only_on_labels != [] and self.apply_only_on_labels is not None and node.label not in self.apply_only_on_labels:
+            if self.node_label_whitelist != [] and self.node_label_whitelist is not None and node.label not in self.node_label_whitelist:
                 continue
 
             if self._get_num_tasklets_within_map(state, node) == 0:
@@ -528,6 +549,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
 
+        # Map fission may create single-state nested SDFGs for the extracted
+        # copy/memset paths.  Re-inline them to keep the graph flat; cost is
+        # bounded by the number of paths lifted in this pass.
         InlineSDFGs().apply_pass(sdfg, {})
 
         return num_rmed_memcpies + num_rmed_memsets
