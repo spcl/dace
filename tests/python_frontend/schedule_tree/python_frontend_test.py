@@ -9,6 +9,7 @@ import warnings
 from typing import Optional
 
 import dace
+from dace.data.pydata import PythonList
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, ScheduleTreeConvertible
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
@@ -805,9 +806,18 @@ def test_python_frontend_schedule_tree_generic_iterator_fallback():
 
     assert isinstance(stree.children[0], tn.AssignNode)
     assert isinstance(stree.children[1], tn.AssignNode)
-    assert isinstance(stree.children[2], tn.LoopScope)
-    assert isinstance(stree.children[2].loop, tn.FrontendLoop)
-    assert isinstance(stree.children[2].children[0], tn.CopyNode)
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert isinstance(stree.children[3], tn.AssignNode)
+    assert isinstance(stree.children[4], tn.LoopScope)
+    assert isinstance(stree.children[4].loop, tn.FrontendLoop)
+    assert stree.children[4].loop.loop_condition.as_string == '__dace_iter_has_next_2'
+    assert isinstance(stree.children[4].children[0], tn.CopyNode)
+    assert isinstance(stree.children[4].children[1], tn.AssignNode)
+    assert stree.children[4].children[1].name == '__dace_iter_next_1'
+    assert isinstance(stree.children[4].children[2], tn.AssignNode)
+    assert stree.children[4].children[2].name == '__dace_iter_has_next_2'
+    assert isinstance(stree.children[4].children[3], tn.AssignNode)
+    assert stree.children[4].children[3].name == '__dace_iter_value_3'
 
 
 def test_python_frontend_schedule_tree_generic_iterator_inference_has_no_runtime_side_effect():
@@ -831,8 +841,8 @@ def test_python_frontend_schedule_tree_generic_iterator_inference_has_no_runtime
     stree = iter_prog.to_schedule_tree()
 
     assert counter.iter_calls == 0
-    assert isinstance(stree.children[2], tn.LoopScope)
-    assert isinstance(stree.children[2].children[0], tn.CopyNode)
+    assert isinstance(stree.children[4], tn.LoopScope)
+    assert isinstance(stree.children[4].children[0], tn.CopyNode)
 
 
 def test_python_frontend_schedule_tree_generic_iterator_tuple_value():
@@ -853,8 +863,10 @@ def test_python_frontend_schedule_tree_generic_iterator_tuple_value():
 
     assert isinstance(stree.children[0], tn.AssignNode)
     assert isinstance(stree.children[1], tn.AssignNode)
-    assert isinstance(stree.children[2], tn.LoopScope)
-    assert isinstance(stree.children[2].children[0], tn.TaskletNode)
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert isinstance(stree.children[3], tn.AssignNode)
+    assert isinstance(stree.children[4], tn.LoopScope)
+    assert isinstance(stree.children[4].children[0], tn.TaskletNode)
 
 
 def test_python_frontend_schedule_tree_generic_iterator_fallback_destructuring():
@@ -875,10 +887,16 @@ def test_python_frontend_schedule_tree_generic_iterator_fallback_destructuring()
 
     assert isinstance(stree.children[0], tn.AssignNode)
     assert isinstance(stree.children[1], tn.AssignNode)
-    assert isinstance(stree.children[2], tn.LoopScope)
-    assert isinstance(stree.children[2].loop, tn.FrontendLoop)
-    assert isinstance(stree.children[2].children[0], tn.StatementNode)
-    assert isinstance(stree.children[2].children[1], tn.TaskletNode)
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert isinstance(stree.children[3], tn.AssignNode)
+    assert isinstance(stree.children[4], tn.LoopScope)
+    assert isinstance(stree.children[4].loop, tn.FrontendLoop)
+    assert isinstance(stree.children[4].children[0], tn.StatementNode)
+    assert stree.children[4].children[0].code.as_string == '(a, b) = __dace_iter_value_3'
+    assert isinstance(stree.children[4].children[1], tn.TaskletNode)
+    assert isinstance(stree.children[4].children[2], tn.AssignNode)
+    assert isinstance(stree.children[4].children[3], tn.AssignNode)
+    assert isinstance(stree.children[4].children[4], tn.AssignNode)
 
 
 def test_python_frontend_schedule_tree_generic_iterator_generator_object():
@@ -900,11 +918,66 @@ def test_python_frontend_schedule_tree_generic_iterator_generator_object():
 
     assert isinstance(stree.children[0], tn.AssignNode)
     assert isinstance(stree.children[1], tn.AssignNode)
-    assert isinstance(stree.children[2], tn.LoopScope)
-    assert isinstance(stree.children[2].loop, tn.FrontendLoop)
-    assert isinstance(stree.children[2].children[0], tn.CopyNode)
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert isinstance(stree.children[3], tn.AssignNode)
+    assert isinstance(stree.children[4], tn.LoopScope)
+    assert isinstance(stree.children[4].loop, tn.FrontendLoop)
+    assert isinstance(stree.children[4].children[0], tn.CopyNode)
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
     assert next(generator) == 3.0
+
+
+def test_python_frontend_schedule_tree_tuple_of_arrays_unrolls():
+
+    @dace.program
+    def iter_prog(a: dace.float64[2, 3, 4], b: dace.float64[2, 3, 4], c: dace.float64[2, 3, 4], out: dace.float64[2, 3,
+                                                                                                                  4]):
+        for arr in (a, b, c):
+            out[:] = arr
+
+    with pytest.warns(UserWarning, match=r'implicitly unrolled'):
+        stree = iter_prog.to_schedule_tree()
+
+    assert [type(child) for child in stree.children] == [tn.CopyNode, tn.CopyNode, tn.CopyNode]
+    assert [child.memlet.data for child in stree.children] == ['a', 'b', 'c']
+
+
+def test_python_frontend_schedule_tree_nounroll_array_annotation_binds_reference():
+
+    @dace.program
+    def iter_prog(a: dace.float64[2, 3, 4], b: dace.float64[2, 3, 4], c: dace.float64[2, 3, 4], out: dace.float64[2, 3,
+                                                                                                                  4]):
+        list_of_arrays = [a, b, c]
+        for arr in dace.nounroll(list_of_arrays):
+            arr: dace.float64[2, 3, 4]
+            out[:] = arr
+
+    stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'list_of_arrays = [a, b, c]'
+    assert isinstance(stree.containers['list_of_arrays'], PythonList)
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].name == '__dace_iter_0'
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert stree.children[2].name == '__dace_iter_next_1'
+    assert isinstance(stree.children[3], tn.AssignNode)
+    assert stree.children[3].name == '__dace_iter_has_next_2'
+    assert isinstance(stree.children[4], tn.AssignNode)
+    assert stree.children[4].name == '__dace_iter_value_3'
+    assert isinstance(stree.children[5], tn.LoopScope)
+    assert stree.children[5].loop.loop_condition.as_string == '__dace_iter_has_next_2'
+    assert isinstance(stree.children[5].children[0], tn.RefSetNode)
+    assert stree.children[5].children[0].target == 'arr'
+    assert isinstance(stree.children[5].children[1], tn.CopyNode)
+    assert stree.children[5].children[1].memlet.data == 'arr'
+    assert isinstance(stree.children[5].children[2], tn.AssignNode)
+    assert stree.children[5].children[2].name == '__dace_iter_next_1'
+    assert isinstance(stree.children[5].children[3], tn.AssignNode)
+    assert stree.children[5].children[3].name == '__dace_iter_has_next_2'
+    assert isinstance(stree.children[5].children[4], tn.AssignNode)
+    assert stree.children[5].children[4].name == '__dace_iter_value_3'
+    assert '__dace_iter_end_' not in stree.as_string()
 
 
 def test_python_frontend_schedule_tree_free_iter_and_next_calls():
@@ -1079,8 +1152,8 @@ def test_python_frontend_schedule_tree_starred_unpacking_uses_analyzable_structu
 
     assert isinstance(stree.children[0], (tn.RefSetNode, tn.ViewNode))
     assert stree.children[0].target == 'head'
-    assert isinstance(stree.children[1], tn.TaskletNode)
-    assert stree.children[1].node.code.as_string == 'rest = [B, C]'
+    assert isinstance(stree.children[1], tn.StatementNode)
+    assert stree.children[1].code.as_string == 'rest = [B, C]'
     assert isinstance(stree.children[2], tn.CopyNode)
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
 
@@ -1097,7 +1170,8 @@ def test_python_frontend_schedule_tree_star_call_expansion_is_resolved_staticall
 
     stree = star_call_prog.to_schedule_tree()
 
-    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'args = (A, B)'
     assert isinstance(stree.children[1], tn.FunctionCallScope)
     assert stree.children[1].call.callee_name == 'callee'
     assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}

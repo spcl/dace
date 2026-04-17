@@ -420,6 +420,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if descriptor is not None and isinstance(node.target, ast.Name):
             self.annotated_descriptors[node.target.id] = descriptor
             if node.value is None:
+                existing = self.bindings.get(node.target.id)
+                if existing is not None and isinstance(existing.descriptor, data.Reference):
+                    return
                 if not isinstance(descriptor, data.Reference):
                     self._register_binding(node.target.id, descriptor, kind=_binding_kind_for_descriptor(descriptor))
                 return
@@ -1168,6 +1171,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
             return
 
+        binding_descriptor = self.bindings.get(name).descriptor if name in self.bindings else None
+        if isinstance(binding_descriptor, (PythonList, PythonTuple)) or isinstance(value, (ast.List, ast.Tuple)):
+            self._append_node(tn.StatementNode(code=CodeBlock(f'{name} = {self._format_runtime_expression(value)}')))
+            return
+
         if self._emit_computed_assignment(ast.Name(id=name, ctx=ast.Store()), value, annotated_descriptor):
             return
 
@@ -1506,6 +1514,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return result
 
     def _infer_descriptor(self, node: ast.AST, target_name: str) -> Optional[data.Data]:
+        if isinstance(node, (ast.List, ast.Tuple)):
+            structure, _ = self._structure_from_ast(node)
+            if structure is not None:
+                return self._descriptor_from_structure(structure)
+
         if isinstance(node, ast.Lambda):
             return data.Scalar(dtypes.callback(None), transient=True)
 
@@ -1811,6 +1824,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                     isinstance(element, data.Scalar) and isinstance(first, data.Scalar) and element.dtype == first.dtype
                     for element in structure):
                 dtype = first.dtype
+            elif all(isinstance(element, data.Scalar) for element in structure):
+                if first.dtype != dtypes.pyobject() and not any(element.dtype == dtypes.pyobject()
+                                                                for element in structure[1:]):
+                    dtype = first.dtype
+                    for element in structure[1:]:
+                        dtype = dtypes.result_type_of(dtype, element.dtype)
 
         descriptor_type = PythonList if isinstance(structure, list) else PythonTuple
         descriptor = descriptor_type(dtype=dtype, shape=(len(structure), ), transient=True)

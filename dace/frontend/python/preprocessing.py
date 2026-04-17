@@ -60,11 +60,11 @@ def __dace_iterator_init(iterable):
     return iterable.__iter__()
 
 
-def __dace_iterator_next(iterator, sentinel):
+def __dace_iterator_next(iterator):
     try:
-        return iterator.__next__()
+        return (True, iterator.__next__())
     except StopIteration:
-        return sentinel
+        return (False, None)
 
 
 class StructTransformer(ast.NodeTransformer):
@@ -1591,19 +1591,15 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
 
     def _normalize_generic_zip_iteration(self, node: ast.For) -> Any:
         iterator_names = [self._fresh_name('iter') for _ in node.iter.args]
+        next_names = [self._fresh_name('iter_next') for _ in node.iter.args]
+        has_next_names = [self._fresh_name('iter_has_next') for _ in node.iter.args]
         value_names = [self._fresh_name('iter_value') for _ in node.iter.args]
-        sentinel_id = self._sentinel_name(node)
 
         init_nodes: List[ast.AST] = []
-        for iterator_name, value_name, arg in zip(iterator_names, value_names, node.iter.args):
+        for iterator_name, next_name, has_next_name, value_name, arg in zip(iterator_names, next_names, has_next_names,
+                                                                            value_names, node.iter.args):
             init_nodes.append(self._assign(iterator_name, self._helper_call('__dace_iterator_init', [arg]), node))
-            init_nodes.append(
-                self._assign(
-                    value_name,
-                    self._helper_call(
-                        '__dace_iterator_next',
-                        [ast.Name(id=iterator_name, ctx=ast.Load()),
-                         ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+            init_nodes.extend(self._iterator_next_sequence(iterator_name, next_name, has_next_name, value_name, node))
 
         yielded_value = ast.Tuple(elts=[ast.Name(id=value_name, ctx=ast.Load()) for value_name in value_names],
                                   ctx=ast.Load())
@@ -1616,42 +1612,28 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
             replacements = {}
 
         test = ast.BoolOp(op=ast.And(),
-                          values=[
-                              ast.Compare(left=ast.Name(id=value_name, ctx=ast.Load()),
-                                          ops=[ast.IsNot()],
-                                          comparators=[ast.Name(id=sentinel_id, ctx=ast.Load())])
-                              for value_name in value_names
-                          ])
+                          values=[ast.Name(id=has_next_name, ctx=ast.Load()) for has_next_name in has_next_names])
         body: List[ast.AST] = []
         if destructuring_setup is not None:
             body.append(destructuring_setup)
         body.extend(self._rewrite_body(node.body, replacements))
-        for iterator_name, value_name in zip(iterator_names, value_names):
-            body.append(
-                self._assign(
-                    value_name,
-                    self._helper_call(
-                        '__dace_iterator_next',
-                        [ast.Name(id=iterator_name, ctx=ast.Load()),
-                         ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+        for iterator_name, next_name, has_next_name, value_name in zip(iterator_names, next_names, has_next_names,
+                                                                       value_names):
+            body.extend(self._iterator_next_sequence(iterator_name, next_name, has_next_name, value_name, node))
 
         loop = ast.While(test=test, body=body, orelse=[astutils.copy_tree(stmt) for stmt in node.orelse])
         return [*init_nodes, ast.fix_missing_locations(ast.copy_location(loop, node))]
 
     def _normalize_generic_iteration(self, node: ast.For, enumerate_start: Optional[ast.AST] = None) -> Any:
         iterator_name = self._fresh_name('iter')
+        next_name = self._fresh_name('iter_next')
+        has_next_name = self._fresh_name('iter_has_next')
         value_name = self._fresh_name('iter_value')
-        sentinel_id = self._sentinel_name(node)
 
         init_nodes: List[ast.AST] = [
-            self._assign(iterator_name, self._helper_call('__dace_iterator_init', [node.iter]), node),
-            self._assign(
-                value_name,
-                self._helper_call(
-                    '__dace_iterator_next',
-                    [ast.Name(id=iterator_name, ctx=ast.Load()),
-                     ast.Name(id=sentinel_id, ctx=ast.Load())]), node),
+            self._assign(iterator_name, self._helper_call('__dace_iterator_init', [node.iter]), node)
         ]
+        init_nodes.extend(self._iterator_next_sequence(iterator_name, next_name, has_next_name, value_name, node))
 
         counter_name: Optional[str] = None
         if enumerate_start is not None:
@@ -1664,17 +1646,26 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
         else:
             yielded_value = ast.Name(id=value_name, ctx=ast.Load())
 
-        replacements = self._target_replacements(node.target, yielded_value)
-        destructuring_setup = None
-        if replacements is None:
-            destructuring_setup = self._destructuring_setup(node.target, yielded_value, node)
-            if destructuring_setup is None:
-                return node
+        target_setup: Optional[ast.Assign] = None
+        if self._requires_explicit_target_binding(node.target, node.body):
             replacements = {}
+            target_setup = self._binding_setup(node.target,
+                                               yielded_value,
+                                               node,
+                                               annotation=self._target_binding_annotation(node.target, node.body))
+            if target_setup is None:
+                return node
+        else:
+            replacements = self._target_replacements(node.target, yielded_value)
+            if replacements is None:
+                target_setup = self._destructuring_setup(node.target, yielded_value, node)
+                if target_setup is None:
+                    return node
+                replacements = {}
 
         body: List[ast.AST] = []
-        if destructuring_setup is not None:
-            body.append(destructuring_setup)
+        if target_setup is not None:
+            body.append(target_setup)
         body.extend(self._rewrite_body(node.body, replacements))
         if counter_name is not None:
             body.append(
@@ -1683,17 +1674,9 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
                     ast.BinOp(left=ast.Name(id=counter_name, ctx=ast.Load()),
                               op=ast.Add(),
                               right=astutils.create_constant(1, node)), node))
-        body.append(
-            self._assign(
-                value_name,
-                self._helper_call(
-                    '__dace_iterator_next',
-                    [ast.Name(id=iterator_name, ctx=ast.Load()),
-                     ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+        body.extend(self._iterator_next_sequence(iterator_name, next_name, has_next_name, value_name, node))
 
-        test = ast.Compare(left=ast.Name(id=value_name, ctx=ast.Load()),
-                           ops=[ast.IsNot()],
-                           comparators=[ast.Name(id=sentinel_id, ctx=ast.Load())])
+        test = ast.Name(id=has_next_name, ctx=ast.Load())
         loop = ast.While(test=test, body=body, orelse=[astutils.copy_tree(stmt) for stmt in node.orelse])
         return [*init_nodes, ast.fix_missing_locations(ast.copy_location(loop, node))]
 
@@ -1745,10 +1728,6 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
 
         return None
 
-    def _sentinel_name(self, node: ast.AST) -> str:
-        sentinel = self.resolver.global_value_to_node(object(), node, self._fresh_name('iter_end'), keep_object=True)
-        return sentinel.id
-
     def _fresh_name(self, prefix: str) -> str:
         name = f'__dace_{prefix}_{self._counter}'
         self._counter += 1
@@ -1773,9 +1752,31 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
                         args=[astutils.copy_tree(arg) for arg in args],
                         keywords=[])
 
+    def _iterator_next_sequence(self, iterator_name: str, next_name: str, has_next_name: str, value_name: str,
+                                location: ast.AST) -> List[ast.Assign]:
+        next_expr = ast.Name(id=next_name, ctx=ast.Load())
+        return [
+            self._assign(next_name,
+                         self._helper_call('__dace_iterator_next', [ast.Name(id=iterator_name, ctx=ast.Load())]),
+                         location),
+            self._assign_target(
+                ast.Name(id=has_next_name, ctx=ast.Store()),
+                ast.Subscript(value=astutils.copy_tree(next_expr),
+                              slice=astutils.create_constant(0, location),
+                              ctx=ast.Load()), location),
+            self._assign_target(
+                ast.Name(id=value_name, ctx=ast.Store()),
+                ast.Subscript(value=astutils.copy_tree(next_expr),
+                              slice=astutils.create_constant(1, location),
+                              ctx=ast.Load()), location)
+        ]
+
     def _assign(self, target_name: str, value: ast.AST, location: ast.AST) -> ast.Assign:
         return ast.fix_missing_locations(
             ast.copy_location(ast.Assign(targets=[ast.Name(id=target_name, ctx=ast.Store())], value=value), location))
+
+    def _assign_target(self, target: ast.AST, value: ast.AST, location: ast.AST) -> ast.Assign:
+        return ast.fix_missing_locations(ast.copy_location(ast.Assign(targets=[target], value=value), location))
 
     def _target_replacements(self, target: ast.AST, value: ast.AST) -> Optional[Dict[str, ast.AST]]:
         result: Dict[str, ast.AST] = {}
@@ -1807,6 +1808,37 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
             replace = astutils.ASTFindReplace({name: astutils.copy_tree(value) for name, value in replacements.items()})
             rewritten.append(ast.fix_missing_locations(replace.visit(copied)))
         return rewritten
+
+    def _requires_explicit_target_binding(self, target: ast.AST, body: List[ast.stmt]) -> bool:
+        return (isinstance(target, ast.Name) and any(
+            isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == target.id
+            for stmt in body))
+
+    def _target_binding_annotation(self, target: ast.AST, body: List[ast.stmt]) -> Optional[ast.AST]:
+        if not isinstance(target, ast.Name):
+            return None
+        for stmt in body:
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == target.id:
+                return astutils.copy_tree(stmt.annotation)
+        return None
+
+    def _binding_setup(self,
+                       target: ast.AST,
+                       value: ast.AST,
+                       location: ast.AST,
+                       annotation: Optional[ast.AST] = None) -> Optional[ast.stmt]:
+        if isinstance(target, ast.Name) and annotation is not None:
+            return ast.fix_missing_locations(
+                ast.copy_location(
+                    ast.AnnAssign(target=astutils.copy_tree(target),
+                                  annotation=astutils.copy_tree(annotation),
+                                  value=astutils.copy_tree(value),
+                                  simple=1), location))
+        if isinstance(target, ast.Name):
+            return ast.fix_missing_locations(
+                ast.copy_location(ast.Assign(targets=[astutils.copy_tree(target)], value=astutils.copy_tree(value)),
+                                  location))
+        return self._destructuring_setup(target, value, location)
 
     def _destructuring_setup(self, target: ast.AST, value: ast.AST, location: ast.AST) -> Optional[ast.Assign]:
         if not isinstance(target, (ast.Tuple, ast.List)):

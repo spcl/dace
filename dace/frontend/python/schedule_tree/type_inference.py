@@ -272,7 +272,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             iterator_binding = self.bindings.get(value.args[0].id)
             if iterator_binding is None or iterator_binding.structure is None:
                 return None
-            structure = copy.deepcopy(iterator_binding.structure)
+            structure = (data.Scalar(dtypes.bool, transient=True), copy.deepcopy(iterator_binding.structure))
             return _Binding(descriptor=self._descriptor_from_structure(structure),
                             kind='iterator-value',
                             structure=structure)
@@ -741,8 +741,11 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         dtype = dtypes.pyobject()
         if structure and all(isinstance(element, data.Scalar) for element in structure):
             dtype = structure[0].dtype
-            for element in structure[1:]:
-                dtype = dtypes.result_type_of(dtype, element.dtype)
+            if dtype == dtypes.pyobject() or any(element.dtype == dtypes.pyobject() for element in structure[1:]):
+                dtype = dtypes.pyobject()
+            else:
+                for element in structure[1:]:
+                    dtype = dtypes.result_type_of(dtype, element.dtype)
         descriptor_type = PythonList if isinstance(structure, list) else PythonTuple
         return descriptor_type(dtype=dtype, shape=(len(structure), ), transient=True)
 
