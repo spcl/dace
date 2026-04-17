@@ -9,7 +9,7 @@ import warnings
 from typing import Optional
 
 import dace
-from dace.frontend.python.common import DaceSyntaxError, ScheduleTreeConvertible
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, ScheduleTreeConvertible
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
@@ -437,6 +437,75 @@ def test_python_frontend_schedule_tree_external_schedule_tree_convertible_call()
     assert call_scope.call.arguments == {'A': '__stree_tmp', 'B': '__stree_tmp1'}
     assert len(call_scope.children) >= 1
     assert isinstance(stree.children[3], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_sdfg_call_stays_opaque():
+
+    @dace.program
+    def inner(A: dace.float64[8], B: dace.float64[8]):
+        return A + B
+
+    sdfg_obj = inner.to_sdfg()
+
+    @dace.program
+    def outer(A: dace.float64[8], B: dace.float64[8]):
+        return sdfg_obj(A, B)
+
+    stree = outer.to_schedule_tree()
+
+    assert not any(isinstance(node, tn.FunctionCallScope) for node in stree.preorder_traversal())
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+    assert isinstance(stree.children[0], tn.SDFGCallNode)
+    assert isinstance(stree.children[0].sdfg, dace.SDFG)
+    assert stree.children[0].sdfg.name == sdfg_obj.name
+    assert stree.children[0].call.callee_name.endswith('inner')
+    assert stree.children[0].call.arguments == {'A': 'A', 'B': 'B'}
+    assert stree.children[0].return_targets == ['__stree_retval']
+    assert isinstance(stree.children[1], tn.ReturnNode)
+    assert stree.children[1].values[0].as_string == '__stree_retval'
+
+
+def test_python_frontend_schedule_tree_sdfg_convertible_call_stays_opaque():
+
+    class Convertible(SDFGConvertible):
+
+        def __init__(self):
+            self.name = 'convertible'
+
+        def __call__(self, *args, **kwargs):
+            raise AssertionError('SDFGConvertible should not execute during schedule-tree generation')
+
+        def __sdfg__(self, A, B):
+
+            @dace.program
+            def inner(X: dace.float64[8], Y: dace.float64[8]):
+                return X + Y
+
+            return inner.to_sdfg(A, B)
+
+        def __sdfg_signature__(self):
+            return (['A', 'B'], [])
+
+        def __sdfg_closure__(self, reevaluate=None):
+            return {}
+
+    convertible = Convertible()
+
+    @dace.program
+    def outer(A: dace.float64[8], B: dace.float64[8]):
+        return convertible(A, B)
+
+    stree = outer.to_schedule_tree()
+
+    assert not any(isinstance(node, tn.FunctionCallScope) for node in stree.preorder_traversal())
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+    assert isinstance(stree.children[0], tn.SDFGCallNode)
+    assert isinstance(stree.children[0].sdfg, dace.SDFG)
+    assert stree.children[0].call.callee_name == 'convertible'
+    assert stree.children[0].call.arguments == {'A': 'A', 'B': 'B'}
+    assert stree.children[0].return_targets == ['__stree_retval']
+    assert isinstance(stree.children[1], tn.ReturnNode)
+    assert stree.children[1].values[0].as_string == '__stree_retval'
 
 
 def test_python_frontend_schedule_tree_return_materializes_array_expression():

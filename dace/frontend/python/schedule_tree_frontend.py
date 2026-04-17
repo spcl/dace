@@ -424,6 +424,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._materialize_call_args(value)
             self._emit_function_call(value)
             return
+        if self._is_sdfg_call(value):
+            self._materialize_call_args(value)
+            if self._emit_sdfg_call(value):
+                return
         planned_value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                                 value,
                                                                 materialize_root=False)
@@ -449,6 +453,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 self._emit_function_call(return_value, return_targets=[tmp])
                 self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
                 return
+            if self._is_sdfg_call(return_value):
+                self._materialize_call_args(return_value)
+                tmp = self._fresh_transient_name('__stree_retval')
+                self._register_binding(tmp, _pyobject_scalar_descriptor(), kind='scalar')
+                if self._emit_sdfg_call(return_value, return_targets=[tmp]):
+                    self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
+                    return
             if isinstance(return_value, ast.Tuple):
                 planned_values = [
                     self.expression_support.plan_expression(self._expression_planning_context(),
@@ -999,6 +1010,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._emit_function_call(value, return_targets=targets)
             return
 
+        if self._is_sdfg_call(value) and not isinstance(target, (ast.Tuple, ast.List)):
+            self._materialize_call_args(value)
+            if self._emit_sdfg_call_assignment(target, value, annotated_descriptor):
+                return
+
         if isinstance(target, (ast.Tuple, ast.List)):
             value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                             value,
@@ -1172,6 +1188,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                            in_memlets=in_memlets,
                            out_memlets=set()))
         return True
+
+    def _emit_sdfg_call_assignment(self, target: ast.AST, value: ast.Call,
+                                   annotated_descriptor: Optional[data.Data]) -> bool:
+        if isinstance(target, ast.Name):
+            descriptor = annotated_descriptor
+            if descriptor is None:
+                binding = self.bindings.get(target.id)
+                if binding is not None:
+                    descriptor = binding.descriptor
+            if descriptor is None:
+                descriptor = _pyobject_scalar_descriptor()
+            self._register_binding(target.id, descriptor, kind=_binding_kind_for_descriptor(descriptor))
+            return self._emit_sdfg_call(value, return_targets=[target.id])
+
+        return self._emit_sdfg_call(value, return_targets=[_unparse(target)])
 
     def _emit_computed_assignment(self, target: ast.AST, value: ast.AST,
                                   annotated_descriptor: Optional[data.Data]) -> bool:
@@ -1901,15 +1932,25 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return False
         if getattr(value, '_schedule_tree_inline_callable', False):
             return True
-        if hasattr(value, '__schedule_tree__'):
-            return True
+        return hasattr(value, '__schedule_tree__')
+
+    def _is_sdfg_call(self, node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        value = self._resolve_callable_value(node.func)
+        if value is UNRESOLVED or hasattr(value, '__schedule_tree__'):
+            return False
         from dace import SDFG
-        return hasattr(value, '__sdfg__') and not isinstance(value, SDFG)
+        return isinstance(value, SDFG) or hasattr(value, '__sdfg__')
 
     def _callable_signature(self, callee: Any) -> inspect.Signature:
-        if hasattr(callee, 'signature'):
+        from dace import SDFG
+
+        if isinstance(callee, SDFG):
+            arg_names = list(callee.arg_names)
+        elif hasattr(callee, 'signature') and isinstance(callee.signature, inspect.Signature):
             return callee.signature
-        if hasattr(callee, '__schedule_tree_signature__'):
+        elif hasattr(callee, '__schedule_tree_signature__'):
             arg_names, _ = callee.__schedule_tree_signature__()
         elif hasattr(callee, '__sdfg_signature__'):
             arg_names, _ = callee.__sdfg_signature__()
@@ -2017,6 +2058,38 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         scope._captured_names = set(getattr(callee, 'captured_names', set()))
         scope._return_targets = return_targets
         self._append_node(scope)
+
+    def _resolve_sdfg_call(self, call_node: ast.Call) -> Optional[Any]:
+        callee = self._resolve_callable_value(call_node.func)
+        from dace import SDFG
+
+        if isinstance(callee, SDFG):
+            return callee
+
+        if not hasattr(callee, '__sdfg__') or hasattr(callee, '__schedule_tree__'):
+            return None
+
+        specialization_args, specialization_kwargs, _, _ = self._extract_call_specialization(call_node)
+        try:
+            sdfg = callee.__sdfg__(*specialization_args, **specialization_kwargs)
+        except Exception:
+            return None
+
+        return sdfg if isinstance(sdfg, SDFG) else None
+
+    def _emit_sdfg_call(self, call_node: ast.Call, return_targets: Optional[List[str]] = None) -> bool:
+        sdfg = self._resolve_sdfg_call(call_node)
+        if sdfg is None:
+            return False
+
+        callee = self._resolve_callable_value(call_node.func)
+        callee_name = self._callable_name(callee)
+        arguments = self._extract_argument_mapping(call_node)
+        self._append_node(
+            tn.SDFGCallNode(sdfg=sdfg,
+                            call=tn.FrontendFunctionCall(callee_name=callee_name, arguments=arguments),
+                            return_targets=list(return_targets or [])))
+        return True
 
     def _materialize_call_args(self, call_node: ast.Call) -> None:
         """Materialize array-valued call arguments into temporaries in-place."""

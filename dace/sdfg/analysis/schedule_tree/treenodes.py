@@ -188,6 +188,25 @@ class FunctionCallScope(ControlFlowScope):
 
 
 @dataclass
+class SDFGCallNode(ScheduleTreeNode):
+    """
+    Represents a call to an SDFG-valued callee that remains explicit in the
+    schedule tree instead of being inlined structurally.
+    """
+    sdfg: 'SDFG'
+    call: FrontendFunctionCall = field(default_factory=lambda: FrontendFunctionCall(''))
+    return_targets: List[str] = field(default_factory=list)
+
+    def as_string(self, indent: int = 0):
+        args = ', '.join(f'{k}={v}' for k, v in self.call.arguments.items())
+        call = f'sdfg_call {self.call.callee_name}({args})'
+        if not self.return_targets:
+            return indent * INDENTATION + call
+        targets = ', '.join(self.return_targets)
+        return indent * INDENTATION + f'{targets} = {call}'
+
+
+@dataclass
 class DataflowScope(ScheduleTreeScope):
     node: Union[nodes.EntryNode, FrontendMap, FrontendConsume]
     state: Optional[SDFGState] = None
