@@ -56,9 +56,9 @@ def _load_and_run_sdfg(build_folder, sdfg):
     _run_sdfg(csdfg)
 
 
-def test_full_folder_version():
+def test_development_folder_version():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_version', value="full")
+        Config.set('compiler', 'build_folder_version', value="development")
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder)
         assert not build_folder.exists()
@@ -67,7 +67,7 @@ def test_full_folder_version():
         assert not_csdfg is None
 
     assert build_folder.exists()
-    assert sdfg_compiler.get_folder_version(build_folder) == "full"
+    assert sdfg_compiler.get_folder_version(build_folder) == "development"
 
     expected_files = {
         "build": pathlib.Path.is_dir,
@@ -92,12 +92,12 @@ def test_full_folder_version():
     # Now run it.
     _load_and_run_sdfg(build_folder, sdfg)
 
-    # Special case for full is that if there is no `VERSION` it is still full.
+    # Special case for development is that if there is no `VERSION` it is still development.
     version_file = build_folder / "VERSION"
     assert version_file.exists()
     version_file.unlink()
     assert not version_file.exists()
-    assert sdfg_compiler.get_folder_version(build_folder) == "full"
+    assert sdfg_compiler.get_folder_version(build_folder) == "development"
 
 
 def test_production_folder_version():
@@ -211,19 +211,19 @@ def _test_build_with_scheme_one_and_then_switch_impl(
 
 def test_build_with_scheme_one_and_then_switch():
     _test_build_with_scheme_one_and_then_switch_impl(
-        version1="full",
+        version1="development",
         version2="production",
     )
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="production",
-        version2="full",
+        version2="development",
     )
 
 
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
-        version1="full",
-        version2="full",
+        version1="development",
+        version2="development",
     )
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="production",
@@ -232,7 +232,7 @@ def test_already_loaded_and_comple_again():
 
 
 if __name__ == '__main__':
-    test_full_folder_version()
+    test_development_folder_version()
     test_production_folder_version()
     test_already_loaded_and_comple_again()
     test_build_with_scheme_one_and_then_switch()

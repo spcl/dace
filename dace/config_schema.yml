@@ -117,14 +117,14 @@ required:
 
             build_folder_version:
                 type: str
-                default: full
+                default: development
                 title: Version of the build folder
                 description: >
                   Determine the content of the build folder that should be created.
-                  The supported values are `full`, which generates the original
-                  version that includes everything. Furthermore, `production` is
-                  supported, in this version only the compiled libraries and the
-                  version file is pressent.
+                  The supported values are `development`, that includes everything
+                  The second mode, that is currently supported is `production`.
+                  In this mode only the compiled library and the version file is
+                  present.
 
             library_prefix:
                 type: str

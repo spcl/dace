@@ -111,7 +111,7 @@ def generate_program_folder(
             filelist.append("{},{},{}".format(target_name, target_type, basename))
 
         # Generate the source map.
-        if sdfg and (folder_version in ["full"]):
+        if sdfg and (folder_version in ["development"]):
             if code_object.language == 'cpp' and code_object.title == 'Frame':
                 code_object.create_source_map(sdfg)
 
@@ -132,7 +132,7 @@ def generate_program_folder(
 
     # Save the SDFG itself and its hash
     if sdfg is not None:
-        if folder_version in ["full"]:
+        if folder_version in ["development"]:
             hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         else:
             hash = sdfg.hash_sdfg()
@@ -142,8 +142,8 @@ def generate_program_folder(
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
-    # Generate the parts of the folder that are exclusive to the full folder mode.
-    if folder_version in ["full"]:
+    # Generate the parts of the folder that are exclusive to the development folder mode.
+    if folder_version in ["development"]:
 
         # Copy a full snapshot of configuration script
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
@@ -187,7 +187,7 @@ def configure_and_compile(
 
     if folder_version is None:
         folder_version = Config.get('compiler.build_folder_version')
-    assert folder_version in ["full", "production"]
+    assert folder_version in ["development", "production"]
 
     if program_name is None:
         program_name = os.path.basename(program_folder)
@@ -199,7 +199,7 @@ def configure_and_compile(
     os.makedirs(build_folder, exist_ok=True)
 
     # Prepare performance report folder if requested.
-    if folder_version == "full":
+    if folder_version == "development":
         os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
 
     # Read list of DaCe files to compile.
@@ -326,8 +326,8 @@ def configure_and_compile(
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
     # Get the names of the library files that were generated.
-    #  Currently we are still in the full version.
-    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_version="full")
+    #  Currently we are still in the `development` folder mode.
+    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_version="development")
     libstub_path = _get_stub_library_path(lib_path)
 
     # In production mode, we are now deleting what we need and relocating it.
@@ -399,8 +399,8 @@ def get_folder_version(object_folder: Union[pathlib.Path, str], probe: bool = Fa
     """Inspect `object_folder` and determine which version the folder has.
 
     If the function find the ``VERSION`` file it will examine it to get the version.
-    If the version file is absent the function assumes that it is the full format,
-    however, it performs some checks to ensure that.
+    If the version file is absent the function assumes that it is the ``development``
+    format, however, some sanity checks are performed.
 
     The function also has the optional argument ``probe`` if given and the folder
     version could not be inferred the function will return ``None`` instead of
@@ -429,8 +429,8 @@ def get_folder_version(object_folder: Union[pathlib.Path, str], probe: bool = Fa
                 raise NotADirectoryError(f'Expected that folder ``{object_folder}`` contains ``{sub_folder}``')
 
         if found_sub_folder:
-            # All expected folders where found, so expect that this is a 'full' format folder.
-            return "full"
+            # All expected folders where found, so expect that this is a 'development' format folder.
+            return "development"
         elif probe:
             # None of the files where found. Thus this is probably an empty folder that just exist.
             return None
@@ -460,7 +460,7 @@ def get_binary_name(
         folder_version = Config.get('compiler', 'build_folder_version')
 
     folder_hirarchy = [object_folder]
-    if folder_version == 'full':
+    if folder_version == 'development':
         folder_hirarchy.append('build')
     elif folder_version == 'production':
         # Nothing to add, they are on the top.
@@ -490,7 +490,7 @@ def load_precompiled_sdfg(
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
     dump file inside ``folder``. If the folder does not contain a ``VERSION`` file
-    it assumes that it is an old style ``full`` folder otherwise, the information
+    it assumes that it is an old style ``development`` folder otherwise, the information
     from ``VERSION`` is consulted.
 
     :param folder: Path to SDFG output folder, i.e. its build folder.
