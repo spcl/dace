@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+import contextlib
 import numpy as np
 import pytest
 import sys
@@ -1283,6 +1284,29 @@ def test_delete_noop_for_arrays():
     # No PythonCallbackNode for 'delete' should appear
     callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode) and c.reason == 'delete']
     assert len(callbacks) == 0
+
+
+def test_dynamic_context_manager_produces_callback():
+
+    @contextlib.contextmanager
+    def guard(value):
+        if value > 0:
+            yield
+        else:
+            yield
+
+    @dace.program
+    def with_prog(A: dace.float64[10]):
+        with guard(A[0]):
+            A[1] = A[0]
+        return A
+
+    stree = with_prog.to_schedule_tree()
+
+    callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
+    assert len(callbacks) == 1
+    assert callbacks[0].reason == 'context manager'
+    assert callbacks[0].code.as_string.startswith('with guard(A[0]):')
 
 
 def test_raise_produces_callback():

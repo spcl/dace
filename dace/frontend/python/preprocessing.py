@@ -1145,7 +1145,12 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     a return statement, or top-level break/continue statements.
     """
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
+    def __init__(self,
+                 globals: Dict[str, Any],
+                 filename: str,
+                 closure_resolver: GlobalResolver,
+                 *,
+                 preserve_uninlinable_context_managers: bool = False) -> None:
         super().__init__()
         self.with_statements: List[ast.With] = []
         self.context_managers: Dict[ast.With, List[Tuple[str, Any]]] = {}
@@ -1153,6 +1158,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         self.filename = filename
         self.resolver = closure_resolver
         self.names: Set[str] = set()
+        self.preserve_uninlinable_context_managers = preserve_uninlinable_context_managers
 
     def _visit_node_with_body(self, node):
         node = self.generic_visit_filtered(node, {'body'})
@@ -1250,7 +1256,13 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         ifnode = ast.copy_location(ifnode, node)
 
         # Make enter calls
-        entries = self._add_entries(node)
+        try:
+            entries = self._add_entries(node)
+        except ValueError:
+            if self.preserve_uninlinable_context_managers:
+                self.with_statements.pop()
+                return node
+            raise
         ifnode.body = entries
 
         # Visit body
@@ -2451,7 +2463,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             preserve_object_attributes: bool = False,
                             disallowed_stmts: Optional[Set[str]] = None,
                             preserve_raises: bool = False,
-                            preserve_fstrings: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            preserve_fstrings: bool = False,
+                            preserve_uninlinable_context_managers: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -2477,6 +2490,11 @@ def preprocess_dace_program(f: Callable[..., Any],
     :param preserve_fstrings: If True, keep non-constant f-string AST nodes
                               in the preprocessed AST for downstream
                               frontends to handle explicitly.
+    :param preserve_uninlinable_context_managers: If True, leave ``with`` /
+                              ``async with`` statements in the AST when the
+                              context manager cannot be created at compile
+                              time, so downstream frontends can decide how to
+                              handle them.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -2567,7 +2585,11 @@ def preprocess_dace_program(f: Callable[..., Any],
             if normalize_generic_for_loops:
                 src_ast = IteratorForLoopNormalizer(resolved, argtypes, closure_resolver).visit(src_ast)
             src_ast = ExpressionInliner(resolved, src_file, closure_resolver).visit(src_ast)
-            src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
+            src_ast = ContextManagerInliner(
+                resolved,
+                src_file,
+                closure_resolver,
+                preserve_uninlinable_context_managers=preserve_uninlinable_context_managers).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved, preserve_raises=preserve_raises).visit(src_ast)
             if normalize_generic_for_loops:
                 src_ast = NamedExprDesugarer().visit(src_ast)

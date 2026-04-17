@@ -724,6 +724,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         for stmt in lowered:
             self.visit(stmt)
 
+    def visit_With(self, node: ast.With) -> None:
+        self._wrap_as_callback(node, 'context manager')
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self._wrap_as_callback(node, 'context manager')
+
     # ------------------------------------------------------------------ #
     #  Category B visitors — try to lower, fall back to callback          #
     # ------------------------------------------------------------------ #

@@ -930,7 +930,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                                                                     preserve_object_attributes=True,
                                                                     disallowed_stmts=set(),
                                                                     preserve_raises=True,
-                                                                    preserve_fstrings=True)
+                                                                    preserve_fstrings=True,
+                                                                    preserve_uninlinable_context_managers=True)
 
         self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
         self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
