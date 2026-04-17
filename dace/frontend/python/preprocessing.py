@@ -2037,10 +2037,11 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
     ``DaceSyntaxError`` exception if one is found.
     """
 
-    def __init__(self, filename: str) -> None:
+    def __init__(self, filename: str, preserve_call_expansions: bool = False) -> None:
         super().__init__()
         self.visitor = collections.namedtuple('Visitor', 'filename')
         self.visitor.filename = filename
+        self.preserve_call_expansions = preserve_call_expansions
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
         if hasattr(node, 'qualname'):
@@ -2066,10 +2067,11 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
-        if any(k.arg is None for k in node.keywords):
+        if any(k.arg is None for k in node.keywords) and not self.preserve_call_expansions:
             raise DaceSyntaxError(
                 self.visitor, node, 'Double-starred (dictionary unpacking, e.g., `**a`) arguments are '
                 'currently unsupported.')
+        self.generic_visit(node)
 
 
 class NamedExprDesugarer(ast.NodeTransformer):
@@ -2467,7 +2469,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             disallowed_stmts: Optional[Set[str]] = None,
                             preserve_raises: bool = False,
                             preserve_fstrings: bool = False,
-                            preserve_uninlinable_context_managers: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            preserve_uninlinable_context_managers: bool = False,
+                            preserve_call_expansions: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -2498,6 +2501,9 @@ def preprocess_dace_program(f: Callable[..., Any],
                               context manager cannot be created at compile
                               time, so downstream frontends can decide how to
                               handle them.
+    :param preserve_call_expansions: If True, leave calls that use ``**``
+                              argument expansion in the AST so downstream
+                              frontends can represent them explicitly.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -2581,7 +2587,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         try:
             closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
-            DisallowedAssignmentChecker(src_file).visit(src_ast)
+            DisallowedAssignmentChecker(src_file, preserve_call_expansions=preserve_call_expansions).visit(src_ast)
             if normalize_generic_for_loops:
                 src_ast = ComprehensionDesugarer().visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)

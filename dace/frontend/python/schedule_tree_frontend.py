@@ -19,7 +19,8 @@ from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (ExpressionPlanningContext, GenericExpressionSupportLibrary,
                                                 NumpyLoweringContext, NumpySupportLibrary, ScheduleTreeTypeInference,
-                                                _Binding, resolve_function_calls)
+                                                _Binding, callback_reason, desugar_schedule_tree_expansions,
+                                                resolve_function_calls)
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -319,8 +320,14 @@ def build_schedule_tree(name: str,
         ``@dace.program`` calls after building the tree.
     :return: A schedule tree rooted at a top-level scope.
     """
+    desugared_ast = preprocessing.PreprocessedAST(
+        parsed_ast.filename, parsed_ast.src_line, parsed_ast.src,
+        desugar_schedule_tree_expansions(parsed_ast.preprocessed_ast,
+                                         filename=parsed_ast.filename,
+                                         global_vars=parsed_ast.program_globals,
+                                         callable_bindings=callable_bindings), parsed_ast.program_globals)
     builder = PythonScheduleTreeBuilder(name,
-                                        parsed_ast,
+                                        desugared_ast,
                                         argtypes,
                                         constants=constants,
                                         callback_mapping=callback_mapping,
@@ -397,10 +404,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return self.root
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         for target in node.targets:
             self._handle_assignment(target, node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         descriptor = self._evaluate_descriptor(node.annotation)
         if descriptor is not None and isinstance(node.target, ast.Name):
             self.annotated_descriptors[node.target.id] = descriptor
@@ -412,10 +427,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._handle_assignment(node.target, node.value, annotated_descriptor=descriptor)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         value = ast.BinOp(left=copy.deepcopy(node.target), op=node.op, right=copy.deepcopy(node.value))
         self._handle_assignment(node.target, value)
 
     def visit_Expr(self, node: ast.Expr) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return
         self._reject_callback_mutated_global_uses(node.value)
@@ -519,10 +542,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._append_node(tn.ContinueNode())
 
     def visit_If(self, node: ast.If) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         self._reject_callback_mutated_global_uses(node.test)
         self._emit_if_chain(node)
 
     def visit_For(self, node: ast.For) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         self._reject_callback_mutated_global_uses(node.iter)
         loop_indices = self._parse_for_indices(node.target)
         iterator_kind, iterator_ranges = self._parse_for_iterator(node.iter)
@@ -555,6 +586,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._visit_body(else_scope, node.orelse)
 
     def visit_While(self, node: ast.While) -> None:
+        reason = callback_reason(node)
+        if reason is not None:
+            self._wrap_as_callback(node, reason)
+            return
         self._reject_callback_mutated_global_uses(node.test)
         loop_scope = tn.LoopScope(
             loop=tn.FrontendLoop(loop_condition=CodeBlock(self._format_runtime_expression(node.test))), children=[])
@@ -603,10 +638,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         """Return parseable source code for a callback-wrapped AST node."""
         if isinstance(node, ast.stmt):
             try:
-                return ast.unparse(copy.deepcopy(node))
+                return ast.unparse(_sanitize_ast_for_unparse(copy.deepcopy(node)))
             except Exception:
                 try:
-                    return astutils.unparse(copy.deepcopy(node))
+                    return astutils.unparse(_sanitize_ast_for_unparse(copy.deepcopy(node)))
                 except Exception:
                     return 'pass'
 
@@ -635,6 +670,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _wrap_as_callback(self, node: ast.AST, reason: str) -> None:
         """Emit a PythonCallbackNode for constructs that cannot be lowered."""
+        node = ast.fix_missing_locations(copy.deepcopy(node))
         code_text = self._callback_code_text(node)
         inputs, outputs = self._analyze_name_flow(node)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

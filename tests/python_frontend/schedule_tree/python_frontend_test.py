@@ -1077,11 +1077,88 @@ def test_python_frontend_schedule_tree_starred_unpacking_uses_analyzable_structu
 
     stree = starred_prog.to_schedule_tree()
 
-    assert isinstance(stree.children[0], tn.StatementNode)
-    assert stree.children[0].code.as_string == '__stree_tuple_tmp = (A, B, C)'
-    assert isinstance(stree.children[1], tn.StatementNode)
-    assert stree.children[1].code.as_string == '(head, *rest) = __stree_tuple_tmp'
+    assert isinstance(stree.children[0], (tn.RefSetNode, tn.ViewNode))
+    assert stree.children[0].target == 'head'
+    assert isinstance(stree.children[1], tn.TaskletNode)
+    assert stree.children[1].node.code.as_string == 'rest = [B, C]'
     assert isinstance(stree.children[2], tn.CopyNode)
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+
+
+def test_python_frontend_schedule_tree_star_call_expansion_is_resolved_statically():
+
+    def callee(a, b, c):
+        return a + b + c
+
+    @dace.program
+    def star_call_prog(A: dace.float64[4], B: dace.float64[4], C: dace.float64[4]):
+        args = (A, B)
+        return callee(*args, c=C)
+
+    stree = star_call_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert isinstance(stree.children[1], tn.FunctionCallScope)
+    assert stree.children[1].call.callee_name == 'callee'
+    assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}
+    assert isinstance(stree.children[2], tn.ReturnNode)
+    assert stree.children[2].values[0].as_string == '__stree_retval'
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+
+
+def test_python_frontend_schedule_tree_double_star_call_expansion_is_resolved_statically():
+
+    def callee(a, b, c):
+        return a + b + c
+
+    @dace.program
+    def dstar_call_prog(A: dace.float64[4], B: dace.float64[4], C: dace.float64[4]):
+        kwargs = {'c': C}
+        return callee(A, B, **kwargs)
+
+    stree = dstar_call_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert isinstance(stree.children[1], tn.FunctionCallScope)
+    assert stree.children[1].call.callee_name == 'callee'
+    assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}
+    assert isinstance(stree.children[2], tn.ReturnNode)
+    assert stree.children[2].values[0].as_string == '__stree_retval'
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+
+
+def test_python_frontend_schedule_tree_dynamic_star_call_expansion_uses_callback():
+
+    def callee(a, b, c):
+        return a + b + c
+
+    @dace.program
+    def dynamic_star_call(flag: dace.bool_, A: dace.float64[4], B: dace.float64[4], C: dace.float64[4]):
+        return callee(*((A, B) if flag else (B, A)), c=C)
+
+    stree = dynamic_star_call.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.PythonCallbackNode)
+    assert stree.children[0].reason == 'call expansion'
+    assert stree.children[0].code.as_string == '__stree_retval = callee(*((A, B) if flag else (B, A)), c=C)'
+    assert isinstance(stree.children[1], tn.ReturnNode)
+    assert stree.children[1].values[0].as_string == '__stree_retval'
+
+
+def test_python_frontend_schedule_tree_dynamic_expanded_sdfg_call_raises():
+
+    @dace.program
+    def inner(A: dace.float64[4], B: dace.float64[4]):
+        return A + B
+
+    sdfg_obj = inner.to_sdfg(simplify=False)
+
+    @dace.program
+    def dynamic_sdfg_call(flag: dace.bool_, A: dace.float64[4], B: dace.float64[4]):
+        return sdfg_obj(*((A, B) if flag else (B, A)))
+
+    with pytest.raises(DaceSyntaxError, match='Dynamic argument expansion is unsupported for SDFG calls'):
+        dynamic_sdfg_call.to_schedule_tree()
 
 
 # ------------------------------------------------------------------ #

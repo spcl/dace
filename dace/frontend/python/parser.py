@@ -944,7 +944,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                                                                     disallowed_stmts=set(),
                                                                     preserve_raises=True,
                                                                     preserve_fstrings=True,
-                                                                    preserve_uninlinable_context_managers=True)
+                                                                    preserve_uninlinable_context_managers=True,
+                                                                    preserve_call_expansions=True)
 
         self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
         self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
