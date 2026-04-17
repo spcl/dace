@@ -973,7 +973,7 @@ def validate_children_and_parents_align(stree: ScheduleTreeScope, *, root: bool 
         raise RuntimeError("Expected schedule tree root.")
 
     for child in stree.children:
-        if id(child.parent) != id(stree):
+        if child.parent is not stree:
             raise RuntimeError(f"Inconsistent parent/child relationship. child: {child}, parent: {stree}")
         if isinstance(child, ScheduleTreeScope):
             validate_children_and_parents_align(child)

@@ -265,7 +265,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
-        # get ConditionalBlock form stack
+        # get ConditionalBlock from stack
         conditional_block: ConditionalBlock = self._pop_state("if_scope")
 
         else_body = ControlFlowRegion("else_body", sdfg=sdfg)
@@ -284,7 +284,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._pending_interstate_assignments():
             raise NotImplementedError("TODO: update edge with new assignments")
 
-    def _insert_nestedSDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
+    def _insert_nestedSDFG_in_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
         outer_nestedSDFG = self._current_nestedSDFG
@@ -396,7 +396,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             with node.scope(self._current_state, self._ctx):
                 self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
-            self._insert_nestedSDFG(node, sdfg)
+            self._insert_nestedSDFG_in_MapScope(node, sdfg)
         else:
             with node.scope(self._current_state, self._ctx):
                 self.visit(node.children, sdfg=sdfg)
@@ -734,7 +734,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             assignments=pending,
         )
 
-    def _pending_interstate_assignments(self) -> Dict:
+    def _pending_interstate_assignments(self) -> dict[str, str]:
         """
         Return currently pending interstate assignments. Clears the cache.
         """
@@ -932,7 +932,7 @@ def create_state_boundary(
     boundary_node: tn.StateBoundaryNode,
     state: SDFGState,
     behavior: StateBoundaryBehavior,
-    assignments: Optional[Dict] = None,
+    assignments: dict[str, str] | None = None,
 ) -> SDFGState:
     """
     Creates a boundary between two states
@@ -943,10 +943,10 @@ def create_state_boundary(
     :return: The newly created state.
     """
     if behavior != StateBoundaryBehavior.STATE_TRANSITION:
-        raise NotImplementedError("Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.")
+        raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
 
-    # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
-    #       behavior. Fall back to state transition in that case.
+    # TODO: Some boundaries (control flow, state labels with goto, pending assignments) could not be fulfilled
+    #       with every behavior. Fall back to state transition in that case.
 
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
@@ -955,10 +955,10 @@ def create_state_boundary(
 
 def _insert_and_split_assignments(
     before_state: ControlFlowBlock,
-    after_state: Optional[ControlFlowBlock] = None,
+    after_state: ControlFlowBlock | None = None,
     *,
-    label: Optional[str] = None,
-    assignments: Optional[Dict] = None,
+    label: str | None = None,
+    assignments: dict[str, str] | None = None,
 ) -> ControlFlowBlock:
     """
     Insert given assignments splitting them in case of potential race conditions.
