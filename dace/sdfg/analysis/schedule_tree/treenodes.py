@@ -23,8 +23,8 @@ class UnsupportedScopeException(Exception):
 class ScheduleTreeNode:
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
 
-    def as_string(self, indent: int = 0):
-        return indent * INDENTATION + 'UNSUPPORTED'
+    def as_string( self, indent:int  = 0  ) :
+        return indent*INDENTATION + 'UNSUPPORTED'
 
     def preorder_traversal(self) -> Iterator['ScheduleTreeNode']:
         """
