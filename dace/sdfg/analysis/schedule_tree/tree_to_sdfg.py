@@ -10,7 +10,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from enum import Enum, auto
-from typing import Dict, Final, List, Optional, Set, Tuple
+from typing import Final, Optional
 
 
 class StateBoundaryBehavior(Enum):
@@ -25,7 +25,7 @@ MAX_NESTED_SDFGS: Final[int] = 1000
 
 class StreeToSDFG(tn.ScheduleNodeVisitor):
 
-    def __init__(self, start_state: Optional[SDFGState] = None) -> None:
+    def __init__(self, start_state: SDFGState | None = None) -> None:
         self._ctx: tn.Context
         """Context information like tree root and current scope."""
 
@@ -35,25 +35,25 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_nestedSDFG: int | None = None
         """Id of the current nested SDFG if we are inside one."""
 
-        self._interstate_symbols: List[tn.AssignNode] = []
+        self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
-        self._nviews_free: List[tn.NView] = []
+        self._nviews_free: list[tn.NView] = []
         """Keep track of NView (nested SDFG view) nodes that are "free" to be used."""
 
-        self._nviews_bound_per_scope: Dict[int, List[tn.NView]] = {}
+        self._nviews_bound_per_scope: dict[int, list[tn.NView]] = {}
         """Mapping of id(SDFG) -> list of active NView nodes in that SDFG."""
 
-        self._nviews_deferred_removal: Dict[int, List[tn.NView]] = {}
+        self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
         """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
         # state management
-        self._state_stack: List[SDFGState] = []
+        self._state_stack: list[SDFGState] = []
 
         # dataflow scopes
-        # List[ (MapEntryNode, ToConnect) | (SDFG, {"inputs": set(), "outputs": set()}) ]
-        self._dataflow_stack: List[Tuple[nodes.EntryNode, Dict[str, Tuple[nodes.AccessNode, Memlet]]]
-                                   | Tuple[SDFG, Dict[str, Set[str]]]] = []
+        # list[ (MapEntryNode, ToConnect) | (SDFG, {"inputs": set(), "outputs": set()}) ]
+        self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
+                                   | tuple[SDFG, dict[str, set[str]]]] = []
 
     def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
         """Apply an NView override if applicable. Returns true if the NView was applied."""
@@ -85,7 +85,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         assert sdfg_counter < MAX_NESTED_SDFGS, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
         return parent_sdfg
 
-    def _pop_state(self, label: Optional[str] = None) -> SDFGState:
+    def _pop_state(self, label: str | None = None) -> SDFGState:
         """Pops the last state from the state stack.
 
         :param str, optional label: Ensures the popped state's label starts with the given string.
@@ -853,10 +853,10 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
     """
-    reads: mmu.MemletDict[List[tn.ScheduleTreeNode]] = mmu.MemletDict()
-    writes: mmu.MemletDict[List[tn.ScheduleTreeNode]] = mmu.MemletDict()
-    parents: Dict[int, Set[int]] = defaultdict(set)
-    boundaries_to_insert: List[int] = []
+    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    parents: dict[int, set[int]] = defaultdict(set)
+    boundaries_to_insert: list[int] = []
 
     for i, n in enumerate(scope.children):
         if isinstance(n, (tn.StateBoundaryNode, tn.ControlFlowScope)):  # Clear state
@@ -1006,7 +1006,7 @@ def _insert_and_split_assignments(
     return last_state
 
 
-def _list_index(list: List[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> int:
+def _list_index(list: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> int:
     """Check if node is in list with "is" operator."""
     index = 0
     for element in list:
