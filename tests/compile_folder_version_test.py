@@ -6,8 +6,6 @@ import pathlib
 import copy
 import re
 
-from typing import Tuple
-
 import dace
 from dace.codegen import compiler as sdfg_compiler
 

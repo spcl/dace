@@ -3,7 +3,6 @@
 
 import collections
 import copy
-import os
 import warnings
 import networkx as nx
 import time
