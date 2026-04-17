@@ -63,7 +63,8 @@ def test_augassign_wcr():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet)
+                                      or isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 1)
 
@@ -84,7 +85,8 @@ def test_augassign_wcr2():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet)
+                                      or isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 2)
 
@@ -108,7 +110,8 @@ def test_augassign_wcr3():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet)
+                                      or isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 2)
 

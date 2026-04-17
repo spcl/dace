@@ -1230,6 +1230,10 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if not isinstance(out_desc, data.View):
             return False
 
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in state.successors(out_array)):
+            return False
+
         vedge = state.out_edges(out_array)[0]
         if vedge.data.data != out_array.data:  # Ensures subset comes from view
             return False
@@ -1314,6 +1318,10 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
             return False
 
         if not isinstance(in_desc, data.View):
+            return False
+
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in state.predecessors(in_array)):
             return False
 
         vedge = state.in_edges(in_array)[0]
@@ -1446,6 +1454,10 @@ class RedundantReadSlice(pm.SingleStateTransformation):
 
         # Ensure in degree is one (only one source, which is in_array)
         if graph.in_degree(out_array) != 1:
+            return False
+
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in graph.successors(out_array)):
             return False
 
         # The match must be Array -> View(Array), i.e.,
@@ -1593,6 +1605,10 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         if graph.out_degree(in_array) != 1:
             return False
 
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in graph.predecessors(in_array)):
+            return False
+
         # The match must be View(Array) -> Array , i.e.,
         # the View must point to the Array. Find the true in_desc.
         true_in_array = sdutil.get_last_view_node(graph, in_array)
@@ -1724,6 +1740,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
             return False
         if isinstance(desc, data.StructureView):
             return False
+
+        # If one of the edges is a nested SDFG, we cannot safely remove the view
+        for e in state.all_edges(self.view):
+            if isinstance(e.dst, nodes.NestedSDFG) or isinstance(e.src, nodes.NestedSDFG):
+                return False
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)

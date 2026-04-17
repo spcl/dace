@@ -5,7 +5,7 @@ from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 import dace
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, subsets
 import dace.sdfg.nodes as nodes
 from collections import defaultdict
 import dace.transformation.dataflow.sve.infer_types as infer_types
@@ -436,7 +436,10 @@ class VectorInferenceGraph(DiGraph):
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
         loop_sym = symbolic.pystr_to_symbolic(self.param)
-        for dim, sub in enumerate(edge.data.subset):
+        subset = edge.data.subset
+        if isinstance(subset, subsets.Indices):
+            subset = subsets.Range.from_indices(subset)
+        for dim, sub in enumerate(subset):
             if loop_sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols:
                 if vec_dim is None:
                     vec_dim = dim
@@ -448,8 +451,9 @@ class VectorInferenceGraph(DiGraph):
         stride = edge.data.get_stride(self.sdfg, self.map)
 
         # Update the subset using the stride and the vector length on the correct dimension
-        sub = edge.data.subset[vec_dim]
-        edge.data.subset[vec_dim] = (sub[0], sub[1] + stride * self.vec_len, stride)
+        sub = subset[vec_dim]
+        subset[vec_dim] = (sub[0], sub[1] + stride * self.vec_len, stride)
+        edge.data.subset = subset
 
     def apply(self):
         """

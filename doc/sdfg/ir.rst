@@ -96,20 +96,11 @@ Tasklets can be written in any language, as long as the code generator supports 
 Python (even if the source language is different), which allows the limited analysis (e.g., operation count). Other
 supported languages are C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
 
-**Nested SDFG**: Nodes that contain an entire SDFG in a state. When invoked, the nested SDFG will be executed in that
-context, independently from other instances if parallel.
-The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is acyclic dataflow
-going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
-
-Such nodes are useful when control flow is necessary in parallel regions. For example, when there is a loop inside a map,
-or when two separate components need to each run its own state machine.
-Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`, :class:`~dace.transformation.dataflow.map_fission.MapFission`)
-work directly with nested SDFGs, and the :ref:`simplify` tries to remove/inline them as much as possible.
-
-To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG. To
-pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
-symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
-this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+**Nested SDFG**: Nodes that contain an entire SDFG in a state. Such nodes are useful when control flow is necessary in
+parallel regions. For example, when there is a loop inside a map, or when two separate components need to each run its
+own state machine. The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is
+acyclic dataflow going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
+See more about nested SDFGs in :ref:`nested-sdfg`.
 
 .. figure:: images/scope.svg
   :name: scopefig
@@ -693,6 +684,40 @@ library node to the new SDFG. An example of such an expansion is Einstein summat
           sdfg = SDFG('einsum')
           ...
           return sdfg
+
+
+.. _nested-sdfg:
+
+Nested SDFGs
+------------
+
+Nested SDFGs are dataflow nodes that contain a nested state machine. They are used to encapsulate potentially cyclic
+control flow in the context of acyclic dataflow. A nested SDFG is defined by the :class:`~dace.sdfg.nodes.NestedSDFG` node,
+which contains a reference to an SDFG object, and a set of input and output connectors. When invoked, the nested SDFG
+will be executed in that context, independently from other instances if parallel, similarly to a function call.
+
+.. figure:: images/nested-sdfg.svg
+  :figwidth: 50%
+  :align: right
+  :alt: Nested SDFG example.
+
+  Nested SDFG example. The graph corresponds to the code ``if input[7] > 5: output[1] = 1; else: output[2] = 2``.
+
+To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG.
+Within the nested SDFG, the data descriptors are set to be non-transient, meaning that they act as if they were
+function parameters. A valid SDFG specifies the same data descriptors in the nested SDFG as the data containers
+connected to it in the parent SDFG. In the figure, the input array is externally transient but internally non-transient
+(hence the thick edge). The memlets outside the nested SDFG represent the union of all the internal memlets
+that go into the nested SDFG, and the volume is the sum of all the volumes of the internal memlets.
+See more in :ref:`memprop`.
+
+To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
+symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
+this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+
+Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`,
+:class:`~dace.transformation.dataflow.map_fission.MapFission`) work directly with nested SDFGs, and the :ref:`simplify`
+tries to remove/inline them as much as possible.
 
 
 .. _memprop:

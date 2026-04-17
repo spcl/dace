@@ -4,7 +4,6 @@ from copy import deepcopy as dcpy
 import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
-from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 import unittest
 

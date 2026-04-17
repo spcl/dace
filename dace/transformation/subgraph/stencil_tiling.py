@@ -357,7 +357,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             # first find out variable mapping
             for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                 mapping = []
-                for dim in e.data.subset:
+                for dim in e.data.subset.ndrange():
                     syms = set()
                     for d in dim:
                         syms |= symbolic.symlist(d).keys()

@@ -9,7 +9,7 @@ import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
 from dace.sdfg.type_inference import infer_expr_type
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import dealias, graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -675,3 +675,6 @@ class LoopToMap(xf.MultiStateTransformation):
                 n.sdfg.parent = p
                 n.sdfg.parent_nsdfg_node = n
                 n.sdfg.parent_sdfg = p.sdfg
+
+        # Integrate the nested SDFG into the parent SDFG
+        dealias.integrate_nested_sdfg(nsdfg.sdfg)

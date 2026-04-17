@@ -392,7 +392,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
-            if arr.lifetime == dtypes.AllocationLifetime.External:
+            if arr.lifetime == dtypes.AllocationLifetime.External and arr.transient is True:
                 ext_arrays[arr.storage].append((subsdfg, aname, arr))
 
         # Only generate functions as necessary
