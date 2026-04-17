@@ -116,6 +116,20 @@ def _pyobject_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.pyobject(), transient=True)
 
 
+def _is_pyobject_scalar_descriptor(descriptor: Optional[data.Data]) -> bool:
+    return isinstance(descriptor, data.Scalar) and isinstance(descriptor.dtype, dtypes.pyobject)
+
+
+def _is_iterator_next_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and (astutils.rname(node.func) == 'next' or
+                                           (isinstance(node.func, ast.Attribute) and node.func.attr == '__next__'))
+
+
+def _is_iterator_protocol_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and (astutils.rname(
+        node.func) in {'iter', '__dace_iterator_init', '__dace_iterator_next'} or _is_iterator_next_call(node))
+
+
 def _string_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.string, transient=True)
 
@@ -392,7 +406,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self.annotated_descriptors[node.target.id] = descriptor
             if node.value is None:
                 if not isinstance(descriptor, data.Reference):
-                    self._register_binding(node.target.id, descriptor, kind='container')
+                    self._register_binding(node.target.id, descriptor, kind=_binding_kind_for_descriptor(descriptor))
                 return
         if node.value is not None:
             self._handle_assignment(node.target, node.value, annotated_descriptor=descriptor)
@@ -628,11 +642,34 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             tn.PythonCallbackNode(code=code, reason=reason, input_names=known_inputs, output_names=sorted(outputs)))
 
     def _emit_callback_assignment(self, name: str, value: ast.AST, reason: str, descriptor: data.Data) -> None:
+        if reason == 'pyobject call' and _is_pyobject_scalar_descriptor(descriptor) and _is_iterator_next_call(value):
+            import warnings
+            warnings.warn('Could not infer the result type of iterator next() in schedule-tree lowering; '
+                          'annotate the assignment target, e.g. val: dace.float64 = next(gen).')
         kind = _binding_kind_for_descriptor(descriptor)
         self._register_binding(name, descriptor, kind=kind)
         callback_assign = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=copy.deepcopy(value))
         callback_assign = ast.copy_location(callback_assign, value)
         self._wrap_as_callback(callback_assign, reason)
+
+    def _should_emit_pyobject_call_callback(self, value: ast.AST) -> bool:
+        if not isinstance(value, ast.Call):
+            return False
+        if _is_iterator_protocol_call(value):
+            return True
+
+        callee = self._resolve_callable_value(value.func)
+        if callee is not UNRESOLVED and inspect.isgeneratorfunction(callee):
+            return True
+
+        runtime_value = try_resolve_static_value(value, self._evaluation_context())
+        if runtime_value is UNRESOLVED:
+            return False
+
+        if callable(runtime_value):
+            return False
+
+        return hasattr(runtime_value, '__next__') or hasattr(runtime_value, '__iter__')
 
     def _materialize_callback_expression(self,
                                          value: ast.AST,
@@ -1062,6 +1099,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if scalar_descriptor is not None:
                 kind = 'callback' if self._is_callback_descriptor(scalar_descriptor) else 'scalar'
                 self._register_binding(name, scalar_descriptor, kind=kind)
+
+        scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
+        if (isinstance(value, ast.Call) and _is_pyobject_scalar_descriptor(scalar_descriptor)
+                and self._should_emit_pyobject_call_callback(value)):
+            self._emit_callback_assignment(name, value, 'pyobject call', scalar_descriptor)
+            return
 
         if self._is_callback_expression(value):
             self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
@@ -1563,6 +1606,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return None
         if isinstance(value, data.Data):
             return _clone_descriptor(value)
+        dtype = _normalize_dtype(value)
+        if dtype is not None:
+            return data.Scalar(dtype, transient=True)
         return None
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:
@@ -1625,6 +1671,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
         self._register_binding(name, descriptor, kind=kind)
         target = ast.Name(id=name, ctx=ast.Store())
+
+        if isinstance(value, ast.Call) and _is_pyobject_scalar_descriptor(descriptor):
+            self._emit_callback_assignment(name, value, 'pyobject call', descriptor)
+            return ast.Name(id=name, ctx=ast.Load())
 
         if self._emit_computed_assignment(target, value, descriptor):
             return ast.Name(id=name, ctx=ast.Load())

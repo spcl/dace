@@ -4,6 +4,7 @@ import ast
 import numpy as np
 import pytest
 import sys
+import warnings
 from typing import Optional
 
 import dace
@@ -768,6 +769,161 @@ def test_python_frontend_schedule_tree_generic_iterator_fallback_destructuring()
     assert isinstance(stree.children[2].loop, tn.FrontendLoop)
     assert isinstance(stree.children[2].children[0], tn.StatementNode)
     assert isinstance(stree.children[2].children[1], tn.TaskletNode)
+
+
+def test_python_frontend_schedule_tree_generic_iterator_generator_object():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield float(cur)
+            cur -= 1
+
+    generator = reverse_range(3)
+
+    @dace.program
+    def iter_prog(out: dace.float64[4]):
+        for val in dace.nounroll(generator):
+            out[0] = val
+
+    stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.AssignNode)
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert isinstance(stree.children[2], tn.LoopScope)
+    assert isinstance(stree.children[2].loop, tn.FrontendLoop)
+    assert isinstance(stree.children[2].children[0], tn.CopyNode)
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+    assert next(generator) == 3.0
+
+
+def test_python_frontend_schedule_tree_free_iter_and_next_calls():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield float(cur)
+            cur -= 1
+
+    generator = reverse_range(3)
+
+    @dace.program
+    def iter_prog(out: dace.float64[3]):
+        it = iter(generator)
+        out[0] = next(it)
+        out[1] = next(it)
+        out[2] = next(it)
+
+    stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.PythonCallbackNode)
+    assert stree.children[0].reason == 'pyobject call'
+    assert stree.children[0].code.as_string == 'it = iter(generator)'
+    for index, child in enumerate(stree.children[1:]):
+        assert isinstance(child, tn.TaskletNode)
+        assert child.node.code.as_string == f'out[{index}] = next(it)'
+    assert len([node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]) == 1
+    assert next(generator) == 3.0
+
+
+def test_python_frontend_schedule_tree_internal_generator_with_next_calls():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield float(cur)
+            cur -= 1
+
+    @dace.program
+    def iter_prog(out: dace.float64[3]):
+        gen = reverse_range(3)
+        out[0] = next(gen)
+        out[1] = next(gen)
+        out[2] = next(gen)
+
+    stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.PythonCallbackNode)
+    assert stree.children[0].reason == 'pyobject call'
+    assert stree.children[0].code.as_string == 'gen = reverse_range(3)'
+    for index, child in enumerate(stree.children[1:]):
+        assert isinstance(child, tn.TaskletNode)
+        assert child.node.code.as_string == f'out[{index}] = next(gen)'
+    assert len([node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]) == 1
+
+
+def test_python_frontend_schedule_tree_next_iter_dict_values():
+
+    @dace.program
+    def iter_prog(out: dace.int64[1]):
+        x = {1: 1, 2: 2, 3: 3}
+        out[0] = next(iter(x.values()))
+
+    stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.AssignNode)
+    assert stree.children[0].name == 'x'
+    assert stree.children[0].value.as_string == '{1: 1, 2: 2, 3: 3}'
+    assert isinstance(stree.children[1], tn.PythonCallbackNode)
+    assert stree.children[1].reason == 'pyobject call'
+    assert stree.children[1].code.as_string == '__stree_tmp = x.values()'
+    assert isinstance(stree.children[2], tn.PythonCallbackNode)
+    assert stree.children[2].reason == 'pyobject call'
+    assert stree.children[2].code.as_string == '__stree_tmp1 = iter(__stree_tmp)'
+    assert isinstance(stree.children[3], tn.TaskletNode)
+    assert stree.children[3].node.code.as_string == 'out[0] = next(__stree_tmp1)'
+    assert len([node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]) == 2
+
+
+def test_python_frontend_schedule_tree_untyped_next_warns():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield float(cur)
+            cur -= 1
+
+    @dace.program
+    def iter_prog(out: dace.float64[1]):
+        gen = reverse_range(3)
+        val = next(gen)
+        out[0] = val
+
+    with pytest.warns(UserWarning,
+                      match=r'Could not infer the result type of iterator next\(\) in schedule-tree lowering'):
+        stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.PythonCallbackNode)
+    assert stree.children[0].code.as_string == 'gen = reverse_range(3)'
+    assert isinstance(stree.children[1], tn.PythonCallbackNode)
+    assert stree.children[1].code.as_string == 'val = next(gen)'
+    assert isinstance(stree.children[2], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_annotated_next_assignment_is_typed():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield float(cur)
+            cur -= 1
+
+    @dace.program
+    def iter_prog(out: dace.float64[1]):
+        gen = reverse_range(3)
+        val: dace.float64 = next(gen)
+        out[0] = val
+
+    with pytest.raises(pytest.fail.Exception, match='DID NOT WARN'):
+        with pytest.warns(UserWarning,
+                          match=r'Could not infer the result type of iterator next\(\) in schedule-tree lowering'):
+            stree = iter_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.PythonCallbackNode)
+    assert stree.children[0].code.as_string == 'gen = reverse_range(3)'
+    assert isinstance(stree.children[1], tn.TaskletNode)
+    assert stree.children[1].node.code.as_string == 'val = next(gen)'
+    assert isinstance(stree.children[2], tn.CopyNode)
 
 
 def test_python_frontend_schedule_tree_tuple_swap_statement():

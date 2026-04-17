@@ -783,6 +783,9 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             descriptor = _clone_descriptor(value)
             descriptor.transient = True
             return descriptor
+        dtype = _normalize_dtype(value)
+        if dtype is not None:
+            return data.Scalar(dtype, transient=True)
         return None
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:

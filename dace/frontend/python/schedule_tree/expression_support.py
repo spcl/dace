@@ -185,12 +185,19 @@ class _ExpressionPlanner:
                           orelse=self._rewrite_child(node.orelse)), node)
 
         if isinstance(node, ast.Call):
+            iterator_protocol_call = self._is_iterator_protocol_call(node)
             return ast.copy_location(
-                ast.Call(
-                    func=copy.deepcopy(node.func),
-                    args=[self._rewrite_child(arg) for arg in node.args],
-                    keywords=[ast.keyword(arg=kw.arg, value=self._rewrite_child(kw.value)) for kw in node.keywords]),
-                node)
+                ast.Call(func=copy.deepcopy(node.func),
+                         args=[
+                             self._rewrite_child(arg, materialize_pyobject_call=iterator_protocol_call)
+                             for arg in node.args
+                         ],
+                         keywords=[
+                             ast.keyword(arg=kw.arg,
+                                         value=self._rewrite_child(kw.value,
+                                                                   materialize_pyobject_call=iterator_protocol_call))
+                             for kw in node.keywords
+                         ]), node)
 
         if isinstance(node, ast.Tuple):
             return ast.copy_location(ast.Tuple(elts=[self._rewrite_child(elt) for elt in node.elts], ctx=node.ctx),
@@ -201,9 +208,11 @@ class _ExpressionPlanner:
 
         return node
 
-    def _rewrite_child(self, node: ast.AST) -> ast.AST:
+    def _rewrite_child(self, node: ast.AST, *, materialize_pyobject_call: bool = False) -> ast.AST:
         rewritten = self._rewrite(copy.deepcopy(node))
         if self._should_materialize(rewritten):
+            return self._materialize(rewritten)
+        if materialize_pyobject_call and self._should_materialize_pyobject_call(rewritten):
             return self._materialize(rewritten)
         return rewritten
 
@@ -217,11 +226,23 @@ class _ExpressionPlanner:
         """
 
         descriptor = self.context.infer_descriptor(node)
-        if descriptor is None or isinstance(descriptor, data.Scalar):
+        if descriptor is None:
+            return False
+        if isinstance(descriptor, data.Scalar):
             return False
         if self.context.resolve_data_access(node) is not None:
             return False
         return isinstance(node, (ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.Call))
+
+    def _should_materialize_pyobject_call(self, node: ast.AST) -> bool:
+        descriptor = self.context.infer_descriptor(node)
+        return isinstance(node, ast.Call) and isinstance(descriptor, data.Scalar) and isinstance(
+            descriptor.dtype, dtypes.pyobject)
+
+    def _is_iterator_protocol_call(self, node: ast.Call) -> bool:
+        if isinstance(node.func, ast.Name):
+            return node.func.id in {'iter', 'next', '__dace_iterator_init', '__dace_iterator_next'}
+        return isinstance(node.func, ast.Attribute) and node.func.attr == '__next__'
 
     def _materialize(self, node: ast.AST) -> ast.AST:
         descriptor = self.context.infer_descriptor(node)
