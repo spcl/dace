@@ -27,17 +27,26 @@ class ReloadableDLL(object):
     bypasses Python's dynamic library reloading issues.
     """
 
-    def __init__(self, library_filename, program_name):
-        """
-        Creates a new reloadable shared object.
+    def __init__(self, library_filename, **kwargs):
+        """Creates a new reloadable shared object.
+
+        The path to the library must be given. The path of the stub library is inferred
+        from it. This means it is expected that it is located in the same folder,
+        see `_get_stub_library_path()` for more information.
 
         :param library_filename: Path to library file.
-        :param program_name: Name of the DaCe program (for use in finding
-                             the stub library loader).
+        :param libstub_path: Optional path to the stub library.
         """
-        self._stub_filename = os.path.join(os.path.dirname(os.path.realpath(library_filename)),
-                                           f'libdacestub_{program_name}.{Config.get("compiler", "library_extension")}')
-        self._library_filename = os.path.realpath(library_filename)
+        from dace.codegen.compiler import _get_stub_library_path
+
+        self._library_filename = str(pathlib.Path(library_filename).resolve())
+
+        if "libstub_path" in kwargs:
+            self._stub_filename = str(pathlib.Path(kwargs.pop("libstub_path")).resolve())
+        else:
+            self._stub_filename = str(_get_stub_library_path(self._library_filename))
+        assert len(kwargs) == 0
+
         self._stub = None
         self._lib = None
 
@@ -478,12 +487,14 @@ class CompiledSDFG(object):
 
         # Pickle the SDFG and arguments
         with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            pickle.dump({
-                'library_path': self._lib._library_filename,
-                "sdfg": self.sdfg,
-                'args': args,
-                'kwargs': kwargs
-            }, f)
+            pickle.dump(
+                {
+                    'library_path': self._lib._library_filename,
+                    'stublibrary_path': self._lib._stub_filename,
+                    "sdfg": self.sdfg,
+                    'args': args,
+                    'kwargs': kwargs
+                }, f)
             temp_path = f.name
 
         # Call the SDFG in a separate process
@@ -498,9 +509,10 @@ Config.set('compiler', 'allow_view_arguments', value=True)  # Python 3.14+
 with open(r"{temp_path}", "rb") as f:
     data = pickle.load(f)
 library_path = data['library_path']
+libstub_path = data['stublibrary_path']
 sdfg = data['sdfg']
 
-lib = csd.ReloadableDLL(library_path, sdfg.name)
+lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
 obj = csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 obj(*data['args'], **data['kwargs'])
 

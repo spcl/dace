@@ -9,7 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -1662,30 +1662,15 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
-    """
-    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfgz" and a subfolder called
-    "build" with the shared object.
+def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
 
-    :param folder: Path to SDFG output folder.
-    :return: A callable CompiledSDFG object.
-    """
-    sdfg: SDFG | None = None
-    if os.path.exists(os.path.join(folder, 'program.sdfgz')):
-        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
-    elif os.path.exists(os.path.join(folder, 'program.sdfg')):
-        # attempt to load uncompressed sdfg (backwards compatibility)
-        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
-    if sdfg is None:
-        raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
-
-    suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(
-        sdfg,
-        csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name),
-        sdfg.arg_names,
+    warnings.warn(
+        'Used deprecated ``dace.sdfg.utils.load_precompiled_sdfg()`` function, use the one from ``dace.codegen.compiler`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
     )
+
+    return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
 def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
@@ -1697,6 +1682,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
@@ -1713,7 +1699,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = load_precompiled_sdfg(folder)
+        func = sdfg_compiler.load_precompiled_sdfg(folder)
 
     comm.Barrier()
 

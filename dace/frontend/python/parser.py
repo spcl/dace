@@ -807,8 +807,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
         """
-        from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path)
+        from dace.codegen import compiler as sdfg_compiler  # Avoid import loop
+        csdfg = sdfg_compiler.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version

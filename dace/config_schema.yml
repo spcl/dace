@@ -115,6 +115,17 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            build_folder_version:
+                type: str
+                default: development
+                title: Version of the build folder
+                description: >
+                  Determine the content of the build folder that should be created.
+                  The supported values are `development`, that includes everything
+                  The second mode, that is currently supported is `production`.
+                  In this mode only the compiled library and the version file is
+                  present.
+
             library_prefix:
                 type: str
                 default: ""
