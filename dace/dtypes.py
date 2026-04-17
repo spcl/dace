@@ -757,7 +757,7 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        self_as_json = json.dumps(self.to_json(), sort_keys=True)
+        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(',', ':'))
         if self_as_json in struct.STRUCT_CTYPES:
             return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
@@ -1327,28 +1327,42 @@ class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
 
-    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
+    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None, file_index=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
+
+        if filename is not None and file_index is not None:
+            raise ValueError("Cannot specify both filename and file_index in DebugInfo")
+
         self.filename = filename
+        self.file_index = file_index
 
     # NOTE: Manually marking as serializable to avoid an import loop
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(type='DebugInfo',
-                    start_line=self.start_line,
-                    end_line=self.end_line,
-                    start_column=self.start_column,
-                    end_column=self.end_column,
-                    filename=self.filename)
+        result = {'type': 'DebugInfo'}
+        if self.start_line is not None:
+            result['start_line'] = self.start_line
+        if self.end_line is not None and self.end_line != self.start_line:
+            result['end_line'] = self.end_line
+        if self.start_column:
+            result['start_column'] = self.start_column
+        if self.end_column and self.end_column != self.start_column:
+            result['end_column'] = self.end_column
+        if self.file_index is not None:
+            result['file_index'] = self.file_index
+        elif self.filename:
+            result['filename'] = self.filename
+
+        return result
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
-                         json_obj['filename'])
+    def from_json(json_obj: dict[str, int | str], context=None):
+        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line', -1),
+                         json_obj.get('end_column', 0), json_obj.get('filename'), json_obj.get('file_index'))
 
     def __deepcopy__(self, memo) -> 'DebugInfo':
         """Performs a `deepcopy` of `self`.
