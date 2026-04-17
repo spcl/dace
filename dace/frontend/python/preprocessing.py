@@ -19,7 +19,8 @@ from dace import data, dtypes, symbolic, sdfg
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, ScheduleTreeConvertible,
+                                         StringLiteral)
 
 if TYPE_CHECKING:
     from dace.frontend.python.parser import DaceProgram
@@ -723,9 +724,10 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
-        elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
-            # Could be a constant, an SDFG, or SDFG-convertible object
-            if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
+        elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')
+              or hasattr(value, '__schedule_tree__')):
+            # Could be a constant, an SDFG, or frontend-convertible object
+            if isinstance(value, SDFG) or hasattr(value, '__sdfg__') or hasattr(value, '__schedule_tree__'):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
             elif isinstance(value, StringLiteral):
                 value = value.value
@@ -744,7 +746,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             newnode = astutils.create_constant(value)
             newnode.qualname = qualname
 
-        elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
+        elif detect_callables and hasattr(value, '__call__') and (hasattr(value.__call__, '__sdfg__')
+                                                                  or hasattr(value.__call__, '__schedule_tree__')):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
         elif dtypes.is_array(value):
             # Arrays need to be stored as a new name and fed as an argument

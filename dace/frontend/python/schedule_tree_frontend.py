@@ -1901,21 +1901,36 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return False
         if getattr(value, '_schedule_tree_inline_callable', False):
             return True
+        if hasattr(value, '__schedule_tree__'):
+            return True
         from dace import SDFG
         return hasattr(value, '__sdfg__') and not isinstance(value, SDFG)
 
     def _callable_signature(self, callee: Any) -> inspect.Signature:
         if hasattr(callee, 'signature'):
             return callee.signature
-        return inspect.signature(callee.f)
+        if hasattr(callee, '__schedule_tree_signature__'):
+            arg_names, _ = callee.__schedule_tree_signature__()
+        elif hasattr(callee, '__sdfg_signature__'):
+            arg_names, _ = callee.__sdfg_signature__()
+        elif hasattr(callee, 'f'):
+            return inspect.signature(callee.f)
+        else:
+            return inspect.signature(callee)
+
+        return inspect.Signature(
+            [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in arg_names])
 
     def _callable_name(self, callee: Any) -> str:
         function_name = getattr(getattr(callee, 'f', None), '__name__', None)
         if isinstance(function_name, str) and function_name:
             return function_name
+        function_name = getattr(callee, '__name__', None)
+        if isinstance(function_name, str) and function_name:
+            return function_name
         if hasattr(callee, 'name') and isinstance(callee.name, str):
             return callee.name
-        return '<anonymous>'
+        return type(callee).__name__
 
     def _extract_argument_mapping(self, call_node: ast.Call) -> Dict[str, str]:
         """Build ``{callee_param: caller_expression}`` from a call AST node."""
@@ -2110,6 +2125,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return None
         if getattr(value, '_schedule_tree_inline_callable', False):
             return value
+        if hasattr(value, '__schedule_tree__'):
+            return None
         if not callable(value):
             return None
         from dace import SDFG

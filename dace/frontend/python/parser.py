@@ -156,7 +156,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     return {str(k)[8:]: v for k, v in result.items()}
 
 
-class DaceProgram(pycommon.SDFGConvertible):
+class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
 
@@ -344,6 +344,16 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return stree
 
+    def __schedule_tree__(self,
+                          *args,
+                          lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                          callable_bindings: Optional[Dict[str, Any]] = None,
+                          **kwargs) -> 'tn.ScheduleTreeRoot':
+        return self._generate_schedule_tree(tuple(args),
+                                            dict(kwargs),
+                                            lambda_bindings=lambda_bindings,
+                                            callable_bindings=callable_bindings)
+
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
 
@@ -379,6 +389,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
         return self.argnames, self.constant_args
+
+    def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        return self.__sdfg_signature__()
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """

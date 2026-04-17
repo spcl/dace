@@ -9,7 +9,7 @@ import warnings
 from typing import Optional
 
 import dace
-from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.common import DaceSyntaxError, ScheduleTreeConvertible
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
@@ -397,6 +397,46 @@ def test_python_frontend_schedule_tree_function_call_assignment():
     # The callee's body should be inlined with the return rewritten
     # as an assignment to the caller's target.
     assert len(call_scope.children) >= 1
+
+
+def test_python_frontend_schedule_tree_external_schedule_tree_convertible_call():
+
+    class Convertible(ScheduleTreeConvertible):
+
+        def __init__(self):
+
+            @dace.program
+            def inner(A: dace.float64[8], B: dace.float64[8]):
+                return A + B
+
+            self.inner = inner
+
+        def __schedule_tree__(self, *args, lambda_bindings=None, callable_bindings=None, **kwargs):
+            return self.inner.__schedule_tree__(*args,
+                                                lambda_bindings=lambda_bindings,
+                                                callable_bindings=callable_bindings,
+                                                **kwargs)
+
+        def __schedule_tree_signature__(self):
+            return (['A', 'B'], [])
+
+    convertible = Convertible()
+
+    @dace.program
+    def outer(A: dace.float64[8], B: dace.float64[8]):
+        return convertible(A + 1, B + 2)
+
+    stree = outer.to_schedule_tree()
+
+    assert len(stree.children) == 4
+    assert isinstance(stree.children[0], tn.MapScope)
+    assert isinstance(stree.children[1], tn.MapScope)
+    call_scope = stree.children[2]
+    assert isinstance(call_scope, tn.FunctionCallScope)
+    assert call_scope.call.callee_name == 'Convertible'
+    assert call_scope.call.arguments == {'A': '__stree_tmp', 'B': '__stree_tmp1'}
+    assert len(call_scope.children) >= 1
+    assert isinstance(stree.children[3], tn.ReturnNode)
 
 
 def test_python_frontend_schedule_tree_return_materializes_array_expression():

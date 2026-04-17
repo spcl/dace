@@ -139,10 +139,21 @@ def _parse_callee(scope: tn.FunctionCallScope) -> tn.ScheduleTreeRoot:
     leaf-level callees are fully inlined before we return.
     """
     callee = scope._callee_program
-    return callee._generate_schedule_tree(tuple(getattr(scope, '_call_args', [])),
-                                          dict(getattr(scope, '_call_kwargs', {})),
-                                          lambda_bindings=dict(getattr(scope, '_lambda_bindings', {})),
-                                          callable_bindings=dict(getattr(scope, '_callable_bindings', {})))
+    call_args = tuple(getattr(scope, '_call_args', []))
+    call_kwargs = dict(getattr(scope, '_call_kwargs', {}))
+    lambda_bindings = dict(getattr(scope, '_lambda_bindings', {}))
+    callable_bindings = dict(getattr(scope, '_callable_bindings', {}))
+
+    if hasattr(callee, '__schedule_tree__'):
+        return callee.__schedule_tree__(*call_args,
+                                        lambda_bindings=lambda_bindings,
+                                        callable_bindings=callable_bindings,
+                                        **call_kwargs)
+
+    return callee._generate_schedule_tree(call_args,
+                                          call_kwargs,
+                                          lambda_bindings=lambda_bindings,
+                                          callable_bindings=callable_bindings)
 
 
 # -------------------------------------------------------------------- #
