@@ -1057,11 +1057,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return
 
         if isinstance(target, (ast.Tuple, ast.List)):
-            value = self.expression_support.plan_expression(self._expression_planning_context(),
-                                                            value,
-                                                            materialize_root=False)
-            value = self._materialize_structured_assignment_value(value)
-            self._bind_structured_assignment(target, value)
+            self._seed_inferred_target_bindings(target)
             self._append_node(tn.StatementNode(code=CodeBlock(self._format_assignment_statement(target, value))))
             return
 
@@ -1703,6 +1699,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if scalar_descriptor is not None:
             self._store_binding(name, scalar_descriptor, kind='iterator-index', structure=scalar_descriptor)
 
+    def _seed_inferred_target_bindings(self, target: ast.AST) -> None:
+        for child in ast.walk(target):
+            if not isinstance(child, ast.Name) or not isinstance(child.ctx, ast.Store):
+                continue
+            inferred_binding = self.inferred_bindings.get(child.id)
+            if inferred_binding is None or inferred_binding.descriptor is None:
+                continue
+            self._store_binding(child.id,
+                                inferred_binding.descriptor,
+                                kind=inferred_binding.kind,
+                                structure=inferred_binding.structure)
+
     def _descriptor_from_structure(self, structure: Any, runtime_value: Optional[Any] = None) -> Optional[data.Data]:
         if isinstance(structure, data.Data):
             return _clone_descriptor(structure)
@@ -1754,74 +1762,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return (tuple(elements), uses_internal)
 
         return (None, False)
-
-    def _materialize_structured_assignment_value(self, value: ast.AST) -> ast.AST:
-        if not isinstance(value, (ast.Tuple, ast.List)):
-            return value
-
-        structure, _ = self._structure_from_ast(value)
-        if structure is None:
-            return value
-
-        descriptor = self._descriptor_from_structure(structure)
-        if descriptor is None:
-            return value
-
-        name = self._fresh_transient_name('__stree_tuple_tmp')
-        kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
-        self._store_binding(name, descriptor, kind=kind, structure=structure)
-        self._append_node(tn.StatementNode(code=CodeBlock(f'{name} = {_unparse(value)}')))
-        return ast.Name(id=name, ctx=ast.Load())
-
-    def _bind_structured_assignment(self, target: ast.AST, value: ast.AST) -> bool:
-        structure, _ = self._structure_from_ast(value)
-        if structure is None:
-            return False
-        return self._bind_target_structure(target, structure)
-
-    def _bind_target_structure(self, target: ast.AST, structure: Any) -> bool:
-        if isinstance(target, ast.Name):
-            descriptor = self._descriptor_from_structure(structure)
-            if descriptor is None:
-                return False
-            kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
-            self._store_binding(target.id, descriptor, kind=kind, structure=structure)
-            return True
-
-        if isinstance(target, ast.Starred):
-            if not isinstance(structure, list):
-                structure = list(structure) if isinstance(structure, tuple) else [structure]
-            return self._bind_target_structure(target.value, structure)
-
-        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(structure, (list, tuple)):
-            starred_indices = [index for index, element in enumerate(target.elts) if isinstance(element, ast.Starred)]
-            if len(starred_indices) > 1:
-                return False
-            if not starred_indices:
-                if len(target.elts) != len(structure):
-                    return False
-                return all(
-                    self._bind_target_structure(subtarget, substructure)
-                    for subtarget, substructure in zip(target.elts, structure))
-
-            starred_index = starred_indices[0]
-            if len(structure) < len(target.elts) - 1:
-                return False
-
-            prefix_targets = target.elts[:starred_index]
-            suffix_targets = target.elts[starred_index + 1:]
-            prefix_structures = structure[:starred_index]
-            suffix_structures = structure[len(structure) - len(suffix_targets):]
-            middle_structure = list(structure[starred_index:len(structure) - len(suffix_targets)])
-
-            return all(
-                self._bind_target_structure(subtarget, substructure)
-                for subtarget, substructure in zip(prefix_targets, prefix_structures)) and self._bind_target_structure(
-                    target.elts[starred_index], middle_structure) and all(
-                        self._bind_target_structure(subtarget, substructure)
-                        for subtarget, substructure in zip(suffix_targets, suffix_structures))
-
-        return False
 
     def _ensure_reference_binding(self, name: str, descriptor: data.Data) -> data.Data:
         existing = self.bindings.get(name)

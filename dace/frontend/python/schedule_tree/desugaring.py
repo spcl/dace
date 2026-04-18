@@ -21,7 +21,15 @@ class _DynamicExpansionError(Exception):
 
 
 class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
-    """Rewrites compile-time-expandable ``*args`` / ``**kwargs`` and starred unpacking.
+    """Rewrite schedule-tree-specific syntax into simpler AST forms.
+
+    The pass handles compile-time-expandable ``*args`` / ``**kwargs``, starred
+    unpacking, and tuple or list assignments that benefit from an explicit
+    right-hand-side temporary.
+
+    Example:
+        ``A, B = B, A`` becomes ``__stree_tuple_tmp = (B, A)`` followed by
+        ``(A, B) = __stree_tuple_tmp``.
 
     Static cases are rewritten into ordinary Python AST. Dynamic cases are marked
     for callback lowering, except SDFG-backed calls, which raise ``DaceSyntaxError``.
@@ -75,6 +83,10 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                 self._invalidate_targets(node.targets)
                 return self._mark_callback(node, 'starred unpacking')
             return self._rewrite_generated_assignments(expanded, template_node=node)
+
+        materialized = self._materialize_structured_assignment(node)
+        if materialized is not None:
+            return materialized
 
         for target in node.targets:
             self._update_target_binding(target, node.value)
@@ -241,6 +253,18 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             assign_stmt = ast.Assign(targets=[copy.deepcopy(target)], value=copy.deepcopy(value))
             assign_stmt = ast.copy_location(assign_stmt, template_node)
             rewritten = self.visit(assign_stmt)
+            if rewritten is None:
+                continue
+            if isinstance(rewritten, list):
+                result.extend(rewritten)
+            else:
+                result.append(rewritten)
+        return result
+
+    def _rewrite_generated_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
+        result: List[ast.stmt] = []
+        for statement in statements:
+            rewritten = self.visit(statement)
             if rewritten is None:
                 continue
             if isinstance(rewritten, list):
@@ -441,6 +465,26 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
 
         return assignments
 
+    def _materialize_structured_assignment(self, node: ast.Assign) -> Optional[List[ast.stmt]]:
+        if not any(isinstance(target, (ast.Tuple, ast.List)) for target in node.targets):
+            return None
+
+        if not isinstance(node.value, (ast.Tuple, ast.List)):
+            return None
+
+        normalized_value = self._normalized_static_expansion_ast(node.value)
+        if not isinstance(normalized_value, (ast.Tuple, ast.List)):
+            return None
+
+        temp_name = self._fresh_name('__stree_tuple_tmp')
+        temp_assign = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=normalized_value)
+        temp_assign = ast.copy_location(temp_assign, node)
+
+        rewritten_assign = ast.Assign(targets=[copy.deepcopy(target) for target in node.targets],
+                                      value=ast.Name(id=temp_name, ctx=ast.Load()))
+        rewritten_assign = ast.copy_location(rewritten_assign, node)
+        return self._rewrite_generated_statements([temp_assign, rewritten_assign])
+
     def _update_target_binding(self, target: ast.AST, value: ast.AST) -> None:
         normalized = self._normalized_static_expansion_ast(value)
         if isinstance(target, ast.Name) and normalized is not None:
@@ -478,7 +522,7 @@ def desugar_schedule_tree_expansions(parsed_ast: ast.AST,
                                      filename: str,
                                      global_vars: Dict[str, Any],
                                      callable_bindings: Optional[Dict[str, Any]] = None) -> ast.AST:
-    """Rewrite schedule-tree-specific argument expansion before AST lowering."""
+    """Rewrite schedule-tree-specific syntax before AST lowering."""
     desugarer = ScheduleTreeExpansionDesugarer(filename, global_vars, callable_bindings=callable_bindings)
     return ast.fix_missing_locations(desugarer.visit(copy.deepcopy(parsed_ast)))
 
