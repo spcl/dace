@@ -15,6 +15,7 @@ from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.lambda_support import extract_lambda_ast, inline_lambda_call
+from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext,
@@ -1406,7 +1407,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if isinstance(node, (ast.List, ast.Tuple)):
             structure, _ = self._structure_from_ast(node)
             if structure is not None:
-                return self._descriptor_from_structure(structure)
+                return descriptor_from_structure(structure)
 
         if isinstance(node, ast.Lambda):
             return data.Scalar(dtypes.callback(None), transient=True)
@@ -1710,34 +1711,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                 inferred_binding.descriptor,
                                 kind=inferred_binding.kind,
                                 structure=inferred_binding.structure)
-
-    def _descriptor_from_structure(self, structure: Any, runtime_value: Optional[Any] = None) -> Optional[data.Data]:
-        if isinstance(structure, data.Data):
-            return _clone_descriptor(structure)
-
-        if not isinstance(structure, (list, tuple)):
-            return None
-
-        dtype = dtypes.pyobject()
-        if structure:
-            first = structure[0]
-            if all(
-                    isinstance(element, data.Scalar) and isinstance(first, data.Scalar) and element.dtype == first.dtype
-                    for element in structure):
-                dtype = first.dtype
-            elif all(isinstance(element, data.Scalar) for element in structure):
-                if first.dtype != dtypes.pyobject() and not any(element.dtype == dtypes.pyobject()
-                                                                for element in structure[1:]):
-                    dtype = first.dtype
-                    for element in structure[1:]:
-                        dtype = dtypes.result_type_of(dtype, element.dtype)
-
-        descriptor_type = PythonList if isinstance(structure, list) else PythonTuple
-        descriptor = descriptor_type(dtype=dtype, shape=(len(structure), ), transient=True)
-
-        if runtime_value is not None and not isinstance(runtime_value, (list, tuple)):
-            return descriptor
-        return descriptor
 
     def _structure_from_ast(self, node: ast.AST) -> Tuple[Optional[Any], bool]:
         if isinstance(node, ast.Name):

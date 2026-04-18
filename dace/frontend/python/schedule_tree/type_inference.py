@@ -14,6 +14,7 @@ from dace import data, dtypes, symbolic
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
+from dace.frontend.python.schedule_tree.structure_helpers import bind_target_structure, descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -232,7 +233,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             if binding is None or binding.descriptor is None:
                 return None
             structure = self._subscript_structure(binding, value.slice)
-            descriptor = self._descriptor_from_structure(structure) if structure is not None else None
+            descriptor = descriptor_from_structure(structure) if structure is not None else None
             if descriptor is None:
                 descriptor = self._subscript_descriptor(binding.descriptor, value)
             if descriptor is None:
@@ -251,7 +252,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             structure = self._structure_from_expression(value)
             if structure is None:
                 return None
-            descriptor = self._descriptor_from_structure(structure)
+            descriptor = descriptor_from_structure(structure)
             if descriptor is None:
                 return None
             kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
@@ -267,15 +268,13 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             structure = self._infer_iterable_structure(value.args[0])
             if structure is None:
                 return None
-            return _Binding(descriptor=self._descriptor_from_structure(structure), kind='iterator', structure=structure)
+            return _Binding(descriptor=descriptor_from_structure(structure), kind='iterator', structure=structure)
         if helper_name == '__dace_iterator_next' and value.args and isinstance(value.args[0], ast.Name):
             iterator_binding = self.bindings.get(value.args[0].id)
             if iterator_binding is None or iterator_binding.structure is None:
                 return None
             structure = (data.Scalar(dtypes.bool, transient=True), copy.deepcopy(iterator_binding.structure))
-            return _Binding(descriptor=self._descriptor_from_structure(structure),
-                            kind='iterator-value',
-                            structure=structure)
+            return _Binding(descriptor=descriptor_from_structure(structure), kind='iterator-value', structure=structure)
         return None
 
     def _infer_iterable_structure(self, node: ast.AST, env: Optional[Dict[str, Any]] = None) -> Optional[Any]:
@@ -694,60 +693,15 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 self._bind_loop_target(element)
 
     def _bind_target_structure(self, target: ast.AST, structure: Any) -> None:
-        if isinstance(target, ast.Name):
-            descriptor = self._descriptor_from_structure(structure)
+
+        def _bind(name: str, substructure: Any) -> None:
+            descriptor = descriptor_from_structure(substructure)
             if descriptor is None:
                 return
             kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
-            self._store_binding(target.id, descriptor, kind=kind, structure=structure)
-            return
-        if isinstance(target, ast.Starred):
-            if not isinstance(structure, list):
-                structure = list(structure) if isinstance(structure, tuple) else [structure]
-            self._bind_target_structure(target.value, structure)
-            return
-        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(structure, (list, tuple)):
-            starred_indices = [index for index, element in enumerate(target.elts) if isinstance(element, ast.Starred)]
-            if len(starred_indices) > 1:
-                return
-            if not starred_indices:
-                if len(target.elts) != len(structure):
-                    return
-                for subtarget, substructure in zip(target.elts, structure):
-                    self._bind_target_structure(subtarget, substructure)
-                return
+            self._store_binding(name, descriptor, kind=kind, structure=substructure)
 
-            starred_index = starred_indices[0]
-            if len(structure) < len(target.elts) - 1:
-                return
-
-            prefix_targets = target.elts[:starred_index]
-            suffix_targets = target.elts[starred_index + 1:]
-            prefix_structures = structure[:starred_index]
-            suffix_structures = structure[len(structure) - len(suffix_targets):]
-            middle_structure = list(structure[starred_index:len(structure) - len(suffix_targets)])
-
-            for subtarget, substructure in zip(prefix_targets, prefix_structures):
-                self._bind_target_structure(subtarget, substructure)
-            self._bind_target_structure(target.elts[starred_index], middle_structure)
-            for subtarget, substructure in zip(suffix_targets, suffix_structures):
-                self._bind_target_structure(subtarget, substructure)
-
-    def _descriptor_from_structure(self, structure: Any) -> Optional[data.Data]:
-        if isinstance(structure, data.Data):
-            return _clone_descriptor(structure)
-        if not isinstance(structure, (list, tuple)):
-            return None
-        dtype = dtypes.pyobject()
-        if structure and all(isinstance(element, data.Scalar) for element in structure):
-            dtype = structure[0].dtype
-            if dtype == dtypes.pyobject() or any(element.dtype == dtypes.pyobject() for element in structure[1:]):
-                dtype = dtypes.pyobject()
-            else:
-                for element in structure[1:]:
-                    dtype = dtypes.result_type_of(dtype, element.dtype)
-        descriptor_type = PythonList if isinstance(structure, list) else PythonTuple
-        return descriptor_type(dtype=dtype, shape=(len(structure), ), transient=True)
+        bind_target_structure(target, structure, _bind)
 
     def _store_binding(self,
                        name: str,
