@@ -19,9 +19,9 @@ from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext,
-                                                GenericExpressionSupportLibrary, NumpyLoweringContext,
-                                                NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
-                                                callback_reason, desugar_schedule_tree_expansions,
+                                                CallableArgumentSpecializer, GenericExpressionSupportLibrary,
+                                                NumpyLoweringContext, NumpySupportLibrary, ScheduleTreeTypeInference,
+                                                _Binding, callback_reason, desugar_schedule_tree_expansions,
                                                 resolve_function_calls)
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -394,6 +394,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                               self.lambda_bindings,
                                               self.callable_bindings,
                                               cache=self._global_lambda_cache)
+        self.callable_specializer = CallableArgumentSpecializer(
+            lambda_resolver=self.lambda_resolver,
+            bindings=self.bindings,
+            resolve_known_callable=self._resolve_known_callable,
+            infer_descriptor=self._infer_plannable_expression_descriptor,
+            evaluation_context=self._evaluation_context,
+            resolve_data_access=self._resolve_data_access,
+            is_callback_descriptor=self._is_callback_descriptor,
+            callback_specialization_value=self._callback_specialization_value)
         self._terminate_body_stack: List[bool] = []
 
         self._initialize_root_scope()
@@ -1170,7 +1179,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._emit_callback_assignment(name, value, 'pyobject call', scalar_descriptor)
             return
 
-        if self._is_callback_expression(value):
+        if self.callable_specializer.is_callback_expression(value):
             self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
             return
 
@@ -1771,20 +1780,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return False
         return isinstance(value, ast.Attribute)
 
-    def _is_callback_expression(self, node: ast.AST) -> bool:
-        if self.lambda_resolver.resolve_known_lambda_node(node) is not None or self._resolve_known_callable(
-                node) is not None:
-            return True
-        if isinstance(node, ast.Name):
-            binding = self.bindings.get(node.id)
-            if binding is not None and self._is_callback_descriptor(binding.descriptor):
-                return True
-        access = self._resolve_data_access(node)
-        if access is None:
-            return False
-        _, _, descriptor, view_descriptor = access
-        return self._is_callback_descriptor(view_descriptor or descriptor)
-
     # ------------------------------------------------------------------ #
     #  Function-call detection for nested @dace.program calls              #
     # ------------------------------------------------------------------ #
@@ -1861,46 +1856,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         bound = inspect.Signature(params).bind_partial(*call_node.args, **keywords)
         return dict(bound.arguments)
 
-    def _specialize_call_argument(self, node: ast.AST) -> Any:
-        lambda_node = self.lambda_resolver.resolve_known_lambda_node(node)
-        if lambda_node is not None:
-            return self._callback_specialization_value()
-
-        callable_value = self._resolve_known_callable(node)
-        if callable_value is not None:
-            return callable_value
-
-        descriptor = self._infer_plannable_expression_descriptor(node)
-        if descriptor is not None:
-            specialized = _clone_descriptor(descriptor)
-            specialized.transient = False
-            return specialized
-
-        value = try_resolve_static_value(node, self._evaluation_context())
-        if value is not UNRESOLVED:
-            return value
-
-        return _unparse(node)
-
     def _extract_call_specialization(
             self, call_node: ast.Call) -> Tuple[List[Any], Dict[str, Any], Dict[str, ast.Lambda], Dict[str, Any]]:
         parameter_nodes = self._call_parameter_nodes(call_node)
-        lambda_bindings: Dict[str, ast.Lambda] = {}
-        callable_bindings: Dict[str, Any] = {}
-
-        for param_name, argument_node in parameter_nodes.items():
-            lambda_node = self.lambda_resolver.resolve_known_lambda_node(argument_node)
-            if lambda_node is not None:
-                lambda_bindings[param_name] = lambda_node
-                continue
-
-            callable_value = self._resolve_known_callable(argument_node)
-            if callable_value is not None:
-                callable_bindings[param_name] = callable_value
-
-        args = [self._specialize_call_argument(arg) for arg in call_node.args]
-        kwargs = {kw.arg: self._specialize_call_argument(kw.value) for kw in call_node.keywords if kw.arg is not None}
-        return args, kwargs, lambda_bindings, callable_bindings
+        return self.callable_specializer.extract_call_specialization(call_node, parameter_nodes, _unparse)
 
     def _emit_function_call(self, call_node: ast.Call, return_targets: Optional[List[str]] = None) -> None:
         """Create a :class:`FunctionCallScope` placeholder and append it."""
