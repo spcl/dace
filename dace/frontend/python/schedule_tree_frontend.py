@@ -17,9 +17,10 @@ from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.lambda_support import extract_lambda_ast, inline_lambda_call
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
-from dace.frontend.python.schedule_tree import (ExpressionPlanningContext, GenericExpressionSupportLibrary,
-                                                NumpyLoweringContext, NumpySupportLibrary, ScheduleTreeTypeInference,
-                                                _Binding, callback_reason, desugar_schedule_tree_expansions,
+from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext,
+                                                GenericExpressionSupportLibrary, NumpyLoweringContext,
+                                                NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
+                                                callback_reason, desugar_schedule_tree_expansions,
                                                 resolve_function_calls)
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -387,6 +388,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
+        self.attribute_rewriter = AttributeRewriter(self._evaluation_context)
         self._terminate_body_stack: List[bool] = []
 
         self._initialize_root_scope()
@@ -1289,122 +1291,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return True
 
     def _format_runtime_expression(self, node: ast.AST) -> str:
-        return _unparse(self._rewrite_protocol_loads(node))
+        return _unparse(self.attribute_rewriter.rewrite_expression(node))
 
     def _format_assignment_statement(self, target: ast.AST, value: ast.AST) -> str:
-        rewritten_call = self._rewrite_protocol_store(target, value)
+        rewritten_call = self.attribute_rewriter.rewrite_assignment(target, value)
         if rewritten_call is not None:
             return _unparse(rewritten_call)
         return f'{_unparse(target)} = {self._format_runtime_expression(value)}'
-
-    def _rewrite_protocol_loads(self, node: ast.AST) -> ast.AST:
-
-        class _ProtocolLoadRewriter(ast.NodeTransformer):
-
-            def __init__(self, builder: 'PythonScheduleTreeBuilder') -> None:
-                self.builder = builder
-
-            def visit_Attribute(self, attr_node: ast.Attribute) -> ast.AST:
-                attr_node.value = self.visit(attr_node.value)
-                rewritten = self.builder._protocol_load_call(attr_node)
-                if rewritten is None:
-                    return attr_node
-                return ast.copy_location(rewritten, attr_node)
-
-        try:
-            working = copy.deepcopy(node)
-        except Exception:
-            working = node
-        rewritten = _ProtocolLoadRewriter(self).visit(working)
-        return ast.fix_missing_locations(rewritten)
-
-    def _protocol_load_call(self, node: ast.Attribute) -> Optional[ast.AST]:
-        if not isinstance(node.ctx, ast.Load):
-            return None
-
-        base_value = try_resolve_static_value(node.value, self._evaluation_context())
-        if base_value is UNRESOLVED or self._is_native_attribute_base(base_value):
-            return None
-
-        owner_expr = self._type_expr(copy.deepcopy(node.value))
-        obj_expr = copy.deepcopy(node.value)
-        objtype = type(base_value)
-
-        try:
-            static_attr = inspect.getattr_static(base_value, node.attr)
-        except AttributeError:
-            static_attr = None
-
-        if static_attr is not None and self._is_descriptor_object(static_attr) and hasattr(static_attr, '__get__'):
-            descriptor_expr = self._descriptor_expr(copy.deepcopy(node.value), node.attr)
-            return ast.Call(func=ast.Attribute(value=descriptor_expr, attr='__get__', ctx=ast.Load()),
-                            args=[obj_expr, copy.deepcopy(owner_expr)],
-                            keywords=[])
-
-        getattribute = objtype.__dict__.get('__getattribute__')
-        if getattribute is not None and getattribute is not object.__getattribute__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__getattribute__',
-                                               ctx=ast.Load()),
-                            args=[obj_expr, ast.Constant(node.attr)],
-                            keywords=[])
-
-        if static_attr is None and '__getattr__' in objtype.__dict__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__getattr__', ctx=ast.Load()),
-                            args=[obj_expr, ast.Constant(node.attr)],
-                            keywords=[])
-
-        return None
-
-    def _rewrite_protocol_store(self, target: ast.AST, value: ast.AST) -> Optional[ast.AST]:
-        if not isinstance(target, ast.Attribute):
-            return None
-
-        base_value = try_resolve_static_value(target.value, self._evaluation_context())
-        if base_value is UNRESOLVED or self._is_native_attribute_base(base_value):
-            return None
-
-        owner_expr = self._type_expr(copy.deepcopy(target.value))
-        obj_expr = copy.deepcopy(target.value)
-        objtype = type(base_value)
-        rewritten_value = self._rewrite_protocol_loads(value)
-
-        try:
-            static_attr = inspect.getattr_static(base_value, target.attr)
-        except AttributeError:
-            static_attr = None
-
-        if static_attr is not None and self._is_descriptor_object(static_attr) and hasattr(static_attr, '__set__'):
-            descriptor_expr = self._descriptor_expr(copy.deepcopy(target.value), target.attr)
-            return ast.Call(func=ast.Attribute(value=descriptor_expr, attr='__set__', ctx=ast.Load()),
-                            args=[obj_expr, rewritten_value],
-                            keywords=[])
-
-        setattr_method = objtype.__dict__.get('__setattr__')
-        if setattr_method is not None and setattr_method is not object.__setattr__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__setattr__', ctx=ast.Load()),
-                            args=[obj_expr, ast.Constant(target.attr), rewritten_value],
-                            keywords=[])
-
-        return None
-
-    def _type_expr(self, value_expr: ast.AST) -> ast.AST:
-        return ast.Call(func=ast.Name(id='type', ctx=ast.Load()), args=[value_expr], keywords=[])
-
-    def _descriptor_expr(self, value_expr: ast.AST, attr_name: str) -> ast.AST:
-        return ast.Subscript(value=ast.Attribute(value=self._type_expr(value_expr), attr='__dict__', ctx=ast.Load()),
-                             slice=ast.Constant(attr_name),
-                             ctx=ast.Load())
-
-    def _is_descriptor_object(self, value: Any) -> bool:
-        return any(hasattr(value, attr) for attr in ('__get__', '__set__', '__delete__'))
-
-    def _is_native_attribute_base(self, value: Any) -> bool:
-        if dtypes.ismodule(value):
-            return True
-        if isinstance(value, (dtypes.typeclass, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic, data.Data)):
-            return True
-        module_name = getattr(type(value), '__module__', '')
-        return module_name.startswith(('numpy', 'dace', 'sympy', 'builtins'))
 
     def _resolve_data_access(self, node: ast.AST) -> Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]]:
         if isinstance(node, ast.Name) and node.id in self.bindings and self.bindings[node.id].descriptor is not None:

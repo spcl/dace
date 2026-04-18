@@ -624,8 +624,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             return False
 
         # User objects should remain attribute accesses in the preprocessed AST.
-        # The schedule-tree frontend can then decide whether to render them as
-        # direct attributes or as explicit protocol calls (__get__/__set__/etc.).
+        # The schedule-tree frontend can then decide whether to keep direct
+        # attribute syntax or rewrite it into explicit special-method calls.
         preserve_direct_attribute = True
 
         try:
