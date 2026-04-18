@@ -8,6 +8,7 @@ import copy
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 
 _CALLBACK_REASON_ATTR = '_schedule_tree_callback_reason'
@@ -42,6 +43,8 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         self.filename = filename
         self.global_vars = copy.copy(global_vars)
         self.callable_bindings = dict(callable_bindings or {})
+        self.callable_resolver = CallableResolver(callable_bindings=self.callable_bindings,
+                                                  evaluation_context=self._evaluation_context)
         self._expansion_bindings: Dict[str, ast.AST] = {}
         self._temp_counter = 0
 
@@ -295,19 +298,10 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         return context
 
     def _resolve_callable_value(self, node: ast.AST) -> Any:
-        if isinstance(node, ast.Name):
-            if node.id in self.callable_bindings:
-                return self.callable_bindings[node.id]
-            if node.id in self.global_vars:
-                return self.global_vars[node.id]
-        return try_resolve_static_value(node, self._evaluation_context())
+        return self.callable_resolver.resolve_callable_value(node)
 
     def _is_sdfg_call(self, node: ast.Call) -> bool:
-        from dace import SDFG
-
-        callee = self._resolve_callable_value(node.func)
-        return callee is not UNRESOLVED and not hasattr(callee, '__schedule_tree__') and (isinstance(callee, SDFG) or
-                                                                                          hasattr(callee, '__sdfg__'))
+        return self.callable_resolver.is_sdfg_call(node)
 
     @staticmethod
     def _is_expanded_call(node: ast.AST) -> bool:
