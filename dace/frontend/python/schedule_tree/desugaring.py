@@ -288,7 +288,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                 expanded = outer._expand_call_if_static(call_node)
                 if expanded is not None:
                     return expanded
-                raise _DynamicExpansionError(call_node, is_sdfg_call=outer._is_sdfg_call(call_node))
+                raise _DynamicExpansionError(call_node, is_sdfg_call=outer.callable_resolver.is_sdfg_call(call_node))
 
         return _ExpressionRewriter().visit(copy.deepcopy(node))
 
@@ -296,12 +296,6 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         context = copy.copy(self.global_vars)
         context.update(self.callable_bindings)
         return context
-
-    def _resolve_callable_value(self, node: ast.AST) -> Any:
-        return self.callable_resolver.resolve_callable_value(node)
-
-    def _is_sdfg_call(self, node: ast.Call) -> bool:
-        return self.callable_resolver.is_sdfg_call(node)
 
     @staticmethod
     def _is_expanded_call(node: ast.AST) -> bool:

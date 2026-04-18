@@ -464,11 +464,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
         self._reject_callback_mutated_global_uses(node.value)
         value = self.lambda_resolver.inline_known_lambda_calls(node.value)
-        if self._is_dace_program_call(value):
+        if self.callable_resolver.is_dace_program_call(value):
             self._materialize_call_args(value)
             self._emit_function_call(value)
             return
-        if self._is_sdfg_call(value):
+        if self.callable_resolver.is_sdfg_call(value):
             self._materialize_call_args(value)
             if self._emit_sdfg_call(value):
                 return
@@ -489,7 +489,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         else:
             self._reject_callback_mutated_global_uses(node.value)
             return_value = self.lambda_resolver.inline_known_lambda_calls(node.value)
-            if self._is_dace_program_call(return_value):
+            if self.callable_resolver.is_dace_program_call(return_value):
                 # Materialize array-valued arguments, emit the function call;
                 # the inlining pass will propagate the callee's return value.
                 self._materialize_call_args(return_value)
@@ -497,7 +497,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 self._emit_function_call(return_value, return_targets=[tmp])
                 self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
                 return
-            if self._is_sdfg_call(return_value):
+            if self.callable_resolver.is_sdfg_call(return_value):
                 self._materialize_call_args(return_value)
                 tmp = self._fresh_transient_name('__stree_retval')
                 self._register_binding(tmp, _pyobject_scalar_descriptor(), kind='scalar')
@@ -726,7 +726,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if _is_iterator_protocol_call(value):
             return True
 
-        callee = self._resolve_callable_value(value.func)
+        callee = self.callable_resolver.resolve_callable_value(value.func)
         if callee is not UNRESOLVED and inspect.isgeneratorfunction(callee):
             return True
 
@@ -1061,13 +1061,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         # Intercept nested @dace.program calls — materialize array-valued
         # arguments into temporaries first, then emit FunctionCallScope.
-        if self._is_dace_program_call(value):
+        if self.callable_resolver.is_dace_program_call(value):
             self._materialize_call_args(value)
             targets = [target.id] if isinstance(target, ast.Name) else [_unparse(target)]
             self._emit_function_call(value, return_targets=targets)
             return
 
-        if self._is_sdfg_call(value) and not isinstance(target, (ast.Tuple, ast.List)):
+        if self.callable_resolver.is_sdfg_call(value) and not isinstance(target, (ast.Tuple, ast.List)):
             self._materialize_call_args(value)
             if self._emit_sdfg_call_assignment(target, value, annotated_descriptor):
                 return
@@ -1786,37 +1786,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     #  Function-call detection for nested @dace.program calls              #
     # ------------------------------------------------------------------ #
 
-    def _is_dace_program_call(self, node: ast.AST) -> bool:
-        """Return True when *node* is a call to an inlineable callee."""
-        return self.callable_resolver.is_dace_program_call(node)
-
-    def _is_sdfg_call(self, node: ast.AST) -> bool:
-        return self.callable_resolver.is_sdfg_call(node)
-
-    def _callable_signature(self, callee: Any) -> inspect.Signature:
-        return self.callable_resolver.callable_signature(callee)
-
-    def _callable_name(self, callee: Any) -> str:
-        return self.callable_resolver.callable_name(callee)
-
-    def _extract_argument_mapping(self, call_node: ast.Call) -> Dict[str, str]:
-        """Build ``{callee_param: caller_expression}`` from a call AST node."""
-        return self.callable_resolver.extract_argument_mapping(call_node, self._format_runtime_expression)
-
-    def _call_parameter_nodes(self, call_node: ast.Call) -> Dict[str, ast.AST]:
-        return self.callable_resolver.call_parameter_nodes(call_node)
-
-    def _extract_call_specialization(
-            self, call_node: ast.Call) -> Tuple[List[Any], Dict[str, Any], Dict[str, ast.Lambda], Dict[str, Any]]:
-        return self.callable_specializer.extract_call_specialization(call_node, _unparse)
-
     def _emit_function_call(self, call_node: ast.Call, return_targets: Optional[List[str]] = None) -> None:
         """Create a :class:`FunctionCallScope` placeholder and append it."""
-        callee = self._resolve_callable_value(call_node.func)
-        callee_name = self._callable_name(callee)
-        arguments = self._extract_argument_mapping(call_node)
-        specialization_args, specialization_kwargs, lambda_bindings, callable_bindings = self._extract_call_specialization(
-            call_node)
+        callee = self.callable_resolver.resolve_callable_value(call_node.func)
+        callee_name = self.callable_resolver.callable_name(callee)
+        arguments = self.callable_resolver.extract_argument_mapping(call_node, self._format_runtime_expression)
+        specialization_args, specialization_kwargs, lambda_bindings, callable_bindings = self.callable_specializer.extract_call_specialization(
+            call_node, _unparse)
 
         scope = tn.FunctionCallScope(
             children=[],
@@ -1834,7 +1810,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._append_node(scope)
 
     def _resolve_sdfg_call(self, call_node: ast.Call) -> Optional[Any]:
-        callee = self._resolve_callable_value(call_node.func)
+        callee = self.callable_resolver.resolve_callable_value(call_node.func)
         from dace import SDFG
 
         if isinstance(callee, SDFG):
@@ -1843,7 +1819,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if not hasattr(callee, '__sdfg__') or hasattr(callee, '__schedule_tree__'):
             return None
 
-        specialization_args, specialization_kwargs, _, _ = self._extract_call_specialization(call_node)
+        specialization_args, specialization_kwargs, _, _ = self.callable_specializer.extract_call_specialization(
+            call_node, _unparse)
         try:
             sdfg = callee.__sdfg__(*specialization_args, **specialization_kwargs)
         except Exception:
@@ -1856,9 +1833,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if sdfg is None:
             return False
 
-        callee = self._resolve_callable_value(call_node.func)
-        callee_name = self._callable_name(callee)
-        arguments = self._extract_argument_mapping(call_node)
+        callee = self.callable_resolver.resolve_callable_value(call_node.func)
+        callee_name = self.callable_resolver.callable_name(callee)
+        arguments = self.callable_resolver.extract_argument_mapping(call_node, self._format_runtime_expression)
         self._append_node(
             tn.SDFGCallNode(sdfg=sdfg,
                             call=tn.FrontendFunctionCall(callee_name=callee_name, arguments=arguments),
@@ -1952,17 +1929,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         return None
 
-    def _resolve_callable_value(self, node: ast.AST) -> Any:
-        return self.callable_resolver.resolve_callable_value(node)
-
     def _is_callback_descriptor(self, descriptor: Optional[data.Data]) -> bool:
         return isinstance(descriptor, data.Scalar) and isinstance(descriptor.dtype, dtypes.callback)
 
     def _callback_specialization_value(self) -> data.Scalar:
         return data.Scalar(dtypes.callback(None), transient=False)
-
-    def _resolve_known_callable(self, node: ast.AST) -> Optional[Any]:
-        return self.callable_resolver.resolve_known_callable(node)
 
     def _make_nested_function_program(self, node: ast.FunctionDef) -> Optional[_NestedFunctionProgram]:
         if node.decorator_list:
@@ -2018,7 +1989,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.lambda_resolver.bind_value(name, value)
 
     def _update_callable_binding(self, name: str, value: ast.AST) -> None:
-        resolved = self._resolve_known_callable(value)
+        resolved = self.callable_resolver.resolve_known_callable(value)
         if resolved is None:
             self.callable_bindings.pop(name, None)
             return
