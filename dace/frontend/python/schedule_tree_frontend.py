@@ -14,7 +14,7 @@ from dace.config import Config
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
-from dace.frontend.python.schedule_tree.lambda_support import extract_lambda_ast, inline_lambda_call
+from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
@@ -390,6 +390,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
         self.attribute_rewriter = AttributeRewriter(self._evaluation_context)
+        self.lambda_resolver = LambdaResolver(self.globals,
+                                              self.lambda_bindings,
+                                              self.callable_bindings,
+                                              cache=self._global_lambda_cache)
         self._terminate_body_stack: List[bool] = []
 
         self._initialize_root_scope()
@@ -448,7 +452,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return
         self._reject_callback_mutated_global_uses(node.value)
-        value = self._inline_known_lambda_calls(node.value)
+        value = self.lambda_resolver.inline_known_lambda_calls(node.value)
         if self._is_dace_program_call(value):
             self._materialize_call_args(value)
             self._emit_function_call(value)
@@ -473,7 +477,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             values: List[CodeBlock] = []
         else:
             self._reject_callback_mutated_global_uses(node.value)
-            return_value = self._inline_known_lambda_calls(node.value)
+            return_value = self.lambda_resolver.inline_known_lambda_calls(node.value)
             if self._is_dace_program_call(return_value):
                 # Materialize array-valued arguments, emit the function call;
                 # the inlining pass will propagate the callee's return value.
@@ -1040,9 +1044,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._reject_callback_mutated_global_uses(value)
         if isinstance(target, ast.Name):
             self._update_callable_binding(target.id, value)
-            self._update_lambda_binding(target.id, value)
+            self.lambda_resolver.update_binding(target.id, value)
 
-        value = self._inline_known_lambda_calls(value)
+        value = self.lambda_resolver.inline_known_lambda_calls(value)
 
         # Intercept nested @dace.program calls — materialize array-valued
         # arguments into temporaries first, then emit FunctionCallScope.
@@ -1768,7 +1772,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return isinstance(value, ast.Attribute)
 
     def _is_callback_expression(self, node: ast.AST) -> bool:
-        if self._resolve_known_lambda_node(node) is not None or self._resolve_known_callable(node) is not None:
+        if self.lambda_resolver.resolve_known_lambda_node(node) is not None or self._resolve_known_callable(
+                node) is not None:
             return True
         if isinstance(node, ast.Name):
             binding = self.bindings.get(node.id)
@@ -1857,7 +1862,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return dict(bound.arguments)
 
     def _specialize_call_argument(self, node: ast.AST) -> Any:
-        lambda_node = self._resolve_known_lambda_node(node)
+        lambda_node = self.lambda_resolver.resolve_known_lambda_node(node)
         if lambda_node is not None:
             return self._callback_specialization_value()
 
@@ -1884,7 +1889,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         callable_bindings: Dict[str, Any] = {}
 
         for param_name, argument_node in parameter_nodes.items():
-            lambda_node = self._resolve_known_lambda_node(argument_node)
+            lambda_node = self.lambda_resolver.resolve_known_lambda_node(argument_node)
             if lambda_node is not None:
                 lambda_bindings[param_name] = lambda_node
                 continue
@@ -1956,12 +1961,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         """Materialize array-valued call arguments into temporaries in-place."""
         ctx = self._expression_planning_context()
         for i, arg in enumerate(call_node.args):
-            call_node.args[i] = self.expression_support.plan_expression(ctx,
-                                                                        self._inline_known_lambda_calls(arg),
-                                                                        materialize_root=True)
+            call_node.args[i] = self.expression_support.plan_expression(
+                ctx, self.lambda_resolver.inline_known_lambda_calls(arg), materialize_root=True)
         for kw in call_node.keywords:
             kw.value = self.expression_support.plan_expression(ctx,
-                                                               self._inline_known_lambda_calls(kw.value),
+                                                               self.lambda_resolver.inline_known_lambda_calls(kw.value),
                                                                materialize_root=True)
 
     def _should_lower_as_library_call(self, node: ast.Call) -> bool:
@@ -2017,7 +2021,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                          resolve_output_target=self._resolve_output_target)
 
     def _infer_plannable_expression_descriptor(self, node: ast.AST) -> Optional[data.Data]:
-        node = self._inline_known_lambda_calls(node)
+        node = self.lambda_resolver.inline_known_lambda_calls(node)
         generic_descriptor = self.expression_support.infer_expression_descriptor(self._expression_planning_context(),
                                                                                  node)
         if generic_descriptor is not None:
@@ -2119,9 +2123,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if callable(value):
             self.callable_bindings[name] = value
 
-        lambda_node = self._resolve_global_lambda_node(value)
-        if lambda_node is not None:
-            self.lambda_bindings[name] = lambda_node
+        self.lambda_resolver.bind_value(name, value)
 
     def _update_callable_binding(self, name: str, value: ast.AST) -> None:
         resolved = self._resolve_known_callable(value)
@@ -2129,71 +2131,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self.callable_bindings.pop(name, None)
             return
         self.callable_bindings[name] = resolved
-
-    def _update_lambda_binding(self, name: str, value: ast.AST) -> None:
-        lambda_node = self._resolve_known_lambda_node(value)
-        if lambda_node is None:
-            self.lambda_bindings.pop(name, None)
-            return
-        self.lambda_bindings[name] = lambda_node
-
-    def _resolve_known_lambda_node(self, node: ast.AST) -> Optional[ast.Lambda]:
-        if isinstance(node, ast.Lambda):
-            return copy.deepcopy(node)
-        if not isinstance(node, ast.Name):
-            return None
-        if node.id in self.lambda_bindings:
-            return copy.deepcopy(self.lambda_bindings[node.id])
-        if node.id in self.callable_bindings:
-            lambda_node = self._resolve_global_lambda_node(self.callable_bindings[node.id])
-            return copy.deepcopy(lambda_node) if lambda_node is not None else None
-        if node.id in self._global_lambda_cache:
-            cached = self._global_lambda_cache[node.id]
-            return copy.deepcopy(cached) if cached is not None else None
-        value = self.globals.get(node.id)
-        lambda_node = self._resolve_global_lambda_node(value) if value is not None else None
-        self._global_lambda_cache[node.id] = copy.deepcopy(lambda_node) if lambda_node is not None else None
-        return copy.deepcopy(lambda_node) if lambda_node is not None else None
-
-    def _resolve_global_lambda_node(self, value: Any) -> Optional[ast.Lambda]:
-        lambda_node = extract_lambda_ast(value)
-        if lambda_node is None:
-            return None
-
-        lambda_globals = copy.copy(getattr(value, '__globals__', {}))
-        closure = getattr(value, '__closure__', None)
-        freevars = getattr(getattr(value, '__code__', None), 'co_freevars', ())
-        if closure is not None:
-            for name, cell in zip(freevars, closure):
-                try:
-                    lambda_globals[name] = cell.cell_contents
-                except ValueError:
-                    lambda_globals[name] = None
-
-        resolver = preprocessing.GlobalResolver(lambda_globals, preserve_object_attributes=True)
-        resolver.toplevel_function = False
-        return ast.fix_missing_locations(resolver.visit(copy.deepcopy(lambda_node)))
-
-    def _inline_known_lambda_calls(self, node: ast.AST) -> ast.AST:
-        builder = self
-
-        class _KnownLambdaInliner(ast.NodeTransformer):
-
-            def visit_Call(self, call_node: ast.Call) -> ast.AST:
-                rewritten = ast.Call(
-                    func=self.visit(call_node.func),
-                    args=[self.visit(arg) for arg in call_node.args],
-                    keywords=[ast.keyword(arg=kw.arg, value=self.visit(kw.value)) for kw in call_node.keywords])
-                lambda_node = builder._resolve_known_lambda_node(rewritten.func)
-                if lambda_node is None:
-                    return ast.copy_location(rewritten, call_node)
-                try:
-                    inlined = inline_lambda_call(lambda_node, rewritten)
-                except TypeError:
-                    return ast.copy_location(rewritten, call_node)
-                return ast.copy_location(self.visit(inlined), call_node)
-
-        return ast.fix_missing_locations(_KnownLambdaInliner().visit(copy.deepcopy(node)))
 
     def _emit_if_chain(self, node: ast.If) -> None:
         parent = self.scope_stack[-1]
