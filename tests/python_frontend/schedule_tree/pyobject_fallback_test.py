@@ -21,10 +21,12 @@ def _assert_string_scalar(descriptor: data.Data) -> None:
     assert descriptor.dtype == dtypes.string
 
 
-def _infer_schedule_tree_bindings(program):
+def _infer_schedule_tree_bindings(program, argtypes=None):
+    argtypes = dict(argtypes or {'A': dace.float64[4]})
     modules = {name: value.__name__ for name, value in program.global_vars.items() if dtypes.ismodule(value)}
     modules['builtins'] = ''
-    parsed_ast, _ = preprocessing.preprocess_dace_program(program.f, {'A': dace.float64[4]},
+    parsed_ast, _ = preprocessing.preprocess_dace_program(program.f,
+                                                          argtypes,
                                                           dict(program.global_vars),
                                                           modules,
                                                           resolve_functions=program.resolve_functions,
@@ -32,9 +34,7 @@ def _infer_schedule_tree_bindings(program):
                                                           normalize_generic_for_loops=True,
                                                           preserve_object_attributes=True,
                                                           disallowed_stmts=set())
-    return ScheduleTreeTypeInference(parsed_ast.program_globals, {
-        'A': dace.float64[4]
-    }).infer(parsed_ast.preprocessed_ast)
+    return ScheduleTreeTypeInference(parsed_ast.program_globals, argtypes).infer(parsed_ast.preprocessed_ast)
 
 
 def test_schedule_tree_type_inference_opaque_assignments_use_pyobject_scalar():
@@ -164,3 +164,55 @@ def prog[T, *Ts](A):
     assert isinstance(bindings['tmp'].descriptor, data.Array)
     assert bindings['tmp'].descriptor.dtype == dace.float64
     assert tuple(bindings['tmp'].descriptor.shape) == (4, )
+
+
+def test_schedule_tree_type_inference_distinguishes_list_and_tuple_indices():
+
+    @dace.program
+    def list_prog(A: dace.float64[5, 6]):
+        tmp = A[[1, 2]]
+
+    @dace.program
+    def tuple_prog(A: dace.float64[5, 6]):
+        tmp = A[(1, 2)]
+
+    list_bindings = _infer_schedule_tree_bindings(list_prog, {'A': dace.float64[5, 6]})
+    tuple_bindings = _infer_schedule_tree_bindings(tuple_prog, {'A': dace.float64[5, 6]})
+
+    assert isinstance(list_bindings['tmp'].descriptor, data.Array)
+    assert tuple(list_bindings['tmp'].descriptor.shape) == (2, 6)
+    assert list_bindings['tmp'].descriptor.dtype == dace.float64
+    assert isinstance(tuple_bindings['tmp'].descriptor, data.Scalar)
+    assert tuple_bindings['tmp'].descriptor.dtype == dace.float64
+    assert tuple_bindings['tmp'].kind == 'scalar'
+
+
+def test_schedule_tree_type_inference_distinguishes_list_and_tuple_indices_with_symbolic_shape():
+    n = dace.symbol('n')
+
+    @dace.program
+    def list_prog(A: dace.float64[5, n]):
+        tmp = A[[1, 2]]
+
+    @dace.program
+    def tuple_prog(A: dace.float64[5, n]):
+        tmp = A[(1, 2)]
+
+    list_bindings = _infer_schedule_tree_bindings(list_prog, {'A': dace.float64[5, n]})
+    tuple_bindings = _infer_schedule_tree_bindings(tuple_prog, {'A': dace.float64[5, n]})
+
+    assert tuple(list_bindings['tmp'].descriptor.shape) == (2, n)
+    assert isinstance(tuple_bindings['tmp'].descriptor, data.Scalar)
+
+
+def test_schedule_tree_type_inference_symbolic_static_slice_shape():
+    n = dace.symbol('n')
+
+    @dace.program
+    def slice_prog(A: dace.float64[n]):
+        tmp = A[1:n:2]
+
+    bindings = _infer_schedule_tree_bindings(slice_prog, {'A': dace.float64[n]})
+
+    assert isinstance(bindings['tmp'].descriptor, data.Array)
+    assert str(bindings['tmp'].descriptor.shape[0]) == 'ceiling(n/2 - 1/2)'

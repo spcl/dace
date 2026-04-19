@@ -232,7 +232,7 @@ class _ExpressionPlanner:
             return False
         if self.context.resolve_data_access(node) is not None:
             return False
-        return isinstance(node, (ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.Call))
+        return isinstance(node, (ast.Attribute, ast.BinOp, ast.Call, ast.Compare, ast.IfExp, ast.UnaryOp, ast.BoolOp))
 
     def _should_materialize_pyobject_call(self, node: ast.AST) -> bool:
         descriptor = self.context.infer_descriptor(node)

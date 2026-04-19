@@ -6,11 +6,12 @@ import collections.abc as cabc
 import copy
 import inspect
 import numbers
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIterator, List, Optional, Sequence, Tuple, \
     get_args, get_origin
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, symbolic, subsets
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
@@ -60,6 +61,238 @@ def _pyobject_scalar_descriptor() -> data.Scalar:
 
 def _string_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.string, transient=True)
+
+
+def _is_scalar_subscript(node: ast.Subscript, subset: subsets.Range, new_axes: Sequence[int],
+                         arrdims: Dict[int, str]) -> bool:
+    if new_axes or arrdims:
+        return False
+    if isinstance(node.slice, ast.Slice):
+        return False
+    if isinstance(node.slice, ast.Tuple):
+        for element in node.slice.elts:
+            if isinstance(element, ast.Slice):
+                return False
+            if isinstance(element, ast.Constant) and element.value in {None, Ellipsis}:
+                return False
+    for (start, end, step), tile in zip(subset.ranges, subset.tile_sizes):
+        if tile != 1 or step != 1 or start != end:
+            return False
+    return True
+
+
+def _infer_static_subscript_descriptor(descriptor: data.Data, node: ast.Subscript,
+                                       evaluation_context: Dict[str, Any]) -> Optional[data.Data]:
+    if not hasattr(descriptor, 'shape') or not hasattr(descriptor, 'dtype'):
+        return None
+
+    index_value = try_resolve_static_value(node.slice, evaluation_context)
+    if index_value is UNRESOLVED:
+        return None
+
+    result_shape = _infer_static_subscript_shape(tuple(descriptor.shape), index_value)
+    if result_shape is None:
+        return None
+    if not result_shape:
+        return data.Scalar(descriptor.dtype, transient=True)
+    return data.Array(descriptor.dtype, list(result_shape), transient=True)
+
+
+def _infer_static_subscript_shape(array_shape: Tuple[Any, ...], index_value: Any) -> Optional[Tuple[Any, ...]]:
+    expanded = _expand_static_indices(index_value, len(array_shape))
+    if expanded is None:
+        return None
+
+    chunks: List[Any] = []
+    advanced_shapes: List[Tuple[int, ...]] = []
+    advanced_groups = 0
+    in_advanced_group = False
+    array_dim = 0
+
+    for index in expanded:
+        if index is None:
+            chunks.append((1, ))
+            in_advanced_group = False
+            continue
+
+        if array_dim >= len(array_shape):
+            return None
+
+        if _is_static_integer_index(index):
+            array_dim += 1
+            in_advanced_group = False
+            continue
+
+        advanced_shape = _static_advanced_index_shape(index)
+        if advanced_shape is not None:
+            advanced_shapes.append(advanced_shape)
+            if not in_advanced_group:
+                chunks.append('ADV')
+                advanced_groups += 1
+                in_advanced_group = True
+            array_dim += 1
+            continue
+
+        if not isinstance(index, slice):
+            return None
+
+        slice_dim = _static_slice_result_dim(array_shape[array_dim], index)
+        if slice_dim is None:
+            return None
+        chunks.append((slice_dim, ))
+        array_dim += 1
+        in_advanced_group = False
+
+    while array_dim < len(array_shape):
+        chunks.append((array_shape[array_dim], ))
+        array_dim += 1
+
+    if not advanced_shapes:
+        return tuple(dim for chunk in chunks for dim in chunk)
+
+    broadcast_shape = _broadcast_static_shapes(advanced_shapes)
+    if broadcast_shape is None:
+        return None
+
+    if advanced_groups == 1:
+        output_shape: List[Any] = []
+        inserted = False
+        for chunk in chunks:
+            if chunk == 'ADV':
+                if not inserted:
+                    output_shape.extend(broadcast_shape)
+                    inserted = True
+                continue
+            output_shape.extend(chunk)
+        return tuple(output_shape)
+
+    output_shape = list(broadcast_shape)
+    for chunk in chunks:
+        if chunk == 'ADV':
+            continue
+        output_shape.extend(chunk)
+    return tuple(output_shape)
+
+
+def _expand_static_indices(index_value: Any, rank: int) -> Optional[List[Any]]:
+    indices = list(index_value) if isinstance(index_value, tuple) else [index_value]
+    if sum(1 for index in indices if index is Ellipsis) > 1:
+        return None
+
+    consumed = sum(1 for index in indices if index is not None and index is not Ellipsis)
+    expanded: List[Any] = []
+    ellipsis_seen = False
+    for index in indices:
+        if index is Ellipsis:
+            ellipsis_seen = True
+            expanded.extend([slice(None)] * max(rank - consumed, 0))
+            continue
+        expanded.append(index)
+
+    if not ellipsis_seen:
+        expanded.extend([slice(None)] * max(rank - consumed, 0))
+
+    return expanded
+
+
+def _is_static_integer_index(index: Any) -> bool:
+    return isinstance(index, numbers.Integral) and not isinstance(index, bool)
+
+
+def _static_advanced_index_shape(index: Any) -> Optional[Tuple[int, ...]]:
+    if isinstance(index, np.ndarray):
+        if index.ndim == 0 or index.dtype == bool:
+            return None
+        return tuple(index.shape)
+
+    if isinstance(index, list):
+        return _static_nested_sequence_shape(index)
+
+    if isinstance(index, tuple):
+        nested_shape = _static_nested_sequence_shape(list(index))
+        if nested_shape is None:
+            return None
+        return nested_shape
+
+    return None
+
+
+def _static_nested_sequence_shape(value: List[Any]) -> Optional[Tuple[int, ...]]:
+    if not value:
+        return (0, )
+    first = value[0]
+    if isinstance(first, (list, tuple)):
+        inner_shape = _static_nested_sequence_shape(list(first))
+        if inner_shape is None:
+            return None
+        for element in value[1:]:
+            if not isinstance(element, (list, tuple)):
+                return None
+            if _static_nested_sequence_shape(list(element)) != inner_shape:
+                return None
+        return (len(value), ) + inner_shape
+
+    if any(isinstance(element, (list, tuple)) for element in value[1:]):
+        return None
+    if any(not _is_static_integer_index(element) for element in value):
+        return None
+    return (len(value), )
+
+
+def _static_slice_result_dim(dim_size: Any, index: slice) -> Optional[Any]:
+    if index == slice(None):
+        return dim_size
+
+    step = 1 if index.step is None else index.step
+    try:
+        if step == 0:
+            return None
+    except TypeError:
+        pass
+
+    step_is_negative = (step < 0) == True
+    step_is_positive = (step > 0) == True
+    if not step_is_negative and not step_is_positive:
+        return None
+
+    if index.start is None:
+        start = dim_size - 1 if step_is_negative else 0
+    else:
+        start = index.start
+
+    if index.stop is None:
+        stop = -1 if step_is_negative else dim_size
+    else:
+        stop = index.stop
+
+    try:
+        if (start < 0) == True:
+            start += dim_size
+    except TypeError:
+        pass
+    try:
+        if (stop < 0) == True:
+            stop += dim_size
+    except TypeError:
+        pass
+
+    end = stop + 1 if step_is_negative else stop - 1
+    return subsets.Range([(start, end, step)]).size()[0]
+
+
+def _broadcast_static_shapes(shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
+    result: List[int] = []
+    max_rank = max(len(shape) for shape in shapes)
+    for axis in range(max_rank):
+        axis_sizes = []
+        for shape in shapes:
+            offset = axis - (max_rank - len(shape))
+            axis_sizes.append(1 if offset < 0 else shape[offset])
+        size = max(axis_sizes)
+        if any(axis_size not in {1, size} for axis_size in axis_sizes):
+            return None
+        result.append(size)
+    return tuple(result)
 
 
 def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
@@ -532,9 +765,11 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return data.Scalar(descriptor.dtype, transient=True)
 
         try:
-            subset, new_axes, _ = memlet_parser.parse_memlet_subset(descriptor, node, self._evaluation_context())
+            subset, new_axes, arrdims = memlet_parser.parse_memlet_subset(descriptor, node, self._evaluation_context())
         except Exception:
-            return None
+            return _infer_static_subscript_descriptor(descriptor, node, self._evaluation_context())
+        if _is_scalar_subscript(node, subset, new_axes, arrdims):
+            return data.Scalar(descriptor.dtype, transient=True)
         return self._make_view_descriptor(descriptor, subset.size(), new_axes)
 
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:

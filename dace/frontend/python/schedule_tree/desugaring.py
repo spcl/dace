@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import builtins as pybuiltins
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -293,7 +294,8 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         return _ExpressionRewriter().visit(copy.deepcopy(node))
 
     def _evaluation_context(self) -> Dict[str, Any]:
-        context = copy.copy(self.global_vars)
+        context = copy.copy(pybuiltins.__dict__)
+        context.update(self.global_vars)
         context.update(self.callable_bindings)
         return context
 
@@ -505,14 +507,360 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                               'schedule-tree lowering')
 
 
+class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
+    """Outline nested subscript-index expressions into explicit temporaries.
+
+    Examples:
+        ``A[B[i]]`` becomes ``__stree_idx = B[i]`` followed by ``A[__stree_idx]``.
+
+        ``A[f(g[i])]`` becomes a sequence such as ``__stree_idx = g[i]``,
+        ``__stree_idx1 = f(__stree_idx)``, then ``A[__stree_idx1]``.
+    """
+
+    def __init__(self, global_vars: Dict[str, Any], callable_bindings: Optional[Dict[str, Any]] = None) -> None:
+        self.global_vars = copy.copy(global_vars)
+        self.callable_bindings = dict(callable_bindings or {})
+        self._temp_counter = 0
+        self._used_names: set[str] = set(self.global_vars) | set(self.callable_bindings)
+
+    def visit_Module(self, node: ast.Module) -> ast.AST:
+        self._seed_used_names(node)
+        node.body = self._rewrite_body(node.body)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self._seed_used_names(node)
+        node.body = self._rewrite_body(node.body)
+        return node
+
+    if hasattr(ast, 'AsyncFunctionDef'):
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            self._seed_used_names(node)
+            node.body = self._rewrite_body(node.body)
+            return node
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST:
+        prologue, value = self._outline_expression(node.value)
+        targets: List[ast.AST] = []
+        for target in node.targets:
+            outlined, rewritten = self._outline_expression(target)
+            prologue.extend(outlined)
+            targets.append(rewritten)
+        node.targets = targets
+        node.value = value
+        return self._prepend_statements(node, prologue)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
+        if node.value is None:
+            return node
+        prologue, value = self._outline_expression(node.value)
+        target_prologue, target = self._outline_expression(node.target)
+        node.value = value
+        node.target = target
+        return self._prepend_statements(node, prologue + target_prologue)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        prologue, target = self._outline_expression(node.target)
+        value_prologue, value = self._outline_expression(node.value)
+        node.target = target
+        node.value = value
+        return self._prepend_statements(node, prologue + value_prologue)
+
+    def visit_Return(self, node: ast.Return) -> ast.AST:
+        if node.value is None:
+            return node
+        prologue, value = self._outline_expression(node.value)
+        node.value = value
+        return self._prepend_statements(node, prologue)
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST:
+        prologue, value = self._outline_expression(node.value)
+        node.value = value
+        return self._prepend_statements(node, prologue)
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        prologue, test = self._outline_expression(node.test)
+        node.test = test
+        node.body = self._rewrite_body(node.body)
+        node.orelse = self._rewrite_body(node.orelse)
+        return self._prepend_statements(node, prologue)
+
+    def visit_While(self, node: ast.While) -> ast.AST:
+        prologue, test = self._outline_expression(node.test)
+        if prologue and node.orelse:
+            return self._mark_callback(node, 'while loop test outlining with else')
+        node.test = test
+        node.body = self._rewrite_body(node.body)
+        node.orelse = self._rewrite_body(node.orelse)
+        if not prologue:
+            return node
+
+        guard = ast.If(test=ast.UnaryOp(op=ast.Not(), operand=copy.deepcopy(test)), body=[ast.Break()], orelse=[])
+        guard = ast.fix_missing_locations(ast.copy_location(guard, node.test))
+        rewritten = ast.While(test=ast.Constant(value=True), body=prologue + [guard] + node.body, orelse=[])
+        rewritten = ast.fix_missing_locations(ast.copy_location(rewritten, node))
+        return rewritten
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        prologue, iterator = self._outline_expression(node.iter)
+        node.iter = iterator
+        node.body = self._rewrite_body(node.body)
+        node.orelse = self._rewrite_body(node.orelse)
+        return self._prepend_statements(node, prologue)
+
+    if hasattr(ast, 'AsyncFor'):
+
+        def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AST:
+            prologue, iterator = self._outline_expression(node.iter)
+            node.iter = iterator
+            node.body = self._rewrite_body(node.body)
+            node.orelse = self._rewrite_body(node.orelse)
+            return self._prepend_statements(node, prologue)
+
+    def visit_With(self, node: ast.With) -> ast.AST:
+        prologue: List[ast.stmt] = []
+        for item in node.items:
+            item_prologue, context_expr = self._outline_expression(item.context_expr)
+            prologue.extend(item_prologue)
+            item.context_expr = context_expr
+        node.body = self._rewrite_body(node.body)
+        return self._prepend_statements(node, prologue)
+
+    if hasattr(ast, 'AsyncWith'):
+
+        def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AST:
+            prologue: List[ast.stmt] = []
+            for item in node.items:
+                item_prologue, context_expr = self._outline_expression(item.context_expr)
+                prologue.extend(item_prologue)
+                item.context_expr = context_expr
+            node.body = self._rewrite_body(node.body)
+            return self._prepend_statements(node, prologue)
+
+    def _rewrite_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
+        result: List[ast.stmt] = []
+        for statement in body:
+            rewritten = self.visit(statement)
+            if rewritten is None:
+                continue
+            if isinstance(rewritten, list):
+                result.extend(rewritten)
+            else:
+                result.append(rewritten)
+        return result
+
+    def _outline_expression(self,
+                            node: Optional[ast.AST],
+                            *,
+                            in_index_context: bool = False,
+                            hoist_safe: bool = True) -> Tuple[List[ast.stmt], Optional[ast.AST]]:
+        if node is None:
+            return [], None
+
+        if isinstance(node, ast.Subscript):
+            prologue, value = self._outline_expression(node.value,
+                                                       in_index_context=in_index_context,
+                                                       hoist_safe=hoist_safe)
+            slice_prologue, slice_node = self._outline_subscript_slice(node.slice, hoist_safe=hoist_safe)
+            rewritten = ast.copy_location(ast.Subscript(value=value, slice=slice_node, ctx=node.ctx), node)
+            prologue.extend(slice_prologue)
+            if hoist_safe and in_index_context and self._should_outline_index_expression(rewritten):
+                return self._outline_to_temp(rewritten, prologue)
+            return prologue, rewritten
+
+        if isinstance(node, ast.Call):
+            prologue, func = self._outline_expression(node.func,
+                                                      in_index_context=in_index_context,
+                                                      hoist_safe=hoist_safe)
+            args: List[ast.AST] = []
+            for arg in node.args:
+                arg_prologue, rewritten_arg = self._outline_expression(arg,
+                                                                       in_index_context=in_index_context,
+                                                                       hoist_safe=hoist_safe)
+                prologue.extend(arg_prologue)
+                args.append(rewritten_arg)
+            keywords: List[ast.keyword] = []
+            for keyword in node.keywords:
+                kw_prologue, rewritten_value = self._outline_expression(keyword.value,
+                                                                        in_index_context=in_index_context,
+                                                                        hoist_safe=hoist_safe)
+                prologue.extend(kw_prologue)
+                keywords.append(ast.keyword(arg=keyword.arg, value=rewritten_value))
+            rewritten = ast.copy_location(ast.Call(func=func, args=args, keywords=keywords), node)
+            if hoist_safe and in_index_context and self._should_outline_index_expression(rewritten):
+                return self._outline_to_temp(rewritten, prologue)
+            return prologue, rewritten
+
+        if isinstance(node, ast.BinOp):
+            prologue, left = self._outline_expression(node.left,
+                                                      in_index_context=in_index_context,
+                                                      hoist_safe=hoist_safe)
+            right_prologue, right = self._outline_expression(node.right,
+                                                             in_index_context=in_index_context,
+                                                             hoist_safe=hoist_safe)
+            prologue.extend(right_prologue)
+            return prologue, ast.copy_location(ast.BinOp(left=left, op=copy.deepcopy(node.op), right=right), node)
+
+        if isinstance(node, ast.UnaryOp):
+            prologue, operand = self._outline_expression(node.operand,
+                                                         in_index_context=in_index_context,
+                                                         hoist_safe=hoist_safe)
+            return prologue, ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=operand), node)
+
+        if isinstance(node, ast.BoolOp):
+            prologue: List[ast.stmt] = []
+            values: List[ast.AST] = []
+            for index, value in enumerate(node.values):
+                value_prologue, rewritten_value = self._outline_expression(value,
+                                                                           in_index_context=in_index_context,
+                                                                           hoist_safe=hoist_safe and index == 0)
+                prologue.extend(value_prologue)
+                values.append(rewritten_value)
+            return prologue, ast.copy_location(ast.BoolOp(op=copy.deepcopy(node.op), values=values), node)
+
+        if isinstance(node, ast.Compare):
+            prologue, left = self._outline_expression(node.left,
+                                                      in_index_context=in_index_context,
+                                                      hoist_safe=hoist_safe)
+            comparators: List[ast.AST] = []
+            for index, comparator in enumerate(node.comparators):
+                comparator_prologue, rewritten_comparator = self._outline_expression(comparator,
+                                                                                     in_index_context=in_index_context,
+                                                                                     hoist_safe=hoist_safe
+                                                                                     and index == 0)
+                prologue.extend(comparator_prologue)
+                comparators.append(rewritten_comparator)
+            return prologue, ast.copy_location(
+                ast.Compare(left=left, ops=copy.deepcopy(node.ops), comparators=comparators), node)
+
+        if isinstance(node, ast.IfExp):
+            prologue, test = self._outline_expression(node.test,
+                                                      in_index_context=in_index_context,
+                                                      hoist_safe=hoist_safe)
+            body_prologue, body = self._outline_expression(node.body,
+                                                           in_index_context=in_index_context,
+                                                           hoist_safe=False)
+            orelse_prologue, orelse = self._outline_expression(node.orelse,
+                                                               in_index_context=in_index_context,
+                                                               hoist_safe=False)
+            prologue.extend(body_prologue)
+            prologue.extend(orelse_prologue)
+            return prologue, ast.copy_location(ast.IfExp(test=test, body=body, orelse=orelse), node)
+
+        if isinstance(node, ast.Attribute):
+            prologue, value = self._outline_expression(node.value,
+                                                       in_index_context=in_index_context,
+                                                       hoist_safe=hoist_safe)
+            return prologue, ast.copy_location(ast.Attribute(value=value, attr=node.attr, ctx=node.ctx), node)
+
+        if isinstance(node, ast.Tuple):
+            prologue: List[ast.stmt] = []
+            elements: List[ast.AST] = []
+            for element in node.elts:
+                element_prologue, rewritten_element = self._outline_expression(element,
+                                                                               in_index_context=in_index_context,
+                                                                               hoist_safe=hoist_safe)
+                prologue.extend(element_prologue)
+                elements.append(rewritten_element)
+            return prologue, ast.copy_location(ast.Tuple(elts=elements, ctx=node.ctx), node)
+
+        if isinstance(node, ast.List):
+            prologue: List[ast.stmt] = []
+            elements: List[ast.AST] = []
+            for element in node.elts:
+                element_prologue, rewritten_element = self._outline_expression(element,
+                                                                               in_index_context=in_index_context,
+                                                                               hoist_safe=hoist_safe)
+                prologue.extend(element_prologue)
+                elements.append(rewritten_element)
+            return prologue, ast.copy_location(ast.List(elts=elements, ctx=node.ctx), node)
+
+        return [], copy.deepcopy(node)
+
+    def _outline_subscript_slice(self, node: ast.AST, *, hoist_safe: bool = True) -> Tuple[List[ast.stmt], ast.AST]:
+        if isinstance(node, ast.Slice):
+            prologue, lower = self._outline_expression(node.lower, in_index_context=True, hoist_safe=hoist_safe)
+            upper_prologue, upper = self._outline_expression(node.upper, in_index_context=True, hoist_safe=hoist_safe)
+            step_prologue, step = self._outline_expression(node.step, in_index_context=True, hoist_safe=hoist_safe)
+            prologue.extend(upper_prologue)
+            prologue.extend(step_prologue)
+            return prologue, ast.copy_location(ast.Slice(lower=lower, upper=upper, step=step), node)
+
+        if isinstance(node, ast.Tuple):
+            prologue: List[ast.stmt] = []
+            elements: List[ast.AST] = []
+            for element in node.elts:
+                element_prologue, rewritten_element = self._outline_subscript_slice(element, hoist_safe=hoist_safe)
+                prologue.extend(element_prologue)
+                elements.append(rewritten_element)
+            return prologue, ast.copy_location(ast.Tuple(elts=elements, ctx=node.ctx), node)
+
+        return self._outline_expression(node, in_index_context=True, hoist_safe=hoist_safe)
+
+    def _outline_to_temp(self, value: ast.AST, prologue: List[ast.stmt]) -> Tuple[List[ast.stmt], ast.AST]:
+        temp_name = self._fresh_name('__stree_idx')
+        assign = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=copy.deepcopy(value))
+        assign = ast.fix_missing_locations(ast.copy_location(assign, value))
+        prologue.append(assign)
+        return prologue, ast.copy_location(ast.Name(id=temp_name, ctx=ast.Load()), value)
+
+    def _prepend_statements(self, node: ast.stmt, prologue: List[ast.stmt]) -> ast.AST:
+        if not prologue:
+            return node
+        return prologue + [node]
+
+    def _mark_callback(self, statement: ast.stmt, reason: str) -> ast.stmt:
+        setattr(statement, _CALLBACK_REASON_ATTR, reason)
+        return ast.fix_missing_locations(statement)
+
+    def _should_outline_index_expression(self, node: ast.AST) -> bool:
+        if not isinstance(node, (ast.Call, ast.Subscript)):
+            return False
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == 'slice':
+            context = self._evaluation_context()
+            for arg in node.args:
+                if try_resolve_static_value(arg, context) is UNRESOLVED:
+                    return True
+            for keyword in node.keywords:
+                if try_resolve_static_value(keyword.value, context) is UNRESOLVED:
+                    return True
+            return False
+        return try_resolve_static_value(node, self._evaluation_context()) is UNRESOLVED
+
+    def _seed_used_names(self, node: ast.AST) -> None:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                self._used_names.add(child.id)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self._used_names.add(child.name)
+            elif isinstance(child, ast.arg):
+                self._used_names.add(child.arg)
+
+    def _fresh_name(self, prefix: str) -> str:
+        candidate = prefix
+        while candidate in self._used_names:
+            self._temp_counter += 1
+            candidate = f'{prefix}{self._temp_counter}'
+        self._used_names.add(candidate)
+        return candidate
+
+    def _evaluation_context(self) -> Dict[str, Any]:
+        context = copy.copy(self.global_vars)
+        context.update(self.callable_bindings)
+        return context
+
+
 def desugar_schedule_tree_expansions(parsed_ast: ast.AST,
                                      *,
                                      filename: str,
                                      global_vars: Dict[str, Any],
                                      callable_bindings: Optional[Dict[str, Any]] = None) -> ast.AST:
     """Rewrite schedule-tree-specific syntax before AST lowering."""
-    desugarer = ScheduleTreeExpansionDesugarer(filename, global_vars, callable_bindings=callable_bindings)
-    return ast.fix_missing_locations(desugarer.visit(copy.deepcopy(parsed_ast)))
+    expanded = ScheduleTreeExpansionDesugarer(filename, global_vars,
+                                              callable_bindings=callable_bindings).visit(copy.deepcopy(parsed_ast))
+    outlined = ScheduleTreeSubscriptIndexDesugarer(global_vars, callable_bindings=callable_bindings).visit(expanded)
+    return ast.fix_missing_locations(outlined)
 
 
 def callback_reason(node: ast.AST) -> Optional[str]:
