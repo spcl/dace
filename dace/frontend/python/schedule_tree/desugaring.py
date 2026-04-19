@@ -6,8 +6,10 @@ from __future__ import annotations
 import ast
 import builtins as pybuiltins
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+import numbers
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from dace import data
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -851,15 +853,435 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
         return context
 
 
+class _DescriptorTrackingEnvironment:
+
+    def __init__(self,
+                 global_vars: Dict[str, Any],
+                 *,
+                 known_descriptors: Optional[Dict[str, data.Data]] = None,
+                 seed_bindings: Optional[Dict[str, Any]] = None,
+                 callable_bindings: Optional[Dict[str, Any]] = None) -> None:
+        self.global_vars = copy.copy(global_vars)
+        self.callable_bindings = dict(callable_bindings or {})
+        self.static_bindings: Dict[str, Any] = {}
+        self.sequence_lengths: Dict[str, int] = {}
+        self.descriptor_bindings: Dict[str, data.Data] = {}
+
+        for name, value in self.global_vars.items():
+            self.static_bindings[name] = value
+            if isinstance(value, (list, tuple)):
+                self.sequence_lengths[name] = len(value)
+            if isinstance(value, data.Data):
+                self.descriptor_bindings[name] = copy.deepcopy(value)
+
+        for name, descriptor in (known_descriptors or {}).items():
+            self.descriptor_bindings[name] = copy.deepcopy(descriptor)
+
+        for name, binding in (seed_bindings or {}).items():
+            descriptor = getattr(binding, 'descriptor', None)
+            if isinstance(descriptor, data.Data):
+                self.descriptor_bindings[name] = copy.deepcopy(descriptor)
+            structure = getattr(binding, 'structure', None)
+            if isinstance(structure, (list, tuple)):
+                self.sequence_lengths[name] = len(structure)
+
+    def child(self, *, cleared_names: Sequence[str] = ()) -> '_DescriptorTrackingEnvironment':
+        cloned = _DescriptorTrackingEnvironment(self.global_vars, callable_bindings=self.callable_bindings)
+        cloned.static_bindings = copy.copy(self.static_bindings)
+        cloned.sequence_lengths = dict(self.sequence_lengths)
+        cloned.descriptor_bindings = {
+            name: copy.deepcopy(descriptor)
+            for name, descriptor in self.descriptor_bindings.items()
+        }
+        for name in cleared_names:
+            cloned.static_bindings.pop(name, None)
+            cloned.sequence_lengths.pop(name, None)
+        return cloned
+
+    def evaluation_context(self) -> Dict[str, Any]:
+        context = copy.copy(pybuiltins.__dict__)
+        context.update(self.global_vars)
+        context.update(self.callable_bindings)
+        context.update(self.static_bindings)
+        return context
+
+    def descriptor_for_base(self, node: ast.AST) -> Optional[data.Data]:
+        if isinstance(node, ast.Name):
+            descriptor = self.descriptor_bindings.get(node.id)
+            if isinstance(descriptor, data.Data) and getattr(descriptor, 'shape', None) is not None:
+                return copy.deepcopy(descriptor)
+        return None
+
+    def sequence_length_for_base(self, node: ast.AST) -> Optional[int]:
+        if isinstance(node, ast.Name) and node.id in self.sequence_lengths:
+            return self.sequence_lengths[node.id]
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return len(node.elts)
+        value = try_resolve_static_value(node, self.evaluation_context())
+        if isinstance(value, (list, tuple)):
+            return len(value)
+        return None
+
+    def evaluate_descriptor(self, node: ast.AST) -> Optional[data.Data]:
+        descriptor = try_resolve_static_value(node, self.evaluation_context())
+        if isinstance(descriptor, data.Data):
+            return copy.deepcopy(descriptor)
+        return None
+
+    def update_target_binding(self, target: ast.AST, value: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            resolved = try_resolve_static_value(value, self.evaluation_context())
+            if resolved is UNRESOLVED:
+                self.static_bindings.pop(target.id, None)
+            else:
+                self.static_bindings[target.id] = resolved
+
+            if isinstance(value, (ast.Tuple, ast.List)):
+                self.sequence_lengths[target.id] = len(value.elts)
+            elif isinstance(resolved, (list, tuple)):
+                self.sequence_lengths[target.id] = len(resolved)
+            else:
+                self.sequence_lengths.pop(target.id, None)
+
+            if isinstance(value, ast.Name) and value.id in self.descriptor_bindings:
+                self.descriptor_bindings[target.id] = copy.deepcopy(self.descriptor_bindings[value.id])
+            return
+
+        self.invalidate_target(target)
+
+    def invalidate_target(self, target: ast.AST) -> None:
+        self.invalidate_names(self.stored_names(target))
+
+    def invalidate_names(self, names: Sequence[str]) -> None:
+        for name in names:
+            self.static_bindings.pop(name, None)
+            self.sequence_lengths.pop(name, None)
+            self.descriptor_bindings.pop(name, None)
+
+    @staticmethod
+    def stored_names(target: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for child in ast.walk(target):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                names.add(child.id)
+        return names
+
+    def assigned_names(self, body: Sequence[ast.stmt]) -> set[str]:
+        names: set[str] = set()
+        for statement in body:
+            if isinstance(statement, ast.ExceptHandler) and statement.name:
+                names.add(statement.name)
+            names.update(self.stored_names(statement))
+        return names
+
+
+class ScheduleTreeNegativeIndexNormalizer(ast.NodeTransformer):
+    """Rewrite definitely negative indices into extent-relative expressions.
+
+    Examples:
+        ``A[-1]`` becomes ``A[N - 1]`` when ``A`` has known extent ``N``.
+
+        ``t[-i]`` becomes ``t[3 - i]`` for a statically known 3-element tuple or
+        list when ``i`` is known positive.
+    """
+
+    def __init__(self,
+                 global_vars: Dict[str, Any],
+                 *,
+                 known_descriptors: Optional[Dict[str, data.Data]] = None,
+                 seed_bindings: Optional[Dict[str, Any]] = None,
+                 callable_bindings: Optional[Dict[str, Any]] = None) -> None:
+        self.global_vars = copy.copy(global_vars)
+        self.callable_bindings = dict(callable_bindings or {})
+        self._env = _DescriptorTrackingEnvironment(global_vars,
+                                                   known_descriptors=known_descriptors,
+                                                   seed_bindings=seed_bindings,
+                                                   callable_bindings=callable_bindings)
+
+    def visit_Module(self, node: ast.Module) -> ast.AST:
+        node.body = self._rewrite_in_child_scope(node.body)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        return self._visit_function_scope(node)
+
+    if hasattr(ast, 'AsyncFunctionDef'):
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            return self._visit_function_scope(node)
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST:
+        node.value = self.visit(node.value)
+        node.targets = [self.visit(target) for target in node.targets]
+        for target in node.targets:
+            self._env.update_target_binding(target, node.value)
+        return node
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
+        if node.value is not None:
+            node.value = self.visit(node.value)
+        node.target = self.visit(node.target)
+        descriptor = self._env.evaluate_descriptor(node.annotation)
+        if isinstance(node.target, ast.Name) and descriptor is not None:
+            self._env.descriptor_bindings[node.target.id] = descriptor
+        if node.value is None:
+            self._env.invalidate_target(node.target)
+            return node
+        self._env.update_target_binding(node.target, node.value)
+        return node
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        node.target = self.visit(node.target)
+        node.value = self.visit(node.value)
+        self._env.invalidate_target(node.target)
+        return node
+
+    def visit_Return(self, node: ast.Return) -> ast.AST:
+        if node.value is not None:
+            node.value = self.visit(node.value)
+        return node
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST:
+        node.value = self.visit(node.value)
+        return node
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        node.test = self.visit(node.test)
+        node.body = self._rewrite_in_child_scope(node.body)
+        node.orelse = self._rewrite_in_child_scope(node.orelse)
+        self._env.invalidate_names(self._env.assigned_names(node.body + node.orelse))
+        return node
+
+    def visit_While(self, node: ast.While) -> ast.AST:
+        node.test = self.visit(node.test)
+        node.body = self._rewrite_in_child_scope(node.body)
+        node.orelse = self._rewrite_in_child_scope(node.orelse)
+        self._env.invalidate_names(self._env.assigned_names(node.body + node.orelse))
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        node.target = self.visit(node.target)
+        node.iter = self.visit(node.iter)
+        node.body = self._rewrite_in_child_scope(node.body)
+        node.orelse = self._rewrite_in_child_scope(node.orelse)
+        self._env.invalidate_target(node.target)
+        self._env.invalidate_names(self._env.assigned_names(node.body + node.orelse))
+        return node
+
+    if hasattr(ast, 'AsyncFor'):
+
+        def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AST:
+            node.target = self.visit(node.target)
+            node.iter = self.visit(node.iter)
+            node.body = self._rewrite_in_child_scope(node.body)
+            node.orelse = self._rewrite_in_child_scope(node.orelse)
+            self._env.invalidate_target(node.target)
+            self._env.invalidate_names(self._env.assigned_names(node.body + node.orelse))
+            return node
+
+    def visit_With(self, node: ast.With) -> ast.AST:
+        for item in node.items:
+            item.context_expr = self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                item.optional_vars = self.visit(item.optional_vars)
+        node.body = self._rewrite_in_child_scope(node.body)
+        invalidated = self._env.assigned_names(node.body)
+        for item in node.items:
+            if item.optional_vars is not None:
+                invalidated.update(self._env.stored_names(item.optional_vars))
+        self._env.invalidate_names(invalidated)
+        return node
+
+    if hasattr(ast, 'AsyncWith'):
+
+        def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AST:
+            for item in node.items:
+                item.context_expr = self.visit(item.context_expr)
+                if item.optional_vars is not None:
+                    item.optional_vars = self.visit(item.optional_vars)
+            node.body = self._rewrite_in_child_scope(node.body)
+            invalidated = self._env.assigned_names(node.body)
+            for item in node.items:
+                if item.optional_vars is not None:
+                    invalidated.update(self._env.stored_names(item.optional_vars))
+            self._env.invalidate_names(invalidated)
+            return node
+
+    def visit_Try(self, node: ast.Try) -> ast.AST:
+        node.body = self._rewrite_in_child_scope(node.body)
+        node.orelse = self._rewrite_in_child_scope(node.orelse)
+        node.finalbody = self._rewrite_in_child_scope(node.finalbody)
+        for handler in node.handlers:
+            handler.body = self._rewrite_in_child_scope(handler.body)
+        invalidated = self._env.assigned_names(node.body + node.orelse + node.finalbody)
+        for handler in node.handlers:
+            invalidated.update(self._env.assigned_names(handler.body))
+            if handler.name:
+                invalidated.add(handler.name)
+        self._env.invalidate_names(invalidated)
+        return node
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        node = self.generic_visit(node)
+        rewritten = self._rewrite_subscript(node)
+        return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+
+    def _visit_function_scope(self, node: ast.AST) -> ast.AST:
+        args = getattr(node, 'args', None)
+        cleared_names = [arg.arg for arg in args.args] if args is not None else []
+        node.body = self._rewrite_in_child_scope(node.body, cleared_names=cleared_names)
+        return node
+
+    def _rewrite_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
+        result: List[ast.stmt] = []
+        for statement in body:
+            rewritten = self.visit(statement)
+            if rewritten is None:
+                continue
+            if isinstance(rewritten, list):
+                result.extend(rewritten)
+            else:
+                result.append(rewritten)
+        return result
+
+    def _rewrite_in_child_scope(self, body: List[ast.stmt], *, cleared_names: Sequence[str] = ()) -> List[ast.stmt]:
+        saved_env = self._env
+        self._env = self._env.child(cleared_names=cleared_names)
+        try:
+            return self._rewrite_body(body)
+        finally:
+            self._env = saved_env
+
+    def _rewrite_subscript(self, node: ast.Subscript) -> ast.Subscript:
+        descriptor = self._env.descriptor_for_base(node.value)
+        if descriptor is not None:
+            rewritten_slice = self._rewrite_descriptor_slice(node.slice, tuple(descriptor.shape))
+            return ast.copy_location(ast.Subscript(value=node.value, slice=rewritten_slice, ctx=node.ctx), node)
+
+        sequence_length = self._env.sequence_length_for_base(node.value)
+        if sequence_length is not None:
+            rewritten_slice = self._rewrite_index_with_extent(node.slice, ast.Constant(sequence_length))
+            return ast.copy_location(ast.Subscript(value=node.value, slice=rewritten_slice, ctx=node.ctx), node)
+
+        return node
+
+    def _rewrite_descriptor_slice(self, slice_node: ast.AST, shape: Tuple[Any, ...]) -> ast.AST:
+        if isinstance(slice_node, ast.Tuple):
+            extents = self._slice_extents(slice_node.elts, shape)
+            if extents is None:
+                return slice_node
+            elements = [
+                self._rewrite_index_with_extent(element, extent) if extent is not None else element
+                for element, extent in zip(slice_node.elts, extents)
+            ]
+            return ast.copy_location(ast.Tuple(elts=elements, ctx=slice_node.ctx), slice_node)
+
+        if not shape:
+            return slice_node
+        return self._rewrite_index_with_extent(slice_node, self._extent_ast(shape[0]))
+
+    def _slice_extents(self, elements: Sequence[ast.AST], shape: Tuple[Any, ...]) -> Optional[List[Optional[ast.AST]]]:
+        if sum(1 for element in elements if self._is_ellipsis(element)) > 1:
+            return None
+
+        consumed = sum(1 for element in elements if not self._is_newaxis(element) and not self._is_ellipsis(element))
+        ellipsis_dims = max(len(shape) - consumed, 0)
+        dim_index = 0
+        extents: List[Optional[ast.AST]] = []
+
+        for element in elements:
+            if self._is_newaxis(element):
+                extents.append(None)
+                continue
+            if self._is_ellipsis(element):
+                extents.append(None)
+                dim_index += ellipsis_dims
+                continue
+            if dim_index >= len(shape):
+                return None
+            extents.append(self._extent_ast(shape[dim_index]))
+            dim_index += 1
+        return extents
+
+    def _rewrite_index_with_extent(self, node: ast.AST, extent: ast.AST) -> ast.AST:
+        if isinstance(node, ast.Slice):
+            lower = self._rewrite_negative_expression(node.lower, extent)
+            upper = self._rewrite_negative_expression(node.upper, extent)
+            return ast.copy_location(ast.Slice(lower=lower, upper=upper, step=node.step), node)
+
+        if isinstance(node, ast.List):
+            return ast.copy_location(
+                ast.List(elts=[self._rewrite_index_with_extent(element, extent) for element in node.elts],
+                         ctx=node.ctx), node)
+
+        if isinstance(node, ast.Tuple):
+            return ast.copy_location(
+                ast.Tuple(elts=[self._rewrite_index_with_extent(element, extent) for element in node.elts],
+                          ctx=node.ctx), node)
+
+        return self._rewrite_negative_expression(node, extent)
+
+    def _rewrite_negative_expression(self, node: Optional[ast.AST], extent: ast.AST) -> Optional[ast.AST]:
+        if node is None:
+            return None
+
+        resolved = try_resolve_static_value(node, self._env.evaluation_context())
+        if not self._is_definitely_negative_value(resolved):
+            return node
+
+        magnitude = self._negative_magnitude(node, resolved)
+        return ast.copy_location(ast.BinOp(left=copy.deepcopy(extent), op=ast.Sub(), right=magnitude), node)
+
+    @staticmethod
+    def _is_definitely_negative_value(value: Any) -> bool:
+        if value is UNRESOLVED or isinstance(value, bool):
+            return False
+        is_negative = getattr(value, 'is_negative', None)
+        if is_negative is True:
+            return True
+        try:
+            return (value < 0) == True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _negative_magnitude(node: ast.AST, resolved: Any) -> ast.AST:
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return copy.deepcopy(node.operand)
+        if isinstance(resolved, numbers.Integral) and not isinstance(resolved, bool):
+            return ast.Constant(value=abs(int(resolved)))
+        return ast.UnaryOp(op=ast.USub(), operand=copy.deepcopy(node))
+
+    @staticmethod
+    def _is_newaxis(node: ast.AST) -> bool:
+        return isinstance(node, ast.Constant) and node.value is None
+
+    @staticmethod
+    def _is_ellipsis(node: ast.AST) -> bool:
+        return isinstance(node, ast.Constant) and node.value is Ellipsis
+
+    @staticmethod
+    def _extent_ast(extent: Any) -> ast.AST:
+        if isinstance(extent, ast.AST):
+            return copy.deepcopy(extent)
+        return ast.parse(str(extent), mode='eval').body
+
+
 def desugar_schedule_tree_expansions(parsed_ast: ast.AST,
                                      *,
                                      filename: str,
                                      global_vars: Dict[str, Any],
+                                     known_descriptors: Optional[Dict[str, data.Data]] = None,
+                                     seed_bindings: Optional[Dict[str, Any]] = None,
                                      callable_bindings: Optional[Dict[str, Any]] = None) -> ast.AST:
     """Rewrite schedule-tree-specific syntax before AST lowering."""
     expanded = ScheduleTreeExpansionDesugarer(filename, global_vars,
                                               callable_bindings=callable_bindings).visit(copy.deepcopy(parsed_ast))
-    outlined = ScheduleTreeSubscriptIndexDesugarer(global_vars, callable_bindings=callable_bindings).visit(expanded)
+    canonical = ScheduleTreeNegativeIndexNormalizer(global_vars,
+                                                    known_descriptors=known_descriptors,
+                                                    seed_bindings=seed_bindings,
+                                                    callable_bindings=callable_bindings).visit(expanded)
+    outlined = ScheduleTreeSubscriptIndexDesugarer(global_vars, callable_bindings=callable_bindings).visit(canonical)
     return ast.fix_missing_locations(outlined)
 
 

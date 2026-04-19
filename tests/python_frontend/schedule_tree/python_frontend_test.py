@@ -1478,6 +1478,39 @@ def test_singleton_subscript_assignment_scalarized():
     assert isinstance(stree.containers['idx'], dace.data.Scalar)
 
 
+def test_singleton_negative_subscript_assignment_canonicalized():
+    n = dace.symbol('n')
+
+    @dace.program
+    def scalar_prog(x: dace.int32[n]):
+        idx = x[-1]
+
+    stree = scalar_prog.to_schedule_tree()
+
+    assert [type(child) for child in stree.children] == [tn.TaskletNode]
+    assert stree.children[0].node.code.as_string == 'idx = x[(n - 1)]'
+    assert str(stree.children[0].in_memlets['in0'].subset) == 'n - 1'
+    assert str(stree.children[0].out_memlets['out'].subset) == '0'
+    assert isinstance(stree.containers['idx'], dace.data.Scalar)
+
+
+def test_singleton_symbolic_negative_subscript_assignment_canonicalized():
+    n = dace.symbol('n')
+    i = dace.symbol('i', integer=True, positive=True)
+
+    @dace.program
+    def scalar_prog(x: dace.int32[n]):
+        idx = x[-i]
+
+    stree = scalar_prog.to_schedule_tree()
+
+    assert [type(child) for child in stree.children] == [tn.TaskletNode]
+    assert stree.children[0].node.code.as_string == 'idx = x[(n - i)]'
+    assert (dace.symbolic.pystr_to_symbolic(str(
+        stree.children[0].in_memlets['in0'].subset)) == dace.symbolic.pystr_to_symbolic('n - i'))
+    assert str(stree.children[0].out_memlets['out'].subset) == '0'
+
+
 def test_short_circuit_condition_keeps_nested_index_in_guard():
 
     @dace.program

@@ -339,6 +339,8 @@ def build_schedule_tree(name: str,
         desugar_schedule_tree_expansions(parsed_ast.preprocessed_ast,
                                          filename=parsed_ast.filename,
                                          global_vars=parsed_ast.program_globals,
+                                         known_descriptors=argtypes,
+                                         seed_bindings=seed_bindings,
                                          callable_bindings=callable_bindings), parsed_ast.program_globals)
     builder = PythonScheduleTreeBuilder(name,
                                         desugared_ast,
