@@ -54,6 +54,7 @@ class _ResolvedAccess:
     index_connectors: Tuple[str, ...]
     output_shape: Tuple[Any, ...]
     new_axes: Tuple[int, ...] = tuple()
+    scalar_dims: Tuple[int, ...] = tuple()
     blueprint: Optional[_AdvancedIndexBlueprint] = None
 
 
@@ -529,6 +530,7 @@ class _ElementwiseExpressionAnalyzer:
         if existing is not None:
             return existing
 
+        scalar_dims = _scalar_indexed_dims(node, len(descriptor.shape), self.context)
         logical_ranges = _logical_ranges_from_basic_access(node, subset, descriptor, self.context)
         output_shape = tuple(_shape_from_ranges(logical_ranges))
         if output_shape:
@@ -545,6 +547,7 @@ class _ElementwiseExpressionAnalyzer:
                                  index_connectors=tuple(),
                                  output_shape=output_shape,
                                  new_axes=tuple(new_axes),
+                                 scalar_dims=scalar_dims,
                                  blueprint=None)
         self.accesses.append(access)
         self.access_map[key] = access
@@ -640,6 +643,7 @@ def _build_input_memlets(access: _ResolvedAccess, iteration_plan: _IterationPlan
 
     idx_and_subset = reversed(list(zip(reversed(input_indices), reversed(fake_subset.ranges))))
     subset_indices = [_compose_input_index(idx, subset) for idx, subset in idx_and_subset]
+    subset_indices = _reinsert_scalar_dims(access, subset_indices)
     return {access.array_connector: Memlet(data=access.name, subset=subsets.Range.from_indices(subset_indices))}
 
 
@@ -670,7 +674,23 @@ def _build_newaxis_input_memlets(access: _ResolvedAccess,
         _compose_input_index(idx, subset) for dim, (idx, subset) in enumerate(zip(input_indices, logical_ranges))
         if dim not in access.new_axes
     ]
+    subset_indices = _reinsert_scalar_dims(access, subset_indices)
     return {access.array_connector: Memlet(data=access.name, subset=subsets.Range.from_indices(subset_indices))}
+
+
+def _reinsert_scalar_dims(access: _ResolvedAccess, subset_indices: Sequence[Any]) -> List[Any]:
+    if not access.scalar_dims:
+        return list(subset_indices)
+
+    scalar_dims = set(access.scalar_dims)
+    subset_iter = iter(subset_indices)
+    result: List[Any] = []
+    for dim, rng in enumerate(access.subset.ranges):
+        if dim in scalar_dims:
+            result.append(rng[0])
+        else:
+            result.append(next(subset_iter))
+    return result
 
 
 def _build_advanced_input_memlets(access: _ResolvedAccess,

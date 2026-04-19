@@ -415,6 +415,29 @@ def test_python_frontend_schedule_tree_numpy_multiple_newaxis_return_shape():
     assert stree.children[1].values[0].as_string == '__stree_tmp'
 
 
+def test_python_frontend_schedule_tree_numpy_ellipsis_return_shape():
+
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        return A[1:5, ..., 0]
+
+    stree = indexing_test.to_schedule_tree()
+
+    assert len(stree.children) == 2
+    assert isinstance(stree.children[0], tn.MapScope)
+    assert stree.children[0].node.params == ['__i0', '__i1', '__i2', '__i3']
+    tasklet = stree.children[0].children[0]
+    assert isinstance(tasklet, tn.TaskletNode)
+    assert tasklet.node.code.as_string == 'out = in0'
+    assert str(tasklet.in_memlets['in0'].subset) == '__i0 + 1, __i1, __i2, __i3, 0'
+    result_name = tasklet.out_memlets['out'].data
+    result_desc = stree.containers[result_name]
+    assert isinstance(result_desc, dace.data.Array)
+    assert tuple(result_desc.shape) == (4, 5, 5, 5)
+    assert isinstance(stree.children[1], tn.ReturnNode)
+    assert stree.children[1].values[0].as_string == '__stree_tmp'
+
+
 def test_python_frontend_schedule_tree_numpy_advanced_indexing_with_newaxes_return_shape():
 
     @dace.program

@@ -216,3 +216,17 @@ def test_schedule_tree_type_inference_symbolic_static_slice_shape():
 
     assert isinstance(bindings['tmp'].descriptor, data.Array)
     assert str(bindings['tmp'].descriptor.shape[0]) == 'ceiling(n/2 - 1/2)'
+
+
+def test_schedule_tree_type_inference_ellipsis_shape():
+    n = dace.symbol('n')
+
+    @dace.program
+    def ellipsis_prog(A: dace.float64[4, n, 6, 7]):
+        tmp = A[1:3, ..., 0]
+
+    bindings = _infer_schedule_tree_bindings(ellipsis_prog, {'A': dace.float64[4, n, 6, 7]})
+
+    assert isinstance(bindings['tmp'].descriptor, data.Array)
+    assert bindings['tmp'].descriptor.dtype == dace.float64
+    assert tuple(bindings['tmp'].descriptor.shape) == (2, n, 6)

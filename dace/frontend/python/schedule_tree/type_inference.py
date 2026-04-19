@@ -764,12 +764,20 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 return None
             return data.Scalar(descriptor.dtype, transient=True)
 
+        static_descriptor = _infer_static_subscript_descriptor(descriptor, node, self._evaluation_context())
+
         try:
             subset, new_axes, arrdims = memlet_parser.parse_memlet_subset(descriptor, node, self._evaluation_context())
         except Exception:
-            return _infer_static_subscript_descriptor(descriptor, node, self._evaluation_context())
+            return static_descriptor
         if _is_scalar_subscript(node, subset, new_axes, arrdims):
             return data.Scalar(descriptor.dtype, transient=True)
+
+        if static_descriptor is not None:
+            if isinstance(static_descriptor, data.Scalar):
+                return static_descriptor
+            return self._make_view_descriptor(descriptor, static_descriptor.shape)
+
         return self._make_view_descriptor(descriptor, subset.size(), new_axes)
 
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
