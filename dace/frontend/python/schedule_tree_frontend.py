@@ -11,9 +11,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic, subsets
 from dace.config import Config
-from dace.data.pydata import PythonList, PythonTuple
+from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
+from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -1143,7 +1144,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         binding_descriptor = self.bindings.get(name).descriptor if name in self.bindings else None
-        if isinstance(binding_descriptor, (PythonList, PythonTuple)) or isinstance(value, (ast.List, ast.Tuple)):
+        if isinstance(binding_descriptor,
+                      (PythonDict, PythonList, PythonTuple)) or isinstance(value, (ast.Dict, ast.List, ast.Tuple)):
             self._append_node(tn.StatementNode(code=CodeBlock(f'{name} = {self._format_runtime_expression(value)}')))
             return
 
@@ -1306,6 +1308,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def _resolve_data_access(self, node: ast.AST) -> Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]]:
         if isinstance(node, ast.Name) and node.id in self.bindings and self.bindings[node.id].descriptor is not None:
             descriptor = _clone_descriptor(self.bindings[node.id].descriptor)
+            if isinstance(descriptor, PythonDict):
+                return None
             return (node.id, Memlet.from_array(node.id, descriptor), descriptor, _clone_descriptor(descriptor))
 
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
@@ -1313,6 +1317,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if base_name not in self.bindings or self.bindings[base_name].descriptor is None:
                 return None
             descriptor = _clone_descriptor(self.bindings[base_name].descriptor)
+            if isinstance(descriptor, PythonDict):
+                return None
             try:
                 subset, new_axes, arrdims = memlet_parser.parse_memlet_subset(descriptor, node,
                                                                               self._evaluation_context())
@@ -1402,6 +1408,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return result
 
     def _infer_descriptor(self, node: ast.AST, target_name: str) -> Optional[data.Data]:
+        if isinstance(node, ast.Dict):
+            return infer_dict_literal_descriptor(node, lambda value: self._infer_descriptor(value, target_name),
+                                                 self._infer_scalar_descriptor)
+
         if isinstance(node, (ast.List, ast.Tuple)):
             structure, _ = self._structure_from_ast(node)
             if structure is not None:
@@ -1410,6 +1420,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             binding = self.bindings.get(node.value.id)
             if binding is not None and binding.descriptor is not None:
+                dict_descriptor = infer_dict_subscript_descriptor(binding.descriptor, node.slice,
+                                                                  self._evaluation_context)
+                if dict_descriptor is not None:
+                    return dict_descriptor
                 inferred = _infer_static_subscript_descriptor(binding.descriptor, node, self._evaluation_context())
                 if inferred is not None:
                     return inferred

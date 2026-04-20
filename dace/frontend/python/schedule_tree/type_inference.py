@@ -12,8 +12,9 @@ from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIter
     get_args, get_origin
 
 from dace import data, dtypes, symbolic, subsets
-from dace.data.pydata import PythonList, PythonTuple
+from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
+from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.structure_helpers import bind_target_structure, descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -764,6 +765,10 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 return None
             return data.Scalar(descriptor.dtype, transient=True)
 
+        dict_descriptor = infer_dict_subscript_descriptor(descriptor, node.slice, self._evaluation_context)
+        if dict_descriptor is not None:
+            return dict_descriptor
+
         static_descriptor = _infer_static_subscript_descriptor(descriptor, node, self._evaluation_context())
 
         try:
@@ -781,6 +786,9 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         return self._make_view_descriptor(descriptor, subset.size(), new_axes)
 
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
+        if isinstance(node, ast.Dict):
+            return infer_dict_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor)
+
         if isinstance(node, ast.Call):
             # Try the method descriptor-inference registry first (a.sum(), etc.)
             if isinstance(node.func, ast.Attribute):

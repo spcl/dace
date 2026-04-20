@@ -92,6 +92,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      shape=interface['shape'],
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
+    elif isinstance(obj, dict):
+        from dace.data.pydata import infer_python_dict_descriptor_from_value
+        return infer_python_dict_descriptor_from_value(
+            obj, lambda value: create_datadescriptor(value, no_custom_desc=no_custom_desc), transient=False)
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
         obj = np.array(obj)

@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from dace import data, dtypes, subsets, symbolic
-from dace.data.pydata import PythonList, PythonTuple
+from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -1308,7 +1308,8 @@ def _index_descriptor(index_name: str, context: NumpyLoweringContext) -> Optiona
 
 
 def _is_numpy_arraylike(descriptor: data.Data) -> bool:
-    return not isinstance(descriptor, (data.Scalar, PythonList, PythonTuple)) and hasattr(descriptor, 'shape')
+    return not isinstance(descriptor,
+                          (data.Scalar, PythonDict, PythonList, PythonTuple)) and hasattr(descriptor, 'shape')
 
 
 def _frontend_range_tuple(dim: Tuple[Any, Any, Any]) -> Tuple[str, str, str]:

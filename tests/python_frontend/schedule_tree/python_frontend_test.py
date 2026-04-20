@@ -9,7 +9,8 @@ import warnings
 from typing import Optional
 
 import dace
-from dace.data.pydata import PythonList
+from dace import dtypes
+from dace.data.pydata import PythonDict, PythonList
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, ScheduleTreeConvertible
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
@@ -783,6 +784,45 @@ def test_python_frontend_schedule_tree_nounroll_array_annotation_binds_reference
     assert '__dace_iter_end_' not in stree.as_string()
 
 
+def test_python_frontend_schedule_tree_typed_dict_literal_and_static_read():
+
+    @dace.program
+    def dict_prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': A[1]}
+        value = mapping['left']
+        return value
+
+    stree = dict_prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == "mapping = {'left': A[0], 'right': A[1]}"
+    assert isinstance(stree.containers['mapping'], PythonDict)
+    assert isinstance(stree.containers['mapping'].key_type, dace.data.Scalar)
+    assert stree.containers['mapping'].key_type.dtype == dace.string
+    assert isinstance(stree.containers['mapping'].value_type, dace.data.Scalar)
+    assert stree.containers['mapping'].value_type.dtype == dace.float64
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].name == 'value'
+    assert stree.children[1].value.as_string == "mapping['left']"
+    assert isinstance(stree.containers['value'], dace.data.Scalar)
+    assert stree.containers['value'].dtype == dace.float64
+    assert isinstance(stree.children[2], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_heterogeneous_dict_values_fallback_to_pyobject():
+
+    @dace.program
+    def dict_prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': 'two'}
+        return 0.0
+
+    stree = dict_prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['mapping'], PythonDict)
+    assert stree.containers['mapping'].key_type.dtype == dace.string
+    assert stree.containers['mapping'].value_type.dtype == dtypes.pyobject()
+
+
 def test_python_frontend_schedule_tree_free_iter_and_next_calls():
 
     def reverse_range(sz):
@@ -851,9 +891,8 @@ def test_python_frontend_schedule_tree_next_iter_dict_values():
 
     stree = iter_prog.to_schedule_tree()
 
-    assert isinstance(stree.children[0], tn.AssignNode)
-    assert stree.children[0].name == 'x'
-    assert stree.children[0].value.as_string == '{1: 1, 2: 2, 3: 3}'
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'x = {1: 1, 2: 2, 3: 3}'
     assert isinstance(stree.children[1], tn.PythonCallbackNode)
     assert stree.children[1].reason == 'pyobject call'
     assert stree.children[1].code.as_string == '__stree_tmp = x.values()'
@@ -999,7 +1038,8 @@ def test_python_frontend_schedule_tree_double_star_call_expansion_is_resolved_st
 
     stree = dstar_call_prog.to_schedule_tree()
 
-    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == "kwargs = {'c': C}"
     assert isinstance(stree.children[1], tn.FunctionCallScope)
     assert stree.children[1].call.callee_name == 'callee'
     assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}
