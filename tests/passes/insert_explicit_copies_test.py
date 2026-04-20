@@ -104,6 +104,7 @@ def test_insert_cpu_to_cpu_2d_slice():
     st.add_edge(a, None, b, None, m)
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_direct_copy_edges(sdfg) == 0
     assert _count_copy_nodes(sdfg) == 1
 
@@ -128,6 +129,7 @@ def test_insert_other_subset_data_is_dst():
     st.add_edge(a, None, b, None, m)
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_copy_nodes(sdfg) == 1
 
     for n in st.nodes():
@@ -162,6 +164,7 @@ def test_insert_other_subset_data_is_src():
     st.add_edge(a, None, b, None, m)
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_copy_nodes(sdfg) == 1
 
     for n in st.nodes():
