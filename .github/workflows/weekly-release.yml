@@ -1,0 +1,136 @@
+# .github/workflows/weekly-release.yml
+#
+# Runs every Thursday at 12:00 UTC (≈ 14:00 Europe/Zurich). If `main` has
+# advanced since the latest vX.Y.Z tag, bumps the patch version, commits
+# and tags, pushes, and creates a GitHub Release with auto-generated notes
+# of every PR merged since the last tag.
+#
+# pypi-publish.yml does the actual PyPI upload. Since events fired by
+# GITHUB_TOKEN do NOT trigger subsequent workflows, we explicitly dispatch
+# pypi-publish.yml at the end (rather than relying on release: published).
+#
+# CI correctness is trusted from branch protection: every PR merged to
+# main must already be CI-green. No separate CI gate here.
+#
+# Also exposes workflow_dispatch with dry_run=true for rehearsal.
+
+name: Weekly Release
+
+on:
+  schedule:
+    # GitHub cron is UTC-only. 12:00 UTC = 14:00 CEST (summer, ~7 months).
+    # In CET (winter DST) this fires at 13:00 local — accept the 1h drift.
+    - cron: '0 12 * * 4'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip side-effects (commit / tag / push / release / PyPI)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Has main moved since the latest tag?
+        run: |
+          LAST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          LAST=${LAST:-v0.0.0}
+          echo "last_tag=$LAST" >> "$GITHUB_OUTPUT"
+          if [[ "$LAST" == "v0.0.0" ]]; then
+            echo "No prior release — proceeding."
+            echo "advanced=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          COUNT=$(git rev-list --count "$LAST"..HEAD)
+          echo "Commits on main since $LAST: $COUNT"
+          if [[ "$COUNT" == "0" ]]; then
+            echo "advanced=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "advanced=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.advanced == 'true'
+        id: ver
+        name: Compute next patch version
+        run: |
+          L="${{ steps.check.outputs.last_tag }}"
+          V=${L#v}
+          IFS='.' read -r A B C <<< "$V"
+          N="${A}.${B}.$((C+1))"
+          echo "next=$N" >> "$GITHUB_OUTPUT"
+          echo "tag=v$N" >> "$GITHUB_OUTPUT"
+          echo "-> $L -> v$N"
+
+      - if: steps.check.outputs.advanced == 'true' && env.DRY_RUN != 'true'
+        name: Bump version.py, commit, tag, push
+        run: |
+          retry(){ local n=0 d=5; until "$@"; do n=$((n+1)); ((n>=3)) && return 1; sleep $d; d=$((d*2)); done; }
+          echo "__version__ = '${{ steps.ver.outputs.next }}'" > dace/version.py
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dace/version.py
+          git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          retry git push origin HEAD:main
+          retry git push origin "${{ steps.ver.outputs.tag }}"
+
+      - if: steps.check.outputs.advanced == 'true' && env.DRY_RUN != 'true'
+        name: Create GitHub Release
+        run: |
+          retry(){ local n=0 d=5; until "$@"; do n=$((n+1)); ((n>=3)) && return 1; sleep $d; d=$((d*2)); done; }
+          retry gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes
+
+      - if: steps.check.outputs.advanced == 'true' && env.DRY_RUN != 'true'
+        name: Dispatch pypi-publish.yml
+        run: |
+          gh workflow run pypi-publish.yml \
+            --ref "${{ steps.ver.outputs.tag }}" \
+            -f tag="${{ steps.ver.outputs.tag }}" \
+            -f dry_run=false
+
+      - if: env.DRY_RUN == 'true'
+        name: Dry-run notice
+        run: |
+          echo "DRY-RUN — advanced=${{ steps.check.outputs.advanced }} next=${{ steps.ver.outputs.tag }}"
+          echo "Would: commit version.py, tag, push, create GitHub Release, dispatch pypi-publish."
+
+      - if: always() && steps.check.outputs.advanced == 'true'
+        name: Run summary
+        run: |
+          {
+            echo "## Weekly Release"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Last tag | \`${{ steps.check.outputs.last_tag }}\` |"
+            echo "| New tag  | \`${{ steps.ver.outputs.tag }}\` |"
+            echo "| Dry run  | $DRY_RUN |"
+            echo "| Release  | https://github.com/$GITHUB_REPOSITORY/releases/tag/${{ steps.ver.outputs.tag }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: failure() && github.event_name != 'workflow_dispatch'
+        name: Open tracking issue on failure
+        run: |
+          gh issue create --label "release,ci-failure" \
+            --title "Weekly release failed" \
+            --body  "Logs: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
