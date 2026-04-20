@@ -3,12 +3,11 @@ from typing import Any, Dict, Set, Type, Union
 
 import dace
 from dace import SDFG, dtypes, properties
-from dace.config import Config
 from dace.sdfg import is_devicelevel_gpu
-from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node, Tasklet
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_dace_runtime_gpu_stream_name, get_gpu_stream_array_name, get_gpu_stream_connector_name
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler, _is_gpu_copy_or_memset
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
 
 @properties.make_properties
@@ -104,8 +103,9 @@ class InsertGPUStreams(ppl.Pass):
         array descriptor store. A child SDFG requires a GPU stream if:
 
         - It launches GPU kernels (MapEntry/MapExit with GPU_Device schedule).
-        - It contains special Tasklets (e.g., from library node expansion) that
-          use the GPU stream they are assigned to in the code.
+        - It contains ``CopyLibraryNode`` or ``MemsetLibraryNode`` instances
+          targeting GPU storage (these lower to stream-bound memcpy /
+          kernel launches and need an explicit stream handle threaded in).
         - It accesses GPU global memory outside device-level GPU scopes, which
           implies memory copies or kernel data feeds.
 
@@ -135,8 +135,10 @@ class InsertGPUStreams(ppl.Pass):
                         requiring_gpu_stream.add(child_sdfg)
                         break
 
-                    # Case 2: Tasklets that use GPU stream in their code
-                    if isinstance(node, Tasklet) and get_dace_runtime_gpu_stream_name() in node.code.as_string:
+                    # Case 2: Copy / memset library nodes targeting GPU storage.
+                    # Their expansions take an explicit `stream` in-connector,
+                    # so the enclosing SDFG must have the stream array.
+                    if _is_gpu_copy_or_memset(node):
                         requiring_gpu_stream.add(child_sdfg)
                         break
 

@@ -16,10 +16,14 @@ from dace import SDFG, dtypes, properties
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
-_GPU_COPY_STORAGES = {
+_GPU_STORAGES = {
     dtypes.StorageType.GPU_Global,
-    dtypes.StorageType.CPU_Pinned,
+}
+
+_CPU_STORAGES = {
+    dtypes.StorageType.Default,
     dtypes.StorageType.CPU_Heap,
+    dtypes.StorageType.CPU_Pinned,
     dtypes.StorageType.CPU_ThreadLocal,
 }
 
@@ -28,10 +32,11 @@ _GPU_COPY_STORAGES = {
 @transformation.explicit_cf_compatible
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     """
-    Insert ``CopyLibraryNode`` instances for data movement involving GPU
-    global memory or pinned host memory.  Kept for backwards-compatibility;
-    new code should call ``InsertExplicitCopies`` directly with explicit
-    ``src_locations`` / ``dst_locations`` filters.
+    Insert ``CopyLibraryNode`` instances for CPU<->GPU data movement --
+    edges where one endpoint lives in GPU global memory and the other in
+    host-side storage (``Default``/``CPU_Heap``/``CPU_Pinned``/
+    ``CPU_ThreadLocal``).  GPU<->GPU and CPU<->CPU transfers are left
+    untouched; those are not serviced by the GPU stream pipeline.
     """
 
     def depends_on(self):
@@ -44,6 +49,10 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict:
-        inner = InsertExplicitCopies(src_locations=_GPU_COPY_STORAGES, dst_locations=_GPU_COPY_STORAGES)
-        inner.apply_pass(sdfg, pipeline_results)
+        # CPU -> GPU
+        InsertExplicitCopies(src_locations=_CPU_STORAGES,
+                             dst_locations=_GPU_STORAGES).apply_pass(sdfg, pipeline_results)
+        # GPU -> CPU
+        InsertExplicitCopies(src_locations=_GPU_STORAGES,
+                             dst_locations=_CPU_STORAGES).apply_pass(sdfg, pipeline_results)
         return {}
