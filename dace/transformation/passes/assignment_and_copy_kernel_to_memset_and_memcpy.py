@@ -9,7 +9,6 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from dace.transformation.passes.fusion_inline import InlineSDFGs
 from typing import Dict, Iterable, List, Set
 
 
@@ -517,7 +516,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         rmed_memsets = dict()
 
         for (node, state) in map_entries:
-            sdfg.validate()
             assert node in state.nodes(), f"Map entry {node} not in state {state}"
             assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
 
@@ -530,7 +528,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
             if rmed_memcpy > 0:
                 print(f"Removed {rmed_memcpy} memcpy from {node.label}")
-            sdfg.validate()
 
             # If the map is only used for 1 memcpy, then it might have been already removed
             if node in state.nodes():
@@ -539,7 +536,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     print(f"Removed {rmed_memset} memset from {node.label}")
             else:
                 rmed_memset = 0
-            sdfg.validate()
 
             assert node not in rmed_memsets
             assert node not in rmed_memcpies
@@ -548,10 +544,5 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
-
-        # Map fission may create single-state nested SDFGs for the extracted
-        # copy/memset paths.  Re-inline them to keep the graph flat; cost is
-        # bounded by the number of paths lifted in this pass.
-        InlineSDFGs().apply_pass(sdfg, {})
 
         return num_rmed_memcpies + num_rmed_memsets

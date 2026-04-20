@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Tuple
 from dace import SDFG, SDFGState, data, dtypes, subsets
 from dace import memlet as mm
 from dace.codegen import common

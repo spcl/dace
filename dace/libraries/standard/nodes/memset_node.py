@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy as _copy
+
 import dace
 from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -9,6 +11,9 @@ from dace.codegen.common import sym2cpp
 
 from dace.libraries.standard.helper import add_dynamic_inputs
 
+# Name of the special in-connector used to pass an explicit GPU stream.
+_STREAM_CONN = "stream"
+
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
@@ -16,7 +21,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -32,6 +37,11 @@ class ExpandPure(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
+        if stream_input is not None:
+            desc = _copy.deepcopy(stream_input)
+            desc.transient = False
+            sdfg.add_datadesc(_STREAM_CONN, desc)
+
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         access_expr = ','.join(map_params)
@@ -41,13 +51,19 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
             schedule = dace.dtypes.ScheduleType.Default
-        state.add_mapped_tasklet(f"{node.label}_tasklet",
-                                 map_rng,
-                                 dict(),
-                                 code,
-                                 outputs,
-                                 schedule=schedule,
-                                 external_edges=True)
+        _, map_entry, _ = state.add_mapped_tasklet(f"{node.label}_tasklet",
+                                                   map_rng,
+                                                   dict(),
+                                                   code,
+                                                   outputs,
+                                                   schedule=schedule,
+                                                   external_edges=True)
+
+        if stream_input is not None and schedule == dace.dtypes.ScheduleType.GPU_Device:
+            stream_access = state.add_access(_STREAM_CONN)
+            map_entry.add_in_connector(_STREAM_CONN)
+            state.add_edge(stream_access, None, map_entry, _STREAM_CONN,
+                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
 
         return sdfg
 
@@ -58,7 +74,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -73,18 +89,36 @@ class ExpandCUDA(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
+        if stream_input is not None:
+            desc = _copy.deepcopy(stream_input)
+            desc.transient = False
+            sdfg.add_datadesc(_STREAM_CONN, desc)
+
+        tasklet_inputs = set()
+        stream_conn = _STREAM_CONN
+        if stream_input is not None:
+            tasklet_inputs.add(stream_conn)
+            stream_expr = stream_conn
+        else:
+            stream_expr = "__dace_current_stream"
+
         out_access = state.add_access(out_name)
         tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
-            inputs={},
+            inputs=tasklet_inputs,
             outputs={"_memset_out"},
-            code=
-            f"cudaMemsetAsync(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), __dace_current_stream);",
+            code=(f"cudaMemsetAsync(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), "
+                  f"{stream_expr});"),
             language=dace.Language.CPP)
 
         state.add_edge(
             tasklet, "_memset_out", out_access, None,
             dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
+
+        if stream_input is not None:
+            stream_access = state.add_access(_STREAM_CONN)
+            state.add_edge(stream_access, None, tasklet, stream_conn,
+                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
 
         return sdfg
 
@@ -95,7 +129,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs, _ = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -139,7 +173,10 @@ class MemsetLibraryNode(nodes.LibraryNode):
     def validate(self, sdfg, state):
         """
         Validates the tensor transposition operation.
-        :return: A tuple (inp, out) for the data descriptors in the parent SDFG.
+        :return: A tuple ``(out_name, out, out_subset, dynamic_inputs,
+            stream_input)`` for the data descriptors in the parent SDFG.
+            ``stream_input`` is ``None`` or the descriptor of the source
+            connected to the optional ``stream`` in-connector.
         """
 
         out_name, out, out_subset = None, None, None
@@ -151,10 +188,19 @@ class MemsetLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        # Add dynamic connectors
-        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn != "_in"}
+        # Extract the optional `stream` in-connector (opaque GPU stream handle,
+        # not a scalar used in map ranges).
+        stream_ies = [ie for ie in state.in_edges(self) if ie.dst_conn == _STREAM_CONN]
+        if len(stream_ies) > 1:
+            raise ValueError(f"{type(self).__name__} expects at most one '{_STREAM_CONN}' input edge.")
+        stream_input = None
+        if stream_ies:
+            stream_input = sdfg.arrays[stream_ies[0].data.data]
+
+        # Dynamic connectors (anything not `_in` or `stream`).
+        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn not in ("_in", _STREAM_CONN)}
         dynamic_inputs = dict()
-        assert len(dynamic_ies) == len(state.in_edges(self)), "Memset nodes cannot have data inputs"
+        assert len(dynamic_ies) + len(stream_ies) == len(state.in_edges(self)), ("Memset nodes cannot have data inputs")
 
         for ie in dynamic_ies:
             dataname = ie.data.data
@@ -166,4 +212,4 @@ class MemsetLibraryNode(nodes.LibraryNode):
         if not out:
             raise ValueError("Missing the output tensor.")
 
-        return out_name, out, out_subset, dynamic_inputs
+        return out_name, out, out_subset, dynamic_inputs, stream_input

@@ -7,7 +7,6 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace.transformation.passes.gpu_specialization.helpers.copy_strategies import CopyContext, OutOfKernelCopyStrategy
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_connector_name
 
 
 def create_viewed_copy_kernel(parent_state: dace.SDFGState, src_node: dace.nodes.AccessNode,
