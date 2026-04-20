@@ -384,7 +384,6 @@ def test_nested_memset_maps_with_dynamic_connectors(expansion_type: str):
     from dace.sdfg import infer_types
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.validate()
-    sdfg.save("a.sdfg")
     sdfg(llindex=A_IN, zsinksum=B_IN, kidia=kidia, kfdia=kfdia, D=DIM_SIZE)
     assert xp.allclose(A_IN, 0.0)
     assert xp.allclose(B_IN, 0.0)
@@ -677,9 +676,7 @@ def test_simple_with_extra_computation(expansion_type: str):
     sdfg.validate()
     sdfg.name = sdfg.name + f"_simple_with_extra_computation_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
-    sdfg.save("x1.sdfg")
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
-    sdfg.save("x2.sdfg")
 
     A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
     A_OUT = xp.zeros_like(A_IN)
@@ -835,7 +832,6 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
         outputs={"_out": dace.memlet.Memlet("pcovptot[i, _for_it_0]" if full_inner_range else "pcovptot[i]")},
     )
     sdfg.validate()
-    sdfg.save("y.sdfg")
     return sdfg
 
 
@@ -861,7 +857,6 @@ def test_nested_memcpy_with_dimension_change_and_fortran_strides(expansion_type:
     A_IN = xp.fromfunction(lambda x: x, (DIM_SIZE, ), dtype=xp.float64).copy()
     B_IN = xp.fromfunction(lambda x, y: x * DIM_SIZE + y, (DIM_SIZE, DIM_SIZE), dtype=xp.float64).copy()
     _set_lib_node_type(sdfg, expansion_type)
-    sdfg.save("x1.sdfg")
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
     sdfg(zcovptot=A_IN, pcovptot=B_IN, kidia=kidia, kfdia=kfdia, D=DIM_SIZE)

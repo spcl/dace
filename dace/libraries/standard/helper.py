@@ -1,4 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions: subset
+stride collapsing (used to size nested-SDFG data descriptors from memlet
+subsets) and dynamic map-range input promotion.
+"""
 from typing import List
 
 import dace
@@ -8,8 +13,11 @@ import copy
 def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[dace.symbolic.SymExpr]):
     """Remove singleton dimensions (length 1) from a subset/stride pair.
 
-    Returns collapsed lists of shapes and strides suitable for constructing
-    a data descriptor that elides trivial dimensions.
+    The resulting strides describe the access pattern of the subset as a
+    view into the parent array, so each parent stride is scaled by the
+    subset's step (``stride * s``).  For unit-step subsets this is a
+    no-op; for strided subsets it yields the effective per-element
+    distance in the underlying memory.
     """
     collapsed_shape = []
     collapsed_strides = []
@@ -17,7 +25,7 @@ def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[d
         length = (e + 1 - b) // s
         if length != 1:
             collapsed_shape.append(length)
-            collapsed_strides.append(stride)
+            collapsed_strides.append(stride * s)
     return collapsed_shape, collapsed_strides
 
 

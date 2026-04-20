@@ -1,25 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Copy library nodes for data movement at various levels of the memory hierarchy.
+``CopyLibraryNode`` and its expansions -- the single node type used for
+every data copy in an SDFG.  The expansion is selected per-instance via
+``implementation``; all expansions accept an optional ``stream``
+in-connector so the generated GPU kernel/memcpy is bound to a
+caller-provided ``gpuStream_t`` instead of ``__dace_current_stream``.
 
-All copy operations use a single node type, ``CopyLibraryNode``, with
-different expansions selected based on storage types:
-
-``pure``
-    Same-side mapped tasklet (default fallback).
-
-``CUDA`` / ``CPU``
-    API-level memcpy for same-storage contiguous copies.
-
-``CUDAHostToDevice`` / ``CUDADeviceToHost``
-    Cross-storage cudaMemcpyAsync calls.
-
-``RegisterCopy``
-    In-kernel register-to-register copy (Sequential mapped tasklet).
-
-``SharedMemoryCopy``
-    In-kernel copy involving GPU shared memory (GPU_ThreadBlock mapped
-    tasklet for cooperative loads).
+``pure``                                 same-side mapped tasklet (default)
+``DirectAssignment``                     bare ``_out = _in`` tasklet
+``CopyND``                               ``dace::CopyNDDynamic`` strided copy
+``CUDA`` / ``CPU``                       contiguous same-storage memcpy
+``CUDAHostToDevice`` / ``CUDADeviceToHost``  host<->device cudaMemcpyAsync
+``CUDA2D``                               2D strided cudaMemcpy2DAsync
+``RegisterCopy``                         strict Register<->Register
+``SharedMemoryCopy``                     cooperative block-level shared copy
 """
 import copy as _copy
 
@@ -36,10 +30,6 @@ from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 
 # Name of the special in-connector used to pass an explicit GPU stream.
 _STREAM_CONN = "stream"
-
-# ===================================================================
-# Shared validation helper
-# ===================================================================
 
 
 def _validate_copy_edges(node, sdfg, state):
@@ -110,11 +100,13 @@ _CPU_STORAGES = {
     dtypes.StorageType.CPU_Heap,
     dtypes.StorageType.CPU_Pinned,
     dtypes.StorageType.CPU_ThreadLocal,
+    dtypes.StorageType.CPU_Pinned,
+    dtypes.StorageType.Register,
 }
 _GPU_STORAGES = {
     dtypes.StorageType.GPU_Global,
     dtypes.StorageType.GPU_Shared,
-    dtypes.StorageType.Register,  # registers live on the GPU die when inside a kernel
+    dtypes.StorageType.Register,
 }
 
 
@@ -123,17 +115,18 @@ def _is_cross_cpu_gpu(src_storage, dst_storage):
     Returns True if src and dst are on opposite sides of the CPU/GPU
     boundary (one is CPU-side, the other GPU-side).  A mapped tasklet
     cannot handle this; it requires a memcpy API call.
+
+    ``Register`` is storage-agnostic: it adopts the side of whatever scope
+    it lives in, so copies where either endpoint is a register are never
+    reported as cross-boundary.
     """
+    if (src_storage == dtypes.StorageType.Register or dst_storage == dtypes.StorageType.Register):
+        return False
     src_cpu = src_storage in _CPU_STORAGES
     src_gpu = src_storage in _GPU_STORAGES
     dst_cpu = dst_storage in _CPU_STORAGES
     dst_gpu = dst_storage in _GPU_STORAGES
     return (src_cpu and dst_gpu) or (src_gpu and dst_cpu)
-
-
-# ===================================================================
-# Shared expansion helpers
-# ===================================================================
 
 
 def _add_stream_descriptor(sdfg, stream_input):
@@ -460,11 +453,6 @@ def _generate_assignment_code(ctype, copy_shape, in_strides, out_strides):
     return "\n".join(lines)
 
 
-# ===================================================================
-# CopyLibraryNode expansions
-# ===================================================================
-
-
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """
@@ -594,9 +582,87 @@ class ExpandCUDADeviceToHost(ExpandTransformation):
         return _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, "DeviceToHost")
 
 
-# ===================================================================
-# In-kernel expansions (registered on CopyLibraryNode)
-# ===================================================================
+@library.expansion
+class ExpandCUDA2D(ExpandTransformation):
+    """
+    Expansion for 2D strided copies between any combination of GPU_Global and
+    host (CPU_Heap / CPU_Pinned) storages via ``cudaMemcpy2DAsync``.
+
+    Handles three stride patterns (row-major contiguous rows, column-major
+    contiguous columns, and the degenerate case where outer stride is a
+    multiple of the inner).
+    """
+    environments = [environments.CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset, map_lengths, in_shape_collapsed,
+         in_strides_collapsed, out_shape_collapsed, out_strides_collapsed,
+         stream_input) = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=True)
+
+        if len(in_shape_collapsed) != 2 or len(out_shape_collapsed) != 2:
+            raise ValueError("ExpandCUDA2D requires exactly 2D collapsed shapes, got "
+                             f"{in_shape_collapsed} (src) / {out_shape_collapsed} (dst).")
+
+        src_loc = "Device" if inp.storage == dtypes.StorageType.GPU_Global else "Host"
+        dst_loc = "Device" if out.storage == dtypes.StorageType.GPU_Global else "Host"
+        kind = f"cudaMemcpy{src_loc}To{dst_loc}"
+
+        copy_shape = in_shape_collapsed
+        src_strides = in_strides_collapsed
+        dst_strides = out_strides_collapsed
+        ctype = inp.dtype.ctype
+
+        if src_strides[1] == 1 and dst_strides[1] == 1:
+            dpitch = f"{sym2cpp(dst_strides[0])} * sizeof({ctype})"
+            spitch = f"{sym2cpp(src_strides[0])} * sizeof({ctype})"
+            width = f"{sym2cpp(copy_shape[1])} * sizeof({ctype})"
+            height = sym2cpp(copy_shape[0])
+        elif src_strides[0] == 1 and dst_strides[0] == 1:
+            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
+            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
+            width = f"{sym2cpp(copy_shape[0])} * sizeof({ctype})"
+            height = sym2cpp(copy_shape[1])
+        elif (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1]):
+            dpitch = f"{sym2cpp(dst_strides[1])} * sizeof({ctype})"
+            spitch = f"{sym2cpp(src_strides[1])} * sizeof({ctype})"
+            width = f"sizeof({ctype})"
+            height = sym2cpp(copy_shape[0] * copy_shape[1])
+        else:
+            raise NotImplementedError(f"Unsupported 2D memory copy: shape={copy_shape}, "
+                                      f"src_strides={src_strides}, dst_strides={dst_strides}.")
+
+        in_access = state.add_access(inp_name)
+        out_access = state.add_access(out_name)
+
+        tasklet_inputs = {"_memcpy_in"}
+        if stream_input is not None:
+            tasklet_inputs.add(_STREAM_CONN)
+            stream_expr = _STREAM_CONN
+        else:
+            stream_expr = "__dace_current_stream"
+
+        tasklet = state.add_tasklet(name="memcpy2d_tasklet",
+                                    inputs=tasklet_inputs,
+                                    outputs={"_memcpy_out"},
+                                    code=(f"cudaMemcpy2DAsync(_memcpy_out, {dpitch}, _memcpy_in, {spitch}, "
+                                          f"{width}, {height}, {kind}, {stream_expr});"),
+                                    language=dace.Language.CPP)
+        tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
+
+        state.add_edge(
+            in_access, None, tasklet, "_memcpy_in",
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in in_shape_collapsed])))
+        state.add_edge(
+            tasklet, "_memcpy_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
+
+        if stream_input is not None:
+            stream_access = state.add_access(_STREAM_CONN)
+            state.add_edge(stream_access, None, tasklet, _STREAM_CONN,
+                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+
+        return sdfg
 
 
 @library.expansion
@@ -777,11 +843,6 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
         return sdfg
 
 
-# ===================================================================
-# CopyLibraryNode
-# ===================================================================
-
-
 @library.node
 class CopyLibraryNode(nodes.LibraryNode):
     """
@@ -801,6 +862,9 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``CPU``                                      CPU_Heap <-> CPU_Heap (memcpy)
     ``CUDAHostToDevice``                         CPU -> GPU (cudaMemcpy H2D)
     ``CUDADeviceToHost``                         GPU -> CPU (cudaMemcpy D2H)
+    ``CUDA2D``                                   2D strided host<->device /
+                                                 device<->device via
+                                                 cudaMemcpy2DAsync
     ``RegisterCopy``                             Register <-> Register (strict)
     ``SharedMemoryCopy``                         Global<->Shared (collective),
                                                  Shared<->Register (thread-level)
@@ -815,6 +879,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         "CPU": ExpandCPU,
         "CUDAHostToDevice": ExpandCUDAHostToDevice,
         "CUDADeviceToHost": ExpandCUDADeviceToHost,
+        "CUDA2D": ExpandCUDA2D,
         "RegisterCopy": ExpandRegisterCopy,
         "SharedMemoryCopy": ExpandSharedMemoryCopy,
     }

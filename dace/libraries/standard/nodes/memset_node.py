@@ -1,4 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+MemsetLibraryNode and its expansions (pure/CPU/CUDA).  Mirrors the
+CopyLibraryNode design: each expansion consumes an optional ``stream``
+in-connector so memset kernels can be bound to a caller-provided
+``gpuStream_t`` instead of ``__dace_current_stream``.
+"""
 import copy as _copy
 
 import dace

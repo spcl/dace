@@ -1,4 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+End-to-end tests for ``InsertExplicitGPUGlobalMemoryCopies``: verifies that
+direct GPU_Global -> GPU_Global edges (with contiguous and strided subsets,
+and with ``other_subset`` addressing) are lifted to a single
+``CopyLibraryNode`` and still compute the correct result on-device.
+"""
 import dace
 import pytest
 import numpy as np
@@ -26,7 +32,6 @@ def _get_sdfg_with_other_subset(name_str: str, dimension: Tuple[int], copy_strid
         sdfg.add_array(arr_name, dimension, dace.float32, dace.dtypes.StorageType.GPU_Global)
     a = state.add_access("A")
     b = state.add_access("B")
-    # copy_str = ", ".join([f"0:{dimension[i]}:{copy_strides[i]}" for i in range(len(dimension))])
     src_subset = dace.subsets.Range([((dimension[i] // 2), dimension[i] - 1, copy_strides[i])
                                      for i in range(len(dimension))])
     dst_subset = dace.subsets.Range([(0, (dimension[i] // 2) - 1, copy_strides[i]) for i in range(len(dimension))])
@@ -36,23 +41,32 @@ def _get_sdfg_with_other_subset(name_str: str, dimension: Tuple[int], copy_strid
 
 
 def _count_tasklets(sdfg: dace.SDFG) -> int:
-    """Count the number of tasklets in the SDFG."""
+    """Count lifted copy operations in the SDFG.
+
+    After ``InsertExplicitGPUGlobalMemoryCopies`` the copy is represented
+    by a ``CopyLibraryNode`` (not a bare tasklet)
+    """
     count = 0
     for state in sdfg.nodes():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.Tasklet):
+            if isinstance(node, (dace.nodes.Tasklet, dace.nodes.LibraryNode)):
                 count += 1
     return count
 
 
-def _count_nsdfgs(sdfg: dace.SDFG) -> int:
-    """Count the number of nested SDFGs in the SDFG."""
-    count = 0
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                count += 1
-    return count
+def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
+    """Postcondition: after copy-node insertion, no memlet in any state/nsdfg
+    should still carry an ``other_subset`` -- copies are represented by
+    ``CopyLibraryNode`` with plain in/out memlets instead."""
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.states():
+            for edge in state.edges():
+                memlet = edge.data
+                if memlet.is_empty():
+                    continue
+                assert memlet.other_subset is None, (
+                    f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
+                    f"has other_subset={memlet.other_subset}; expected None after copy insertion.")
 
 
 @pytest.mark.gpu
@@ -65,6 +79,7 @@ def test_1d_copy():
 
     sdfg = _get_sdfg("test_1d_copy", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -91,7 +106,7 @@ def test_1d_copy_w_other_subset():
 
     sdfg = _get_sdfg_with_other_subset("test_1d_copy_w_other_subset", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
-    sdfg.save("x.sdfg")
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -118,6 +133,7 @@ def test_2d_copy():
 
     sdfg = _get_sdfg("test_2d_copy", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -146,6 +162,7 @@ def test_2d_copy_with_other_subset():
 
     sdfg = _get_sdfg_with_other_subset("test_2d_copy_with_other_subset", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -172,6 +189,7 @@ def test_3d_copy():
 
     sdfg = _get_sdfg("test_3d_copy", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -200,6 +218,7 @@ def test_1d_strided_copy(stride):
 
     sdfg = _get_sdfg(f"test_1d_strided_copy_s{stride}", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -228,6 +247,7 @@ def test_2d_strided_copy(stride_1, stride_2):
 
     sdfg = _get_sdfg(f"test_2d_strided_copy_s{stride_1}_{stride_2}", dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -256,9 +276,8 @@ def test_3d_strided_copy(stride_1, stride_2, stride_3):
     copy_strides = (stride_1, stride_2, stride_3)
 
     sdfg = _get_sdfg(f"test_3d_strided_copy_s{stride_1}_{stride_2}_{stride_3}", dimension, copy_strides)
-    sdfg.save("x1.sdfg")
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
-    sdfg.save("x2.sdfg")
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -290,9 +309,10 @@ def test_3d_strided_copy_w_other_subset(stride_1, stride_2, stride_3):
     dimension = (8, 8, 8)
     copy_strides = (stride_1, stride_2, stride_3)
 
-    sdfg = _get_sdfg_with_other_subset(f"test_3d_strided_copy_s{stride_1}_{stride_2}_{stride_3}_w_other_subset",
+    sdfg = _get_sdfg_with_other_subset(f"test_3d_strided_copy_w_other_subset_s{stride_1}_{stride_2}_{stride_3}",
                                        dimension, copy_strides)
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Count tasklets
     num_tasklets = _count_tasklets(sdfg)
@@ -322,10 +342,9 @@ def test_independent_copies():
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
     sdfg.validate()
-    sdfg.save("s1.sdfg")
 
     InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
-    sdfg.save("s2.sdfg")
+    _assert_no_other_subset(sdfg)
 
     sdfg.validate()
     sdfg.compile()

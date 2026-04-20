@@ -1,25 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Pass that replaces implicit copy patterns with explicit
-``CopyLibraryNode`` library nodes.
-
-Handles two patterns:
-
-1. **Direct copy edges**: ``AccessNode -> AccessNode``
-2. **Map boundary staging**:
-   ``AccessNode -> MapEntry -> AccessNode(transient)`` (stage-in) and
-   ``AccessNode(transient) -> MapExit -> AccessNode`` (stage-out),
-   where data is staged in/out of a map scope through a transient
-   buffer.
-
-After this pass every data copy in the SDFG is represented by a library
-node that can be independently expanded (Layer 3) and specialized.
+Pass that replaces implicit copy patterns -- direct ``AccessNode ->
+AccessNode`` edges and map-boundary staging (AN -> MapEntry -> AN
+transient; AN transient -> MapExit -> AN) -- with explicit
+``CopyLibraryNode`` instances.  ``src_locations`` / ``dst_locations``
+restrict lifting to specific storage-pair filters (empty means any);
+the GPU-specific wrapper ``InsertExplicitGPUGlobalMemoryCopies`` uses
+this to target GPU_Global / CPU_Pinned copies only.
 """
 import copy as _copy
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import dace
-from dace import nodes, properties
+from dace import dtypes, nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -42,9 +35,34 @@ class InsertExplicitCopies(ppl.Pass):
 
     The pass sets ``src_storage`` and ``dst_storage`` on each new node
     from the array descriptors.
+
+    The ``src_locations`` / ``dst_locations`` properties restrict which
+    copies are lifted.  Empty / ``None`` means "any storage".  When set,
+    only copies whose source storage is in ``src_locations`` *and* whose
+    destination storage is in ``dst_locations`` are replaced.
     """
 
     CATEGORY = "Optimization Preparation"
+
+    src_locations = properties.SetProperty(
+        element_type=dtypes.StorageType,
+        default=set(),
+        desc="Only lift copies whose source storage is in this set. "
+        "Empty set means any source storage is accepted.",
+    )
+    dst_locations = properties.SetProperty(
+        element_type=dtypes.StorageType,
+        default=set(),
+        desc="Only lift copies whose destination storage is in this set. "
+        "Empty set means any destination storage is accepted.",
+    )
+
+    def __init__(self,
+                 src_locations: Optional[Iterable[dtypes.StorageType]] = None,
+                 dst_locations: Optional[Iterable[dtypes.StorageType]] = None):
+        super().__init__()
+        self.src_locations = set(src_locations) if src_locations else set()
+        self.dst_locations = set(dst_locations) if dst_locations else set()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -54,6 +72,14 @@ class InsertExplicitCopies(ppl.Pass):
 
     def depends_on(self):
         return set()
+
+    def _storage_allowed(self, src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
+        """Return True when the (src, dst) storage pair passes the configured filter."""
+        if self.src_locations and src_storage not in self.src_locations:
+            return False
+        if self.dst_locations and dst_storage not in self.dst_locations:
+            return False
+        return True
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """
@@ -70,8 +96,7 @@ class InsertExplicitCopies(ppl.Pass):
     # Pattern 1: direct AccessNode -> AccessNode edges
     # -----------------------------------------------------------------
 
-    @staticmethod
-    def _replace_direct_copies(sdfg: SDFG, state: SDFGState) -> int:
+    def _replace_direct_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         edges = list(state.edges())
         count = 0
         for edge in edges:
@@ -87,6 +112,9 @@ class InsertExplicitCopies(ppl.Pass):
 
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
+
+            if not self._storage_allowed(src_desc.storage, dst_desc.storage):
+                continue
 
             src_name = src_node.data
             dst_name = dst_node.data
@@ -117,8 +145,7 @@ class InsertExplicitCopies(ppl.Pass):
     # Pattern 2: map boundary staging (ME -> AN or AN -> MX)
     # -----------------------------------------------------------------
 
-    @staticmethod
-    def _replace_map_staging_copies(sdfg: SDFG, state: SDFGState) -> int:
+    def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """
         Detect map boundary staging paths:
 
@@ -184,6 +211,9 @@ class InsertExplicitCopies(ppl.Pass):
                 local_desc = sdfg.arrays[local_an.data]
                 outer_desc = sdfg.arrays[outer_memlet.data]
 
+                if not self._storage_allowed(outer_desc.storage, local_desc.storage):
+                    continue
+
                 local_subset = dace.subsets.Range.from_array(local_desc)
                 local_memlet = Memlet(data=local_an.data, subset=local_subset)
 
@@ -204,6 +234,9 @@ class InsertExplicitCopies(ppl.Pass):
                 outer_memlet = edge.data
                 local_desc = sdfg.arrays[local_an.data]
                 outer_desc = sdfg.arrays[outer_memlet.data]
+
+                if not self._storage_allowed(local_desc.storage, outer_desc.storage):
+                    continue
 
                 local_subset = dace.subsets.Range.from_array(local_desc)
                 local_memlet = Memlet(data=local_an.data, subset=local_subset)
