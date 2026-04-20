@@ -216,10 +216,8 @@ def test_three_kernels_dependent_and_independent():
         sdfg.apply_transformations_repeated(StateFusionExtended)
         sdfg.apply_gpu_transformations()
         sdfg.apply_transformations_repeated(StateFusionExtended)
-
         # Step 1: materialize explicit GPU memory copies so we can inspect the SDFG at that point.
         Pipeline([InsertExplicitGPUGlobalMemoryCopies()]).apply_pass(sdfg, {})
-        sdfg.save("three_kernels_gpu_copies.sdfg")
 
         # Step 2: run the remaining stream-specialization passes.
         Pipeline([
@@ -228,7 +226,6 @@ def test_three_kernels_dependent_and_independent():
             ConnectGPUStreamsToNodes(),
             InsertGPUStreamSyncTasklets(),
         ]).apply_pass(sdfg, {})
-        sdfg.save("three_kernels_gpu_streams.sdfg")
 
         kernel_states = []
         for state in sdfg.states():
