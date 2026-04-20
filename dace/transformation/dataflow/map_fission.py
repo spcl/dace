@@ -4,7 +4,6 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import sdfg as sd, memlet as mm, subsets, data as dt
-from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil

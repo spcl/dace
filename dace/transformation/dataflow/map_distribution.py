@@ -3,13 +3,11 @@
 
 from copy import deepcopy
 from numbers import Number
-from typing import Dict, List
 import dace
 import sympy
-from dace import data, dtypes, subsets, symbolic
+from dace import data, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce

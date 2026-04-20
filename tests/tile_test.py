@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import argparse
 import dace
-import math
 import numpy as np
 
 W = dace.symbol('W')
