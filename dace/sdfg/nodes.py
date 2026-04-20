@@ -11,14 +11,12 @@ import dace.serialize
 from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse, rname
-from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
-                             SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
-                             ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
-                             CodeBlock)
-from dace.frontend.operations import detect_reduction_type
+from dace.frontend.python.astutils import rname
+from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty, DebugInfoProperty, SetProperty,
+                             make_properties, indirect_properties, DataProperty, SymbolicProperty, ListProperty,
+                             SDFGReferenceProperty, DictProperty, LibraryImplementationProperty, CodeBlock)
 from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace import data, subsets as sbs, dtypes
+from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
 from dace.sdfg.type_inference import infer_types, infer_expr_type
 import pydoc

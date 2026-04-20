@@ -1,0 +1,227 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+MemsetLibraryNode and its expansions (pure/CPU/CUDA).  Mirrors the
+CopyLibraryNode design: each expansion consumes an optional ``stream``
+in-connector so memset kernels can be bound to a caller-provided
+``gpuStream_t`` instead of ``__dace_current_stream``.
+"""
+import copy as _copy
+
+import dace
+from dace import library, nodes
+from dace.transformation.transformation import ExpandTransformation
+from .. import environments
+from functools import reduce
+import operator
+from dace.codegen.common import sym2cpp
+
+from dace.libraries.standard.helper import add_dynamic_inputs
+
+# Name of the special in-connector used to pass an explicit GPU stream.
+_STREAM_CONN = "stream"
+
+
+@library.expansion
+class ExpandPure(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
+        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        out_shape_collapsed = map_lengths
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
+
+        state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
+
+        if stream_input is not None:
+            desc = _copy.deepcopy(stream_input)
+            desc.transient = False
+            sdfg.add_datadesc(_STREAM_CONN, desc)
+
+        map_params = [f"__i{i}" for i in range(len(map_lengths))]
+        map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
+        access_expr = ','.join(map_params)
+        outputs = {"_memset_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
+        code = "_memset_out = 0"
+        if out.storage == dace.dtypes.StorageType.GPU_Global:
+            schedule = dace.dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dace.dtypes.ScheduleType.Default
+        _, map_entry, _ = state.add_mapped_tasklet(f"{node.label}_tasklet",
+                                                   map_rng,
+                                                   dict(),
+                                                   code,
+                                                   outputs,
+                                                   schedule=schedule,
+                                                   external_edges=True)
+
+        if stream_input is not None and schedule == dace.dtypes.ScheduleType.GPU_Device:
+            stream_access = state.add_access(_STREAM_CONN)
+            map_entry.add_in_connector(_STREAM_CONN)
+            state.add_edge(stream_access, None, map_entry, _STREAM_CONN,
+                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+
+        return sdfg
+
+
+@library.expansion
+class ExpandCUDA(ExpandTransformation):
+    environments = [environments.CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
+        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        out_shape_collapsed = [ml for ml in map_lengths if ml != 1]
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
+        state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
+
+        if stream_input is not None:
+            desc = _copy.deepcopy(stream_input)
+            desc.transient = False
+            sdfg.add_datadesc(_STREAM_CONN, desc)
+
+        tasklet_inputs = set()
+        stream_conn = _STREAM_CONN
+        if stream_input is not None:
+            tasklet_inputs.add(stream_conn)
+            stream_expr = stream_conn
+        else:
+            stream_expr = "__dace_current_stream"
+
+        out_access = state.add_access(out_name)
+        tasklet = state.add_tasklet(
+            name=f"memcpy_tasklet",
+            inputs=tasklet_inputs,
+            outputs={"_memset_out"},
+            code=(f"cudaMemsetAsync(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), "
+                  f"{stream_expr});"),
+            language=dace.Language.CPP)
+
+        state.add_edge(
+            tasklet, "_memset_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
+
+        if stream_input is not None:
+            stream_access = state.add_access(_STREAM_CONN)
+            state.add_edge(stream_access, None, tasklet, stream_conn,
+                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+
+        return sdfg
+
+
+@library.expansion
+class ExpandCPU(ExpandTransformation):
+    environments = [environments.CPU]
+
+    @staticmethod
+    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        out_name, out, out_subset, dynamic_inputs, _ = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
+        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        out_shape_collapsed = map_lengths
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
+        state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
+
+        # Access the original output
+        out_access = state.add_access(out_name)
+
+        # Add a tasklet that does standard CPU memset
+        tasklet = state.add_tasklet(name=f"memset_tasklet",
+                                    inputs={},
+                                    outputs={"_memset_out"},
+                                    code=f"memset(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));",
+                                    language=dace.Language.CPP)
+
+        # Connect tasklet to the output
+        state.add_edge(
+            tasklet, "_memset_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
+
+        return sdfg
+
+
+@library.node
+class MemsetLibraryNode(nodes.LibraryNode):
+    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
+    default_implementation = 'pure'
+
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
+
+    def validate(self, sdfg, state):
+        """
+        Validates the tensor transposition operation.
+        :return: A tuple ``(out_name, out, out_subset, dynamic_inputs,
+            stream_input)`` for the data descriptors in the parent SDFG.
+            ``stream_input`` is ``None`` or the descriptor of the source
+            connected to the optional ``stream`` in-connector.
+        """
+
+        out_name, out, out_subset = None, None, None
+        # Only the ``_out`` edge carries the memset payload; empty-memlet
+        # dependency edges (e.g. from the GPU stream pipeline) are ignored.
+        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
+        if len(data_oes) != 1:
+            raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")
+
+        oe = data_oes[0]
+        out = sdfg.arrays[oe.data.data]
+        out_subset = oe.data.subset
+        out_name = oe.src_conn
+
+        # Extract the optional `stream` in-connector (opaque GPU stream handle,
+        # not a scalar used in map ranges).
+        stream_ies = [ie for ie in state.in_edges(self) if ie.dst_conn == _STREAM_CONN]
+        if len(stream_ies) > 1:
+            raise ValueError(f"{type(self).__name__} expects at most one '{_STREAM_CONN}' input edge.")
+        stream_input = None
+        if stream_ies:
+            stream_input = sdfg.arrays[stream_ies[0].data.data]
+
+        # Dynamic connectors (anything not `_in` or `stream`). Empty-memlet
+        # dependency edges are ignored.
+        dynamic_ies = {
+            ie
+            for ie in state.in_edges(self) if ie.dst_conn not in ("_in", _STREAM_CONN) and not ie.data.is_empty()
+        }
+        dynamic_inputs = dict()
+
+        for ie in dynamic_ies:
+            dataname = ie.data.data
+            datadesc = state.sdfg.arrays[dataname]
+            if not isinstance(datadesc, dace.data.Scalar):
+                raise ValueError("Dynamic inputs (not connected to `_in`) need to be all scalars")
+            dynamic_inputs[ie.dst_conn] = datadesc
+
+        if not out:
+            raise ValueError("Missing the output tensor.")
+
+        return out_name, out, out_subset, dynamic_inputs, stream_input

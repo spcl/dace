@@ -6,12 +6,10 @@ import sympy
 from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict, Callable
-import warnings
+from typing import Set, Tuple, Union, List, Dict, Callable
 
 # Transformations
 from dace.transformation.passes import FullMapFusion

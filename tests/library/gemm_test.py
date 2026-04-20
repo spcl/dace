@@ -1,12 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
-import warnings
 import itertools
 import sys
 import dace
 import random
 import numpy as np
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.blas import Gemm
 
 M = dace.symbol('M')

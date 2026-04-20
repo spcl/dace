@@ -4,8 +4,7 @@
 from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
-from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict

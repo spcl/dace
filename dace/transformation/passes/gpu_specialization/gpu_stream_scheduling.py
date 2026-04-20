@@ -4,12 +4,32 @@ from typing import Dict, List, Set, Type, Union
 import dace
 from dace import SDFG, SDFGState, properties
 from dace.config import Config
+from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.transformation import pass_pipeline as ppl, transformation
 
-# Placeholder for the GPU stream variable used in tasklet code
-STREAM_PLACEHOLDER = "__dace_current_stream"
+# Storages whose copies are serviced by the GPU stream pipeline.
+_GPU_SIDE_STORAGES = frozenset({
+    dace.dtypes.StorageType.GPU_Global,
+    dace.dtypes.StorageType.GPU_Shared,
+    dace.dtypes.StorageType.CPU_Pinned,
+})
+
+
+def _is_gpu_copy_or_memset(node) -> bool:
+    """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU
+    global or pinned host memory -- i.e. the nodes the GPU stream pipeline
+    needs to wire a stream handle to.
+    """
+    if isinstance(node, CopyLibraryNode):
+        return (node.src_storage in _GPU_SIDE_STORAGES or node.dst_storage in _GPU_SIDE_STORAGES)
+    if isinstance(node, MemsetLibraryNode):
+        # Memset has a single output; inspect its descriptor via the parent
+        # state at detection time (see ``_requires_gpu_stream``).
+        return True
+    return False
 
 
 @properties.make_properties
@@ -210,7 +230,8 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         A component requires a GPU stream if it contains at least one of:
         - An AccessNode with GPU global memory storage,
         - A MapEntry scheduled on a GPU device,
-        - A Tasklet whose code includes the stream placeholder.
+        - A ``CopyLibraryNode`` or ``MemsetLibraryNode`` touching GPU
+          storage (these lower to stream-bound memcpy/kernel launches).
 
         Parameters
         ----------
@@ -232,7 +253,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             elif (isinstance(node, nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
                 return True
 
-            elif (isinstance(node, nodes.Tasklet) and STREAM_PLACEHOLDER in node.code.as_string):
+            elif _is_gpu_copy_or_memset(node):
                 return True
 
             return False

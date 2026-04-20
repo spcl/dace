@@ -4,13 +4,10 @@ from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Dict, Iterator, List, Literal, Optional, Set, Union
-
-if TYPE_CHECKING:
-    from dace import SDFG
+from typing import Dict, Iterator, List, Literal, Optional, Set, Union
 
 INDENTATION = '  '
 

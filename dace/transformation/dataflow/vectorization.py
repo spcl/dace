@@ -1,13 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
-from dace import data, dtypes, registry, symbolic, subsets
+from dace import data, dtypes, symbolic, subsets
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
 from dace.transformation.helpers import replicate_scope
 from dace.properties import Property, make_properties
-import itertools
 
 
 @make_properties

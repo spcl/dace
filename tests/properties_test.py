@@ -4,7 +4,6 @@
 import unittest
 import sympy as sp
 import dace
-from collections import OrderedDict
 
 
 class PropertyTests(unittest.TestCase):

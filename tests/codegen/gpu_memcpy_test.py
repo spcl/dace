@@ -5,7 +5,6 @@ from dace.transformation.auto import auto_optimize
 from dace.sdfg import nodes as dace_nodes
 
 import pytest
-import copy
 import re
 
 # this test requires cupy module
