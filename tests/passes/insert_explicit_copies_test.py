@@ -197,6 +197,7 @@ def test_insert_cpu_to_cpu_full_array():
     st.add_edge(a, None, b, None, Memlet("A[0:64]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     sdfg.expand_library_nodes()
     exe = sdfg.compile()
     A = np.arange(64, dtype=np.float64)
@@ -219,6 +220,7 @@ def test_insert_multiple_copies_same_state():
     st.add_edge(a, None, c, None, Memlet("A[0:32]"))
 
     result = InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert result == 2
     assert _count_copy_nodes(sdfg) == 2
 
@@ -243,6 +245,7 @@ def test_insert_empty_memlet_skipped():
     st.add_edge(a, None, b, None, Memlet())
 
     result = InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert result is None
     assert _count_copy_nodes(sdfg) == 0
 
@@ -259,6 +262,7 @@ def test_insert_no_copies_returns_none():
     st.add_edge(t, "_out", a2, None, Memlet("A[0]"))
 
     result = InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert result is None
 
 
@@ -283,6 +287,7 @@ def test_insert_nested_sdfg():
     ost.add_edge(nsdfg, "Y", b, None, Memlet("B[0:20]"))
 
     result = InsertExplicitCopies().apply_pass(outer, {})
+    _assert_no_other_subset(outer)
     assert result == 1
     assert _count_copy_nodes(outer) == 1
 
@@ -298,6 +303,7 @@ def test_insert_validates_after_pass():
     st.add_edge(a, None, b, None, Memlet("A[0:100]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     sdfg.validate()
 
 
@@ -338,6 +344,7 @@ def test_insert_map_staging_copies():
     assert _count_copy_nodes(sdfg) == 0
 
     result = InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert result == 2, f"Expected 2 staging copies, got {result}"
     assert _count_copy_nodes(sdfg) == 2
 
@@ -385,6 +392,7 @@ def test_insert_staging_requires_outer_access_node():
     # Stage-out is a valid pattern (lo -> MX -> B), but stage-in must NOT
     # fire because there is no AccessNode feeding MapEntry for "local".
     result = InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
 
     # Only the stage-out side should have been rewritten.
     assert result == 1, f"Expected 1 staging copy (stage-out only), got {result}"
@@ -406,6 +414,7 @@ def test_insert_cpu_to_gpu():
     st.add_edge(h, None, g, None, Memlet("H[0:64]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_copy_nodes(sdfg) == 1
     for n in st.nodes():
         if isinstance(n, CopyLibraryNode):
@@ -425,6 +434,7 @@ def test_insert_gpu_to_cpu():
     st.add_edge(g, None, h, None, Memlet("G[0:64]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_copy_nodes(sdfg) == 1
     for n in st.nodes():
         if isinstance(n, CopyLibraryNode):
@@ -444,6 +454,7 @@ def test_insert_gpu_to_gpu():
     st.add_edge(a, None, b, None, Memlet("A[0:128]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_copy_nodes(sdfg) == 1
     assert _count_direct_copy_edges(sdfg) == 0
     for n in st.nodes():
@@ -476,6 +487,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
 
     sdfg_pass = _copy.deepcopy(sdfg_ref)
     InsertExplicitCopies().apply_pass(sdfg_pass, {})
+    _assert_no_other_subset(sdfg_pass)
     sdfg_pass.expand_library_nodes()
     pass_exe = sdfg_pass.compile()
     pass_arrays = init_fn(**sizes)
