@@ -19,7 +19,7 @@ import copy as _copy
 from typing import Any, Dict, Optional
 
 import dace
-from dace import dtypes, nodes, properties
+from dace import nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState

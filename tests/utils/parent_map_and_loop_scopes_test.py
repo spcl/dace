@@ -19,8 +19,6 @@ scalar-dependent dynamic ranges, and 3D tensor accesses::
                     A[k, ii, j+s+idx] += 1.0     # Tasklet
 """
 import dace
-import numpy as np
-import pytest
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.construction_utils import (get_parent_map_and_loop_scopes, get_parent_maps)
 

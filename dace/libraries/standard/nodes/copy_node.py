@@ -28,7 +28,6 @@ from .. import environments
 from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
-import copy
 
 from dace.libraries.standard.helper import add_dynamic_inputs, collapse_shape_and_strides
 from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
