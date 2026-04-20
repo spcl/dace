@@ -16,7 +16,8 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
-from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from_structure
+from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, member_descriptor, \
+    structure_member_path
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
@@ -1312,11 +1313,23 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return None
             return (node.id, Memlet.from_array(node.id, descriptor), descriptor, _clone_descriptor(descriptor))
 
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            base_name = node.value.id
-            if base_name not in self.bindings or self.bindings[base_name].descriptor is None:
+        if isinstance(node, ast.Attribute):
+            owner_access = self._resolve_data_access(node.value)
+            if owner_access is None:
                 return None
-            descriptor = _clone_descriptor(self.bindings[base_name].descriptor)
+            owner_name, _, owner_descriptor, _ = owner_access
+            descriptor = member_descriptor(owner_descriptor, node.attr)
+            if descriptor is None or isinstance(descriptor, PythonDict):
+                return None
+            data_name = structure_member_path(owner_name, node.attr)
+            return (data_name, Memlet.from_array(data_name, descriptor), descriptor, _clone_descriptor(descriptor))
+
+        if isinstance(node, ast.Subscript):
+            base_access = self._resolve_data_access(node.value)
+            if base_access is None:
+                return None
+            base_name, _, descriptor, _ = base_access
+            descriptor = _clone_descriptor(descriptor)
             if isinstance(descriptor, PythonDict):
                 return None
             try:
@@ -1417,14 +1430,31 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if structure is not None:
                 return descriptor_from_structure(structure)
 
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            binding = self.bindings.get(node.value.id)
-            if binding is not None and binding.descriptor is not None:
-                dict_descriptor = infer_dict_subscript_descriptor(binding.descriptor, node.slice,
-                                                                  self._evaluation_context)
+        if isinstance(node, ast.Attribute):
+            access = self._resolve_data_access(node)
+            if access is not None:
+                _, _, descriptor, view_descriptor = access
+                result = _clone_descriptor(view_descriptor or descriptor)
+                result.transient = True
+                return result
+
+        if isinstance(node, ast.Subscript):
+            base_descriptor: Optional[data.Data] = None
+            base_access = self._resolve_data_access(node.value)
+            if base_access is not None:
+                _, _, base_descriptor, _ = base_access
+            elif isinstance(node.value, ast.Name):
+                binding = self.bindings.get(node.value.id)
+                if binding is not None and binding.descriptor is not None:
+                    base_descriptor = binding.descriptor
+            elif isinstance(node.value, ast.Attribute):
+                base_descriptor = self._infer_descriptor(node.value, target_name)
+
+            if base_descriptor is not None:
+                dict_descriptor = infer_dict_subscript_descriptor(base_descriptor, node.slice, self._evaluation_context)
                 if dict_descriptor is not None:
                     return dict_descriptor
-                inferred = _infer_static_subscript_descriptor(binding.descriptor, node, self._evaluation_context())
+                inferred = _infer_static_subscript_descriptor(base_descriptor, node, self._evaluation_context())
                 if inferred is not None:
                     return inferred
 

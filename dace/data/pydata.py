@@ -1,5 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Python-native data descriptors."""
+"""Python-native data descriptors.
+
+These descriptors are primarily used by the direct schedule-tree Python
+frontend. They intentionally distinguish between:
+
+- ``Structure`` for classes with a fully known by-value field layout, and
+- ``PythonClass`` for analyzable Python objects whose field information is
+  useful to the frontend even when the value is not treated as a by-value
+  structure.
+"""
 # TODO: These classes are incomplete, they require more support on the SDFG/connector level and in code generation
 #       (bindings, C++ codegen, etc.). They are currently only used for the Schedule Tree-based Python frontend.
 
@@ -78,6 +87,19 @@ def infer_python_dict_descriptor_from_value(value: Mapping[Any, Any],
                       transient=transient)
 
 
+def python_dataclass_descriptor(cls: Type[Any], *, by_value: bool = False, **overrides) -> Data:
+    """Create the canonical descriptor for a Python dataclass.
+
+    ``by_value=True`` selects ``Structure`` and is intended for classes whose
+    full field layout is known and safe to pass by value. ``by_value=False``
+    keeps the descriptor on the ``PythonClass`` path, which preserves analyzable
+    member information without collapsing the object to a plain ``pyobject``.
+    """
+    if by_value:
+        return Structure.from_dataclass(cls, **overrides)
+    return PythonClass.from_dataclass(cls, **overrides)
+
+
 @make_properties
 class PythonList(Array):
     """Represents a native Python list argument."""
@@ -106,7 +128,12 @@ class PythonTuple(Array):
 
 @make_properties
 class PythonDict(Data):
-    """Represents a native Python dictionary with a uniform key and value type."""
+    """Represents a native Python dictionary with a uniform key and value type.
+
+    This is intentionally a frontend-facing stub descriptor for now: it carries
+    typed key/value metadata for analysis and schedule-tree lowering, but it is
+    not a promise of full first-class mapping code generation support.
+    """
 
     key_type = NestedDataClassProperty(default=None, allow_none=True)
     value_type = NestedDataClassProperty(default=None, allow_none=True)
@@ -208,7 +235,11 @@ class PythonDict(Data):
 
 @make_properties
 class PythonClass(Structure):
-    """Represents a Python dataclass with typed fields."""
+    """Represents an analyzable Python class with typed fields.
+
+    Unlike ``Structure``, this descriptor keeps the value on the Python-object
+    path even when member types are known.
+    """
 
     def __init__(self, members, name: str = 'PythonClass', **kwargs):
         super().__init__(members=members, name=name, **kwargs)
@@ -234,6 +265,9 @@ class PythonClass(Structure):
         from dace.data.creation import create_datadescriptor  # Avoid import cycle
         members = {}
         for field in fields(cls):
+            if is_dataclass(field.type):
+                members[field.name] = Structure.from_dataclass(field.type)
+                continue
             members[field.name] = create_datadescriptor(field.type)
         members.update(overrides)
         return PythonClass(members, name=cls.__name__)

@@ -16,7 +16,8 @@ from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
-from dace.frontend.python.schedule_tree.structure_helpers import bind_target_structure, descriptor_from_structure
+from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
+    member_descriptor
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -462,8 +463,19 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         if isinstance(value, ast.Name) and value.id in self.bindings:
             return _clone_binding(self.bindings[value.id])
 
-        if isinstance(value, ast.Subscript) and isinstance(value.value, ast.Name):
-            binding = self.bindings.get(value.value.id)
+        if isinstance(value, ast.Attribute):
+            base_binding = self._resolve_binding(value.value)
+            if base_binding is None or base_binding.descriptor is None:
+                return None
+            descriptor = member_descriptor(base_binding.descriptor, value.attr)
+            if descriptor is None:
+                return None
+            kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
+            structure = descriptor if isinstance(descriptor, data.Scalar) else None
+            return _Binding(descriptor=descriptor, kind=kind, structure=structure)
+
+        if isinstance(value, ast.Subscript):
+            binding = self._resolve_binding(value.value)
             if binding is None or binding.descriptor is None:
                 return None
             structure = self._subscript_structure(binding, value.slice)
@@ -788,6 +800,11 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         if isinstance(node, ast.Dict):
             return infer_dict_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor)
+
+        if isinstance(node, ast.Attribute):
+            binding = self._resolve_binding(node)
+            if binding is not None and binding.descriptor is not None:
+                return _clone_descriptor(binding.descriptor)
 
         if isinstance(node, ast.Call):
             # Try the method descriptor-inference registry first (a.sum(), etc.)
