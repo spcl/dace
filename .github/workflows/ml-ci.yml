@@ -5,6 +5,7 @@ on:
     branches: [ main, ci-fix ]
   pull_request:
     branches: [ main, ci-fix ]
+    types: [opened, synchronize, reopened, unlabeled]
   merge_group:
     branches: [ main, ci-fix ]
 
