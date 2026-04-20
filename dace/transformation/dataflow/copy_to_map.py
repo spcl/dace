@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import dtypes, symbolic, data, subsets, Memlet, properties
+from dace import properties
 from dace.transformation import transformation as xf
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil, memlet_utils as mutils
 

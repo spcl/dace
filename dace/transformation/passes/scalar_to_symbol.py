@@ -21,7 +21,6 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible

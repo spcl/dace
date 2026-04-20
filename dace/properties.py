@@ -14,7 +14,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Integral, Number
+from numbers import Number
 from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:

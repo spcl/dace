@@ -3,17 +3,13 @@
 
 from dace.transformation.estimator.enumeration import Enumerator
 
-from dace.transformation.subgraph import SubgraphFusion, helpers
+from dace.transformation.subgraph import helpers
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-import dace.sdfg.nodes as nodes
-
-from collections import deque, defaultdict, ChainMap
-from typing import Set, Union, List, Callable
-import itertools
+from typing import Callable
 
 import heapq
 
