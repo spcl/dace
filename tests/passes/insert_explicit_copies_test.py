@@ -40,6 +40,21 @@ def _count_direct_copy_edges(sdfg):
     return count
 
 
+def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
+    """Postcondition: after copy-node insertion, no memlet in any state/nsdfg
+    should still carry an ``other_subset`` -- copies are represented by
+    ``CopyLibraryNode`` with plain in/out memlets instead."""
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.states():
+            for edge in state.edges():
+                memlet = edge.data
+                if memlet.is_empty():
+                    continue
+                assert memlet.other_subset is None, (
+                    f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
+                    f"has other_subset={memlet.other_subset}; expected None after copy insertion.")
+
+
 # ===================================================================
 # Part 1: Artificial SDFG builder tests
 # ===================================================================
@@ -59,6 +74,7 @@ def test_insert_cpu_to_cpu_1d():
 
     assert _count_direct_copy_edges(sdfg) == 1
     InsertExplicitCopies().apply_pass(sdfg, {})
+    _assert_no_other_subset(sdfg)
     assert _count_direct_copy_edges(sdfg) == 0
     assert _count_copy_nodes(sdfg) == 1
 
