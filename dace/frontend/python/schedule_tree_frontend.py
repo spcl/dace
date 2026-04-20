@@ -18,7 +18,7 @@ from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_helpers import descriptor_from_structure
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
-from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext,
+from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
                                                 CallableArgumentSpecializer, CallableResolver,
                                                 GenericExpressionSupportLibrary, NumpyLoweringContext,
                                                 NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
@@ -418,6 +418,26 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             resolve_data_access=self._resolve_data_access,
             is_callback_descriptor=self._is_callback_descriptor,
             callback_specialization_value=self._callback_specialization_value)
+
+        def _raise_callback_syntax_error(node: ast.AST, message: str) -> None:
+            raise DaceSyntaxError(self, node, message)
+
+        self.callback_handler = CallbackHandler(bindings=self.bindings,
+                                                callback_mutated_global_names=self._callback_mutated_global_names,
+                                                callable_resolver=self.callable_resolver,
+                                                evaluation_context=self._evaluation_context,
+                                                append_node=self._append_node,
+                                                register_binding=self._register_binding,
+                                                fresh_callback_name=self._fresh_callback_name,
+                                                fresh_transient_name=self._fresh_transient_name,
+                                                render_callback_code=self._callback_code_text,
+                                                collect_scope_declarations=_collect_scope_declarations,
+                                                raise_syntax_error=_raise_callback_syntax_error,
+                                                binding_kind_for_descriptor=_binding_kind_for_descriptor,
+                                                pyobject_scalar_descriptor=_pyobject_scalar_descriptor,
+                                                is_pyobject_scalar_descriptor=_is_pyobject_scalar_descriptor,
+                                                is_iterator_protocol_call=_is_iterator_protocol_call,
+                                                is_iterator_next_call=_is_iterator_next_call)
         self._terminate_body_stack: List[bool] = []
 
         self._initialize_root_scope()
@@ -437,7 +457,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_Assign(self, node: ast.Assign) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
         for target in node.targets:
             self._handle_assignment(target, node.value)
@@ -445,7 +465,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
         descriptor = self._evaluate_descriptor(node.annotation)
         if descriptor is not None and isinstance(node.target, ast.Name):
@@ -463,7 +483,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
         value = ast.BinOp(left=copy.deepcopy(node.target), op=node.op, right=copy.deepcopy(node.value))
         self._handle_assignment(node.target, value)
@@ -471,11 +491,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_Expr(self, node: ast.Expr) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return
-        self._reject_callback_mutated_global_uses(node.value)
+        self.callback_handler.reject_mutated_global_uses(node.value)
         value = self.lambda_resolver.inline_known_lambda_calls(node.value)
         if self.callable_resolver.is_dace_program_call(value):
             self._materialize_call_args(value)
@@ -492,7 +512,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
         if _requires_fstring_callback(planned_value):
             callback_expr = ast.copy_location(ast.Expr(value=copy.deepcopy(planned_value)), planned_value)
-            self._wrap_as_callback(callback_expr, 'f-string')
+            self.callback_handler.wrap_node(callback_expr, 'f-string')
             return
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_runtime_expression(planned_value))))
 
@@ -500,7 +520,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if node.value is None:
             values: List[CodeBlock] = []
         else:
-            self._reject_callback_mutated_global_uses(node.value)
+            self.callback_handler.reject_mutated_global_uses(node.value)
             return_value = self.lambda_resolver.inline_known_lambda_calls(node.value)
             if self.callable_resolver.is_dace_program_call(return_value):
                 # Materialize array-valued arguments, emit the function call;
@@ -545,10 +565,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         unchanged so the caller can still emit it as opaque text.
         """
         if _requires_fstring_callback(value):
-            return self._materialize_callback_expression(value,
-                                                         'f-string',
-                                                         _string_scalar_descriptor(),
-                                                         prefix='__stree_retval')
+            return self.callback_handler.materialize_expression(value,
+                                                                'f-string',
+                                                                _string_scalar_descriptor(),
+                                                                prefix='__stree_retval')
         if not isinstance(value, ast.Call):
             descriptor = self._infer_plannable_expression_descriptor(value)
             should_materialize = False
@@ -589,17 +609,17 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_If(self, node: ast.If) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
-        self._reject_callback_mutated_global_uses(node.test)
+        self.callback_handler.reject_mutated_global_uses(node.test)
         self._emit_if_chain(node)
 
     def visit_For(self, node: ast.For) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
-        self._reject_callback_mutated_global_uses(node.iter)
+        self.callback_handler.reject_mutated_global_uses(node.iter)
         loop_indices = self._parse_for_indices(node.target)
         iterator_kind, iterator_ranges = self._parse_for_iterator(node.iter)
 
@@ -633,9 +653,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_While(self, node: ast.While) -> None:
         reason = callback_reason(node)
         if reason is not None:
-            self._wrap_as_callback(node, reason)
+            self.callback_handler.wrap_node(node, reason)
             return
-        self._reject_callback_mutated_global_uses(node.test)
+        self.callback_handler.reject_mutated_global_uses(node.test)
         loop_scope = tn.LoopScope(
             loop=tn.FrontendLoop(loop_condition=CodeBlock(self._format_runtime_expression(node.test))), children=[])
         self._append_node(loop_scope)
@@ -651,33 +671,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             f'Schedule tree frontend: unhandled AST node {type(node).__name__} '
             f'at line {getattr(node, "lineno", "?")} — wrapping as callback',
             stacklevel=2)
-        self._wrap_as_callback(node, f'unhandled {type(node).__name__}')
+        self.callback_handler.wrap_node(node, f'unhandled {type(node).__name__}')
 
     # ------------------------------------------------------------------ #
     #  PythonCallbackNode helpers                                         #
     # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _analyze_name_flow(node: ast.AST) -> Tuple[set, set]:
-        """Walk AST subtree, return (names in Load ctx, names in Store ctx)."""
-        inputs: set = set()
-        outputs: set = set()
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name):
-                if isinstance(child.ctx, ast.Store):
-                    outputs.add(child.id)
-                elif isinstance(child.ctx, ast.Load):
-                    inputs.add(child.id)
-            elif isinstance(child, ast.alias):
-                if child.asname:
-                    outputs.add(child.asname)
-                else:
-                    outputs.add(child.name.split('.')[0])
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                outputs.add(child.name)
-            elif isinstance(child, ast.ExceptHandler) and isinstance(child.name, str):
-                outputs.add(child.name)
-        return inputs, outputs
 
     def _callback_code_text(self, node: ast.AST) -> str:
         """Return parseable source code for a callback-wrapped AST node."""
@@ -701,84 +699,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 except Exception:
                     return 'None'
 
-    def _reject_callback_mutated_global_uses(self, node: Optional[ast.AST]) -> None:
-        if node is None or not self._callback_mutated_global_names:
-            return
-
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
-                if child.id in self._callback_mutated_global_names:
-                    raise DaceSyntaxError(
-                        self, child,
-                        f'Nested callback functions cannot reassign global names that are used in the enclosing '
-                        f'program: {child.id}')
-
-    def _wrap_as_callback(self, node: ast.AST, reason: str) -> None:
-        """Emit a PythonCallbackNode for constructs that cannot be lowered."""
-        node = ast.fix_missing_locations(copy.deepcopy(node))
-        code_text = self._callback_code_text(node)
-        inputs, outputs = self._analyze_name_flow(node)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            global_names, _ = _collect_scope_declarations(node)
-            self._callback_mutated_global_names.update(global_names)
-        known_inputs = sorted(inputs & set(self.bindings))
-        for output_name in sorted(outputs):
-            binding = self.bindings.get(output_name)
-            if binding is None or binding.descriptor is None:
-                self._register_binding(output_name, _pyobject_scalar_descriptor(), kind='scalar')
-        try:
-            code = CodeBlock(code_text)
-        except Exception:
-            code = CodeBlock('pass')
-        self._append_node(
-            tn.PythonCallbackNode(code=code, reason=reason, input_names=known_inputs, output_names=sorted(outputs)))
-
-    def _emit_callback_assignment(self, name: str, value: ast.AST, reason: str, descriptor: data.Data) -> None:
-        if reason == 'pyobject call' and _is_pyobject_scalar_descriptor(descriptor) and _is_iterator_next_call(value):
-            import warnings
-            warnings.warn('Could not infer the result type of iterator next() in schedule-tree lowering; '
-                          'annotate the assignment target, e.g. val: dace.float64 = next(gen).')
-        kind = _binding_kind_for_descriptor(descriptor)
-        self._register_binding(name, descriptor, kind=kind)
-        callback_assign = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=copy.deepcopy(value))
-        callback_assign = ast.copy_location(callback_assign, value)
-        self._wrap_as_callback(callback_assign, reason)
-
-    def _should_emit_pyobject_call_callback(self, value: ast.AST) -> bool:
-        if not isinstance(value, ast.Call):
-            return False
-        if _is_iterator_protocol_call(value):
-            return True
-
-        callee = self.callable_resolver.resolve_callable_value(value.func)
-        if callee is not UNRESOLVED and inspect.isgeneratorfunction(callee):
-            return True
-
-        runtime_value = try_resolve_static_value(value, self._evaluation_context())
-        if runtime_value is UNRESOLVED:
-            return False
-
-        if callable(runtime_value):
-            return False
-
-        return hasattr(runtime_value, '__next__') or hasattr(runtime_value, '__iter__')
-
-    def _materialize_callback_expression(self,
-                                         value: ast.AST,
-                                         reason: str,
-                                         descriptor: data.Data,
-                                         *,
-                                         prefix: str = '__stree_tmp') -> ast.AST:
-        name = self._fresh_transient_name(prefix)
-        self._emit_callback_assignment(name, value, reason, descriptor)
-        return ast.Name(id=name, ctx=ast.Load())
-
     # ------------------------------------------------------------------ #
     #  Category C visitors — always callback                              #
     # ------------------------------------------------------------------ #
 
     def visit_Try(self, node: ast.Try) -> None:
-        self._wrap_as_callback(node, 'try/except')
+        self.callback_handler.wrap_node(node, 'try/except')
 
     # Python 3.11+ except* (TryStar)
     if hasattr(ast, 'TryStar'):
@@ -791,36 +717,36 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             'be outlined safely from compiled code')
 
     def visit_Import(self, node: ast.Import) -> None:
-        self._wrap_as_callback(node, 'import')
+        self.callback_handler.wrap_node(node, 'import')
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        self._wrap_as_callback(node, 'import')
+        self.callback_handler.wrap_node(node, 'import')
 
     def visit_Yield(self, node: ast.AST) -> None:
-        self._wrap_as_callback(node, 'yield')
+        self.callback_handler.wrap_node(node, 'yield')
 
     def visit_YieldFrom(self, node: ast.AST) -> None:
-        self._wrap_as_callback(node, 'yield from')
+        self.callback_handler.wrap_node(node, 'yield from')
 
     def visit_Await(self, node: ast.AST) -> None:
-        self._wrap_as_callback(node, 'await')
+        self.callback_handler.wrap_node(node, 'await')
 
     def visit_Match(self, node: ast.AST) -> None:
         subject = self._match_subject_expression(node.subject)
         try:
             lowered = lower_match_to_statements(node, subject)
         except UnsupportedMatchPatternError:
-            self._wrap_as_callback(node, 'match/case')
+            self.callback_handler.wrap_node(node, 'match/case')
             return
 
         for stmt in lowered:
             self.visit(stmt)
 
     def visit_With(self, node: ast.With) -> None:
-        self._wrap_as_callback(node, 'context manager')
+        self.callback_handler.wrap_node(node, 'context manager')
 
     def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
-        self._wrap_as_callback(node, 'context manager')
+        self.callback_handler.wrap_node(node, 'context manager')
 
     # ------------------------------------------------------------------ #
     #  Category B visitors — try to lower, fall back to callback          #
@@ -831,7 +757,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         for name in node.names:
             value = self._resolve_external_scope_value(name)
             if value is UNRESOLVED:
-                self._wrap_as_callback(node, 'global scope')
+                self.callback_handler.wrap_node(node, 'global scope')
                 return
             self._bind_external_scope_value(name, value)
 
@@ -872,7 +798,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             raise DaceSyntaxError(
                 self, node, 'Nested functions that use nonlocal declarations cannot fall back to callbacks during '
                 'schedule-tree lowering')
-        self._wrap_as_callback(node, 'nested function')
+        self.callback_handler.wrap_node(node, 'nested function')
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         global_names, nonlocal_names = _collect_scope_declarations(node)
@@ -887,7 +813,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             raise DaceSyntaxError(
                 self, node, 'Nested functions that use nonlocal declarations cannot fall back to callbacks during '
                 'schedule-tree lowering')
-        self._wrap_as_callback(node, 'async function')
+        self.callback_handler.wrap_node(node, 'async function')
 
     def visit_Delete(self, node: ast.Delete) -> None:
         # del of DaCe arrays is a no-op (runtime manages memory)
@@ -895,7 +821,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if isinstance(target, ast.Name) and target.id in self.bindings:
                 continue  # No-op for known containers
             else:
-                self._wrap_as_callback(node, 'delete')
+                self.callback_handler.wrap_node(node, 'delete')
                 return
 
     def visit_Raise(self, node: ast.Raise) -> None:
@@ -917,7 +843,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if self._raise_behavior == 'ignore_dynamic':
             return
 
-        self._wrap_as_callback(node, 'raise')
+        self.callback_handler.wrap_node(node, 'raise')
         self._terminate_current_body()
 
     def _append_node(self, node: tn.ScheduleTreeNode) -> None:
@@ -1076,7 +1002,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                            target: ast.AST,
                            value: ast.AST,
                            annotated_descriptor: Optional[data.Data] = None) -> None:
-        self._reject_callback_mutated_global_uses(value)
+        self.callback_handler.reject_mutated_global_uses(value)
         if isinstance(target, ast.Name):
             self._update_callable_binding(target.id, value)
             self.lambda_resolver.update_binding(target.id, value)
@@ -1137,7 +1063,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         if _requires_fstring_callback(value):
-            self._emit_callback_assignment(name, value, 'f-string', _string_scalar_descriptor())
+            self.callback_handler.emit_assignment(name, value, 'f-string', _string_scalar_descriptor())
             return
 
         existing = self.bindings.get(name)
@@ -1208,8 +1134,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
         if (isinstance(value, ast.Call) and _is_pyobject_scalar_descriptor(scalar_descriptor)
-                and self._should_emit_pyobject_call_callback(value)):
-            self._emit_callback_assignment(name, value, 'pyobject call', scalar_descriptor)
+                and self.callback_handler.should_emit_pyobject_call_callback(value)):
+            self.callback_handler.emit_assignment(name, value, 'pyobject call', scalar_descriptor)
             return
 
         if self.callable_specializer.is_callback_expression(value):
@@ -1715,6 +1641,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             candidate = f'{prefix}{index}'
         return candidate
 
+    def _fresh_callback_name(self, prefix: str = '__stree_callback') -> str:
+        index = 0
+        candidate = prefix
+        while (candidate in self.bindings or candidate in self.root.containers or candidate in self.globals
+               or candidate in self.callable_bindings):
+            index += 1
+            candidate = f'{prefix}{index}'
+        return candidate
+
     def _materialize_temporary_expression(self, value: ast.AST, descriptor: data.Data) -> ast.AST:
         name = self._fresh_transient_name()
         kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
@@ -1722,7 +1657,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         target = ast.Name(id=name, ctx=ast.Store())
 
         if isinstance(value, ast.Call) and _is_pyobject_scalar_descriptor(descriptor):
-            self._emit_callback_assignment(name, value, 'pyobject call', descriptor)
+            self.callback_handler.emit_assignment(name, value, 'pyobject call', descriptor)
             return ast.Name(id=name, ctx=ast.Load())
 
         if self._emit_computed_assignment(target, value, descriptor):

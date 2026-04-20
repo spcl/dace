@@ -296,6 +296,9 @@ class PythonCallbackNode(ScheduleTreeNode):
     reason: str
     input_names: List[str] = field(default_factory=list)
     output_names: List[str] = field(default_factory=list)
+    outlined_function_name: Optional[str] = None
+    outlined_function_code: Optional[CodeBlock] = None
+    outlined_call_code: Optional[CodeBlock] = None
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'python_callback "{self.reason}" {{ {self.code.as_string} }}'

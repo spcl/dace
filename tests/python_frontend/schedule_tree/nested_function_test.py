@@ -1,10 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import inspect
+
 import dace
 import numpy as np
 import pytest
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+
+__schedule_tree_callback_scale = 5
 
 
 def test_simple_nested_function_becomes_call_scope():
@@ -304,3 +308,53 @@ def test_decorated_nested_function_stays_callback():
     callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
     assert len(callbacks) == 1
     assert callbacks[0].reason == 'nested function'
+
+
+def test_decorated_nested_function_callback_outliner_recovers_callable_handle():
+
+    def passthrough(fn):
+        return fn
+
+    @dace.program
+    def prog():
+        offset = 7
+
+        @passthrough
+        def helper(x, /, y=2, *, twist=1):
+            return ((x + offset) * (y + twist)) + __schedule_tree_callback_scale
+
+        return 0
+
+    stree = prog.to_schedule_tree()
+
+    callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
+    assert len(callbacks) == 1
+    callback = callbacks[0]
+    assert callback.reason == 'nested function'
+    assert callback.input_names == ['offset']
+    assert callback.output_names == ['helper']
+    assert callback.outlined_function_name is not None
+    assert callback.outlined_function_code is not None
+    assert callback.outlined_call_code is not None
+
+    namespace = {
+        'passthrough': passthrough,
+        '__schedule_tree_callback_scale': __schedule_tree_callback_scale,
+    }
+    exec(callback.outlined_function_code.as_string, namespace, namespace)
+
+    callback_factory = namespace[callback.outlined_function_name]
+    assert callable(callback_factory)
+
+    recovered_direct = callback_factory(7)
+    assert callable(recovered_direct)
+    assert str(inspect.signature(recovered_direct)) == '(x, /, y=2, *, twist=1)'
+    assert recovered_direct(3, y=4, twist=2) == 65
+
+    namespace['offset'] = 7
+    exec(callback.outlined_call_code.as_string, namespace, namespace)
+
+    recovered_from_callsite = namespace['helper']
+    assert callable(recovered_from_callsite)
+    assert recovered_from_callsite(4) == 38
+    assert recovered_from_callsite(3, y=4, twist=2) == 65

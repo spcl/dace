@@ -346,6 +346,14 @@ class _ContainerRenamer(tn.ScheduleNodeTransformer):
         node.code = self._rename_code_block(node.code)
         return node
 
+    def visit_PythonCallbackNode(self, node: tn.PythonCallbackNode):
+        node.code = self._rename_code_block(node.code)
+        if node.outlined_function_code is not None:
+            node.outlined_function_code = self._rename_code_block(node.outlined_function_code)
+        if node.outlined_call_code is not None:
+            node.outlined_call_code = self._rename_code_block(node.outlined_call_code)
+        return node
+
     def visit_RaiseNode(self, node: tn.RaiseNode):
         if node.exception_type is not None:
             node.exception_type = self._rename_code_block(node.exception_type)

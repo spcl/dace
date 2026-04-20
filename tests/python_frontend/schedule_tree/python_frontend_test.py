@@ -805,6 +805,10 @@ def test_python_frontend_schedule_tree_free_iter_and_next_calls():
     assert isinstance(stree.children[0], tn.PythonCallbackNode)
     assert stree.children[0].reason == 'pyobject call'
     assert stree.children[0].code.as_string == 'it = iter(generator)'
+    assert stree.children[0].outlined_function_name.startswith('__stree_callback')
+    assert stree.children[0].outlined_function_code.as_string.startswith(
+        f'def {stree.children[0].outlined_function_name}():')
+    assert stree.children[0].outlined_call_code.as_string == f'it = {stree.children[0].outlined_function_name}()'
     for index, child in enumerate(stree.children[1:]):
         assert isinstance(child, tn.TaskletNode)
         assert child.node.code.as_string == f'out[{index}] = next(it)'

@@ -2,6 +2,7 @@
 """Support modules for the direct Python schedule-tree frontend."""
 
 from .attribute_rewriter import AttributeRewriter
+from .callback_support import CallbackHandler, CallbackOutliner
 from .callable_support import CallableArgumentSpecializer, CallableResolver
 from .desugaring import callback_reason, desugar_schedule_tree_expansions
 from .expression_support import ExpressionPlanningContext, GenericExpressionSupportLibrary
@@ -13,6 +14,8 @@ __all__ = [
     'ScheduleTreeTypeInference',
     '_Binding',
     'AttributeRewriter',
+    'CallbackHandler',
+    'CallbackOutliner',
     'CallableArgumentSpecializer',
     'CallableResolver',
     'desugar_schedule_tree_expansions',
