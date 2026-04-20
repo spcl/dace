@@ -1,0 +1,185 @@
+# .github/workflows/release.yml
+#
+# Adding a new CI workflow? ONE edit: add its display `name:` to
+# `on.workflow_run.workflows` below. The gate derives its required-list
+# from that field at runtime — no second place to update.
+
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["General Tests", "Code Quality", "Heterogeneous Tests", "Machine Learning and Autodiff Tests", "Pauli GPU Tests"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA (blank = main HEAD)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Skip side-effects"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # CANARY: `false &&` gates the workflow_run branch so the first merge of this
+    # file is a no-op. Dry-run via `workflow_dispatch` on main to validate, then
+    # ship a follow-up PR that removes the `false &&` to enable real releases.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (false &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dace
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+      id-token: write
+    env:
+      SHA: ${{ github.event.inputs.sha || github.event.workflow_run.head_sha || github.sha }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      - name: Refuse if commit edits dace/version.py
+        run: |
+          if git show --name-only --pretty=format: HEAD | grep -qx 'dace/version.py'; then
+            echo "::error::commit touches dace/version.py — refusing to overwrite"
+            exit 1
+          fi
+
+      - id: gate
+        name: Verify all sibling CI workflows passed for this SHA
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual dispatch — skipping sibling-CI gate."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Derive required list from our own `on.workflow_run.workflows` —
+          # single source of truth. Adding a new CI workflow = one edit above.
+          mapfile -t REQUIRED < <(
+            awk '/^    workflows:/{f=1;next}/^    types:/{f=0}f' .github/workflows/release.yml \
+              | tr -d '[]"' | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$'
+          )
+          echo "Gating on: ${REQUIRED[*]}"
+          for wf in "${REQUIRED[@]}"; do
+            C=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$SHA" --workflow "$wf" \
+                --limit 1 --json conclusion --jq '.[0].conclusion // "pending"')
+            echo "$wf -> $C"
+            if [[ "$C" != "success" ]]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.release == 'true'
+        id: ver
+        name: Compute next patch version
+        run: |
+          L=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          L=${L:-v0.0.0}
+          V=${L#v}
+          IFS='.' read -r A B C <<< "$V"
+          N="${A}.${B}.$((C+1))"
+          echo "next=$N" >> "$GITHUB_OUTPUT"
+          echo "tag=v$N" >> "$GITHUB_OUTPUT"
+          echo "-> $L -> v$N"
+
+      - if: steps.gate.outputs.release == 'true'
+        id: idem
+        name: Existing-state probes (tag / release / PyPI)
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.ver.outputs.tag }}" | grep -q .; then
+            echo "tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=false" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+          python -m pip install --quiet --upgrade pip
+          if python -m pip index versions dace 2>/dev/null | grep -qw "${{ steps.ver.outputs.next }}"; then
+            echo "pypi=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pypi=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.release == 'true' && steps.idem.outputs.pypi == 'false'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.10'
+
+      - if: steps.gate.outputs.release == 'true' && steps.idem.outputs.pypi == 'false'
+        name: Build sdist + wheel and offline metadata check
+        run: |
+          echo "__version__ = '${{ steps.ver.outputs.next }}'" > dace/version.py
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - if: steps.gate.outputs.release == 'true' && steps.idem.outputs.pypi == 'false' && env.DRY_RUN != 'true'
+        name: Publish to PyPI via OIDC Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+
+      - if: env.DRY_RUN == 'true'
+        name: Dry-run notice
+        run: echo "DRY-RUN: would publish dist/* via OIDC, push commit+tag, create GitHub Release"
+
+      - if: steps.gate.outputs.release == 'true' && steps.idem.outputs.tag == 'false' && env.DRY_RUN != 'true'
+        name: Push bump commit + tag
+        run: |
+          retry(){ local n=0 d=5; until "$@"; do n=$((n+1)); ((n>=3)) && return 1; sleep $d; d=$((d*2)); done; }
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dace/version.py
+          git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          retry git push origin HEAD:main
+          retry git push origin "${{ steps.ver.outputs.tag }}"
+
+      - if: steps.gate.outputs.release == 'true' && steps.idem.outputs.release == 'false' && env.DRY_RUN != 'true'
+        name: Create GitHub Release
+        run: |
+          retry(){ local n=0 d=5; until "$@"; do n=$((n+1)); ((n>=3)) && return 1; sleep $d; d=$((d*2)); done; }
+          retry gh release create "${{ steps.ver.outputs.tag }}" --generate-notes dist/*
+
+      - if: always() && steps.gate.outputs.release == 'true'
+        name: Run summary
+        run: |
+          {
+            echo "## Release"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ steps.ver.outputs.tag }}\` |"
+            echo "| Commit | \`$SHA\` |"
+            echo "| Dry run | $DRY_RUN |"
+            echo "| PyPI | https://pypi.org/project/dace/${{ steps.ver.outputs.next }}/ |"
+            echo "| GitHub Release | https://github.com/$GITHUB_REPOSITORY/releases/tag/${{ steps.ver.outputs.tag }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: failure() && github.event_name != 'workflow_dispatch'
+        name: Open tracking issue on failure
+        run: |
+          gh issue create --label "release,ci-failure" \
+            --title "Release workflow failed on $SHA" \
+            --body  "Logs: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
