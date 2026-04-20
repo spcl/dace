@@ -614,7 +614,6 @@ def test_strided_fission_step2():
     A = np.arange(10, dtype=np.float64)
     B_ref = np.zeros(10, dtype=np.float64)
     B_test = np.zeros(10, dtype=np.float64)
-    
 
     strided_two_ops(A=A, B=B_ref)
 

@@ -234,17 +234,13 @@ class MapFission(transformation.SingleStateTransformation):
 
         # Get map information
         outer_map: nodes.Map = map_entry.map
+        # Border-transient extent equals the iteration count per dimension.
+        # Memlets that index border transients are normalized to
+        # `(p - iMin) / step` so the squeezed array remains in-bounds for
+        # strided maps. Symbolic steps are assumed non-negative.
         mapsize = outer_map.range.size()
-        # Border-transient extent sized to the maximum loop index (+ 1) per
-        # dimension, so that memlets indexed by the map parameter are always
-        # in-bounds. For strided maps this is larger than the iteration count.
-        # Symbolic steps are assumed non-negative.
-        loop_extent = []
-        for iMin, iMax, _step in outer_map.range.ranges:
-            if (_step < 0) == True:
-                loop_extent.append(iMin + 1)
-            else:
-                loop_extent.append(iMax + 1)
+        squeezed_idx = [(pystr_to_symbolic(p) - iMin) / step
+                        for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)]
 
         # Add new symbols from outer map to nested SDFG
         # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
@@ -331,7 +327,7 @@ class MapFission(transformation.SingleStateTransformation):
                 desc = parent.arrays[scalar]
                 del parent.arrays[scalar]
                 name, newdesc = parent.add_transient(scalar,
-                                                     loop_extent,
+                                                     mapsize,
                                                      desc.dtype,
                                                      desc.storage,
                                                      lifetime=desc.lifetime,
@@ -342,7 +338,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Add extra nodes in component boundaries
                 for edge in edges:
                     anode = state.add_access(name)
-                    sbs = subsets.Range.from_string(','.join(outer_map.params))
+                    sbs = subsets.Range([(idx, idx, 1) for idx in squeezed_idx])
                     state.add_edge(edge.src, edge.src_conn, anode, None,
                                    mm.Memlet.simple(name, sbs, num_accesses=outer_map.range.num_elements()))
                     state.add_edge(anode, None, edge.dst, edge.dst_conn,
@@ -354,8 +350,7 @@ class MapFission(transformation.SingleStateTransformation):
             for component_in, component_out in components:
                 me, mx = state.add_map(outer_map.label + '_fission', [(p, '0:1') for p in outer_map.params],
                                        outer_map.schedule,
-                                       unroll=outer_map.unroll,
-                                       debuginfo=outer_map.debuginfo)
+                                       unroll=outer_map.unroll)
 
                 # Add dynamic input connectors
                 for conn in map_entry.in_connectors:
@@ -447,20 +442,20 @@ class MapFission(transformation.SingleStateTransformation):
                     parent.arrays[array] = desc
 
                 if scalar_like:
-                    desc.shape = list(loop_extent)
-                    strides = [1] * len(loop_extent)
-                    for i in range(len(loop_extent) - 2, -1, -1):
-                        strides[i] = strides[i + 1] * loop_extent[i + 1]
+                    desc.shape = list(mapsize)
+                    strides = [1] * len(mapsize)
+                    for i in range(len(mapsize) - 2, -1, -1):
+                        strides[i] = strides[i + 1] * mapsize[i + 1]
                     desc.strides = strides
-                    desc.total_size = reduce(lambda a, b: a * b, loop_extent, 1)
-                    desc.offset = [0] * len(loop_extent)
+                    desc.total_size = reduce(lambda a, b: a * b, mapsize, 1)
+                    desc.offset = [0] * len(mapsize)
                     scalar_like_arrays.add(array)
                 else:
-                    for sz in reversed(loop_extent):
+                    for sz in reversed(mapsize):
                         desc.strides = [desc.total_size] + list(desc.strides)
                         desc.total_size = desc.total_size * sz
-                    desc.shape = list(loop_extent) + list(desc.shape)
-                    desc.offset = [0] * len(loop_extent) + list(desc.offset)
+                    desc.shape = list(mapsize) + list(desc.shape)
+                    desc.offset = [0] * len(mapsize) + list(desc.offset)
                 modified_arrays.add(array)
 
             # Fill scope connectors so that memlets can be tracked below
@@ -529,7 +524,7 @@ class MapFission(transformation.SingleStateTransformation):
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
-                            map_ranges = [(pystr_to_symbolic(d), pystr_to_symbolic(d), 1) for d in outer_map.params]
+                            map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:
                                 if e.data.subset:
                                     if is_scalar_like:
