@@ -186,10 +186,13 @@ class MemsetLibraryNode(nodes.LibraryNode):
         """
 
         out_name, out, out_subset = None, None, None
-        if len(state.out_edges(self)) != 1:
-            raise ValueError("Number of out edges unequal to one")
+        # Only the ``_out`` edge carries the memset payload; empty-memlet
+        # dependency edges (e.g. from the GPU stream pipeline) are ignored.
+        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
+        if len(data_oes) != 1:
+            raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")
 
-        oe = next(iter(state.out_edges(self)))
+        oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
         out_name = oe.src_conn
@@ -203,10 +206,13 @@ class MemsetLibraryNode(nodes.LibraryNode):
         if stream_ies:
             stream_input = sdfg.arrays[stream_ies[0].data.data]
 
-        # Dynamic connectors (anything not `_in` or `stream`).
-        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn not in ("_in", _STREAM_CONN)}
+        # Dynamic connectors (anything not `_in` or `stream`). Empty-memlet
+        # dependency edges are ignored.
+        dynamic_ies = {
+            ie
+            for ie in state.in_edges(self) if ie.dst_conn not in ("_in", _STREAM_CONN) and not ie.data.is_empty()
+        }
         dynamic_inputs = dict()
-        assert len(dynamic_ies) + len(stream_ies) == len(state.in_edges(self)), ("Memset nodes cannot have data inputs")
 
         for ie in dynamic_ies:
             dataname = ie.data.data
