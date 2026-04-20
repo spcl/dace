@@ -1,0 +1,56 @@
+# .github/workflows/release-please.yml
+#
+# Runs release-please in two modes:
+#   1. on push to `main` — keeps the open Release PR up-to-date with
+#      every merged Conventional Commit since the last release.
+#   2. on cron (Fri 14:00 UTC) — calls `gh pr merge --auto --squash`
+#      on the open Release PR, so it merges as soon as its CI is green.
+#      Merging the Release PR creates the tag + GitHub Release, which
+#      fires pypi-publish.yml (see that file).
+#
+# If branch protection blocks the bot, swap `--auto` for `--admin` below.
+
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 14 * * 5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5  # v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  auto-merge-friday:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enqueue auto-merge on open Release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                --label "autorelease: pending" \
+                --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$PR" ]]; then
+            echo "No open Release PR — nothing merged since last release."
+            exit 0
+          fi
+          echo "Enqueuing auto-merge for Release PR #$PR"
+          gh pr merge "$PR" --auto --squash --repo "$GITHUB_REPOSITORY"

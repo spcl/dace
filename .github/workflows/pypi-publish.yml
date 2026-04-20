@@ -1,0 +1,89 @@
+# .github/workflows/pypi-publish.yml
+#
+# Fires on every published (non-prerelease) GitHub Release. In normal flow
+# this is triggered by release-please creating a Release after its Release PR
+# is merged, but it also works for manually-created releases (recovery path).
+#
+# Publishes via PyPI OIDC Trusted Publishing — no long-lived token.
+# Requires: a `pypi` GH environment + a Trusted Publisher entry on PyPI
+# pointing at this workflow file.
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)publish"
+        required: true
+      dry_run:
+        description: "Skip PyPI upload"
+        type: boolean
+        default: true
+
+concurrency:
+  group: pypi-publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dace
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.10'
+
+      - id: check
+        name: Skip if version already on PyPI
+        run: |
+          V="${TAG#v}"
+          python -m pip install --quiet --upgrade pip
+          if python -m pip index versions dace 2>/dev/null | grep -qw "$V"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "dace $V already on PyPI — nothing to do."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.skip == 'false'
+        name: Build sdist + wheel and offline metadata check
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - if: steps.check.outputs.skip == 'false' && env.DRY_RUN != 'true'
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+
+      - if: env.DRY_RUN == 'true'
+        run: echo "DRY-RUN: would publish dist/* via OIDC for tag $TAG"
+
+      - if: always()
+        name: Run summary
+        run: |
+          {
+            echo "## Publish"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Tag | \`$TAG\` |"
+            echo "| Already on PyPI | ${{ steps.check.outputs.skip }} |"
+            echo "| Dry run | $DRY_RUN |"
+            echo "| PyPI | https://pypi.org/project/dace/${TAG#v}/ |"
+          } >> "$GITHUB_STEP_SUMMARY"

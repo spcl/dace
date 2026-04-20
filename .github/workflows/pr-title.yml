@@ -1,0 +1,45 @@
+# .github/workflows/pr-title.yml
+#
+# Enforces Conventional Commit shape on the PR title.
+# Since dace squash-merges PRs, the PR title becomes the single commit
+# message on `main` — which is what release-please reads to decide bumps.
+#
+# Allowed types map to release-please behaviour:
+#   feat       → minor bump
+#   fix        → patch bump
+#   feat! / "BREAKING CHANGE:" footer → major bump
+#   chore, docs, refactor, test, ci, perf, style, build → no bump
+#                                                       (perf/refactor show in changelog)
+
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825  # v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            ci
+            perf
+            style
+            build
+          requireScope: false
+          subjectPattern: ^[A-Za-z].+[^.]$
+          subjectPatternError: |
+            The subject "{subject}" must start with a letter and not end with a period.
