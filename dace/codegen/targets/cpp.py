@@ -9,12 +9,11 @@ import functools
 import itertools
 import math
 import numbers
-import sys
 import warnings
 
 import sympy as sp
 from io import StringIO
-from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -23,10 +22,9 @@ from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
-from dace.frontend import operations
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, utils, propagation
+from dace.sdfg import nodes, graph as gr, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView

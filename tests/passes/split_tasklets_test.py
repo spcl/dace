@@ -2,7 +2,6 @@
 import typing
 import dace
 import re
-import dace.sdfg.utils as sdutil
 import copy
 from dace.transformation.passes.split_tasklets import SplitTasklets
 import numpy

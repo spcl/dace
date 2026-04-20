@@ -2,11 +2,9 @@
 """ General class for pattern replacement transformations. """
 import abc
 import dace
-from dace import registry, nodes, data as dt
+from dace import nodes, data as dt
 from dace.transformation import transformation, helpers as xfh
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dace.sdfg import utils as sdutil
-from dace.libraries.onnx import nodes as onnx_op
 from dace.sdfg import graph as gr
 
 

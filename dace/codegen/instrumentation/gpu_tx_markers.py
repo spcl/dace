@@ -9,7 +9,6 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState

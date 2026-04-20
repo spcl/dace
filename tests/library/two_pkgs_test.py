@@ -1,10 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.linalg import Inv
 import numpy as np
-import warnings
 
 n = dace.symbol("n", dace.int64)
 

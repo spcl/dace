@@ -6,7 +6,6 @@ from dace.transformation.dataflow import MapFission
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
-import unittest
 
 
 def mapfission_sdfg():

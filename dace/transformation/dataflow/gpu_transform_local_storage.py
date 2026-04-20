@@ -5,12 +5,11 @@
 import copy
 import collections
 
-from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import Property, make_properties
-from dace.config import Config
 
 
 def in_scope(graph, node, parent):
