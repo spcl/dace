@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
 import inspect
 
 import dace
@@ -341,7 +342,10 @@ def test_decorated_nested_function_callback_outliner_recovers_callable_handle():
         'passthrough': passthrough,
         '__schedule_tree_callback_scale': __schedule_tree_callback_scale,
     }
-    exec(callback.outlined_function_code.as_string, namespace, namespace)
+
+    outlined_function_module = ast.fix_missing_locations(
+        ast.Module(body=list(callback.outlined_function_code.code), type_ignores=[]))
+    exec(compile(outlined_function_module, '<schedule_tree_callback>', 'exec'), namespace, namespace)
 
     callback_factory = namespace[callback.outlined_function_name]
     assert callable(callback_factory)
@@ -352,7 +356,10 @@ def test_decorated_nested_function_callback_outliner_recovers_callable_handle():
     assert recovered_direct(3, y=4, twist=2) == 65
 
     namespace['offset'] = 7
-    exec(callback.outlined_call_code.as_string, namespace, namespace)
+
+    outlined_call_module = ast.fix_missing_locations(
+        ast.Module(body=list(callback.outlined_call_code.code), type_ignores=[]))
+    exec(compile(outlined_call_module, '<schedule_tree_callback_callsite>', 'exec'), namespace, namespace)
 
     recovered_from_callsite = namespace['helper']
     assert callable(recovered_from_callsite)
