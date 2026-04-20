@@ -184,10 +184,14 @@ class _ExpressionPlanner:
                           body=self._rewrite_child(node.body),
                           orelse=self._rewrite_child(node.orelse)), node)
 
+        if isinstance(node, ast.Attribute):
+            return ast.copy_location(ast.Attribute(value=self._rewrite_child(node.value), attr=node.attr, ctx=node.ctx),
+                                     node)
+
         if isinstance(node, ast.Call):
             iterator_protocol_call = self._is_iterator_protocol_call(node)
             return ast.copy_location(
-                ast.Call(func=copy.deepcopy(node.func),
+                ast.Call(func=self._rewrite_call_func(node.func, iterator_protocol_call=iterator_protocol_call),
                          args=[
                              self._rewrite_child(arg, materialize_pyobject_call=iterator_protocol_call)
                              for arg in node.args
@@ -207,6 +211,14 @@ class _ExpressionPlanner:
             return ast.copy_location(ast.List(elts=[self._rewrite_child(elt) for elt in node.elts], ctx=node.ctx), node)
 
         return node
+
+    def _rewrite_call_func(self, func: ast.AST, *, iterator_protocol_call: bool) -> ast.AST:
+        if isinstance(func, ast.Attribute):
+            return ast.copy_location(
+                ast.Attribute(value=self._rewrite_child(func.value, materialize_pyobject_call=iterator_protocol_call),
+                              attr=func.attr,
+                              ctx=func.ctx), func)
+        return copy.deepcopy(func)
 
     def _rewrite_child(self, node: ast.AST, *, materialize_pyobject_call: bool = False) -> ast.AST:
         rewritten = self._rewrite(copy.deepcopy(node))

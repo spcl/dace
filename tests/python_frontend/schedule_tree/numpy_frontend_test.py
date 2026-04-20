@@ -602,6 +602,37 @@ def test_python_frontend_schedule_tree_numpy_attribute_stays_library_call():
     assert isinstance(stree.children[1], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_nested_numpy_attributes_are_materialized():
+
+    @dace.program
+    def called(A: dace.float64[3, 5]):
+        return A.T.T
+
+    stree = called.to_schedule_tree()
+
+    library_calls = [node for node in stree.children if isinstance(node, tn.LibraryCall)]
+    assert len(library_calls) == 2
+    assert all(node.node.name == 'T' for node in library_calls)
+    assert all(node.node.properties['access_kind'] == 'attribute' for node in library_calls)
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_nested_numpy_attribute_method_chain_is_materialized():
+
+    @dace.program
+    def called(A: dace.float64[3, 5]):
+        return A.T.T.ravel()
+
+    stree = called.to_schedule_tree()
+
+    library_calls = [node for node in stree.children if isinstance(node, tn.LibraryCall)]
+    assert [node.node.name for node in library_calls] == ['T', 'T', 'ravel']
+    assert library_calls[0].node.properties['access_kind'] == 'attribute'
+    assert library_calls[1].node.properties['access_kind'] == 'attribute'
+    assert library_calls[2].node.properties['access_kind'] == 'method'
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+
+
 def test_python_frontend_schedule_tree_numpy_compiletime_full_slice_lowers_to_map():
 
     @dace.program
