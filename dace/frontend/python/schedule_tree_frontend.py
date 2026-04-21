@@ -16,7 +16,8 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary, \
     infer_array_literal_descriptor
-from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
+from dace.frontend.python.schedule_tree.dict_support import StaticDictBinding, infer_dict_assignment_binding, \
+    infer_dict_literal_binding, infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, member_descriptor, \
     structure_member_path
@@ -1035,6 +1036,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                         value,
                                                         materialize_root=False)
+        self._update_dict_subscript_binding(target, value)
 
         source_access = self._resolve_data_access(value)
         if isinstance(target, ast.Name):
@@ -1054,6 +1056,24 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_assignment_statement(target, value))))
+
+    def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
+        if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):
+            return
+        binding = self.bindings.get(target.value.id)
+        if binding is None or binding.descriptor is None:
+            return
+        dict_binding = binding.structure if isinstance(binding.structure, StaticDictBinding) else None
+        updated = infer_dict_assignment_binding(binding.descriptor, dict_binding, target.slice, value,
+                                                lambda node: self._infer_descriptor(node, target.value.id),
+                                                self._infer_scalar_descriptor, self._evaluation_context)
+        if updated is None:
+            return
+        updated_descriptor, updated_binding = updated
+        self._store_binding(target.value.id,
+                            updated_descriptor,
+                            kind=binding.kind,
+                            structure=updated_binding if updated_binding is not None else None)
 
     def _handle_name_assignment(self, name: str, value: ast.AST, source_access: Optional[Tuple[str, Memlet, data.Data,
                                                                                                Optional[data.Data]]],
@@ -1130,7 +1150,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             kind = 'reference' if isinstance(inferred_descriptor, data.Reference) else 'container'
             if self._is_callback_descriptor(inferred_descriptor):
                 kind = 'callback'
-            self._register_binding(name, inferred_descriptor, kind=kind)
+            structure = None
+            if isinstance(inferred_descriptor, PythonDict) and isinstance(value, ast.Dict):
+                structure = infer_dict_literal_binding(value, lambda node: self._infer_descriptor(node, name),
+                                                       self._infer_scalar_descriptor, self._evaluation_context)
+            self._store_binding(name, inferred_descriptor, kind=kind, structure=structure)
         else:
             scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
             if scalar_descriptor is not None:
@@ -1469,7 +1493,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 base_descriptor = self._infer_descriptor(node.value, target_name)
 
             if base_descriptor is not None:
-                dict_descriptor = infer_dict_subscript_descriptor(base_descriptor, node.slice, self._evaluation_context)
+                dict_binding = None
+                if isinstance(node.value, ast.Name):
+                    binding = self.bindings.get(node.value.id)
+                    if binding is not None and isinstance(binding.structure, StaticDictBinding):
+                        dict_binding = binding.structure
+                dict_descriptor = infer_dict_subscript_descriptor(base_descriptor, node.slice, self._evaluation_context,
+                                                                  dict_binding)
                 if dict_descriptor is not None:
                     return dict_descriptor
                 inferred = _infer_static_subscript_descriptor(base_descriptor, node, self._evaluation_context())

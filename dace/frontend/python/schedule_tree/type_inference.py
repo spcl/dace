@@ -15,7 +15,8 @@ from dace import data, dtypes, symbolic, subsets
 from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.array_literal_support import infer_array_literal_descriptor
-from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
+from dace.frontend.python.schedule_tree.dict_support import StaticDictBinding, infer_dict_assignment_binding, \
+    infer_dict_literal_binding, infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
     member_descriptor
@@ -422,6 +423,10 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
     def _compatible_structures(self, left: Any, right: Any) -> bool:
         if left is None or right is None:
             return left is right
+        if isinstance(left, StaticDictBinding) and isinstance(right, StaticDictBinding):
+            if set(left.entries.keys()) != set(right.entries.keys()):
+                return False
+            return all(self._compatible_descriptors(left.entries[key], right.entries[key]) for key in left.entries)
         if isinstance(left, data.Data) and isinstance(right, data.Data):
             return self._compatible_descriptors(left, right)
         if isinstance(left, list) and isinstance(right, list) and len(left) == len(right):
@@ -438,6 +443,25 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 return
             if isinstance(target, (ast.Tuple, ast.List)) and binding.structure is not None:
                 self._bind_target_structure(target, binding.structure)
+        self._update_dict_subscript_binding(target, value)
+
+    def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
+        if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):
+            return
+        binding = self.bindings.get(target.value.id)
+        if binding is None or binding.descriptor is None:
+            return
+        dict_binding = binding.structure if isinstance(binding.structure, StaticDictBinding) else None
+        updated = infer_dict_assignment_binding(binding.descriptor, dict_binding, target.slice, value,
+                                                self._infer_known_descriptor, self._infer_scalar_descriptor,
+                                                self._evaluation_context)
+        if updated is None:
+            return
+        updated_descriptor, updated_binding = updated
+        self._store_binding(target.value.id,
+                            updated_descriptor,
+                            kind=binding.kind,
+                            structure=updated_binding if updated_binding is not None else None)
 
     def _infer_binding(self, value: ast.AST, annotated_descriptor: Optional[data.Data]) -> Optional[_Binding]:
         binding = self._infer_internal_iterator_binding(value)
@@ -447,6 +471,13 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         binding = self._resolve_binding(value)
         if binding is not None:
             return binding
+
+        if isinstance(value, ast.Dict):
+            descriptor = infer_dict_literal_descriptor(value, self._infer_known_descriptor,
+                                                       self._infer_scalar_descriptor)
+            structure = infer_dict_literal_binding(value, self._infer_known_descriptor, self._infer_scalar_descriptor,
+                                                   self._evaluation_context)
+            return _Binding(descriptor=descriptor, kind='container', structure=structure)
 
         inferred_descriptor = self._infer_descriptor(value)
         if inferred_descriptor is not None:
@@ -479,6 +510,15 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             binding = self._resolve_binding(value.value)
             if binding is None or binding.descriptor is None:
                 return None
+            if isinstance(binding.descriptor, PythonDict):
+                descriptor = infer_dict_subscript_descriptor(
+                    binding.descriptor, value.slice, self._evaluation_context,
+                    binding.structure if isinstance(binding.structure, StaticDictBinding) else None)
+                if descriptor is None:
+                    return None
+                kind = 'scalar' if isinstance(descriptor, data.Scalar) else binding.kind
+                structure = descriptor if isinstance(descriptor, data.Scalar) else None
+                return _Binding(descriptor=descriptor, kind=kind, structure=structure)
             structure = self._subscript_structure(binding, value.slice)
             descriptor = descriptor_from_structure(structure) if structure is not None else None
             if descriptor is None:
@@ -798,9 +838,15 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
 
         return self._make_view_descriptor(descriptor, subset.size(), new_axes)
 
+    def _infer_known_descriptor(self, node: ast.AST) -> Optional[data.Data]:
+        binding = self._resolve_binding(node)
+        if binding is not None and binding.descriptor is not None:
+            return _clone_descriptor(binding.descriptor)
+        return self._infer_descriptor(node)
+
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         if isinstance(node, ast.Dict):
-            return infer_dict_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor)
+            return infer_dict_literal_descriptor(node, self._infer_known_descriptor, self._infer_scalar_descriptor)
 
         if isinstance(node, ast.Call):
             inferred = infer_array_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor,

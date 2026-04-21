@@ -823,6 +823,51 @@ def test_python_frontend_schedule_tree_heterogeneous_dict_values_fallback_to_pyo
     assert stree.containers['mapping'].value_type.dtype == dtypes.pyobject()
 
 
+def test_python_frontend_schedule_tree_heterogeneous_dict_known_static_reads_stay_precise():
+
+    @dace.program
+    def dict_prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': 'two'}
+        left = mapping['left']
+        right = mapping['right']
+        return left
+
+    stree = dict_prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['mapping'], PythonDict)
+    assert stree.containers['mapping'].value_type.dtype == dtypes.pyobject()
+    assert isinstance(stree.containers['left'], dace.data.Scalar)
+    assert stree.containers['left'].dtype == dace.float64
+    assert isinstance(stree.containers['right'], dace.data.Scalar)
+    assert stree.containers['right'].dtype == dace.string
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].value.as_string == "mapping['left']"
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert stree.children[2].value.as_string == "mapping['right']"
+
+
+def test_python_frontend_schedule_tree_dict_same_key_update_widens_value_type():
+
+    @dace.program
+    def dict_prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': A[1]}
+        mapping['left'] = 'two'
+        value = mapping['left']
+        return value
+
+    stree = dict_prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['mapping'], PythonDict)
+    assert stree.containers['mapping'].key_type.dtype == dace.string
+    assert stree.containers['mapping'].value_type.dtype == dtypes.pyobject()
+    assert isinstance(stree.containers['value'], dace.data.Scalar)
+    assert stree.containers['value'].dtype == dace.string
+    assert isinstance(stree.children[1], tn.StatementNode)
+    assert stree.children[1].code.as_string == "mapping['left'] = 'two'"
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert stree.children[2].value.as_string == "mapping['left']"
+
+
 def test_python_frontend_schedule_tree_free_iter_and_next_calls():
 
     def reverse_range(sz):

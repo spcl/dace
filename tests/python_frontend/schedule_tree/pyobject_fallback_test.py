@@ -92,6 +92,38 @@ def test_python_frontend_schedule_tree_callback_outputs_use_pyobject_scalar():
     _assert_pyobject_scalar(stree.containers['tmp'])
 
 
+def test_schedule_tree_type_inference_dict_same_key_update_widens_value_type():
+
+    @dace.program
+    def prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': A[1]}
+        mapping['left'] = 'two'
+        value = mapping['left']
+        return 0.0
+
+    bindings = _infer_schedule_tree_bindings(prog, {'A': dace.float64[2]})
+
+    assert bindings['mapping'].descriptor.value_type.dtype == dtypes.pyobject()
+    _assert_string_scalar(bindings['value'].descriptor)
+
+
+def test_schedule_tree_type_inference_dict_known_static_reads_stay_precise():
+
+    @dace.program
+    def prog(A: dace.float64[2]):
+        mapping = {'left': A[0], 'right': 'two'}
+        left = mapping['left']
+        right = mapping['right']
+        return 0.0
+
+    bindings = _infer_schedule_tree_bindings(prog, {'A': dace.float64[2]})
+
+    assert bindings['mapping'].descriptor.value_type.dtype == dtypes.pyobject()
+    assert isinstance(bindings['left'].descriptor, data.Scalar)
+    assert bindings['left'].descriptor.dtype == dace.float64
+    _assert_string_scalar(bindings['right'].descriptor)
+
+
 def test_schedule_tree_type_inference_constant_scalars_use_literal_descriptors():
 
     @dace.program
