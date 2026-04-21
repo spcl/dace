@@ -1,11 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 
 import pytest
-from typing import List
 
 
 def _irreducible_loop_to_loop():
@@ -171,7 +170,7 @@ def test_edgecase_symbol_mapping():
 
 def _check_for_name_clashes(stree: tn.ScheduleTreeNode):
 
-    def _traverse(node: tn.ScheduleTreeScope, scopes: List[str]):
+    def _traverse(node: tn.ScheduleTreeScope, scopes: list[str]) -> None:
         for child in node.children:
             if isinstance(child, tn.LoopScope):
                 itervar = child.loop.loop.loop_variable

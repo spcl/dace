@@ -1,9 +1,9 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 import numpy as np
 import pytest
-from dace.sdfg import memlet_utils as mu
+from dace.sdfg import graph, memlet_utils as mu
 import re
 from typing import Tuple, Optional
 
@@ -11,14 +11,15 @@ from typing import Tuple, Optional
 def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
     if not isinstance(memlet.subset, dace.subsets.Range):
         return memlet
-    for i, (rb, re, rs) in enumerate(memlet.subset.ndrange()):
+
+    for i, (rb, _re, rs) in enumerate(memlet.subset.ndrange()):
         if rb == 0:
             memlet.subset.ranges[i] = (1, 1, rs)
     return memlet
 
 
 @pytest.mark.parametrize('filter_type', ['none', 'same_array', 'different_array'])
-def test_replace_memlet(filter_type):
+def test_replace_memlet(filter_type: str) -> None:
     # Prepare SDFG
     sdfg = dace.SDFG('replace_memlet')
     sdfg.add_array('A', [2, 2], dace.float64)
@@ -65,7 +66,7 @@ def test_replace_memlet(filter_type):
         assert B[0] == 1
 
 
-def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge) -> bool:
+def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge) -> None:
     assert sdfg.number_of_nodes() == 1
     state: dace.SDFGState = sdfg.states()[0]
     assert state.number_of_nodes() == 2
@@ -102,8 +103,6 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge) -> bool:
     # Now call it again after the optimization.
     sdfg(a=a, b=b_opt)
     assert np.allclose(b_unopt, b_opt)
-
-    return True
 
 
 def _make_non_lin_delin_sdfg(
