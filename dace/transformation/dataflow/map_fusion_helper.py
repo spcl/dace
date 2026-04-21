@@ -281,9 +281,25 @@ def relocate_nodes(
 
             # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                          f" to '{to_node}', but the symbol is already known there, but the"
-                                          " renaming is not implemented.")
+                # The symbol is already bound on the target. If both bindings
+                # read the same data (same memlet), we can consolidate: drop
+                # the duplicate edge and reuse `to_node`'s existing connector.
+                # Otherwise renaming would be required, which we still don't
+                # implement.
+                existing_edges = list(state.in_edges_by_connector(to_node, dmr_symbol))
+                m = edge_to_move.data
+                can_consolidate = (len(existing_edges) >= 1
+                                   and all(e.data.data == m.data and e.data.subset == m.subset
+                                           for e in existing_edges))
+                if not can_consolidate:
+                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                                              f" to '{to_node}', but the symbol is already known there with a"
+                                              " different binding, and renaming is not implemented.")
+                # Drop the edge and its connector on `from_node`; `to_node`
+                # already provides the same value.
+                state.remove_edge(edge_to_move)
+                from_node.remove_in_connector(dmr_symbol)
+                continue
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
                     f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
