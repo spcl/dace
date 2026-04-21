@@ -43,7 +43,6 @@ jobs:
       uses: actions/checkout@v6
       with:
             repository: 'NOAA-GFDL/pyFV3'
-            submodules: 'recursive'
             path: 'pyFV3'
 
     - name: Checkout dace
