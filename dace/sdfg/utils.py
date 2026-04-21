@@ -2536,6 +2536,10 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
             return offset_symbols | used_symbols
     elif isinstance(scope, nd.MapEntry):
         used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
+        if not include_symbols_for_offset_calculations:
+            # The map's own range free symbols are iteration/offset-calculation
+            # symbols; surface them only when offset symbols were requested.
+            used_symbols = used_symbols - scope.free_symbols
         return offset_symbols | used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
