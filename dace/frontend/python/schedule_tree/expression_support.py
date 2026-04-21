@@ -81,6 +81,7 @@ ExpressionMaterializer = Callable[[ast.AST, data.Data], ast.AST]
 DataAccessResolver = Callable[[ast.AST], Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]]]
 InputMemletCollector = Callable[[ast.AST], Dict[str, Memlet]]
 OutputTargetResolver = Callable[[ast.AST, ast.AST, Optional[data.Data]], Optional[Tuple[str, Memlet, data.Data]]]
+CallableNameResolver = Callable[[ast.AST], str]
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class ExpressionPlanningContext:
     resolve_data_access: DataAccessResolver
     collect_input_memlets: InputMemletCollector
     resolve_output_target: OutputTargetResolver
+    resolve_callable_name: Optional[CallableNameResolver] = None
 
 
 class GenericExpressionSupportLibrary:
@@ -284,6 +286,8 @@ class _ExpressionPlanner:
         return isinstance(node.func, ast.Attribute) and node.func.attr == '__next__'
 
     def _is_array_constructor_call(self, node: ast.Call) -> bool:
+        if self.context.resolve_callable_name is not None:
+            return self.context.resolve_callable_name(node.func) == 'numpy.array'
         return astutils.rname(node.func) == 'numpy.array'
 
     def _materialize(self, node: ast.AST) -> ast.AST:

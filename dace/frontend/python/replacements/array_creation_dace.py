@@ -5,7 +5,7 @@ array creation functions for NumPy that reuse the same functionality.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size, sym_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
@@ -58,6 +58,150 @@ def infer_array_creation_descriptor(obj: Any,
             return None
     descriptor.transient = True
     return descriptor
+
+
+def infer_dynamic_literal_descriptor(obj: Any,
+                                     sdfg: SDFG,
+                                     *,
+                                     dtype: dtypes.typeclass = None,
+                                     ndmin: int = 0) -> Optional[data.Array]:
+    shape_dtype = _infer_dynamic_literal_shape_dtype(obj, sdfg)
+    if shape_dtype is None:
+        return None
+
+    shape, inferred_dtype = shape_dtype
+    result_dtype = dtype or inferred_dtype
+    if result_dtype is None:
+        return None
+
+    out_shape = list(shape)
+    if len(out_shape) < ndmin:
+        out_shape = [1] * (ndmin - len(out_shape)) + out_shape
+    return data.Array(result_dtype, out_shape, transient=True)
+
+
+def populate_dynamic_literal_array(state: SDFGState, sdfg: SDFG, outname: str, obj: Any) -> None:
+    outdesc = sdfg.arrays[outname]
+    constant_array = _entire_constant_literal_array(obj, outdesc)
+    if constant_array is not None:
+        const_name = sdfg.find_new_constant(f'{outname}_literal')
+        sdfg.add_constant(const_name, constant_array)
+        sdfg.arrays[const_name] = sdfg.constants_prop[const_name][0]
+        sdfg.arrays[const_name].transient = True
+        read = state.add_read(const_name)
+        write = state.add_write(outname)
+        subset = ', '.join(f'0:{dim}' for dim in constant_array.shape)
+        state.add_edge(read, None, write, None, Memlet.simple(const_name, subset, other_subset_str=subset))
+        return
+
+    write = state.add_write(outname)
+    counter = 0
+
+    def emit(value: Any, index: tuple[int, ...]) -> None:
+        nonlocal counter
+        if isinstance(value, (list, tuple)):
+            for child_idx, child in enumerate(value):
+                emit(child, index + (child_idx, ))
+            return
+
+        tasklet_name = f'{outname}_literal_{counter}'
+        counter += 1
+        subset = ', '.join(str(i) for i in index)
+        if isinstance(value, str) and value in sdfg.arrays:
+            desc = sdfg.arrays[value]
+            read = state.add_read(value)
+            tasklet = state.add_tasklet(tasklet_name, {'__inp'}, {'__out'}, '__out = __inp')
+            state.add_edge(read, None, tasklet, '__inp', Memlet.from_array(value, desc))
+            state.add_edge(tasklet, '__out', write, None, Memlet.simple(outname, subset))
+            return
+
+        tasklet = state.add_tasklet(tasklet_name, set(), {'__out'}, f'__out = {_literal_code(value)}')
+        state.add_edge(tasklet, '__out', write, None, Memlet.simple(outname, subset))
+
+    emit(obj, tuple())
+
+
+def _entire_constant_literal_array(obj: Any, outdesc: data.Array) -> Optional[np.ndarray]:
+    if not _is_entire_literal_constant(obj):
+        return None
+    npdtype = outdesc.dtype.as_numpy_dtype()
+    result = np.array(obj, dtype=npdtype)
+    if tuple(result.shape) != tuple(outdesc.shape):
+        try:
+            result = result.reshape(tuple(outdesc.shape))
+        except ValueError:
+            return None
+    return result
+
+
+def _is_entire_literal_constant(obj: Any) -> bool:
+    if isinstance(obj, (list, tuple)):
+        return all(_is_entire_literal_constant(v) for v in obj)
+    return isinstance(obj, (np.generic, bool, int, float, complex))
+
+
+def _infer_dynamic_literal_shape_dtype(obj: Any, sdfg: SDFG) -> Optional[tuple[tuple[int, ...], dtypes.typeclass]]:
+    if isinstance(obj, (list, tuple)):
+        child_shapes: list[tuple[int, ...]] = []
+        child_dtype: Optional[dtypes.typeclass] = None
+        for element in obj:
+            shape_dtype = _infer_dynamic_literal_shape_dtype(element, sdfg)
+            if shape_dtype is None:
+                return None
+            element_shape, element_dtype = shape_dtype
+            child_shapes.append(element_shape)
+            child_dtype = element_dtype if child_dtype is None else dtypes.result_type_of(child_dtype, element_dtype)
+
+        if not child_shapes:
+            return ((0, ), dtypes.float64)
+
+        first_shape = child_shapes[0]
+        if any(shape != first_shape for shape in child_shapes[1:]):
+            return None
+        return ((len(obj), ) + first_shape, child_dtype)
+
+    dtype = _dynamic_literal_scalar_dtype(obj, sdfg)
+    if dtype is None:
+        return None
+    return (tuple(), dtype)
+
+
+def _dynamic_literal_scalar_dtype(obj: Any, sdfg: SDFG) -> Optional[dtypes.typeclass]:
+    if isinstance(obj, np.generic):
+        return dtypes.typeclass(obj.dtype.type)
+    if isinstance(obj, bool):
+        return dtypes.bool
+    if isinstance(obj, (int, float, complex)):
+        return dtypes.typeclass(type(obj))
+    if symbolic.issymbolic(obj):
+        return sym_type(obj)
+    if isinstance(obj, str):
+        if obj in sdfg.arrays:
+            desc = sdfg.arrays[obj]
+            if isinstance(desc, data.Scalar):
+                return desc.dtype
+            if isinstance(desc, data.Array) and tuple(desc.shape) == (1, ):
+                return desc.dtype
+            return None
+        if obj in sdfg.symbols:
+            return sdfg.symbols[obj]
+        try:
+            parsed = symbolic.pystr_to_symbolic(obj)
+        except Exception:
+            return None
+        if symbolic.issymbolic(parsed):
+            return sym_type(parsed)
+    return None
+
+
+def _literal_code(value: Any) -> str:
+    if isinstance(value, np.generic):
+        return repr(value.item())
+    if isinstance(value, str):
+        return value
+    if symbolic.issymbolic(value):
+        return symbolic.symstr(value)
+    return repr(value)
 
 
 @oprepo.infers_descriptor('dace.define_local')
@@ -236,6 +380,7 @@ def _define_literal_ex(pv: ProgramVisitor,
         desc = dcpy(sdfg.arrays[obj])
         if dtype is not None:
             desc.dtype = dtype
+        dynamic_literal = False
     else:  # From literal / constant
         desc = infer_array_creation_descriptor(obj,
                                                dtype=dtype,
@@ -244,13 +389,17 @@ def _define_literal_ex(pv: ProgramVisitor,
                                                subok=subok,
                                                ndmin=ndmin,
                                                like=like)
-        if desc is None:
-            raise DaceSyntaxError(pv, None, 'Could not infer numpy.array descriptor from literal input')
-        if dtype is None:
-            arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
+        dynamic_literal = desc is None
+        if dynamic_literal:
+            desc = infer_dynamic_literal_descriptor(obj, sdfg, dtype=dtype, ndmin=ndmin)
+            if desc is None:
+                raise DaceSyntaxError(pv, None, 'Could not infer numpy.array descriptor from literal input')
         else:
-            npdtype = dtype.as_numpy_dtype()
-            arr = np.array(obj, npdtype, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
+            if dtype is None:
+                arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
+            else:
+                npdtype = dtype.as_numpy_dtype()
+                arr = np.array(obj, npdtype, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
 
     # Set extra properties
     desc.transient = True
@@ -267,6 +416,8 @@ def _define_literal_ex(pv: ProgramVisitor,
         rnode = state.add_read(obj)
         wnode = state.add_write(name)
         state.add_nedge(rnode, wnode, Memlet.from_array(name, desc))
+    elif dynamic_literal:
+        populate_dynamic_literal_array(state, sdfg, name, obj)
     else:
         # Make constant
         sdfg.add_constant(name, arr, desc)

@@ -4,7 +4,7 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import ListLiteral, StringLiteral, TupleLiteral
 from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_together, cast_str, np_result_type,
                                                      representative_num, sym_type)
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
@@ -18,6 +18,30 @@ import sympy as sp
 import dace  # For evaluation of data types
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
+
+
+def _materialize_sequence_literal(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+                                  literal: Union[ListLiteral, TupleLiteral]) -> str:
+    from dace.frontend.python.replacements.array_creation_dace import (infer_dynamic_literal_descriptor,
+                                                                       populate_dynamic_literal_array)
+
+    value = literal.value
+    desc = infer_dynamic_literal_descriptor(value, sdfg)
+    if desc is None:
+        raise SyntaxError('Operand cannot be materialized as an array literal')
+
+    name = sdfg.temp_data_name()
+    name = sdfg.add_datadesc(name, desc, find_new_name=True)
+    init_states = getattr(visitor, '_literal_init_states', None)
+    if init_states is None:
+        init_states = {}
+        setattr(visitor, '_literal_init_states', init_states)
+    init_state = init_states.get(state)
+    if init_state is None:
+        init_state = visitor.cfg_target.add_state_before(state)
+        init_states[state] = init_state
+    populate_dynamic_literal_array(init_state, sdfg, name, value)
+    return name
 
 
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
@@ -775,6 +799,16 @@ def _makebinop(op, opcode):
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('Array', op, otherclass='ListLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('Array', op, otherclass='TupleLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
     @oprepo.replaces_operator('View', op, otherclass='View')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -798,6 +832,16 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('View', op, otherclass='symbol')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='ListLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='TupleLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
@@ -846,6 +890,26 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='Array')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='View')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='Array')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='View')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):

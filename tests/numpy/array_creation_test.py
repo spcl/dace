@@ -130,6 +130,60 @@ def test_array_literal_inside_expression():
     assert np.allclose(result, expected)
 
 
+def test_array_literal_from_dynamic_scalar_elements():
+
+    @dace.program
+    def dynamic_literal(A: dace.float64[1], B: dace.float64[4], i: dace.int32):
+        return np.array([A[0], B[i]], dtype=np.float64)
+
+    A = np.random.rand(1)
+    B = np.random.rand(4)
+    i = np.int32(2)
+    result = dynamic_literal(A, B, i)
+    expected = np.array([A[0], B[i]], dtype=np.float64)
+    assert np.allclose(result, expected)
+
+
+def test_list_literal_inside_array_expression():
+
+    @dace.program
+    def literal_expr(A: dace.float64[3]):
+        return A * [1.0, 2.0, 3.0]
+
+    A = np.random.rand(3)
+    result = literal_expr(A)
+    expected = A * np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    assert np.allclose(result, expected)
+
+
+def test_constant_list_literal_inside_array_expression_materializes_as_one_constant_array():
+
+    @dace.program
+    def literal_expr(A: dace.float64[3]):
+        return A * [1.0, 2.0, 3.0]
+
+    sdfg = literal_expr.to_sdfg(simplify=False)
+    constant_arrays = [value for _, (_, value) in sdfg.constants_prop.items() if isinstance(value, np.ndarray)]
+    assert any(np.array_equal(value, np.array([1.0, 2.0, 3.0], dtype=np.float64)) for value in constant_arrays)
+
+    literal_tasklets = [
+        node for state in sdfg.states() for node in state.nodes()
+        if isinstance(node, dace.sdfg.nodes.Tasklet) and '_literal_' in node.label
+    ]
+    assert not literal_tasklets
+
+
+def test_broadcast_mixed_tuple_and_list_literals_inside_expression():
+
+    @dace.program
+    def literal_expr():
+        return np.array([1, 2, 3]) * ((4, 5, 6), [1, 2, 3])
+
+    result = literal_expr()
+    expected = np.array([1, 2, 3]) * ((4, 5, 6), [1, 2, 3])
+    assert np.allclose(result, expected)
+
+
 @compare_numpy_output()
 def test_arange_0():
     return np.arange(10, dtype=np.int32)

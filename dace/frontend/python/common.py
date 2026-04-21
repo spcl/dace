@@ -61,6 +61,18 @@ class StringLiteral:
         return self.value > str(other)
 
 
+@dataclass(frozen=True)
+class ListLiteral:
+    """A list literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class TupleLiteral:
+    """A tuple literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
+
+
 class SDFGConvertible(object):
     """
     A mixin that defines the interface to annotate SDFG-convertible objects.

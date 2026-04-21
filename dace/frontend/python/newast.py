@@ -17,8 +17,8 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
-                                         StringLiteral)
+from dace.frontend.python.common import (DaceSyntaxError, ListLiteral, SDFGClosure, SDFGConvertible, TupleLiteral,
+                                         inverse_dict_lookup, StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -5149,6 +5149,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
+        if isinstance(opnode, ast.List):
+            return [(ListLiteral(tuple(self.visit(opnode))), ListLiteral)]
+        if isinstance(opnode, ast.Tuple):
+            return [(TupleLiteral(tuple(self.visit(opnode))), TupleLiteral)]
+
         if isinstance(opnode, ast.AST):
             operands = self.visit(opnode)
         else:
@@ -5192,6 +5197,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(op1_parsed) > 1:
             raise DaceSyntaxError(self, op1, 'Operand cannot be a tuple')
         operand1, op1type = op1_parsed[0]
+
         if op2 is not None:
             op2_parsed = self._gettype(op2)
             if len(op2_parsed) > 1:

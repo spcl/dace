@@ -2086,7 +2086,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                          materialize_expression=self._materialize_temporary_expression,
                                          resolve_data_access=self._resolve_data_access,
                                          collect_input_memlets=self._collect_input_memlets,
-                                         resolve_output_target=self._resolve_output_target)
+                                         resolve_output_target=self._resolve_output_target,
+                                         resolve_callable_name=self._resolved_callable_name)
 
     def _infer_plannable_expression_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         node = self.lambda_resolver.inline_known_lambda_calls(node)
