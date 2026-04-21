@@ -8,7 +8,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, default_line_info
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
@@ -318,10 +318,13 @@ class MapFission(transformation.SingleStateTransformation):
             # Add extra maps around components
             new_map_entries = []
             for component_in, component_out in components:
-                me, mx = state.add_map(outer_map.label + '_fission', [(p, '0:1') for p in outer_map.params],
-                                       outer_map.schedule,
-                                       unroll=outer_map.unroll,
-                                       debuginfo=outer_map.debuginfo)
+                with default_line_info(state, outer_map.debuginfo):
+                    me, mx = state.add_map(
+                        outer_map.label + '_fission',
+                        [(p, '0:1') for p in outer_map.params],
+                        outer_map.schedule,
+                        unroll=outer_map.unroll,
+                    )
 
                 # Add dynamic input connectors
                 for conn in map_entry.in_connectors:

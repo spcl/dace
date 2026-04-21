@@ -11,6 +11,7 @@ from dace.dtypes import Language
 from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import default_line_info
 from dace.transformation import transformation as pm
 
 
@@ -275,18 +276,20 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             new_name = t1.label + '_fused_' + t2.label
 
-        new_tasklet = graph.add_tasklet(new_name,
-                                        inputs,
-                                        t2.out_connectors,
-                                        new_code_str,
-                                        t1.language,
-                                        state_fields=t1.state_fields + t2.state_fields,
-                                        code_global=t1.code_global.code + t2.code_global.code,
-                                        code_init=t1.code_init.code + t2.code_init.code,
-                                        code_exit=t1.code_exit.code + t2.code_exit.code,
-                                        location=_merge_dicts(t1.location, t2.location),
-                                        side_effects=t1.side_effects or t2.side_effects,
-                                        debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo))
+        with default_line_info(graph, _merge_debuginfo(t1.debuginfo, t2.debuginfo)):
+            new_tasklet = graph.add_tasklet(
+                new_name,
+                inputs,
+                t2.out_connectors,
+                new_code_str,
+                t1.language,
+                state_fields=t1.state_fields + t2.state_fields,
+                code_global=t1.code_global.code + t2.code_global.code,
+                code_init=t1.code_init.code + t2.code_init.code,
+                code_exit=t1.code_exit.code + t2.code_exit.code,
+                location=_merge_dicts(t1.location, t2.location),
+                side_effects=t1.side_effects or t2.side_effects,
+            )
 
         for in_edge in graph.in_edges(t1):
             if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):
