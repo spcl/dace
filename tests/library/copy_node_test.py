@@ -34,7 +34,7 @@ def _make_same_storage_sdfg(implementation,
     a1 = state.add_access(a_name)
     b1 = state.add_access(b_name)
 
-    libnode = CopyLibraryNode(name="cp", src_storage=storage, dst_storage=storage)
+    libnode = CopyLibraryNode(name="cp")
     if implementation is not None:
         libnode.implementation = implementation
 
@@ -60,7 +60,7 @@ def _make_cross_storage_sdfg(implementation, src_storage, dst_storage, size=128)
     src_access = state.add_access(src_name)
     dst_access = state.add_access(dst_name)
 
-    libnode = CopyLibraryNode(name="cp_cross", src_storage=src_storage, dst_storage=dst_storage)
+    libnode = CopyLibraryNode(name="cp_cross")
     libnode.implementation = implementation
 
     state.add_edge(src_access, None, libnode, "_in", dace.memlet.Memlet(f"{src_name}[0:{size}]"))
@@ -222,36 +222,32 @@ def test_copy_cuda_device_to_host():
     np.testing.assert_array_equal(dst, cp.asnumpy(src))
 
 
-def test_copy_node_storage_properties():
-    """Verify src_storage/dst_storage are stored and serialized correctly."""
-    node = CopyLibraryNode(name="test_props",
-                           src_storage=dace.dtypes.StorageType.CPU_Heap,
-                           dst_storage=dace.dtypes.StorageType.GPU_Global)
-    assert node.src_storage == dace.dtypes.StorageType.CPU_Heap
-    assert node.dst_storage == dace.dtypes.StorageType.GPU_Global
-
-    # Round-trip through JSON: need an SDFG + state as parent for to_json
-    sdfg = dace.SDFG("ser_test")
+def test_copy_node_storage_from_edges():
+    """``src_storage`` / ``dst_storage`` resolve live from the node's ``_in`` / ``_out`` edges."""
+    sdfg = dace.SDFG("storage_from_edges")
     sdfg.add_array("A", [10], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     sdfg.add_array("B", [10], dace.float64, dace.dtypes.StorageType.GPU_Global)
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
+    node = CopyLibraryNode(name="edges_to_storage")
     state.add_node(node)
     state.add_edge(a, None, node, "_in", dace.memlet.Memlet("A[0:10]"))
     state.add_edge(node, "_out", b, None, dace.memlet.Memlet("B[0:10]"))
 
-    json_obj = node.to_json(state)
-    restored = CopyLibraryNode.from_json(json_obj)
-    assert restored.src_storage == dace.dtypes.StorageType.CPU_Heap
-    assert restored.dst_storage == dace.dtypes.StorageType.GPU_Global
+    assert node.src_storage(state, sdfg) == dace.dtypes.StorageType.CPU_Heap
+    assert node.dst_storage(state, sdfg) == dace.dtypes.StorageType.GPU_Global
 
 
-def test_copy_node_default_storage():
-    """Default storage properties should be StorageType.Default."""
-    node = CopyLibraryNode(name="test_default")
-    assert node.src_storage == dace.dtypes.StorageType.Default
-    assert node.dst_storage == dace.dtypes.StorageType.Default
+def test_copy_node_storage_defaults_when_unattached():
+    """Without edges, the storage methods fall back to ``StorageType.Default``."""
+    sdfg = dace.SDFG("storage_unattached")
+    state = sdfg.add_state("main")
+    node = CopyLibraryNode(name="unattached")
+    state.add_node(node)
+
+    assert node.src_storage(state, sdfg) == dace.dtypes.StorageType.Default
+    assert node.dst_storage(state, sdfg) == dace.dtypes.StorageType.Default
 
 
 def test_copy_cross_storage_validation_rejects_without_flag():
@@ -296,9 +292,7 @@ def test_cpu_memcpy_rejects_non_contiguous_subset():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cp_nc",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.CPU_Heap)
+    libnode = CopyLibraryNode(name="cp_nc")
     libnode.implementation = "CPU"
     # A[2:6, 0:10] is non-contiguous: partial in dim 0, NOT full in dim 1
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:6, 0:10]"))
@@ -317,9 +311,7 @@ def test_strided_expansions_accept_non_contiguous():
         state = sdfg.add_state("main")
         a = state.add_access("A")
         b = state.add_access("B")
-        libnode = CopyLibraryNode(name="cp",
-                                  src_storage=dace.dtypes.StorageType.CPU_Heap,
-                                  dst_storage=dace.dtypes.StorageType.CPU_Heap)
+        libnode = CopyLibraryNode(name="cp")
         libnode.implementation = impl
         state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:6, 0:10]"))
         state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
@@ -336,9 +328,7 @@ def test_register_copy_expands_with_register_storage():
     state = sdfg.add_state("main")
     r_in = state.add_access("R_in")
     r_out = state.add_access("R_out")
-    libnode = CopyLibraryNode(name="regcpy",
-                              src_storage=dace.dtypes.StorageType.Register,
-                              dst_storage=dace.dtypes.StorageType.Register)
+    libnode = CopyLibraryNode(name="regcpy")
     libnode.implementation = "RegisterCopy"
     state.add_edge(r_in, None, libnode, "_in", dace.memlet.Memlet("R_in[0:8]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
@@ -363,9 +353,7 @@ def test_register_copy_rejects_non_register():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     r_out = state.add_access("R_out")
-    libnode = CopyLibraryNode(name="regcpy_bad",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.Register)
+    libnode = CopyLibraryNode(name="regcpy_bad")
     libnode.implementation = "RegisterCopy"
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:8]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
@@ -397,9 +385,7 @@ def test_direct_assignment_register_to_register():
     state = sdfg.add_state("main")
     r_in = state.add_access("R_in")
     r_out = state.add_access("R_out")
-    libnode = CopyLibraryNode(name="da",
-                              src_storage=dace.dtypes.StorageType.Register,
-                              dst_storage=dace.dtypes.StorageType.Register)
+    libnode = CopyLibraryNode(name="da")
     libnode.implementation = "DirectAssignment"
     state.add_edge(r_in, None, libnode, "_in", dace.memlet.Memlet("R_in[0:4]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:4]"))
@@ -427,9 +413,7 @@ def test_direct_assignment_rejects_shared_memory():
     state = sdfg.add_state("main")
     g_in = state.add_access("G_in")
     s_out = state.add_access("S_out")
-    libnode = CopyLibraryNode(name="da_bad",
-                              src_storage=dace.dtypes.StorageType.GPU_Global,
-                              dst_storage=dace.dtypes.StorageType.GPU_Shared)
+    libnode = CopyLibraryNode(name="da_bad")
     libnode.implementation = "DirectAssignment"
     state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:32]"))
     state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:32]"))
@@ -459,9 +443,7 @@ def test_shared_memory_copy_global_to_shared_is_collective():
     state = sdfg.add_state("main")
     g_in = state.add_access("G_in")
     s_out = state.add_access("S_out")
-    libnode = CopyLibraryNode(name="shmcpy",
-                              src_storage=dace.dtypes.StorageType.GPU_Global,
-                              dst_storage=dace.dtypes.StorageType.GPU_Shared)
+    libnode = CopyLibraryNode(name="shmcpy")
     libnode.implementation = "SharedMemoryCopy"
     state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:64]"))
     state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:64]"))
@@ -495,9 +477,7 @@ def test_shared_memory_copy_shared_to_register_is_thread_level():
     state = sdfg.add_state("main")
     s_in = state.add_access("S_in")
     r_out = state.add_access("R_out")
-    libnode = CopyLibraryNode(name="shmcpy_thr",
-                              src_storage=dace.dtypes.StorageType.GPU_Shared,
-                              dst_storage=dace.dtypes.StorageType.Register)
+    libnode = CopyLibraryNode(name="shmcpy_thr")
     libnode.implementation = "SharedMemoryCopy"
     state.add_edge(s_in, None, libnode, "_in", dace.memlet.Memlet("S_in[0:8]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
@@ -521,9 +501,7 @@ def test_shared_memory_copy_rejects_no_shared():
     state = sdfg.add_state("main")
     g_in = state.add_access("G_in")
     r_out = state.add_access("R_out")
-    libnode = CopyLibraryNode(name="shmcpy_bad",
-                              src_storage=dace.dtypes.StorageType.GPU_Global,
-                              dst_storage=dace.dtypes.StorageType.Register)
+    libnode = CopyLibraryNode(name="shmcpy_bad")
     libnode.implementation = "SharedMemoryCopy"
     state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:32]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:32]"))
@@ -540,9 +518,7 @@ def test_shared_memory_copy_rejects_cpu():
     state = sdfg.add_state("main")
     c_in = state.add_access("C_in")
     s_out = state.add_access("S_out")
-    libnode = CopyLibraryNode(name="shmcpy_cpu",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.GPU_Shared)
+    libnode = CopyLibraryNode(name="shmcpy_cpu")
     libnode.implementation = "SharedMemoryCopy"
     state.add_edge(c_in, None, libnode, "_in", dace.memlet.Memlet("C_in[0:32]"))
     state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:32]"))
@@ -569,9 +545,7 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
     ime, imx = state.add_map("tblock_map", {"ti": "0:32"}, schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
 
     # CopyLibraryNode with SharedMemoryCopy inside the ThreadBlock map
-    libnode = CopyLibraryNode(name="shmcpy_bad",
-                              src_storage=dace.dtypes.StorageType.GPU_Global,
-                              dst_storage=dace.dtypes.StorageType.GPU_Shared)
+    libnode = CopyLibraryNode(name="shmcpy_bad")
     libnode.implementation = "SharedMemoryCopy"
 
     state.add_memlet_path(a, ome, ime, libnode, dst_conn="_in", memlet=dace.Memlet("A[bi:bi+32]"))
@@ -590,9 +564,7 @@ def test_copynd_expansion_generates_copynd_call():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.CPU_Heap)
+    libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyND"
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:8, 5:15]"))
     state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
@@ -627,9 +599,7 @@ def test_copynd_expansion_rejects_cross_boundary():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd_bad",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.GPU_Global)
+    libnode = CopyLibraryNode(name="cpnd_bad")
     libnode.implementation = "CopyND"
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:10]"))
     state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:10]"))
@@ -648,9 +618,7 @@ def test_copynd_uses_static_template_for_concrete_dims():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.CPU_Heap)
+    libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyND"
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[10:30]"))
     state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:20]"))
@@ -685,9 +653,7 @@ def test_copynd_falls_back_to_dynamic_for_symbolic_dims():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.CPU_Heap)
+    libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyND"
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:N]"))
     state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:N]"))
@@ -719,9 +685,7 @@ def test_copy_pure_cpu_2d():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cp2d",
-                              src_storage=dace.dtypes.StorageType.CPU_Heap,
-                              dst_storage=dace.dtypes.StorageType.CPU_Heap)
+    libnode = CopyLibraryNode(name="cp2d")
     libnode.implementation = "pure"
 
     state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:8, 5:15]"))
@@ -747,8 +711,8 @@ if __name__ == "__main__":
     test_copy_cpu_copynd()
 
     # Properties
-    test_copy_node_storage_properties()
-    test_copy_node_default_storage()
+    test_copy_node_storage_from_edges()
+    test_copy_node_storage_defaults_when_unattached()
 
     # Validation
     test_copy_dtype_mismatch_rejected()

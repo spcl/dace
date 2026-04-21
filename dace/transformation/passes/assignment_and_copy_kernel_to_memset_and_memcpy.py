@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
+"""Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 import warnings
 import dace
 import copy
@@ -9,14 +9,13 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
-    """Lift contiguous zero-assignments and element-wise copies out of maps
-    into Memset / Copy library nodes.
+    """Implementation of the lifting operatio.
 
     The pass walks every map in the SDFG, identifies data paths that perform
     a constant-zero write or a direct element-wise copy over a contiguous
@@ -29,8 +28,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     overapproximate_first_dimension = properties.Property(
         dtype=bool,
         default=False,
-        desc=
-        "If True, the first dimension of the map is overapproximated to be contiguous, even if it is not. This is useful for some cases where the first dimension is always contiguous, but the map range is not.",
+        desc="If True, overapproximate the first dimension as contiguous over its stride-one extent, "
+        "even if the map range isn't. Useful when the dimension is known to be contiguous in memory.",
     )
     node_label_whitelist = properties.ListProperty(
         element_type=str,
@@ -70,14 +69,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             edges.append(oe)
         return edges
 
-    def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry, is_memset: bool):
+    def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry,
+                                 is_memset: bool) -> List[List[MultiConnectorEdge]]:
         """
-        Find ``ME -> tasklet -> MX`` paths whose tasklet is a pure copy
+        Find ``MapEntry -> tasklet -> MapExit`` paths whose tasklet is a pure copy
         (``is_memset=False``) or constant-zero write (``is_memset=True``).
-
-        For memcpy, each returned path is ``[ie, e_in, e_out, oe]`` where
-        ``ie`` / ``oe`` are the outer access-node edges. For memset it is
-        ``[e_in, e_out, oe]`` (no input access node).
         """
         if any(s != 1 for (_, _, s) in node.map.range):
             return []
@@ -130,24 +126,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return paths
 
-    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState,
+                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
         return self._detect_contiguous_paths(state, node, is_memset=False)
 
-    def _detect_contiguous_memset_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _detect_contiguous_memset_paths(self, state: dace.SDFGState,
+                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
         return self._detect_contiguous_paths(state, node, is_memset=True)
 
-    def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry) -> int:
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
         assert isinstance(node, dace.nodes.MapEntry), f"Node {node} is not a MapEntry"
         assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
-    def _get_write_begin_and_length(self,
-                                    state: dace.SDFGState,
-                                    map_entry: dace.nodes.MapEntry,
-                                    tasklet: dace.nodes.Tasklet,
-                                    verbose=True):
+    def _get_write_begin_and_length(
+            self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+            tasklet: dace.nodes.Tasklet) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
         range_list = {
             dace.symbolic.symbol(p): (b, e, s)
             for (p, (b, e, s)) in zip(map_entry.map.params, map_entry.map.range)
@@ -171,7 +167,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 for (p, (b2, e2, s2)) in range_list.items():
                     nb = nb.subs(p, b2)
                     ne = ne.subs(p, e2)
-                    assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy detection"
+                    assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
                 new_in_data_range.append((nb, ne, ns))
 
             # If we overapproximate the first dimension, we assume it is contiguous
@@ -220,8 +216,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             contig_subset = new_out_data_subset.is_contiguous_subset(state.sdfg.arrays[out_edge.data.data])
             if not contig_subset:
                 warnings.warn(
-                    f"Output array {out_edge.data.data} is not contiguous, cannot remove memcpy/memset {new_out_data_range} of ({state.sdfg.arrays[out_edge.data.data]})",
-                    UserWarning)
+                    f"Output array {out_edge.data.data} subset {new_out_data_range} is not contiguous, "
+                    "cannot remove memcpy/memset.", UserWarning)
                 return None, None, None
 
         if in_edge.data.data is not None:
@@ -255,13 +251,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             in_length_collapsed = None
 
         if in_length_collapsed is not None:
-            # This means the inner access is voer a non-unit stride dimension
+            # Inner access is over a non-unit stride dimension
             if in_length_collapsed != out_length_collapsed:
                 return None, None, None
 
         return new_in_data_range, new_out_data_range, out_length_collapsed
 
-    def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
+    def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
         rmed_count = 0
 
@@ -276,9 +272,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if src_access_node not in state.nodes() or map_entry not in state.nodes() or tasklet not in state.nodes(
             ) or map_exit not in state.nodes() or dst_access_node not in state.nodes():
                 warnings.warn(
-                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), "
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                    UserWarning)
+                    f"Skipping memcpy removal: map {map_entry.map.label} or its tasklet/exit is no longer "
+                    "in state.", UserWarning)
                 continue
 
             # If src and dst types are not the same, we can't do memcpy
@@ -286,20 +281,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dst_desc = state.sdfg.arrays[dst_access_node.data]
             if src_desc.dtype != dst_desc.dtype:
                 if verbose:
-                    warnings.warn(
-                        f"Source and destination types do not match for memcpy removal: {src_desc.dtype} != {dst_desc.dtype}. Skipping.",
-                        UserWarning)
+                    warnings.warn(f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
+                                  UserWarning)
                 continue
             if src_desc.storage != dst_desc.storage:
                 if verbose:
                     warnings.warn(
-                        f"Source and destination storage types do not match for memcpy removal: {src_desc.storage} != {dst_desc.storage}. Skipping.",
+                        f"Skipping memcpy removal: storage mismatch ({src_desc.storage} != {dst_desc.storage}).",
                         UserWarning)
                 continue
 
             # Must run before the memcpy path is torn down: needs the tasklet's edges.
-            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(
-                state, map_entry, tasklet, verbose)
+            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
             if begin_subset is None and exit_subset is None and copy_length is None:
                 continue
@@ -338,7 +331,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return rmed_count
 
-    def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
+    def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         memset_paths = self._detect_contiguous_memset_paths(state, node)
 
         joined_edges = set()
@@ -357,9 +350,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
                 warnings.warn(
-                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                    UserWarning)
+                    f"Skipping memset removal: map {map_entry.map.label} or its tasklet/exit is no longer "
+                    "in state.", UserWarning)
                 continue
 
             # Must run before the memset path is torn down: needs the tasklet's edges.
@@ -368,8 +360,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if begin_subset is None or exit_subset is None or copy_length is None:
                 if verbose:
                     warnings.warn(
-                        f"Could not determine begin or exit subset or copy length for memset removal (or they are not contiguous) in map {map_entry.map}({map_entry.map.label}). Skipping.",
-                        UserWarning)
+                        f"Skipping memset removal in map {map_entry.map.label}: subset or copy length "
+                        "could not be determined or is non-contiguous.", UserWarning)
                 continue
 
             in_edges = state.in_edges(map_entry)
@@ -393,7 +385,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return rmed_count
 
-    def _has_passthrough_connectors(self, n: dace.nodes.Node):
+    def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
         in_conns = n.in_connectors
         out_conns = n.out_connectors
 

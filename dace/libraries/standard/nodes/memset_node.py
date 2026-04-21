@@ -1,26 +1,29 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-MemsetLibraryNode and its expansions (pure/CPU/CUDA). Each expansion accepts
+MemsetLibraryNode representing 0-memsets over contiguous subsets. Each expansion accepts
 an optional ``stream`` in-connector so the generated memset is bound to a
-caller-provided ``gpuStream_t`` instead of ``__dace_current_stream``.
+caller-provided ``gpuStream_t`` instead of default ``__dace_current_stream``.
 """
-import dace
-from dace import library, nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from functools import reduce
 import operator
+from typing import Any, List, Optional, Tuple
+
+import dace
+from dace import library, nodes
 from dace.codegen.common import sym2cpp
+from dace.transformation.transformation import ExpandTransformation
+from .. import environments
 
 from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dynamic_inputs,
                                             extract_stream_and_dynamic_inputs)
 from dace.libraries.standard.nodes.copy_node import _add_stream_descriptor, _wire_stream_to
 
 
-def _make_memset_skeleton(node, parent_state, parent_sdfg):
-    """Shared SDFG skeleton for every memset expansion. Returns
-    ``(sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed, stream_input)``.
-    """
+def _make_memset_skeleton(
+    node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
+) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any],
+           Optional[dace.data.Data]]:
+    """Shared SDFG skeleton for every memset expansion."""
     out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
     keep = [(e + 1 - b) // s != 1 for (b, e, s) in out_subset]
     out_shape_collapsed = [(e + 1 - b) // s for (b, e, s), k in zip(out_subset, keep) if k]
@@ -37,7 +40,9 @@ def _make_memset_skeleton(node, parent_state, parent_sdfg):
     return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed, stream_input
 
 
-def _make_memset_memcpy_tasklet(sdfg, state, out_name, out, out_shape_collapsed, cp_size, stream_input, cuda: bool):
+def _make_memset_memcpy_tasklet(sdfg: dace.SDFG, state: dace.SDFGState, out_name: str, out: dace.data.Data,
+                                out_shape_collapsed: List[Any], cp_size: Any, stream_input: Optional[dace.data.Data],
+                                cuda: bool):
     """Emit a ``memset`` / ``cudaMemsetAsync`` tasklet writing zeros to ``out``."""
     tasklet_inputs = set()
     if cuda:
@@ -67,7 +72,7 @@ class ExpandPure(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, _out_subset, map_lengths, _, stream_input = _make_memset_skeleton(
             node, parent_state, parent_sdfg)
 
@@ -95,7 +100,7 @@ class ExpandCUDA(ExpandTransformation):
     environments = [environments.CUDA]
 
     @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, _out_subset, map_lengths, out_shape_collapsed, stream_input = (
             _make_memset_skeleton(node, parent_state, parent_sdfg))
         cp_size = reduce(operator.mul, map_lengths, 1)
@@ -108,7 +113,7 @@ class ExpandCPU(ExpandTransformation):
     environments = [environments.CPU]
 
     @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, _out_subset, map_lengths, out_shape_collapsed, stream_input = (
             _make_memset_skeleton(node, parent_state, parent_sdfg))
         cp_size = reduce(operator.mul, map_lengths, 1)
@@ -121,13 +126,12 @@ class MemsetLibraryNode(nodes.LibraryNode):
     implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'pure'
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
 
-    def validate(self, sdfg, state):
-        """Validate this node's edges and return
-        ``(out_name, out, out_subset, dynamic_inputs, stream_input)``.
-        """
+    def validate(
+            self, sdfg: dace.SDFG,
+            state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict, Optional[dace.data.Data]]:
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")

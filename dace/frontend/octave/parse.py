@@ -675,7 +675,7 @@ def p_error(p):
     raise ValueError("Unexpected EOF")
 
 
-parser = yacc.yacc(start="top", write_tables=False, debug=False)
+parser = yacc.yacc(start="top")
 
 
 def parse(buf, debug=False):
