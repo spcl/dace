@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for ``dace.sdfg.construction_utils.get_parent_map_and_loop_scopes``
-and ``dace.sdfg.construction_utils.get_parent_maps``.
+Tests for ``dace.sdfg.construction_utils.get_parent_map_and_loop_scopes``.
 
 Uses the DaCe Python frontend (``@dace.program``, ``dace.map``, ``range``)
 to build a realistic HPC-style SDFG that mixes maps, loops, nested SDFGs,
@@ -20,18 +19,10 @@ scalar-dependent dynamic ranges, and 3D tensor accesses::
 """
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.construction_utils import (get_parent_map_and_loop_scopes, get_parent_maps)
-
-# ===================================================================
-# Constants
-# ===================================================================
+from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 
 N, M, K = 4, 4, 5
 COLS = M + 10  # enough room for j + offset + 9
-
-# ===================================================================
-# DaCe programs (numpy frontend)
-# ===================================================================
 
 
 @dace.program
@@ -47,11 +38,6 @@ def inner_compute(A: dace.float64[K, N, COLS], off_row: dace.int64[M], ii: dace.
 def kernel(A: dace.float64[K, N, COLS], offsets: dace.int64[N, M]):
     for i in dace.map[0:N]:
         inner_compute(A, offsets[i, :], i)
-
-
-# ===================================================================
-# Helpers
-# ===================================================================
 
 
 def _get_sdfg():
@@ -87,11 +73,6 @@ def _find_inner_tasklet(sdfg):
             if "+ 1.0" in code or "+1.0" in code or "+ 1" in code:
                 return n, st
     raise RuntimeError("Could not find increment tasklet")
-
-
-# ===================================================================
-# Tests: get_parent_map_and_loop_scopes
-# ===================================================================
 
 
 def test_inner_map_sees_two_loops_and_outer_map():
@@ -142,40 +123,7 @@ def test_outer_map_has_no_parent_scopes():
     assert len(parents) == 0
 
 
-# ===================================================================
-# Tests: get_parent_maps (MapEntry only, skips LoopRegions)
-# ===================================================================
-
-
-def test_get_parent_maps_inner_map_sees_only_outer_map():
-    """
-    get_parent_maps for the k-map returns only the outer i-map,
-    skipping both LoopRegions.
-    """
-    sdfg = _get_sdfg()
-    me, st = _find_inner_map(sdfg)
-    maps = get_parent_maps(sdfg, me, st)
-
-    assert len(maps) == 1, (f"Expected 1 parent map, got {len(maps)}")
-    parent_me, _ = maps[0]
-    assert isinstance(parent_me, dace.sdfg.nodes.MapEntry)
-
-
-def test_get_parent_maps_outer_map_has_no_parents():
-    """The outermost i-map has no parent maps."""
-    sdfg = _get_sdfg()
-    me, st = _find_outer_map(sdfg)
-    maps = get_parent_maps(sdfg, me, st)
-    assert len(maps) == 0
-
-
-# ===================================================================
-# main
-# ===================================================================
-
 if __name__ == "__main__":
     test_inner_map_sees_two_loops_and_outer_map()
     test_inner_tasklet_sees_inner_map_plus_all_scopes()
     test_outer_map_has_no_parent_scopes()
-    test_get_parent_maps_inner_map_sees_only_outer_map()
-    test_get_parent_maps_outer_map_has_no_parents()
