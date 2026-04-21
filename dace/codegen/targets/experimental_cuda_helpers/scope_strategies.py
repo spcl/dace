@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
 
-import dace
 from dace import dtypes, subsets, symbolic
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion

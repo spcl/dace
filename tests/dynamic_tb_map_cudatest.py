@@ -27,6 +27,7 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map():
     height = 1024
     width = 1024
@@ -68,6 +69,7 @@ def test_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_maps():
     """ Tests the case of multiple dynamic maps in a row that share dynamic inputs."""
 
@@ -223,6 +225,7 @@ def test_nested_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map_with_step():
 
     M = dace.symbol('M')
@@ -294,6 +297,7 @@ def test_dynamic_map_with_step():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_multidim_map():
 
     @dace.program
@@ -341,6 +345,7 @@ def test_dynamic_nested_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_default_schedule():
     N = dace.symbol('N')
 

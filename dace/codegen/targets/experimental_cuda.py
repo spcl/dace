@@ -18,17 +18,16 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, memlet_copy_to_absolute_strides, mangle_dace_state_struct_name,
                                       ptr, sym2cpp)
-from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
+from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 # DaCe transformation imports
 from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
-from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
-from dace.transformation.passes.gpu_specialization.gpu_stream_topology_simplification import GPUStreamTopologySimplification
+from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
+from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
+    InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
@@ -36,7 +35,8 @@ from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import In
 
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call, get_defined_type
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
+from dace.codegen.targets.experimental_cuda_helpers.reduced_ir_check import warn_if_not_simplified_dialect
 
 from dace.codegen.targets import cpp
 
@@ -136,6 +136,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         Note that the order of the steps matters, e.g. TODO
         """
 
+        # Warn (do not fail) if the SDFG violates the Simplified SDFG Dialect
+        # assumed by this codegen.
+        warn_if_not_simplified_dialect(sdfg)
+
         #------------------------- Hanlde GPU<->GPU strided copies --------------------------
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
@@ -201,22 +205,41 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Register GPU context in state struct
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
-        # Prepare the Pipeline to make GPU streams explicit: Add and connect SDFG nodes
-        # with GPU stream AccessNodes where used
+        # Prepare the Pipeline that lowers the SDFG to the form the experimental
+        # CUDA codegen expects:
+        #   1. Replace implicit CPU<->GPU AccessNode-to-AccessNode edges with
+        #      explicit ``CopyLibraryNode`` instances (the stream machinery
+        #      attaches to library nodes, not to raw memlets).
+        #   2. Assign GPU streams and thread the stream handle through the
+        #      kernels / copy library nodes.
         stream_pipeline = Pipeline([
+            InsertExplicitGPUGlobalMemoryCopies(),
             NaiveGPUStreamScheduler(),
             InsertGPUStreams(),
-            ConnectGPUStreamsToKernels(),
-            ConnectGPUStreamsToTasklets(),
+            ConnectGPUStreamsToNodes(),
             InsertGPUStreamSyncTasklets(),
-            InsertGPUCopyTasklets(),
-            GPUStreamTopologySimplification(),
         ])
 
-        # TODO: Missed copies due to InsertGPUCopyTasklet -> maybe check wheter copies were
-        # handled above than just adding this codegen to used_targets by default
         self._dispatcher._used_targets.add(self)
         gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
+
+        # ``InsertExplicitGPUGlobalMemoryCopies`` inserts ``CopyLibraryNode``
+        # instances that the framecode's one-shot library-node expansion
+        # (which ran before ``preprocess``) did not see.  Expand them now so
+        # codegen hits only real tasklets / maps from here on.
+        sdfg.expand_library_nodes(recursive=True)
+
+        # The expansion introduces nested SDFGs / tasklets whose connectors
+        # are left as ``void``; re-run connector-type inference so codegen
+        # emits correctly-typed function signatures.
+        from dace.sdfg import infer_types
+        infer_types.infer_connector_types(sdfg)
+
+        # The expansion above creates nested SDFGs with new ``cfg_id``s that
+        # are not in the framecode's symbol/constant cache (populated in
+        # ``DaCeCodeGenerator.__init__`` before any ``preprocess`` ran).
+        # Re-seed it with the current SDFG hierarchy.
+        self._rebuild_frame_symbol_cache(sdfg)
 
         # Initialize runtime GPU stream manager
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
@@ -240,6 +263,31 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
+        """Re-seed ``self._frame._symbols_and_constants`` for the current SDFG hierarchy.
+
+        The framecode builds this cache once in its constructor, keyed by
+        ``cfg_id``.  Any pass that introduces new nested SDFGs during
+        ``preprocess`` (e.g. library-node expansion after
+        ``InsertExplicitGPUGlobalMemoryCopies``) invalidates it.  This method
+        mirrors the original seeding logic so lookups succeed for the new
+        ``cfg_id``s.
+        """
+        frame = self._frame
+        frame._symbols_and_constants = {}
+        sdfg.reset_cfg_list()
+        frame._symbols_and_constants[sdfg.cfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
+        for nested, state in sdfg.all_nodes_recursive():
+            if isinstance(nested, nodes.NestedSDFG):
+                nsdfg = nested.sdfg
+                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
+                parent_constants = frame._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
+                result |= parent_constants
+                for edge in state.in_edges(nested):
+                    if edge.data.data in parent_constants:
+                        result.add(edge.dst_conn)
+                frame._symbols_and_constants[nsdfg.cfg_id] = result
 
     def _compute_pool_release(self, top_sdfg: SDFG):
         """
@@ -432,16 +480,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 callsite_stream.write(outer_stream.getvalue())
 
             return
-
-        import copy
-        from dace.transformation.passes.fix_test import Fix
-        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-        from dace.sdfg import infer_types
-
-        names = Fix().apply_pass(sdfg, {})
-        for name, map_parent in names.items():
-            MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
-        infer_types.infer_connector_types(sdfg)
 
         #--------------- Nested GPU Scope --------------------
         supported_strategies: List[ScopeGenerationStrategy] = [

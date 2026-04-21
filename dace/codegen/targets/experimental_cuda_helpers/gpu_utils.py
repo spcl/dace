@@ -4,7 +4,6 @@ import functools
 import sympy
 from typing import Set, List
 
-import dace
 from dace import Config, data as dt, dtypes
 from dace.sdfg import nodes, SDFGState
 from dace.codegen import common

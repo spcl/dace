@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, FrozenSet, Set, Tuple, List, Optional
+from typing import Dict, FrozenSet, Set, Tuple, List
 import copy
 import functools
 from collections import deque
@@ -16,8 +16,6 @@ from dace.subsets import Range
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.symbolic import symbol
-
-import dace.sdfg.utils as sdutil
 
 
 @make_properties
