@@ -14,10 +14,8 @@ from dace.config import Config
 from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
-from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary, \
-    infer_array_literal_descriptor
-from dace.frontend.python.schedule_tree.dict_support import StaticDictBinding, infer_dict_assignment_binding, \
-    infer_dict_literal_binding, infer_dict_literal_descriptor, infer_dict_subscript_descriptor
+from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
+from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, member_descriptor, \
     structure_member_path
@@ -408,6 +406,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.array_literal_support = ArrayLiteralSupportLibrary()
+        self.dict_support = DictSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
         self.attribute_rewriter = AttributeRewriter(self._evaluation_context)
         self.lambda_resolver = LambdaResolver(self.globals,
@@ -1064,9 +1063,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if binding is None or binding.descriptor is None:
             return
         dict_binding = binding.structure if isinstance(binding.structure, StaticDictBinding) else None
-        updated = infer_dict_assignment_binding(binding.descriptor, dict_binding, target.slice, value,
-                                                lambda node: self._infer_descriptor(node, target.value.id),
-                                                self._infer_scalar_descriptor, self._evaluation_context)
+        updated = self.dict_support.infer_assignment_binding(self._dict_support_context(target.value.id),
+                                                             binding.descriptor, dict_binding, target.slice, value)
         if updated is None:
             return
         updated_descriptor, updated_binding = updated
@@ -1152,8 +1150,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 kind = 'callback'
             structure = None
             if isinstance(inferred_descriptor, PythonDict) and isinstance(value, ast.Dict):
-                structure = infer_dict_literal_binding(value, lambda node: self._infer_descriptor(node, name),
-                                                       self._infer_scalar_descriptor, self._evaluation_context)
+                structure = self.dict_support.infer_literal_binding(self._dict_support_context(name), value)
             self._store_binding(name, inferred_descriptor, kind=kind, structure=structure)
         else:
             scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
@@ -1455,15 +1452,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _infer_descriptor(self, node: ast.AST, target_name: str) -> Optional[data.Data]:
         if isinstance(node, ast.Dict):
-            return infer_dict_literal_descriptor(node, lambda value: self._infer_descriptor(value, target_name),
-                                                 self._infer_scalar_descriptor)
+            return self.dict_support.infer_literal_descriptor(self._dict_support_context(target_name), node)
 
         if isinstance(node, ast.Call):
-            inferred = infer_array_literal_descriptor(node,
-                                                      lambda value: self._infer_descriptor(value, target_name),
-                                                      self._infer_scalar_descriptor,
-                                                      self._evaluation_context,
-                                                      callable_name_resolver=self._resolved_callable_name)
+            inferred = self.array_literal_support.infer_expression_descriptor(self._array_literal_context(), node)
             if inferred is not None:
                 return inferred
 
@@ -1498,8 +1490,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                     binding = self.bindings.get(node.value.id)
                     if binding is not None and isinstance(binding.structure, StaticDictBinding):
                         dict_binding = binding.structure
-                dict_descriptor = infer_dict_subscript_descriptor(base_descriptor, node.slice, self._evaluation_context,
-                                                                  dict_binding)
+                dict_descriptor = self.dict_support.infer_subscript_descriptor(self._dict_support_context(target_name),
+                                                                               base_descriptor, node.slice,
+                                                                               dict_binding)
                 if dict_descriptor is not None:
                     return dict_descriptor
                 inferred = _infer_static_subscript_descriptor(base_descriptor, node, self._evaluation_context())
@@ -2080,6 +2073,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                    resolve_callable_name=self._resolved_callable_name,
                                    tasklet_name=self._tasklet_name,
                                    array_constructor_name=self._array_constructor_name)
+
+    def _dict_support_context(self, target_name: str = '__probe') -> DictSupportContext:
+        return DictSupportContext(infer_descriptor=lambda node: self._infer_descriptor(node, target_name),
+                                  infer_scalar_descriptor=self._infer_scalar_descriptor,
+                                  evaluation_context=self._evaluation_context)
 
     def _expression_planning_context(self) -> ExpressionPlanningContext:
         return ExpressionPlanningContext(infer_descriptor=self._infer_plannable_expression_descriptor,

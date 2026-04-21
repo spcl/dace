@@ -7,8 +7,9 @@ from dace import data
 from dace import dtypes
 from dace.data.creation import create_datadescriptor
 from dace.data.pydata import PythonDict
-from dace.frontend.python.schedule_tree.dict_support import infer_dict_assignment_descriptor, infer_dict_literal_binding, \
-    infer_dict_literal_descriptor, infer_dict_subscript_descriptor
+from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding, \
+    infer_dict_assignment_descriptor, infer_dict_literal_binding, infer_dict_literal_descriptor, \
+    infer_dict_subscript_descriptor
 
 
 def test_create_datadescriptor_infers_typed_python_dict():
@@ -93,3 +94,23 @@ def test_infer_dict_subscript_descriptor_uses_static_key_binding():
     assert isinstance(left, data.Scalar)
     assert left.dtype == dace.float64
     assert missing is None
+
+
+def test_dict_support_library_routes_shared_inference():
+    library = DictSupportLibrary()
+    context = DictSupportContext(
+        infer_descriptor=lambda current: data.Scalar(dace.string, transient=True)
+        if isinstance(current, ast.Constant) and isinstance(current.value, str) else None,
+        infer_scalar_descriptor=lambda current, annotated: data.Scalar(dace.float64, transient=True)
+        if isinstance(current, ast.Constant) and isinstance(current.value, float) else None,
+        evaluation_context=lambda: {})
+    node = ast.parse("{'left': 1.0, 'right': 2.0}", mode='eval').body
+
+    descriptor = library.infer_literal_descriptor(context, node)
+    binding = library.infer_literal_binding(context, node)
+    subscript = library.infer_subscript_descriptor(context, descriptor, ast.parse("'left'", mode='eval').body, binding)
+
+    assert isinstance(descriptor, PythonDict)
+    assert isinstance(binding, StaticDictBinding)
+    assert isinstance(subscript, data.Scalar)
+    assert subscript.dtype == dace.float64

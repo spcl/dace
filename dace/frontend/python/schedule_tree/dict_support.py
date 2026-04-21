@@ -20,6 +20,42 @@ class StaticDictBinding:
     entries: Dict[Any, data.Data]
 
 
+@dataclass(frozen=True)
+class DictSupportContext:
+    infer_descriptor: DescriptorInference
+    infer_scalar_descriptor: ScalarDescriptorInference
+    evaluation_context: EvaluationContextFactory
+
+
+class DictSupportLibrary:
+    """Shared dict descriptor and binding helpers for the direct frontend."""
+
+    def infer_literal_descriptor(self, context: DictSupportContext, node: ast.Dict) -> PythonDict:
+        return infer_dict_literal_descriptor(node, context.infer_descriptor, context.infer_scalar_descriptor)
+
+    def infer_literal_binding(self, context: DictSupportContext, node: ast.Dict) -> Optional[StaticDictBinding]:
+        return infer_dict_literal_binding(node, context.infer_descriptor, context.infer_scalar_descriptor,
+                                          context.evaluation_context)
+
+    def infer_subscript_descriptor(self,
+                                   context: DictSupportContext,
+                                   descriptor: data.Data,
+                                   slice_node: ast.AST,
+                                   binding: Optional[StaticDictBinding] = None) -> Optional[data.Data]:
+        return infer_dict_subscript_descriptor(descriptor, slice_node, context.evaluation_context, binding)
+
+    def infer_assignment_binding(self, context: DictSupportContext, descriptor: data.Data,
+                                 binding: Optional[StaticDictBinding], slice_node: ast.AST,
+                                 value_node: ast.AST) -> Optional[tuple[PythonDict, Optional[StaticDictBinding]]]:
+        return infer_dict_assignment_binding(descriptor, binding, slice_node, value_node, context.infer_descriptor,
+                                             context.infer_scalar_descriptor, context.evaluation_context)
+
+    def infer_assignment_descriptor(self, context: DictSupportContext, descriptor: data.Data, slice_node: ast.AST,
+                                    value_node: ast.AST) -> Optional[PythonDict]:
+        return infer_dict_assignment_descriptor(descriptor, slice_node, value_node, context.infer_descriptor,
+                                                context.infer_scalar_descriptor, context.evaluation_context)
+
+
 def infer_dict_literal_descriptor(node: ast.Dict, infer_descriptor: DescriptorInference,
                                   infer_scalar_descriptor: ScalarDescriptorInference) -> PythonDict:
     key_descriptors = []
