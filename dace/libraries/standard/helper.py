@@ -69,7 +69,6 @@ def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Ran
         map_lengths = new_map_lengths
 
     if pre_assignments != dict():
-        # Add a state for assignments in the beginning
         sdfg.add_state_before(state=state, label="pre_assign", is_start_block=True, assignments=pre_assignments)
 
     collapsed_map_lengths = [ml for ml in map_lengths if ml != 1]

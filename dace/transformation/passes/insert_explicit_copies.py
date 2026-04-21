@@ -92,11 +92,8 @@ class InsertExplicitCopies(ppl.Pass):
                 count += self._replace_map_staging_copies(nsdfg, state)
         return count if count > 0 else None
 
-    # -----------------------------------------------------------------
-    # Pattern 1: direct AccessNode -> AccessNode edges
-    # -----------------------------------------------------------------
-
     def _replace_direct_copies(self, sdfg: SDFG, state: SDFGState) -> int:
+        """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances."""
         edges = list(state.edges())
         count = 0
         for edge in edges:
@@ -141,20 +138,18 @@ class InsertExplicitCopies(ppl.Pass):
 
         return count
 
-    # -----------------------------------------------------------------
-    # Pattern 2: map boundary staging (ME -> AN or AN -> MX)
-    # -----------------------------------------------------------------
-
     def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """
-        Detect map boundary staging paths:
+        Replace map-boundary staging paths with ``CopyLibraryNode`` instances.
 
-          ``AccessNode -> MapEntry -> AccessNode(transient)`` -- stage-in
-          ``AccessNode(transient) -> MapExit -> AccessNode`` -- stage-out
+        Two staging directions are handled:
 
-        The map scope must be entered from (or exited to) an outer
-        AccessNode through a pass-through memlet; an inserted
-        CopyLibraryNode materializes the copy at the boundary.
+          * ``AccessNode -> MapEntry -> AccessNode(transient)`` (stage-in)
+          * ``AccessNode(transient) -> MapExit -> AccessNode`` (stage-out)
+
+        The map scope must be entered from (or exited to) an outer access
+        node through a pass-through memlet; the inserted copy node
+        materializes the transfer at the boundary.
         """
         edges_to_process = []
 

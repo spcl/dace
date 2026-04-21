@@ -448,18 +448,15 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides):
     src_stride_strs = [sym2cpp(s) for s in src_strides]
     dst_stride_strs = [sym2cpp(s) for s in dst_strides]
 
-    # --- Determine which parts are compile-time constant ---
     dims_static = not any(symbolic.issymbolic(s) for s in copy_shape)
     src_static = not any(symbolic.issymbolic(s) for s in src_strides)
     dst_static = not any(symbolic.issymbolic(s) for s in dst_strides)
 
-    # --- Build the template ---
     if dims_static:
         copy_tmpl = f"dace::CopyND<{ctype}, 1, false, {', '.join(shape_strs)}>"
     else:
         copy_tmpl = f"dace::CopyNDDynamic<{ctype}, 1, false, {ndims}>"
 
-    # --- Build the stride specialization ---
     if dst_static:
         shape_tmpl = f"template ConstDst<{', '.join(dst_stride_strs)}>"
     elif src_static:
@@ -467,7 +464,6 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides):
     else:
         shape_tmpl = "Dynamic"
 
-    # --- Build the runtime arguments ---
     # Per dimension, pass only the values NOT baked into the template.
     # CopyND runtime API order per dim:
     #   CopyND:        [src_stride | dst_stride | src_stride,dst_stride]

@@ -356,20 +356,15 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         UserWarning)
                 continue
 
-            # To calculate the total range,
-            # Take input subset of tasklet replace expression with map range
-            # For now, we will just use the original range
-            # Needs to be before removing the path because it requires edges of the tasklet
+            # Must run before the memcpy path is torn down: needs the tasklet's edges.
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(
                 state, map_entry, tasklet, verbose)
 
             if begin_subset is None and exit_subset is None and copy_length is None:
                 continue
 
-            # We can now remove the memcpy path
             in_edges = state.in_edges(map_entry)
 
-            # If src / dst not in the graph anymore, add new ones
             if src_access_node not in state.nodes():
                 new_src_access_node = state.add_access(src_access_node.data)
             else:
@@ -379,7 +374,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             else:
                 new_dst_access_node = dst_access_node
 
-            # Add a new memcpy tasklet
             tasklet = CopyLibraryNode(
                 name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}", )
             state.add_node(tasklet)
@@ -423,10 +417,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             assert isinstance(dst_access_node,
                               dace.nodes.AccessNode), f"Destination access node {dst_access_node} is not an AccessNode"
 
-            # To calculate the total range,
-            # Take input subset of tasklet replace expression with map range
-            # For now, we will just use the original range
-            # Needs to be done before removing the memset path
             if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
                 warnings.warn(
                     f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
@@ -434,6 +424,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     UserWarning)
                 continue
 
+            # Must run before the memset path is torn down: needs the tasklet's edges.
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
             if begin_subset is None or exit_subset is None or copy_length is None:
@@ -443,17 +434,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         UserWarning)
                 continue
 
-            # We can now remove the memset path
             in_edges = state.in_edges(map_entry)
 
-            # Add a new memset tasklet
             tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
             tasklet.add_out_connector("_out")
             state.add_node(tasklet)
             self.rmid += 1
             state.add_edge(tasklet, "_out", dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
-            # Redirect all dynamic input connectors
             for ie in in_edges:
                 if not ie.dst_conn.startswith("IN_"):
                     _an1 = state.add_access(ie.data.data)

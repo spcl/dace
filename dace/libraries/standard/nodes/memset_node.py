@@ -150,17 +150,12 @@ class ExpandCPU(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
-        # Access the original output
         out_access = state.add_access(out_name)
-
-        # Add a tasklet that does standard CPU memset
         tasklet = state.add_tasklet(name=f"memset_tasklet",
                                     inputs={},
                                     outputs={"_memset_out"},
                                     code=f"memset(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));",
                                     language=dace.Language.CPP)
-
-        # Connect tasklet to the output
         state.add_edge(
             tasklet, "_memset_out", out_access, None,
             dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
@@ -178,13 +173,18 @@ class MemsetLibraryNode(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         """
-        Validates the tensor transposition operation.
-        :return: A tuple ``(out_name, out, out_subset, dynamic_inputs,
-            stream_input)`` for the data descriptors in the parent SDFG.
-            ``stream_input`` is ``None`` or the descriptor of the source
-            connected to the optional ``stream`` in-connector.
-        """
+        Validate the edges of this node and extract the output descriptor,
+        subset, dynamic scalar inputs, and optional ``stream`` input.
 
+        :param sdfg: The parent SDFG.
+        :param state: The parent state containing this node.
+        :return: A tuple ``(out_name, out, out_subset, dynamic_inputs,
+                 stream_input)``. ``stream_input`` is ``None`` if no
+                 ``stream`` in-connector is wired.
+        :raises ValueError: If the required ``_out`` edge is missing or
+                            multiply-connected, or if a dynamic input is
+                            not a scalar.
+        """
         out_name, out, out_subset = None, None, None
         # Only the ``_out`` edge carries the memset payload; empty-memlet
         # dependency edges (e.g. from the GPU stream pipeline) are ignored.

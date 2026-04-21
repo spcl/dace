@@ -18,10 +18,6 @@ from dace.memlet import Memlet
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
-# ===================================================================
-# Helpers
-# ===================================================================
-
 
 def _count_copy_nodes(sdfg):
     """Count CopyLibraryNode instances across all states (recursive)."""
@@ -53,13 +49,6 @@ def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
                 assert memlet.other_subset is None, (
                     f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
                     f"has other_subset={memlet.other_subset}; expected None after copy insertion.")
-
-
-# ===================================================================
-# Part 1: Artificial SDFG builder tests
-# ===================================================================
-
-# --- Pattern 1: direct AccessNode -> AccessNode ---
 
 
 def test_insert_cpu_to_cpu_1d():
@@ -307,9 +296,6 @@ def test_insert_validates_after_pass():
     sdfg.validate()
 
 
-# --- Pattern 2: map boundary staging ---
-
-
 def test_insert_map_staging_copies():
     """Map with transient staging buffers:
     AN(A) -> ME -> AN(local_in) -> ... -> AN(local_out) -> MX -> AN(B)
@@ -399,9 +385,6 @@ def test_insert_staging_requires_outer_access_node():
     assert _count_copy_nodes(sdfg) == 1
 
 
-# --- GPU structural tests ---
-
-
 @pytest.mark.gpu
 def test_insert_cpu_to_gpu():
     """CPU_Heap -> GPU_Global: structural check."""
@@ -463,14 +446,10 @@ def test_insert_gpu_to_gpu():
             assert n.dst_storage == dace.StorageType.GPU_Global
 
 
-# ===================================================================
-# Part 2: Polybench-derived numerical correctness tests
-#
-# These verify the pass does not break real programs.
-# Pattern 1 (direct edges) is not present in polybench SDFGs.
-# Pattern 2 (staging) may or may not fire depending on the program.
-# Either way, numerical output must match the reference.
-# ===================================================================
+# Part 2: Polybench-derived numerical correctness tests. Pattern 1 (direct
+# AccessNode->AccessNode edges) is not present in polybench; Pattern 2
+# (map-boundary staging) may or may not fire. Either way, output must match
+# the reference.
 
 _ = None  # needed for dace.map range syntax
 datatype = dace.float64
@@ -500,8 +479,6 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
                                    atol=1e-12,
                                    err_msg=f"{name}: array '{arr_name}' mismatch after pass")
 
-
-# --- fdtd-2d ---
 
 NX = dace.symbol('NX')
 NY = dace.symbol('NY')
@@ -562,8 +539,6 @@ def _init_fdtd2d(NX, NY, TMAX):
 def test_polybench_fdtd2d():
     _run_and_compare(fdtd2d_v, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
 
-
-# --- correlation ---
 
 M_corr = dace.symbol('M_corr')
 N_corr = dace.symbol('N_corr')
@@ -651,8 +626,6 @@ def test_polybench_correlation():
     _run_and_compare(correlation_v, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
 
 
-# --- covariance ---
-
 M_cov = dace.symbol('M_cov')
 N_cov = dace.symbol('N_cov')
 
@@ -719,12 +692,7 @@ def test_polybench_covariance():
     _run_and_compare(covariance_v, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
 
 
-# ===================================================================
-# main
-# ===================================================================
-
 if __name__ == "__main__":
-    # Pattern 1: direct edges
     test_insert_cpu_to_cpu_1d()
     test_insert_cpu_to_cpu_2d_slice()
     test_insert_other_subset_data_is_dst()

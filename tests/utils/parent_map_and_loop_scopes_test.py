@@ -22,16 +22,8 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.construction_utils import (get_parent_map_and_loop_scopes, get_parent_maps)
 
-# ===================================================================
-# Constants
-# ===================================================================
-
 N, M, K = 4, 4, 5
 COLS = M + 10  # enough room for j + offset + 9
-
-# ===================================================================
-# DaCe programs (numpy frontend)
-# ===================================================================
 
 
 @dace.program
@@ -47,11 +39,6 @@ def inner_compute(A: dace.float64[K, N, COLS], off_row: dace.int64[M], ii: dace.
 def kernel(A: dace.float64[K, N, COLS], offsets: dace.int64[N, M]):
     for i in dace.map[0:N]:
         inner_compute(A, offsets[i, :], i)
-
-
-# ===================================================================
-# Helpers
-# ===================================================================
 
 
 def _get_sdfg():
@@ -87,11 +74,6 @@ def _find_inner_tasklet(sdfg):
             if "+ 1.0" in code or "+1.0" in code or "+ 1" in code:
                 return n, st
     raise RuntimeError("Could not find increment tasklet")
-
-
-# ===================================================================
-# Tests: get_parent_map_and_loop_scopes
-# ===================================================================
 
 
 def test_inner_map_sees_two_loops_and_outer_map():
@@ -142,11 +124,6 @@ def test_outer_map_has_no_parent_scopes():
     assert len(parents) == 0
 
 
-# ===================================================================
-# Tests: get_parent_maps (MapEntry only, skips LoopRegions)
-# ===================================================================
-
-
 def test_get_parent_maps_inner_map_sees_only_outer_map():
     """
     get_parent_maps for the k-map returns only the outer i-map,
@@ -168,10 +145,6 @@ def test_get_parent_maps_outer_map_has_no_parents():
     maps = get_parent_maps(sdfg, me, st)
     assert len(maps) == 0
 
-
-# ===================================================================
-# main
-# ===================================================================
 
 if __name__ == "__main__":
     test_inner_map_sees_two_loops_and_outer_map()
