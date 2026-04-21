@@ -10,10 +10,43 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import copy
 from numbers import Number, Integral
+import re
 from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
 import sympy as sp
+
+
+def arange_promoted_symbol_name(name: str) -> str:
+    sanitized = re.sub(r'\W|^(?=\d)', '_', name)
+    return f'__sym_{sanitized}'
+
+
+def normalize_arange_argument(value: Any, input_descs: Optional[dict[str, data.Data]] = None) -> Any:
+    if isinstance(value, Number) or symbolic.issymbolic(value):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    desc = (input_descs or {}).get(value)
+    if isinstance(desc, data.Scalar):
+        return symbolic.pystr_to_symbolic(arange_promoted_symbol_name(value))
+
+    try:
+        normalized = symbolic.pystr_to_symbolic(value)
+    except Exception:
+        return value
+    return normalized if symbolic.issymbolic(normalized) else value
+
+
+def infer_arange_shape(start: Any, stop: Any, step: Any) -> Optional[Sequence[Any]]:
+    if all(isinstance(v, Number) for v in (start, stop, step)):
+        return (int(np.ceil((stop - start) / step)), )
+    if any(not isinstance(v, Number) and not symbolic.issymbolic(v) for v in (start, stop, step)):
+        return None
+    if step == 1:
+        return (stop - start, )
+    return (symbolic.int_ceil(stop - start, step), )
 
 
 @oprepo.replaces('numpy.copy')
@@ -232,6 +265,24 @@ def _arange(pv: ProgramVisitor,
             like: Optional[str] = None):
     """ Implementes numpy.arange """
 
+    def _promote_scalar_argument(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if value not in sdfg.arrays:
+            return value
+
+        desc = sdfg.arrays[value]
+        if not isinstance(desc, data.Scalar):
+            return value
+
+        promoted_name = sdfg.add_symbol(arange_promoted_symbol_name(value), desc.dtype, find_new_name=True)
+        promoted = symbolic.symbol(promoted_name, desc.dtype)
+
+        symassign_state = pv.cfg_target.add_state_before(state, label=f'promote_{value}_to_{promoted_name}')
+        isedge = pv.cfg_target.edges_between(symassign_state, state)[0]
+        isedge.data.assignments[promoted_name] = value
+        return promoted
+
     start = 0
     stop = None
     step = 1
@@ -243,6 +294,10 @@ def _arange(pv: ProgramVisitor,
         start, stop = args
     else:
         start, stop, step = args
+
+    start = _promote_scalar_argument(start)
+    stop = _promote_scalar_argument(stop)
+    step = _promote_scalar_argument(step)
 
     if isinstance(start, str):
         raise TypeError(f'Cannot compile numpy.arange with a scalar start value "{start}" (only constants and symbolic '
@@ -258,13 +313,9 @@ def _arange(pv: ProgramVisitor,
     if isinstance(start, Number) and isinstance(stop, Number):
         actual_step = type(start + step)(start + step) - start
 
-    if any(not isinstance(s, Number) for s in [start, stop, step]):
-        if step == 1:  # Common case where ceiling is not necessary
-            shape = (stop - start, )
-        else:
-            shape = (symbolic.int_ceil(stop - start, step), )
-    else:
-        shape = (np.int64(np.ceil((stop - start) / step)), )
+    shape = infer_arange_shape(start, stop, step)
+    if shape is None:
+        raise TypeError('Cannot compile numpy.arange with non-scalar or unsupported dynamic arguments.')
 
     # Infer dtype from input arguments
     if dtype is None:
@@ -557,16 +608,14 @@ def _infer_arange(input_descs, *args, dtype=None, **_kw):
         start, stop, step = args[0], args[1], args[2]
     else:
         return None
-    # Try to compute shape
-    if all(isinstance(v, Number) for v in (start, stop, step)):
-        shape = (int(np.ceil((stop - start) / step)), )
-    elif symbolic.issymbolic(stop) or symbolic.issymbolic(start) or symbolic.issymbolic(step):
-        if step == 1:
-            shape = (stop - start, )
-        else:
-            shape = (symbolic.int_ceil(stop - start, step), )
-    else:
+
+    start = normalize_arange_argument(start, input_descs)
+    stop = normalize_arange_argument(stop, input_descs)
+    step = normalize_arange_argument(step, input_descs)
+    shape = infer_arange_shape(start, stop, step)
+    if shape is None:
         return None
+
     if dtype is None:
         if all(isinstance(v, Number) for v in args):
             from dace.frontend.python.replacements.operators import result_type as rt

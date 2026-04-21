@@ -1578,9 +1578,17 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         for arg in call_node.args:
             access = self._resolve_data_access(arg)
             if access is not None:
-                name, _, desc, _ = access
-                input_descs[name] = desc
-                args.append(name)
+                name, memlet, desc, view_desc = access
+                is_scalar_memlet = _is_singleton_scalar_memlet(memlet)
+                if is_scalar_memlet:
+                    base_descriptor = view_desc or desc
+                    resolved_desc = data.Scalar(base_descriptor.dtype, transient=True)
+                    key = _unparse(arg)
+                else:
+                    resolved_desc = _clone_descriptor(view_desc or desc)
+                    key = name
+                input_descs[key] = resolved_desc
+                args.append(key)
             else:
                 val = try_resolve_static_value(arg, self._evaluation_context())
                 args.append(val if val is not UNRESOLVED else _unparse(arg))
@@ -2028,7 +2036,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                     evaluation_context=self._evaluation_context,
                                     resolve_output_target=self._resolve_output_target,
                                     tasklet_name=self._tasklet_name,
-                                    fresh_symbol=self._fresh_symbol)
+                                    fresh_symbol=self._fresh_symbol,
+                                    fresh_name=self._fresh_transient_name,
+                                    append_node=self._append_node,
+                                    register_binding=self._register_binding)
 
     def _array_literal_context(self) -> ArrayLiteralContext:
         return ArrayLiteralContext(infer_descriptor=lambda node: self._infer_descriptor(node, '__probe'),

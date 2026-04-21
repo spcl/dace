@@ -12,6 +12,7 @@ import numpy as np
 from dace import data, dtypes, subsets, symbolic
 from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
+from dace.frontend.python.replacements.array_creation import arange_promoted_symbol_name
 from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.type_inference import _Binding
@@ -24,6 +25,9 @@ OutputTargetResolver = Callable[[ast.AST, ast.AST, Optional[data.Data]], Optiona
 TaskletNameFactory = Callable[[ast.AST], str]
 EvaluationContextFactory = Callable[[], Dict[str, Any]]
 FreshSymbolFactory = Callable[[str], symbolic.symbol]
+FreshNameFactory = Callable[[str], str]
+NodeAppender = Callable[[tn.ScheduleTreeNode], None]
+BindingRegistrar = Callable[[str, data.Data, str], None]
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,9 @@ class NumpyLoweringContext:
     resolve_output_target: OutputTargetResolver
     tasklet_name: TaskletNameFactory
     fresh_symbol: FreshSymbolFactory
+    fresh_name: FreshNameFactory
+    append_node: NodeAppender
+    register_binding: BindingRegistrar
 
 
 @dataclass(frozen=True)
@@ -100,7 +107,7 @@ class NumpySupportLibrary:
     """Ordered NumPy-specific lowering and inference helpers."""
 
     def __init__(self) -> None:
-        self.assignment_passes = (_BooleanMaskReadPass(), _ElementwiseAssignmentPass())
+        self.assignment_passes = (_ArangePass(), _BooleanMaskReadPass(), _ElementwiseAssignmentPass())
 
     def lower_assignment(self, context: NumpyLoweringContext, target: ast.AST, value: ast.AST,
                          annotated_descriptor: Optional[data.Data]) -> Optional[tn.ScheduleTreeNode]:
@@ -115,6 +122,42 @@ class NumpySupportLibrary:
             descriptor = lowering_pass.infer_expression_descriptor(context, value)
             if descriptor is not None:
                 return descriptor
+        return None
+
+
+class _ArangePass:
+    """Lower numpy.arange calls with explicit symbolic properties."""
+
+    _LIBRARY_NAME = 'numpy.arange'
+
+    def lower_assignment(self, context: NumpyLoweringContext, target: ast.AST, value: ast.AST,
+                         annotated_descriptor: Optional[data.Data]) -> Optional[tn.ScheduleTreeNode]:
+        if not _is_arange_call(value):
+            return None
+
+        output = context.resolve_output_target(target, value, annotated_descriptor)
+        if output is None:
+            return None
+        _, output_memlet, output_descriptor = output
+        if not isinstance(output_descriptor, data.Array) or len(output_descriptor.shape) != 1:
+            return None
+
+        resolved_args = _resolve_arange_arguments(context, value)
+        if resolved_args is None:
+            return None
+        start, stop, step = resolved_args
+
+        properties: Dict[str, Any] = {
+            'start': str(start),
+            'stop': str(stop),
+            'step': str(step),
+            'dtype': str(output_descriptor.dtype),
+        }
+        return tn.LibraryCall(node=tn.FrontendLibrary(name=self._LIBRARY_NAME, properties=properties),
+                              in_memlets={},
+                              out_memlets={'out': output_memlet})
+
+    def infer_expression_descriptor(self, context: NumpyLoweringContext, value: ast.AST) -> Optional[data.Data]:
         return None
 
 
@@ -150,6 +193,70 @@ class _BooleanMaskReadPass:
         if plan is None:
             return None
         return plan.result_descriptor
+
+
+def _is_arange_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and astutils.rname(node.func) in {'numpy.arange', 'dace.arange'}
+
+
+def _resolve_arange_arguments(context: NumpyLoweringContext, node: ast.Call) -> Optional[Tuple[Any, Any, Any]]:
+    if len(node.args) == 1:
+        start_node, stop_node, step_node = ast.Constant(value=0), node.args[0], ast.Constant(value=1)
+    elif len(node.args) == 2:
+        start_node, stop_node, step_node = node.args[0], node.args[1], ast.Constant(value=1)
+    elif len(node.args) >= 3:
+        start_node, stop_node, step_node = node.args[0], node.args[1], node.args[2]
+    else:
+        return None
+
+    resolved = tuple(_resolve_arange_argument(context, arg) for arg in (start_node, stop_node, step_node))
+    if any(value is None for value in resolved):
+        return None
+    return resolved
+
+
+def _resolve_arange_argument(context: NumpyLoweringContext, node: ast.AST) -> Optional[Any]:
+    value = try_resolve_static_value(node, context.evaluation_context())
+    if value is not UNRESOLVED and not isinstance(value, data.Data):
+        return value
+    if isinstance(node, ast.Name):
+        binding = context.bindings.get(node.id)
+        if binding is not None and isinstance(binding.descriptor, data.Scalar):
+            return _promote_arange_scalar_expression(context, node)
+    analysis = _ElementwiseExpressionAnalyzer(context).analyze(node)
+    if analysis is None or analysis.result_shape:
+        return None
+    return _promote_arange_scalar_expression(context, node, analysis)
+
+
+def _promote_arange_scalar_expression(context: NumpyLoweringContext,
+                                      node: ast.AST,
+                                      analysis: Optional[_ExpressionAnalysis] = None) -> symbolic.symbol:
+    analysis = analysis or _ElementwiseExpressionAnalyzer(context).analyze(node)
+    symbol_name = arange_promoted_symbol_name(_unparse(node))
+    symbol_value = context.fresh_symbol(symbol_name)
+
+    transient_name = context.fresh_name('__stree_arange_arg')
+    transient_dtype = analysis.result_dtype if analysis is not None else dtypes.int64
+    transient_descriptor = data.Scalar(transient_dtype, transient=True)
+    context.register_binding(transient_name, transient_descriptor, 'scalar')
+
+    input_memlets: Dict[str, Memlet] = {}
+    tasklet_value = copy.deepcopy(node)
+    if analysis is not None:
+        tasklet_value = analysis.tasklet_value
+        for access in analysis.accesses:
+            access_memlet = _build_scalar_input_memlet(access)
+            if access_memlet is not None:
+                input_memlets.update(access_memlet)
+
+    tasklet = tn.FrontendTasklet(name=f'{transient_name}_tasklet', code=CodeBlock(f'out = {_unparse(tasklet_value)}'))
+    context.append_node(
+        tn.TaskletNode(node=tasklet,
+                       in_memlets=input_memlets,
+                       out_memlets={'out': Memlet.from_array(transient_name, transient_descriptor)}))
+    context.append_node(tn.AssignNode(name=str(symbol_value), value=CodeBlock(transient_name)))
+    return symbol_value
 
 
 class _ElementwiseAssignmentPass:

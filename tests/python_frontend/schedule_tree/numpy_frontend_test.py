@@ -602,6 +602,72 @@ def test_python_frontend_schedule_tree_numpy_attribute_stays_library_call():
     assert isinstance(stree.children[1], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_numpy_arange_symbolic_library_call():
+
+    K = dace.symbol('K')
+
+    @dace.program
+    def called():
+        return np.arange(K, dtype=np.int32)
+
+    stree = called.to_schedule_tree(K=8)
+
+    assert isinstance(stree.children[0], tn.LibraryCall)
+    assert stree.children[0].node.name == 'numpy.arange'
+    assert stree.children[0].node.properties['start'] == '0'
+    assert stree.children[0].node.properties['stop'] == 'K'
+    result_name = stree.children[0].out_memlets['out'].data
+    result_desc = stree.containers[result_name]
+    assert isinstance(result_desc, dace.data.Array)
+    assert tuple(result_desc.shape) == (K, )
+    assert result_desc.dtype == dace.int32
+    assert isinstance(stree.children[1], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_numpy_arange_scalar_argument_promotes_symbol():
+
+    @dace.program
+    def called(n: dace.int32):
+        return np.arange(n, dtype=np.int32)
+
+    stree = called.to_schedule_tree(np.int32(8))
+
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert stree.children[0].node.code.as_string == 'out = n'
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].name.startswith('__sym_n')
+    assert isinstance(stree.children[2], tn.LibraryCall)
+    assert stree.children[2].node.name == 'numpy.arange'
+    assert stree.children[2].node.properties['stop'] == stree.children[1].name
+    result_name = stree.children[2].out_memlets['out'].data
+    result_desc = stree.containers[result_name]
+    assert isinstance(result_desc, dace.data.Array)
+    assert str(result_desc.shape[0]).startswith('__sym_n')
+    assert isinstance(stree.children[3], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_numpy_arange_data_scalar_argument_promotes_symbol():
+
+    @dace.program
+    def called(A: dace.int32[1]):
+        return np.arange(A[0], dtype=np.int32)
+
+    stree = called.to_schedule_tree(np.array([8], dtype=np.int32))
+
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert stree.children[0].node.code.as_string == 'out = in0'
+    assert str(stree.children[0].in_memlets['in0'].subset) == '0'
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].name.startswith('__sym_A_0_')
+    assert isinstance(stree.children[2], tn.LibraryCall)
+    assert stree.children[2].node.properties['stop'] == stree.children[1].name
+    result_name = stree.children[2].out_memlets['out'].data
+    result_desc = stree.containers[result_name]
+    assert isinstance(result_desc, dace.data.Array)
+    assert str(result_desc.shape[0]).startswith('__sym_A_0_')
+    assert isinstance(stree.children[3], tn.ReturnNode)
+
+
 def test_python_frontend_schedule_tree_nested_numpy_attributes_are_materialized():
 
     @dace.program

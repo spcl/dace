@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.replacements.array_creation import _infer_arange
 import numpy as np
 from common import compare_numpy_output
 import pytest
@@ -164,6 +165,60 @@ def test_arange_6():
     return np.arange(2.5, 10, 3)
 
 
+def test_arange_symbolic_stop():
+    K = dace.symbol('K')
+    desc = _infer_arange({}, K, dtype=np.int32)
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (K, )
+    assert desc.dtype == dace.int32
+
+
+def test_arange_scalar_stop():
+    desc = _infer_arange({'n': dace.data.Scalar(dace.int32)}, 'n', dtype=np.int32)
+    assert isinstance(desc, dace.data.Array)
+    assert str(desc.shape[0]).startswith('__sym_n')
+    assert desc.dtype == dace.int32
+
+    @dace.program
+    def arange_scalar(n: dace.int32):
+        return np.sum(np.arange(n, dtype=np.int32))
+
+    result = arange_scalar(np.int32(7))
+    expected = np.sum(np.arange(7, dtype=np.int32))
+    assert result == expected
+
+
+def test_arange_data_scalar_stop():
+    desc = _infer_arange({'A[0]': dace.data.Scalar(dace.int32)}, 'A[0]', dtype=np.int32)
+    assert isinstance(desc, dace.data.Array)
+    assert str(desc.shape[0]).startswith('__sym_A_0_')
+    assert desc.dtype == dace.int32
+
+    @dace.program
+    def arange_data_scalar(A: dace.int32[1]):
+        return np.sum(np.arange(A[0], dtype=np.int32))
+
+    A = np.array([7], dtype=np.int32)
+    result = arange_data_scalar(A)
+    expected = np.sum(np.arange(A[0], dtype=np.int32))
+    assert result == expected
+
+
+def test_arange_data_scalar_stop_repromotes_after_write():
+
+    @dace.program
+    def arange_data_scalar_twice(A: dace.int32[1]):
+        first = np.sum(np.arange(A[0], dtype=np.int32))
+        A[0] += 1
+        second = np.sum(np.arange(A[0], dtype=np.int32))
+        return first, second
+
+    A = np.array([7], dtype=np.int32)
+    first, second = arange_data_scalar_twice(A)
+    assert first == np.sum(np.arange(7, dtype=np.int32))
+    assert second == np.sum(np.arange(8, dtype=np.int32))
+
+
 @compare_numpy_output()
 def test_linspace_1():
     return np.linspace(2.5, 10, num=3)
@@ -316,6 +371,9 @@ if __name__ == "__main__":
     test_arange_4()
     test_arange_5()
     test_arange_6()
+    test_arange_symbolic_stop()
+    test_arange_scalar_stop()
+    test_arange_data_scalar_stop()
     test_linspace_1()
     test_linspace_2()
     test_linspace_3()
