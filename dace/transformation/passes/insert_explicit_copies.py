@@ -1,12 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Pass that replaces implicit copy patterns -- direct ``AccessNode ->
-AccessNode`` edges and map-boundary staging (AN -> MapEntry -> AN
-transient; AN transient -> MapExit -> AN) -- with explicit
-``CopyLibraryNode`` instances.  ``src_locations`` / ``dst_locations``
-restrict lifting to specific storage-pair filters (empty means any);
-the GPU-specific wrapper ``InsertExplicitGPUGlobalMemoryCopies`` uses
-this to target GPU_Global / CPU_Pinned copies only.
+"""Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances.
+
+Covers direct ``AccessNode -> AccessNode`` edges and map-boundary staging (stage-in /
+stage-out through MapEntry / MapExit). ``src_locations`` / ``dst_locations`` filter by
+storage (empty = any); the GPU wrapper ``InsertExplicitGPUGlobalMemoryCopies`` uses this
+to target GPU_Global / CPU_Pinned copies only.
 """
 import copy as _copy
 from typing import Any, Dict, Iterable, Optional
@@ -23,9 +21,7 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
-    """
-    Replaces implicit copy patterns with explicit ``CopyLibraryNode``
-    instances.
+    """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
 
     Detected patterns:
 
@@ -33,13 +29,8 @@ class InsertExplicitCopies(ppl.Pass):
     - ``AccessNode -> MapEntry -> AccessNode(transient)`` (stage-in)
     - ``AccessNode(transient) -> MapExit -> AccessNode`` (stage-out)
 
-    The pass sets ``src_storage`` and ``dst_storage`` on each new node
-    from the array descriptors.
-
-    The ``src_locations`` / ``dst_locations`` properties restrict which
-    copies are lifted.  Empty / ``None`` means "any storage".  When set,
-    only copies whose source storage is in ``src_locations`` *and* whose
-    destination storage is in ``dst_locations`` are replaced.
+    Each new node's ``src_storage`` / ``dst_storage`` is taken from the array descriptors.
+    ``src_locations`` / ``dst_locations`` filter which copies are lifted (empty = any).
     """
 
     CATEGORY = "Optimization Preparation"

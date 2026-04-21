@@ -1,19 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``CopyLibraryNode`` and its expansions -- the single node type used for
-every data copy in an SDFG.  The expansion is selected per-instance via
-``implementation``; all expansions accept an optional ``stream``
-in-connector so the generated GPU kernel/memcpy is bound to a
-caller-provided ``gpuStream_t`` instead of ``__dace_current_stream``.
+"""``CopyLibraryNode`` -- single node type for every data copy in an SDFG.
 
-``pure``                                 same-side mapped tasklet (default)
-``DirectAssignment``                     bare ``_out = _in`` tasklet
-``CopyND``                               ``dace::CopyNDDynamic`` strided copy
-``CUDA`` / ``CPU``                       contiguous same-storage memcpy
-``CUDAHostToDevice`` / ``CUDADeviceToHost``  host<->device cudaMemcpyAsync
-``CUDA2D``                               2D strided cudaMemcpy2DAsync
-``RegisterCopy``                         strict Register<->Register
-``SharedMemoryCopy``                     cooperative block-level shared copy
+The expansion is selected per-instance via ``implementation``; all expansions accept an optional
+``stream`` in-connector so generated GPU kernels/memcpies bind to a caller-provided
+``gpuStream_t`` instead of ``__dace_current_stream``. See ``CopyLibraryNode`` for the
+full implementation table.
 """
 import copy as _copy
 
@@ -142,13 +133,11 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
             and _cuda2d_strides_are_supported(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed)):
         return 'CUDA2D'
 
-    raise ValueError(f"CopyLibraryNode '{node.name}' has a strided copy pattern that cannot be "
-                     f"lowered to a single cudaMemcpy or cudaMemcpy2DAsync call "
+    raise ValueError(f"CopyLibraryNode '{node.name}' has a strided copy pattern that cannot be lowered "
+                     f"to a single cudaMemcpy or cudaMemcpy2DAsync "
                      f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
-                     f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}).  "
-                     f"Per-row memcpy loop fallback is not yet implemented -- decompose the "
-                     f"copy into contiguous or 2D-strided sub-copies, or pick an explicit "
-                     f"implementation manually.")
+                     f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "
+                     f"pick an explicit implementation manually.")
 
 
 def _add_stream_descriptor(sdfg, stream_input):
@@ -178,17 +167,16 @@ def _wire_stream_to(sdfg, state, target, target_conn, stream_input):
 def _require_contiguous_subset(name: str, subset, desc, side: str):
     """Raise if ``subset`` is not contiguous in the array described by ``desc``."""
     if not subset.is_contiguous_subset(desc):
-        raise ValueError(f"This expansion requires a contiguous {side} subset, but "
-                         f"'{name}' subset {subset} is not contiguous in "
-                         f"array shape {desc.shape} with strides {desc.strides}. "
-                         f"Use a strided expansion (pure, CopyND, Assignment) instead, "
-                         f"or decompose into contiguous copies in Layer 2.")
+        raise ValueError(f"This expansion requires a contiguous {side} subset, but '{name}' subset "
+                         f"{subset} is not contiguous in shape {desc.shape} with strides {desc.strides}; "
+                         f"use a strided expansion (pure, CopyND, Assignment) instead.")
 
 
 def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
-    """Shared validation and SDFG skeleton used by all CopyLibraryNode expansions.
-    With ``require_contiguous=True`` both subsets must be contiguous (needed by
-    flat-memcpy expansions: CPU, CUDA, H2D, D2H).
+    """Shared validation + SDFG skeleton for copy expansions.
+
+    ``require_contiguous=True`` enforces contiguous subsets on both sides, as needed by
+    the flat-memcpy expansions (CPU, CUDA, H2D, D2H).
     """
     inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(
         parent_sdfg, parent_state, allow_cross_storage=allow_cross_storage)
@@ -412,10 +400,10 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides):
 
 
 def _generate_assignment_code(ctype, copy_shape, in_strides, out_strides):
-    """
-    Generates a C++ unrolled assignment loop for a direct copy.
-    For 1D contiguous copies this is a simple ``#pragma unroll`` loop.
-    For ND strided copies it delinearizes, respecting strides.
+    """Build a C++ ``#pragma unroll`` assignment loop for a direct copy.
+
+    1D uses a simple unrolled loop; ND delinearizes the flat iteration index into
+    per-dimension indices, respecting ``in_strides`` / ``out_strides``.
     """
     ndims = len(copy_shape)
     shape_strs = [sym2cpp(s) for s in copy_shape]
@@ -458,12 +446,10 @@ def _generate_assignment_code(ctype, copy_shape, in_strides, out_strides):
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """
-    Default expansion: generates a mapped tasklet that copies element by
-    element.  Correct for same-storage copies and GPU-side cross-storage
-    copies (e.g. GPU_Global <-> GPU_Shared).  Raises for copies that cross
-    the CPU/GPU boundary -- those require ``CUDAHostToDevice`` or
-    ``CUDADeviceToHost``.
+    """Default expansion: mapped tasklet copying element-by-element.
+
+    Handles same-storage copies and GPU-side cross-storage (e.g. GPU_Global <-> GPU_Shared).
+    Raises across the CPU/GPU boundary -- use ``CUDAHostToDevice`` / ``CUDADeviceToHost`` there.
     """
     environments = []
 
@@ -474,10 +460,9 @@ class ExpandPure(ExpandTransformation):
 
 @library.expansion
 class ExpandCopyND(ExpandTransformation):
-    """
-    Expansion that lowers to a ``dace::CopyNDDynamic`` call (C++ tasklet).
-    Works for any same-side copy (CPU or GPU).  This is the DaCe runtime
-    fallback that handles strided ND copies without generating maps.
+    """Runtime fallback for strided ND copies, via a ``dace::CopyNDDynamic`` C++ tasklet.
+
+    Works for any same-side copy (CPU or GPU) without generating a map.
     """
     environments = []
 
@@ -514,10 +499,7 @@ class ExpandCopyND(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """
-    Expansion for GPU_Global -> GPU_Global contiguous copies via
-    ``cudaMemcpyAsync(..., cudaMemcpyDeviceToDevice)``.
-    """
+    """GPU_Global <-> GPU_Global contiguous copy via ``cudaMemcpyAsync(..., cudaMemcpyDeviceToDevice)``."""
     environments = [environments.CUDA]
 
     @staticmethod
@@ -527,9 +509,7 @@ class ExpandCUDA(ExpandTransformation):
 
 @library.expansion
 class ExpandCPU(ExpandTransformation):
-    """
-    Expansion for CPU_Heap -> CPU_Heap contiguous copies via ``std::memcpy``.
-    """
+    """CPU_Heap <-> CPU_Heap contiguous copy via ``std::memcpy``."""
     environments = [environments.CPU]
 
     @staticmethod
@@ -561,10 +541,7 @@ class ExpandCPU(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDAHostToDevice(ExpandTransformation):
-    """
-    Expansion for CPU_Heap/CPU_Pinned -> GPU_Global contiguous copies via
-    ``cudaMemcpyAsync(..., cudaMemcpyHostToDevice)``.
-    """
+    """CPU_Heap/CPU_Pinned -> GPU_Global contiguous copy via ``cudaMemcpyAsync(..., cudaMemcpyHostToDevice)``."""
     environments = [environments.CUDA]
 
     @staticmethod
@@ -574,10 +551,7 @@ class ExpandCUDAHostToDevice(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDADeviceToHost(ExpandTransformation):
-    """
-    Expansion for GPU_Global -> CPU_Heap/CPU_Pinned contiguous copies via
-    ``cudaMemcpyAsync(..., cudaMemcpyDeviceToHost)``.
-    """
+    """GPU_Global -> CPU_Heap/CPU_Pinned contiguous copy via ``cudaMemcpyAsync(..., cudaMemcpyDeviceToHost)``."""
     environments = [environments.CUDA]
 
     @staticmethod
@@ -587,13 +561,10 @@ class ExpandCUDADeviceToHost(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDA2D(ExpandTransformation):
-    """
-    Expansion for 2D strided copies between any combination of GPU_Global and
-    host (CPU_Heap / CPU_Pinned) storages via ``cudaMemcpy2DAsync``.
+    """2D strided copy via ``cudaMemcpy2DAsync`` between any combination of GPU_Global and host storage.
 
-    Handles three stride patterns (row-major contiguous rows, column-major
-    contiguous columns, and the degenerate case where outer stride is a
-    multiple of the inner).
+    Handles three stride patterns: row-major contiguous rows, column-major contiguous columns,
+    and the degenerate case where the outer stride is a multiple of the inner.
     """
     environments = [environments.CUDA]
 
@@ -662,20 +633,12 @@ class ExpandCUDA2D(ExpandTransformation):
 
 @library.expansion
 class ExpandDirectAssignment(ExpandTransformation):
-    """
-    Generates a bare ``_out = _in`` assignment tasklet (no map).
-    The DaCe codegen resolves the actual data movement from the memlets:
-    for scalars it emits a direct assignment, for arrays it emits CopyND.
+    """Bare ``_out = _in`` assignment tasklet (no map); the lightest expansion.
 
-    Suitable for:
-
-    - GPU_Global -> Register  (thread loads)
-    - Register -> Register
-    - Same-storage copies **except** GPU_Shared
-
-    This is the lightest expansion -- a single tasklet with no map
-    overhead.  Prefer this for thread-private copies inside GPU kernels
-    where the copy dimensions are known at compile time.
+    Codegen resolves the actual movement from the memlets -- direct assignment for scalars,
+    CopyND for arrays. Suitable for GPU_Global -> Register (thread loads), Register -> Register,
+    and same-storage copies **except** GPU_Shared. Prefer for thread-private copies in GPU
+    kernels where the dimensions are known at compile time.
     """
     environments = []
 
@@ -723,14 +686,9 @@ class ExpandDirectAssignment(ExpandTransformation):
         return sdfg
 
 
-# Keep RegisterCopy as a strict alias: validates Register on both sides,
-# then delegates to the same thread-level copy.
 @library.expansion
 class ExpandRegisterCopy(ExpandTransformation):
-    """
-    Strict variant of Assignment that validates both sides are Register.
-    Equivalent to ExpandAssignment with an additional storage check.
-    """
+    """Strict Register<->Register copy; equivalent to ``ExpandDirectAssignment`` with an added storage check."""
     environments = []
 
     @staticmethod
@@ -739,28 +697,22 @@ class ExpandRegisterCopy(ExpandTransformation):
             parent_sdfg, parent_state, allow_cross_storage=False)
 
         if inp.storage != dtypes.StorageType.Register:
-            raise ValueError(f"ExpandRegisterCopy expects Register storage for input, "
-                             f"got {inp.storage}.")
+            raise ValueError(f"ExpandRegisterCopy expects Register input storage, got {inp.storage}.")
         if out.storage != dtypes.StorageType.Register:
-            raise ValueError(f"ExpandRegisterCopy expects Register storage for output, "
-                             f"got {out.storage}.")
+            raise ValueError(f"ExpandRegisterCopy expects Register output storage, got {out.storage}.")
 
         return _make_thread_level_copy(node, parent_state, parent_sdfg)
 
 
 @library.expansion
 class ExpandSharedMemoryCopy(ExpandTransformation):
-    """
-    Expansion for copies involving GPU shared memory inside a GPU kernel.
+    """Copies involving GPU shared memory, inside a GPU kernel.
 
-    - **Global <-> Shared** or **Shared <-> Shared**: generates a C++
-      tasklet that calls ``dace::CopyNDDynamic`` followed by
-      ``__syncthreads()`` to ensure all threads see the updated shared
-      memory.  This expansion should **not** sit inside a parent
-      ``GPU_ThreadBlock`` map -- it *is* the thread-block level operation.
-
-    - **Shared <-> Register**: thread-level copy (Sequential mapped tasklet,
-      same as RegisterCopy).  No synchronization needed.
+    - **Global <-> Shared** or **Shared <-> Shared**: C++ tasklet calling
+      ``dace::CopyNDDynamic`` followed by ``__syncthreads()``. Must NOT sit inside a
+      parent ``GPU_ThreadBlock`` map -- this expansion IS the thread-block-level operation.
+    - **Shared <-> Register**: thread-level copy (Sequential mapped tasklet, like ``RegisterCopy``).
+      No synchronization needed.
     """
     environments = []
 
@@ -773,11 +725,11 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
         valid_storages = {dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global, dtypes.StorageType.Register}
 
         if inp.storage not in valid_storages:
-            raise ValueError(f"ExpandSharedMemoryCopy expects GPU_Shared, GPU_Global, or "
-                             f"Register storage for input, got {inp.storage}.")
+            raise ValueError(f"ExpandSharedMemoryCopy: input storage {inp.storage} not in "
+                             "{GPU_Shared, GPU_Global, Register}.")
         if out.storage not in valid_storages:
-            raise ValueError(f"ExpandSharedMemoryCopy expects GPU_Shared, GPU_Global, or "
-                             f"Register storage for output, got {out.storage}.")
+            raise ValueError(f"ExpandSharedMemoryCopy: output storage {out.storage} not in "
+                             "{GPU_Shared, GPU_Global, Register}.")
         if (inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared):
             raise ValueError("ExpandSharedMemoryCopy requires at least one side to be GPU_Shared.")
 
@@ -786,18 +738,16 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
         if involves_register:
             return _make_thread_level_copy(node, parent_state, parent_sdfg)
 
-        # Global <-> Shared or Shared <-> Shared: block-collective copy.
-        # This expansion IS the thread-block-level operation, so it must
-        # NOT sit inside a parent GPU_ThreadBlock map.
+        # Global/Shared <-> Shared: block-collective copy; this expansion must not sit inside
+        # a parent GPU_ThreadBlock map because it IS that thread-block-level operation.
         root_sdfg = parent_sdfg
         while root_sdfg.parent_nsdfg_node is not None:
             root_sdfg = root_sdfg.parent_sdfg
         parent_scopes = get_parent_map_and_loop_scopes(root_sdfg, node, parent_state)
         for scope in parent_scopes:
             if (isinstance(scope, dace.sdfg.nodes.MapEntry) and scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                raise ValueError("ExpandSharedMemoryCopy (collective) must not be nested "
-                                 "inside a GPU_ThreadBlock map.  The cooperative copy IS "
-                                 "the thread-block-level operation.")
+                raise ValueError("ExpandSharedMemoryCopy (collective) IS the thread-block-level "
+                                 "operation and must not be nested inside a GPU_ThreadBlock map.")
 
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
 
@@ -811,11 +761,9 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
 
-        # Use CopyND for the actual data movement, then __syncthreads()
-        # to ensure all threads see the updated shared memory.
-        # TODO: replace with a proper cooperative copy that distributes
-        # work across threads once DaCe's GPU scheduling supports bare
-        # thread-block-level tasklets.
+        # Use CopyND for the data movement; __syncthreads() afterwards so all threads see the update.
+        # TODO: replace with a proper cooperative copy distributing work across threads, once DaCe's
+        # GPU scheduling supports bare thread-block-level tasklets.
         copynd_call = _build_copynd_call(inp.dtype.ctype, map_lengths, in_strides_collapsed, out_strides_collapsed)
         code = copynd_call + "\n__syncthreads();"
 
@@ -840,11 +788,10 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
 
 @library.node
 class CopyLibraryNode(nodes.LibraryNode):
-    """
-    A library node representing a data copy between two access nodes.
+    """Library node representing a data copy between two access nodes.
 
-    Carries explicit ``src_storage`` and ``dst_storage`` properties so that
-    expansion selection can be done without walking the surrounding graph.
+    Carries explicit ``src_storage`` / ``dst_storage`` so expansion selection does not need to
+    walk the surrounding graph.
 
     ============================================ ================================
     Expansion                                    Use case
@@ -898,19 +845,16 @@ class CopyLibraryNode(nodes.LibraryNode):
         self.src_storage = src_storage
         self.dst_storage = dst_storage
 
-        # The 'pure' default cannot handle cross-storage copies (CPU<->GPU).
-        # Auto-select a storage-aware implementation when the caller did not
-        # pin one explicitly; same-side copies fall through to the 'pure'
-        # default preserved via ``default_implementation``.
+        # The 'pure' default cannot cross the CPU/GPU boundary -- auto-pick a CUDA-family
+        # implementation when the caller didn't pin one. Same-side copies keep 'pure'.
         if self.implementation is None:
             auto = _auto_select_copy_implementation(src_storage, dst_storage)
             if auto is not None:
                 self.implementation = auto
 
     def expand(self, state, sdfg=None, *args, **kwargs):
-        # Late dispatch: the __init__ auto-selection assumes contiguous
-        # subsets; once edges are attached we can see the real subsets and
-        # upgrade a CUDA-family memcpy to CUDA2D when the pattern demands it.
+        # Late dispatch: __init__ auto-selection assumes contiguous subsets; now that edges
+        # are attached, upgrade a CUDA-family memcpy to CUDA2D when the pattern demands it.
         if self.implementation in _CUDA_MEMCPY_IMPLS:
             actual_sdfg = sdfg if sdfg is not None else state.parent
             refinement = _refine_cuda_impl_for_subsets(self, state, actual_sdfg)
@@ -919,11 +863,11 @@ class CopyLibraryNode(nodes.LibraryNode):
         return super().expand(state, sdfg, *args, **kwargs)
 
     def validate(self, sdfg, state, allow_cross_storage=True):
-        """Validate the copy operation. ``allow_cross_storage=True`` (default)
-        permits different source/destination storages so SDFG-level validation
-        passes; same-storage-only expansions call with ``False`` at expansion
-        time. Returns ``(inp_name, inp, in_subset, out_name, out, out_subset,
-        dynamic_inputs, stream_input)``.
+        """Validate the copy's edges.
+
+        :param allow_cross_storage: when ``False``, require matching src/dst storage. Same-storage-only
+            expansions pass ``False`` at expansion time; SDFG-level validation uses the default.
+        :return: ``(inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input)``.
         """
         result = _validate_copy_edges(self, sdfg, state)
         inp = result[1]

@@ -29,8 +29,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     overapproximate_first_dimension = properties.Property(
         dtype=bool,
         default=False,
-        desc=
-        "If True, the first dimension of the map is overapproximated to be contiguous, even if it is not. This is useful for some cases where the first dimension is always contiguous, but the map range is not.",
+        desc="If True, overapproximate the first dimension as contiguous over its stride-one extent, "
+        "even if the map range isn't. Useful when the dimension is known to be contiguous in memory.",
     )
     node_label_whitelist = properties.ListProperty(
         element_type=str,
@@ -171,7 +171,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 for (p, (b2, e2, s2)) in range_list.items():
                     nb = nb.subs(p, b2)
                     ne = ne.subs(p, e2)
-                    assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy detection"
+                    assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
                 new_in_data_range.append((nb, ne, ns))
 
             # If we overapproximate the first dimension, we assume it is contiguous
@@ -220,8 +220,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             contig_subset = new_out_data_subset.is_contiguous_subset(state.sdfg.arrays[out_edge.data.data])
             if not contig_subset:
                 warnings.warn(
-                    f"Output array {out_edge.data.data} is not contiguous, cannot remove memcpy/memset {new_out_data_range} of ({state.sdfg.arrays[out_edge.data.data]})",
-                    UserWarning)
+                    f"Output array {out_edge.data.data} subset {new_out_data_range} is not contiguous, "
+                    "cannot remove memcpy/memset.", UserWarning)
                 return None, None, None
 
         if in_edge.data.data is not None:
@@ -255,7 +255,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             in_length_collapsed = None
 
         if in_length_collapsed is not None:
-            # This means the inner access is voer a non-unit stride dimension
+            # Inner access is over a non-unit stride dimension
             if in_length_collapsed != out_length_collapsed:
                 return None, None, None
 
@@ -276,9 +276,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if src_access_node not in state.nodes() or map_entry not in state.nodes() or tasklet not in state.nodes(
             ) or map_exit not in state.nodes() or dst_access_node not in state.nodes():
                 warnings.warn(
-                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), "
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                    UserWarning)
+                    f"Skipping memcpy removal: map {map_entry.map.label} or its tasklet/exit is no longer "
+                    "in state.", UserWarning)
                 continue
 
             # If src and dst types are not the same, we can't do memcpy
@@ -287,13 +286,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if src_desc.dtype != dst_desc.dtype:
                 if verbose:
                     warnings.warn(
-                        f"Source and destination types do not match for memcpy removal: {src_desc.dtype} != {dst_desc.dtype}. Skipping.",
+                        f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
                         UserWarning)
                 continue
             if src_desc.storage != dst_desc.storage:
                 if verbose:
                     warnings.warn(
-                        f"Source and destination storage types do not match for memcpy removal: {src_desc.storage} != {dst_desc.storage}. Skipping.",
+                        f"Skipping memcpy removal: storage mismatch ({src_desc.storage} != {dst_desc.storage}).",
                         UserWarning)
                 continue
 
@@ -357,9 +356,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
                 warnings.warn(
-                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
-                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                    UserWarning)
+                    f"Skipping memset removal: map {map_entry.map.label} or its tasklet/exit is no longer "
+                    "in state.", UserWarning)
                 continue
 
             # Must run before the memset path is torn down: needs the tasklet's edges.
@@ -368,8 +366,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if begin_subset is None or exit_subset is None or copy_length is None:
                 if verbose:
                     warnings.warn(
-                        f"Could not determine begin or exit subset or copy length for memset removal (or they are not contiguous) in map {map_entry.map}({map_entry.map.label}). Skipping.",
-                        UserWarning)
+                        f"Skipping memset removal in map {map_entry.map.label}: subset or copy length "
+                        "could not be determined or is non-contiguous.", UserWarning)
                 continue
 
             in_edges = state.in_edges(map_entry)
