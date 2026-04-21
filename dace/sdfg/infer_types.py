@@ -64,7 +64,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                scalar = bool(e.data.subset is not None and e.data.subset.num_elements() == 1)
                 if e.data.data is not None:
                     allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
