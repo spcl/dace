@@ -10,7 +10,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from enum import Enum, auto
-from typing import Final, Optional
+from typing import Final
 
 
 class StateBoundaryBehavior(Enum):
