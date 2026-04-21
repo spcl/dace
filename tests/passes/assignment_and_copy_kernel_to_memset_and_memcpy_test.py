@@ -20,9 +20,8 @@ EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
 EXPANSION_TYPES_CPU_ONLY = [
     "pure", "CPU",
     pytest.param("CUDA",
-                 marks=pytest.mark.skip(
-                     reason="nested memset/memcpy inside a GPU kernel is unsupported: "
-                     "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"))
+                 marks=pytest.mark.skip(reason="nested memset/memcpy inside a GPU kernel is unsupported: "
+                                        "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"))
 ]
 
 
