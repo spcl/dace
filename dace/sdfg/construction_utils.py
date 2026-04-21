@@ -3,7 +3,7 @@
 Utility functions for traversing the SDFG hierarchy to discover parent
 map scopes, loop regions, and nested SDFG boundaries.
 """
-from typing import List, Tuple, Union
+from typing import List, Union
 
 import dace
 import dace.sdfg.nodes
@@ -78,51 +78,3 @@ def get_parent_map_and_loop_scopes(
         parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
 
     return parent_scopes
-
-
-def get_parent_maps(root_sdfg: dace.SDFG, node: dace.sdfg.nodes.MapEntry,
-                    parent_state: dace.SDFGState) -> List[Tuple[dace.sdfg.nodes.MapEntry, dace.SDFGState]]:
-    """
-    Collect all parent MapEntry nodes enclosing *node*, traversing upward
-    through scope dicts and nested SDFG boundaries.
-
-    Unlike :func:`get_parent_map_and_loop_scopes`, this function skips
-    LoopRegions and only returns MapEntry nodes paired with the state
-    they reside in.
-
-    :param root_sdfg: The top-level SDFG.
-    :param node: The starting MapEntry node.
-    :param parent_state: The SDFGState containing *node*.
-    :return: A list of ``(MapEntry, SDFGState)`` pairs, ordered from
-        innermost to outermost.
-    """
-    maps: List[Tuple[dace.sdfg.nodes.MapEntry, dace.SDFGState]] = []
-    scope_dict = parent_state.scope_dict()
-    cur_node = node
-
-    # Walk up scope dict in current state
-    while scope_dict[cur_node] is not None:
-        if isinstance(scope_dict[cur_node], dace.sdfg.nodes.MapEntry):
-            maps.append((scope_dict[cur_node], parent_state))
-        cur_node = scope_dict[cur_node]
-
-    # Walk up control-flow regions (skip LoopRegions, only count maps)
-    parent_graph = parent_state.parent_graph
-    while parent_graph != parent_state.sdfg:
-        parent_graph = parent_graph.parent_graph
-
-    # Walk up through nested SDFG boundaries
-    parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
-    while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
-        scope_dict = parent_nsdfg_parent_state.scope_dict()
-        cur_node = parent_nsdfg_node
-        while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.sdfg.nodes.MapEntry):
-                maps.append((scope_dict[cur_node], parent_nsdfg_parent_state))
-            cur_node = scope_dict[cur_node]
-
-        parent_nsdfg_node = parent_nsdfg_parent_state.sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
-
-    return maps

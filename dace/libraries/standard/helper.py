@@ -1,13 +1,38 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions: subset
-stride collapsing (used to size nested-SDFG data descriptors from memlet
-subsets) and dynamic map-range input promotion.
+Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 """
-from typing import List
+from typing import List, Tuple
 
 import dace
 import copy
+
+STREAM_CONN = "stream"
+
+
+def extract_stream_and_dynamic_inputs(node, sdfg, state, reserved_conns: Tuple[str, ...]) -> Tuple[object, dict]:
+    """Extract the optional ``stream`` descriptor and dynamic scalar inputs of a
+    library node. Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to
+    ``STREAM_CONN`` are skipped, as are empty-memlet dependency edges.
+    Returns ``(stream_input, dynamic_inputs)``; ``stream_input`` is ``None``
+    when no ``stream`` edge is connected.
+    """
+    stream_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == STREAM_CONN]
+    if len(stream_ies) > 1:
+        raise ValueError(f"{type(node).__name__} expects at most one '{STREAM_CONN}' input edge.")
+    stream_input = sdfg.arrays[stream_ies[0].data.data] if stream_ies else None
+
+    reserved = set(reserved_conns) | {STREAM_CONN}
+    dynamic_inputs = {}
+    for ie in state.in_edges(node):
+        if ie.dst_conn in reserved or ie.data.is_empty():
+            continue
+        datadesc = sdfg.arrays[ie.data.data]
+        if not isinstance(datadesc, dace.data.Scalar):
+            raise ValueError("Dynamic inputs (not connected to `_in`) must be scalars.")
+        dynamic_inputs[ie.dst_conn] = datadesc
+
+    return stream_input, dynamic_inputs
 
 
 def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[dace.symbolic.SymExpr]):
@@ -69,7 +94,6 @@ def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Ran
         map_lengths = new_map_lengths
 
     if pre_assignments != dict():
-        # Add a state for assignments in the beginning
         sdfg.add_state_before(state=state, label="pre_assign", is_start_block=True, assignments=pre_assignments)
 
     collapsed_map_lengths = [ml for ml in map_lengths if ml != 1]

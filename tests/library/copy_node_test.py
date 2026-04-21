@@ -10,10 +10,6 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 import pytest
 import numpy as np
 
-# ===================================================================
-# Helpers
-# ===================================================================
-
 
 def _make_same_storage_sdfg(implementation,
                             gpu,
@@ -71,11 +67,6 @@ def _make_cross_storage_sdfg(implementation, src_storage, dst_storage, size=128)
     state.add_edge(libnode, "_out", dst_access, None, dace.memlet.Memlet(f"{dst_name}[0:{size}]"))
 
     return sdfg, src_name, dst_name
-
-
-# ===================================================================
-# Tests: CopyLibraryNode -- same storage
-# ===================================================================
 
 
 def test_copy_pure_cpu():
@@ -163,11 +154,6 @@ def test_copy_cuda_d2d():
     cp.testing.assert_array_equal(B[50:100], A[150:200])
 
 
-# ===================================================================
-# Tests: CopyLibraryNode -- cross storage
-# ===================================================================
-
-
 def test_copy_pure_host_to_device_rejected():
     """Pure expansion must reject CPU_Heap -> GPU_Global (needs cudaMemcpy)."""
     sdfg, src_name, dst_name = _make_cross_storage_sdfg("pure",
@@ -236,11 +222,6 @@ def test_copy_cuda_device_to_host():
     np.testing.assert_array_equal(dst, cp.asnumpy(src))
 
 
-# ===================================================================
-# Tests: CopyLibraryNode -- properties
-# ===================================================================
-
-
 def test_copy_node_storage_properties():
     """Verify src_storage/dst_storage are stored and serialized correctly."""
     node = CopyLibraryNode(name="test_props",
@@ -271,11 +252,6 @@ def test_copy_node_default_storage():
     node = CopyLibraryNode(name="test_default")
     assert node.src_storage == dace.dtypes.StorageType.Default
     assert node.dst_storage == dace.dtypes.StorageType.Default
-
-
-# ===================================================================
-# Tests: CopyLibraryNode -- validation
-# ===================================================================
 
 
 def test_copy_cross_storage_validation_rejects_without_flag():
@@ -352,11 +328,6 @@ def test_strided_expansions_accept_non_contiguous():
         sdfg.expand_library_nodes()
 
 
-# ===================================================================
-# Tests: RegisterCopy expansion
-# ===================================================================
-
-
 def test_register_copy_expands_with_register_storage():
     """RegisterCopy expansion accepts Register storage on both sides."""
     sdfg = dace.SDFG("reg_copy_ok")
@@ -401,11 +372,6 @@ def test_register_copy_rejects_non_register():
 
     with pytest.raises(Exception, match="storage types must match"):
         sdfg.expand_library_nodes()
-
-
-# ===================================================================
-# Tests: DirectAssignment expansion
-# ===================================================================
 
 
 def test_direct_assignment_cpu_same_storage():
@@ -773,12 +739,7 @@ def test_copy_pure_cpu_2d():
     np.testing.assert_array_equal(B[0:6, 0:10], A[2:8, 5:15])
 
 
-# ===================================================================
-# main
-# ===================================================================
-
 if __name__ == "__main__":
-    # Same-storage CPU
     test_copy_pure_cpu()
     test_copy_cpu_memcpy()
     test_copy_cpu_copynd()
