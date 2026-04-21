@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from dace import data, dtypes
@@ -22,6 +23,12 @@ def clone_descriptor(descriptor: data.Data) -> data.Data:
 
 def structure_member_path(base_path: str, member_name: str) -> str:
     return f'{base_path}.{member_name}'
+
+
+@dataclass(frozen=True)
+class StructureMemberAccess:
+    data_name: str
+    descriptor: data.Data
 
 
 def descriptor_members(descriptor: data.Data) -> Optional[Mapping[str, data.Data]]:
@@ -53,6 +60,13 @@ def nested_member_descriptor(descriptor: data.Data, member_names: Sequence[str])
         if current is None:
             return None
     return current
+
+
+def resolve_member_access(base_name: str, descriptor: data.Data, member_name: str) -> Optional[StructureMemberAccess]:
+    member = member_descriptor(descriptor, member_name)
+    if member is None:
+        return None
+    return StructureMemberAccess(data_name=structure_member_path(base_name, member_name), descriptor=member)
 
 
 def descriptor_from_structure(structure: Any) -> Optional[data.Data]:

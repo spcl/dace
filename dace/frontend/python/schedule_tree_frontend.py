@@ -17,8 +17,7 @@ from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
-from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, member_descriptor, \
-    structure_member_path
+from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, resolve_member_access
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
@@ -1148,9 +1147,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             kind = 'reference' if isinstance(inferred_descriptor, data.Reference) else 'container'
             if self._is_callback_descriptor(inferred_descriptor):
                 kind = 'callback'
-            structure = None
-            if isinstance(inferred_descriptor, PythonDict) and isinstance(value, ast.Dict):
-                structure = self.dict_support.infer_literal_binding(self._dict_support_context(name), value)
+            structure = self._runtime_container_structure(name, value, inferred_descriptor)
             self._store_binding(name, inferred_descriptor, kind=kind, structure=structure)
         else:
             scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
@@ -1168,9 +1165,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
             return
 
-        binding_descriptor = self.bindings.get(name).descriptor if name in self.bindings else None
-        if isinstance(binding_descriptor,
-                      (PythonDict, PythonList, PythonTuple)) or isinstance(value, (ast.Dict, ast.List, ast.Tuple)):
+        if self._should_emit_runtime_container_assignment(name, value):
             self._append_node(tn.StatementNode(code=CodeBlock(f'{name} = {self._format_runtime_expression(value)}')))
             return
 
@@ -1178,6 +1173,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
+
+    def _runtime_container_structure(self, name: str, value: ast.AST, inferred_descriptor: data.Data) -> Optional[Any]:
+        if isinstance(inferred_descriptor, PythonDict) and isinstance(value, ast.Dict):
+            return self.dict_support.infer_literal_binding(self._dict_support_context(name), value)
+        return None
+
+    def _should_emit_runtime_container_assignment(self, name: str, value: ast.AST) -> bool:
+        binding_descriptor = self.bindings.get(name).descriptor if name in self.bindings else None
+        return self._is_runtime_container_descriptor(binding_descriptor) or self._is_runtime_container_literal(value)
+
+    def _is_runtime_container_descriptor(self, descriptor: Optional[data.Data]) -> bool:
+        return isinstance(descriptor, (PythonDict, PythonList, PythonTuple))
+
+    def _is_runtime_container_literal(self, value: ast.AST) -> bool:
+        return isinstance(value, (ast.Dict, ast.List, ast.Tuple))
 
     def _handle_external_name_reassignment(self, name: str, value: ast.AST,
                                            source_access: Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]],
@@ -1348,10 +1358,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if owner_access is None:
                 return None
             owner_name, _, owner_descriptor, _ = owner_access
-            descriptor = member_descriptor(owner_descriptor, node.attr)
-            if descriptor is None or isinstance(descriptor, PythonDict):
+            member_access = resolve_member_access(owner_name, owner_descriptor, node.attr)
+            if member_access is None or isinstance(member_access.descriptor, PythonDict):
                 return None
-            data_name = structure_member_path(owner_name, node.attr)
+            descriptor = member_access.descriptor
+            data_name = member_access.data_name
             return (data_name, Memlet.from_array(data_name, descriptor), descriptor, _clone_descriptor(descriptor))
 
         if isinstance(node, ast.Subscript):

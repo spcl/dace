@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import dace
 from dace import data
 from dace.data.pydata import PythonClass, python_dataclass_descriptor
-from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure
+from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
+    resolve_member_access
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
@@ -58,6 +59,16 @@ def test_python_dataclass_descriptor_preserves_structure_vs_python_class_split()
     assert python_object.name == 'Outer'
     assert isinstance(python_object.members['inner'], data.Structure)
     assert isinstance(python_object.members['y'], data.Scalar)
+
+
+def test_resolve_member_access_returns_named_member_path():
+    Bundle = dace.data.Structure({'data': dace.float64[4]}, name='Bundle')
+
+    access = resolve_member_access('bundle', Bundle, 'data')
+
+    assert access is not None
+    assert access.data_name == 'bundle.data'
+    assert isinstance(access.descriptor, data.Array)
 
 
 def test_schedule_tree_supports_structure_member_copy():
