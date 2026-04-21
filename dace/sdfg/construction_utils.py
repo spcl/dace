@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Utility functions for traversing the SDFG hierarchy to discover parent
-map scopes, loop regions, and nested SDFG boundaries.
+Utility functions for manipulating/constructing/analyzing SDFG components
 """
 from typing import List, Union
 
