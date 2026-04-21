@@ -1,6 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import annotations
-
 import ast
 from collections import defaultdict
 import copy
