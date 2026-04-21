@@ -14,12 +14,15 @@ from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy 
 DIM_SIZE = 10
 D = dace.symbol("D")
 EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
-# CUDA variant is skipped because nested memset/memcpy inside a kernel needs
-# the not-yet-implemented "choose best expansion" logic.
+# Not supported: the CUDA expansion emits cudaMemsetAsync/cudaMemcpyAsync, which are host-side
+# runtime calls and cannot execute from device code, so nesting a memset/memcpy library node
+# inside a GPU kernel has no valid CUDA expansion.
 EXPANSION_TYPES_CPU_ONLY = [
     "pure", "CPU",
     pytest.param("CUDA",
-                 marks=pytest.mark.skip(reason="nested memset/memcpy inside kernel needs choose-best-expansion"))
+                 marks=pytest.mark.skip(
+                     reason="nested memset/memcpy inside a GPU kernel is unsupported: "
+                     "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"))
 ]
 
 
