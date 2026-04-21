@@ -1,29 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Simplified-SDFG-Dialect compliance check for the experimental CUDA codegen.
+"""Simplified SDFG Dialect compliance check.
 
-The experimental codegen assumes a reduced form of the SDFG IR (the
-"Simplified SDFG Dialect").  Constructs disallowed by this form include:
+Constructs disallowed by the dialect:
 
-* Control flow:
-    - ``ConsumeEntry`` scopes ("consume maps")
-    - ``Stream`` data descriptors (SDFG streams) and the access nodes that
-      reference them
-    - conditional interstate edges (inter-state edges with non-trivial
-      ``condition``)
-* Data movement:
-    - memlets with WCR
-    - memlets with ``other_subset``
-    - implicit AccessNode -> AccessNode copies
-    - view data descriptors (and view access nodes)
-* GPU-specific:
-    - dynamic thread-block maps (``GPU_ThreadBlock_Dynamic``)
-    - persistent GPU device maps (``GPU_Persistent``)
-
-``SimplifiedDialectCompliant`` exposes one method per feature, each returning
-``True`` when the SDFG is compliant with respect to that feature (i.e. the
-forbidden construct is absent).  ``is_compliant(sdfg)`` aggregates them; if
-any check fails the experimental codegen emits a prominent warning via
-``warn_if_not_simplified_dialect``.
+- control flow: ``ConsumeEntry`` scopes, ``Stream`` data descriptors and their
+  access nodes, conditional interstate edges;
+- data movement: memlets with WCR, memlets with ``other_subset``, implicit
+  AccessNode-to-AccessNode copies, view descriptors and view access nodes;
+- GPU-specific: ``GPU_ThreadBlock_Dynamic`` maps, ``GPU_Persistent`` maps.
 """
 from typing import List, Tuple
 
@@ -34,13 +18,10 @@ from dace.sdfg import SDFG, nodes
 class SimplifiedDialectCompliant:
     """Per-feature compliance checks for the Simplified SDFG Dialect.
 
-    Each ``check_*`` method returns ``True`` when the SDFG is compliant with
-    respect to that feature (i.e. contains none of the forbidden construct).
-    ``offenders_*`` returns a list of human-readable locator strings for the
-    offending constructs (used for the aggregated warning message).
+    Every ``check_*`` method returns ``True`` when the SDFG contains none of the
+    corresponding forbidden construct; ``offenders_*`` returns human-readable
+    locators for the concrete offenders.
     """
-
-    # ---- Control flow -----------------------------------------------------
 
     @staticmethod
     def offenders_consume_scopes(sdfg: SDFG) -> List[str]:
@@ -61,7 +42,6 @@ class SimplifiedDialectCompliant:
             stream_names = {name for name, desc in sub_sdfg.arrays.items() if isinstance(desc, dt.Stream)}
             for name in stream_names:
                 out.append(f'SDFG stream "{name}" in "{sub_sdfg.label}"')
-            # Access nodes referencing those streams.
             for state in sub_sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.AccessNode) and node.data in stream_names:
@@ -89,8 +69,6 @@ class SimplifiedDialectCompliant:
     @classmethod
     def check_no_conditional_interstate_edges(cls, sdfg: SDFG) -> bool:
         return not cls.offenders_conditional_interstate_edges(sdfg)
-
-    # ---- Data movement ----------------------------------------------------
 
     @staticmethod
     def offenders_wcr_edges(sdfg: SDFG) -> List[str]:
@@ -149,8 +127,6 @@ class SimplifiedDialectCompliant:
     def check_no_views(cls, sdfg: SDFG) -> bool:
         return not cls.offenders_views(sdfg)
 
-    # ---- GPU-specific -----------------------------------------------------
-
     @staticmethod
     def offenders_dynamic_threadblock_maps(sdfg: SDFG) -> List[str]:
         out: List[str] = []
@@ -175,10 +151,6 @@ class SimplifiedDialectCompliant:
     def check_no_persistent_gpu_device_maps(cls, sdfg: SDFG) -> bool:
         return not cls.offenders_persistent_gpu_device_maps(sdfg)
 
-    # ---- Aggregator -------------------------------------------------------
-
-    # Ordered list of (feature label, offenders-getter) pairs.  The order is
-    # the order shown in the warning message.
     _CHECKS = (
         ('consume scopes', offenders_consume_scopes),
         ('SDFG streams', offenders_sdfg_streams),
@@ -193,7 +165,11 @@ class SimplifiedDialectCompliant:
 
     @classmethod
     def collect(cls, sdfg: SDFG) -> List[Tuple[str, List[str]]]:
-        """Return a list of (feature_label, offenders) for every feature that fails its check."""
+        """Return ``(feature_label, offenders)`` pairs for every failing feature, in report order.
+
+        :param sdfg: the SDFG to inspect.
+        :return: a list of ``(label, offenders)`` tuples; empty if ``sdfg`` is compliant.
+        """
         out: List[Tuple[str, List[str]]] = []
         for label, getter in cls._CHECKS:
             offenders = getter.__func__(sdfg) if isinstance(getter, staticmethod) else getter(sdfg)
@@ -203,16 +179,17 @@ class SimplifiedDialectCompliant:
 
     @classmethod
     def is_compliant(cls, sdfg: SDFG) -> bool:
-        """``True`` iff ``sdfg`` is compliant with every feature of the Simplified Dialect."""
+        """Return ``True`` iff the SDFG is compliant with every feature of the dialect."""
         return not cls.collect(sdfg)
 
 
 def warn_if_not_simplified_dialect(sdfg: SDFG) -> None:
-    """Emit a prominent warning if ``sdfg`` violates the Simplified SDFG Dialect.
+    """Emit a ``UserWarning`` if ``sdfg`` violates the Simplified SDFG Dialect.
 
-    The warning lists each offending feature together with up to a handful of
-    concrete locators.  It does not raise -- the experimental codegen then
-    proceeds on a best-effort basis.
+    The warning enumerates each offending feature together with up to five concrete locators.
+    It never raises; the experimental codegen proceeds best-effort.
+
+    :param sdfg: the SDFG to check.
     """
     import warnings
 
@@ -225,7 +202,7 @@ def warn_if_not_simplified_dialect(sdfg: SDFG) -> None:
     for label, offenders in offenders_by_feature:
         shown = offenders[:max_per_feature]
         extra = len(offenders) - len(shown)
-        bullet = f'\n    * ' + '\n    * '.join(shown)
+        bullet = '\n    * ' + '\n    * '.join(shown)
         if extra > 0:
             bullet += f'\n    * ... and {extra} more'
         lines.append(f'  - {label}:{bullet}')
@@ -239,7 +216,3 @@ def warn_if_not_simplified_dialect(sdfg: SDFG) -> None:
         f'{banner}',
         stacklevel=2,
     )
-
-
-# Backwards-compatible re-export: older callers used ``warn_if_not_reduced_ir``.
-warn_if_not_reduced_ir = warn_if_not_simplified_dialect

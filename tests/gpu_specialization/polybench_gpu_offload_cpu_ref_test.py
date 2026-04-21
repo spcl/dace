@@ -1,41 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU-offloading correctness tests for all npbench polybench kernels.
+"""GPU-offloading correctness tests for npbench polybench kernels.
 
-For each kernel this test:
-
-1. Initializes inputs at a very small size (no dimension equal to 1).
-2. Computes a CPU reference by parsing the ``@dc.program`` to an SDFG and
-   running it through the default (CPU) codegen.  ``kernel.f(...)`` is not
-   usable as a reference for every npbench kernel because several use
-   ``range(N)`` / ``np.empty((N, N))`` with ``N`` being a ``dc.symbol``,
-   which is not interpretable as an integer under pure Python.
-3. Parses the same ``@dc.program`` to a fresh SDFG, applies
-   ``apply_gpu_transformations`` (which runs the experimental CUDA
-   codegen's explicit GPU-stream / GPU-global-copy pipeline during
-   compile), and runs the compiled SDFG on fresh copies of the inputs.
-4. Compares the two runs element-wise with ``np.testing.assert_allclose``.
-
-Kernels are imported directly from the existing ``tests/npbench/polybench``
-test modules so the canonical kernel source is exercised.  Inputs and
-symbol values are chosen small (10-32 per dim, TSTEPS in 2-4) to keep the
-suite fast; nothing has a dimension of 1.
+Each test builds a CPU SDFG (reference) and a GPU-transformed SDFG from the same
+``@dc.program``, runs both on independent copies of the inputs at a small size
+(no dimension equals 1), and compares the results element-wise.  Kernels are
+imported from ``tests/npbench/polybench`` so the canonical source is exercised.
 """
 import os
 import sys
-from typing import Callable, Dict, Optional, Sequence, Tuple
+from typing import Callable, Dict
 
 import numpy as np
 import pytest
 
 import dace as dc
 
-# Make the npbench polybench test modules importable as plain modules.
-_NPBENCH_DIR = os.path.join(os.path.dirname(__file__), os.pardir, 'npbench', 'polybench')
-_NPBENCH_DIR = os.path.abspath(_NPBENCH_DIR)
+_NPBENCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'npbench', 'polybench'))
 if _NPBENCH_DIR not in sys.path:
     sys.path.insert(0, _NPBENCH_DIR)
 
-# Kernel sources.
 import adi_test  # noqa: E402
 import atax_test  # noqa: E402
 import bicg_test  # noqa: E402
@@ -69,11 +52,6 @@ import trisolv_test  # noqa: E402
 import trmm_test  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# Harness
-# ---------------------------------------------------------------------------
-
-
 def _compare_arrays(cpu_args: Dict[str, np.ndarray], gpu_args: Dict[str, np.ndarray], rtol: float,
                     atol: float) -> None:
     for name, cpu_val in cpu_args.items():
@@ -98,7 +76,14 @@ def _run_gpu_vs_cpu(kernel,
                     *,
                     rtol: float = 1e-10,
                     atol: float = 1e-12) -> None:
-    """Run the kernel via CPU SDFG (reference) and GPU-transformed SDFG, compare."""
+    """Run ``kernel`` on CPU (reference) and on a GPU-transformed SDFG, compare outputs.
+
+    :param kernel: the ``@dc.program`` to exercise.
+    :param build_args: callable returning a fresh ``{name: array}`` argument dict per call.
+    :param symbols: symbol values passed to both SDFGs.
+    :param rtol: relative tolerance for ``np.testing.assert_allclose``.
+    :param atol: absolute tolerance for ``np.testing.assert_allclose``.
+    """
     cpu_sdfg = kernel.to_sdfg(simplify=True)
     cpu_args = build_args()
     cpu_ret = cpu_sdfg(**cpu_args, **symbols)
@@ -112,13 +97,7 @@ def _run_gpu_vs_cpu(kernel,
     _compare_returns(cpu_ret, gpu_ret, rtol, atol)
 
 
-# Small sizes used for every kernel.  All > 1, all small enough to be cheap.
 _TSTEPS_SMALL = 3
-
-
-# ---------------------------------------------------------------------------
-# Per-kernel tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.gpu

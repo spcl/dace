@@ -40,15 +40,7 @@ def _stream_in_edges(state, node):
 
 @pytest.mark.gpu
 def test_basic():
-    """
-    A simple memory copy program.
-
-    Since the SDFG has a single connected component, exactly one GPU stream is
-    used and must be synchronized at the end of the state.  The unified
-    ``ConnectGPUStreamsToNodes`` pass plus ``InsertGPUStreamSyncTasklets``
-    produces a single synchronization tasklet that receives exactly one
-    ``gpu_streams[i]`` in-edge per stream used.
-    """
+    """Single connected component: one stream, one sync tasklet with one gpu_streams in-edge."""
 
     @dace.program
     def simple_copy(A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
@@ -61,12 +53,9 @@ def test_basic():
 
     state = sdfg.states()[0]
 
-    # Exactly one synchronization tasklet, and it is a sink.
     sync = _sync_tasklet(state)
     assert sync in state.sink_nodes(), "The stream-synchronization tasklet must be a sink of the state."
 
-    # Exactly one stream used (single connected component), so exactly one
-    # ``gpu_streams[...]`` in-edge feeds the synchronization tasklet.
     stream_edges = _stream_in_edges(state, sync)
     assert len(stream_edges) == 1, (f"Expected one gpu_streams in-edge on the sync tasklet, "
                                     f"got {len(stream_edges)}: {[str(e.data) for e in stream_edges]}")
@@ -76,21 +65,7 @@ def test_basic():
 
 @pytest.mark.gpu
 def test_extended():
-    """
-    A program that performs two independent memory copies.
-
-    The input arrays reside in host memory, and ``apply_gpu_transformations``
-    is applied.  The data is first copied to GPU global memory, after which
-    the two copies are executed on the GPU.  Since these copies form two
-    independent connected components, the naive scheduler assigns them to
-    different GPU streams.
-
-    This test verifies:
-      1. Both streams are synchronized at the end of the state (one sync
-         tasklet with two distinct ``gpu_streams[i]`` in-edges).
-      2. Each asynchronous memory-copy tasklet has exactly one input
-         connector (its stream handle) and references it in its code.
-    """
+    """Two independent components on two streams, both synchronized at the end of the state."""
 
     @dace.program
     def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
@@ -105,7 +80,6 @@ def test_extended():
 
     state = sdfg.states()[0]
 
-    # -- 1. Synchronization at end of state covers both streams. --------------
     sync = _sync_tasklet(state)
     stream_edges = _stream_in_edges(state, sync)
     stream_slots = {str(e.data) for e in stream_edges}
@@ -115,10 +89,6 @@ def test_extended():
         assert e.src.desc(state).dtype == dace.dtypes.gpuStream_t, (
             "Every gpu_streams in-edge must originate from a gpu_streams AccessNode.")
 
-    # -- 2. CopyLibraryNodes wire their stream connector correctly. -----------
-    # After the merge of explicit-streams / explicit-gpu-global-copies, the
-    # pipeline inserts ``CopyLibraryNode`` instances (lowered to cudaMemcpyAsync
-    # at codegen time) rather than raw ``MemcpyAsync`` tasklets.
     copy_libnodes = [n for n in state.nodes() if type(n).__name__ == 'CopyLibraryNode']
     assert copy_libnodes, ("Expected at least one CopyLibraryNode after gpu_transformations + "
                            "InsertExplicitGPUGlobalMemoryCopies.")

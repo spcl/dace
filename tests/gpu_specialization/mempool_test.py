@@ -1,20 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Regression test for GPU memory-pool (``cudaMallocAsync`` / ``cudaFreeAsync``) support
-in ``ExperimentalCUDACodeGen``.
-
-The test:
-
-* Builds a two-kernel SDFG that uses a transient GPU buffer (``tmp``).
-* Marks all transient GPU_Global arrays as ``pool=True`` (the "please allocate
-  out of the device mempool" hint).
-* Applies GPU transformations, compiles, and runs the SDFG.
-* Asserts numerical correctness.
-* Inspects the generated CUDA source and asserts that:
-    - the default-pool header is emitted (``cudaDeviceGetDefaultMemPool`` +
-      ``cudaMemPoolSetAttribute``);
-    - every pooled transient is allocated with ``cudaMallocAsync`` and
-      released with ``cudaFreeAsync``.
-"""
+"""GPU memory-pool (``cudaMallocAsync`` / ``cudaFreeAsync``) test for the experimental codegen."""
 import glob
 import os
 
@@ -54,16 +39,13 @@ def test_mempool_runs_correctly_and_emits_expected_calls():
     sdfg, pooled = _build_pooled_sdfg()
     compiled = sdfg.compile()
 
-    # Numerical check.
     n = 256
     A = np.arange(n, dtype=np.float64)
     B = np.zeros(n, dtype=np.float64)
     compiled(A=A, B=B, _MP_N=n)
     np.testing.assert_allclose(B, A * 2.0 + 1.0)
 
-    # Generated-code check -- scan all emitted .cu / .cpp sources because the
-    # async allocation calls are emitted on the host side and the pool header
-    # can live in either the cuda or experimental_cuda src subdir.
+    # Async alloc/free calls are emitted on the host side; scan every emitted source.
     build = sdfg.build_folder
     sources = (glob.glob(os.path.join(build, 'src', '**', '*.cu'), recursive=True) +
                glob.glob(os.path.join(build, 'src', '**', '*.cpp'), recursive=True))
@@ -73,7 +55,6 @@ def test_mempool_runs_correctly_and_emits_expected_calls():
     assert src.count('cudaDeviceGetDefaultMemPool') >= 1, "Pool header missing (DeviceGetDefaultMemPool)."
     assert src.count('cudaMemPoolSetAttribute') >= 1, "Pool header missing (MemPoolSetAttribute)."
 
-    # One MallocAsync + one FreeAsync per pooled transient (at minimum).
     malloc_async = src.count('cudaMallocAsync')
     free_async = src.count('cudaFreeAsync')
     assert malloc_async >= len(pooled), (f"Expected >= {len(pooled)} cudaMallocAsync calls "
