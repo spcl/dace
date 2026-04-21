@@ -15,6 +15,8 @@ from numpy import float64 as fl
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
 
+from dace.sdfg.state import default_line_info
+
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
     "REAL": dtypes.float32,
@@ -25,13 +27,14 @@ fortrantypes2dacetypes = {
 
 def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list,
                 source: str):
-    tasklet = substate.add_tasklet(name="T" + name,
-                                   inputs=vars_in,
-                                   outputs=vars_out,
-                                   code=code,
-                                   debuginfo=di(start_line=debuginfo[0], start_column=debuginfo[1], filename=source),
-                                   language=lang.Python)
-    return tasklet
+    with default_line_info(substate, di(start_line=debuginfo[0], start_column=debuginfo[1], filename=source)):
+        return substate.add_tasklet(
+            name="T" + name,
+            inputs=vars_in,
+            outputs=vars_out,
+            code=code,
+            language=lang.Python,
+        )
 
 
 def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_conn: str, memlet_range: str):

@@ -23,7 +23,7 @@ import copy
 from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, default_line_info
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -706,11 +706,13 @@ class ExpandTransformation(PatternTransformation):
         node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
-            expansion = state.add_nested_sdfg(expansion,
-                                              node.in_connectors,
-                                              node.out_connectors,
-                                              name=node.name,
-                                              debuginfo=node.debuginfo)
+            with default_line_info(state, node.debuginfo):
+                expansion = state.add_nested_sdfg(
+                    expansion,
+                    node.in_connectors,
+                    node.out_connectors,
+                    name=node.name,
+                )
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
             if isinstance(expansion, nd.NestedSDFG):

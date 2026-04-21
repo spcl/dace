@@ -6,6 +6,7 @@ import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
+from dace.sdfg.state import default_line_info
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -782,8 +783,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     find_new_name=True,
                 )
             # We reuse the old debug information.
-            new_inter_node: nodes.AccessNode = state.add_access(new_inter_name, copy.copy(inter_node.debuginfo))
-            new_inter_desc: data.Data = sdfg.arrays[new_inter_name]
+            with default_line_info(state, copy.copy(inter_node.debuginfo)):
+                new_inter_node = state.add_access(new_inter_name)
+            new_inter_desc = sdfg.arrays[new_inter_name]
 
             # Get the subset that defined into which part of the old intermediate
             #  the old output edge wrote to. We need that to adjust the producer

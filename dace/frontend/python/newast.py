@@ -714,16 +714,18 @@ class TaskletTransformer(ExtNodeTransformer):
         if self.lang is None:
             self.lang = dtypes.Language.Python
 
-        t = self.state.add_tasklet(name,
-                                   set(self.inputs.keys()),
-                                   set(self.outputs.keys()),
-                                   self.extcode or tasklet_ast.body,
-                                   language=self.lang,
-                                   code_global=self.globalcode,
-                                   code_init=self.initcode,
-                                   code_exit=self.exitcode,
-                                   location=self.location,
-                                   debuginfo=locinfo)
+        with default_line_info(self.state, locinfo):
+            t = self.state.add_tasklet(
+                name,
+                set(self.inputs.keys()),
+                set(self.outputs.keys()),
+                self.extcode or tasklet_ast.body,
+                language=self.lang,
+                code_global=self.globalcode,
+                code_init=self.initcode,
+                code_exit=self.exitcode,
+                location=self.location,
+            )
 
         return t, self.inputs, self.outputs, self.accesses
 
@@ -3198,19 +3200,22 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 inp_memlets.update(input_memlets)
 
-                state.add_mapped_tasklet(state.label,
-                                         map_range,
-                                         inp_memlets,
-                                         tasklet_code, {'__out': out_memlet},
-                                         external_edges=True,
-                                         debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    state.add_mapped_tasklet(
+                        state.label,
+                        map_range,
+                        inp_memlets,
+                        tasklet_code,
+                        {'__out': out_memlet},
+                        external_edges=True,
+                    )
         else:
             if op_subset.num_elements() != 1:
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s, %s and %s" % (rtarget_subset, op_subset, wtarget_subset))
             else:
                 with default_line_info(state, self.current_lineinfo):
-                    op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
+                    op1 = state.add_read(rtarget_name)
                 if op_name:
                     with default_line_info(state, self.current_lineinfo):
                         op2 = state.add_read(op_name)
@@ -5314,7 +5319,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s_%d' % (array.replace('.', '_'), node.lineno))
         if has_array_indirection:
             # Make copy slicing state
-            with default_line_info(self.current_state, self.current_state):
+            with default_line_info(self.current_state, self.current_lineinfo):
                 rnode = self.current_state.add_read(array)
             return self._array_indirection_subgraph(rnode, expr)
 
