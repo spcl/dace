@@ -3221,11 +3221,10 @@ class LoopRegion(ControlFlowRegion):
 
         if condition_expr is None:
             self.loop_condition = CodeBlock('True')
+        elif isinstance(condition_expr, CodeBlock):
+            self.loop_condition = condition_expr
         else:
-            if isinstance(condition_expr, CodeBlock):
-                self.loop_condition = condition_expr
-            else:
-                self.loop_condition = CodeBlock(condition_expr)
+            self.loop_condition = CodeBlock(condition_expr)
 
         if update_expr is None or isinstance(update_expr, CodeBlock):
             self.update_statement = update_expr
