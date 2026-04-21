@@ -174,7 +174,7 @@ class MemletSet(Set[Memlet]):
 
         return False
 
-    def union(self, *s: Iterable[Memlet]) -> MemletSet:
+    def union(self, *s: Iterable[Memlet]) -> 'MemletSet':
         """
         Performs a set-union (with memlet union) over the given sets of memlets.
 
