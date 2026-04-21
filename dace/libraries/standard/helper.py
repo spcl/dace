@@ -2,15 +2,18 @@
 """
 Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 """
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import dace
 import copy
+from dace.sdfg import nodes
 
 STREAM_CONN = "stream"
 
 
-def extract_stream_and_dynamic_inputs(node, sdfg, state, reserved_conns: Tuple[str, ...]) -> Tuple[object, dict]:
+def extract_stream_and_dynamic_inputs(
+        node: nodes.Node, sdfg: dace.SDFG, state: dace.SDFGState,
+        reserved_conns: Tuple[str, ...]) -> Tuple[Optional[dace.data.Data], Dict[str, dace.data.Data]]:
     """Extract the optional ``stream`` descriptor and dynamic scalar inputs of a library node.
 
     Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to ``STREAM_CONN`` are skipped,
@@ -36,7 +39,9 @@ def extract_stream_and_dynamic_inputs(node, sdfg, state, reserved_conns: Tuple[s
     return stream_input, dynamic_inputs
 
 
-def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[dace.symbolic.SymExpr]):
+def collapse_shape_and_strides(
+        subset: dace.subsets.Range,
+        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """Drop length-1 dimensions from a (subset, strides) pair.
 
     Surviving strides are scaled by the subset step (``stride * s``) so they describe the access
@@ -53,7 +58,8 @@ def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[d
     return collapsed_shape, collapsed_strides
 
 
-def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Range, state: dace.SDFGState):
+def add_dynamic_inputs(dynamic_inputs: Dict[str, dace.data.Data], sdfg: dace.SDFG, subset: dace.subsets.Range,
+                       state: dace.SDFGState) -> List[dace.symbolic.SymExpr]:
     """Promote dynamic map-range inputs to SDFG-level data descriptors.
 
     For each dynamic input not already in the SDFG (e.g. a runtime-determined array dimension),

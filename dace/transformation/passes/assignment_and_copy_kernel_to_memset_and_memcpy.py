@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
+"""Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 import warnings
 import dace
 import copy
@@ -9,14 +9,13 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
-    """Lift contiguous zero-assignments and element-wise copies out of maps
-    into Memset / Copy library nodes.
+    """Implementation of the lifting operatio.
 
     The pass walks every map in the SDFG, identifies data paths that perform
     a constant-zero write or a direct element-wise copy over a contiguous
@@ -70,14 +69,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             edges.append(oe)
         return edges
 
-    def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry, is_memset: bool):
+    def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry,
+                                 is_memset: bool) -> List[List[MultiConnectorEdge]]:
         """
-        Find ``ME -> tasklet -> MX`` paths whose tasklet is a pure copy
+        Find ``MapEntry -> tasklet -> MapExit`` paths whose tasklet is a pure copy
         (``is_memset=False``) or constant-zero write (``is_memset=True``).
-
-        For memcpy, each returned path is ``[ie, e_in, e_out, oe]`` where
-        ``ie`` / ``oe`` are the outer access-node edges. For memset it is
-        ``[e_in, e_out, oe]`` (no input access node).
         """
         if any(s != 1 for (_, _, s) in node.map.range):
             return []
@@ -130,24 +126,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return paths
 
-    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState,
+                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
         return self._detect_contiguous_paths(state, node, is_memset=False)
 
-    def _detect_contiguous_memset_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _detect_contiguous_memset_paths(self, state: dace.SDFGState,
+                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
         return self._detect_contiguous_paths(state, node, is_memset=True)
 
-    def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+    def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry) -> int:
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
         assert isinstance(node, dace.nodes.MapEntry), f"Node {node} is not a MapEntry"
         assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
-    def _get_write_begin_and_length(self,
-                                    state: dace.SDFGState,
-                                    map_entry: dace.nodes.MapEntry,
-                                    tasklet: dace.nodes.Tasklet,
-                                    verbose=True):
+    def _get_write_begin_and_length(
+            self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+            tasklet: dace.nodes.Tasklet) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
         range_list = {
             dace.symbolic.symbol(p): (b, e, s)
             for (p, (b, e, s)) in zip(map_entry.map.params, map_entry.map.range)
@@ -261,7 +257,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return new_in_data_range, new_out_data_range, out_length_collapsed
 
-    def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
+    def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
         rmed_count = 0
 
@@ -296,8 +292,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             # Must run before the memcpy path is torn down: needs the tasklet's edges.
-            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(
-                state, map_entry, tasklet, verbose)
+            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
             if begin_subset is None and exit_subset is None and copy_length is None:
                 continue
@@ -336,7 +331,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return rmed_count
 
-    def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
+    def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         memset_paths = self._detect_contiguous_memset_paths(state, node)
 
         joined_edges = set()
@@ -390,7 +385,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return rmed_count
 
-    def _has_passthrough_connectors(self, n: dace.nodes.Node):
+    def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
         in_conns = n.in_connectors
         out_conns = n.out_connectors
 
