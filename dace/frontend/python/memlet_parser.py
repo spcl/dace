@@ -5,11 +5,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
 from dace import data, dtypes, subsets
+from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
+from dace.symbolic import IfExpr, SymbolicType, pyindex, pystr_to_symbolic
 from dace.frontend.python.common import DaceSyntaxError
+from sympy.core.relational import Relational
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 
@@ -79,6 +81,55 @@ def _parse_dim_atom(das, atom):
     return result
 
 
+def _wrap_scalar_index(index_expr, extent):
+    # Scalar element access uses Python wraparound semantics, which codegen
+    # implements via pyindex(...)->py_mod(...).
+    try:
+        if (index_expr < 0) == True:
+            return index_expr + extent
+    except (TypeError, ValueError):
+        pass
+
+    if not Config.get_bool('frontend', 'runtime_negative_indices'):
+        return index_expr
+
+    if getattr(index_expr, 'is_Boolean', False):
+        return index_expr
+
+    is_integer = getattr(index_expr, 'is_integer', None)
+    if is_integer is False:
+        return index_expr
+
+    is_nonnegative = getattr(index_expr, 'is_nonnegative', None)
+    if is_nonnegative is True:
+        return index_expr
+    return pyindex(index_expr, extent)
+
+
+def _wrap_slice_bound(index_expr, extent, *, inclusive_stop: bool):
+    # Slice bounds are different: positive stop=size must remain size rather
+    # than wrapping to zero, so we normalize only negative values.
+    try:
+        if (index_expr < 0) == True:
+            wrapped = index_expr + extent
+        else:
+            wrapped = index_expr
+    except (TypeError, ValueError):
+        wrapped = index_expr
+
+    if wrapped is index_expr and Config.get_bool('frontend', 'runtime_negative_indices'):
+        if not getattr(index_expr, 'is_Boolean', False):
+            is_integer = getattr(index_expr, 'is_integer', None)
+            if is_integer is not False:
+                is_nonnegative = getattr(index_expr, 'is_nonnegative', None)
+                if is_nonnegative is not True:
+                    wrapped = IfExpr(index_expr < 0, index_expr + extent, index_expr)
+
+    if inclusive_stop:
+        return wrapped - 1
+    return wrapped
+
+
 def _fill_missing_slices(das, ast_ndslice, array, indices):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
@@ -99,20 +150,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             dim = ast.Name(id=dim)
 
         if isinstance(dim, tuple):
-            rb = _parse_dim_atom(das, dim[0] or 0)
-            re = _parse_dim_atom(das, dim[1] or array.shape[indices[idx]]) - 1
+            dim_extent = array.shape[indices[idx]]
+            rb = _wrap_slice_bound(_parse_dim_atom(das, dim[0] or 0), dim_extent, inclusive_stop=False)
+            re = _wrap_slice_bound(_parse_dim_atom(das, dim[1] or dim_extent), dim_extent, inclusive_stop=True)
             rs = _parse_dim_atom(das, dim[2] or 1)
-            # NOTE: try/except for cases where rb/re are not symbols/numbers
-            try:
-                if (rb < 0) == True:
-                    rb += array.shape[indices[idx]]
-            except (TypeError, ValueError):
-                pass
-            try:
-                if (re < 0) == True:
-                    re += array.shape[indices[idx]]
-            except (TypeError, ValueError):
-                pass
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1
@@ -147,7 +188,9 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             if rs is None:
                 rs = 1
 
-            ndslice[idx] = (rb, re - 1, rs)
+            dim_extent = array.shape[indices[idx]]
+            ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
+                            _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
             new_idx += 1
         elif isinstance(inner_eval_ast(das, dim), slice):
@@ -161,7 +204,9 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             if rs is None:
                 rs = 1
 
-            ndslice[idx] = (rb, re - 1, rs)
+            dim_extent = array.shape[indices[idx]]
+            ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
+                            _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array)):
@@ -184,7 +229,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
             if data._prod(desc.shape) == 1:
                 # Special case: one-element array treated as scalar
-                ndslice[idx] = (dim.id, dim.id, 1)
+                scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), array.shape[indices[idx]])
+                ndslice[idx] = (scalar_expr, scalar_expr, 1)
             else:
                 ndslice[idx] = (0, array.shape[idx] - 1, 1)
                 arrdims[indices[idx]] = dim.id
@@ -192,13 +238,15 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Scalar)):
-            ndslice[idx] = (dim.id, dim.id, 1)
+            scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), array.shape[indices[idx]])
+            ndslice[idx] = (scalar_expr, scalar_expr, 1)
             idx += 1
             new_idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
-            if (r < 0) == True:
-                r += array.shape[indices[idx]]
+            if getattr(r, 'is_Boolean', False) or getattr(r, 'is_Relational', False) or isinstance(r, Relational):
+                raise IndexError('Boolean expressions are not supported as scalar memlet indices')
+            r = _wrap_scalar_index(r, array.shape[indices[idx]])
             ndslice[idx] = r
             idx += 1
             new_idx += 1

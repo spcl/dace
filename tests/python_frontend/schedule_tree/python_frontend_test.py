@@ -1600,6 +1600,24 @@ def test_singleton_symbolic_negative_subscript_assignment_canonicalized():
     assert str(stree.children[0].out_memlets['out'].subset) == '0'
 
 
+def test_singleton_runtime_negative_subscript_assignment_uses_pyindex_when_enabled():
+    n = dace.symbol('n')
+    i = dace.symbol('i', integer=True)
+
+    @dace.program
+    def scalar_prog(x: dace.int32[n]):
+        idx = x[i]
+
+    with dace.config.set_temporary('frontend', 'runtime_negative_indices', value=True):
+        stree = scalar_prog.to_schedule_tree()
+
+    assert [type(child) for child in stree.children] == [tn.TaskletNode]
+    assert stree.children[0].node.code.as_string == 'idx = x[i]'
+    assert (dace.symbolic.pystr_to_symbolic(str(
+        stree.children[0].in_memlets['in0'].subset)) == dace.symbolic.pystr_to_symbolic('pyindex(i, n)'))
+    assert str(stree.children[0].out_memlets['out'].subset) == '0'
+
+
 def test_short_circuit_condition_keeps_nested_index_in_guard():
 
     @dace.program

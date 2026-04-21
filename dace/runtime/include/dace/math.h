@@ -255,10 +255,11 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
 // Formula: num - (num // den) * den
 // NOTE: This is different than Python math.remainder and C remainder,
 // which are equaivalent to the IEEE remainder: num - round(num / den) * den
-template<typename T>
-static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
-    T quotient = py_floor(numerator, denominator);
-    return (T)(numerator - quotient * denominator);
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI std::common_type_t<T1, T2> py_mod(const T1& numerator, const T2& denominator) {
+    using CT = std::common_type_t<T1, T2>;
+    CT quotient = py_floor((CT)numerator, (CT)denominator);
+    return (CT)(numerator - quotient * denominator);
 }
 
 // Computes C/C++ modulus (operator % and fmod)

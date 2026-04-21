@@ -584,6 +584,20 @@ required:
                     dynamic raises that would otherwise require a callback.
                     ``ignore_all`` skips all ``raise`` statements.
 
+            runtime_negative_indices:
+                type: bool
+                title: Runtime negative-index wrapping
+                default: false
+                description: >
+                    If enabled, array indices whose sign cannot be proven
+                    nonnegative are normalized with symbolic runtime accessors
+                    during frontend lowering. Uncertain scalar element indices
+                    use ``pyindex(ind, size)``, while uncertain slice bounds use
+                    conditional negative-offset normalization so positive bounds
+                    such as ``stop == size`` keep Python semantics. This is
+                    disabled by default; definitely negative cases are still
+                    normalized statically during preprocessing.
+
             verbose_errors:
                 type: bool
                 title: Show preprocessed AST on parsing errors

@@ -111,6 +111,13 @@ def test_extraneous_goto():
     assert 'goto' not in sdfg.generate_code()[0].code
 
 
+def test_pyindex_codegen_prints_python_mod_for_scalar_indices():
+    i = dace.symbol('i', dtype=dace.int32)
+    n = dace.symbol('N', dtype=dace.int32)
+
+    assert dace.symbolic.symstr(dace.symbolic.pyindex(i, n), cpp_mode=True) == '(py_mod(i, N))'
+
+
 def test_extraneous_goto_nested():
 
     @dace.program
