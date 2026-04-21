@@ -285,9 +285,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dst_desc = state.sdfg.arrays[dst_access_node.data]
             if src_desc.dtype != dst_desc.dtype:
                 if verbose:
-                    warnings.warn(
-                        f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
-                        UserWarning)
+                    warnings.warn(f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
+                                  UserWarning)
                 continue
             if src_desc.storage != dst_desc.storage:
                 if verbose:
