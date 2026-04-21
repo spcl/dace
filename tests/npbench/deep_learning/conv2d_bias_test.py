@@ -5,9 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.transformation.interstate import InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
 C_in, C_out, H, K, N, W = (dc.symbol(s, dc.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))

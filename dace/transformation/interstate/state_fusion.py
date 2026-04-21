@@ -5,7 +5,7 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, dtypes, registry, sdfg, subsets
+from dace import data as dt, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil

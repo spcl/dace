@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.dtypes import vector
-import dace
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
 

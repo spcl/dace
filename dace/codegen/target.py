@@ -4,7 +4,7 @@ import shutil  # which
 from typing import List, TYPE_CHECKING
 import warnings
 
-from dace import memlet as mm, data as dt, dtypes, subsets
+from dace import memlet as mm, data as dt, dtypes
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream

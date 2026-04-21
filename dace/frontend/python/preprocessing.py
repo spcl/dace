@@ -12,7 +12,7 @@ import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
-from dace import data, dtypes, symbolic, sdfg
+from dace import data, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils

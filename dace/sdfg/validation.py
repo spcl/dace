@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 
 import networkx as nx
 
-from dace import dtypes, subsets, symbolic, data
+from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
@@ -413,7 +413,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace import data as dt
     from dace import subsets as sbs
     from dace.config import Config
-    from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
     from dace.sdfg import utils as sdutil
     from dace.sdfg.scope import is_devicelevel_gpu, scope_contains_scope

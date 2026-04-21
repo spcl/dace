@@ -1,6 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-import pytest
 import dace
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.sdfg.state import LoopRegion
