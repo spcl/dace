@@ -25,83 +25,38 @@ from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
 
-from dace.libraries.standard.helper import add_dynamic_inputs, collapse_shape_and_strides
+from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dynamic_inputs, collapse_shape_and_strides,
+                                            extract_stream_and_dynamic_inputs)
 from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 
-# Name of the special in-connector used to pass an explicit GPU stream.
-_STREAM_CONN = "stream"
-
-# Distinct connector name used inside expansion tasklets -- must differ from
-# ``_STREAM_CONN`` because the expansion also adds a nested-SDFG array of
-# that name (the propagated stream descriptor) and DaCe validation rejects
-# tasklet connectors that collide with SDFG-level array names.
+# Must differ from STREAM_CONN: the expansion adds a nested-SDFG array of
+# that name, and DaCe rejects tasklet connectors colliding with array names.
 _STREAM_TASKLET_CONN = "_stream_in"
 
 
 def _validate_copy_edges(node, sdfg, state):
+    """Validate a copy library node's edges and return
+    ``(inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input)``.
     """
-    Common edge validation for all copy library nodes.
-
-    Checks that there is exactly one ``_in`` data input edge, exactly one
-    output edge, collects dynamic scalar inputs, and returns the data
-    descriptors and subsets.  Also extracts an optional ``stream``
-    in-connector used to pass an explicit GPU stream to the expansion.
-
-    :return: ``(inp_name, inp, in_subset, out_name, out, out_subset,
-        dynamic_inputs, stream_input)`` where ``stream_input`` is either
-        ``None`` or the data descriptor of the source connected to the
-        ``stream`` connector.
-    """
-    # Only the ``_out`` data edge carries the copy payload; other outgoing
-    # edges (empty-memlet dependency edges used by the GPU stream pipeline
-    # to wire the copy into the stream dataflow ordering) are ignored here.
     data_oes = [oe for oe in state.out_edges(node) if oe.src_conn == "_out"]
     if len(data_oes) != 1:
         raise ValueError(f"{type(node).__name__} expects exactly one `_out` output edge.")
-
     oe = data_oes[0]
     out = sdfg.arrays[oe.data.data]
     out_subset = oe.data.subset
     out_name = oe.src_conn
 
-    # Extract the optional `stream` input connector separately.  Streams are
-    # opaque handles (gpuStream_t), not scalars used in map ranges, so they
-    # bypass the scalar-only check below.
-    stream_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == _STREAM_CONN]
-    if len(stream_ies) > 1:
-        raise ValueError(f"{type(node).__name__} expects at most one '{_STREAM_CONN}' input edge.")
-    stream_input = None
-    if stream_ies:
-        stream_input = sdfg.arrays[stream_ies[0].data.data]
+    stream_input, dynamic_inputs = extract_stream_and_dynamic_inputs(node, sdfg, state, reserved_conns=("_in", ))
 
-    # Collect dynamic input connectors (anything not "_in" or "stream").
-    # Empty-memlet dependency edges are ignored -- they are used by the GPU
-    # stream pipeline for dataflow ordering, not for passing data.
-    dynamic_ies = {
-        ie
-        for ie in state.in_edges(node) if ie.dst_conn not in ("_in", _STREAM_CONN) and not ie.data.is_empty()
-    }
-    dynamic_inputs = dict()
-    for ie in dynamic_ies:
-        dataname = ie.data.data
-        datadesc = sdfg.arrays[dataname]
-        if not isinstance(datadesc, dace.data.Scalar):
-            raise ValueError("Dynamic inputs (not connected to `_in`) must be scalars.")
-        dynamic_inputs[ie.dst_conn] = datadesc
-
-    data_ies = {ie for ie in state.in_edges(node) if ie.dst_conn == "_in"}
+    data_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == "_in"]
     if len(data_ies) != 1:
         raise ValueError(f"{type(node).__name__} expects exactly one data input edge "
                          "connected to the `_in` connector.")
-    ie = data_ies.pop()
+    ie = data_ies[0]
     inp = sdfg.arrays[ie.data.data]
     in_subset = ie.data.subset
     inp_name = ie.dst_conn
 
-    if not inp:
-        raise ValueError("Missing input data descriptor.")
-    if not out:
-        raise ValueError("Missing output data descriptor.")
     if inp.dtype != out.dtype:
         raise ValueError("Input and output data types must match "
                          f"(got {inp.dtype} vs {out.dtype}).")
@@ -109,13 +64,11 @@ def _validate_copy_edges(node, sdfg, state):
     return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input
 
 
-# Storage type sets for cross-boundary detection.
-# A mapped tasklet cannot read from one side and write to the other.
+# A mapped tasklet cannot read CPU and write GPU (or vice versa) in one scope.
 _CPU_STORAGES = {
     dtypes.StorageType.CPU_Heap,
     dtypes.StorageType.CPU_Pinned,
     dtypes.StorageType.CPU_ThreadLocal,
-    dtypes.StorageType.CPU_Pinned,
     dtypes.StorageType.Register,
 }
 _GPU_STORAGES = {
@@ -126,16 +79,9 @@ _GPU_STORAGES = {
 
 
 def _is_cross_cpu_gpu(src_storage, dst_storage):
-    """
-    Returns True if src and dst are on opposite sides of the CPU/GPU
-    boundary (one is CPU-side, the other GPU-side).  A mapped tasklet
-    cannot handle this; it requires a memcpy API call.
-
-    ``Register`` is storage-agnostic: it adopts the side of whatever scope
-    it lives in, so copies where either endpoint is a register are never
-    reported as cross-boundary.
-    """
-    if (src_storage == dtypes.StorageType.Register or dst_storage == dtypes.StorageType.Register):
+    """Return True if src and dst straddle the CPU/GPU boundary. ``Register``
+    adopts the side of its enclosing scope and is never reported as cross."""
+    if src_storage == dtypes.StorageType.Register or dst_storage == dtypes.StorageType.Register:
         return False
     src_cpu = src_storage in _CPU_STORAGES
     src_gpu = src_storage in _GPU_STORAGES
@@ -145,16 +91,8 @@ def _is_cross_cpu_gpu(src_storage, dst_storage):
 
 
 def _auto_select_copy_implementation(src_storage, dst_storage):
-    """Pick a storage-aware implementation for a ``CopyLibraryNode``.
-
-    The default ``'pure'`` expansion emits a mapped tasklet, which cannot
-    cross the CPU/GPU boundary.  Return an explicit CUDA-family expansion
-    when either endpoint is GPU; return ``None`` to leave the node on the
-    ``'pure'`` default for same-side copies.
-
-    ``StorageType.Default`` is treated as CPU-side (it resolves to a host
-    allocation at codegen time).
-    """
+    """Return a CUDA-family implementation name for cross-CPU/GPU copies, or
+    ``None`` to keep the ``'pure'`` default. ``StorageType.Default`` is CPU."""
     src_gpu = src_storage == dtypes.StorageType.GPU_Global
     dst_gpu = dst_storage == dtypes.StorageType.GPU_Global
     cpu_side = _CPU_STORAGES | {dtypes.StorageType.Default}
@@ -188,14 +126,8 @@ def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
 
 
 def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
-    """Pick between CUDA-family memcpy and CUDA2D based on actual subsets.
-
-    Contiguous subsets keep the existing ``CUDA`` / ``CUDAHostToDevice`` /
-    ``CUDADeviceToHost`` choice.  2D-strided subsets that match a
-    ``cudaMemcpy2DAsync`` pattern are upgraded to ``CUDA2D``.  Anything more
-    complex raises a clear error -- per-row loop fallbacks are not yet
-    implemented.
-    """
+    """Upgrade CUDA-family impls to ``CUDA2D`` for 2D-strided subsets; raise
+    for more complex strided patterns (per-row fallback not yet implemented)."""
     inp_name, inp, in_subset, out_name, out, out_subset, _dyn, _stream = node.validate(parent_sdfg,
                                                                                        parent_state,
                                                                                        allow_cross_storage=True)
@@ -220,11 +152,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
 
 
 def _add_stream_descriptor(sdfg, stream_input):
-    """Register an opaque ``stream`` input descriptor on the expansion SDFG.
-
-    Mirrors the parent-side descriptor shape/dtype so connector names on the
-    library node map directly to the nested SDFG's top-level arrays.
-    """
+    """Mirror the parent-side ``stream`` descriptor onto the expansion SDFG."""
     if stream_input is None:
         return
     desc = _copy.deepcopy(stream_input)
@@ -232,35 +160,42 @@ def _add_stream_descriptor(sdfg, stream_input):
     sdfg.add_datadesc(_STREAM_CONN, desc)
 
 
-def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
+def _wire_stream_to(sdfg, state, target, target_conn, stream_input):
+    """Connect the SDFG-level ``stream`` access node to ``target`` on ``target_conn``.
+
+    No-op if the node has no ``stream`` input. For map entries the connector is
+    added on the target; for tasklets it must already exist.
     """
-    Shared validation and SDFG skeleton used by all CopyLibraryNode expansions.
+    if stream_input is None:
+        return
+    stream_access = state.add_access(_STREAM_CONN)
+    if isinstance(target, nodes.MapEntry):
+        target.add_in_connector(target_conn)
+    state.add_edge(stream_access, None, target, target_conn,
+                   dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
 
-    :param require_contiguous: If True, checks that both subsets are
-        contiguous in their respective arrays.  Expansions that use flat
-        memcpy (CPU, CUDA, H2D, D2H) must set this to True.
 
-    Returns a tuple of:
-        (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset,
-         map_lengths, in_shape_collapsed, in_strides_collapsed,
-         out_shape_collapsed, out_strides_collapsed, stream_input)
+def _require_contiguous_subset(name: str, subset, desc, side: str):
+    """Raise if ``subset`` is not contiguous in the array described by ``desc``."""
+    if not subset.is_contiguous_subset(desc):
+        raise ValueError(f"This expansion requires a contiguous {side} subset, but "
+                         f"'{name}' subset {subset} is not contiguous in "
+                         f"array shape {desc.shape} with strides {desc.strides}. "
+                         f"Use a strided expansion (pure, CopyND, Assignment) instead, "
+                         f"or decompose into contiguous copies in Layer 2.")
+
+
+def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
+    """Shared validation and SDFG skeleton used by all CopyLibraryNode expansions.
+    With ``require_contiguous=True`` both subsets must be contiguous (needed by
+    flat-memcpy expansions: CPU, CUDA, H2D, D2H).
     """
     inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(
         parent_sdfg, parent_state, allow_cross_storage=allow_cross_storage)
 
     if require_contiguous:
-        if not in_subset.is_contiguous_subset(inp):
-            raise ValueError(f"This expansion requires a contiguous input subset, but "
-                             f"'{inp_name}' subset {in_subset} is not contiguous in "
-                             f"array shape {inp.shape} with strides {inp.strides}.  "
-                             f"Use a strided expansion (pure, CopyND, Assignment) instead, "
-                             f"or decompose into contiguous copies in Layer 2.")
-        if not out_subset.is_contiguous_subset(out):
-            raise ValueError(f"This expansion requires a contiguous output subset, but "
-                             f"'{out_name}' subset {out_subset} is not contiguous in "
-                             f"array shape {out.shape} with strides {out.strides}.  "
-                             f"Use a strided expansion (pure, CopyND, Assignment) instead, "
-                             f"or decompose into contiguous copies in Layer 2.")
+        _require_contiguous_subset(inp_name, in_subset, inp, "input")
+        _require_contiguous_subset(out_name, out_subset, out, "output")
 
     map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
 
@@ -280,20 +215,14 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
 
 
 def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=False):
-    """
-    Creates a pure mapped-tasklet expansion.
-
-    Correct for same-storage copies and for GPU-side cross-storage copies
-    (e.g. GPU_Global <-> GPU_Shared).  Raises ValueError for copies that
-    cross the CPU/GPU boundary -- those require a memcpy API call.
-    """
+    """Mapped-tasklet expansion. Valid for same-storage and GPU-side cross-storage
+    copies; raises for copies that cross the CPU/GPU boundary."""
     (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset, map_lengths, _, _, _, _,
      stream_input) = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=allow_cross_storage)
 
-    # A single map cannot access both CPU and GPU memory.
     if _is_cross_cpu_gpu(inp.storage, out.storage):
         raise ValueError("Pure (mapped tasklet) expansion cannot handle copies across the "
-                         f"CPU/GPU boundary (got {inp.storage} -> {out.storage}).  "
+                         f"CPU/GPU boundary (got {inp.storage} -> {out.storage}). "
                          "Use CUDAHostToDevice or CUDADeviceToHost instead.")
 
     sdfg.schedule = dace.dtypes.ScheduleType.Default
@@ -321,26 +250,24 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
                                                schedule=schedule,
                                                external_edges=True)
 
-    # Thread the explicit stream through as a dynamic input on the map when
-    # this is a GPU_Device map.  The connector carries the caller-provided
-    # ``gpuStream_t`` so downstream passes can bind the kernel launch to it.
-    if stream_input is not None and schedule == dace.dtypes.ScheduleType.GPU_Device:
-        stream_access = state.add_access(_STREAM_CONN)
-        map_entry.add_in_connector(_STREAM_CONN)
-        state.add_edge(stream_access, None, map_entry, _STREAM_CONN,
-                       dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+    if schedule == dace.dtypes.ScheduleType.GPU_Device:
+        _wire_stream_to(sdfg, state, map_entry, _STREAM_CONN, stream_input)
 
     return sdfg
 
 
-def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
-    """
-    Creates a CUDA expansion using cudaMemcpyAsync with the given direction
-    string (e.g. "DeviceToDevice", "HostToDevice", "DeviceToHost").
+def _stream_expr_for_tasklet(tasklet_inputs: set, stream_input) -> str:
+    """Add the tasklet stream connector if needed, and return the stream-arg expression."""
+    if stream_input is None:
+        return "__dace_current_stream"
+    tasklet_inputs.add(_STREAM_TASKLET_CONN)
+    return _STREAM_TASKLET_CONN
 
-    If the library node has a ``stream`` in-connector, the caller-provided
-    ``gpuStream_t`` is used as the stream argument to ``cudaMemcpyAsync``.
-    Otherwise, the expansion falls back to ``__dace_current_stream``.
+
+def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
+    """Emit a ``cudaMemcpyAsync`` tasklet for ``direction`` (e.g. ``DeviceToDevice``).
+
+    Uses the caller-provided ``stream`` connector if present, else ``__dace_current_stream``.
     """
     allow_cross = direction != "DeviceToDevice"
     (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset, map_lengths, _, _, _, _,
@@ -351,16 +278,11 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
                                           require_contiguous=True)
 
     cp_size = reduce(operator.mul, map_lengths, 1)
-
     in_access = state.add_access(inp_name)
     out_access = state.add_access(out_name)
 
     tasklet_inputs = {"_memcpy_in"}
-    if stream_input is not None:
-        tasklet_inputs.add(_STREAM_TASKLET_CONN)
-        stream_expr = _STREAM_TASKLET_CONN
-    else:
-        stream_expr = "__dace_current_stream"
+    stream_expr = _stream_expr_for_tasklet(tasklet_inputs, stream_input)
 
     tasklet = state.add_tasklet(name="memcpy_tasklet",
                                 inputs=tasklet_inputs,
@@ -375,11 +297,7 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
                    dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
     state.add_edge(tasklet, "_memcpy_out", out_access, None,
                    dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
-
-    if stream_input is not None:
-        stream_access = state.add_access(_STREAM_CONN)
-        state.add_edge(stream_access, None, tasklet, _STREAM_TASKLET_CONN,
-                       dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+    _wire_stream_to(sdfg, state, tasklet, _STREAM_TASKLET_CONN, stream_input)
 
     return sdfg
 
@@ -721,11 +639,7 @@ class ExpandCUDA2D(ExpandTransformation):
         out_access = state.add_access(out_name)
 
         tasklet_inputs = {"_memcpy_in"}
-        if stream_input is not None:
-            tasklet_inputs.add(_STREAM_TASKLET_CONN)
-            stream_expr = _STREAM_TASKLET_CONN
-        else:
-            stream_expr = "__dace_current_stream"
+        stream_expr = _stream_expr_for_tasklet(tasklet_inputs, stream_input)
 
         tasklet = state.add_tasklet(name="memcpy2d_tasklet",
                                     inputs=tasklet_inputs,
@@ -741,11 +655,7 @@ class ExpandCUDA2D(ExpandTransformation):
         state.add_edge(
             tasklet, "_memcpy_out", out_access, None,
             dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
-
-        if stream_input is not None:
-            stream_access = state.add_access(_STREAM_CONN)
-            state.add_edge(stream_access, None, tasklet, _STREAM_TASKLET_CONN,
-                           dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
+        _wire_stream_to(sdfg, state, tasklet, _STREAM_TASKLET_CONN, stream_input)
 
         return sdfg
 
@@ -1009,17 +919,11 @@ class CopyLibraryNode(nodes.LibraryNode):
         return super().expand(state, sdfg, *args, **kwargs)
 
     def validate(self, sdfg, state, allow_cross_storage=True):
-        """
-        Validates the copy operation.
-
-        :param allow_cross_storage: If True, allows source and destination to
-            reside in different storage types (e.g. CPU -> GPU).  Defaults to
-            True so that SDFG-level validation passes; same-storage-only
-            expansions call with ``False`` at expansion time.
-        :return: A tuple ``(inp_name, inp, in_subset, out_name, out,
-            out_subset, dynamic_inputs, stream_input)`` where
-            ``stream_input`` is the source data descriptor connected to the
-            optional ``stream`` in-connector (``None`` if absent).
+        """Validate the copy operation. ``allow_cross_storage=True`` (default)
+        permits different source/destination storages so SDFG-level validation
+        passes; same-storage-only expansions call with ``False`` at expansion
+        time. Returns ``(inp_name, inp, in_subset, out_name, out, out_subset,
+        dynamic_inputs, stream_input)``.
         """
         result = _validate_copy_edges(self, sdfg, state)
         inp = result[1]

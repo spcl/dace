@@ -47,7 +47,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         self.node_label_whitelist = node_label_whitelist
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modeifies.Everything
+        return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -70,130 +70,71 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             edges.append(oe)
         return edges
 
-    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
-        paths = list()
+    def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry, is_memset: bool):
+        """
+        Find ``ME -> tasklet -> MX`` paths whose tasklet is a pure copy
+        (``is_memset=False``) or constant-zero write (``is_memset=True``).
 
-        # If map range is not contigous, we can't do contiguous copy detection
-        step_equal_one = True
-        for (b, e, s) in node.map.range:
-            if s != 1:
-                step_equal_one = False
-                break
+        For memcpy, each returned path is ``[ie, e_in, e_out, oe]`` where
+        ``ie`` / ``oe`` are the outer access-node edges. For memset it is
+        ``[e_in, e_out, oe]`` (no input access node).
+        """
+        if any(s != 1 for (_, _, s) in node.map.range):
+            return []
 
-        # Non-zero step in map range
-        if not step_equal_one:
-            return paths
-
-        assert node in state.nodes()
-        assert state.exit_node(node) in state.nodes()
         path_candidates = [
             self._get_edges_from_path(state, p)
             for p in state.all_simple_paths(node, state.exit_node(node), as_edges=False)
         ]
-        # AN1 -> MapEntry -> Tasklet -> MapExit -> AN2
-        # Need to get AN1 and AN2
+
+        paths = []
         for path_candidate in path_candidates:
             if len(path_candidate) != 2:
                 continue
-            # Gen AN1 by replacing the name of the OUT connector
-            if path_candidate[0].dst_conn is None or (not path_candidate[0].src_conn.startswith("OUT_")):
+
+            tasklet = path_candidate[1].src
+            if not isinstance(tasklet, dace.nodes.Tasklet):
                 continue
-            ie = next(
-                state.in_edges_by_connector(path_candidate[0].src, path_candidate[0].src_conn.replace("OUT_", "IN_")))
+
+            expected_in_conns = 0 if is_memset else 1
+            if len(tasklet.in_connectors) != expected_in_conns or len(tasklet.out_connectors) != 1:
+                continue
+
             oe = next(
                 state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
                                                                                                          "OUT_")))
-            tasklet = path_candidate[1].src
-
-            # Tasklet in the middle
-            if not isinstance(tasklet, dace.nodes.Tasklet):
-                continue
-            if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
-                continue
-            # Output Access Node
             if not isinstance(oe.dst, dace.nodes.AccessNode):
                 continue
-            # Input Access Node
-            if not isinstance(ie.src, dace.nodes.AccessNode):
-                continue
 
-            in_conn = next(iter(tasklet.in_connectors))
             out_conn = next(iter(tasklet.out_connectors))
-            if tasklet.language == dace.Language.Python:
-                tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = {in_conn}" != tasklet_code_str:
-                    continue
-            elif tasklet.language == dace.Language.CPP:
-                tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = {in_conn};" != tasklet_code_str:
-                    continue
-            else:
+            suffix = ";" if tasklet.language == dace.Language.CPP else ""
+            if tasklet.language not in (dace.Language.Python, dace.Language.CPP):
                 continue
 
-            paths.append([ie] + path_candidate + [oe])
+            if is_memset:
+                expected_codes = {f"{out_conn} = 0{suffix}", f"{out_conn} = 0.0{suffix}"}
+                if tasklet.code.as_string not in expected_codes:
+                    continue
+                paths.append(path_candidate + [oe])
+            else:
+                entry_edge = path_candidate[0]
+                if entry_edge.dst_conn is None or not entry_edge.src_conn.startswith("OUT_"):
+                    continue
+                ie = next(state.in_edges_by_connector(entry_edge.src, entry_edge.src_conn.replace("OUT_", "IN_")))
+                if not isinstance(ie.src, dace.nodes.AccessNode):
+                    continue
+                in_conn = next(iter(tasklet.in_connectors))
+                if tasklet.code.as_string != f"{out_conn} = {in_conn}{suffix}":
+                    continue
+                paths.append([ie] + path_candidate + [oe])
 
         return paths
+
+    def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
+        return self._detect_contiguous_paths(state, node, is_memset=False)
 
     def _detect_contiguous_memset_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
-        # All tasklets within the map
-        paths = list()
-
-        # If map range is not contigous, we can't do contiguous copy detection
-        step_equal_one = True
-        for (b, e, s) in node.map.range:
-            if s != 1:
-                step_equal_one = False
-                break
-
-        # Non-one step in map range
-        if not step_equal_one:
-            return paths
-
-        assert node in state.nodes()
-        assert state.exit_node(node) in state.nodes()
-        path_candidates = [
-            self._get_edges_from_path(state, p)
-            for p in state.all_simple_paths(node, state.exit_node(node), as_edges=False)
-        ]
-        # MapEntry -> Tasklet -> MapExit -> AN2
-        # Need to get AN2 only
-        for path_candidate in path_candidates:
-            if len(path_candidate) != 2:
-                continue
-
-            ie = path_candidate[0]
-            if ie.src_conn is not None or ie.dst_conn is not None or ie.data.data is not None:
-                continue
-
-            oe = next(
-                state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
-                                                                                                         "OUT_")))
-            tasklet = path_candidate[1].src
-
-            # Tasklet in the middle
-            if not isinstance(tasklet, dace.nodes.Tasklet):
-                continue
-            if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
-                continue
-            # Output Access Node
-            if not isinstance(oe.dst, dace.nodes.AccessNode):
-                continue
-
-            out_conn = next(iter(tasklet.out_connectors))
-            if tasklet.language == dace.Language.Python:
-                tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = 0" != tasklet_code_str and f"{out_conn} = 0.0" != tasklet_code_str:
-                    continue
-            elif tasklet.language == dace.Language.CPP:
-                tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = 0;" != tasklet_code_str and f"{out_conn} = 0.0;" != tasklet_code_str:
-                    continue
-            else:
-                continue
-
-            paths.append(path_candidate + [oe])
-
-        return paths
+        return self._detect_contiguous_paths(state, node, is_memset=True)
 
     def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
@@ -391,10 +332,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     tasklet.add_in_connector(ie.dst_conn)
 
             rmed_count += 1
-
-            for memcpy_path in memcpy_paths:
-                for e in memcpy_path:
-                    joined_edges.add(e)
+            joined_edges.update(memcpy_path)
 
         self.rm_edges(state, joined_edges)
 
@@ -449,10 +387,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     tasklet.add_in_connector(ie.dst_conn)
 
             rmed_count += 1
-
-            for memcpy_path in memset_paths:
-                for e in memcpy_path:
-                    joined_edges.add(e)
+            joined_edges.update(memset_path)
 
         self.rm_edges(state, joined_edges)
 
