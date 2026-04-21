@@ -23,6 +23,43 @@ def _normalize_allocator_shape(shape: Shape):
     return list(shape)
 
 
+def infer_array_creation_descriptor(obj: Any,
+                                    *,
+                                    dtype: dtypes.typeclass = None,
+                                    copy: bool = True,
+                                    order: StringLiteral = StringLiteral('K'),
+                                    subok: bool = False,
+                                    ndmin: int = 0,
+                                    like: Any = None) -> Optional[data.Data]:
+    if like is not None:
+        return None
+
+    if dtype is not None and not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.typeclass(dtype)
+        except TypeError:
+            return None
+
+    try:
+        if dtype is None:
+            arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
+        else:
+            arr = np.array(obj, dtype.as_numpy_dtype(), copy=copy, order=str(order), subok=subok, ndmin=ndmin)
+    except Exception:
+        return None
+
+    try:
+        descriptor = data.create_datadescriptor(arr)
+    except TypeError:
+        scalar_dtype = dtypes.typeclass(np.asarray(arr).dtype.type)
+        if getattr(arr, 'shape', tuple()) == tuple():
+            descriptor = data.Scalar(scalar_dtype, transient=True)
+        else:
+            return None
+    descriptor.transient = True
+    return descriptor
+
+
 @oprepo.infers_descriptor('dace.define_local')
 @oprepo.infers_descriptor('dace.ndarray')
 @oprepo.infers_descriptor('numpy.ndarray')
@@ -61,6 +98,27 @@ def _infer_local_structure_descriptor(input_descs, dtype: data.Structure, **_kw)
     descriptor = dcpy(dtype)
     descriptor.transient = True
     return descriptor
+
+
+@oprepo.infers_descriptor('numpy.array')
+@oprepo.infers_descriptor('dace.array')
+def _infer_literal_array_descriptor(input_descs,
+                                    obj: Any,
+                                    dtype: dtypes.typeclass = None,
+                                    copy: bool = True,
+                                    order: StringLiteral = StringLiteral('K'),
+                                    subok: bool = False,
+                                    ndmin: int = 0,
+                                    like: Any = None,
+                                    **_kw):
+    del input_descs
+    return infer_array_creation_descriptor(obj,
+                                           dtype=dtype,
+                                           copy=copy,
+                                           order=order,
+                                           subok=subok,
+                                           ndmin=ndmin,
+                                           like=like)
 
 
 @oprepo.replaces('dace.define_local')
@@ -179,12 +237,20 @@ def _define_literal_ex(pv: ProgramVisitor,
         if dtype is not None:
             desc.dtype = dtype
     else:  # From literal / constant
+        desc = infer_array_creation_descriptor(obj,
+                                               dtype=dtype,
+                                               copy=copy,
+                                               order=order,
+                                               subok=subok,
+                                               ndmin=ndmin,
+                                               like=like)
+        if desc is None:
+            raise DaceSyntaxError(pv, None, 'Could not infer numpy.array descriptor from literal input')
         if dtype is None:
             arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         else:
             npdtype = dtype.as_numpy_dtype()
             arr = np.array(obj, npdtype, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
-        desc = data.create_datadescriptor(arr)
 
     # Set extra properties
     desc.transient = True

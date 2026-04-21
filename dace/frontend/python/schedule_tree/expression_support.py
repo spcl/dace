@@ -71,6 +71,7 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 
 from dace import data, dtypes
+from dace.frontend.python import astutils
 from dace.frontend.python.replacements.utils import broadcast_together
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -159,9 +160,9 @@ class _ExpressionPlanner:
     def _rewrite(self, node: ast.AST) -> ast.AST:
         if isinstance(node, ast.BinOp):
             return ast.copy_location(
-                ast.BinOp(left=self._rewrite_child(node.left),
+                ast.BinOp(left=self._rewrite_binop_child(node.left, node.right),
                           op=copy.deepcopy(node.op),
-                          right=self._rewrite_child(node.right)), node)
+                          right=self._rewrite_binop_child(node.right, node.left)), node)
 
         if isinstance(node, ast.UnaryOp):
             return ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=self._rewrite_child(node.operand)),
@@ -190,11 +191,14 @@ class _ExpressionPlanner:
 
         if isinstance(node, ast.Call):
             iterator_protocol_call = self._is_iterator_protocol_call(node)
+            array_constructor_call = self._is_array_constructor_call(node)
             return ast.copy_location(
                 ast.Call(func=self._rewrite_call_func(node.func, iterator_protocol_call=iterator_protocol_call),
                          args=[
-                             self._rewrite_child(arg, materialize_pyobject_call=iterator_protocol_call)
-                             for arg in node.args
+                             self._rewrite_child(arg,
+                                                 materialize_pyobject_call=iterator_protocol_call,
+                                                 preserve_array_literal=array_constructor_call and index == 0)
+                             for index, arg in enumerate(node.args)
                          ],
                          keywords=[
                              ast.keyword(arg=kw.arg,
@@ -220,11 +224,34 @@ class _ExpressionPlanner:
                               ctx=func.ctx), func)
         return copy.deepcopy(func)
 
-    def _rewrite_child(self, node: ast.AST, *, materialize_pyobject_call: bool = False) -> ast.AST:
+    def _rewrite_child(self,
+                       node: ast.AST,
+                       *,
+                       materialize_pyobject_call: bool = False,
+                       preserve_array_literal: bool = False) -> ast.AST:
         rewritten = self._rewrite(copy.deepcopy(node))
+        if preserve_array_literal:
+            return rewritten
         if self._should_materialize(rewritten):
             return self._materialize(rewritten)
         if materialize_pyobject_call and self._should_materialize_pyobject_call(rewritten):
+            return self._materialize(rewritten)
+        return rewritten
+
+    def _rewrite_binop_child(self, node: ast.AST, sibling: ast.AST) -> ast.AST:
+        rewritten = self._rewrite(copy.deepcopy(node))
+        array_literal_descriptor = None
+        if isinstance(rewritten, (ast.List, ast.Tuple)):
+            array_literal_descriptor = self.context.infer_descriptor(
+                ast.Call(func=ast.Attribute(value=ast.Name(id='numpy', ctx=ast.Load()), attr='array', ctx=ast.Load()),
+                         args=[copy.deepcopy(rewritten)],
+                         keywords=[]))
+            sibling_descriptor = self.context.infer_descriptor(copy.deepcopy(sibling))
+            if (array_literal_descriptor is not None and sibling_descriptor is not None
+                    and not isinstance(sibling_descriptor, data.Scalar)):
+                return self.context.materialize_expression(rewritten, array_literal_descriptor)
+
+        if self._should_materialize(rewritten):
             return self._materialize(rewritten)
         return rewritten
 
@@ -244,7 +271,7 @@ class _ExpressionPlanner:
             return False
         if self.context.resolve_data_access(node) is not None:
             return False
-        return isinstance(node, (ast.Attribute, ast.BinOp, ast.Call, ast.Compare, ast.IfExp, ast.UnaryOp, ast.BoolOp))
+        return isinstance(node, (ast.Attribute, ast.BinOp, ast.BoolOp, ast.Call, ast.Compare, ast.IfExp, ast.UnaryOp))
 
     def _should_materialize_pyobject_call(self, node: ast.AST) -> bool:
         descriptor = self.context.infer_descriptor(node)
@@ -255,6 +282,9 @@ class _ExpressionPlanner:
         if isinstance(node.func, ast.Name):
             return node.func.id in {'iter', 'next', '__dace_iterator_init', '__dace_iterator_next'}
         return isinstance(node.func, ast.Attribute) and node.func.attr == '__next__'
+
+    def _is_array_constructor_call(self, node: ast.Call) -> bool:
+        return astutils.rname(node.func) == 'numpy.array'
 
     def _materialize(self, node: ast.AST) -> ast.AST:
         descriptor = self.context.infer_descriptor(node)

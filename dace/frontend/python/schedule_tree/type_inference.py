@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIter
 from dace import data, dtypes, symbolic, subsets
 from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
+from dace.frontend.python.schedule_tree.array_literal_support import infer_array_literal_descriptor
 from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
@@ -800,6 +801,12 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         if isinstance(node, ast.Dict):
             return infer_dict_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor)
+
+        if isinstance(node, ast.Call):
+            inferred = infer_array_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor,
+                                                      self._evaluation_context)
+            if inferred is not None:
+                return inferred
 
         if isinstance(node, ast.Attribute):
             binding = self._resolve_binding(node)

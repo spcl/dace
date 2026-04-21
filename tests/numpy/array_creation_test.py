@@ -117,6 +117,18 @@ def test_array_literal():
     return np.array([[1, 2], [3, 4]], dtype=np.float32)
 
 
+def test_array_literal_inside_expression():
+
+    @dace.program
+    def literal_expr(A: dace.float64[3]):
+        return A + np.array([1.0, 2.0, 3.0], dtype=np.float64)
+
+    A = np.random.rand(3)
+    result = literal_expr(A)
+    expected = A + np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    assert np.allclose(result, expected)
+
+
 @compare_numpy_output()
 def test_arange_0():
     return np.arange(10, dtype=np.int32)

@@ -633,6 +633,50 @@ def test_python_frontend_schedule_tree_nested_numpy_attribute_method_chain_is_ma
     assert isinstance(stree.children[-1], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_numpy_array_literal_is_materialized_before_elementwise_lowering():
+
+    @dace.program
+    def computed(A: dace.float64[3], out: dace.float64[3]):
+        out[:] = A + np.array([1.0, 2.0, 3.0])
+
+    stree = computed.to_schedule_tree()
+
+    assert isinstance(stree.containers['__stree_tmp'], dace.data.Array)
+    assert tuple(stree.containers['__stree_tmp'].shape) == (3, )
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert stree.children[0].node.code.as_string in {
+        'out = np.array([1.0, 2.0, 3.0])',
+        'out = numpy.array([1.0, 2.0, 3.0])',
+    }
+    assert isinstance(stree.children[1], tn.MapScope)
+    tasklet = stree.children[1].children[0]
+    assert isinstance(tasklet, tn.TaskletNode)
+    assert tasklet.node.code.as_string == 'out = (in0 + in1)'
+    assert len(tasklet.in_memlets) == 2
+
+
+def test_python_frontend_schedule_tree_list_literal_in_array_expression_is_materialized_as_array():
+
+    @dace.program
+    def computed(A: dace.float64[3], out: dace.float64[3]):
+        out[:] = A * [1.0, 2.0, 3.0]
+
+    stree = computed.to_schedule_tree()
+
+    assert isinstance(stree.containers['__stree_tmp'], dace.data.Array)
+    assert tuple(stree.containers['__stree_tmp'].shape) == (3, )
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert stree.children[0].node.code.as_string in {
+        'out = np.array([1.0, 2.0, 3.0])',
+        'out = numpy.array([1.0, 2.0, 3.0])',
+    }
+    assert isinstance(stree.children[1], tn.MapScope)
+    tasklet = stree.children[1].children[0]
+    assert isinstance(tasklet, tn.TaskletNode)
+    assert tasklet.node.code.as_string == 'out = (in0 * in1)'
+    assert len(tasklet.in_memlets) == 2
+
+
 def test_python_frontend_schedule_tree_numpy_compiletime_full_slice_lowers_to_map():
 
     @dace.program

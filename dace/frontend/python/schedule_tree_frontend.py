@@ -14,6 +14,8 @@ from dace.config import Config
 from dace.data.pydata import PythonDict, PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
+from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary, \
+    infer_array_literal_descriptor
 from dace.frontend.python.schedule_tree.dict_support import infer_dict_literal_descriptor, infer_dict_subscript_descriptor
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, member_descriptor, \
@@ -404,6 +406,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._emit_external_reassign_nodes = isinstance(parsed_ast.preprocessed_ast, ast.Module)
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
+        self.array_literal_support = ArrayLiteralSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
         self.attribute_rewriter = AttributeRewriter(self._evaluation_context)
         self.lambda_resolver = LambdaResolver(self.globals,
@@ -1234,6 +1237,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         output = self._resolve_output_target(target, value, annotated_descriptor)
         out_memlet = output[1] if output is not None else None
 
+        lowered = self.array_literal_support.lower_assignment(self._array_literal_context(), target, value,
+                                                              annotated_descriptor)
+        if lowered is not None:
+            self._append_node(lowered)
+            return True
+
         lowered = self.numpy_support.lower_assignment(self._numpy_lowering_context(), target, value,
                                                       annotated_descriptor)
         if lowered is not None:
@@ -1424,6 +1433,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if isinstance(node, ast.Dict):
             return infer_dict_literal_descriptor(node, lambda value: self._infer_descriptor(value, target_name),
                                                  self._infer_scalar_descriptor)
+
+        if isinstance(node, ast.Call):
+            inferred = infer_array_literal_descriptor(node,
+                                                      lambda value: self._infer_descriptor(value, target_name),
+                                                      self._infer_scalar_descriptor,
+                                                      self._evaluation_context,
+                                                      callable_name_resolver=self._resolved_callable_name)
+            if inferred is not None:
+                return inferred
 
         if isinstance(node, (ast.List, ast.Tuple)):
             structure, _ = self._structure_from_ast(node)
@@ -1693,6 +1711,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             index += 1
             candidate = f'{prefix}{index}'
         return candidate
+
+    def _array_constructor_name(self) -> str:
+        return 'numpy.array'
 
     def _materialize_temporary_expression(self, value: ast.AST, descriptor: data.Data) -> ast.AST:
         name = self._fresh_transient_name()
@@ -2009,6 +2030,16 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                     tasklet_name=self._tasklet_name,
                                     fresh_symbol=self._fresh_symbol)
 
+    def _array_literal_context(self) -> ArrayLiteralContext:
+        return ArrayLiteralContext(infer_descriptor=lambda node: self._infer_descriptor(node, '__probe'),
+                                   infer_scalar_descriptor=self._infer_scalar_descriptor,
+                                   evaluation_context=self._evaluation_context,
+                                   resolve_output_target=self._resolve_output_target,
+                                   resolve_data_access=self._resolve_data_access,
+                                   resolve_callable_name=self._resolved_callable_name,
+                                   tasklet_name=self._tasklet_name,
+                                   array_constructor_name=self._array_constructor_name)
+
     def _expression_planning_context(self) -> ExpressionPlanningContext:
         return ExpressionPlanningContext(infer_descriptor=self._infer_plannable_expression_descriptor,
                                          materialize_expression=self._materialize_temporary_expression,
@@ -2022,6 +2053,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                                                                  node)
         if generic_descriptor is not None:
             return generic_descriptor
+
+        if isinstance(node, ast.Call):
+            array_literal_descriptor = self.array_literal_support.infer_expression_descriptor(
+                self._array_literal_context(), node)
+            if array_literal_descriptor is not None:
+                return array_literal_descriptor
 
         numpy_descriptor = self.numpy_support.infer_expression_descriptor(self._numpy_lowering_context(), node)
         if numpy_descriptor is not None:
