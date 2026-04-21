@@ -2,7 +2,6 @@
 import copy
 from collections import defaultdict
 from dace import symbolic
-from dace.dtypes import DebugInfo
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -317,7 +316,6 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             sdfg=inner_sdfg,
             inputs=connectors["inputs"],
             outputs=connectors["outputs"],
-            debuginfo=DebugInfo(123456),  # fake DebugInfo to avoid calls to `inspect`
         )
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
@@ -464,8 +462,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
                 # cache local read access
                 assert memlet_data not in access_cache
-                # fake DebugInfo to avoid calls to `inspect`
-                access_cache[memlet_data] = self._current_state.add_read(memlet_data, DebugInfo(123456))
+                access_cache[memlet_data] = self._current_state.add_read(memlet_data)
                 cached_access = access_cache[memlet_data]
                 self._current_state.add_memlet_path(cached_access,
                                                     map_entry,
@@ -533,8 +530,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             # map i=0:20:
             #  A[i] = tasklet(A[i])
             if name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0:
-                # cache write access into access_cache (with fake DebugInfo to avoid calls to `inspect`)
-                write_access_node = self._current_state.add_write(name, DebugInfo(123456))
+                # cache write access into access_cache
+                write_access_node = self._current_state.add_write(name)
                 access_cache[name] = write_access_node
 
             access_node = access_cache[name]
@@ -614,8 +611,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
             # cache local read access
             assert memlet.data not in cache
-            cache[memlet.data] = self._current_state.add_read(
-                memlet.data, DebugInfo(123456))  # fake DebugInfo to avoid calls to `inspect`
+            cache[memlet.data] = self._current_state.add_read(memlet.data)
             cached_access = cache[memlet.data]
             self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
 
@@ -629,8 +625,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             # A[1] = tasklet(A[1])
             if memlet.data not in cache or self._current_state.out_degree(cache[memlet.data]) > 0:
                 # cache write access node
-                write_access_node = self._current_state.add_write(
-                    memlet.data, DebugInfo(123456))  # fake DebugInfo to avoid calls to `inspect`
+                write_access_node = self._current_state.add_write(memlet.data)
                 cache[memlet.data] = write_access_node
 
             access_node = cache[memlet.data]
@@ -673,15 +668,11 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # assumption source access may or may not yet exist (in this state)
         src_name = node.memlet.data
-        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(
-            src_name,
-            DebugInfo(123456),  # fake DebugInfo to avoid calls to `inspect`
-        )
+        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
 
         # assumption: target access node doesn't exist yet
         assert node.target not in access_cache
-        target = self._current_state.add_write(node.target,
-                                               DebugInfo(123456))  # fake DebugInfo to avoid calls to `inspect`
+        target = self._current_state.add_write(node.target)
 
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
