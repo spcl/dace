@@ -4,6 +4,7 @@
 import ast
 import abc
 import collections
+import contextlib
 import copy
 import inspect
 import itertools
@@ -1280,7 +1281,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def sub_regions(self) -> List['AbstractControlFlowRegion']:
         return []
 
-    def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
+    def set_default_lineinfo(self, lineinfo: Optional[dace.dtypes.DebugInfo]) -> None:
         """
         Sets the default source line information to be lineinfo, or None to
         revert to default mode.
@@ -3896,3 +3897,24 @@ class FunctionCallRegion(NamedRegion):
                  debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg, debuginfo)
         self.arguments = arguments
+
+
+@contextlib.contextmanager
+def default_line_info(block: ControlFlowBlock, line_info: dace.dtypes.DebugInfo):
+    """
+    Context manager to set a temporary default line_info on the given `block `.
+
+    If you want to include a code sample, use:
+
+    .. code-block:: python
+
+        current_line_info = ...
+        with default_line_info(state, current_line_info):
+            state.add_read(A)
+    """
+    previous_line_info = block._default_lineinfo
+    block.set_default_lineinfo(line_info)
+    try:
+        yield
+    finally:
+        block.set_default_lineinfo(previous_line_info)

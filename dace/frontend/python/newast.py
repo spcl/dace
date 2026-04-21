@@ -29,7 +29,7 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
-                             LoopRegion, ControlFlowRegion, NamedRegion)
+                             LoopRegion, ControlFlowRegion, NamedRegion, default_line_info)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
@@ -447,11 +447,14 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map('indirection', {
-            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            for i, (s, e, t) in enumerate(mapped_rng)
-        },
-                                            debuginfo=pvisitor.current_lineinfo)
+        with default_line_info(graph, pvisitor.current_lineinfo):
+            ind_entry, ind_exit = graph.add_map(
+                'indirection',
+                {
+                    '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                    for i, (s, e, t) in enumerate(mapped_rng)
+                },
+            )
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -477,7 +480,8 @@ def add_indirection_subgraph(sdfg: SDFG,
             # Memlet to load the indirection index
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
-            read_node = graph.add_read(arrname, debuginfo=pvisitor.current_lineinfo)
+            with default_line_info(graph, pvisitor.current_lineinfo):
+                read_node = graph.add_read(arrname)
             if pvisitor.nested or not isinstance(src, nodes.EntryNode):
                 path = [read_node] + inp_base_path
             else:
@@ -543,16 +547,17 @@ def add_indirection_subgraph(sdfg: SDFG,
 
     # Create transients when implementing indirection
     # through slicing or when indirecting a range.
-    if src is None:
-        if start_src:
-            src = graph.add_access(tmp_name, debuginfo=pvisitor.current_lineinfo)
-        else:
-            src = graph.add_read(tmp_name, debuginfo=pvisitor.current_lineinfo)
-    elif dst is None:
-        if end_dst:
-            dst = graph.add_access(tmp_name, debuginfo=pvisitor.current_lineinfo)
-        else:
-            dst = graph.add_write(tmp_name, debuginfo=pvisitor.current_lineinfo)
+    with default_line_info(graph, pvisitor.current_lineinfo):
+        if src is None:
+            if start_src:
+                src = graph.add_access(tmp_name)
+            else:
+                src = graph.add_read(tmp_name)
+        elif dst is None:
+            if end_dst:
+                dst = graph.add_access(tmp_name)
+            else:
+                dst = graph.add_write(tmp_name)
 
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
@@ -566,7 +571,8 @@ def add_indirection_subgraph(sdfg: SDFG,
 
     if output:
         if isinstance(dst, nodes.ExitNode):
-            full_write_node = graph.add_write(memlet.data, debuginfo=pvisitor.current_lineinfo)
+            with default_line_info(graph, pvisitor.current_lineinfo):
+                full_write_node = graph.add_write(memlet.data)
             path = out_base_path + [dst, full_write_node]
         elif isinstance(dst, nodes.AccessNode):
             path = out_base_path + [dst]
@@ -577,7 +583,8 @@ def add_indirection_subgraph(sdfg: SDFG,
         graph.add_memlet_path(*path, src_conn='__ind_' + local_name, memlet=fullMemlet)
     else:
         if isinstance(src, nodes.EntryNode):
-            full_read_node = graph.add_read(memlet.data, debuginfo=pvisitor.current_lineinfo)
+            with default_line_info(graph, pvisitor.current_lineinfo):
+                full_read_node = graph.add_read(memlet.data)
             path = [full_read_node, src] + inp_base_path
         elif isinstance(src, nodes.AccessNode):
             path = [src] + inp_base_path
@@ -1707,17 +1714,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 params = self._decorator_or_annotation_params(node)
                 params, map_inputs = self._parse_map_inputs(node.name, params, node)
                 map_symbols = self._symbols_from_params(params, map_inputs)
-                entry, exit = state.add_map(node.name, ndrange=params, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    entry, exit = state.add_map(node.name, ndrange=params)
             elif 'consume' in dec:
                 (stream_name, stream_elem, PE_tuple, condition, chunksize) = self._parse_consume_inputs(node)
                 params = [PE_tuple, (stream_elem, self.sdfg.arrays[stream_name].dtype)]
                 map_inputs = {}
                 map_symbols = set()
-                entry, exit = state.add_consume(node.name,
-                                                PE_tuple,
-                                                condition,
-                                                chunksize=chunksize,
-                                                debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    entry, exit = state.add_consume(node.name, PE_tuple, condition, chunksize=chunksize)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
                 # TODO: Now that we return the nested for-loop symbols,
@@ -1738,10 +1743,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                       params, map_inputs),
                                                                   extra_map_symbols=map_symbols)
 
-            internal_node = state.add_nested_sdfg(sdfg,
-                                                  set(inputs.keys()),
-                                                  set(outputs.keys()),
-                                                  debuginfo=self.current_lineinfo)
+            with default_line_info(state, self.current_lineinfo):
+                internal_node = state.add_nested_sdfg(sdfg, set(inputs.keys()), set(outputs.keys()))
             self._add_nested_symbols(internal_node)
 
             # If consume scope, inject stream inputs to the internal SDFG
@@ -1776,17 +1779,19 @@ class ProgramVisitor(ExtNodeVisitor):
         if not dec.endswith('scope'):
             injected_node_count = 0
             for s in sdfg.states():
-                for n in s.nodes():
-                    if isinstance(n, nodes.Tasklet):
-                        n.add_in_connector(stream_elem)
-                        rnode = s.add_read(ntrans, debuginfo=self.current_lineinfo)
-                        s.add_edge(rnode, None, n, stream_elem, internal_memlet)
-                        injected_node_count += 1
+                with default_line_info(s, self.current_lineinfo):
+                    for n in s.nodes():
+                        if isinstance(n, nodes.Tasklet):
+                            n.add_in_connector(stream_elem)
+                            rnode = s.add_read(ntrans)
+                            s.add_edge(rnode, None, n, stream_elem, internal_memlet)
+                            injected_node_count += 1
             assert injected_node_count == 1
 
         # Inject to nested SDFG node
         internal_node.add_in_connector(ntrans)
-        stream_node = state.add_read(stream_name, debuginfo=self.current_lineinfo)
+        with default_line_info(state, self.current_lineinfo):
+            stream_node = state.add_read(stream_name)
         state.add_edge_pair(entry,
                             internal_node,
                             stream_node,
@@ -2134,7 +2139,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     new_name = memlet.data
 
-                read_node = state.add_read(new_name, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    read_node = state.add_read(new_name)
                 entry_node.add_in_connector(conn)
                 state.add_edge(read_node, None, entry_node, conn, memlet)
 
@@ -2176,7 +2182,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
-                        read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
+                        with default_line_info(state, self.current_lineinfo):
+                            read_node = state.add_read(memlet.data)
                     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
                     continue
                 if memlet.data not in self.sdfg.arrays:
@@ -2237,7 +2244,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     vname = memlet.data
 
-                read_node = state.add_read(vname, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    read_node = state.add_read(vname)
 
                 if entry_node is not None:
                     state.add_memlet_path(read_node,
@@ -2266,7 +2274,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
-                        write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
+                        with default_line_info(state, self.current_lineinfo):
+                            write_node = state.add_write(memlet.data)
                     add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
                     continue
                 inner_memlet = memlet
@@ -2327,7 +2336,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
-                write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    write_node = state.add_write(vname)
                 if exit_node is not None:
                     state.add_memlet_path(internal_node,
                                           exit_node,
@@ -2440,17 +2450,16 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('MapState')
             params = [(k, ':'.join([str(t) for t in v])) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno, params, node)
-            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
-                                   ndrange=params,
-                                   debuginfo=self.current_lineinfo,
-                                   schedule=schedule)
+            with default_line_info(state, self.current_lineinfo):
+                me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno), ndrange=params, schedule=schedule)
             # body = SDFG('MapBody')
             body, inputs, outputs, symbols = self._parse_subprogram(
                 self.name,
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
+            with default_line_info(state, self.current_lineinfo):
+                tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys())
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
@@ -2910,18 +2919,23 @@ class ProgramVisitor(ExtNodeVisitor):
                         out_memlet.dynamic = True
 
                     tasklet_code += f'__out{output_suffix} = __inp'
-                    state.add_mapped_tasklet(state.label,
-                                             map_range, {
-                                                 '__inp': inp_memlet,
-                                                 **input_memlets
-                                             },
-                                             tasklet_code, {'__out': out_memlet},
-                                             external_edges=True,
-                                             debuginfo=self.current_lineinfo)
+                    with default_line_info(state, self.current_lineinfo):
+                        state.add_mapped_tasklet(
+                            state.label,
+                            map_range,
+                            {
+                                '__inp': inp_memlet,
+                                **input_memlets
+                            },
+                            tasklet_code,
+                            {'__out': out_memlet},
+                            external_edges=True,
+                        )
 
                 else:
-                    op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                    op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
+                    with default_line_info(state, self.current_lineinfo):
+                        op1 = state.add_read(op_name)
+                        op2 = state.add_write(target_name)
                     memlet = Memlet(data=target_name, subset=target_subset)
                     memlet.other_subset = op_subset
                     if op:
@@ -2959,29 +2973,35 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet.dynamic = True
 
                 inp_memlet.update(input_memlets)
-                state.add_mapped_tasklet(state.label,
-                                         map_range,
-                                         inp_memlet,
-                                         tasklet_code, {'__out': memlet},
-                                         external_edges=True,
-                                         debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    state.add_mapped_tasklet(
+                        state.label,
+                        map_range,
+                        inp_memlet,
+                        tasklet_code,
+                        {'__out': memlet},
+                        external_edges=True,
+                    )
         else:
             if op_subset.num_elements() != 1:
                 raise DaceSyntaxError(self, node, "Incompatible subsets %s and %s" % (target_subset, op_subset))
             if op_name:
-                op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    op1 = state.add_read(op_name)
                 inp_conn = {'__inp'}
                 tasklet_code += f'__out{output_suffix} = __inp'
             else:
                 inp_conn = set()
                 tasklet_code += f'__out{output_suffix} = {operand}'
             inp_conn |= set(input_memlets.keys())
-            op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
-            tasklet = state.add_tasklet(name=state.label,
-                                        inputs=inp_conn,
-                                        outputs={'__out'},
-                                        code=tasklet_code,
-                                        debuginfo=self.current_lineinfo)
+            with default_line_info(state, self.current_lineinfo):
+                op2 = state.add_write(target_name)
+                tasklet = state.add_tasklet(
+                    name=state.label,
+                    inputs=inp_conn,
+                    outputs={'__out'},
+                    code=tasklet_code,
+                )
             if op_name:
                 inp_memlet = Memlet.simple(op_name, '%s' % op_subset)
                 if boolarr is not None:
@@ -3124,18 +3144,23 @@ class ProgramVisitor(ExtNodeVisitor):
                         in1_suffix = ''
 
                     tasklet_code += f'__out{output_suffix} = __in1{in1_suffix} {op} __in2'
-                    state.add_mapped_tasklet(state.label,
-                                             map_range, {
-                                                 '__in1': in1_memlet,
-                                                 '__in2': in2_memlet,
-                                                 **input_memlets,
-                                             },
-                                             tasklet_code, {'__out': out_memlet},
-                                             external_edges=True,
-                                             debuginfo=self.current_lineinfo)
+                    with default_line_info(state, self.current_lineinfo):
+                        state.add_mapped_tasklet(
+                            state.label,
+                            map_range,
+                            {
+                                '__in1': in1_memlet,
+                                '__in2': in2_memlet,
+                                **input_memlets,
+                            },
+                            tasklet_code,
+                            {'__out': out_memlet},
+                            external_edges=True,
+                        )
                 else:
-                    op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                    op2 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
+                    with default_line_info(state, self.current_lineinfo):
+                        op1 = state.add_read(op_name)
+                        op2 = state.add_write(wtarget_name)
                     memlet = Memlet.simple(wtarget_name, wtarget_subset)
                     memlet.other_subset = op_subset
                     if op is not None:
@@ -3184,21 +3209,25 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s, %s and %s" % (rtarget_subset, op_subset, wtarget_subset))
             else:
-                op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
                 if op_name:
-                    op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                    with default_line_info(state, self.current_lineinfo):
+                        op2 = state.add_read(op_name)
                     inp_conns = {'__in1', '__in2'}
                     tasklet_code += f'__out = __in1 {op} __in2'
                 else:
                     inp_conns = {'__in1'}
                     tasklet_code += f'__out = __in1 {op} {operand}'
                 inp_conns |= set(input_memlets.keys())
-                op3 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
-                tasklet = state.add_tasklet(name=state.label,
-                                            inputs=inp_conns,
-                                            outputs={'__out'},
-                                            code=tasklet_code,
-                                            debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    op3 = state.add_write(wtarget_name)
+                    tasklet = state.add_tasklet(
+                        name=state.label,
+                        inputs=inp_conns,
+                        outputs={'__out'},
+                        code=tasklet_code,
+                    )
                 in1_memlet = Memlet.simple(rtarget_name, '%s' % rtarget_subset)
                 if op_name:
                     in2_memlet = Memlet.simple(op_name, '%s' % op_subset)
@@ -3758,8 +3787,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result, view.shape, view.dtype, find_new_name=True)
                     self._add_state(f'copy_from_view_{node.lineno}')
-                    rnode = self.current_state.add_read(result, debuginfo=self.current_lineinfo)
-                    wnode = self.current_state.add_read(cname, debuginfo=self.current_lineinfo)
+                    with default_line_info(self.current_state, self.current_lineinfo):
+                        rnode = self.current_state.add_read(result)
+                        wnode = self.current_state.add_read(cname)
                     self.current_state.add_nedge(rnode, wnode, Memlet.from_array(cname, carr))
                     result = cname
 
@@ -3782,7 +3812,8 @@ class ProgramVisitor(ExtNodeVisitor):
             output_indirection = None
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
-                wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
+                with default_line_info(output_indirection, self.current_lineinfo):
+                    wnode = output_indirection.add_write(new_name)
                 memlet = Memlet.simple(new_name, str(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
@@ -3811,7 +3842,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if op and independent:
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
-                    rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
+                    with default_line_info(self.current_state, self.current_lineinfo):
+                        rnode = self.current_state.add_read(new_name)
                     memlet = Memlet.simple(new_name, str(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
@@ -4235,9 +4267,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Handle scalar inputs to nested SDFG calls
         for conn, arg in args:
             if ((not isinstance(arg, str) or arg not in self.sdfg.arrays) and conn not in mapping.keys() | symbols):
-                argdict[conn] = state.add_tasklet('scalar', {}, {'__out'},
-                                                  f'__out = {arg}',
-                                                  debuginfo=self.current_lineinfo)
+                with default_line_info(state, self.current_lineinfo):
+                    argdict[conn] = state.add_tasklet('scalar', {}, {'__out'}, f'__out = {arg}')
 
         # Handle scalar inputs that become symbols in the nested SDFG
         for sym, local in mapping.items():
@@ -4384,7 +4415,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
-        nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping, debuginfo=self.current_lineinfo)
+        with default_line_info(state, self.current_lineinfo):
+            nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping)
         self._add_nested_symbols(nsdfg)
         inputs = {k: (state, v, set()) for k, v in inputs.items()}
         outputs = {k: (state, v, set()) for k, v in outputs.items()}
@@ -4935,8 +4967,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if dst_name not in self.sdfg.arrays:
                 dst_name, dst_rng = self._add_write_access(dst_name, dst_expr.subset, None)
 
-            rnode = state.add_read(src_name, debuginfo=self.current_lineinfo)
-            wnode = state.add_write(dst_name, debuginfo=self.current_lineinfo)
+            with default_line_info(state, self.current_lineinfo):
+                rnode = state.add_read(src_name)
+                wnode = state.add_write(dst_name)
             if isinstance(self.sdfg.arrays[dst_name], data.Stream):
                 dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
                 mem = Memlet.simple(dst_name, dst_rng, num_accesses=dst_expr.accesses, wcr_str=dst_expr.wcr)
@@ -5281,7 +5314,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s_%d' % (array.replace('.', '_'), node.lineno))
         if has_array_indirection:
             # Make copy slicing state
-            rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
+            with default_line_info(self.current_state, self.current_state):
+                rnode = self.current_state.add_read(array)
             return self._array_indirection_subgraph(rnode, expr)
 
         is_index = False
@@ -5362,8 +5396,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                       wcr=expr.wcr))
         self.variables[tmp] = tmp
         if not isinstance(tmparr, data.View):
-            rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
-            wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            with default_line_info(self.current_state, self.current_lineinfo):
+                rnode = self.current_state.add_read(array)
+                wnode = self.current_state.add_write(tmp)
             # NOTE: We convert the subsets to string because keeping the original symbolic information causes
             # equality check failures, e.g., in LoopToMap.
             self.current_state.add_nedge(
@@ -5589,7 +5624,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add slicing state
         # TODO: naming issue, we don't have the linenumber here
         self._add_state('slice_%s' % (array))
-        rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
+        with default_line_info(self.current_state, self.current_lineinfo):
+            rnode = self.current_state.add_read(array)
         other_subset = copy.deepcopy(rng)
         other_subset.squeeze()
         if _subset_has_indirection(rng, self):
@@ -5603,7 +5639,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.dtype,
                                                   arrobj.storage,
                                                   find_new_name=True)
-            wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            with default_line_info(self.current_state, self.current_lineinfo):
+                wnode = self.current_state.add_write(tmp)
             self.current_state.add_nedge(
                 rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
         return tmp, other_subset
@@ -5848,23 +5885,23 @@ class ProgramVisitor(ExtNodeVisitor):
         access_expr = [f'__inp{i}' for i in range(len(expr.arrdims))]
         access_str = ', '.join(access_expr)
 
-        # Make mapped tasklet with the proper dimensions
-        self.current_state.add_mapped_tasklet(
-            'indirection',
-            index_mapping,
-            inputs={
-                '__arr': input_memlet,
-                **{
-                    f'__inp{i}': m
-                    for i, m in enumerate(index_memlets)
-                }
-            },
-            outputs={'__out': output_memlet},
-            code=f'__out = __arr[{access_str}]',
-            external_edges=True,
-            debuginfo=self.current_lineinfo,
-            input_nodes={rnode.data: rnode},
-        )
+        with default_line_info(self.current_state, self.current_lineinfo):
+            # Make mapped tasklet with the proper dimensions
+            self.current_state.add_mapped_tasklet(
+                'indirection',
+                index_mapping,
+                inputs={
+                    '__arr': input_memlet,
+                    **{
+                        f'__inp{i}': m
+                        for i, m in enumerate(index_memlets)
+                    }
+                },
+                outputs={'__out': output_memlet},
+                code=f'__out = __arr[{access_str}]',
+                external_edges=True,
+                input_nodes={rnode.data: rnode},
+            )
 
         return outname
 
