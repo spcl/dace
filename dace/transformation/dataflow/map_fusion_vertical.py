@@ -396,6 +396,118 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if not self.never_consolidate_edges:
             propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
 
+        # Repair NestedSDFGs whose inout connector now straddles two different
+        # outer arrays (IN-side still sees the old name, OUT-side got redirected
+        # to the new intermediate during shared-mode fusion). Split the inout
+        # into distinct in- and out-connectors, inserting a local scratch in the
+        # inner SDFG to preserve the read-modify-write semantics.
+        self._split_mismatched_inout_connectors(graph, sdfg)
+
+    def _split_mismatched_inout_connectors(self,
+                                            graph: Union[dace.SDFGState, dace.SDFG],
+                                            sdfg: dace.SDFG) -> None:
+        from dace.sdfg import utils as _sdutils
+        for n in list(graph.nodes()):
+            if not isinstance(n, nodes.NestedSDFG):
+                continue
+            shared = set(n.in_connectors) & set(n.out_connectors)
+            for c in list(shared):
+                in_edges = [e for e in graph.in_edges(n) if e.dst_conn == c]
+                out_edges = [e for e in graph.out_edges(n) if e.src_conn == c]
+                if not in_edges or not out_edges:
+                    continue
+                in_names = {
+                    s.data for s in (
+                        _sdutils.get_global_memlet_path_src(sdfg, graph, e)
+                        for e in in_edges
+                    ) if isinstance(s, nodes.AccessNode)
+                }
+                out_names = {
+                    d.data for d in (
+                        _sdutils.get_global_memlet_path_dst(sdfg, graph, e)
+                        for e in out_edges
+                    ) if isinstance(d, nodes.AccessNode)
+                }
+                if not in_names or not out_names or in_names == out_names:
+                    continue
+                self._split_one_inout(graph, n, c, in_edges, out_edges)
+
+    def _split_one_inout(self,
+                         graph: Union[dace.SDFGState, dace.SDFG],
+                         nsdfg_node: nodes.NestedSDFG,
+                         conn: str,
+                         in_edges: list,
+                         out_edges: list) -> None:
+        """Split the inout connector `conn` on `nsdfg_node` into `conn_in`/
+        `conn_out` pair, with a transient local inside the inner SDFG."""
+        inner = nsdfg_node.sdfg
+
+        # 2. Fresh names, colliding neither with inner arrays nor outer conns.
+        taken = (set(inner.arrays.keys())
+                 | set(nsdfg_node.in_connectors.keys())
+                 | set(nsdfg_node.out_connectors.keys()))
+        def _fresh(base: str) -> str:
+            i = 0
+            cand = base
+            while cand in taken:
+                i += 1
+                cand = f"{base}_{i}"
+            taken.add(cand)
+            return cand
+        c_in = _fresh(f"{conn}_in")
+        c_out = _fresh(f"{conn}_out")
+        c_local = _fresh(f"{conn}_local")
+
+        # 4. Inner-SDFG array rewrite.  First rename every inner reference of
+        # `conn` to `c_local`, then mark it transient, then add matching
+        # non-transient descriptors for the new connector names.
+        orig_desc = inner.arrays[conn]
+        inner.replace(conn, c_local)
+        inner.arrays[c_local].transient = True
+        in_desc = copy.deepcopy(orig_desc)
+        in_desc.transient = False
+        out_desc = copy.deepcopy(orig_desc)
+        out_desc.transient = False
+        inner.add_datadesc(c_in, in_desc)
+        inner.add_datadesc(c_out, out_desc)
+
+        # 3. Outer-node surgery.
+        in_ctype = nsdfg_node.in_connectors.get(conn)
+        out_ctype = nsdfg_node.out_connectors.get(conn)
+        nsdfg_node.remove_in_connector(conn)
+        nsdfg_node.remove_out_connector(conn)
+        nsdfg_node.add_in_connector(c_in, in_ctype)
+        nsdfg_node.add_out_connector(c_out, out_ctype)
+        for e in in_edges:
+            graph.remove_edge(e)
+            graph.add_edge(e.src, e.src_conn, nsdfg_node, c_in, e.data)
+        for e in out_edges:
+            graph.remove_edge(e)
+            graph.add_edge(nsdfg_node, c_out, e.dst, e.dst_conn, e.data)
+
+        # 5. Copy-in / copy-out states bridging outer connectors to the local.
+        old_start = inner.start_block
+        copy_in_state = inner.add_state_before(
+            old_start, label=f"__mf_inout_copy_in_{conn}", is_start_block=True)
+        r_in = copy_in_state.add_read(c_in)
+        w_local_in = copy_in_state.add_write(c_local)
+        copy_in_state.add_edge(r_in, None, w_local_in, None,
+                                dace.Memlet.from_array(c_in, in_desc))
+
+        # Sink blocks: any block with no outgoing interstate edges. Append a
+        # single post-state after all of them.
+        sink_blocks = [b for b in inner.nodes() if inner.out_degree(b) == 0
+                       and b is not copy_in_state]
+        copy_out_state = inner.add_state(label=f"__mf_inout_copy_out_{conn}")
+        for sink in sink_blocks:
+            if sink is copy_out_state:
+                continue
+            inner.add_edge(sink, copy_out_state, dace.InterstateEdge())
+        r_local_out = copy_out_state.add_read(c_local)
+        w_out = copy_out_state.add_write(c_out)
+        copy_out_state.add_edge(r_local_out, None, w_out, None,
+                                 dace.Memlet.from_array(c_local, inner.arrays[c_local]))
+
     def partition_first_outputs(
         self,
         state: dace.SDFGState,
