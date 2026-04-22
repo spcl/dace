@@ -3,7 +3,7 @@
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
-from dace import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 

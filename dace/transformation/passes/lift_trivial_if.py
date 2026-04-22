@@ -4,11 +4,11 @@ import re
 import dace
 import copy
 from typing import Any, Dict, Optional, Set, Union
-from dace import SDFG, ControlFlowRegion
+from dace import SDFG
 from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
-from dace.sdfg.state import ControlFlowBlock, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 from sympy import pycode
