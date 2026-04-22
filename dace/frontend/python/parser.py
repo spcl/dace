@@ -933,19 +933,22 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         for argtype in argtypes.values():
             global_vars.update({v.name: v for v in argtype.free_symbols})
 
-        parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
-                                                                    argtypes,
-                                                                    global_vars,
-                                                                    modules,
-                                                                    resolve_functions=self.resolve_functions,
-                                                                    default_args=unspecified_default_args.keys(),
-                                                                    normalize_generic_for_loops=True,
-                                                                    preserve_object_attributes=True,
-                                                                    disallowed_stmts=set(),
-                                                                    preserve_raises=True,
-                                                                    preserve_fstrings=True,
-                                                                    preserve_uninlinable_context_managers=True,
-                                                                    preserve_call_expansions=True)
+        parsed_ast, closure = preprocessing.preprocess_dace_program(
+            dace_func,
+            argtypes,
+            global_vars,
+            modules,
+            resolve_functions=self.resolve_functions,
+            default_args=unspecified_default_args.keys(),
+            normalize_generic_for_loops=True,
+            preserve_object_attributes=True,
+            prefer_resolved_object_attributes=({self.objname}
+                                               if self.methodobj is not None and self.objname is not None else None),
+            disallowed_stmts=set(),
+            preserve_raises=True,
+            preserve_fstrings=True,
+            preserve_uninlinable_context_managers=True,
+            preserve_call_expansions=True)
 
         self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
         self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
@@ -973,6 +976,24 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             if callable(value):
                 seeded_callable_bindings[name] = value
 
+        seed_bindings = None
+        if self.methodobj is not None and self.objname is not None:
+            from dace.data.core import infer_structured_object_members
+            from dace.data.pydata import PythonClass
+
+            try:
+                self_descriptor = PythonClass(infer_structured_object_members(self.methodobj),
+                                              name=type(self.methodobj).__name__)
+            except (TypeError, ValueError):
+                # Keep bound-method self available to the schedule-tree frontend
+                # even when the object has no currently inferable typed members.
+                self_descriptor = PythonClass({}, name=type(self.methodobj).__name__)
+
+            if self_descriptor is not None:
+                seed_bindings = {
+                    self.objname: schedule_tree_frontend._Binding(descriptor=self_descriptor, kind='container')
+                }
+
         stree = schedule_tree_frontend.build_schedule_tree(self.name,
                                                            parsed_ast,
                                                            argtypes,
@@ -980,7 +1001,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                                                            callback_mapping=callback_mapping,
                                                            arg_names=arg_names,
                                                            lambda_bindings=lambda_bindings,
-                                                           callable_bindings=seeded_callable_bindings)
+                                                           callable_bindings=seeded_callable_bindings,
+                                                           seed_bindings=seed_bindings)
 
         for name, (_, descriptor, _, _) in closure.closure_arrays.items():
             if name in removed_args or name in stree.containers:

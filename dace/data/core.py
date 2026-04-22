@@ -81,6 +81,43 @@ def infer_structured_class_members(cls: Type[Any], **overrides) -> Dict[str, Any
     return members
 
 
+def infer_structured_object_members(obj: Any, **overrides) -> Dict[str, Any]:
+    """Infer typed members for a live Python object instance.
+
+    Class-level typed fields are used when available, then instance attributes
+    with values that can be converted to DaCe descriptors refine or extend the
+    result.
+    """
+    if isinstance(obj, type):
+        raise TypeError(f'{obj} is a class type, not an instance')
+
+    from dace.data.creation import create_datadescriptor  # Avoid import cycle
+
+    members: Dict[str, Any] = {}
+    try:
+        members.update(infer_structured_class_members(type(obj)))
+    except TypeError:
+        pass
+
+    try:
+        instance_items = vars(obj).items()
+    except TypeError:
+        instance_items = ()
+
+    for field_name, value in instance_items:
+        if field_name.startswith('__'):
+            continue
+        try:
+            members[field_name] = create_datadescriptor(value)
+        except (TypeError, ValueError):
+            continue
+
+    members.update(overrides)
+    if not members:
+        raise TypeError(f'{obj} does not expose a supported typed field layout')
+    return members
+
+
 @make_properties
 class Data:
     """ Data type descriptors that can be used as references to memory.

@@ -585,12 +585,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                  resolve_functions: bool = False,
                  default_args: Set[str] = None,
                  preserve_object_attributes: bool = False,
+                 prefer_resolved_object_attributes: Optional[Set[str]] = None,
                  preserve_raises: bool = False,
                  preserve_fstrings: bool = False):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
         self.preserve_object_attributes = preserve_object_attributes
+        self.prefer_resolved_object_attributes = prefer_resolved_object_attributes or set()
         self.preserve_raises = preserve_raises
         self.preserve_fstrings = preserve_fstrings
         self.current_scope = set()
@@ -623,6 +625,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         if self._is_native_attribute_base(base_value):
             return False
 
+        prefer_resolved_base = (isinstance(node.value, ast.Name)
+                                and node.value.id in self.prefer_resolved_object_attributes)
+
         # User objects should remain attribute accesses in the preprocessed AST.
         # The schedule-tree frontend can then decide whether to keep direct
         # attribute syntax or rewrite it into explicit special-method calls.
@@ -651,6 +656,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             setattr_method = objtype.__dict__.get('__setattr__')
             if setattr_method is not None and setattr_method is not object.__setattr__:
                 return True
+
+        if prefer_resolved_base and isinstance(node.ctx, ast.Load):
+            try:
+                attribute_value = getattr(base_value, node.attr)
+            except Exception:
+                return True
+
+            try:
+                data.create_datadescriptor(attribute_value)
+            except (TypeError, ValueError):
+                return True
+
+            return False
 
         return preserve_direct_attribute
 
@@ -2498,6 +2516,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                             default_args: Optional[Set[str]] = None,
                             normalize_generic_for_loops: bool = False,
                             preserve_object_attributes: bool = False,
+                            prefer_resolved_object_attributes: Optional[Set[str]] = None,
                             disallowed_stmts: Optional[Set[str]] = None,
                             preserve_raises: bool = False,
                             preserve_fstrings: bool = False,
@@ -2522,6 +2541,11 @@ def preprocess_dace_program(f: Callable[..., Any],
     :param parent_closure: If not None, represents the closure of the parent of
                            the currently processed function.
     :param default_args: If not None, defines a list of unspecified default arguments.
+    :param prefer_resolved_object_attributes: If given, attribute loads on
+                            these base names prefer closure/global resolution
+                            when the field value can be represented as a DaCe
+                            descriptor, instead of being preserved as plain
+                            object syntax.
     :param preserve_raises: If True, keep ``raise`` statements in the
                             preprocessed AST for downstream frontends to
                             handle explicitly.
@@ -2570,6 +2594,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                                       resolve_functions,
                                       default_args=default_args,
                                       preserve_object_attributes=preserve_object_attributes,
+                                      prefer_resolved_object_attributes=prefer_resolved_object_attributes,
                                       preserve_raises=preserve_raises,
                                       preserve_fstrings=preserve_fstrings)
 

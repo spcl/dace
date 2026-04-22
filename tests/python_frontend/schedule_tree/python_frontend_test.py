@@ -416,6 +416,79 @@ def test_python_frontend_schedule_tree_reduction_calls():
     assert isinstance(method_sum_tree.children[1], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_method_field_read_is_not_left_as_raw_self_attribute():
+
+    class FieldReader:
+
+        def __init__(self):
+            self._tmp_field = np.arange(8, dtype=np.float64)
+
+        @dace.method
+        def reduce(self):
+            return np.sum(self._tmp_field)
+
+    stree = FieldReader().reduce.to_schedule_tree()
+
+    assert 'self._tmp_field' not in stree.as_string()
+    assert any(
+        isinstance(node, tn.LibraryCall) and node.node.name == 'numpy.sum' for node in stree.preorder_traversal())
+
+
+def test_python_frontend_schedule_tree_nested_method_self_containers_do_not_conflict():
+
+    class Inner:
+
+        def __init__(self, size: int, offset: float):
+            self._tmp = np.arange(size, dtype=np.float64) + offset
+
+        @dace.method
+        def reduce(self):
+            return np.sum(self._tmp)
+
+    class Outer:
+
+        def __init__(self):
+            self._tmp = np.arange(4, dtype=np.float64)
+            self.inner1 = Inner(5, 1.0)
+            self.inner2 = Inner(6, 2.0)
+
+        @dace.method
+        def reduce(self):
+            return np.sum(self._tmp) + self.inner1.reduce() + self.inner2.reduce()
+
+    stree = Outer().reduce.to_schedule_tree()
+
+    closure_shapes = sorted(
+        descriptor.shape[0] for name, descriptor in stree.containers.items()
+        if name.startswith('__g_') and len(descriptor.shape) == 1 and descriptor.shape[0] in (4, 5, 6))
+
+    assert closure_shapes == [4, 5, 6]
+    assert 'self._tmp' not in stree.as_string()
+    assert [type(child) for child in stree.children
+            ] == [tn.LibraryCall, tn.FunctionCallScope, tn.FunctionCallScope, tn.TaskletNode, tn.ReturnNode]
+    assert stree.children[-1].values[0] == stree.children[-2].out_memlets['out'].data
+
+
+def test_python_frontend_schedule_tree_method_unresolved_new_field_assignment_stays_explicit():
+
+    class FieldWriter:
+
+        @dace.method
+        def write(self, A: dace.float64[8]):
+            self.new_field = A[0]
+            return A[0]
+
+    stree = FieldWriter().write.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'self.new_field = A[0]'
+    assert 'self' in stree.containers
+    assert isinstance(stree.containers['self'], dace.data.pydata.PythonClass)
+    assert stree.containers['self'].name == 'FieldWriter'
+    assert stree.containers['self'].members == {}
+    assert all('new_field' not in name for name in stree.containers)
+
+
 def test_python_frontend_schedule_tree_descriptor_and_attribute_access():
 
     class ArrayDescriptor:

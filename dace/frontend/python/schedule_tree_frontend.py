@@ -990,7 +990,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self.bindings[name] = _clone_binding(binding)
             if binding.descriptor is not None:
                 self.root.containers[name] = _clone_descriptor(binding.descriptor)
-                self.globals[name] = _clone_descriptor(binding.descriptor)
+                self.globals.setdefault(name, _clone_descriptor(binding.descriptor))
 
     def _external_scope_kind(self, name: str) -> Optional[str]:
         if name in self._declared_nonlocal_names:
@@ -1763,6 +1763,16 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._register_binding(name, descriptor, kind=kind)
         target = ast.Name(id=name, ctx=ast.Store())
 
+        if isinstance(value, ast.Call) and self.callable_resolver.is_dace_program_call(value):
+            self._materialize_call_args(value)
+            self._emit_function_call(value, return_targets=[name])
+            return ast.Name(id=name, ctx=ast.Load())
+
+        if isinstance(value, ast.Call) and self.callable_resolver.is_sdfg_call(value):
+            self._materialize_call_args(value)
+            if self._emit_sdfg_call(value, return_targets=[name]):
+                return ast.Name(id=name, ctx=ast.Load())
+
         if isinstance(value, ast.Call) and _is_pyobject_scalar_descriptor(descriptor):
             self.callback_handler.emit_assignment(name, value, 'pyobject call', descriptor)
             return ast.Name(id=name, ctx=ast.Load())
@@ -2096,7 +2106,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                          resolve_data_access=self._resolve_data_access,
                                          collect_input_memlets=self._collect_input_memlets,
                                          resolve_output_target=self._resolve_output_target,
-                                         resolve_callable_name=self._resolved_callable_name)
+                                         resolve_callable_name=self._resolved_callable_name,
+                                         should_materialize_call=lambda node:
+                                         (self.callable_resolver.is_dace_program_call(node) or self.callable_resolver.
+                                          is_sdfg_call(node) or self._should_lower_as_library_call(node)))
 
     def _infer_plannable_expression_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         node = self.lambda_resolver.inline_known_lambda_calls(node)

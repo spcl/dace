@@ -82,6 +82,7 @@ DataAccessResolver = Callable[[ast.AST], Optional[Tuple[str, Memlet, data.Data, 
 InputMemletCollector = Callable[[ast.AST], Dict[str, Memlet]]
 OutputTargetResolver = Callable[[ast.AST, ast.AST, Optional[data.Data]], Optional[Tuple[str, Memlet, data.Data]]]
 CallableNameResolver = Callable[[ast.AST], str]
+CallMaterializationPredicate = Callable[[ast.Call], bool]
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class ExpressionPlanningContext:
     collect_input_memlets: InputMemletCollector
     resolve_output_target: OutputTargetResolver
     resolve_callable_name: Optional[CallableNameResolver] = None
+    should_materialize_call: Optional[CallMaterializationPredicate] = None
 
 
 class GenericExpressionSupportLibrary:
@@ -266,11 +268,15 @@ class _ExpressionPlanner:
         without introducing extra storage.
         """
 
+        if (isinstance(node, ast.Call) and self.context.should_materialize_call is not None
+                and self.context.should_materialize_call(node)):
+            return True
+
         descriptor = self.context.infer_descriptor(node)
         if descriptor is None:
             return False
         if isinstance(descriptor, data.Scalar):
-            return False
+            return isinstance(node, ast.Call)
         if self.context.resolve_data_access(node) is not None:
             return False
         return isinstance(node, (ast.Attribute, ast.BinOp, ast.BoolOp, ast.Call, ast.Compare, ast.IfExp, ast.UnaryOp))
@@ -292,6 +298,9 @@ class _ExpressionPlanner:
 
     def _materialize(self, node: ast.AST) -> ast.AST:
         descriptor = self.context.infer_descriptor(node)
+        if (descriptor is None and isinstance(node, ast.Call) and self.context.should_materialize_call is not None
+                and self.context.should_materialize_call(node)):
+            descriptor = data.Scalar(dtypes.pyobject(), transient=True)
         if descriptor is None:
             return node
         return self.context.materialize_expression(node, descriptor)
