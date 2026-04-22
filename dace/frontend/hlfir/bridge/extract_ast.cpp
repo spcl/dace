@@ -68,6 +68,49 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
     return "?";
 }
 
+/// Build a display expression for an index value.  Mirrors Fortran syntax
+/// (1-based, square brackets for indirect access) so the Python side can
+/// pattern-match on it.  Depth-limited to avoid loops on malformed IR.
+static std::string buildIndexExpr(mlir::Value v, int d = 0) {
+    if (d > 20 || !v) return "?";
+    auto *def = v.getDefiningOp();
+    if (!def) return "?";
+
+    // fir.convert is transparent.
+    if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return buildIndexExpr(conv.getValue(), d + 1);
+
+    // A loaded scalar — either a named variable (loop iter) or an indirect
+    // access via hlfir.designate on another array.
+    if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
+        auto mem = ld.getMemref();
+        if (auto *md = mem.getDefiningOp()) {
+            if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(md)) {
+                auto arrName = traceToDecl(dg.getMemref());
+                if (arrName.empty()) return "?";
+                std::string s = arrName + "[";
+                bool first = true;
+                for (auto idx : dg.getIndices()) {
+                    if (!first) s += ",";
+                    s += buildIndexExpr(idx, d + 1);
+                    first = false;
+                }
+                s += "]";
+                return s;
+            }
+        }
+        auto n = traceToDecl(mem);
+        return n.empty() ? "?" : n;
+    }
+
+    // Constant integer.
+    if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+        if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+            return std::to_string(i.getInt());
+
+    return "?";
+}
+
 // ---------------------------------------------------------------------------
 // Per-statement builders
 // ---------------------------------------------------------------------------
@@ -88,6 +131,7 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             for (auto idx : dg.getIndices()) {
                 auto n = traceToDecl(idx);
                 wa.index_vars.push_back(n.empty() ? "?" : n);
+                wa.index_exprs.push_back(buildIndexExpr(idx));
             }
             node.accesses.push_back(std::move(wa));
         } else {
@@ -125,6 +169,11 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             for (auto idx : dg.getIndices()) {
                 auto n = traceToDecl(idx);
                 ra.index_vars.push_back(n.empty() ? "?" : n);
+                ra.index_exprs.push_back(buildIndexExpr(idx));
+                // Keep descending into the index operand too, so inner
+                // indirect loads (edge_idx used below z_kin) are captured as
+                // their own AccessInfo entries for extract_vars to see.
+                collectReads(idx);
             }
             node.accesses.push_back(std::move(ra));
             return;

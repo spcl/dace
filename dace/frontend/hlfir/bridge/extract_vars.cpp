@@ -42,14 +42,24 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
         for (auto ext : sh.getExtents()) {
             auto n = traceToDecl(ext);
-            syms.push_back(n.empty() ? "?" : n);
+            if (!n.empty()) { syms.push_back(n); continue; }
+            if (auto c = traceConstInt(ext)) {
+                syms.push_back(std::to_string(*c));
+                continue;
+            }
+            syms.push_back("?");
         }
 
     if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
         auto ops = ss->getOperands();
         for (unsigned i = 1; i < ops.size(); i += 2) {
             auto n = traceToDecl(ops[i]);
-            syms.push_back(n.empty() ? "?" : n);
+            if (!n.empty()) { syms.push_back(n); continue; }
+            if (auto c = traceConstInt(ops[i])) {
+                syms.push_back(std::to_string(*c));
+                continue;
+            }
+            syms.push_back("?");
         }
     }
 

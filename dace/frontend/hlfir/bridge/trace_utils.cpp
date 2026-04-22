@@ -45,6 +45,10 @@ std::optional<int64_t> traceConstInt(mlir::Value v) {
                 return ia.getInt();
         if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
             { v = cv.getValue(); continue; }
+        // Flang wraps each static extent in a `select extent>0, extent, 0`
+        // clamp; follow the true branch to reach the original value.
+        if (auto s = mlir::dyn_cast<mlir::arith::SelectOp>(d))
+            { v = s.getTrueValue(); continue; }
         break;
     }
     return std::nullopt;

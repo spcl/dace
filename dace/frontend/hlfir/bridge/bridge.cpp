@@ -157,10 +157,11 @@ NB_MODULE(hlfir_bridge, m) {
         });
 
     nb::class_<AccessInfo>(m, "AccessInfo")
-        .def_ro("array_name", &AccessInfo::array_name)
-        .def_ro("index_vars", &AccessInfo::index_vars)
-        .def_ro("is_read",    &AccessInfo::is_read)
-        .def_ro("is_write",   &AccessInfo::is_write);
+        .def_ro("array_name",  &AccessInfo::array_name)
+        .def_ro("index_vars",  &AccessInfo::index_vars)
+        .def_ro("index_exprs", &AccessInfo::index_exprs)
+        .def_ro("is_read",     &AccessInfo::is_read)
+        .def_ro("is_write",    &AccessInfo::is_write);
 
     nb::class_<ASTNode>(m, "ASTNode")
         .def_ro("kind",            &ASTNode::kind)

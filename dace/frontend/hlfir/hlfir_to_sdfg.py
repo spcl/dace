@@ -136,18 +136,26 @@ class SDFGBuilder:
             sdfg.add_symbol(v.fortran_name, self._dt(v.dtype))
 
         # Synthetic symbols for dims that stayed unresolved after passes.
+        # Literal-integer dimensions (e.g. the "3" in ``edge_idx(nc, 3)``)
+        # stay as Python ints and do not need a symbol registration.
         known = {v.fortran_name for v in self.variables}
         for v in self.arrays.values():
-            syms = v.shape_symbols
-            for s in syms:
+            for s in v.shape_symbols:
+                if s.lstrip('-').isdigit():
+                    continue
                 if s not in known and s not in sdfg.symbols:
                     sdfg.add_symbol(s, dace.int64)
+
+        def _dim(s: str):
+            if s.lstrip('-').isdigit():
+                return int(s)
+            return dace.symbol(s)
 
         # Arrays.
         for v in self.arrays.values():
             sdfg.add_array(
                 v.fortran_name,
-                shape=[dace.symbol(s) for s in v.shape_symbols],
+                shape=[_dim(s) for s in v.shape_symbols],
                 dtype=self._dt(v.dtype),
                 transient=(v.intent == ''),
             )
@@ -220,12 +228,34 @@ class SDFGBuilder:
                     self._emit_assign(inner_ctx, c, loop)
             inner_ctx.flush(self)
         elif child_assigns:
-            body = loop.add_state('body')
+            # Indirect accesses in the body turn into fresh SDFG symbols; the
+            # value is assigned on an interstate edge so a new state is forced
+            # before the compute tasklet runs.
+            indirect_syms = self._collect_indirect(child_assigns)
+            if indirect_syms:
+                pre = loop.add_state(f"pre_{self.nid()}")
+                body = loop.add_state('body')
+                assigns = {sym: self._indirect_to_dace(expr, iter_map) for expr, sym in indirect_syms.items()}
+                for sym in indirect_syms.values():
+                    if sym not in ctx.sdfg.symbols:
+                        ctx.sdfg.add_symbol(sym, dace.int64)
+                loop.add_edge(pre, body, InterstateEdge(assignments=assigns))
+            else:
+                body = loop.add_state('body')
             for idx, a in enumerate(child_assigns):
-                self._emit_tasklet(body, a, idx, iter_map)
+                self._emit_tasklet(body, a, idx, iter_map, indirect_syms)
 
-    def _emit_tasklet(self, state, assign_node, idx: int, iter_map: dict):
-        """One Tasklet per array assignment."""
+    def _emit_tasklet(self, state, assign_node, idx: int, iter_map: dict, indirect_syms: dict = None):
+        """One Tasklet per array assignment.
+
+        Expressions like ``e_bln(jc,1)*z_kin(...) + e_bln(jc,2)*z_kin(...)``
+        access the same array at several positions.  Each *occurrence* in
+        the RHS becomes its own tasklet input connector so every access
+        carries the correct memlet; otherwise the generated code would
+        collapse all three terms onto a single connector and silently
+        compute a wrong result.
+        """
+        indirect_syms = indirect_syms or {}
         accesses = assign_node.accesses
 
         tokens = set(re.findall(r'[a-zA-Z_]\w*', assign_node.expr))
@@ -233,30 +263,59 @@ class SDFGBuilder:
         r_scl = tokens & set(self.scalars)
         target = assign_node.target
 
-        in_c = {f"_in_{x}" for x in r_arr | r_scl}
+        # Index arrays (e.g. edge_idx) show up in the RHS token scan but we
+        # move their values onto the interstate edge as symbols.
+        indirect_arrays = {self._indirect_host(expr) for expr in indirect_syms}
+        r_arr -= indirect_arrays
+
+        # One AccessInfo per occurrence, in the order buildExpr produced.
+        reads_by_name = {}
+        for ac in accesses:
+            if ac.is_read and ac.array_name in r_arr:
+                reads_by_name.setdefault(ac.array_name, []).append(ac)
+
+        # Rewrite the RHS, replacing the Nth occurrence of each array name
+        # with `_in_<name>_<N>`.  Longest-first guards against partial
+        # matches between related names.
+        occ = {nm: 0 for nm in r_arr}
+        sorted_tokens = sorted(r_arr | r_scl, key=len, reverse=True)
+
+        def rewrite(code: str) -> str:
+            for nm in sorted_tokens:
+                if nm in r_scl:
+                    code = re.sub(rf'\b{re.escape(nm)}\b', f'_in_{nm}', code)
+                    continue
+
+                def sub(_m, _nm=nm):
+                    n = occ[_nm]
+                    occ[_nm] += 1
+                    return f"_in_{_nm}_{n}"
+
+                code = re.sub(rf'\b{re.escape(nm)}\b', sub, code)
+            return code
+
+        in_c = {f"_in_{sc}" for sc in r_scl}
+        for nm, acs in reads_by_name.items():
+            for i in range(len(acs)):
+                in_c.add(f"_in_{nm}_{i}")
         out_c = {f"_out_{target}"}
 
-        # Rewrite: longest names first, to avoid partial matches.
-        code = assign_node.expr
-        for nm in sorted(r_arr | r_scl, key=len, reverse=True):
-            code = re.sub(rf'\b{re.escape(nm)}\b', f'_in_{nm}', code)
-        code = f"_out_{target} = {code}"
-
+        code = f"_out_{target} = {rewrite(assign_node.expr)}"
         t = state.add_tasklet(f"t_{idx}", in_c, out_c, code)
 
-        for nm in sorted(r_arr):
+        for nm in sorted(reads_by_name):
             r = self._acc(state, nm)
-            ivars = self._get_index_vars(accesses, nm, is_read=True)
-            ix = self._build_memlet_index(nm, ivars, iter_map)
-            state.add_edge(r, None, t, f"_in_{nm}", Memlet(f"{nm}[{ix}]"))
+            for i, ac in enumerate(reads_by_name[nm]):
+                ix = self._build_memlet_index(nm, ac, iter_map, indirect_syms)
+                state.add_edge(r, None, t, f"_in_{nm}_{i}", Memlet(f"{nm}[{ix}]"))
 
         for sc in sorted(r_scl):
             r = self._acc(state, sc)
             state.add_edge(r, None, t, f"_in_{sc}", Memlet(data=sc, subset="0"))
 
         w = self._acc(state, target)
-        ivars = self._get_index_vars(accesses, target, is_read=False)
-        ix = self._build_memlet_index(target, ivars, iter_map)
+        ac = self._get_access(accesses, target, is_read=False)
+        ix = self._build_memlet_index(target, ac, iter_map, indirect_syms)
         state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{target}[{ix}]"))
 
     def _acc(self, state, name: str):
@@ -280,27 +339,94 @@ class SDFGBuilder:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_index_vars(self, accesses: list, array_name: str, is_read: bool) -> list:
+    def _get_access(self, accesses: list, array_name: str, is_read: bool):
+        """Return the matching AccessInfo (exact read/write match preferred)."""
         for ac in accesses:
             if ac.array_name == array_name:
                 if is_read and ac.is_read:
-                    return ac.index_vars
+                    return ac
                 if not is_read and ac.is_write:
-                    return ac.index_vars
+                    return ac
         for ac in accesses:
             if ac.array_name == array_name:
-                return ac.index_vars
-        return []
+                return ac
+        return None
 
-    def _build_memlet_index(self, array_name: str, index_vars: list, iter_map: dict) -> str:
-        """Build a memlet subset, offsetting Fortran→DaCe indices."""
+    _INDIRECT_RE = re.compile(r'^(\w+)\[([^\]]*)\]$')
+
+    def _indirect_host(self, expr: str) -> str:
+        m = self._INDIRECT_RE.match(expr)
+        return m.group(1) if m else ""
+
+    def _collect_indirect(self, assigns: list) -> dict:
+        """Walk every access in ``assigns`` and mint a fresh SDFG symbol for
+        each distinct indirect index expression.  Returns a map from the
+        Fortran-style expression (``edge_idx[jc,1]``) to the symbol name."""
+        out = {}
+        for a in assigns:
+            for ac in a.accesses:
+                for expr in getattr(ac, 'index_exprs', None) or []:
+                    if '[' in expr and expr not in out:
+                        out[expr] = f"_idx_{self.nid()}"
+        return out
+
+    def _indirect_to_dace(self, expr: str, iter_map: dict) -> str:
+        """Convert ``arr[i,j]`` (Fortran 1-based) into DaCe's 0-based
+        subscript form using the array's lower bounds and the current loop
+        iter_map."""
+        m = self._INDIRECT_RE.match(expr)
+        if not m:
+            return expr
+        arr, inner = m.group(1), m.group(2)
+        info = self.arrays.get(arr)
+        lbs = info.lower_bounds if info else []
+        parts = []
+        for dim, raw in enumerate(p.strip() for p in inner.split(',')):
+            lb = lbs[dim] if dim < len(lbs) else "1"
+            parts.append(self._offset_index_token(raw, lb, iter_map))
+        return f"{arr}[{', '.join(parts)}]"
+
+    def _offset_index_token(self, tok: str, lb: str, iter_map: dict) -> str:
+        """Apply lower-bound offset to a single index token (``jc`` or ``3``)."""
+        try:
+            lb_int = int(lb)
+        except (TypeError, ValueError):
+            lb_int = 1
+
+        if tok.lstrip('-').isdigit():
+            return str(int(tok) - lb_int)
+        uid = iter_map.get(tok, tok)
+        if lb_int == 0:
+            return uid
+        return f"{uid} - {lb_int}" if lb_int >= 0 else f"{uid} + {-lb_int}"
+
+    def _build_memlet_index(self, array_name: str, access, iter_map: dict, indirect_syms: dict = None) -> str:
+        """Build a memlet subset, offsetting Fortran→DaCe indices and
+        resolving indirect index expressions against their minted symbols."""
+        indirect_syms = indirect_syms or {}
         arr = self.arrays.get(array_name)
         lbs = arr.lower_bounds if arr else []
+        if access is None:
+            return ""
+        exprs = list(access.index_exprs) if access.index_exprs else []
+        ivars = list(access.index_vars)
 
         parts = []
-        for dim, v in enumerate(index_vars):
-            uid = iter_map.get(v, v)
+        for dim, v in enumerate(ivars):
             lb = lbs[dim] if dim < len(lbs) else "1"
+            expr = exprs[dim] if dim < len(exprs) else v
+
+            # Indirect: use the minted symbol (holds the Fortran 1-based index).
+            if '[' in expr and expr in indirect_syms:
+                parts.append(self._offset_index_token(indirect_syms[expr], lb, iter_map))
+                continue
+
+            # Constant literal: subtract the lower bound directly.
+            if expr.lstrip('-').isdigit():
+                parts.append(self._offset_index_token(expr, lb, iter_map))
+                continue
+
+            uid = iter_map.get(v, v)
 
             if lb == "0":
                 parts.append(uid)

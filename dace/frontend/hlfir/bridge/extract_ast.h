@@ -12,9 +12,21 @@
 namespace hlfir_bridge {
 
 /// One array access found inside an hlfir.assign expression tree.
+///
+/// `index_vars[d]` is the best-effort source name for dimension `d` (a loop
+/// iterator, a scalar symbol, or — for indirect accesses — the array that
+/// supplied the index).
+///
+/// `index_exprs[d]` is a richer expression string (same length as
+/// index_vars).  For a loop iterator it matches `index_vars[d]`; for a
+/// constant it is the decimal literal; for an indirect access like
+/// ``z_kin(edge_idx(jc,1), jk)`` the first entry is ``edge_idx[jc,1]``
+/// (Fortran 1-based, square-bracket notation) so the SDFG generator can
+/// detect indirection by looking for ``[`` in the expression.
 struct AccessInfo {
     std::string array_name;
     std::vector<std::string> index_vars;
+    std::vector<std::string> index_exprs;
     bool is_read = false;
     bool is_write = false;
 };
