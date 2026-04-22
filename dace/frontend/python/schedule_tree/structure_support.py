@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from dace import data, dtypes
-from dace.data.pydata import PythonList, PythonTuple
+from dace.data.pydata import PythonClass, PythonList, PythonTuple
 
 
 def clone_descriptor(descriptor: data.Data) -> data.Data:
@@ -67,6 +67,30 @@ def resolve_member_access(base_name: str, descriptor: data.Data, member_name: st
     if member is None:
         return None
     return StructureMemberAccess(data_name=structure_member_path(base_name, member_name), descriptor=member)
+
+
+def python_class_requirement_for_member_assignment(descriptor: data.Data, member_name: str) -> Optional[str]:
+    """Return a message when ``descriptor.member_name = ...`` needs ``PythonClass`` semantics.
+
+    ``Structure`` models a fixed by-value layout that is marshalled as a C
+    struct. Direct assignment to a non-array field or creation of a new field
+    changes the Python object state instead of mutating array contents inside a
+    fixed layout, so those writes require the by-reference ``PythonClass`` path.
+    """
+    if isinstance(descriptor, PythonClass) or not isinstance(descriptor, data.Structure):
+        return None
+
+    member = member_descriptor(descriptor, member_name)
+    if member is None:
+        return (f'Creating field "{member_name}" on by-value Structure "{descriptor.name}" requires '
+                'PythonClass semantics. Use PythonClass when dynamic field creation must be preserved.')
+
+    if isinstance(member, (data.Array, data.View, data.Reference)):
+        return None
+
+    return (f'Assigning to non-array field "{member_name}" on by-value Structure "{descriptor.name}" '
+            'requires PythonClass semantics. Use PythonClass when field rebinding must affect the original '
+            'Python object.')
 
 
 def descriptor_from_structure(structure: Any) -> Optional[data.Data]:

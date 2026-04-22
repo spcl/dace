@@ -577,6 +577,47 @@ def test_python_frontend_schedule_tree_descriptor_setter_protocol_is_preserved()
         "out[:] = type(descriptor_holder).__dict__['arr'].__get__(descriptor_holder, type(descriptor_holder))")
 
 
+def test_python_frontend_schedule_tree_structure_scalar_field_assignment_warns_to_use_pythonclass():
+
+    class Holder:
+        scalar: dace.float64
+        arr: dace.float64[8]
+
+    Struct = dace.data.Structure.from_class(Holder)
+
+    @dace.program
+    def prog(holder: Struct, A: dace.float64[8]):
+        holder.scalar = A[0]
+        holder.arr[:] = A[:]
+
+    with pytest.warns(UserWarning, match=r'non-array field "scalar".*PythonClass'):
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'holder.scalar'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_structure_new_field_assignment_warns_to_use_pythonclass():
+
+    class Holder:
+        arr: dace.float64[8]
+
+    Struct = dace.data.Structure.from_class(Holder)
+
+    @dace.program
+    def prog(holder: Struct, A: dace.float64[8]):
+        holder.new_field = A[0]
+        holder.arr[:] = A[:]
+
+    with pytest.warns(UserWarning, match=r'Creating field "new_field".*PythonClass'):
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'holder.new_field = A[0]'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
 def test_python_frontend_schedule_tree_optional_none_branch():
 
     @dace.program

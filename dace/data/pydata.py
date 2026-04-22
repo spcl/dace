@@ -4,10 +4,15 @@
 These descriptors are primarily used by the direct schedule-tree Python
 frontend. They intentionally distinguish between:
 
-- ``Structure`` for classes with a fully known by-value field layout, and
-- ``PythonClass`` for analyzable Python objects whose field information is
-  useful to the frontend even when the value is not treated as a by-value
-  structure.
+- ``Structure`` for classes whose fully known layout can be marshalled to code
+    generation as a by-value C struct, and
+- ``PythonClass`` for analyzable Python objects that stay on the Python-object
+    path and are passed by reference, currently through the nanobind object
+    boundary.
+
+That distinction is semantic, not cosmetic. Once frontend behavior depends on
+Python object identity, such as reassigning a field to a new object or
+creating new fields dynamically, the value must remain a ``PythonClass``.
 """
 # TODO: These classes are incomplete, they require more support on the SDFG/connector level and in code generation
 #       (bindings, C++ codegen, etc.). They are currently only used for the Schedule Tree-based Python frontend.
@@ -91,9 +96,15 @@ def python_dataclass_descriptor(cls: Type[Any], *, by_value: bool = False, **ove
     """Create the canonical descriptor for a Python dataclass.
 
     ``by_value=True`` selects ``Structure`` and is intended for classes whose
-    full field layout is known and safe to pass by value. ``by_value=False``
-    keeps the descriptor on the ``PythonClass`` path, which preserves analyzable
-    member information without collapsing the object to a plain ``pyobject``.
+    full field layout is known and safe to marshal as a by-value C struct.
+    ``by_value=False`` keeps the descriptor on the ``PythonClass`` path, which
+    preserves analyzable member information while still treating the value as a
+    Python object reference.
+
+    In particular, frontends should prefer ``PythonClass`` whenever code may
+    rebind a non-array field to a different object or create new fields at
+    runtime, because those operations cannot be represented as mutation of a
+    fixed by-value struct layout.
     """
     if by_value:
         return Structure.from_dataclass(cls, **overrides)
@@ -238,7 +249,12 @@ class PythonClass(Structure):
     """Represents an analyzable Python class with typed fields.
 
     Unlike ``Structure``, this descriptor keeps the value on the Python-object
-    path even when member types are known.
+    path even when member types are known. Code generation therefore treats it
+    as a referenced Python object rather than a by-value C struct.
+
+    This is the correct representation when the program may rely on Python
+    object identity, such as scalar or other non-array field rebinding,
+    descriptor-backed behavior, or dynamic field creation.
     """
 
     def __init__(self, members, name: str = 'PythonClass', **kwargs):

@@ -7,6 +7,7 @@ import copy
 import inspect
 import numbers
 import re
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic, subsets
@@ -17,7 +18,9 @@ from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
-from dace.frontend.python.schedule_tree.structure_support import descriptor_from_structure, resolve_member_access
+from dace.frontend.python.schedule_tree.structure_support import (descriptor_from_structure,
+                                                                  python_class_requirement_for_member_assignment,
+                                                                  resolve_member_access)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
@@ -1034,6 +1037,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                         value,
                                                         materialize_root=False)
+        self._warn_if_member_assignment_requires_python_class(target)
         self._update_dict_subscript_binding(target, value)
 
         source_access = self._resolve_data_access(value)
@@ -1054,6 +1058,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_assignment_statement(target, value))))
+
+    def _warn_if_member_assignment_requires_python_class(self, target: ast.AST) -> None:
+        if not isinstance(target, ast.Attribute):
+            return
+
+        owner_access = self._resolve_data_access(target.value)
+        if owner_access is None:
+            return
+
+        _, _, owner_descriptor, _ = owner_access
+        message = python_class_requirement_for_member_assignment(owner_descriptor, target.attr)
+        if message is None:
+            return
+
+        warnings.warn(message, UserWarning, stacklevel=2)
 
     def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
         if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):

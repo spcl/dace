@@ -1085,6 +1085,11 @@ class Structure(Data):
         :param cls: The dataclass to convert.
         :param overrides: Optional overrides for the structure fields.
         :return: A Structure data descriptor.
+
+        The resulting descriptor assumes a fixed field layout that can be
+        marshalled to code generation as a C struct. Frontends should keep
+        values on the ``PythonClass`` path instead when code may reassign
+        non-array fields or create new fields dynamically.
         """
         members = {}
         for field in dataclasses.fields(cls):
@@ -1099,7 +1104,13 @@ class Structure(Data):
 
     @staticmethod
     def from_class(cls, **overrides) -> 'Structure':
-        """Create a Structure descriptor from a conservatively typed Python class."""
+        """Create a Structure descriptor from a conservatively typed Python class.
+
+        This helper is for classes whose field layout is treated as a marshalled C struct.
+        If frontend behavior depends on the object remaining a Python reference,
+        such as non-array field reassignment or dynamic field creation, use
+        ``dace.data.PythonClass`` instead.
+        """
         members = infer_structured_class_members(cls, **overrides)
         return Structure(members, name=cls.__name__)
 
