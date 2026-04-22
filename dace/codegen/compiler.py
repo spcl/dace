@@ -41,8 +41,8 @@ def generate_program_folder(
     :param sdfg: The SDFG to generate the program folder for.
     :param code_objects: List of generated code objects.
     :param out_path: The folder in which the build files should be written.
-    :param folder_mode: Version of the program folder that should be generated,
-                           if not given ``compiler.build_folder_mode`` is used.
+    :param folder_mode: Mode for saving build files in the program folder; if not
+                        given, ``compiler.build_folder_mode`` is used.
     :return: Path to the program folder.
 
     :note: The ``config`` argument is retained for compatibility and should not be used.
@@ -159,8 +159,8 @@ def generate_program_folder(
         # Copy a full snapshot of configuration script
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
-    # The version file is always generated. In case it is missing we assume the old version.
-    with open(os.path.join(out_path, "VERSION"), "w") as version_file:
+    # The folder mode file is always generated. In case it is missing we assume the old version.
+    with open(os.path.join(out_path, "FOLDER_MODE"), "w") as version_file:
         version_file.write(folder_mode)
 
     return out_path
@@ -396,14 +396,14 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool) -> Opt
 
 
 def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False) -> Optional[str]:
-    """Inspect `object_folder` and determine which version the folder has.
+    """Inspect `object_folder` and determine which save mode the folder has.
 
-    If the function find the ``VERSION`` file it will examine it to get the version.
-    If the version file is absent the function assumes that it is the ``development``
+    If the function finds the ``FOLDER_MODE`` file it will examine it to get the save mode.
+    If the folder mode file is absent the function assumes that it is the ``development``
     format, however, some sanity checks are performed.
 
     The function also has the optional argument ``probe`` if given and the folder
-    version could not be inferred the function will return ``None`` instead of
+    save mode could not be inferred the function will return ``None`` instead of
     generating an error.
     """
     object_folder = pathlib.Path(object_folder)
@@ -413,13 +413,13 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
             return None
         raise NotADirectoryError("The build folder does not exists.")
 
-    if (object_folder / 'VERSION').exists():
-        with open(object_folder / 'VERSION', 'rt') as F:
+    if (object_folder / 'FOLDER_MODE').exists():
+        with open(object_folder / 'FOLDER_MODE', 'rt') as F:
             folder_mode = F.readline().strip()
         return folder_mode
     else:
         # This is to check an old style folder, i.e. a cache folder that was generated before
-        #  the `VERSION` file was introduced. We do some small sanity checks.
+        #  the `FOLDER_MODE` file was introduced. We do some small sanity checks.
         # TODO: Phase out this feature, after there are no old style caches.
         found_sub_folder = False
         for sub_folder in ["build", "map", "src", "include", "sample"]:
@@ -451,8 +451,8 @@ def get_binary_name(
     :param sdfg_name: The name of the SDFG, i.e. `sdfg.name`.
     :param lib_extension: The extension of the library, i.e. file extension.
                           If not given the config option `compiler.library_extension` is used.
-    :param folder_mode: The version of the build folder. If not given the config option
-                           `compiler.build_folder_mode` is used.
+    :param folder_mode: The save mode for the build folder. If not given the config
+                        option `compiler.build_folder_mode` is used.
     """
     if lib_extension is None:
         lib_extension = Config.get('compiler', 'library_extension')
@@ -466,7 +466,7 @@ def get_binary_name(
         # Nothing to add, they are on the top.
         pass
     else:
-        raise ValueError(f"Unknown folder version '{folder_mode}' found.")
+        raise ValueError(f"Unknown folder mode '{folder_mode}' found.")
 
     return pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
 
@@ -489,9 +489,9 @@ def load_precompiled_sdfg(
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
-    dump file inside ``folder``. If the folder does not contain a ``VERSION`` file
+    dump file inside ``folder``. If the folder does not contain a ``FOLDER_MODE`` file
     it assumes that it is an old style ``development`` folder otherwise, the information
-    from ``VERSION`` is consulted.
+    from ``FOLDER_MODE`` is consulted.
 
     :param folder: Path to SDFG output folder, i.e. its build folder.
     :param sdfg: If given then ``program.sdfg(z)`` does not need to be present.

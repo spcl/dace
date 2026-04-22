@@ -123,7 +123,7 @@ required:
                   Selects which content should be saved in the build folder.
                   Two modes are currently supported: `development`, that includes
                   everything; and `production`, that saves only the compiled library
-                  and the version file.
+                  and the folder mode file.
 
             library_prefix:
                 type: str

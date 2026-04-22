@@ -2487,7 +2487,7 @@ class SDFG(ControlFlowRegion):
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
-        # Get the folder version, but if the folder already exist, then use the `VERSION` file.
+        # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
         folder_mode = compiler.get_folder_mode(build_folder, probe=True)
         if folder_mode is None:
             folder_mode = Config.get('compiler', 'build_folder_mode')

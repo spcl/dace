@@ -75,11 +75,11 @@ def test_development_folder_mode():
         "sample": pathlib.Path.is_dir,
         "src": pathlib.Path.is_dir,
         "CACHEDIR.TAG": pathlib.Path.is_file,
+        "FOLDER_MODE": pathlib.Path.is_file,
         "dace.conf": pathlib.Path.is_file,
         "dace_files.csv": pathlib.Path.is_file,
         "dace_environments.csv": pathlib.Path.is_file,
         "program.sdfgz": pathlib.Path.is_file,
-        "VERSION": pathlib.Path.is_file,
     }
 
     for found_path in build_folder.iterdir():
@@ -90,8 +90,8 @@ def test_development_folder_mode():
     # Now run it.
     _load_and_run_sdfg(build_folder, sdfg)
 
-    # Special case for development is that if there is no `VERSION` it is still development.
-    version_file = build_folder / "VERSION"
+    # Special case for development is that if there is no `FOLDER_MODE` it is still development.
+    version_file = build_folder / "FOLDER_MODE"
     assert version_file.exists()
     version_file.unlink()
     assert not version_file.exists()
@@ -116,7 +116,7 @@ def test_production_folder_mode():
 
     expected_files = {
         "CACHEDIR.TAG": pathlib.Path.is_file,
-        "VERSION": pathlib.Path.is_file,
+        "FOLDER_MODE": pathlib.Path.is_file,
         lib_path.name: pathlib.Path.is_file,
         libstub_path.name: pathlib.Path.is_file,
     }
@@ -129,8 +129,8 @@ def test_production_folder_mode():
     # Now run it.
     _load_and_run_sdfg(build_folder, sdfg)
 
-    # If we delete the VERSION file we will get an error.
-    version_file = build_folder / "VERSION"
+    # If we delete the FOLDER_MODE file we will get an error.
+    version_file = build_folder / "FOLDER_MODE"
     assert version_file.exists()
     version_file.unlink()
     assert not version_file.exists()
@@ -187,7 +187,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
 
         expected_files = {
             "CACHEDIR.TAG": pathlib.Path.is_file,
-            "VERSION": pathlib.Path.is_file,
+            "FOLDER_MODE": pathlib.Path.is_file,
             lib1_path.name: pathlib.Path.is_file,
             libstub1_path.name: pathlib.Path.is_file,
             lib2_path.name: pathlib.Path.is_file,
