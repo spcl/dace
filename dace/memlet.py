@@ -4,7 +4,6 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
-import warnings
 
 import dace
 from dace.sdfg.graph import generate_element_id

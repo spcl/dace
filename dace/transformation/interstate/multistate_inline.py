@@ -5,16 +5,16 @@ from copy import deepcopy as dc
 import itertools
 from typing import Dict, List
 
-from dace import Memlet, symbolic, dtypes, subsets
+from dace import Memlet, symbolic, subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg import utils as sdutil, infer_types
+from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
-from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
+from dace.sdfg.state import LoopRegion, ReturnBlock
 
 
 @make_properties
