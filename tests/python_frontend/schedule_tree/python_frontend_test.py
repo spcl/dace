@@ -618,6 +618,130 @@ def test_python_frontend_schedule_tree_structure_new_field_assignment_warns_to_u
     assert isinstance(stree.children[1], tn.CopyNode)
 
 
+def test_python_frontend_schedule_tree_direct_class_scalar_field_assignment_uses_pythonclass():
+
+    class Holder:
+        scalar: dace.float64
+        arr: dace.float64[8]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8]):
+        holder.scalar = A[0]
+        holder.arr[:] = A[:]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'holder.scalar'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_direct_class_new_field_assignment_uses_pythonclass():
+
+    class Holder:
+        arr: dace.float64[8]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8]):
+        holder.new_field = A[0]
+        holder.arr[:] = A[:]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'holder.new_field = A[0]'
+
+
+def test_python_frontend_schedule_tree_direct_class_array_field_only_stays_structure():
+
+    class Holder:
+        arr: dace.float64[8]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8], out: dace.float64[8]):
+        holder.arr[:] = A[:]
+        out[:] = holder.arr
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.Structure)
+    assert not isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'holder.arr'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_direct_class_nested_scalar_field_assignment_uses_pythonclass():
+
+    class Inner:
+        scalar: dace.float64
+
+    class Outer:
+        inner: Inner
+
+    @dace.program
+    def prog(wrapper: Outer, A: dace.float64[8]):
+        wrapper.inner.scalar = A[0]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['wrapper'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'wrapper.inner.scalar'
+
+
+def test_python_frontend_schedule_tree_direct_class_annotated_alias_scalar_field_assignment_uses_pythonclass():
+
+    class Holder:
+        scalar: dace.float64
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8]):
+        alias: Holder = holder
+        alias.scalar = A[0]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['alias'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.RefSetNode)
+    assert stree.children[0].target == 'alias'
+    assert isinstance(stree.children[1], tn.CopyNode)
+    assert stree.children[1].target == 'alias.scalar'
+
+
+def test_python_frontend_schedule_tree_direct_class_annotated_alias_new_field_assignment_uses_pythonclass():
+
+    class Holder:
+        arr: dace.float64[8]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8]):
+        alias: Holder = holder
+        alias.new_field = A[0]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['alias'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.RefSetNode)
+    assert stree.children[0].target == 'alias'
+    assert isinstance(stree.children[1], tn.StatementNode)
+    assert stree.children[1].code.as_string == 'alias.new_field = A[0]'
+
+
 def test_python_frontend_schedule_tree_optional_none_branch():
 
     @dace.program

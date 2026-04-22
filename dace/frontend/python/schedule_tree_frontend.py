@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic, subsets
 from dace.config import Config
-from dace.data.pydata import PythonDict, PythonList, PythonTuple
+from dace.data.pydata import PythonClass, PythonDict, PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
@@ -394,6 +394,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.scope_stack: List[tn.ScheduleTreeScope] = [self.root]
         self.bindings: Dict[str, _Binding] = {}
         self.annotated_descriptors: Dict[str, data.Data] = {}
+        self.annotated_class_types: Dict[str, type[Any]] = {}
         self.lambda_bindings: Dict[str, ast.Lambda] = {
             key: copy.deepcopy(value)
             for key, value in (lambda_bindings or {}).items()
@@ -449,6 +450,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         self._initialize_root_scope()
         self._initialize_seed_bindings()
+        self._initialize_direct_class_annotations()
         self.inferred_bindings = ScheduleTreeTypeInference(self.globals, self.argtypes).infer(self._program_node())
         for name, binding in self.inferred_bindings.items():
             if binding.descriptor is not None:
@@ -475,8 +477,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self.callback_handler.wrap_node(node, reason)
             return
         descriptor = self._evaluate_descriptor(node.annotation)
+        class_type = self._evaluate_annotation_class_type(node.annotation)
         if descriptor is not None and isinstance(node.target, ast.Name):
             self.annotated_descriptors[node.target.id] = descriptor
+            if class_type is not None:
+                self.annotated_class_types[node.target.id] = class_type
             if node.value is None:
                 existing = self.bindings.get(node.target.id)
                 if existing is not None and isinstance(existing.descriptor, data.Reference):
@@ -1037,7 +1042,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                         value,
                                                         materialize_root=False)
-        self._warn_if_member_assignment_requires_python_class(target)
+        if not self._ensure_pythonclass_for_direct_class_annotation(target):
+            self._warn_if_member_assignment_requires_python_class(target)
         self._update_dict_subscript_binding(target, value)
 
         source_access = self._resolve_data_access(value)
@@ -1073,6 +1079,45 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         warnings.warn(message, UserWarning, stacklevel=2)
+
+    def _ensure_pythonclass_for_direct_class_annotation(self, target: ast.AST) -> bool:
+        if not isinstance(target, ast.Attribute):
+            return False
+
+        owner_access = self._resolve_data_access(target.value)
+        if owner_access is None:
+            return False
+
+        _, _, owner_descriptor, _ = owner_access
+        if python_class_requirement_for_member_assignment(owner_descriptor, target.attr) is None:
+            return False
+
+        root_name = self._attribute_root_name(target.value)
+        if root_name is None:
+            return False
+        class_type = self.annotated_class_types.get(root_name)
+        if class_type is None:
+            return False
+
+        binding = self.bindings.get(root_name)
+        if binding is None or binding.descriptor is None or isinstance(binding.descriptor, PythonClass):
+            return False
+
+        try:
+            python_class_descriptor = PythonClass.from_class(class_type)
+        except (TypeError, ValueError):
+            return False
+
+        self._store_binding(root_name, python_class_descriptor, kind=binding.kind)
+        return True
+
+    def _attribute_root_name(self, node: ast.AST) -> Optional[str]:
+        current = node
+        while isinstance(current, ast.Attribute):
+            current = current.value
+        if isinstance(current, ast.Name):
+            return current.id
+        return None
 
     def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
         if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):
@@ -1698,6 +1743,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def _evaluate_descriptor(self, node: Optional[ast.AST]) -> Optional[data.Data]:
         if node is None:
             return None
+        class_type = self._evaluate_annotation_class_type(node)
+        if class_type is not None:
+            try:
+                return data.Structure.from_class(class_type)
+            except (TypeError, ValueError):
+                return None
         try:
             value = astutils.evalnode(node, self._evaluation_context())
         except Exception:
@@ -1708,6 +1759,34 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if dtype is not None:
             return data.Scalar(dtype, transient=True)
         return None
+
+    def _evaluate_annotation_class_type(self, node: Optional[ast.AST]) -> Optional[type[Any]]:
+        if node is None:
+            return None
+        try:
+            value = astutils.evalnode(node, self._evaluation_context())
+        except Exception:
+            return None
+        if not isinstance(value, type):
+            return None
+        try:
+            data.Structure.from_class(value)
+        except (TypeError, ValueError):
+            return None
+        return value
+
+    def _initialize_direct_class_annotations(self) -> None:
+        program = self._program_node()
+        arguments = list(program.args.posonlyargs) + list(program.args.args) + list(program.args.kwonlyargs)
+        if program.args.vararg is not None:
+            arguments.append(program.args.vararg)
+        if program.args.kwarg is not None:
+            arguments.append(program.args.kwarg)
+
+        for argument in arguments:
+            class_type = self._evaluate_annotation_class_type(argument.annotation)
+            if class_type is not None:
+                self.annotated_class_types[argument.arg] = class_type
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:
         value = try_resolve_static_value(node, self._evaluation_context())

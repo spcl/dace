@@ -12,13 +12,13 @@ from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIter
     get_args, get_origin
 
 from dace import data, dtypes, symbolic, subsets
-from dace.data.pydata import PythonDict, PythonList, PythonTuple
+from dace.data.pydata import PythonClass, PythonDict, PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.array_literal_support import infer_array_literal_descriptor
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
-    member_descriptor
+    member_descriptor, python_class_requirement_for_member_assignment
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -316,12 +316,14 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             for name, descriptor in argtypes.items()
         }
         self.results: Dict[str, _Binding] = {}
+        self.annotated_class_types: Dict[str, type[Any]] = {}
 
     def infer(self, program: ast.AST) -> Dict[str, _Binding]:
         if isinstance(program, ast.Module):
             program = program.body[0] if program.body else None
         if not isinstance(program, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return {}
+        self._initialize_direct_class_annotations(program)
         for stmt in program.body:
             self.visit(stmt)
         return {name: _clone_binding(binding) for name, binding in self.results.items()}
@@ -332,6 +334,9 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         annotated_descriptor = self._evaluate_descriptor(node.annotation)
+        class_type = self._evaluate_annotation_class_type(node.annotation)
+        if class_type is not None and isinstance(node.target, ast.Name):
+            self.annotated_class_types[node.target.id] = class_type
         if node.value is None:
             if isinstance(node.target, ast.Name) and annotated_descriptor is not None:
                 self._store_binding(node.target.id, annotated_descriptor)
@@ -443,7 +448,36 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 return
             if isinstance(target, (ast.Tuple, ast.List)) and binding.structure is not None:
                 self._bind_target_structure(target, binding.structure)
+        self._ensure_pythonclass_for_direct_class_annotation(target)
         self._update_dict_subscript_binding(target, value)
+
+    def _ensure_pythonclass_for_direct_class_annotation(self, target: ast.AST) -> None:
+        if not isinstance(target, ast.Attribute):
+            return
+
+        owner_binding = self._resolve_binding(target.value)
+        if owner_binding is None or owner_binding.descriptor is None:
+            return
+        if python_class_requirement_for_member_assignment(owner_binding.descriptor, target.attr) is None:
+            return
+
+        root_name = self._attribute_root_name(target.value)
+        if root_name is None:
+            return
+        class_type = self.annotated_class_types.get(root_name)
+        if class_type is None:
+            return
+
+        binding = self.bindings.get(root_name)
+        if binding is None or binding.descriptor is None or isinstance(binding.descriptor, PythonClass):
+            return
+
+        try:
+            python_class_descriptor = PythonClass.from_class(class_type)
+        except (TypeError, ValueError):
+            return
+
+        self._store_binding(root_name, python_class_descriptor, kind=binding.kind)
 
     def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
         if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):
@@ -1056,9 +1090,26 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                                   infer_scalar_descriptor=self._infer_scalar_descriptor,
                                   evaluation_context=self._evaluation_context)
 
+    def _evaluate_annotation_class_type(self, node: Optional[ast.AST]) -> Optional[type[Any]]:
+        if node is None:
+            return None
+        value = self._safe_eval(node, self._evaluation_context())
+        if not isinstance(value, type):
+            return None
+        try:
+            data.Structure.from_class(value)
+        except (TypeError, ValueError):
+            return None
+        return value
+
     def _evaluate_descriptor(self, node: Optional[ast.AST]) -> Optional[data.Data]:
         if node is None:
             return None
+        class_type = self._evaluate_annotation_class_type(node)
+        if class_type is not None:
+            descriptor = data.Structure.from_class(class_type)
+            descriptor.transient = True
+            return descriptor
         value = self._safe_eval(node, self._evaluation_context())
         if isinstance(value, data.Data):
             descriptor = _clone_descriptor(value)
@@ -1067,6 +1118,26 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         dtype = _normalize_dtype(value)
         if dtype is not None:
             return data.Scalar(dtype, transient=True)
+        return None
+
+    def _initialize_direct_class_annotations(self, program: ast.AST) -> None:
+        arguments = list(program.args.posonlyargs) + list(program.args.args) + list(program.args.kwonlyargs)
+        if program.args.vararg is not None:
+            arguments.append(program.args.vararg)
+        if program.args.kwarg is not None:
+            arguments.append(program.args.kwarg)
+
+        for argument in arguments:
+            class_type = self._evaluate_annotation_class_type(argument.annotation)
+            if class_type is not None:
+                self.annotated_class_types[argument.arg] = class_type
+
+    def _attribute_root_name(self, node: ast.AST) -> Optional[str]:
+        current = node
+        while isinstance(current, ast.Attribute):
+            current = current.value
+        if isinstance(current, ast.Name):
+            return current.id
         return None
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:

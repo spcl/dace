@@ -6,6 +6,7 @@ import sys
 import dace
 import pytest
 from dace import data, dtypes
+from dace.data.pydata import PythonClass
 from dace.frontend.python import preprocessing
 from dace.frontend.python.schedule_tree import ScheduleTreeTypeInference
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -90,6 +91,44 @@ def test_python_frontend_schedule_tree_callback_outputs_use_pyobject_scalar():
     assert isinstance(stree.children[0], tn.PythonCallbackNode)
     _assert_pyobject_scalar(stree.containers['m'])
     _assert_pyobject_scalar(stree.containers['tmp'])
+
+
+def test_schedule_tree_type_inference_direct_class_annotated_alias_array_field_only_stays_structure():
+
+    class Holder:
+        arr: dace.float64[4]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[4]):
+        alias: Holder = holder
+        alias.arr[:] = A[:]
+
+    bindings = _infer_schedule_tree_bindings(prog, {
+        'holder': dace.data.Structure.from_class(Holder),
+        'A': dace.float64[4]
+    })
+
+    assert isinstance(bindings['alias'].descriptor, dace.data.Structure)
+    assert not isinstance(bindings['alias'].descriptor, PythonClass)
+
+
+def test_schedule_tree_type_inference_direct_class_annotated_alias_scalar_rebinding_uses_pythonclass():
+
+    class Holder:
+        scalar: dace.float64
+        arr: dace.float64[4]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[4]):
+        alias: Holder = holder
+        alias.scalar = A[0]
+
+    bindings = _infer_schedule_tree_bindings(prog, {
+        'holder': dace.data.Structure.from_class(Holder),
+        'A': dace.float64[4]
+    })
+
+    assert isinstance(bindings['alias'].descriptor, PythonClass)
 
 
 def test_schedule_tree_type_inference_dict_same_key_update_widens_value_type():
