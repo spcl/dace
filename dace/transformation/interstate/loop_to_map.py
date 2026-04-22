@@ -478,11 +478,8 @@ class LoopToMap(xf.MultiStateTransformation):
             body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
         # Propagate free symbols referenced by nested array shapes/strides/offsets:
-        # ``copy.deepcopy`` of the descriptor carries the symbols verbatim, but they
-        # must be surfaced on the NestedSDFG node (``symbol_mapping``) and the
-        # nested SDFG's own symbol table, otherwise codegen for any nested construct
-        # (ConditionalBlock guards, memlet subsets flattened via strides) references
-        # symbols that are never declared in the emitted loop-body function.
+        # ``copy.deepcopy`` of the descriptor carries the symbols, but they
+        # must be added to the NestedSDFG's symbol mapping.
         for desc in nsdfg.arrays.values():
             for sym in desc.free_symbols:
                 sym_name = str(sym)
