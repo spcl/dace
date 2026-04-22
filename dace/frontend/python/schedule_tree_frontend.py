@@ -522,7 +522,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def visit_Return(self, node: ast.Return) -> None:
         if node.value is None:
-            values: List[CodeBlock] = []
+            values: List[str] = []
         else:
             self.callback_handler.reject_mutated_global_uses(node.value)
             return_value = self.lambda_resolver.inline_known_lambda_calls(node.value)
@@ -532,14 +532,14 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 self._materialize_call_args(return_value)
                 tmp = self._fresh_transient_name('__stree_retval')
                 self._emit_function_call(return_value, return_targets=[tmp])
-                self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
+                self._append_node(tn.ReturnNode(values=[tmp]))
                 return
             if self.callable_resolver.is_sdfg_call(return_value):
                 self._materialize_call_args(return_value)
                 tmp = self._fresh_transient_name('__stree_retval')
                 self._register_binding(tmp, _pyobject_scalar_descriptor(), kind='scalar')
                 if self._emit_sdfg_call(return_value, return_targets=[tmp]):
-                    self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
+                    self._append_node(tn.ReturnNode(values=[tmp]))
                     return
             if isinstance(return_value, ast.Tuple):
                 planned_values = [
@@ -547,57 +547,57 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                                             value,
                                                             materialize_root=True) for value in return_value.elts
                 ]
-                values = [
-                    CodeBlock(self._format_runtime_expression(self._materialize_return_value(v)))
-                    for v in planned_values
-                ]
+                values = [self._materialize_return_value(v) for v in planned_values]
             else:
                 planned_value = self.expression_support.plan_expression(self._expression_planning_context(),
                                                                         return_value,
                                                                         materialize_root=True)
-                planned_value = self._materialize_return_value(planned_value)
-                values = [CodeBlock(self._format_runtime_expression(planned_value))]
+                values = [self._materialize_return_value(planned_value)]
         self._append_node(tn.ReturnNode(values=values))
 
-    def _materialize_return_value(self, value: ast.AST) -> ast.AST:
-        """Try to lower a return-value expression into a named temporary.
+    def _materialize_return_value(self, value: ast.AST) -> str:
+        """Return the descriptor name backing a return-value expression.
 
-        If the expression is a call whose descriptor can be inferred (e.g.
-        ``numpy.sum(X)``), it is emitted as a proper computation node
-        (LibraryCall / TaskletNode) writing to a fresh transient, and the
-        transient's ``ast.Name`` is returned.  Otherwise *value* is returned
-        unchanged so the caller can still emit it as opaque text.
+        Non-descriptor expressions are materialized into fresh temporaries
+        before returning so :class:`ReturnNode` only refers to descriptor names.
         """
         if _requires_fstring_callback(value):
-            return self.callback_handler.materialize_expression(value,
-                                                                'f-string',
-                                                                _string_scalar_descriptor(),
-                                                                prefix='__stree_retval')
-        if not isinstance(value, ast.Call):
-            descriptor = self._infer_plannable_expression_descriptor(value)
-            should_materialize = False
-            if isinstance(value, ast.Attribute) and self._library_info_for_attribute(value) is not None:
-                should_materialize = True
-            if isinstance(value, ast.Subscript) and self.numpy_support.infer_expression_descriptor(
-                    self._numpy_lowering_context(), value) is not None:
-                should_materialize = True
-            if descriptor is None or isinstance(descriptor, data.Scalar):
-                return value
-            if not should_materialize and self._resolve_data_access(value) is not None:
-                return value
-            return self._materialize_temporary_expression(value, descriptor)
-        descriptor = self._infer_descriptor(value, '__probe')
+            materialized = self.callback_handler.materialize_expression(value,
+                                                                        'f-string',
+                                                                        _string_scalar_descriptor(),
+                                                                        prefix='__stree_retval')
+            return materialized.id
+
+        if isinstance(value, ast.Name) and self._resolve_data_access(value) is not None:
+            return value.id
+
+        descriptor = self._infer_plannable_expression_descriptor(value)
         if descriptor is None:
-            return value
-        name = self._fresh_transient_name('__stree_retval')
-        kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
-        self._register_binding(name, descriptor, kind=kind)
-        target = ast.Name(id=name, ctx=ast.Store())
-        if self._emit_computed_assignment(target, value, descriptor):
-            return ast.Name(id=name, ctx=ast.Load())
-        # Fallback: emit as opaque assignment.
-        self._append_node(tn.AssignNode(name=name, value=CodeBlock(_unparse(value))))
-        return ast.Name(id=name, ctx=ast.Load())
+            descriptor = self._infer_scalar_descriptor(value, None)
+        if descriptor is not None:
+            name = self._fresh_transient_name('__stree_retval')
+            kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
+            self._register_binding(name, descriptor, kind=kind)
+            target = ast.Name(id=name, ctx=ast.Store())
+            if self._emit_computed_assignment(target, value, descriptor):
+                return name
+
+            output = self._resolve_output_target(target, value, descriptor)
+            if output is not None:
+                _, out_memlet, _ = output
+                tasklet = tn.FrontendTasklet(name=self._tasklet_name(target),
+                                             code=CodeBlock(f'{_unparse(target)} = {_unparse(value)}'))
+                self._append_node(
+                    tn.TaskletNode(node=tasklet,
+                                   in_memlets=self._collect_input_memlets(value),
+                                   out_memlets={'out': out_memlet}))
+                return name
+
+        materialized = self.callback_handler.materialize_expression(value,
+                                                                    'return expression',
+                                                                    _pyobject_scalar_descriptor(),
+                                                                    prefix='__stree_retval')
+        return materialized.id
 
     def visit_Pass(self, node: ast.Pass) -> None:
         del node

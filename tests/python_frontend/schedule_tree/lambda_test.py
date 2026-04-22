@@ -109,7 +109,8 @@ def test_external_lambda_argument_to_nested_program_stays_callback_typed():
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
     calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
     assert len(calls) == 1
-    assert 'assign __stree_retval = f(A, B)' in calls[0].as_string()
+    assert 'tasklet(f[0], A[0], B[0])' in calls[0].as_string()
+    assert 'assign __stree_retval = __stree_tmp' in calls[0].as_string()
 
 
 def test_runtime_callback_argument_passes_through_nested_program():
@@ -131,4 +132,5 @@ def test_runtime_callback_argument_passes_through_nested_program():
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
     calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
     assert len(calls) == 1
-    assert 'assign __stree_retval = f(A, B)' in calls[0].as_string()
+    assert 'tasklet(f[0], A[0], B[0])' in calls[0].as_string()
+    assert 'assign __stree_retval = __stree_tmp' in calls[0].as_string()

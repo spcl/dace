@@ -332,12 +332,15 @@ class ReturnNode(ScheduleTreeNode):
     Explicit return node used by source frontends before lowering returns to a
     backend-specific representation.
     """
-    values: List[CodeBlock] = field(default_factory=list)
+    values: List[str] = field(default_factory=list)
+    """
+    If non-empty, represents the return value(s) of this return statement as a list of data descriptor names.
+    """
 
     def as_string(self, indent: int = 0):
         if not self.values:
             return indent * INDENTATION + 'return'
-        joined = ', '.join(value.as_string for value in self.values)
+        joined = ', '.join(self.values)
         return indent * INDENTATION + f'return {joined}'
 
 

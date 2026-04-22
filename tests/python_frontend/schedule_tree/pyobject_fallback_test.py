@@ -170,7 +170,7 @@ def test_python_frontend_schedule_tree_runtime_fstring_callback_outputs_use_stri
     result_name = callbacks[0].output_names[0]
     _assert_string_scalar(stree.containers[result_name])
     assert isinstance(stree.children[-1], tn.ReturnNode)
-    assert stree.children[-1].values[0].as_string == result_name
+    assert stree.children[-1].values[0] == result_name
 
 
 def test_schedule_tree_type_inference_nested_generic_conflicts_do_not_leak():

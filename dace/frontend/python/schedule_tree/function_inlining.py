@@ -362,7 +362,7 @@ class _ContainerRenamer(tn.ScheduleNodeTransformer):
         return node
 
     def visit_ReturnNode(self, node: tn.ReturnNode):
-        node.values = [self._rename_code_block(v) for v in node.values]
+        node.values = [self._rename(v) for v in node.values]
         return node
 
 
@@ -382,9 +382,9 @@ def _rewrite_returns(body: List[tn.ScheduleTreeNode], return_targets: Optional[L
     for node in body:
         if isinstance(node, tn.ReturnNode):
             if return_targets and node.values:
-                for target, value_cb in zip(return_targets, node.values):
-                    if value_cb.as_string.strip() != target:
-                        result.append(tn.AssignNode(name=target, value=value_cb))
+                for target, value_name in zip(return_targets, node.values):
+                    if value_name != target:
+                        result.append(tn.AssignNode(name=target, value=CodeBlock(value_name)))
             # else: bare call — drop the return
         elif isinstance(node, tn.ScheduleTreeScope):
             node.children = _rewrite_returns(node.children, return_targets, rename_map)

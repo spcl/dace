@@ -179,6 +179,35 @@ def test_python_frontend_schedule_tree_nested_program_calls_are_not_executed(mon
     assert isinstance(stree.children[3], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_constant_return_materializes_descriptor():
+
+    @dace.program
+    def constant():
+        return 5
+
+    stree = constant.to_schedule_tree()
+
+    assert isinstance(stree.children[-2], tn.TaskletNode)
+    assert stree.children[-2].node.code.as_string == '__stree_retval = 5'
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+    assert stree.children[-1].values == ['__stree_retval']
+
+
+def test_python_frontend_schedule_tree_symbolic_return_materializes_descriptor():
+    n = dace.symbol('n')
+
+    @dace.program
+    def symbolic_constant():
+        return n + 1
+
+    stree = symbolic_constant.to_schedule_tree()
+
+    assert isinstance(stree.children[-2], tn.TaskletNode)
+    assert stree.children[-2].node.code.as_string == '__stree_retval = (n + 1)'
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+    assert stree.children[-1].values == ['__stree_retval']
+
+
 def test_python_frontend_schedule_tree_function_call_assignment():
 
     @dace.program
@@ -267,7 +296,7 @@ def test_python_frontend_schedule_tree_sdfg_call_stays_opaque():
     assert stree.children[0].call.arguments == {'A': 'A', 'B': 'B'}
     assert stree.children[0].return_targets == ['__stree_retval']
     assert isinstance(stree.children[1], tn.ReturnNode)
-    assert stree.children[1].values[0].as_string == '__stree_retval'
+    assert stree.children[1].values[0] == '__stree_retval'
 
 
 def test_python_frontend_schedule_tree_sdfg_convertible_call_stays_opaque():
@@ -310,7 +339,7 @@ def test_python_frontend_schedule_tree_sdfg_convertible_call_stays_opaque():
     assert stree.children[0].call.arguments == {'A': 'A', 'B': 'B'}
     assert stree.children[0].return_targets == ['__stree_retval']
     assert isinstance(stree.children[1], tn.ReturnNode)
-    assert stree.children[1].values[0].as_string == '__stree_retval'
+    assert stree.children[1].values[0] == '__stree_retval'
 
 
 def test_python_frontend_schedule_tree_return_materializes_array_expression():
@@ -324,7 +353,7 @@ def test_python_frontend_schedule_tree_return_materializes_array_expression():
     assert len(stree.children) == 2
     assert isinstance(stree.children[0], tn.MapScope)
     assert isinstance(stree.children[1], tn.ReturnNode)
-    assert stree.children[1].values[0].as_string == '__stree_tmp'
+    assert stree.children[1].values[0] == '__stree_tmp'
 
 
 def test_python_frontend_schedule_tree_compile_time_fstring_stays_direct():
@@ -360,7 +389,7 @@ def test_python_frontend_schedule_tree_matmul_chain_library_calls():
     assert isinstance(stree.children[1].node, tn.FrontendLibrary)
     assert stree.children[0].node.name == 'MatMul'
     assert stree.children[1].node.name == 'MatMul'
-    assert stree.children[2].values[0].as_string == '__stree_tmp1'
+    assert stree.children[2].values[0] == '__stree_tmp1'
 
 
 def test_python_frontend_schedule_tree_reduction_calls():
@@ -1067,7 +1096,7 @@ def test_python_frontend_schedule_tree_star_call_expansion_is_resolved_staticall
     assert stree.children[1].call.callee_name == 'callee'
     assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}
     assert isinstance(stree.children[2], tn.ReturnNode)
-    assert stree.children[2].values[0].as_string == '__stree_retval'
+    assert stree.children[2].values[0] == '__stree_retval'
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
 
 
@@ -1089,7 +1118,7 @@ def test_python_frontend_schedule_tree_double_star_call_expansion_is_resolved_st
     assert stree.children[1].call.callee_name == 'callee'
     assert stree.children[1].call.arguments == {'a': 'A', 'b': 'B', 'c': 'C'}
     assert isinstance(stree.children[2], tn.ReturnNode)
-    assert stree.children[2].values[0].as_string == '__stree_retval'
+    assert stree.children[2].values[0] == '__stree_retval'
     assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
 
 
@@ -1108,7 +1137,7 @@ def test_python_frontend_schedule_tree_dynamic_star_call_expansion_uses_callback
     assert stree.children[0].reason == 'call expansion'
     assert stree.children[0].code.as_string == '__stree_retval = callee(*((A, B) if flag else (B, A)), c=C)'
     assert isinstance(stree.children[1], tn.ReturnNode)
-    assert stree.children[1].values[0].as_string == '__stree_retval'
+    assert stree.children[1].values[0] == '__stree_retval'
 
 
 def test_python_frontend_schedule_tree_dynamic_expanded_sdfg_call_raises():

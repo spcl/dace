@@ -260,8 +260,8 @@ def test_nested_function_with_global_callback_fallback_is_allowed():
         del globals()['__schedule_tree_callback_global']
 
     callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
-    assert len(callbacks) == 1
-    assert callbacks[0].reason == 'nested function'
+    assert len(callbacks) == 2
+    assert sorted(callback.reason for callback in callbacks) == ['nested function', 'pyobject call']
 
 
 def test_nested_function_with_global_callback_fallback_is_rejected_if_enclosing_program_uses_global():
@@ -307,8 +307,8 @@ def test_decorated_nested_function_stays_callback():
     stree = prog.to_schedule_tree()
 
     callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
-    assert len(callbacks) == 1
-    assert callbacks[0].reason == 'nested function'
+    assert len(callbacks) == 2
+    assert sorted(callback.reason for callback in callbacks) == ['nested function', 'pyobject call']
 
 
 def test_decorated_nested_function_callback_outliner_recovers_callable_handle():
