@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import itertools
@@ -684,6 +685,26 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 outer_edge=final_producer_edge,
                         ):
                             return None
+
+                # Conservative race check: if the producer writes a subset that
+                # doesn't mention any of the first map's iteration variables, it
+                # means every map iteration writes the same (full / constant)
+                # subset. Pre-fusion this works by "broadcast + idempotence"
+                # relying on the MapExit serialization point between the two
+                # maps. Post-fusion, threads interleave producer and consumer
+                # ops within the same scope; without the MapExit sync the
+                # consumer can read a half-written intermediate. Reject.
+                map_params = set(map(str, first_map_exit.map.params))
+                if map_params:
+                    subset_syms = {str(s) for r in producer_edge.data.dst_subset
+                                   for s in getattr(r, 'free_symbols', ()) or ()}
+                    # free_symbols attr may be absent on tuple ranges; fall back
+                    # to stringifying the whole subset.
+                    if not subset_syms:
+                        subset_str = str(producer_edge.data.dst_subset)
+                        subset_syms = set(re.findall(r'\b[A-Za-z_][A-Za-z_0-9]*\b', subset_str))
+                    if not (map_params & subset_syms):
+                        return None
 
                 producer_subsets.append(producer_edge.data.dst_subset)
                 assert producer_subsets[-1] not in reduced_intermediate_shape_cache
