@@ -22,7 +22,7 @@ PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
 MAX_NESTED_SDFGS: Final[int] = 1000
 
 
-class StreeToSDFG(tn.ScheduleNodeVisitor):
+class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def __init__(self, start_state: SDFGState | None = None) -> None:
         self._ctx: tn.Context
@@ -718,7 +718,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         # When creating a state boundary, include all inter-state assignments that precede it.
         pending = self._pending_interstate_assignments()
 
-        self._current_state = create_state_boundary(
+        self._current_state = _create_state_boundary(
             node,
             self._current_state,
             StateBoundaryBehavior.STATE_TRANSITION,
@@ -757,16 +757,16 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     result.symbols = copy.deepcopy(stree.symbols)
 
     # Insert artificial state boundaries after WAW, before label, etc.
-    stree = insert_state_boundaries_to_tree(stree)
+    stree = _insert_state_boundaries_to_tree(stree)
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
-    StreeToSDFG().visit(stree, sdfg=result)
+    _StreeToSDFG().visit(stree, sdfg=result)
     propagation.propagate_memlets_sdfg(result)
 
     return result
 
 
-def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:
+def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:
     """
     Inserts StateBoundaryNode objects into a schedule tree where more than one SDFG state would be necessary.
     Operates in-place on the given schedule tree.
@@ -919,7 +919,7 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 # SDFG content creation functions
 
 
-def create_state_boundary(
+def _create_state_boundary(
     boundary_node: tn.StateBoundaryNode,
     state: SDFGState,
     behavior: StateBoundaryBehavior,

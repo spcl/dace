@@ -21,7 +21,7 @@ def test_stree_propagation_forloop():
         a[1] = 1
 
     stree = tester.to_sdfg().as_schedule_tree()
-    stree = t2s.insert_state_boundaries_to_tree(stree)
+    stree = t2s._insert_state_boundaries_to_tree(stree)
 
     node_types = [n for n in stree.preorder_traversal()]
     assert isinstance(node_types[2], tn.ForScope)

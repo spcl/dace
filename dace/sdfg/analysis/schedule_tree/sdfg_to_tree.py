@@ -26,7 +26,7 @@ NODE_TO_SCOPE_TYPE = {
 }
 
 
-def dealias_sdfg(sdfg: SDFG):
+def _dealias_sdfg(sdfg: SDFG) -> None:
     """
     Renames all data containers in an SDFG tree (i.e., nested SDFGs) to use the same data descriptors
     as the top-level SDFG. This function takes care of offsetting memlets and internal
@@ -197,7 +197,7 @@ def dealias_sdfg(sdfg: SDFG):
                     e._dst_conn = replacements[e.dst_conn]
 
 
-def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
+def _normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
     """
     Normalizes a memlet to a given data descriptor.
 
@@ -230,9 +230,10 @@ def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEd
     return memlet
 
 
-def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping: Dict[str, Memlet]):
+def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping: Dict[str, Memlet]):
     """
     Replaces all uses of data containers in memlets and interstate edges in an SDFG.
+
     :param sdfg: The SDFG.
     :param input_mapping: A mapping from internal data descriptor names to external input memlets.
     :param output_mapping: A mapping from internal data descriptor names to external output memlets.
@@ -308,11 +309,13 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 e.data.condition.as_string = condstr.replace(find, replace)
 
 
-def remove_name_collisions(sdfg: SDFG):
+def _remove_name_collisions(sdfg: SDFG) -> None:
     """
     Removes name collisions in nested SDFGs by renaming states, data containers, and symbols.
 
-    :param sdfg: The SDFG.
+    This function works in-place on the given SDFG.
+
+    :param sdfg: The SDFG to operate on.
     """
     state_names_seen = set()
     identifiers_seen = set()
@@ -374,7 +377,7 @@ def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_
     Helper function to create a view schedule tree node from a memlet edge.
     """
     sdfg = state.parent
-    normalized = normalize_memlet(sdfg, state, edge, viewed_name)
+    normalized = _normalize_memlet(sdfg, state, edge, viewed_name)
     view_node = tn.ViewNode(target=view_name,
                             source=viewed_name,
                             memlet=normalized,
@@ -383,7 +386,7 @@ def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_
     return view_node
 
 
-def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
+def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
     """
     Replaces symbol values in a nested SDFG until their value has been reset. This is used for matching symbol
     namespaces between an SDFG and a nested SDFG.
@@ -408,7 +411,7 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
             symbolic.safe_replace(per_state_mapping, lambda d: e.data.replace_dict(d, replace_keys=False))
 
 
-def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]:
+def _prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
     This handles view edges, reference sets, and dynamic map inputs.
@@ -503,7 +506,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                 result[e] = tn.DynScopeCopyNode(target=e.dst_conn, memlet=e.data)
             else:
                 target_name = innermost_node.data
-                new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
+                new_memlet = _normalize_memlet(sdfg, state, e, outermost_node.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
@@ -524,7 +527,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
     edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
     scope_to_edges: Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
-    edge_to_stree, scope_to_edges = prepare_schedule_tree_edges(state)
+    edge_to_stree, scope_to_edges = _prepare_schedule_tree_edges(state)
     edges_to_ignore = set()
 
     # Handle all unscoped edges to generate output views
@@ -564,7 +567,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             generated_nviews = set()
 
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
-            replace_symbols_until_set(node)
+            _replace_symbols_until_set(node)
 
             # Create memlets for nested SDFG mapping, or NView schedule nodes if slice cannot be determined.
             for e in state.all_edges(node):
@@ -595,14 +598,14 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                         result.append(nview_node)
                         generated_nviews.add(conn)
 
-            replace_memlets(node.sdfg, nested_array_mapping_input, nested_array_mapping_output)
+            _replace_memlets(node.sdfg, nested_array_mapping_input, nested_array_mapping_output)
 
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
             result.extend(nested_stree.children)
 
             if generated_nviews:
-                # Insert matching NViewEnd nodes to define the scope NView nodes.
+                # Insert matching NViewEnd nodes to define the scope of NView nodes.
                 for target in generated_nviews:
                     result.append(tn.NViewEnd(target=target))
 
@@ -640,8 +643,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
-def _isedge_schedule_tree(graph: ControlFlowRegion,
-                          edge: gr.Edge[InterstateEdge],
+def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
                           emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
@@ -688,7 +690,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 subnodes.extend(_block_schedule_tree(n))
                 for oe in block.out_edges(n):
                     if oe not in processed_edges:
-                        subnodes.extend(_isedge_schedule_tree(block, oe, emit_goto_for_successors=True))
+                        subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
                         processed_edges.add(oe)
             gblock = tn.GBlock(children=subnodes)
             children = [gblock]
@@ -700,7 +702,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 oedges = block.out_edges(pivot)
                 if len(oedges) == 1:
                     pivot = oedges[0].dst
-                    children.extend(_isedge_schedule_tree(block, oedges[0], emit_goto_for_successors=False))
+                    children.extend(_isedge_schedule_tree(oedges[0], emit_goto_for_successors=False))
                 else:
                     pivot = None
 
@@ -791,10 +793,10 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
         # Handle name collisions (in arrays, state labels, symbols)
-        remove_name_collisions(sdfg)
+        _remove_name_collisions(sdfg)
 
         # Ensure no arrays alias in SDFG tree
-        dealias_sdfg(sdfg)
+        _dealias_sdfg(sdfg)
 
 
 def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot) -> None:
