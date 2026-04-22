@@ -800,6 +800,71 @@ def test_nested_sdfg_nested_loop():
     assert sdfg.apply_transformations_repeated(LoopToMap) == 2
 
 
+def test_stride_symbol_propagated_to_nested_sdfg():
+    """A ``ConditionalBlock`` guard that indexes a 2D array whose stride uses
+    a free symbol ``S``. After two applications of ``LoopToMap``, both the
+    level-1 and level-2 ``NestedSDFG``s must carry ``S`` in their
+    ``symbol_mapping`` AND in the free-symbol set consumed by
+    ``generate_nsdfg_header`` -- otherwise codegen emits a ``loop_body_*``
+    function using ``S`` without declaring it. Regression for a bug observed
+    on the velocity-tendencies pipeline where compile fails with
+    ``'S' was not declared in this scope``.
+    """
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG("loop_to_map_missing_stride_symbol")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
+
+    outer = LoopRegion("outer",
+                       condition_expr="k < 5",
+                       loop_var="k",
+                       initialize_expr="k = 0",
+                       update_expr="k = k + 1")
+    sdfg.add_node(outer, is_start_block=True)
+
+    init = outer.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("t_init", {}, {"o"}, "o = 0")
+    init.add_edge(t0, "o", init.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    inner = LoopRegion("inner",
+                       condition_expr="j < 5",
+                       loop_var="j",
+                       initialize_expr="j = 0",
+                       update_expr="j = j + 1")
+    outer.add_node(inner)
+    outer.add_edge(init, inner, dace.InterstateEdge())
+
+    cb = ConditionalBlock("cb")
+    inner.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[j, k] == 1"), branch)
+
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t1 = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t1, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    sdfg.validate()
+    applied = sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
+    assert applied == 2
+
+    # Every ``NestedSDFG`` the pass created must have ``S`` in both its
+    # ``symbol_mapping`` and its inner ``sdfg.symbols``. Otherwise the
+    # stride-using subscript is emitted without the declaration.
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        if any('S' in {str(s) for s in d.free_symbols} for d in node.sdfg.arrays.values()):
+            assert 'S' in node.symbol_mapping, node.symbol_mapping
+            assert 'S' in node.sdfg.symbols, sorted(node.sdfg.symbols)
+
+    # End-to-end: the SDFG must compile cleanly. Before the fix this emits
+    # ``'S' was not declared in this scope`` inside ``loop_body_*``.
+    sdfg.compile()
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -840,3 +905,4 @@ if __name__ == "__main__":
     test_rotated_loop_to_map(True)
     test_self_loop_to_map()
     test_nested_sdfg_nested_loop()
+    test_stride_symbol_propagated_to_nested_sdfg()
