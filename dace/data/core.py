@@ -11,7 +11,7 @@ import ctypes
 import dataclasses
 
 from collections import OrderedDict
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Set, Tuple, Type, Union, get_origin, get_type_hints
 
 import numpy as np
 import sympy as sp
@@ -41,6 +41,44 @@ def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
     return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
+
+
+def infer_structured_class_members(cls: Type[Any], **overrides) -> Dict[str, Any]:
+    """Infer typed members for a dataclass-like Python class.
+
+    This helper is intentionally conservative: it uses dataclass fields when
+    available, otherwise it requires class-level annotations that can be turned
+    into DaCe data descriptors.
+    """
+    if not isinstance(cls, type):
+        raise TypeError(f'{cls} is not a class type')
+
+    from dace.data.creation import create_datadescriptor  # Avoid import cycle
+
+    members: Dict[str, Any] = {}
+    if dataclasses.is_dataclass(cls):
+        for field in dataclasses.fields(cls):
+            if dataclasses.is_dataclass(field.type):
+                members[field.name] = Structure.from_dataclass(field.type)
+            else:
+                members[field.name] = create_datadescriptor(field.type)
+    else:
+        try:
+            annotations = get_type_hints(cls)
+        except Exception:
+            annotations = dict(getattr(cls, '__annotations__', {}) or {})
+
+        for field_name, annotation in annotations.items():
+            if field_name == 'return' or field_name.startswith('__'):
+                continue
+            if get_origin(annotation) is ClassVar:
+                continue
+            members[field_name] = create_datadescriptor(annotation)
+
+    members.update(overrides)
+    if not members:
+        raise TypeError(f'{cls} does not expose a supported typed field layout')
+    return members
 
 
 @make_properties
@@ -1020,6 +1058,12 @@ class Structure(Data):
             members[field.name] = field.type
 
         members.update(overrides)
+        return Structure(members, name=cls.__name__)
+
+    @staticmethod
+    def from_class(cls, **overrides) -> 'Structure':
+        """Create a Structure descriptor from a conservatively typed Python class."""
+        members = infer_structured_class_members(cls, **overrides)
         return Structure(members, name=cls.__name__)
 
     @property

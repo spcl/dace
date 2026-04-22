@@ -18,7 +18,7 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, symbolic
-from dace.data.core import Array, Data, Scalar
+from dace.data.core import Array, Data, Scalar, Structure
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -119,6 +119,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, np.number):
         return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, type):
+        try:
+            return Structure.from_class(obj)
+        except TypeError:
+            pass
     elif isinstance(obj, (Number, np.number, np.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):

@@ -13,11 +13,11 @@ frontend. They intentionally distinguish between:
 #       (bindings, C++ codegen, etc.). They are currently only used for the Schedule Tree-based Python frontend.
 
 import copy
-from dataclasses import fields, is_dataclass
+from dataclasses import is_dataclass
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Type
 
 from dace import dtypes
-from dace.data.core import Array, Data, Scalar, Structure
+from dace.data.core import Array, Data, Scalar, Structure, infer_structured_class_members
 from dace.properties import NestedDataClassProperty, make_properties
 
 
@@ -257,17 +257,13 @@ class PythonClass(Structure):
 
         return ret
 
-    @staticmethod
-    def from_dataclass(cls: Type[Any], **overrides) -> 'PythonClass':
-        if not is_dataclass(cls):
-            raise TypeError(f'{cls} is not a dataclass')
+    @classmethod
+    def from_dataclass(cls, dataclass_type: Type[Any], **overrides) -> 'PythonClass':
+        if not is_dataclass(dataclass_type):
+            raise TypeError(f'{dataclass_type} is not a dataclass')
+        return cls.from_class(dataclass_type, **overrides)
 
-        from dace.data.creation import create_datadescriptor  # Avoid import cycle
-        members = {}
-        for field in fields(cls):
-            if is_dataclass(field.type):
-                members[field.name] = Structure.from_dataclass(field.type)
-                continue
-            members[field.name] = create_datadescriptor(field.type)
-        members.update(overrides)
-        return PythonClass(members, name=cls.__name__)
+    @classmethod
+    def from_class(cls, class_type: Type[Any], **overrides) -> 'PythonClass':
+        members = infer_structured_class_members(class_type, **overrides)
+        return cls(members, name=class_type.__name__)

@@ -449,6 +449,42 @@ def test_struct_recursive_from_dataclass():
     assert np.allclose(B.y, A.y)
 
 
+def test_struct_recursive_from_plain_class_annotation():
+
+    class Inner:
+        a: dace.float32[20]
+        b: dace.int32
+
+        def __init__(self, a, b):
+            self.a = a
+            self.b = b
+
+    class Outer:
+        x: Inner
+        y: dace.float64[10, 10]
+
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    Struct = dace.data.Structure.from_class(Outer)
+
+    @dace.program
+    def struct_recursive(A: Outer, B: Outer):
+        B.x.a[:] = A.x.a[:]
+        B.x.b = A.x.b
+        B.y[:] = A.y[:]
+
+    A = Outer(x=Inner(a=np.random.rand(20).astype(np.float32), b=42), y=np.random.rand(10, 10).astype(np.float64))
+    B = Outer(x=Inner(a=np.zeros(20, dtype=np.float32), b=0), y=np.zeros((10, 10), dtype=np.float64))
+
+    struct_recursive(Struct.make_argument_from_object(A), Struct.make_argument_from_object(B))
+
+    assert np.allclose(B.x.a, A.x.a)
+    assert not np.allclose(B.x.b, A.x.b)
+    assert np.allclose(B.y, A.y)
+
+
 if __name__ == '__main__':
     test_read_structure()
     test_write_structure()
@@ -462,3 +498,4 @@ if __name__ == '__main__':
     test_struct_interface()
     test_struct_recursive()
     test_struct_recursive_from_dataclass()
+    test_struct_recursive_from_plain_class_annotation()

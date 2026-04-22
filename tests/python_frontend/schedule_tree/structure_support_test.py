@@ -61,6 +61,28 @@ def test_python_dataclass_descriptor_preserves_structure_vs_python_class_split()
     assert isinstance(python_object.members['y'], data.Scalar)
 
 
+def test_plain_class_descriptor_preserves_structure_vs_python_class_split():
+
+    class Inner:
+        x: dace.int32
+
+    class Outer:
+        inner: Inner
+        y: dace.float64
+
+    by_value = data.Structure.from_class(Outer)
+    python_object = PythonClass.from_class(Outer)
+
+    assert isinstance(by_value, data.Structure)
+    assert by_value.name == 'Outer'
+    assert isinstance(by_value.members['inner'], data.Structure)
+
+    assert isinstance(python_object, PythonClass)
+    assert python_object.name == 'Outer'
+    assert isinstance(python_object.members['inner'], data.Structure)
+    assert isinstance(python_object.members['y'], data.Scalar)
+
+
 def test_resolve_member_access_returns_named_member_path():
     Bundle = dace.data.Structure({'data': dace.float64[4]}, name='Bundle')
 
