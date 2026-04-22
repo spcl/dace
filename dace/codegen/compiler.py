@@ -41,8 +41,8 @@ def generate_program_folder(
     :param sdfg: The SDFG to generate the program folder for.
     :param code_objects: List of generated code objects.
     :param out_path: The folder in which the build files should be written.
-    :param folder_mode: Mode for saving build files in the program folder; if not
-                        given, ``compiler.build_folder_mode`` is used.
+    :param folder_mode: Select which files should be saved in the program build folder;
+                        if not given, ``compiler.build_folder_mode`` is used.
     :return: Path to the program folder.
 
     :note: The ``config`` argument is retained for compatibility and should not be used.
