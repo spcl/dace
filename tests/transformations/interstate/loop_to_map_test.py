@@ -818,22 +818,14 @@ def test_stride_symbol_propagated_to_nested_sdfg():
     sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
     sdfg.add_scalar("acc", dace.int32, transient=True)
 
-    outer = LoopRegion("outer",
-                       condition_expr="k < 5",
-                       loop_var="k",
-                       initialize_expr="k = 0",
-                       update_expr="k = k + 1")
+    outer = LoopRegion("outer", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
     sdfg.add_node(outer, is_start_block=True)
 
     init = outer.add_state("init", is_start_block=True)
     t0 = init.add_tasklet("t_init", {}, {"o"}, "o = 0")
     init.add_edge(t0, "o", init.add_write("acc"), None, dace.Memlet("acc[0]"))
 
-    inner = LoopRegion("inner",
-                       condition_expr="j < 5",
-                       loop_var="j",
-                       initialize_expr="j = 0",
-                       update_expr="j = j + 1")
+    inner = LoopRegion("inner", condition_expr="j < 5", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
     outer.add_node(inner)
     outer.add_edge(init, inner, dace.InterstateEdge())
 
