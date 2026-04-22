@@ -3,9 +3,9 @@
 import dace
 from dace import memlet as mm
 from dace.libraries.standard.nodes.reduce import Reduce
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
-
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -18,7 +18,7 @@ def _count_loops(sdfg: dace.SDFG) -> int:
 def _assert_single_sum_reduce_identity_none(sdfg: dace.SDFG):
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1, reduces
-    (red,) = reduces
+    (red, ) = reduces
     assert red.wcr == "lambda a, b: a + b"
     assert red.identity is None
 
@@ -29,8 +29,7 @@ def test_sdfg_api_sum_reduction_is_lifted():
     sdfg.add_array("A", [1], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
 
-    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i",
-                      initialize_expr="i = 0", update_expr="i = i + 1")
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
 
     body = loop.add_state("body", is_start_block=True)
@@ -94,7 +93,7 @@ def test_frontend_augassign_array_slice_is_lifted():
 
     reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     (red, state) = reduces[0]
-    (out_edge,) = state.out_edges(red)
+    (out_edge, ) = state.out_edges(red)
     assert out_edge.data.data == "C"
     assert str(out_edge.data.subset) in {"3", "3:4", "3:3"}
 
@@ -106,14 +105,12 @@ def _build_interstate_reduction_sdfg(offset_expr: str):
     sdfg.add_array("B", [N], dace.float64)
 
     pre = sdfg.add_state("pre", is_start_block=True)
-    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i",
-                      initialize_expr="i = 0", update_expr="i = i + 1")
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     s1 = loop.add_state("s1", is_start_block=True)
     s2 = loop.add_state("s2")
-    loop.add_edge(s1, s2, dace.InterstateEdge(
-        assignments={"accum": f"accum + B[{offset_expr}]"}))
+    loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": f"accum + B[{offset_expr}]"}))
     post = sdfg.add_state("post")
     sdfg.add_edge(loop, post, dace.InterstateEdge())
     return sdfg
@@ -131,9 +128,91 @@ def test_interstate_edge_direct_index_is_lifted():
     assert _count_loops(sdfg) == 0
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1
-    (red,) = reduces
+    (red, ) = reduces
     assert red.wcr == "lambda a, b: a + b"
     assert red.identity is None
+
+
+def _build_conditional_minmax_sdfg(cond_expr: str):
+    """body = ConditionalBlock(cond_expr) > branch of (2 empty states + {accum: B[i]})."""
+    safe = "".join(c if c.isalnum() else "_" for c in cond_expr)
+    sdfg = dace.SDFG(f"interstate_cond_{safe}")
+    sdfg.add_symbol("accum", dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock(cond_expr), branch)
+    s1 = branch.add_state("s1", is_start_block=True)
+    s2 = branch.add_state("s2")
+    branch.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": "B[i]"}))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    return sdfg
+
+
+def _assert_single_reduce_with_wcr(sdfg: dace.SDFG, expected_wcr: str):
+    reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert len(reduces) == 1, reduces
+    (red, ) = reduces
+    assert red.wcr == expected_wcr, red.wcr
+    assert red.identity is None
+
+
+def test_conditional_interstate_gt_lifts_to_max():
+    for cond in ("B[i] > accum", "accum < B[i]", "B[i] >= accum", "accum <= B[i]"):
+        sdfg = _build_conditional_minmax_sdfg(cond)
+        sdfg.validate()
+        assert _count_loops(sdfg) == 1
+        lifted = LoopToReduce().apply_pass(sdfg, {})
+        sdfg.validate()
+        assert lifted == 1, cond
+        assert _count_loops(sdfg) == 0
+        _assert_single_reduce_with_wcr(sdfg, "lambda a, b: max(a, b)")
+
+
+def test_conditional_interstate_lt_lifts_to_min():
+    for cond in ("B[i] < accum", "accum > B[i]", "B[i] <= accum", "accum >= B[i]"):
+        sdfg = _build_conditional_minmax_sdfg(cond)
+        sdfg.validate()
+        assert _count_loops(sdfg) == 1
+        lifted = LoopToReduce().apply_pass(sdfg, {})
+        sdfg.validate()
+        assert lifted == 1, cond
+        assert _count_loops(sdfg) == 0
+        _assert_single_reduce_with_wcr(sdfg, "lambda a, b: min(a, b)")
+
+
+def test_conditional_interstate_unrelated_array_is_not_lifted():
+    """Guard compares a different array than the assignment — reject."""
+    sdfg = dace.SDFG("interstate_cond_mismatched")
+    sdfg.add_symbol("accum", dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("C", [N], dace.float64)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("C[i] > accum"), branch)
+    s1 = branch.add_state("s1", is_start_block=True)
+    s2 = branch.add_state("s2")
+    branch.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": "B[i]"}))
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    sdfg.validate()
+
+    assert LoopToReduce().apply_pass(sdfg, {}) is None
+    assert _count_loops(sdfg) == 1
 
 
 if __name__ == "__main__":
@@ -141,3 +220,6 @@ if __name__ == "__main__":
     test_frontend_augassign_length1_array_is_lifted()
     test_frontend_augassign_array_slice_is_lifted()
     test_interstate_edge_direct_index_is_lifted()
+    test_conditional_interstate_gt_lifts_to_max()
+    test_conditional_interstate_lt_lifts_to_min()
+    test_conditional_interstate_unrelated_array_is_not_lifted()

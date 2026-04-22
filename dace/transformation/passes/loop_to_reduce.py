@@ -1,13 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Detect scalar accumulator loops and replace them with ``Reduce`` nodes.
 
-Two commutative-op loop shapes are recognised (``identity=None`` on the
-emitted ``Reduce`` so the pre-loop accumulator seeds the fold):
+Three loop shapes are recognised (``identity=None`` on the emitted
+``Reduce`` so the pre-loop accumulator seeds the fold):
 
 - **Tasklet**: a single-state containing one two-input tasklet that
   writes to the accumulator.
 - **Interstate edge**: body = 2 empty states joined by one interstate
   edge with assignment ``{sym: sym <op> arr[<f(i)>]}``.
+- **Conditional interstate edge**: body = a single ``ConditionalBlock``
+  with one branch guarded by ``sym <cmp> arr[<f(i)>]`` (``cmp`` in
+  ``>``/``>=``/``<``/``<=``) whose body is the 2-empty-states + edge
+  shape above with assignment ``{sym: arr[<f(i)>]}``. ``>``/``>=`` lift
+  to ``max``, ``<``/``<=`` lift to ``min``.
 
 Accumulator forms accepted: a ``Scalar``, a length-1 ``Array``, a single
 loop-invariant slice of a multi-element ``Array`` (``C[k]``).
@@ -19,11 +24,10 @@ from typing import Dict, NamedTuple, Optional
 import sympy
 
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-
 
 # Ops in these tables are commutative by construction, so we skip calling
 # ``dace.frontend.operations.is_op_commutative`` (which returns ``None`` for
@@ -39,11 +43,15 @@ _CALL_TO_WCR: Dict[str, str] = {
     "max": "lambda a, b: max(a, b)",
     "min": "lambda a, b: min(a, b)",
 }
+# For a guard `lhs <cmp> rhs` where the assignment inside writes `sym = arr[i]`,
+# the reduction is max iff the condition fires when arr is larger than sym.
+_CMP_GT = (ast.Gt, ast.GtE)
+_CMP_LT = (ast.Lt, ast.LtE)
 
 
 class _Reduction(NamedTuple):
     wcr: str
-    accum: str # data-descriptor name, or DaCe symbol
+    accum: str  # data-descriptor name, or DaCe symbol
     accum_subset: subsets.Subset
     array: str
     array_subset: subsets.Subset
@@ -53,6 +61,7 @@ class _Reduction(NamedTuple):
 @xf.explicit_cf_compatible
 class LoopToReduce(ppl.Pass):
     """Lift scalar-accumulator loops to Reduction library nodes."""
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
@@ -84,8 +93,7 @@ def _one_elem(subset) -> Optional[int]:
 
 
 def _uses(subset: subsets.Subset, sym: sympy.Symbol) -> bool:
-    return subset is not None and any(
-        symbolic.pystr_to_symbolic(str(e)) == sym for e in subset.free_symbols)
+    return subset is not None and any(symbolic.pystr_to_symbolic(str(e)) == sym for e in subset.free_symbols)
 
 
 def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
@@ -97,14 +105,12 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
         return False
 
     def scalar_like(d) -> bool:
-        return isinstance(d, data.Scalar) or (
-            isinstance(d, data.Array) and all(s == 1 for s in d.shape))
+        return isinstance(d, data.Scalar) or (isinstance(d, data.Array) and all(s == 1 for s in d.shape))
 
     return scalar_like(da) and scalar_like(db)
 
 
-def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol,
-                      start, end) -> Optional[subsets.Range]:
+def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
     """Widen ``subset`` -- which uses ``loop_var`` linearly -- over the
     iteration range ``[start, end]``."""
     if not isinstance(subset, subsets.Range):
@@ -116,9 +122,38 @@ def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol,
         offset = symbolic.simplify(rb - loop_var)
         if offset.has(loop_var):
             return None
-        ranges.append((symbolic.simplify(start + offset),
-                       symbolic.simplify(end + offset), 1))
+        ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
     return subsets.Range(ranges)
+
+
+def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
+    """Map a ``sym <cmp> arr[...]`` (or reversed) guard to a max/min WCR."""
+    try:
+        tree = ast.parse(cond.as_string, mode="eval").body
+    except (SyntaxError, TypeError, ValueError):
+        return None
+    if not isinstance(tree, ast.Compare) or len(tree.ops) != 1:
+        return None
+    op_type = type(tree.ops[0])
+    if op_type not in _CMP_GT and op_type not in _CMP_LT:
+        return None
+
+    def _is_target(n):
+        return isinstance(n, ast.Name) and n.id == target
+
+    def _is_array(n):
+        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == array)
+
+    left, right = tree.left, tree.comparators[0]
+    if _is_target(left) and _is_array(right):
+        array_on_left = False
+    elif _is_array(left) and _is_target(right):
+        array_on_left = True
+    else:
+        return None
+    is_gt = op_type in _CMP_GT
+    arr_is_larger = array_on_left == is_gt
+    return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
 def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
@@ -160,8 +195,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
         rhs = tree.body[0].value
         if isinstance(rhs, ast.BinOp):
             wcr = _BINOP_TO_WCR.get(type(rhs.op))
-        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name)
-              and len(rhs.args) == 2):
+        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
             wcr = _CALL_TO_WCR.get(rhs.func.id)
         else:
             wcr = None
@@ -198,8 +232,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
                 return None
             if desc.transient and len(state.in_edges(src)) == 1 and len(state.out_edges(src)) == 1:
                 pred = state.in_edges(src)[0]
-                if (not isinstance(pred.src, nodes.AccessNode)
-                        or pred.data is None or pred.data.subset is None
+                if (not isinstance(pred.src, nodes.AccessNode) or pred.data is None or pred.data.subset is None
                         or _one_elem(e.data.subset) != _one_elem(pred.data.subset)):
                     return None
                 resolved.append((pred.src.data, _copy.deepcopy(pred.data.subset)))
@@ -213,9 +246,8 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif _one_elem(sub) == 1 and (
-                    (name == accum and sub == write_subset)
-                    or (name != accum and _scalar_equiv(sdfg, name, accum))):
+            elif _one_elem(sub) == 1 and ((name == accum and sub == write_subset) or
+                                          (name != accum and _scalar_equiv(sdfg, name, accum))):
                 accum_ok = True
         if not accum_ok or array is None or array == accum:
             return None
@@ -225,21 +257,34 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
             return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
 
-    # Interstate-edge pattern: 2 empty states + 1 edge with 1 assignment.
+    # Interstate-edge pattern: 2 empty states + 1 edge with 1 assignment,
+    # either at loop level or inside a single-branch ConditionalBlock whose
+    # guard is a >/>=/</<= comparison between the accumulator and the array.
+    cond = None
+    body: ControlFlowRegion = loop
+    if len(blocks) == 1 and isinstance(blocks[0], ConditionalBlock):
+        cb = blocks[0]
+        if len(cb.branches) != 1:
+            return None
+        cond, body = cb.branches[0]
+        if cond is None:
+            return None
+        blocks = body.nodes()
+
     if len(blocks) == 2 and all(isinstance(b, SDFGState) for b in blocks):
         s1, s2 = blocks
         if s1.nodes() or s2.nodes():
             return None
-        edges = loop.edges()
+        edges = body.edges()
         if len(edges) != 1:
             return None
-        (edge,) = edges
+        (edge, ) = edges
         if {edge.src, edge.dst} != {s1, s2}:
             return None
         assignments = edge.data.assignments or {}
         if len(assignments) != 1:
             return None
-        ((target, expr_str),) = assignments.items()
+        ((target, expr_str), ) = assignments.items()
         # Interstate-edge assignment targets are always DaCe symbols.
         if target not in sdfg.symbols:
             return None
@@ -250,26 +295,35 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
             return None
 
         # ``pystr_to_symbolic`` renders ``B[i]`` as a sympy ``Function("B")(i)``.
-        # Top-level op must be a 2-arg commutative reduction.
-        if isinstance(expr, sympy.Add) and len(expr.args) == 2:
-            wcr = "lambda a, b: a + b"
-        elif isinstance(expr, sympy.Mul) and len(expr.args) == 2:
-            wcr = "lambda a, b: a * b"
-        else:
-            return None
-
-        target_sym = symbolic.pystr_to_symbolic(target)
-        arr_call = None
-        other = None
-        for arg in expr.args:
-            if isinstance(arg, sympy.Function) and str(arg.func) in sdfg.arrays:
-                if arr_call is not None:
-                    return None
-                arr_call = arg
+        if cond is None:
+            # Top-level op must be a 2-arg commutative reduction.
+            if isinstance(expr, sympy.Add) and len(expr.args) == 2:
+                wcr = "lambda a, b: a + b"
+            elif isinstance(expr, sympy.Mul) and len(expr.args) == 2:
+                wcr = "lambda a, b: a * b"
             else:
-                other = arg
-        if arr_call is None or other != target_sym:
-            return None
+                return None
+
+            target_sym = symbolic.pystr_to_symbolic(target)
+            arr_call = None
+            other = None
+            for arg in expr.args:
+                if isinstance(arg, sympy.Function) and str(arg.func) in sdfg.arrays:
+                    if arr_call is not None:
+                        return None
+                    arr_call = arg
+                else:
+                    other = arg
+            if arr_call is None or other != target_sym:
+                return None
+        else:
+            # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
+            if not (isinstance(expr, sympy.Function) and str(expr.func) in sdfg.arrays):
+                return None
+            arr_call = expr
+            wcr = _cmp_to_wcr(cond, target, str(arr_call.func))
+            if wcr is None:
+                return None
 
         array = str(arr_call.func)
         if len(sdfg.arrays[array].shape) != 1 or len(arr_call.args) != 1:
@@ -283,8 +337,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
             accum=target,
             accum_subset=subsets.Range([(0, 0, 1)]),
             array=array,
-            array_subset=subsets.Range([(symbolic.simplify(start + offset),
-                                         symbolic.simplify(end + offset), 1)]),
+            array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1)]),
         )
 
     return None
@@ -311,14 +364,14 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     else:
         tmp_name, _ = root.add_scalar(f"_red_tmp_{info.accum}",
                                       dtype=root.symbols[info.accum],
-                                      transient=True, find_new_name=True)
+                                      transient=True,
+                                      find_new_name=True)
         init_state = parent.add_state(loop.label + "_init", is_start_block=was_start)
         red_state = parent.add_state(loop.label + "_reduce")
         parent.add_edge(init_state, red_state, dace.InterstateEdge())
         seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
         init_state.add_edge(seed, "_out", init_state.add_write(tmp_name), None,
-                            mm.Memlet(data=tmp_name,
-                                      subset=subsets.Range([(0, 0, 1)])))
+                            mm.Memlet(data=tmp_name, subset=subsets.Range([(0, 0, 1)])))
         entry = init_state
         dest_name = tmp_name
         dest_subset = subsets.Range([(0, 0, 1)])
@@ -330,16 +383,11 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
         assigns = dict(e.data.assignments or {})
         assigns.update(extra_assignments)
         cond = e.data.condition.as_string if e.data.condition is not None else "1"
-        parent.add_edge(red_state, e.dst,
-                        dace.InterstateEdge(condition=cond, assignments=assigns))
+        parent.add_edge(red_state, e.dst, dace.InterstateEdge(condition=cond, assignments=assigns))
     parent.remove_node(loop)
 
     arr = red_state.add_read(info.array)
     dst = red_state.add_write(dest_name)
-    red = red_state.add_reduce(info.wcr,
-                               axes=list(range(len(info.array_subset))),
-                               identity=None)
-    red_state.add_edge(arr, None, red, None,
-                       mm.Memlet(data=info.array, subset=info.array_subset))
-    red_state.add_edge(red, None, dst, None,
-                       mm.Memlet(data=dest_name, subset=dest_subset))
+    red = red_state.add_reduce(info.wcr, axes=list(range(len(info.array_subset))), identity=None)
+    red_state.add_edge(arr, None, red, None, mm.Memlet(data=info.array, subset=info.array_subset))
+    red_state.add_edge(red, None, dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
