@@ -1448,12 +1448,31 @@ class SDFG(ControlFlowRegion):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super()._used_symbols_internal(all_symbols=all_symbols,
-                                              keep_defined_in_mapping=keep_defined_in_mapping,
-                                              defined_syms=defined_syms,
-                                              free_syms=free_syms,
-                                              used_before_assignment=used_before_assignment,
-                                              with_contents=with_contents)
+        # Snapshot the set so super() can filter array names out of
+        # ``free_syms``; we re-extract them from internal references below.
+        result = super()._used_symbols_internal(all_symbols=all_symbols,
+                                                keep_defined_in_mapping=keep_defined_in_mapping,
+                                                defined_syms=defined_syms,
+                                                free_syms=free_syms,
+                                                used_before_assignment=used_before_assignment,
+                                                with_contents=with_contents)
+        # Expand array-descriptor stride/shape/offset symbols into the free
+        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
+        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
+        # out of the computed free-symbol set, causing
+        # ``generate_nsdfg_header`` to emit a nested function signature
+        # missing those symbols. ``A`` is in ``defined_syms`` (array names
+        # are always defined by the SDFG), so we walk every array descriptor
+        # unconditionally and union in its symbol dependencies.
+        res_free, res_defined, res_before = result
+        if with_contents:
+            for desc in self.arrays.values():
+                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
+            # Don't drag in symbols that are genuinely defined inside this
+            # SDFG (e.g., LoopRegion loop variables); keep only the ones
+            # outside ``defined_syms``.
+            res_free -= res_defined
+        return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """

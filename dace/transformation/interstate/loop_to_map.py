@@ -504,6 +504,21 @@ class LoopToMap(xf.MultiStateTransformation):
             w = body.add_write(name)
             body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
+        # Propagate free symbols referenced by nested array shapes/strides/offsets:
+        # ``copy.deepcopy`` of the descriptor carries the symbols verbatim, but they
+        # must be surfaced on the NestedSDFG node (``symbol_mapping``) and the
+        # nested SDFG's own symbol table, otherwise codegen for any nested construct
+        # (ConditionalBlock guards, memlet subsets flattened via strides) references
+        # symbols that are never declared in the emitted loop-body function.
+        for desc in nsdfg.arrays.values():
+            for sym in desc.free_symbols:
+                sym_name = str(sym)
+                if sym_name in sdfg.symbols:
+                    if sym_name not in nsdfg.symbols:
+                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
+                    if sym_name not in cnode.symbol_mapping:
+                        cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
+
         # Fix SDFG symbols
         for sym in sdfg.free_symbols - fsymbols:
             if sym in sdfg.symbols:
@@ -683,8 +698,12 @@ class LoopToMap(xf.MultiStateTransformation):
         # Delete the loop and connected edges.
         graph.remove_node(self.loop)
 
-        # If this had made a variable a free symbol, we can remove it from the SDFG symbols
+        # If this had made a variable a free symbol, we can remove it from the SDFG symbols.
+        # Guard both branches with ``in sdfg.symbols`` -- the array-descriptor-symbol
+        # propagation above may have already cleared entries that were also free.
         for var in sdfg.free_symbols - fsymbols:
+            if var not in sdfg.symbols:
+                continue
             if sdfg.parent_nsdfg_node:
                 if var not in sdfg.parent_nsdfg_node.symbol_mapping:
                     sdfg.remove_symbol(var)
