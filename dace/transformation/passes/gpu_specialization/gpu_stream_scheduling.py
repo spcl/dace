@@ -18,13 +18,14 @@ _GPU_SIDE_STORAGES = frozenset({
 })
 
 
-def _is_gpu_copy_or_memset(node) -> bool:
+def _is_gpu_copy_or_memset(node, state: SDFGState, sdfg: SDFG) -> bool:
     """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU
     global or pinned host memory -- i.e. the nodes the GPU stream pipeline
     needs to wire a stream handle to.
     """
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage in _GPU_SIDE_STORAGES or node.dst_storage in _GPU_SIDE_STORAGES)
+        return (node.src_storage(state, sdfg) in _GPU_SIDE_STORAGES
+                or node.dst_storage(state, sdfg) in _GPU_SIDE_STORAGES)
     if isinstance(node, MemsetLibraryNode):
         # Memset has a single output; inspect its descriptor via the parent
         # state at detection time (see ``_requires_gpu_stream``).
@@ -35,37 +36,16 @@ def _is_gpu_copy_or_memset(node) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NaiveGPUStreamScheduler(ppl.Pass):
-    """
-    Assigns GPU streams to nodes and stores the assignments in a dictionary.
-    This can be useful for enabling asynchronous and parallel GPU computation using GPU streams.
+    """Assign backend GPU streams (CUDA/HIP) to nodes via weakly-connected-component grouping.
 
-    Strategy Overview:
-    ------------------
-    - GPU stream assignment is based on weakly connected components (WCCs) within each state.
-    - Nodes in the same WCC are assigned to the same stream.
-    - For top-level states (not within nested SDFGs), each new WCC starts on a new stream (starting from 0).
-    - In nested SDFGs:
-        * Stream assignment is inherited from the parent component,
-        * All internal components share the parent's stream.
-    - GPU stream IDs wrap around according to the `max_concurrent_streams` configuration.
+    Strategy:
 
-    Example:
-    --------
-    A state with the following independent chains:
-        K1 → K2
-        K3 → K4 → K5
-        K6
+    - Nodes in the same weakly connected component share one stream.
+    - Top-level states start each new component on a fresh stream (wrapping
+      according to ``compiler.cuda.max_concurrent_streams``).
+    - In nested SDFGs, all internal components inherit the parent component's stream.
 
-    would be scheduled as:
-        K1, K2     → stream 0
-        K3, K4, K5 → stream 1
-        K6         → stream 2
-
-    (assuming no limit on the number of concurrent streams)
-
-    Note:
-    -----
-    These refer to **backend GPU streams** (e.g., CUDA or HIP), not DaCe symbolic streams.
+    The streams here are backend GPU streams (CUDA/HIP), not DaCe symbolic streams.
     """
 
     def __init__(self):
@@ -83,21 +63,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[nodes.Node, int]:
-        """
-        Assigns GPU streams to nodes within the given SDFG.
-
-        Parameters
-        ----------
-        sdfg : SDFG
-            The top-level SDFG to process.
-        pipeline_results : Dict
-            Unused.
-
-        Returns
-        -------
-        Dict[nodes.Node, int]
-            A dictionary mapping each node to its assigned GPU stream.
-        """
+        """Return a dict mapping each node to its assigned GPU stream."""
         stream_assignments: Dict[nodes.Node, int] = dict()
         for state in sdfg.states():
             self._assign_gpu_streams_in_state(sdfg, False, state, stream_assignments, 0)
@@ -105,30 +71,17 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         return stream_assignments
 
     def _assign_gpu_streams_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState,
-                                     stream_assignments: Dict[nodes.Node, int], gpu_stream: int) -> None:
-        """
-        Assigns GPU streams to nodes in a single state.
+                                     stream_assignments: Dict[nodes.Node, int], gpu_stream: int):
+        """Assign GPU streams to nodes in a single state; updates ``stream_assignments`` in place.
 
-        If inside a nested SDFG, components inherit the parent's stream.
-        Otherwise, each connected component gets a different stream.
-        Nested SDFGs are processed recursively.
+        If inside a nested SDFG, components inherit the parent's stream. Otherwise each connected
+        component gets a different stream. Nested SDFGs are processed recursively.
 
-        Parameters
-        ----------
-        sdfg : SDFG
-            The SDFG containing the state.
-        in_nested_sdfg : bool
-            True if the state is in a nested SDFG.
-        state : SDFGState
-            The state to process.
-        stream_assignments : Dict[nodes.Node, int]
-            Mapping of nodes to assigned GPU streams (updated in-place).
-        gpu_stream : int
-            The current GPU stream ID.
-
-        Returns
-        -------
-        None
+        :param sdfg: the SDFG containing the state.
+        :param in_nested_sdfg: True when the state lives inside a nested SDFG.
+        :param state: the state to process.
+        :param stream_assignments: mapping updated in place.
+        :param gpu_stream: current GPU stream ID.
         """
         components = self._get_weakly_connected_nodes(state)
 
@@ -151,23 +104,10 @@ class NaiveGPUStreamScheduler(ppl.Pass):
                 gpu_stream = self._next_stream(gpu_stream)
 
     def _get_weakly_connected_nodes(self, graph: Graph) -> List[Set[NodeT]]:
-        """
-        Returns all weakly connected components in the given directed graph.
+        """Return the weakly connected components of ``graph`` (edge directions ignored).
 
         A weakly connected component is a maximal group of nodes such that each pair
         of nodes is connected by a path when ignoring edge directions.
-
-        Parameters
-        ----------
-        graph: Graph
-            A directed graph instance.
-
-        Returns
-        -------
-        List[Set[Node_T]]
-
-            A list containing sets of nodes, with each set corresponding to a weakly
-            connected component.
         """
         visited: Set[NodeT] = set()
         components: List[Set[NodeT]] = []
@@ -197,23 +137,11 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         return components
 
     def _next_stream(self, gpu_stream: int) -> int:
-        """
-        Compute the next CUDA stream index according to the concurrency configuration.
+        """Return the next stream index per the concurrency configuration.
 
-        Behavior depends on the configured max_concurrent_streams value:
-        - If 0: unlimited streams allowed, so increment the stream index by one.
-        - If -1: default setting, always return stream 0 (no concurrency).
-        - Otherwise: cycle through stream indices from 0 up to max_concurrent_streams - 1.
-
-        Parameters
-        ----------
-        gpu_stream : int
-            The current CUDA stream index.
-
-        Returns
-        -------
-        int
-            The next CUDA stream index based on the concurrency policy.
+        With ``max_concurrent_streams`` == ``0`` streams are unlimited (increment);
+        ``-1`` always returns stream 0 (no concurrency); otherwise cycle through
+        ``[0, max_concurrent_streams)``.
         """
         if self._max_concurrent_streams == 0:
             return gpu_stream + 1
@@ -223,27 +151,14 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             return (gpu_stream + 1) % self._max_concurrent_streams
 
     def _requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
-        """
-        Check whether a connected component in an SDFG state should be assigned
-        a GPU stream.
+        """Return True when ``component`` needs a GPU stream.
 
-        A component requires a GPU stream if it contains at least one of:
-        - An AccessNode with GPU global memory storage,
-        - A MapEntry scheduled on a GPU device,
-        - A ``CopyLibraryNode`` or ``MemsetLibraryNode`` touching GPU
-          storage (these lower to stream-bound memcpy/kernel launches).
+        A component requires a stream if it contains any of:
 
-        Parameters
-        ----------
-        state : SDFGState
-            The state containing the component.
-        component : Set[NodeT]
-            The set of nodes that form the connected component.
-
-        Returns
-        -------
-        bool
-            True if the component requires a GPU stream, False otherwise.
+        - an ``AccessNode`` with ``GPU_Global`` storage,
+        - a ``MapEntry`` scheduled on ``GPU_Device``,
+        - a ``CopyLibraryNode`` / ``MemsetLibraryNode`` touching GPU storage
+          (these lower to stream-bound memcpy / kernel launches).
         """
 
         def gpu_relevant(node, parent) -> bool:
@@ -253,7 +168,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             elif (isinstance(node, nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
                 return True
 
-            elif _is_gpu_copy_or_memset(node):
+            elif _is_gpu_copy_or_memset(node, parent, parent.sdfg):
                 return True
 
             return False

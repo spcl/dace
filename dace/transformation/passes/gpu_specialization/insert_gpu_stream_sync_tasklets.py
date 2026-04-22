@@ -77,8 +77,9 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             dst_in_kernel = is_within_schedule_types(state, dst, dtypes.GPU_SCHEDULES)
             return src_in_kernel and dst_in_kernel
 
-        def is_stream_bound_copy_or_memset(src):
-            return (_is_gpu_copy_or_memset(src) and COPY_MEMSET_STREAM_CONNECTOR in src.in_connectors)
+        def is_stream_bound_copy_or_memset(src, state):
+            return (_is_gpu_copy_or_memset(src, state, state.sdfg)
+                    and COPY_MEMSET_STREAM_CONNECTOR in src.in_connectors)
 
         sync_state: Dict[SDFGState, Set[int]] = {}
         sync_node: Dict[nodes.Node, SDFGState] = {}
@@ -108,7 +109,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             elif (is_kernel_exit(src) and is_gpu_global_accessnode(dst, state) and is_sink_node(dst, state)):
                 sync_state[state].add(stream_assignments[dst])
 
-            elif is_stream_bound_copy_or_memset(src):
+            elif is_stream_bound_copy_or_memset(src, state):
                 sync_state[state].add(stream_assignments[src])
 
             else:
@@ -140,7 +141,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
         return None
 
     def _insert_gpu_stream_sync_at_state_end(self, sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]],
-                                             stream_assignments: Dict[nodes.Node, int]) -> None:
+                                             stream_assignments: Dict[nodes.Node, int]):
         """
         Insert a single synchronization tasklet at the end of each state that
         requires it.  The tasklet reads every synchronized stream from the
