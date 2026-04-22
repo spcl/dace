@@ -9,8 +9,8 @@ import inspect
 import itertools
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple,
-                    Union, overload)
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
+                    overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -39,39 +39,22 @@ if TYPE_CHECKING:
 NodeT = Union[nd.Node, 'ControlFlowBlock']
 EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
 GraphT = Union['ControlFlowRegion', 'SDFGState']
-ConfigurableDebugInfo = Literal["config"] | dtypes.DebugInfo | None
 
 
-def _get_debug_info(
-    debug_info: ConfigurableDebugInfo,
-    default_lineinfo: dtypes.DebugInfo | None,
-) -> dtypes.DebugInfo | None:
+def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugInfo | None:
     """Returns a DebugInfo from the stack, if configured.
 
     If lineinfo is configured in the config, this function inspects the python
     stacktrace and returns a DebugInfo object for the position that called this
-    function. `default_lineinfo` has precedence, if given.
+    function. `explicit_lineinfo` has precedence, if given.
     """
+    if dace.Config.get("compiler", "lineinfo") == "none":
+        return None
 
-    if isinstance(debug_info, dtypes.DebugInfo):
-        warnings.warn(
-            "Passing debug_info of type DebugInfo is deprecated. Pass `'config'` and set `compiler.lineinfo` in your DaCe config.",
-            DeprecationWarning,
-            stacklevel=3)
-        return debug_info
+    if explicit_lineinfo is not None:
+        return explicit_lineinfo
 
-    if debug_info is None:
-        warnings.warn(
-            "Passing debug_info=None is deprecated. Pass `'config'` and set `compiler.lineinfo` in your DaCe config.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-    do_inspect = dace.Config.get("compiler", "lineinfo") == "inspect" if debug_info == "config" else False
-    if (debug_info is None or do_inspect) and default_lineinfo is not None:
-        return default_lineinfo
-
-    if do_inspect:
+    if dace.Config.get("compiler", "lineinfo") == "inspect":
         caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
         return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
@@ -1669,7 +1652,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :param debuginfo: Source line information for this access node.
             :return: An array access node.
         """
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
         node = nd.AccessNode(array_or_stream_name, debuginfo=debuginfo)
         self.add_node(node)
         return node
@@ -1690,7 +1673,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo: Optional[dtypes.DebugInfo] = None,
     ):
         """ Adds a tasklet to the SDFG state. """
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -1759,7 +1742,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         if name is None:
             name = sdfg.label
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         if sdfg is None and external_path is None:
             raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
@@ -1835,7 +1818,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             :return: (map_entry, map_exit) node 2-tuple
         """
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
         map = nd.Map(name, *_make_iterators(ndrange), schedule=schedule, unroll=unroll, debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
@@ -1873,7 +1856,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                             "(PE_index, num_PEs)")
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
         if condition is not None:
             condition = CodeBlock(condition, language)
         consume = nd.Consume(name, pe_tuple, condition, schedule, chunksize, debuginfo=debuginfo)
@@ -1932,7 +1915,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Create appropriate dictionaries from inputs
         tinputs = {k: None for k, v in inputs.items()}
@@ -2066,7 +2049,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :return: A Reduce node
         """
         import dace.libraries.standard as stdlib  # Avoid import loop
-        debuginfo = _get_debug_info("config", debuginfo or self._default_lineinfo)
+        debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
         result = stdlib.Reduce('Reduce', wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
