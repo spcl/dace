@@ -2,11 +2,10 @@
 from typing import Set, Tuple
 import re
 
-from dace import dtypes, SDFG, SDFGState, symbolic, properties, data as dt
+from dace import dtypes, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
-from dace.sdfg.state import StateSubgraphView
 
 
 @properties.make_properties
