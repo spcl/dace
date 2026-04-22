@@ -18,6 +18,8 @@ namespace hlfir_bridge {
 // --- Individual pass constructors ---
 std::unique_ptr<mlir::Pass> createPropagateShapesPass();
 std::unique_ptr<mlir::Pass> createInlineAllPass();
+std::unique_ptr<mlir::Pass> createFlattenStructsPass();
+
 // --- Registry ---
 
 /// Register every bridge pass with MLIR's global pass registry.

@@ -27,6 +27,8 @@ std::string traceToDecl(mlir::Value val, int max) {
             { val = c.getValue(); continue; }
         if (auto l = mlir::dyn_cast<fir::LoadOp>(d))
             { val = l.getMemref(); continue; }
+        if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d))
+            { val = co.getRef(); continue; }
         if (auto s = mlir::dyn_cast<mlir::arith::SelectOp>(d))
             { val = s.getTrueValue(); continue; }
         break;

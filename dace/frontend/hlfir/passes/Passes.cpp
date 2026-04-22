@@ -18,6 +18,9 @@ void registerAllBridgePasses() {
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createInlineAllPass();
     });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createFlattenStructsPass();
+    });
 }
 
 }  // namespace hlfir_bridge

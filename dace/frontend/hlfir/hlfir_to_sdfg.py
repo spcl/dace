@@ -52,11 +52,12 @@ from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes as nd
 from build_bridge import hb
 
-
 # The default pipeline run before AST/variable extraction.  Shape
 # propagation fills in assumed-shape (:,:) dummies with real Fortran
 # names wherever callers supplied them.
-DEFAULT_PIPELINE = "builtin.module(hlfir-inline-all,hlfir-propagate-shapes)"
+DEFAULT_PIPELINE = ("hlfir-inline-all,"
+                    "hlfir-flatten-structs,"
+                    "hlfir-propagate-shapes")
 
 
 class SDFGBuilder:
@@ -65,8 +66,8 @@ class SDFGBuilder:
     DTYPE = {
         'float64': dace.float64,
         'float32': dace.float32,
-        'int32':   dace.int32,
-        'int64':   dace.int64,
+        'int32': dace.int32,
+        'int64': dace.int64,
     }
 
     def __init__(self, hlfir_path: str, pipeline: str = DEFAULT_PIPELINE):
@@ -88,7 +89,7 @@ class SDFGBuilder:
 
         self.variables = self.module.get_variables()
         self.ast = self.module.get_ast()
-        self.arrays  = {v.fortran_name: v for v in self.variables if v.role == "array"}
+        self.arrays = {v.fortran_name: v for v in self.variables if v.role == "array"}
         self.symbols = {v.fortran_name: v for v in self.variables if v.role == "symbol"}
         self.scalars = {v.fortran_name: v for v in self.variables if v.role == "scalar"}
 
@@ -165,8 +166,8 @@ class SDFGBuilder:
 
     def _emit(self, ctx: '_Ctx', nodes: list, region):
         for n in nodes:
-            if   n.kind == "assign":      self._emit_assign(ctx, n, region)
-            elif n.kind == "loop":        self._emit_loop(ctx, n, region)
+            if n.kind == "assign": self._emit_assign(ctx, n, region)
+            elif n.kind == "loop": self._emit_loop(ctx, n, region)
             elif n.kind == "conditional": self._emit_cond(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
 
@@ -176,8 +177,7 @@ class SDFGBuilder:
             ctx.flush(self)
             ctx.ensure(region)
             dst = region.add_state(f"post_{n.target}_{self.nid()}")
-            region.add_edge(ctx.cur, dst,
-                            InterstateEdge(assignments={n.target: n.expr}))
+            region.add_edge(ctx.cur, dst, InterstateEdge(assignments={n.target: n.expr}))
             ctx.cur = dst
         elif not n.target_is_array:
             ctx.pending.append((n.target, n.expr))
@@ -208,7 +208,7 @@ class SDFGBuilder:
 
         # Cache .children once — nanobind copies on every access.
         children = n.children
-        child_loops   = [c for c in children if c.kind == "loop"]
+        child_loops = [c for c in children if c.kind == "loop"]
         child_assigns = [c for c in children if c.kind == "assign"]
 
         if child_loops:
@@ -226,7 +226,6 @@ class SDFGBuilder:
 
     def _emit_tasklet(self, state, assign_node, idx: int, iter_map: dict):
         """One Tasklet per array assignment."""
-        # Cache .accesses once.
         accesses = assign_node.accesses
 
         tokens = set(re.findall(r'[a-zA-Z_]\w*', assign_node.expr))
@@ -234,7 +233,7 @@ class SDFGBuilder:
         r_scl = tokens & set(self.scalars)
         target = assign_node.target
 
-        in_c  = {f"_in_{x}" for x in r_arr | r_scl}
+        in_c = {f"_in_{x}" for x in r_arr | r_scl}
         out_c = {f"_out_{target}"}
 
         # Rewrite: longest names first, to avoid partial matches.
@@ -246,28 +245,42 @@ class SDFGBuilder:
         t = state.add_tasklet(f"t_{idx}", in_c, out_c, code)
 
         for nm in sorted(r_arr):
-            r = state.add_access(nm)
+            r = self._acc(state, nm)
             ivars = self._get_index_vars(accesses, nm, is_read=True)
             ix = self._build_memlet_index(nm, ivars, iter_map)
             state.add_edge(r, None, t, f"_in_{nm}", Memlet(f"{nm}[{ix}]"))
 
         for sc in sorted(r_scl):
-            r = state.add_access(sc)
-            state.add_edge(r, None, t, f"_in_{sc}",
-                           Memlet(data=sc, subset="0"))
+            r = self._acc(state, sc)
+            state.add_edge(r, None, t, f"_in_{sc}", Memlet(data=sc, subset="0"))
 
-        w = state.add_access(target)
+        w = self._acc(state, target)
         ivars = self._get_index_vars(accesses, target, is_read=False)
         ix = self._build_memlet_index(target, ivars, iter_map)
-        state.add_edge(t, f"_out_{target}", w, None,
-                       Memlet(f"{target}[{ix}]"))
+        state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{target}[{ix}]"))
+
+    def _acc(self, state, name: str):
+        """Single access node for `name` in `state`, reused across reads/writes.
+
+        Without this, every tasklet in the same state would fabricate its own
+        disconnected access node, so a later read could not see the value
+        produced by an earlier write in the same state.
+        """
+        cache = getattr(state, '_hlfir_access', None)
+        if cache is None:
+            cache = {}
+            state._hlfir_access = cache
+        node = cache.get(name)
+        if node is None:
+            node = state.add_access(name)
+            cache[name] = node
+        return node
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_index_vars(self, accesses: list, array_name: str,
-                        is_read: bool) -> list:
+    def _get_index_vars(self, accesses: list, array_name: str, is_read: bool) -> list:
         for ac in accesses:
             if ac.array_name == array_name:
                 if is_read and ac.is_read:
@@ -279,8 +292,7 @@ class SDFGBuilder:
                 return ac.index_vars
         return []
 
-    def _build_memlet_index(self, array_name: str, index_vars: list,
-                            iter_map: dict) -> str:
+    def _build_memlet_index(self, array_name: str, index_vars: list, iter_map: dict) -> str:
         """Build a memlet subset, offsetting Fortran→DaCe indices."""
         arr = self.arrays.get(array_name)
         lbs = arr.lower_bounds if arr else []
@@ -311,16 +323,15 @@ class SDFGBuilder:
         ctx.flush(self)
 
     def emit_scalar_assign(self, state, target: str, value: str):
-        t = state.add_tasklet(f"set_{target}", set(), {'_out'},
-                              f"_out = {value}")
-        a = state.add_access(target)
-        state.add_edge(t, '_out', a, None,
-                       Memlet(data=target, subset='0'))
+        t = state.add_tasklet(f"set_{target}", set(), {'_out'}, f"_out = {value}")
+        a = self._acc(state, target)
+        state.add_edge(t, '_out', a, None, Memlet(data=target, subset='0'))
 
 
 # ======================================================================
 # Emission context
 # ======================================================================
+
 
 class _Ctx:
     """Tracks the current state and pending scalar assignments."""
@@ -358,6 +369,7 @@ class _Ctx:
 # ======================================================================
 # Public convenience
 # ======================================================================
+
 
 def generate_sdfg(path: str, pipeline: str = DEFAULT_PIPELINE) -> SDFG:
     """One-liner: parse HLFIR file → run passes → validated DaCe SDFG."""
