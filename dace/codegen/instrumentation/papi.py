@@ -153,7 +153,7 @@ int _papi_nevents = _papi_events.size();
         PAPI_start(_papi_event_sets[tid]);
     }}
 }}
-""".format(events=f"\"{'\", \"'.join(self._counters)}\"")
+""".format(events='"' + '", "'.join(self._counters) + '"')
             local_stream.write(counter_start_code)
 
         elif sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
