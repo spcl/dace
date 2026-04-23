@@ -44,21 +44,21 @@ def _resolve_minmax_subset(subset, itervar, start, step):
 
 
 def _check_range(subset, a, itersym, b, step, itervar=None, start=None):
+    def _endpoint_matches(expr):
+        if expr is None:
+            return False
+        try:
+            m = expr.match(a * itersym + b)
+        except AttributeError:
+            return False
+        if m is None:
+            return False
+        return (abs(m[a]) >= 1) == True
+
     def _match(s):
         for rb, re, _ in s.ndrange():
-            if rb != 0:
-                m = rb.match(a * itersym + b)
-                if m is None:
-                    continue
-                if (abs(m[a]) >= 1) != True:
-                    continue
-            else:
-                m = re.match(a * itersym + b)
-                if m is None:
-                    continue
-                if (abs(m[a]) >= 1) != True:
-                    continue
-            return True
+            if _endpoint_matches(rb) or _endpoint_matches(re):
+                return True
         return False
     if _match(subset):
         return True
