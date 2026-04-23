@@ -2471,6 +2471,63 @@ def test_s1161():
     assert len(branches) == 0
 
 
+def test_can_be_applied_on_top_level_and_nested_conditional():
+    """Pattern matching previously fired ``AssertionError`` in
+    ``BranchElimination.can_be_applied`` when enumerating matches across
+    a nested SDFG whose ``ConditionalBlock`` had a stale ``_sdfg``
+    attribute pointing to the outer SDFG -- an invariant sometimes left
+    behind by earlier transformations. The asserts were paranoia: the
+    bound ``self.conditional`` is already resolved correctly by
+    ``setup_match`` plus ``PatternNode.__get__``; the inconsistency just
+    means the match doesn't apply. Regression: applying the pass
+    repeatedly must not raise or log ``AssertionError`` warnings.
+    """
+    import io, contextlib
+
+    # Inner SDFG with a ConditionalBlock of its own.
+    inner = dace.SDFG("inner_with_if")
+    inner.add_symbol("ix", dace.int32)
+    inner_pre = inner.add_state("inner_pre", is_start_block=True)
+    inner_post = inner.add_state("inner_post")
+    inner_cb = ConditionalBlock("inner_cb")
+    inner.add_node(inner_cb)
+    inner_body = ControlFlowRegion("inner_body", sdfg=inner)
+    inner_body.add_state("in_true", is_start_block=True)
+    inner_cb.add_branch(CodeBlock("(ix == 1)"), inner_body)
+    inner.add_edge(inner_pre, inner_cb, InterstateEdge())
+    inner.add_edge(inner_cb, inner_post, InterstateEdge())
+
+    # Outer SDFG with its own ConditionalBlock, then a NestedSDFG carrying
+    # ``inner``.
+    outer = dace.SDFG("outer_with_if")
+    outer.add_symbol("ox", dace.int32)
+    outer.add_symbol("ix", dace.int32)
+    outer_pre = outer.add_state("outer_pre", is_start_block=True)
+    outer_post = outer.add_state("outer_post")
+    outer_cb = ConditionalBlock("outer_cb")
+    outer.add_node(outer_cb)
+    outer_body = ControlFlowRegion("outer_body", sdfg=outer)
+    outer_body.add_state("out_true", is_start_block=True)
+    outer_cb.add_branch(CodeBlock("(ox == 1)"), outer_body)
+    outer.add_edge(outer_pre, outer_cb, InterstateEdge())
+    outer.add_edge(outer_cb, outer_post, InterstateEdge())
+    outer_post.add_nested_sdfg(inner, set(), set(), symbol_mapping={"ix": "ix"})
+
+    # Reproduce the stale-``_sdfg`` state left behind by a transformation
+    # that moved ``inner_cb`` into the nested SDFG without fixing its
+    # parent pointers. Pattern matching will still resolve it via
+    # ``inner.cfg_list`` (because the block is in ``inner.nodes()``), but
+    # ``inner_cb.sdfg`` now answers with the outer SDFG instead of
+    # ``inner`` -- tripping the removed assertion.
+    inner_cb._sdfg = outer
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        outer.apply_transformations_repeated(branch_elimination.BranchElimination)
+    output = buf.getvalue()
+    assert "AssertionError" not in output, output
+
+
 if __name__ == "__main__":
     test_s1161()
     test_top_level_if()
@@ -2487,6 +2544,7 @@ if __name__ == "__main__":
     test_pattern_from_cloudsc_one(0.0)
     test_pattern_from_cloudsc_one(1.0)
     test_pattern_from_cloudsc_one(6.0)
+    test_can_be_applied_on_top_level_and_nested_conditional()
     test_condition_on_bounds()
     test_nested_if_two()
     test_disjoint_chain_split_branch_only(0.0)

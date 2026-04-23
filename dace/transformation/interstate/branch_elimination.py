@@ -708,10 +708,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         return False
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Works for if-else branches or only if branches
-        # Sanity checks for the sdfg and graph parameters
-        assert sdfg == self.conditional.sdfg
-        assert graph == self.conditional.parent_graph
+        # Works for if-else branches or only if branches. No need to
+        # assert ``sdfg``/``graph`` against ``self.conditional`` -- the
+        # pattern-matching framework has already bound the latter via
+        # ``setup_match`` / ``PatternNode.__get__``.
 
         if sdfg.parent_nsdfg_node is not None:
             if self.parent_nsdfg_state is None:

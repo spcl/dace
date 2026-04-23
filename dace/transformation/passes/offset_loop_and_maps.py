@@ -265,7 +265,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         repldict = dict()
                         multipliers = []
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self.do_not_check_begin is None or b == _get_expr_from_str(
+                            if self.do_not_check_begin or b == _get_expr_from_str(
                                     self.begin_expr) or str(b) == str(self.begin_expr):
                                 has_matches = True
 
@@ -295,7 +295,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             else:
                                 new_range_list.append((b, e, s))
 
-                        print(new_range_list)
                         if has_matches:
                             new_range = dace.subsets.Range(new_range_list)
                             state_node.map.range = new_range
