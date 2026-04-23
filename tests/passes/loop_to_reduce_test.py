@@ -308,8 +308,7 @@ def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1"):
     sdfg.add_symbol("tmp_call_13", dace.int32)
     sdfg.add_array("B", [N], dace.int32)
     pre = sdfg.add_state("pre", is_start_block=True)
-    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i",
-                      initialize_expr="i = 0", update_expr="i = i + 1")
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     cb = ConditionalBlock("cb")
