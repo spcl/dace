@@ -1,12 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 
 
 @dace.library.environment
-class CUDA:
+class CPU:
 
     cmake_minimum_version = None
-    cmake_packages = ["CUDA"]
+    cmake_packages = []
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = []
@@ -14,7 +14,7 @@ class CUDA:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["cuda_runtime.h"]}
+    headers = {'frame': ["cstring"]}
     state_fields = []
     init_code = ""
     finalize_code = ""
