@@ -212,6 +212,13 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             n.kind = "loop";
             n.loop_iter  = traceLoopIter(doLoop);
             n.loop_bound = traceToDecl(doLoop.getUpperBound());
+            if (n.loop_bound.empty()) {
+                // Literal integer upper bound (e.g. DO jk = 1, 10) — fall back
+                // to the constant value so downstream code doesn't see an
+                // empty string.
+                if (auto c = traceConstInt(doLoop.getUpperBound()))
+                    n.loop_bound = std::to_string(*c);
+            }
             n.loop_lower = traceLB(doLoop.getLowerBound());
             n.children   = buildAST(doLoop.getRegion().front());
             nodes.push_back(std::move(n));

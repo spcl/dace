@@ -57,7 +57,8 @@ from build_bridge import hb
 # names wherever callers supplied them.
 DEFAULT_PIPELINE = ("hlfir-inline-all,"
                     "hlfir-flatten-structs,"
-                    "hlfir-propagate-shapes")
+                    "hlfir-propagate-shapes,"
+                    "hlfir-default-intent")
 
 
 class SDFGBuilder:

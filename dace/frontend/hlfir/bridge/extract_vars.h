@@ -28,7 +28,6 @@ struct VarInfo {
     std::string fortran_name, mangled_name, intent, dtype;
     int rank = 0;
     bool is_dynamic = false;
-    bool is_dummy = false;  // subroutine dummy argument (declare has dummy_scope)
     std::vector<std::string> shape_symbols;
     std::vector<std::string> lower_bounds;
     std::string role;

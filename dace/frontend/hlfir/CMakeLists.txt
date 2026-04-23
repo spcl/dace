@@ -180,6 +180,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/PropagateShapes.cpp
     passes/InlineAll.cpp
     passes/FlattenStructs.cpp
+    passes/DefaultIntent.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core
