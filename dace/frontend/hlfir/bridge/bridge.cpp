@@ -211,6 +211,8 @@ NB_MODULE(hlfir_bridge, m) {
                 s += "))";
                 return s;
             }
+            if (n.kind == "break")  return std::string("Break()");
+            if (n.kind == "return") return std::string("Return()");
             return std::string("<") + n.kind + ">";
         });
 

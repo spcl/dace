@@ -230,6 +230,8 @@ class SDFGBuilder:
             elif n.kind == "copy": self._emit_copy(ctx, n, region)
             elif n.kind == "memset": self._emit_memset(ctx, n, region)
             elif n.kind == "libcall": self._emit_libcall(ctx, n, region)
+            elif n.kind == "break": self._emit_break(ctx, n, region)
+            elif n.kind == "return": self._emit_return(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
 
     def _emit_copy(self, ctx: '_Ctx', n, region):
@@ -252,6 +254,35 @@ class SDFGBuilder:
         tgt_access = self._acc(state, tgt_name)
         state.add_edge(src_access, None, cp, "_in", Memlet.from_array(src_name, src_desc))
         state.add_edge(cp, "_out", tgt_access, None, Memlet.from_array(tgt_name, tgt_desc))
+
+    def _emit_break(self, ctx: '_Ctx', n, region):
+        """Fortran ``EXIT`` → ``BreakBlock`` added to the current region.
+        The block is a leaf and implicitly transfers control to the
+        nearest enclosing loop's exit edge at codegen time.  When the
+        break is the region's first block (a branch body whose only
+        statement is ``exit``), it becomes the region's start block."""
+        from dace.sdfg.state import BreakBlock
+        ctx.flush(self, region)
+        is_start = ctx.cur is None
+        blk = BreakBlock(f"break_{self.nid()}")
+        region.add_node(blk, is_start_block=is_start)
+        if ctx.cur is not None:
+            region.add_edge(ctx.cur, blk, InterstateEdge())
+        ctx.cur = blk
+
+    def _emit_return(self, ctx: '_Ctx', n, region):
+        """Fortran ``RETURN`` → ``ReturnBlock``.  Added to the current
+        region so RETURNs nested inside a loop or conditional get
+        placed correctly; codegen still emits a plain ``return`` that
+        bails out of the whole subroutine."""
+        from dace.sdfg.state import ReturnBlock
+        ctx.flush(self, region)
+        is_start = ctx.cur is None
+        blk = ReturnBlock(f"return_{self.nid()}")
+        region.add_node(blk, is_start_block=is_start)
+        if ctx.cur is not None:
+            region.add_edge(ctx.cur, blk, InterstateEdge())
+        ctx.cur = blk
 
     def _emit_memset(self, ctx: '_Ctx', n, region):
         """Scalar-zero → array fill → ``MemsetLibraryNode`` with a single

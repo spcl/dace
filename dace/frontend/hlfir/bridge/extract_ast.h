@@ -46,6 +46,12 @@ struct AccessInfo {
 ///   "libcall"     — target, callee ("matmul" / "transpose" /
 ///                   "dot_product"), call_args (1 or 2 source array
 ///                   names), target_is_array
+///   "break"       — Fortran EXIT (break out of the enclosing loop).
+///                   No payload — hlfir_to_sdfg emits a ``BreakBlock``
+///                   in the current region.
+///   "return"      — Fortran RETURN (exit the subroutine early).
+///                   No payload — hlfir_to_sdfg emits a ``ReturnBlock``
+///                   at SDFG top level.
 struct ASTNode {
     std::string kind;
 
