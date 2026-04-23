@@ -1448,28 +1448,43 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         read_write_map_1 = set(read_map_1.keys()).intersection(write_map_1.keys())
         datas_to_inspect = read_write_map_1.intersection(exchange_names)
         for data_to_inspect in datas_to_inspect:
-            # Now get all subsets of the data container that the first Map reads
-            #  from or writes to and check if they are pointwise.
-            all_subsets: List[subsets.Subset] = []
-            all_subsets.extend(
-                self.find_subsets(
-                    node=read_map_1[data_to_inspect],
-                    scope_node=first_map_entry,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=None,
-                ))
-            all_subsets.extend(
-                self.find_subsets(
-                    node=write_map_1[data_to_inspect],
-                    scope_node=first_map_exit,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=None,
-                ))
-            if not self.test_if_subsets_are_point_wise(all_subsets):
+            # Partition the first map's reads on this container into:
+            #   (a) "RMW" reads that intersect at least one write subset — these
+            #       must be pointwise with the writes (a[i] = f(a[i], ...)).
+            #   (b) "pass-through" reads disjoint from every write — these are
+            #       cells this map does not write but carries downstream; safe
+            #       because the intermediate AccessNode preserves their values
+            #       and no per-iteration overlap between consumer's read and
+            #       any producer write exists.
+            #
+            # `find_subsets` returns subsets one level below the scope
+            # connector, which are already propagated unions of all tasklet
+            # writes/reads. To distinguish pass-through vs RMW we need the
+            # per-tasklet precise subsets, so walk the memlet tree leaves.
+            def leaf_subsets(access_node: nodes.AccessNode,
+                             is_write: bool) -> List[subsets.Subset]:
+                out: List[subsets.Subset] = []
+                outer_edges = (state.in_edges(access_node) if is_write
+                               else state.out_edges(access_node))
+                for e in outer_edges:
+                    if e.data is None or e.data.data != access_node.data:
+                        continue
+                    for leaf in state.memlet_tree(e).leaves():
+                        sub = (leaf.data.dst_subset if is_write
+                               else leaf.data.src_subset) or leaf.data.subset
+                        if sub is not None:
+                            out.append(sub)
+                return out
+
+            write_subsets = leaf_subsets(write_map_1[data_to_inspect], is_write=True)
+            read_subsets = leaf_subsets(read_map_1[data_to_inspect], is_write=False)
+            rmw_reads: List[subsets.Subset] = []
+            for rs in read_subsets:
+                if any(rs.intersects(ws) for ws in write_subsets):
+                    rmw_reads.append(rs)
+            rmw_subsets = rmw_reads + list(write_subsets)
+            if rmw_subsets and not self.test_if_subsets_are_point_wise(rmw_subsets):
                 return True
-            del all_subsets
 
         # If there is no intersection between the input and output data, then we can
         #  we have nothing to check.
