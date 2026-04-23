@@ -203,9 +203,6 @@ end subroutine pick
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR frontend: scalar target reads an array element "
-        "(``s = d(2,1) + 1.0``) — emit_scalar_assign doesn't wire "
-        "array-element reads yet.")
 def test_ported_cond_array(tmp_path):
     """Port of ``cond_array_test``."""
     src = """
@@ -334,10 +331,6 @@ end subroutine fill_range
     np.testing.assert_array_equal(r_sdfg, r_ref)
 
 
-@_xfail("HLFIR frontend: scalar target with array-element read "
-        "(``temp = min(d(1), temp)``) — emit_scalar_assign doesn't wire "
-        "array-element reads yet.  Elementwise ``min`` on a whole array "
-        "works via hlfir.elemental (see elemwise_intrinsics_test).")
 def test_ported_min_intrinsic(tmp_path):
     """Port of ``tasklet_test``'s ``MIN`` intrinsic use."""
     src = """

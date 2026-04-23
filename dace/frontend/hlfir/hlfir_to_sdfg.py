@@ -50,7 +50,7 @@ import sys as _sys
 from pathlib import Path as _Path
 import dace
 from dace import SDFG, Memlet, InterstateEdge
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd
 from build_bridge import hb
 
@@ -81,6 +81,17 @@ DEFAULT_PIPELINE = (
     # exposes scalar member loads, lift-cf-to-scf makes IV
     # bounds visible).
     "sccp,canonicalize,cse")
+
+
+def _assign_reads_array(assign_node, arrays: dict) -> bool:
+    """True iff any ``accesses`` entry on ``assign_node`` is a read against an
+    array descriptor.  Used to promote a nominally-scalar assign (``s = d(i)
+    + 1``) onto the per-occurrence-connector tasklet path so the array read
+    gets a real memlet instead of a bare identifier in the code string."""
+    for ac in assign_node.accesses:
+        if ac.is_read and ac.array_name in arrays:
+            return True
+    return False
 
 
 class SDFGBuilder:
@@ -371,10 +382,17 @@ class SDFGBuilder:
     def _emit_assign(self, ctx: '_Ctx', n, region):
         """Scalar or symbol assignment.
 
-        Array-targeted assigns inside a structured flow (``if`` branch, ``while``
-        body, …) land on the current state as a tasklet; the loop-only
-        optimised path in ``_emit_loop`` keeps its flat ``body`` state for pure
-        array-assign DO bodies.
+        Routes by target kind:
+          * ``symbols``    → interstate-edge assignment that forces a new state.
+          * ``array``      → tasklet via ``_emit_tasklet`` with per-occurrence
+                             array-read connectors.
+          * ``scalar`` whose RHS reads an array element (``s = d(2,1) + 1.0``)
+                             → same tasklet path; the subscripted read needs a
+                             real memlet so the codegen sees a connector, not
+                             a bare array-pointer identifier.
+          * plain ``scalar`` (``i = i + 1``, ``c = 0.5``) → queued on
+                             ``ctx.pending`` for a flat ``emit_scalar_assign``
+                             tasklet at flush time.
         """
         if n.target in self.symbols:
             ctx.flush(self)
@@ -382,12 +400,13 @@ class SDFGBuilder:
             dst = region.add_state(f"post_{n.target}_{self.nid()}")
             region.add_edge(ctx.cur, dst, InterstateEdge(assignments={n.target: n.expr}))
             ctx.cur = dst
-        elif not n.target_is_array:
-            ctx.pending.append((n.target, n.expr))
-        else:
+            return
+        if n.target_is_array or _assign_reads_array(n, self.arrays):
             ctx.flush(self, region)
             ctx.ensure(region)
             self._emit_tasklet(ctx.cur, n, self.nid(), ctx.iter_map)
+            return
+        ctx.pending.append((n.target, n.expr))
 
     def _emit_loop(self, ctx: '_Ctx', n, region, iter_map=None):
         """Fortran DO loop → LoopRegion with exact Fortran bounds."""
@@ -524,10 +543,29 @@ class SDFGBuilder:
             r = self._acc(state, sc)
             state.add_edge(r, None, t, f"_in_{sc}", Memlet(data=sc, subset="0"))
 
-        w = self._acc(state, target)
-        ac = self._get_access(accesses, target, is_read=False)
-        ix = self._build_memlet_index(target, ac, iter_map, indirect_syms)
-        state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{target}[{ix}]"))
+        # Self-update detection: if the target name appears in any of this
+        # tasklet's read sets — as a scalar (``temp = min(d, temp)``) or as
+        # an array written in place (``d(1) = d(1) * 2.0``) — reusing the
+        # cached access node would close a cycle in this state.  Same
+        # applies when an earlier tasklet in the state already wrote to the
+        # target.  Allocate a fresh write node and refresh the cache so
+        # later reads in the state pick up the latest value.
+        cache = getattr(state, '_hlfir_access', None)
+        is_self_update = (target in r_scl or target in reads_by_name or (cache is not None and target in cache))
+        if is_self_update:
+            w = state.add_access(target)
+            if cache is not None:
+                cache[target] = w
+        else:
+            w = self._acc(state, target)
+
+        if target in self.scalars:
+            # Scalar target: no buildable index, subset is always element 0.
+            state.add_edge(t, f"_out_{target}", w, None, Memlet(data=target, subset="0"))
+        else:
+            ac = self._get_access(accesses, target, is_read=False)
+            ix = self._build_memlet_index(target, ac, iter_map, indirect_syms)
+            state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{target}[{ix}]"))
 
     def _acc(self, state, name: str):
         """Single access node for `name` in `state`, reused across reads/writes.
@@ -656,17 +694,20 @@ class SDFGBuilder:
         return ", ".join(parts)
 
     def _emit_cond(self, ctx: '_Ctx', n, region):
-        """``if (cond) then ... else ... end if`` → two branch states joined
-        by interstate edges.  The ``then`` edge carries ``cond``; the other
-        edge carries ``not (cond)``.  Both branches merge at a shared
-        post-state that becomes the new ``ctx.cur``.
+        """``if (cond) then ... else ... end if`` → ``ConditionalBlock`` with
+        a ``ControlFlowRegion`` per branch.
 
-        When ``else_children`` is empty we still emit the ``not (cond)``
-        edge (straight from the pre-state to the merge state) so the
-        interstate graph stays total — otherwise SDFG codegen would drop
-        the false branch on the floor.
+        The block itself is a single node in ``region``; subsequent statements
+        land in a fresh successor state wired from the block.  Each branch's
+        body lives in its own ``ControlFlowRegion``, populated through a
+        nested ``_emit`` dispatch so conditionals, loops, library-node calls
+        etc. all compose naturally.
+
+        A missing ``else`` is encoded as ``add_branch(None, empty_region)`` —
+        DaCe's codegen treats a ``None``-conditioned branch as the default
+        (``else``) arm.
         """
-        ctx.flush(self)
+        ctx.flush(self, region)
         ctx.ensure(region)
         pre = ctx.cur
 
@@ -676,38 +717,37 @@ class SDFGBuilder:
         for fname, uname in ctx.iter_map.items():
             cond = re.sub(rf'\b{re.escape(fname)}\b', uname, cond)
         # Scalars with intent land as size-1 Arrays on the SDFG signature,
-        # so referring to a bare name in an interstate condition would pick
-        # up the array pointer.  Subscript each one to read element 0.
+        # so referring to a bare name in a branch condition would pick up
+        # the array pointer.  Subscript each one to read element 0.
         for nm, v in self.scalars.items():
             if v.intent:
                 cond = re.sub(rf'\b{re.escape(nm)}\b', f"{nm}[0]", cond)
-        not_cond = f"not ({cond})"
 
-        end_state = region.add_state(f"if_end_{self.nid()}")
+        uid = self.nid()
+        cond_block = ConditionalBlock(f"if_{uid}")
+        region.add_node(cond_block, ensure_unique_name=True)
+        if pre is not None:
+            region.add_edge(pre, cond_block, InterstateEdge())
 
-        then_start = region.add_state(f"if_then_{self.nid()}")
-        region.add_edge(pre, then_start, InterstateEdge(condition=cond))
+        then_region = ControlFlowRegion(f"if_{uid}_then", sdfg=ctx.sdfg)
+        cond_block.add_branch(cond, then_region)
         then_ctx = _Ctx(ctx.sdfg, self)
         then_ctx.iter_map = ctx.iter_map
-        then_ctx.cur = then_start
-        self._emit(then_ctx, list(n.children), region)
-        then_ctx.flush(self, region)
-        region.add_edge(then_ctx.cur, end_state, InterstateEdge())
+        self._emit(then_ctx, list(n.children), then_region)
+        then_ctx.flush(self, then_region)
 
         else_children = list(n.else_children)
         if else_children:
-            else_start = region.add_state(f"if_else_{self.nid()}")
-            region.add_edge(pre, else_start, InterstateEdge(condition=not_cond))
+            else_region = ControlFlowRegion(f"if_{uid}_else", sdfg=ctx.sdfg)
+            cond_block.add_branch(None, else_region)
             else_ctx = _Ctx(ctx.sdfg, self)
             else_ctx.iter_map = ctx.iter_map
-            else_ctx.cur = else_start
-            self._emit(else_ctx, else_children, region)
-            else_ctx.flush(self, region)
-            region.add_edge(else_ctx.cur, end_state, InterstateEdge())
-        else:
-            region.add_edge(pre, end_state, InterstateEdge(condition=not_cond))
+            self._emit(else_ctx, else_children, else_region)
+            else_ctx.flush(self, else_region)
 
-        ctx.cur = end_state
+        # The ConditionalBlock is itself the "current" control-flow node;
+        # subsequent statements get a fresh state edge-connected to it.
+        ctx.cur = cond_block
 
     def emit_scalar_assign(self, state, target: str, value: str):
         """Tasklet for ``target = value`` on a scalar target.
@@ -774,9 +814,19 @@ class _Ctx:
         # SDFGState / LoopRegion define __len__ that returns 0 when empty,
         # so a freshly-created state is treated as falsy even though we
         # want to keep emitting into it.  Use explicit None checks.
+        from dace.sdfg.state import SDFGState
         if self.cur is None:
             r = self.sdfg if region is None else region
             self.cur = r.add_state(f"s_{self.builder.nid()}")
+            return
+        # After a ConditionalBlock (or any non-SDFGState control-flow block
+        # like a LoopRegion), the next emitter needs a fresh successor state
+        # wired from that block so tasklets / memlets have somewhere to land.
+        if not isinstance(self.cur, SDFGState):
+            r = self.sdfg if region is None else region
+            succ = r.add_state(f"s_{self.builder.nid()}")
+            r.add_edge(self.cur, succ, InterstateEdge())
+            self.cur = succ
 
     def flush(self, builder: SDFGBuilder, region=None):
         if not self.pending:
