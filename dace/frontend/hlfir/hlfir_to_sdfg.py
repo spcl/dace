@@ -217,6 +217,7 @@ class SDFGBuilder:
             elif n.kind == "reduce": self._emit_reduce(ctx, n, region)
             elif n.kind == "copy": self._emit_copy(ctx, n, region)
             elif n.kind == "memset": self._emit_memset(ctx, n, region)
+            elif n.kind == "libcall": self._emit_libcall(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
 
     def _emit_copy(self, ctx: '_Ctx', n, region):
@@ -257,6 +258,51 @@ class SDFGBuilder:
 
         tgt_access = self._acc(state, tgt_name)
         state.add_edge(ms, "_out", tgt_access, None, Memlet.from_array(tgt_name, tgt_desc))
+
+    # Per-node-class connector conventions (set via ``inputs=`` / ``outputs=``
+    # in each library node's ``__init__``).  Kept next to ``_emit_libcall``
+    # rather than on ``LibNodeIntrinsic`` because the names are a property
+    # of the DaCe node, not of the Fortran intrinsic.
+    _LIBCALL_CONNECTORS = {
+        "MatMul": (("_a", "_b"), "_c"),
+        "Dot": (("_x", "_y"), "_result"),
+        "Transpose": (("_inp", ), "_out"),
+    }
+
+    def _emit_libcall(self, ctx: '_Ctx', n, region):
+        """``target = matmul(a, b)`` / ``transpose(a)`` / ``dot_product(x, y)``
+        lowered to the matching DaCe library node.  ``MatMul`` specializes
+        internally (GEMM / GEMV / Dot) based on operand ranks, so we only
+        need one emission path for all three linalg intrinsics."""
+        import importlib
+        from dace.frontend.hlfir.intrinsics import libnode_spec
+
+        ctx.flush(self)
+        ctx.ensure(region)
+        state = ctx.cur
+
+        spec = libnode_spec(n.callee)
+        if spec is None:
+            raise RuntimeError(f"unregistered libnode intrinsic {n.callee!r}")
+        mod = importlib.import_module(f"dace.libraries.{spec.module}.nodes")
+        cls = getattr(mod, spec.node_cls)
+        in_conns, out_conn = self._LIBCALL_CONNECTORS[spec.node_cls]
+
+        # ``Transpose`` needs an explicit ``dtype`` so its expansion can
+        # produce the right element type; every other library node picks
+        # types up from the attached memlets.
+        tgt_desc = ctx.sdfg.arrays[n.target]
+        if spec.node_cls == "Transpose":
+            node = cls(f"{spec.name}_{n.target}_{self.nid()}", dtype=tgt_desc.dtype)
+        else:
+            node = cls(f"{spec.name}_{n.target}_{self.nid()}")
+        state.add_node(node)
+
+        for conn, src in zip(in_conns, n.call_args):
+            src_desc = ctx.sdfg.arrays[src]
+            state.add_edge(self._acc(state, src), None, node, conn, Memlet.from_array(src, src_desc))
+
+        state.add_edge(node, out_conn, self._acc(state, n.target), None, Memlet.from_array(n.target, tgt_desc))
 
     def _emit_reduce(self, ctx: '_Ctx', n, region):
         """``target = sum(src)`` (and product / minval / maxval) lowered as

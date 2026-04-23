@@ -43,6 +43,9 @@ struct AccessInfo {
 ///   "copy"        — target, reduce_src (source array name)
 ///   "memset"      — target (memset always writes zero today; the
 ///                   MemsetLibraryNode side is hard-coded for 0)
+///   "libcall"     — target, callee ("matmul" / "transpose" /
+///                   "dot_product"), call_args (1 or 2 source array
+///                   names), target_is_array
 struct ASTNode {
     std::string kind;
 

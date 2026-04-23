@@ -443,6 +443,29 @@ static ASTNode buildMemsetNode(hlfir::AssignOp assign) {
     return n;
 }
 
+/// ``target = matmul(a, b)`` / ``transpose(a)`` / ``dot_product(x, y)`` —
+/// the source of an hlfir.assign is a first-class hlfir linalg op.  Emit
+/// ``kind="libcall"`` so hlfir_to_sdfg can wire a ``blas.MatMul`` /
+/// ``standard.Transpose`` / ``blas.Dot`` library node.
+static ASTNode buildLibCallNode(hlfir::AssignOp assign,
+                                mlir::Operation *srcOp,
+                                std::string_view callee) {
+    ASTNode n;
+    n.kind = "libcall";
+    n.callee = callee;
+
+    auto dest = assign.getOperand(1);
+    if (auto dd = dest.getDefiningOp())
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+            n.target = extractName(decl.getUniqName().str());
+    if (n.target.empty()) n.target = traceToDecl(dest);
+    n.target_is_array = isArrayRef(dest.getType());
+
+    for (auto operand : srcOp->getOperands())
+        n.call_args.push_back(traceToDecl(operand));
+    return n;
+}
+
 /// ``target = sum(a)`` / product / minval / maxval — one of the dedicated
 /// hlfir reduction ops appears as the source of an hlfir.assign.
 ///
@@ -783,6 +806,30 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                         nodes.push_back(std::move(n));
                     continue;
                 }
+                // Linear-algebra ops are first-class in HLFIR; each lowers
+                // to a dedicated DaCe library node.  MatMul's SpecializeMatMul
+                // handles matrix-matrix / matrix-vector / vector-matrix via
+                // operand rank, so we don't disambiguate here.
+                auto srcOpName = sd->getName().getStringRef();
+                struct LibEntry {
+                    llvm::StringRef op;
+                    llvm::StringRef callee;
+                };
+                static const LibEntry kLibTable[] = {
+                    {"hlfir.matmul",      "matmul"},
+                    {"hlfir.transpose",   "transpose"},
+                    {"hlfir.dot_product", "dot_product"},
+                };
+                bool libMatched = false;
+                for (auto &e : kLibTable) {
+                    if (srcOpName == e.op) {
+                        nodes.push_back(buildLibCallNode(assign, sd, e.callee.str()));
+                        libMatched = true;
+                        break;
+                    }
+                }
+                if (libMatched) continue;
+
                 // Scalar reductions land as their own dedicated op; pattern-
                 // match each one and hand the shared reduce-lowering helper
                 // the right wcr + identity.

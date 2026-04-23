@@ -1,18 +1,28 @@
-"""Linear-algebra intrinsics (MATMUL / TRANSPOSE / DOT_PRODUCT / FFT).
+"""Linear-algebra intrinsics (MATMUL / TRANSPOSE / DOT_PRODUCT).
 
-Phase 3 — each will emit a DaCe library node directly from the HLFIR op
-without going through a post-SDFG pattern match:
+Each one lowers to a dedicated DaCe library node:
 
-    hlfir.matmul       -> dace.libraries.blas.nodes.Matmul
-    hlfir.transpose    -> dace.libraries.standard.nodes.Transpose
-    hlfir.dot_product  -> dace.libraries.blas.nodes.Dot
-    fir.call(@fft_*)   -> dace.libraries.fft.nodes.FFT
+    hlfir.matmul       -> dace.libraries.blas.nodes.matmul.MatMul
+    hlfir.transpose    -> dace.libraries.standard.nodes.transpose.Transpose
+    hlfir.dot_product  -> dace.libraries.blas.nodes.dot.Dot
 
-Today this package only carries an empty ``LIBNODE_INTRINSICS`` registry
-so the top-level ``is_libnode`` helper can stay family-agnostic.
+The bridge classifies the op (callee string + operand names) and
+``hlfir_to_sdfg._emit_libcall`` does the actual ``add_node`` + connector
+wiring.  Connector names per node:
+
+    MatMul    inputs ``_a``, ``_b``  output ``_c``
+    Dot       inputs ``_x``, ``_y``  output ``_result``
+    Transpose input  ``_inp``        output ``_out``
 """
 from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import LibNodeIntrinsic
+from dace.frontend.hlfir.intrinsics.linalg.matmul import MATMUL
+from dace.frontend.hlfir.intrinsics.linalg.transpose import TRANSPOSE
+from dace.frontend.hlfir.intrinsics.linalg.dot_product import DOT_PRODUCT
 
-LIBNODE_INTRINSICS: dict[str, LibNodeIntrinsic] = {}
+LIBNODE_INTRINSICS: dict[str, LibNodeIntrinsic] = {
+    **MATMUL,
+    **TRANSPOSE,
+    **DOT_PRODUCT,
+}

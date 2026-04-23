@@ -54,3 +54,8 @@ def render_call(name: str, args: list[str]) -> str:
 def reduction_spec(name: str):
     """Return the ``ReductionIntrinsic`` for ``name`` or ``None``."""
     return REDUCTION_INTRINSICS.get(name)
+
+
+def libnode_spec(name: str):
+    """Return the ``LibNodeIntrinsic`` for ``name`` or ``None``."""
+    return LIBNODE_INTRINSICS.get(name)

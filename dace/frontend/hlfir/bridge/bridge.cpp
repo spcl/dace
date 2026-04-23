@@ -202,6 +202,15 @@ NB_MODULE(hlfir_bridge, m) {
                 return std::string("Copy(") + n.target + " <- " + n.reduce_src + ")";
             if (n.kind == "memset")
                 return std::string("Memset(") + n.target + ")";
+            if (n.kind == "libcall") {
+                std::string s = "LibCall(" + n.target + " = " + n.callee + "(";
+                for (size_t i = 0; i < n.call_args.size(); ++i) {
+                    if (i) s += ", ";
+                    s += n.call_args[i];
+                }
+                s += "))";
+                return s;
+            }
             return std::string("<") + n.kind + ">";
         });
 
