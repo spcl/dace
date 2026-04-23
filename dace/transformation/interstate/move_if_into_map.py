@@ -71,8 +71,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return non_empty[0]
 
     @staticmethod
-    def _find_inner_map_pieces(
-            branch_state: SDFGState) -> Optional[Tuple[MapEntry, MapExit, NestedSDFG]]:
+    def _find_inner_map_pieces(branch_state: SDFGState) -> Optional[Tuple[MapEntry, MapExit, NestedSDFG]]:
         """Returns (map_entry, map_exit, inner_nsdfg) if ``branch_state`` has
         exactly one top-level map whose body is a single NestedSDFG (with
         access-node taps allowed around it)."""
@@ -196,8 +195,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 inner_sdfg.add_datadesc(arr_name, desc)
             if arr_name not in inner_nsdfg.in_connectors:
                 inner_nsdfg.add_in_connector(arr_name)
-            piped_array_shape_syms.update(
-                str(s) for s in enclosing_sdfg.arrays[arr_name].free_symbols)
+            piped_array_shape_syms.update(str(s) for s in enclosing_sdfg.arrays[arr_name].free_symbols)
 
         # Pipe free symbols that the condition and moved RHS expressions
         # reference. Skip any names that now live as data descriptors OR
@@ -235,8 +233,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             copy_mapping[b] = new_b
             new_body_cfr.add_node(new_b, is_start_block=(b is original_start))
         for e in inner_sdfg.edges():
-            new_body_cfr.add_edge(copy_mapping[e.src], copy_mapping[e.dst],
-                                  copy.deepcopy(e.data))
+            new_body_cfr.add_edge(copy_mapping[e.src], copy_mapping[e.dst], copy.deepcopy(e.data))
 
         new_cond_block = ConditionalBlock(label=f"{cond_block.label}_moved")
         new_cond_block.add_branch(CodeBlock(branch_cond.as_string), new_body_cfr)
@@ -248,8 +245,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # materialises them via an interstate edge to ``new_cond_block``.
         if moved_assignments:
             inner_pre = inner_sdfg.add_state(f"{cond_block.label}_materialize")
-            inner_sdfg.add_edge(inner_pre, new_cond_block,
-                                InterstateEdge(assignments=dict(moved_assignments)))
+            inner_sdfg.add_edge(inner_pre, new_cond_block, InterstateEdge(assignments=dict(moved_assignments)))
             inner_sdfg.start_block = inner_sdfg.node_id(inner_pre)
 
         new_branch_state = copy.deepcopy(branch_state)
@@ -268,12 +264,10 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 if "OUT_" + arr_name not in copied_entry.out_connectors:
                     copied_entry.add_out_connector("OUT_" + arr_name)
                 arr_read = new_branch_state.add_read(arr_name)
-                new_branch_state.add_edge(
-                    arr_read, None, copied_entry, "IN_" + arr_name,
-                    mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
-                new_branch_state.add_edge(
-                    copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
-                    mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+                new_branch_state.add_edge(arr_read, None, copied_entry, "IN_" + arr_name,
+                                          mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+                new_branch_state.add_edge(copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
+                                          mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
 
         out_edges = list(enclosing_sdfg.out_edges(cond_block))
         was_start = enclosing_sdfg.start_block is cond_block
@@ -341,8 +335,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         # Drop empty placeholder pre-states that are no longer reachable.
         for s in states_to_try_remove:
-            if (s in enclosing_sdfg.nodes() and s.is_empty()
-                    and enclosing_sdfg.in_degree(s) == 0
+            if (s in enclosing_sdfg.nodes() and s.is_empty() and enclosing_sdfg.in_degree(s) == 0
                     and enclosing_sdfg.out_degree(s) == 0):
                 was_start_src = enclosing_sdfg.start_block is s
                 enclosing_sdfg.remove_node(s)
