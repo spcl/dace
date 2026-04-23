@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from dace import data
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
+from dace.frontend.python.schedule_tree.dunder_support import (rewrite_augassign, rewrite_subscript_assignment,
+                                                               rewrite_subscript_delete, rewrite_sugared_expression)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 
 _CALLBACK_REASON_ATTR = '_schedule_tree_callback_reason'
@@ -83,6 +85,12 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                 self._raise_dynamic_sdfg_error(ex.node)
             return self._mark_callback(node, 'call expansion')
 
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Subscript):
+            rewritten = rewrite_subscript_assignment(node.targets[0], node.value, self.callable_resolver)
+            if rewritten is not None:
+                self._invalidate_targets(node.targets)
+                return self.visit(rewritten)
+
         if len(node.targets) == 1 and self._has_starred_target(node.targets[0]):
             expanded = self._expand_starred_assignment(node.targets[0], node.value)
             if expanded is None:
@@ -115,6 +123,11 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         return node
 
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        rewritten = rewrite_augassign(node.target, node.op, node.value, self.callable_resolver)
+        if rewritten is not None:
+            self._invalidate_target(node.target)
+            return self.visit(rewritten)
+
         try:
             node.value = self._rewrite_expression(node.value)
         except _DynamicExpansionError as ex:
@@ -122,6 +135,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             if ex.is_sdfg_call:
                 self._raise_dynamic_sdfg_error(ex.node)
             return self._mark_callback(node, 'call expansion')
+
         self._invalidate_target(node.target)
         return node
 
@@ -233,6 +247,15 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             handler.body = self._rewrite_nested_body(handler.body)
         return node
 
+    def visit_Delete(self, node: ast.Delete) -> ast.AST:
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Subscript):
+            return node
+        rewritten = rewrite_subscript_delete(node.targets[0], self.callable_resolver)
+        if rewritten is None:
+            return node
+        self._invalidate_targets(node.targets)
+        return self.visit(rewritten)
+
     def _rewrite_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
         result: List[ast.stmt] = []
         for statement in body:
@@ -286,12 +309,35 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
 
             def visit_Call(self, call_node: ast.Call) -> ast.AST:
                 call_node = self.generic_visit(call_node)
+                rewritten = rewrite_sugared_expression(call_node, outer.callable_resolver)
+                if rewritten is not None:
+                    call_node = self.visit(rewritten)
                 if not outer._is_expanded_call(call_node):
                     return call_node
                 expanded = outer._expand_call_if_static(call_node)
                 if expanded is not None:
                     return expanded
                 raise _DynamicExpansionError(call_node, is_sdfg_call=outer.callable_resolver.is_sdfg_call(call_node))
+
+            def visit_BinOp(self, expr_node: ast.BinOp) -> ast.AST:
+                expr_node = self.generic_visit(expr_node)
+                rewritten = rewrite_sugared_expression(expr_node, outer.callable_resolver)
+                return rewritten if rewritten is not None else expr_node
+
+            def visit_UnaryOp(self, expr_node: ast.UnaryOp) -> ast.AST:
+                expr_node = self.generic_visit(expr_node)
+                rewritten = rewrite_sugared_expression(expr_node, outer.callable_resolver)
+                return rewritten if rewritten is not None else expr_node
+
+            def visit_Compare(self, expr_node: ast.Compare) -> ast.AST:
+                expr_node = self.generic_visit(expr_node)
+                rewritten = rewrite_sugared_expression(expr_node, outer.callable_resolver)
+                return rewritten if rewritten is not None else expr_node
+
+            def visit_Subscript(self, expr_node: ast.Subscript) -> ast.AST:
+                expr_node = self.generic_visit(expr_node)
+                rewritten = rewrite_sugared_expression(expr_node, outer.callable_resolver)
+                return rewritten if rewritten is not None else expr_node
 
         return _ExpressionRewriter().visit(copy.deepcopy(node))
 

@@ -273,6 +273,66 @@ def test_python_frontend_schedule_tree_external_schedule_tree_convertible_call()
     assert isinstance(stree.children[3], tn.ReturnNode)
 
 
+def test_python_frontend_schedule_tree_callable_object_call_is_inlined():
+
+    class CallableObject:
+
+        def __call__(self, A: dace.float64[8]):
+            return A + 1
+
+    callable_object = CallableObject()
+
+    @dace.program
+    def outer(A: dace.float64[8]):
+        return callable_object(A)
+
+    stree = outer.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.FunctionCallScope)
+    assert stree.children[0].call.callee_name == '__call__'
+    assert stree.children[0].call.arguments == {'A': 'A'}
+    assert isinstance(stree.children[1], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_parseable_free_function_call_is_inlined():
+
+    def callee(A: dace.float64[8]):
+        return A + 1
+
+    @dace.program
+    def outer(A: dace.float64[8]):
+        return callee(A)
+
+    stree = outer.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.FunctionCallScope)
+    assert stree.children[0].call.callee_name == 'callee'
+    assert stree.children[0].call.arguments == {'A': 'A'}
+    assert isinstance(stree.children[1], tn.ReturnNode)
+
+
+def test_python_frontend_schedule_tree_dunder_add_is_inlined():
+
+    class Adder:
+
+        @dace.method
+        def __add__(self, A: dace.float64[8]):
+            return A + 1
+
+    adder = Adder()
+
+    @dace.program
+    def outer(A: dace.float64[8]):
+        return adder + A
+
+    stree = outer.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.FunctionCallScope)
+    assert stree.children[0].call.callee_name == '__add__'
+    assert stree.children[0].call.arguments == {'A': 'A'}
+    assert isinstance(stree.children[1], tn.ReturnNode)
+
+
 def test_python_frontend_schedule_tree_sdfg_call_stays_opaque():
 
     @dace.program

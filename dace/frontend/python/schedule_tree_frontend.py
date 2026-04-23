@@ -2312,12 +2312,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._store_binding(name, descriptor, kind=_binding_kind_for_descriptor(descriptor))
         self.globals[name] = value
 
-        if callable(value):
+        if callable(value) and self.lambda_resolver.resolve_global_lambda_node(value) is None:
             self.callable_bindings[name] = value
 
         self.lambda_resolver.bind_value(name, value)
 
     def _update_callable_binding(self, name: str, value: ast.AST) -> None:
+        if self.lambda_resolver.resolve_known_lambda_node(value) is not None:
+            self.callable_bindings.pop(name, None)
+            return
         resolved = self.callable_resolver.resolve_known_callable(value)
         if resolved is None:
             self.callable_bindings.pop(name, None)
