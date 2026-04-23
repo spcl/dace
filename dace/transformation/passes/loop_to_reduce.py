@@ -25,6 +25,7 @@ import sympy
 
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.symbolic import AND, OR, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -38,6 +39,10 @@ _BINOP_TO_WCR: Dict[type, str] = {
     ast.BitAnd: "lambda a, b: a & b",
     ast.BitOr: "lambda a, b: a | b",
     ast.BitXor: "lambda a, b: a ^ b",
+}
+_BOOLOP_TO_WCR: Dict[type, str] = {
+    ast.Or: "lambda a, b: a | b",
+    ast.And: "lambda a, b: a & b",
 }
 _CALL_TO_WCR: Dict[str, str] = {
     "max": "lambda a, b: max(a, b)",
@@ -195,6 +200,8 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
         rhs = tree.body[0].value
         if isinstance(rhs, ast.BinOp):
             wcr = _BINOP_TO_WCR.get(type(rhs.op))
+        elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
+            wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
         elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
             wcr = _CALL_TO_WCR.get(rhs.func.id)
         else:
@@ -301,6 +308,10 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
                 wcr = "lambda a, b: a + b"
             elif isinstance(expr, sympy.Mul) and len(expr.args) == 2:
                 wcr = "lambda a, b: a * b"
+            elif isinstance(expr, (OR, bitwise_or)) and len(expr.args) == 2:
+                wcr = "lambda a, b: a | b"
+            elif isinstance(expr, (AND, bitwise_and)) and len(expr.args) == 2:
+                wcr = "lambda a, b: a & b"
             else:
                 return None
 
