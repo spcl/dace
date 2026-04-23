@@ -577,7 +577,7 @@ def test_python_frontend_schedule_tree_descriptor_setter_protocol_is_preserved()
         "out[:] = type(descriptor_holder).__dict__['arr'].__get__(descriptor_holder, type(descriptor_holder))")
 
 
-def test_python_frontend_schedule_tree_structure_scalar_field_assignment_warns_to_use_pythonclass():
+def test_python_frontend_schedule_tree_structure_scalar_field_assignment_errors_to_use_pythonclass():
 
     class Holder:
         scalar: dace.float64
@@ -590,15 +590,11 @@ def test_python_frontend_schedule_tree_structure_scalar_field_assignment_warns_t
         holder.scalar = A[0]
         holder.arr[:] = A[:]
 
-    with pytest.warns(UserWarning, match=r'non-array field "scalar".*PythonClass'):
-        stree = prog.to_schedule_tree()
-
-    assert isinstance(stree.children[0], tn.CopyNode)
-    assert stree.children[0].target == 'holder.scalar'
-    assert isinstance(stree.children[1], tn.CopyNode)
+    with pytest.raises(DaceSyntaxError, match=r'non-array field "scalar".*PythonClass'):
+        prog.to_schedule_tree()
 
 
-def test_python_frontend_schedule_tree_structure_new_field_assignment_warns_to_use_pythonclass():
+def test_python_frontend_schedule_tree_structure_new_field_assignment_errors_to_use_pythonclass():
 
     class Holder:
         arr: dace.float64[8]
@@ -610,12 +606,8 @@ def test_python_frontend_schedule_tree_structure_new_field_assignment_warns_to_u
         holder.new_field = A[0]
         holder.arr[:] = A[:]
 
-    with pytest.warns(UserWarning, match=r'Creating field "new_field".*PythonClass'):
-        stree = prog.to_schedule_tree()
-
-    assert isinstance(stree.children[0], tn.StatementNode)
-    assert stree.children[0].code.as_string == 'holder.new_field = A[0]'
-    assert isinstance(stree.children[1], tn.CopyNode)
+    with pytest.raises(DaceSyntaxError, match=r'Creating field "new_field".*PythonClass'):
+        prog.to_schedule_tree()
 
 
 def test_python_frontend_schedule_tree_direct_class_scalar_field_assignment_uses_pythonclass():
@@ -698,6 +690,81 @@ def test_python_frontend_schedule_tree_direct_class_nested_scalar_field_assignme
     assert isinstance(stree.containers['wrapper'], dace.data.pydata.PythonClass)
     assert isinstance(stree.children[0], tn.CopyNode)
     assert stree.children[0].target == 'wrapper.inner.scalar'
+
+
+def test_python_frontend_schedule_tree_structure_annotated_field_scalar_assignment_warns():
+
+    class Inner:
+        scalar: dace.float64
+        arr: dace.float64[8]
+
+    InnerStruct = dace.data.Structure.from_class(Inner)
+
+    class Outer:
+        inner: InnerStruct
+
+    @dace.program
+    def prog(wrapper: Outer, A: dace.float64[8]):
+        wrapper.inner.scalar = A[0]
+        wrapper.inner.arr[:] = A[:]
+
+    with pytest.warns(UserWarning, match=r'non-array field "scalar".*PythonClass'):
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['wrapper'], dace.data.Structure)
+    assert not isinstance(stree.containers['wrapper'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'wrapper.inner.scalar'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_structure_annotated_field_new_field_assignment_warns():
+
+    class Inner:
+        arr: dace.float64[8]
+
+    InnerStruct = dace.data.Structure.from_class(Inner)
+
+    class Outer:
+        inner: InnerStruct
+
+    @dace.program
+    def prog(wrapper: Outer, A: dace.float64[8]):
+        wrapper.inner.new_field = A[0]
+
+    with pytest.warns(UserWarning, match=r'Creating field "new_field".*PythonClass'):
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['wrapper'], dace.data.Structure)
+    assert not isinstance(stree.containers['wrapper'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.StatementNode)
+    assert stree.children[0].code.as_string == 'wrapper.inner.new_field = A[0]'
+
+
+def test_python_frontend_schedule_tree_nested_calls_propagate_pythonclass_to_top_level():
+
+    class Holder:
+        arr: dace.float64[8]
+
+    @dace.program
+    def leaf(holder: Holder, A: dace.float64[8]):
+        holder.new_field = A[0]
+
+    @dace.program
+    def mid(holder: Holder, A: dace.float64[8]):
+        leaf(holder, A)
+
+    @dace.program
+    def top(holder: Holder, A: dace.float64[8]):
+        mid(holder, A)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = top.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    call_scopes = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
+    assert [scope.call.callee_name for scope in call_scopes] == ['mid', 'leaf']
 
 
 def test_python_frontend_schedule_tree_direct_class_annotated_alias_scalar_field_assignment_uses_pythonclass():

@@ -18,7 +18,8 @@ from dace.frontend.python.schedule_tree.array_literal_support import infer_array
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.structure_support import bind_target_structure, descriptor_from_structure, \
-    member_descriptor, python_class_requirement_for_member_assignment
+    direct_class_annotation_type, member_descriptor, nested_direct_class_owner, \
+    python_class_requirement_for_member_assignment
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -461,11 +462,14 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         if python_class_requirement_for_member_assignment(owner_binding.descriptor, target.attr) is None:
             return
 
-        root_name = self._attribute_root_name(target.value)
-        if root_name is None:
+        root = self._attribute_root_and_members(target.value)
+        if root is None:
             return
+        root_name, member_names = root
         class_type = self.annotated_class_types.get(root_name)
         if class_type is None:
+            return
+        if nested_direct_class_owner(class_type, member_names) is None:
             return
 
         binding = self.bindings.get(root_name)
@@ -1094,13 +1098,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         if node is None:
             return None
         value = self._safe_eval(node, self._evaluation_context())
-        if not isinstance(value, type):
-            return None
-        try:
-            data.Structure.from_class(value)
-        except (TypeError, ValueError):
-            return None
-        return value
+        return direct_class_annotation_type(value)
 
     def _evaluate_descriptor(self, node: Optional[ast.AST]) -> Optional[data.Data]:
         if node is None:
@@ -1133,11 +1131,18 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 self.annotated_class_types[argument.arg] = class_type
 
     def _attribute_root_name(self, node: ast.AST) -> Optional[str]:
+        root = self._attribute_root_and_members(node)
+        return root[0] if root is not None else None
+
+    def _attribute_root_and_members(self, node: ast.AST) -> Optional[Tuple[str, List[str]]]:
         current = node
+        members: List[str] = []
         while isinstance(current, ast.Attribute):
+            members.append(current.attr)
             current = current.value
         if isinstance(current, ast.Name):
-            return current.id
+            members.reverse()
+            return current.id, members
         return None
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:

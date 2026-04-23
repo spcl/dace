@@ -19,6 +19,8 @@ from dace.frontend.python.schedule_tree.array_literal_support import ArrayLitera
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
 from dace.frontend.python.schedule_tree.structure_support import (descriptor_from_structure,
+                                                                  direct_class_annotation_type,
+                                                                  nested_direct_class_owner,
                                                                   python_class_requirement_for_member_assignment,
                                                                   resolve_member_access)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -395,6 +397,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.bindings: Dict[str, _Binding] = {}
         self.annotated_descriptors: Dict[str, data.Data] = {}
         self.annotated_class_types: Dict[str, type[Any]] = {}
+        self.explicit_structure_argument_names: set[str] = set()
         self.lambda_bindings: Dict[str, ast.Lambda] = {
             key: copy.deepcopy(value)
             for key, value in (lambda_bindings or {}).items()
@@ -1043,7 +1046,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                                         value,
                                                         materialize_root=False)
         if not self._ensure_pythonclass_for_direct_class_annotation(target):
-            self._warn_if_member_assignment_requires_python_class(target)
+            self._raise_or_warn_if_member_assignment_requires_python_class(target)
         self._update_dict_subscript_binding(target, value)
 
         source_access = self._resolve_data_access(value)
@@ -1065,7 +1068,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_assignment_statement(target, value))))
 
-    def _warn_if_member_assignment_requires_python_class(self, target: ast.AST) -> None:
+    def _raise_or_warn_if_member_assignment_requires_python_class(self, target: ast.AST) -> None:
         if not isinstance(target, ast.Attribute):
             return
 
@@ -1077,6 +1080,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         message = python_class_requirement_for_member_assignment(owner_descriptor, target.attr)
         if message is None:
             return
+
+        root_name = self._attribute_root_name(target.value)
+        if root_name in self.explicit_structure_argument_names:
+            raise DaceSyntaxError(self, target, message)
 
         warnings.warn(message, UserWarning, stacklevel=2)
 
@@ -1092,11 +1099,14 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if python_class_requirement_for_member_assignment(owner_descriptor, target.attr) is None:
             return False
 
-        root_name = self._attribute_root_name(target.value)
-        if root_name is None:
+        root = self._attribute_root_and_members(target.value)
+        if root is None:
             return False
+        root_name, member_names = root
         class_type = self.annotated_class_types.get(root_name)
         if class_type is None:
+            return False
+        if nested_direct_class_owner(class_type, member_names) is None:
             return False
 
         binding = self.bindings.get(root_name)
@@ -1112,11 +1122,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return True
 
     def _attribute_root_name(self, node: ast.AST) -> Optional[str]:
+        root = self._attribute_root_and_members(node)
+        return root[0] if root is not None else None
+
+    def _attribute_root_and_members(self, node: ast.AST) -> Optional[Tuple[str, List[str]]]:
         current = node
+        members: List[str] = []
         while isinstance(current, ast.Attribute):
+            members.append(current.attr)
             current = current.value
         if isinstance(current, ast.Name):
-            return current.id
+            members.reverse()
+            return current.id, members
         return None
 
     def _update_dict_subscript_binding(self, target: ast.AST, value: ast.AST) -> None:
@@ -1767,13 +1784,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             value = astutils.evalnode(node, self._evaluation_context())
         except Exception:
             return None
-        if not isinstance(value, type):
-            return None
-        try:
-            data.Structure.from_class(value)
-        except (TypeError, ValueError):
-            return None
-        return value
+        return direct_class_annotation_type(value)
 
     def _initialize_direct_class_annotations(self) -> None:
         program = self._program_node()
@@ -1784,9 +1795,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             arguments.append(program.args.kwarg)
 
         for argument in arguments:
+            descriptor = self._evaluate_descriptor(argument.annotation)
             class_type = self._evaluate_annotation_class_type(argument.annotation)
             if class_type is not None:
                 self.annotated_class_types[argument.arg] = class_type
+            elif isinstance(descriptor, data.Structure):
+                self.explicit_structure_argument_names.add(argument.arg)
 
     def _parse_shape(self, node: ast.AST) -> List[Any]:
         value = try_resolve_static_value(node, self._evaluation_context())

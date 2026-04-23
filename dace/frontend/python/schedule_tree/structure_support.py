@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -67,6 +68,41 @@ def resolve_member_access(base_name: str, descriptor: data.Data, member_name: st
     if member is None:
         return None
     return StructureMemberAccess(data_name=structure_member_path(base_name, member_name), descriptor=member)
+
+
+def direct_class_annotation_type(annotation: Any) -> Optional[type[Any]]:
+    if not isinstance(annotation, type):
+        return None
+    try:
+        data.Structure.from_class(annotation)
+    except (TypeError, ValueError):
+        return None
+    return annotation
+
+
+def nested_direct_class_owner(root_class_type: type[Any], member_names: Sequence[str]) -> Optional[type[Any]]:
+    current = direct_class_annotation_type(root_class_type)
+    if current is None:
+        return None
+
+    for member_name in member_names:
+        annotation = _class_member_annotation(current, member_name)
+        current = direct_class_annotation_type(annotation)
+        if current is None:
+            return None
+
+    return current
+
+
+def _class_member_annotation(class_type: type[Any], member_name: str) -> Any:
+    annotations = getattr(class_type, '__annotations__', {})
+    annotation = annotations.get(member_name)
+    if annotation is not None and not isinstance(annotation, str):
+        return annotation
+    try:
+        return inspect.get_annotations(class_type, eval_str=True).get(member_name)
+    except Exception:
+        return annotation
 
 
 def python_class_requirement_for_member_assignment(descriptor: data.Data, member_name: str) -> Optional[str]:

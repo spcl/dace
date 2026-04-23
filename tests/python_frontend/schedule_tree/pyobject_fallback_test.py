@@ -131,6 +131,24 @@ def test_schedule_tree_type_inference_direct_class_annotated_alias_scalar_rebind
     assert isinstance(bindings['alias'].descriptor, PythonClass)
 
 
+def test_schedule_tree_type_inference_direct_class_annotated_alias_new_field_uses_pythonclass():
+
+    class Holder:
+        arr: dace.float64[4]
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[4]):
+        alias: Holder = holder
+        alias.new_field = A[0]
+
+    bindings = _infer_schedule_tree_bindings(prog, {
+        'holder': dace.data.Structure.from_class(Holder),
+        'A': dace.float64[4]
+    })
+
+    assert isinstance(bindings['alias'].descriptor, PythonClass)
+
+
 def test_schedule_tree_type_inference_dict_same_key_update_widens_value_type():
 
     @dace.program

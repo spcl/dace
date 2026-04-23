@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import data
+from dace.data.pydata import PythonClass
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -182,7 +183,10 @@ def _inline_callee(scope: tn.FunctionCallScope, callee_tree: tn.ScheduleTreeRoot
     body = [renamer.visit(child) for child in body]
     body = [child for child in body if child is not None]
 
-    # 4. Merge callee transient containers and symbols into the caller.
+    # 4. Propagate callee argument descriptor upgrades back to the caller.
+    _propagate_argument_descriptor_updates(arguments, callee_tree, caller_root)
+
+    # 5. Merge callee transient containers and symbols into the caller.
     for cname, desc in callee_tree.containers.items():
         new_name = rename_map.get(cname, cname)
         if new_name not in caller_root.containers:
@@ -190,20 +194,32 @@ def _inline_callee(scope: tn.FunctionCallScope, callee_tree: tn.ScheduleTreeRoot
     for sname, stype in callee_tree.symbols.items():
         caller_root.symbols.setdefault(sname, stype)
 
-    # 5. Merge callee constants and callbacks.
+    # 6. Merge callee constants and callbacks.
     for cname, cval in callee_tree.constants.items():
         caller_root.constants.setdefault(cname, cval)
     for cbname, cbval in callee_tree.callback_mapping.items():
         caller_root.callback_mapping.setdefault(cbname, cbval)
 
-    # 6. Handle return values.
+    # 7. Handle return values.
     return_targets = getattr(scope, '_return_targets', None)
     body = _rewrite_returns(body, return_targets, rename_map)
 
-    # 7. Populate the scope.
+    # 8. Populate the scope.
     scope.children = body
     for child in body:
         child.parent = scope
+
+
+def _propagate_argument_descriptor_updates(arguments: Dict[str, str], callee_tree: tn.ScheduleTreeRoot,
+                                           caller_root: tn.ScheduleTreeRoot) -> None:
+    for callee_param, caller_expr in arguments.items():
+        callee_descriptor = callee_tree.containers.get(callee_param)
+        if not isinstance(callee_descriptor, PythonClass):
+            continue
+        caller_descriptor = caller_root.containers.get(caller_expr)
+        if caller_descriptor is None or isinstance(caller_descriptor, PythonClass):
+            continue
+        caller_root.containers[caller_expr] = copy.deepcopy(callee_descriptor)
 
 
 # -------------------------------------------------------------------- #
