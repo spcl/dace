@@ -516,7 +516,19 @@ class SDFGBuilder:
             r = self._acc(state, nm)
             state.add_edge(r, None, t, f"_in_{nm}", Memlet(data=nm, subset='0'))
 
-        a = self._acc(state, target)
+        # Self-update (``i = i + 1``): the read and write need DIFFERENT
+        # access nodes so the state remains a DAG — ``Access(i_read) →
+        # Tasklet → Access(i_write)`` instead of a cycle on one node.
+        # Plain ``i = 0`` still reuses the cached node.
+        if target in reads:
+            a = state.add_access(target)
+            # Refresh the cache so subsequent tasklets in the same state
+            # see this "latest" version when they read ``target``.
+            cache = getattr(state, '_hlfir_access', None)
+            if cache is not None:
+                cache[target] = a
+        else:
+            a = self._acc(state, target)
         state.add_edge(t, '_out', a, None, Memlet(data=target, subset='0'))
 
 
