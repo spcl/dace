@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import ReductionIntrinsic
 
-SCALAR_REDUCTIONS: dict[str, ReductionIntrinsic] = {
+REDUCTIONS: dict[str, ReductionIntrinsic] = {
     'sum':
     ReductionIntrinsic(name='sum', wcr='lambda a, b: a + b', identity='0'),
     'product':
