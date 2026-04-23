@@ -312,6 +312,15 @@ class OffsetLoopsAndMaps(ppl.Pass):
             if isinstance(node, ConditionalBlock):
                 for _, body in node.branches:
                     self._apply(body)
+            else:
+                assert isinstance(node, dace.SDFGState)
+                # Descend into NestedSDFGs so their maps/loops get
+                # offset too -- not just the ones at the enclosing
+                # SDFG's top level (e.g. loop bodies that ``LoopToMap``
+                # promoted into a ``loop_body`` nested SDFG).
+                for state_node in node.nodes():
+                    if isinstance(state_node, dace.nodes.NestedSDFG):
+                        self._apply(state_node.sdfg)
 
     def _split_expr_str_opt_rhs(self, expr_str: str, op_to_split: str) -> str:
         exprs = expr_str.split(op_to_split)
