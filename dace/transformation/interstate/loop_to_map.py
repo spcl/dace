@@ -19,24 +19,52 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
 
-def _check_range(subset, a, itersym, b, step):
-    found = False
-    for rb, re, _ in subset.ndrange():
-        if rb != 0:
-            m = rb.match(a * itersym + b)
-            if m is None:
-                continue
-            if (abs(m[a]) >= 1) != True:
-                continue
-        else:
-            m = re.match(a * itersym + b)
-            if m is None:
-                continue
-            if (abs(m[a]) >= 1) != True:
-                continue
-        found = True
-        break
-    return found
+def _resolve_minmax(expr, itervar, start, step):
+    """Resolve Min/Max using the loop reparameterization ik = start + step*delta, delta >= 0.
+    Safe no-op if expression is non-symbolic or step is unknown/zero.
+    """
+    if expr is None or not symbolic.issymbolic(expr) or step is None or step == 0:
+        return expr
+    try:
+        delta = symbolic.symbol('__l2m_delta', nonnegative=True, integer=True)
+        ik = symbolic.pystr_to_symbolic(itervar)
+        e = sp.sympify(expr).subs(ik, start + step * delta)
+        e = sp.simplify(e).subs(delta, (ik - start) / step)
+        return sp.simplify(e)
+    except Exception:
+        return expr
+
+
+def _resolve_minmax_subset(subset, itervar, start, step):
+    if itervar is None or start is None:
+        return subset
+    return subsets.Range([(_resolve_minmax(rb, itervar, start, step),
+                           _resolve_minmax(re, itervar, start, step),
+                           st) for rb, re, st in subset.ndrange()])
+
+
+def _check_range(subset, a, itersym, b, step, itervar=None, start=None):
+    def _match(s):
+        for rb, re, _ in s.ndrange():
+            if rb != 0:
+                m = rb.match(a * itersym + b)
+                if m is None:
+                    continue
+                if (abs(m[a]) >= 1) != True:
+                    continue
+            else:
+                m = re.match(a * itersym + b)
+                if m is None:
+                    continue
+                if (abs(m[a]) >= 1) != True:
+                    continue
+            return True
+        return False
+    if _match(subset):
+        return True
+    if itervar is not None and start is not None:
+        return _match(_resolve_minmax_subset(subset, itervar, start, step))
+    return False
 
 
 def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
@@ -181,7 +209,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)) and not permissive:
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, itervar, start)) and not permissive:
                                 print(
                                     f"Cannot apply: Write pattern check failed for {dn.data} - dst_subset={dst_subset}")
                                 return False
@@ -294,7 +322,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if (mmlt.dynamic and mmlt.src_subset.num_elements() != 1):
             # If pointers are involved, give up
             return False
-        if not _check_range(src_subset, a, itersym, b, step):
+        if not _check_range(src_subset, a, itersym, b, step, itervar, start):
             return False
 
         # Always use the source data container for the memlet test
