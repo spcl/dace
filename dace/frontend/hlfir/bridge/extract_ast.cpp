@@ -23,11 +23,57 @@
 namespace hlfir_bridge {
 
 // ---------------------------------------------------------------------------
+// Elemental index substitution stack
+// ---------------------------------------------------------------------------
+//
+// Flang-lowered ``hlfir.elemental`` bodies use the elemental's block
+// argument as the index operand of inner ``hlfir.designate`` ops — that
+// index has no ``hlfir.declare`` to trace back to, so traceToDecl returns
+// the empty string.  Before we walk an elemental body we push (blockArg,
+// syntheticName) pairs onto this stack so our index lookups can resolve
+// the block arg to the synthetic loop iter name the emitter will use.
+// Supports nesting (elementals composed via hlfir.apply) via LIFO search.
+
+namespace {
+std::vector<std::pair<mlir::Value, std::string>> &indexStack() {
+    static thread_local std::vector<std::pair<mlir::Value, std::string>> s;
+    return s;
+}
+
+std::string resolveIndex(mlir::Value idx) {
+    // Look up through fir.convert chains since the index might be wrapped.
+    mlir::Value cur = idx;
+    for (int i = 0; i < 6; ++i) {
+        for (auto it = indexStack().rbegin(); it != indexStack().rend(); ++it)
+            if (it->first == cur) return it->second;
+        if (auto *d = cur.getDefiningOp())
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
+                { cur = cv.getValue(); continue; }
+        break;
+    }
+    return traceToDecl(idx);
+}
+}  // namespace
+
+// ---------------------------------------------------------------------------
 // Expression reconstruction
 // ---------------------------------------------------------------------------
 
 /// Recursively build a Python-syntax expression string from an SSA value.
 /// Depth-limited to 30 to prevent infinite recursion on malformed IR.
+///
+/// Handles:
+///   * binary / unary arith ops (addf, mulf, subf, divf, addi, muli,
+///     negf, minimumf, maximumf)
+///   * elementwise math.* ops (math.sin, math.cos, math.sqrt, math.exp,
+///     math.log, math.log10, math.tan, math.sinh, math.cosh, math.tanh,
+///     math.absf, math.floor, math.ceil, math.erf, math.erfc, math.powf,
+///     math.atan, math.atan2, math.asin, math.acos) — emitted as a bare
+///     Python call so DaCe's tasklet codegen can resolve the name.
+///   * fir.load of hlfir.designate (named variable read)
+///   * arith.constant integer / float literals
+///   * fir.convert pass-through (numeric kind casts)
+///   * hlfir.apply / hlfir.elemental composition (inlined at index)
 static std::string buildExpr(mlir::Value val, int d = 0) {
     if (d > 30) return "?";
     auto *def = val.getDefiningOp();
@@ -35,19 +81,113 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
 
     auto nm = def->getName().getStringRef();
 
-    static const std::map<llvm::StringRef, std::string> ops = {
+    // Binary arithmetic.
+    static const std::map<llvm::StringRef, std::string> bin_ops = {
         {"arith.mulf", " * "}, {"arith.addf", " + "},
         {"arith.subf", " - "}, {"arith.divf", " / "},
         {"arith.muli", " * "}, {"arith.addi", " + "},
+        {"arith.subi", " - "}, {"arith.divsi", " // "}, {"arith.divui", " // "},
     };
-    auto it = ops.find(nm);
-    if (it != ops.end() && def->getNumOperands() == 2)
+    if (auto it = bin_ops.find(nm); it != bin_ops.end()
+            && def->getNumOperands() == 2) {
         return "(" + buildExpr(def->getOperand(0), d + 1)
                    + it->second
                    + buildExpr(def->getOperand(1), d + 1) + ")";
+    }
 
     if (nm == "arith.negf" && def->getNumOperands() == 1)
         return "(-" + buildExpr(def->getOperand(0), d + 1) + ")";
+
+    // Elementwise min / max — arith.minimumf / maximumf produce IEEE-min/max
+    // (NaN-propagating); arith.minnumf / maxnumf are the numeric variants.
+    static const std::map<llvm::StringRef, std::string> minmax_ops = {
+        {"arith.minimumf", "min"}, {"arith.maximumf", "max"},
+        {"arith.minnumf",  "min"}, {"arith.maxnumf",  "max"},
+        {"arith.minsi",    "min"}, {"arith.maxsi",    "max"},
+        {"arith.minui",    "min"}, {"arith.maxui",    "max"},
+    };
+    if (auto it = minmax_ops.find(nm); it != minmax_ops.end()
+            && def->getNumOperands() == 2) {
+        return it->second + "("
+             + buildExpr(def->getOperand(0), d + 1) + ", "
+             + buildExpr(def->getOperand(1), d + 1) + ")";
+    }
+
+    // Elementwise math intrinsics → bare Python names.  DaCe's tasklet
+    // codegen maps ``sin``/``cos``/... to ``dace::math::sin`` etc. via
+    // ``_ALLOWED_MODULES`` in ``dace/dtypes.py``.  The ``f`` suffix Flang
+    // uses (absf / powf / …) is stripped because the runtime wrappers
+    // overload on the operand's type.
+    static const std::map<llvm::StringRef, std::string> unary_math = {
+        {"math.sin",   "sin"},   {"math.cos",   "cos"},
+        {"math.tan",   "tan"},
+        {"math.asin",  "asin"},  {"math.acos",  "acos"},
+        {"math.atan",  "atan"},
+        {"math.sinh",  "sinh"},  {"math.cosh",  "cosh"},
+        {"math.tanh",  "tanh"},
+        {"math.exp",   "exp"},   {"math.log",   "log"},
+        {"math.log10", "log10"},
+        {"math.sqrt",  "sqrt"},
+        {"math.absf",  "abs"},   {"math.absi",  "abs"},
+        {"math.floor", "floor"}, {"math.ceil",  "ceil"},
+        {"math.erf",   "erf"},   {"math.erfc",  "erfc"},
+    };
+    if (auto it = unary_math.find(nm); it != unary_math.end()
+            && def->getNumOperands() == 1) {
+        return it->second + "("
+             + buildExpr(def->getOperand(0), d + 1) + ")";
+    }
+
+    static const std::map<llvm::StringRef, std::string> binary_math = {
+        {"math.powf",  "pow"}, {"math.ipowi", "pow"},
+        {"math.atan2", "atan2"},
+    };
+    if (auto it = binary_math.find(nm); it != binary_math.end()
+            && def->getNumOperands() == 2) {
+        return it->second + "("
+             + buildExpr(def->getOperand(0), d + 1) + ", "
+             + buildExpr(def->getOperand(1), d + 1) + ")";
+    }
+
+    // fir.convert is transparent at the expression level — Fortran type
+    // kind casts (i32 -> i64, f32 -> f64, i64 -> f64 …) don't survive into
+    // the tasklet code verbatim.
+    if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return buildExpr(conv.getValue(), d + 1);
+
+    // Scalar min / max idiom: Flang lowers ``min(a, b)`` on f32/f64 to
+    // ``arith.select(arith.cmpf olt, a, b)`` (and ``max`` via ``ogt``).
+    // Recognise that shape so the tasklet code gets a bare min/max call.
+    if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
+        auto *cdef = sel.getCondition().getDefiningOp();
+        if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpFOp>(cdef)) {
+            auto pred = cmp.getPredicate();
+            using P = mlir::arith::CmpFPredicate;
+            const char *fn = nullptr;
+            if (pred == P::OLT || pred == P::ULT) fn = "min";
+            else if (pred == P::OGT || pred == P::UGT) fn = "max";
+            if (fn && cmp.getLhs() == sel.getTrueValue()
+                   && cmp.getRhs() == sel.getFalseValue()) {
+                return std::string(fn) + "("
+                     + buildExpr(cmp.getLhs(), d + 1) + ", "
+                     + buildExpr(cmp.getRhs(), d + 1) + ")";
+            }
+        }
+        // Same idiom for integer min / max via arith.cmpi.
+        if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpIOp>(cdef)) {
+            auto pred = cmp.getPredicate();
+            using P = mlir::arith::CmpIPredicate;
+            const char *fn = nullptr;
+            if (pred == P::slt || pred == P::ult) fn = "min";
+            else if (pred == P::sgt || pred == P::ugt) fn = "max";
+            if (fn && cmp.getLhs() == sel.getTrueValue()
+                   && cmp.getRhs() == sel.getFalseValue()) {
+                return std::string(fn) + "("
+                     + buildExpr(cmp.getLhs(), d + 1) + ", "
+                     + buildExpr(cmp.getRhs(), d + 1) + ")";
+            }
+        }
+    }
 
     if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
         auto mem = ld.getMemref();
@@ -64,6 +204,43 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
         }
         if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
             return std::to_string(i.getInt());
+    }
+
+    // hlfir.apply %elem, %i — read one element of an hlfir.elemental expr
+    // at a given index.  Inline the referenced elemental's body at the
+    // apply site by mapping its block args to the apply's index operands
+    // via indexStack(), then recursing into the yield_element operand.
+    if (auto apply = mlir::dyn_cast<hlfir::ApplyOp>(def)) {
+        auto src = apply.getExpr();
+        if (auto *srcDef = src.getDefiningOp())
+            if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(srcDef)) {
+                auto &region = elem.getRegion();
+                if (!region.empty()) {
+                    auto &block = region.front();
+                    auto apply_idxs = apply.getIndices();
+                    unsigned pushed = 0;
+                    // Push the apply indices onto the index stack — as
+                    // synthetic names if we have them, otherwise pass the
+                    // Value through resolveIndex so callers see the same
+                    // iter names the outer elemental already set up.
+                    for (unsigned i = 0;
+                         i < block.getNumArguments() && i < apply_idxs.size();
+                         ++i) {
+                        auto name = resolveIndex(apply_idxs[i]);
+                        indexStack().push_back({block.getArgument(i), name});
+                        ++pushed;
+                    }
+                    std::string result = "?";
+                    for (auto &op : block)
+                        if (auto y = mlir::dyn_cast<hlfir::YieldElementOp>(op)) {
+                            result = buildExpr(y.getElementValue(), d + 1);
+                            break;
+                        }
+                    for (unsigned i = 0; i < pushed; ++i)
+                        indexStack().pop_back();
+                    return result;
+                }
+            }
     }
 
     return "?";
@@ -87,7 +264,8 @@ static std::string buildIndexExpr(mlir::Value v, int d = 0) {
         auto mem = ld.getMemref();
         if (auto *md = mem.getDefiningOp()) {
             if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(md)) {
-                auto arrName = traceToDecl(dg.getMemref());
+                auto arrName = resolveIndex(dg.getMemref());
+                if (arrName.empty()) arrName = traceToDecl(dg.getMemref());
                 if (arrName.empty()) return "?";
                 std::string s = arrName + "[";
                 bool first = true;
@@ -101,8 +279,15 @@ static std::string buildIndexExpr(mlir::Value v, int d = 0) {
             }
         }
         auto n = traceToDecl(mem);
-        return n.empty() ? "?" : n;
+        if (!n.empty()) return n;
+        // Last resort: maybe the load memref is the elemental's block arg
+        // indirectly (unlikely, but guard).
+        return "?";
     }
+
+    // Inside an elemental body, an index value IS a tracked block arg.
+    auto resolved = resolveIndex(v);
+    if (!resolved.empty()) return resolved;
 
     // Constant integer.
     if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
@@ -130,7 +315,7 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             wa.array_name = node.target;
             wa.is_write = true;
             for (auto idx : dg.getIndices()) {
-                auto n = traceToDecl(idx);
+                auto n = resolveIndex(idx);
                 wa.index_vars.push_back(n.empty() ? "?" : n);
                 wa.index_exprs.push_back(buildIndexExpr(idx));
             }
@@ -168,7 +353,7 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             ra.array_name = traceToDecl(dg.getMemref());
             ra.is_read = true;
             for (auto idx : dg.getIndices()) {
-                auto n = traceToDecl(idx);
+                auto n = resolveIndex(idx);
                 ra.index_vars.push_back(n.empty() ? "?" : n);
                 ra.index_exprs.push_back(buildIndexExpr(idx));
                 // Keep descending into the index operand too, so inner
@@ -194,6 +379,166 @@ static int64_t traceLB(mlir::Value v) {
 
 /// Forward declare — called from buildWhileNode to recurse into the body.
 static std::vector<ASTNode> buildAST(mlir::Block &block);
+
+/// Resolve the extent of a fir.shape / fir.shape_shift operand at dim `d`,
+/// preferring a traced declare name (`"nproma"`), then a literal constant
+/// (`"10"`), and falling back to `"?"` if neither is available.
+static std::string resolveExtent(mlir::Value shape, unsigned d) {
+    if (!shape) return "?";
+    auto *def = shape.getDefiningOp();
+    if (!def) return "?";
+    mlir::Value ext;
+    if (auto sh = mlir::dyn_cast<fir::ShapeOp>(def)) {
+        if (d >= sh.getExtents().size()) return "?";
+        ext = sh.getExtents()[d];
+    } else if (auto ss = mlir::dyn_cast<fir::ShapeShiftOp>(def)) {
+        auto ops = ss->getOperands();
+        unsigned idx = 2 * d + 1;
+        if (idx >= ops.size()) return "?";
+        ext = ops[idx];
+    } else {
+        return "?";
+    }
+    auto n = traceToDecl(ext);
+    if (!n.empty()) return n;
+    if (auto c = traceConstInt(ext)) return std::to_string(*c);
+    return "?";
+}
+
+/// ``b = elementwise_expr(a)`` — the ``hlfir.assign``'s source is an
+/// ``hlfir.elemental``.  Synthesise one ``kind="loop"`` ASTNode per shape
+/// dimension (synthetic iter names ``ei0``, ``ei1``, …) wrapping a single
+/// ``kind="assign"`` child whose RHS is the elemental's body expression
+/// with the block args replaced by the synthetic iter names.
+///
+/// ``buildExpr`` consults ``indexStack()`` to resolve an elemental block
+/// arg to its synthetic name, so the inner ``buildAssignNode``-style walk
+/// sees ``a[ei0]`` etc. as a normal array read with a normal iter var.
+static std::vector<ASTNode>
+buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
+    // Target array (LHS of the assign).
+    ASTNode inner;
+    inner.kind = "assign";
+    auto dest = assign.getOperand(1);
+    if (auto dd = dest.getDefiningOp())
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+            inner.target = extractName(decl.getUniqName().str());
+    if (inner.target.empty()) inner.target = traceToDecl(dest);
+    inner.target_is_array = true;
+
+    // Synthetic iter names for each shape dimension.
+    auto shape = elem.getShape();
+    auto &region = elem.getRegion();
+    if (region.empty()) return {};
+    auto &block = region.front();
+    unsigned rank = block.getNumArguments();
+
+    std::vector<std::string> iter_names;
+    iter_names.reserve(rank);
+    for (unsigned i = 0; i < rank; ++i)
+        iter_names.push_back("ei" + std::to_string(i));
+
+    // Push block-arg → synthetic-name pairs so resolveIndex sees them
+    // everywhere we walk the body.
+    unsigned pushed = 0;
+    for (unsigned i = 0; i < rank; ++i) {
+        indexStack().push_back({block.getArgument(i), iter_names[i]});
+        ++pushed;
+    }
+
+    // Inner write access: target[ei0, ei1, …].
+    AccessInfo wa;
+    wa.array_name = inner.target;
+    wa.is_write = true;
+    for (unsigned i = 0; i < rank; ++i) {
+        wa.index_vars.push_back(iter_names[i]);
+        wa.index_exprs.push_back(iter_names[i]);
+    }
+    inner.accesses.push_back(std::move(wa));
+
+    // Walk the body's yield_element to produce the RHS string.
+    mlir::Value yielded;
+    for (auto &op : block)
+        if (auto y = mlir::dyn_cast<hlfir::YieldElementOp>(op))
+            { yielded = y.getElementValue(); break; }
+    inner.expr = yielded ? buildExpr(yielded) : "?";
+
+    // Read accesses.  Unlike plain assigns we must follow hlfir.apply into
+    // the referenced hlfir.elemental's body (where the real designate
+    // lives) — pushing the apply's index mapping onto indexStack() so the
+    // designate sees the same synthetic iter names as the outer elemental.
+    if (yielded) {
+        std::set<mlir::Operation *> visited;
+        std::function<void(mlir::Value)> collectReads = [&](mlir::Value v) {
+            auto *op = v.getDefiningOp();
+            if (!op || visited.count(op)) return;
+            visited.insert(op);
+            if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(op)) {
+                AccessInfo ra;
+                ra.array_name = traceToDecl(dg.getMemref());
+                ra.is_read = true;
+                for (auto idx : dg.getIndices()) {
+                    auto n = resolveIndex(idx);
+                    ra.index_vars.push_back(n.empty() ? "?" : n);
+                    ra.index_exprs.push_back(buildIndexExpr(idx));
+                    collectReads(idx);
+                }
+                inner.accesses.push_back(std::move(ra));
+                return;
+            }
+            if (auto apply = mlir::dyn_cast<hlfir::ApplyOp>(op)) {
+                auto src = apply.getExpr();
+                if (auto *sd = src.getDefiningOp())
+                    if (auto inner_elem = mlir::dyn_cast<hlfir::ElementalOp>(sd)) {
+                        auto &ireg = inner_elem.getRegion();
+                        if (!ireg.empty()) {
+                            auto &iblock = ireg.front();
+                            auto apply_idxs = apply.getIndices();
+                            unsigned pushed = 0;
+                            for (unsigned i = 0;
+                                 i < iblock.getNumArguments()
+                                      && i < apply_idxs.size();
+                                 ++i) {
+                                auto name = resolveIndex(apply_idxs[i]);
+                                indexStack().push_back(
+                                    {iblock.getArgument(i), name});
+                                ++pushed;
+                            }
+                            for (auto &iop : iblock)
+                                if (auto y = mlir::dyn_cast<hlfir::YieldElementOp>(iop))
+                                    collectReads(y.getElementValue());
+                            for (unsigned i = 0; i < pushed; ++i)
+                                indexStack().pop_back();
+                        }
+                    }
+                return;
+            }
+            for (auto operand : op->getOperands())
+                collectReads(operand);
+        };
+        collectReads(yielded);
+    }
+
+    // Pop the stack frames we pushed.
+    for (unsigned i = 0; i < pushed; ++i)
+        indexStack().pop_back();
+
+    // Wrap the inner assign in one ASTNode kind="loop" per rank.  The
+    // outermost loop is the result; deeper loops live as its sole child.
+    ASTNode current;
+    current.kind = "assign";
+    current = inner;
+    for (int i = rank - 1; i >= 0; --i) {
+        ASTNode wrap;
+        wrap.kind = "loop";
+        wrap.loop_iter = iter_names[i];
+        wrap.loop_lower = 1;
+        wrap.loop_bound = resolveExtent(shape, i);
+        wrap.children.push_back(current);
+        current = wrap;
+    }
+    return {current};
+}
 
 /// Render an arith::cmpi predicate as a Python comparison operator.  Returns
 /// an empty string for signed/unsigned variants we haven't wired up yet.
@@ -304,6 +649,17 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             continue;
         }
         if (auto assign = mlir::dyn_cast<hlfir::AssignOp>(op)) {
+            // b = <elementwise-expression>  — Flang wraps the RHS in one or
+            // more composed hlfir.elemental ops, the outermost of which is
+            // the assign's source.  Synthesise a nested loop over the shape
+            // instead of treating it as a scalar assign.
+            auto src = assign.getOperand(0);
+            if (auto *sd = src.getDefiningOp())
+                if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(sd)) {
+                    for (auto &n : buildElementalAssign(assign, elem))
+                        nodes.push_back(std::move(n));
+                    continue;
+                }
             nodes.push_back(buildAssignNode(assign));
             continue;
         }

@@ -46,11 +46,23 @@ NOTE on nanobind bindings:
 """
 
 import re
+import sys as _sys
+from pathlib import Path as _Path
 import dace
 from dace import SDFG, Memlet, InterstateEdge
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes as nd
 from build_bridge import hb
+
+# intrinsics/ lives alongside this file but uses absolute imports
+# (``dace.frontend.hlfir.intrinsics``).  hlfir_to_sdfg is usually imported
+# via the ``sys.path.insert(<hlfir_dir>, …)`` pattern in build_bridge.py,
+# which does not expose the full ``dace.frontend.hlfir`` package.  Add the
+# DaCe source root so the package import resolves either way.
+_HLFIR_DIR = _Path(__file__).resolve().parent
+_DACE_ROOT = _HLFIR_DIR.parents[2]
+if str(_DACE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_DACE_ROOT))
 
 # The default pipeline run before AST/variable extraction.  Shape
 # propagation fills in assumed-shape (:,:) dummies with real Fortran
