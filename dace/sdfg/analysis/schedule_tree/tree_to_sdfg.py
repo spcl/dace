@@ -69,7 +69,13 @@ class _TreeScope:
 
 class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
-    def __init__(self, start_state: SDFGState | None = None) -> None:
+    def __init__(self,
+                 start_state: SDFGState | None = None,
+                 *,
+                 boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION) -> None:
+        if boundary_behavior != StateBoundaryBehavior.STATE_TRANSITION:
+            raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
+
         self._ctx: tn.Context
         """Context information like tree root and current scope."""
 
@@ -755,7 +761,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = _create_state_boundary(
             node,
             self._current_state,
-            StateBoundaryBehavior.STATE_TRANSITION,
             assignments=pending,
         )
 
@@ -956,7 +961,6 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 def _create_state_boundary(
     boundary_node: tn.StateBoundaryNode,
     state: SDFGState,
-    behavior: StateBoundaryBehavior,
     assignments: dict[str, str] | None = None,
 ) -> SDFGState:
     """
@@ -964,15 +968,8 @@ def _create_state_boundary(
 
     :param boundary_node: The state boundary node to generate.
     :param state: The last state prior to this boundary.
-    :param behavior: The state boundary behavior with which to create the boundary.
     :return: The newly created state.
     """
-    if behavior != StateBoundaryBehavior.STATE_TRANSITION:
-        raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
-
-    # TODO: Some boundaries (control flow, state labels with goto, pending assignments) could not be fulfilled
-    #       with every behavior. Fall back to state transition in that case.
-
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
     return _insert_and_split_assignments(state, label=label, assignments=assignments)
