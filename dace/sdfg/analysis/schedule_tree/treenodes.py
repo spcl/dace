@@ -27,7 +27,7 @@ class ScheduleTreeNode:
     """Base class for nodes in the schedule tree."""
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
 
-    def as_string(self, indent: int = 0):
+    def as_string(self, indent: int = 0) -> str:
         return indent * INDENTATION + 'UNSUPPORTED'
 
     def preorder_traversal(self) -> Iterator['ScheduleTreeNode']:
@@ -107,7 +107,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
 
         # Fast path, no propagation necessary
         if keep_locals:
-            return MemletSet().union(*(gather(c) for c in self.children))
+            return MemletSet().union(*(gather(c, root) for c in self.children))
 
         root = root if root is not None else self.get_root()
 
@@ -392,7 +392,7 @@ class LoopScope(ControlFlowScope):
         if variant in ["for", "while", "do-while"]:
             return super().as_string(indent)
 
-        return NotImplementedError(f"Unknown LoopRegion variant '{variant}.")
+        raise NotImplementedError(f"Unknown LoopRegion variant '{variant}.")
 
 
 @dataclass
@@ -413,7 +413,12 @@ class ForScope(LoopScope):
         result = indent * INDENTATION + f"for {init_statement}; {condition}; {update_statement}:\n"
         return result + super().as_string(indent)
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -429,7 +434,13 @@ class ForScope(LoopScope):
         result.update(super().input_memlets(root, propagate=propagate, **kwargs))
         return result
 
-    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def output_memlets(self,
+                       root: ScheduleTreeRoot | None = None,
+                       keep_locals: bool = False,
+                       propagate: dict[str, subsets.Range] | None = None,
+                       disallow_propagation: set[str] | None = None,
+                       **kwargs) -> MemletSet:
+
         # If loop range is well-formed, use it in propagation
         range = _loop_range(self.loop)
         if range is not None:
@@ -456,7 +467,12 @@ class WhileScope(LoopScope):
         result = indent * INDENTATION + f'while {condition}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -481,7 +497,12 @@ class DoWhileScope(LoopScope):
         footer = indent * INDENTATION + f'while {self.loop.loop_condition.as_string}'
         return header + super().as_string(indent) + '\n' + footer
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -510,7 +531,12 @@ class IfScope(ControlFlowScope):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers))
@@ -588,7 +614,12 @@ class ElifScope(ControlFlowScope):
         result = indent * INDENTATION + f'elif {self.condition.as_string}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers))
@@ -630,7 +661,12 @@ class MapScope(DataflowScope):
         result = indent * INDENTATION + f'map {", ".join(self.node.map.params)} in [{rangestr}]:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def input_memlets(self,
+                      root: ScheduleTreeRoot | None = None,
+                      keep_locals: bool = False,
+                      propagate: dict[str, subsets.Range] | None = None,
+                      disallow_propagation: set[str] | None = None,
+                      **kwargs) -> MemletSet:
         return super().input_memlets(root,
                                      propagate={
                                          k: v
@@ -638,7 +674,12 @@ class MapScope(DataflowScope):
                                      },
                                      **kwargs)
 
-    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+    def output_memlets(self,
+                       root: ScheduleTreeRoot | None = None,
+                       keep_locals: bool = False,
+                       propagate: dict[str, subsets.Range] | None = None,
+                       disallow_propagation: set[str] | None = None,
+                       **kwargs) -> MemletSet:
         return super().output_memlets(root,
                                       propagate={
                                           k: v
@@ -857,12 +898,13 @@ class StateBoundaryNode(ScheduleTreeNode):
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
 class ScheduleNodeVisitor:
 
-    def visit(self, node: ScheduleTreeNode, **kwargs: Any):
+    def visit(self, node: ScheduleTreeNode | list[ScheduleTreeNode], **kwargs: Any):
         """Visit a node."""
         if isinstance(node, list):
             return [self.visit(snode, **kwargs) for snode in node]
+
         if isinstance(node, ScheduleTreeScope) and hasattr(self, 'visit_scope'):
-            return self.visit_scope(node, **kwargs)
+            return self.visit_scope(node, **kwargs)  # type: ignore
 
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
@@ -876,23 +918,23 @@ class ScheduleNodeVisitor:
 
 class ScheduleNodeTransformer(ScheduleNodeVisitor):
 
-    def visit(self, node: ScheduleTreeNode):
+    def visit(self, node: ScheduleTreeNode | list[ScheduleTreeNode], **kwargs: Any):
         if isinstance(node, list):
             result = []
             for snode in node:
-                new_node = self.visit(snode)
+                new_node = self.visit(snode, **kwargs)
                 if new_node is not None:
                     result.append(new_node)
             return result
 
-        return super().visit(node)
+        return super().visit(node, **kwargs)
 
-    def generic_visit(self, node: ScheduleTreeNode):
+    def generic_visit(self, node: ScheduleTreeNode, **kwargs: Any):
         new_values = []
         if isinstance(node, ScheduleTreeScope):
             for value in node.children:
                 if isinstance(value, ScheduleTreeNode):
-                    value = self.visit(value)
+                    value = self.visit(value, **kwargs)
                     if value is None:
                         continue
                     elif not isinstance(value, ScheduleTreeNode):

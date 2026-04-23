@@ -32,7 +32,7 @@ class _Context:
     root: tn.ScheduleTreeRoot
     current_scope: tn.ScheduleTreeScope | None
 
-    access_cache: dict[tuple[SDFGState, str], dict[str, nodes.AccessNode]]
+    access_cache: dict[tuple[SDFGState, int], dict[str, nodes.AccessNode]]
     """Per scope (hashed by id(scope_node) access_cache."""
 
 
@@ -70,15 +70,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def __init__(
         self,
-        start_state: SDFGState | None = None,
         *,
+        start_state: SDFGState | None = None,
         boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
         max_nested_sdfg: int = 1000,
     ) -> None:
         if boundary_behavior != StateBoundaryBehavior.STATE_TRANSITION:
             raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
 
-        self._ctx: tn.Context
+        self._ctx: _Context
         """Context information like tree root and current scope."""
 
         self._current_state = start_state
@@ -136,11 +136,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         """Find the closest parent SDFG containing an array with the given name."""
         parent_sdfg = sdfg.parent.parent
         sdfg_counter = 1
-        while name not in parent_sdfg.arrays and sdfg_counter < self._max_nested_sdfgs:
+        while name not in parent_sdfg.arrays and sdfg_counter < self._max_nested_sdfg:
             parent_sdfg = parent_sdfg.parent.parent
             assert isinstance(parent_sdfg, SDFG)
             sdfg_counter += 1
-        assert sdfg_counter < self._max_nested_sdfgs, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
+        assert sdfg_counter < self._max_nested_sdfg, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
         return parent_sdfg
 
     def _pop_state(self, label: str | None = None) -> SDFGState:
@@ -225,6 +225,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
         current_state = self._current_state
+        assert current_state is not None
         cf_region = current_state.parent_graph
 
         loop_region = node.loop
@@ -241,6 +242,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
         current_state = self._current_state
+        assert current_state is not None
         cf_region = current_state.parent_graph
 
         loop_region = node.loop
@@ -263,6 +265,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
         before_state = self._current_state
+        assert before_state is not None
         cf_region = before_state.parent_graph
 
         conditional_block = ConditionalBlock(f"if_scope_{id(node)}")
@@ -806,7 +809,7 @@ def from_schedule_tree(
     stree = _insert_state_boundaries_to_tree(stree)
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
-    _StreeToSDFG(state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
+    _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
     propagation.propagate_memlets_sdfg(result)
 
     return result
