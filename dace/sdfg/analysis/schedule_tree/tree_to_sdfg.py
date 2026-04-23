@@ -201,6 +201,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         after_state = _insert_and_split_assignments(loop_region, label="loop_after")
         self._current_state = after_state
 
+    def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+
     def visit_LoopScope(self, node: tn.LoopScope, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 

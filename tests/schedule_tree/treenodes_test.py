@@ -40,6 +40,7 @@ def test_schedule_tree_scope_children(ScopeClass: type[tn.ScheduleTreeScope], ta
     tn.LoopScope,
     tn.ForScope,
     tn.WhileScope,
+    tn.DoWhileScope,
 ))
 def test_loop_scope_children(LoopScope: type[tn.LoopScope], tasklet: nodes.Tasklet) -> None:
     scope = LoopScope(loop=None, children=[tasklet])
@@ -116,6 +117,7 @@ if __name__ == '__main__':
     test_loop_scope_children(tn.LoopScope, tasklet)
     test_loop_scope_children(tn.ForScope, tasklet)
     test_loop_scope_children(tn.WhileScope, tasklet)
+    test_loop_scope_children(tn.DoWhileScope, tasklet)
     test_if_scope_children(tn.IfScope, tasklet)
     test_if_scope_children(tn.StateIfScope, tasklet)
     test_if_scope_children(tn.ElifScope, tasklet)

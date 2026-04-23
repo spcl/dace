@@ -503,6 +503,31 @@ class WhileScope(LoopScope):
 
 
 @dataclass
+class DoWhileScope(LoopScope):
+    """Specialized LoopScope for do-while-loops"""
+
+    def __init__(self,
+                 *,
+                 loop: LoopRegion,
+                 children: list[ScheduleTreeNode],
+                 parent: ScheduleTreeScope | None = None) -> None:
+        super().__init__(loop=loop, children=children, parent=parent)
+
+    def as_string(self, indent: int = 0) -> str:
+        header = indent * INDENTATION + 'do:\n'
+        footer = indent * INDENTATION + f'while {self.loop.loop_condition.as_string}'
+        return header + super().as_string(indent) + '\n' + footer
+
+    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+
+        result = MemletSet()
+        result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
+        result.update(super().input_memlets(root, **kwargs))
+        return result
+
+
+@dataclass
 class IfScope(ControlFlowScope):
     """
     If branch scope.

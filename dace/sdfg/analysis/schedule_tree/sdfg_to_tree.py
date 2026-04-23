@@ -715,6 +715,9 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
             if variant == "while":
                 return [tn.WhileScope(loop=block, children=children)]
 
+            if variant == "do-while":
+                return [tn.DoWhileScope(loop=block, children=children)]
+
             # If we end up here, we don't need more granularity and just use a general loop scope.
             return [tn.LoopScope(loop=block, children=children)]
 
