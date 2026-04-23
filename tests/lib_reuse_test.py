@@ -56,25 +56,25 @@ def test_reload():
 
 
 def test_load_precompiled():
-    for folder_version in ["development", "production"]:
+    for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:
-            conf.set('compiler', 'build_folder_version', value=folder_version)
+            conf.set('compiler', 'build_folder_mode', value=folder_mode)
             _load_precompiled_impl(
                 test_name="test_load_precompiled",
-                folder_version=folder_version,
+                folder_mode=folder_mode,
             )
 
 
-def _load_precompiled_impl(test_name: str, folder_version: str) -> None:
+def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
     prog = program_generator(10, 2.0)
     sdfg = prog.to_sdfg()
-    sdfg.name = f'{test_name}_{sdfg.name}_{folder_version}'
+    sdfg.name = f'{test_name}_{sdfg.name}_{folder_mode}'
 
     func1 = sdfg.compile()
 
-    if folder_version == "production":
+    if folder_mode == "production":
         func2 = load_precompiled_sdfg(sdfg.build_folder, sdfg=sdfg)
-    elif folder_version == "development":
+    elif folder_mode == "development":
         func2 = load_precompiled_sdfg(sdfg.build_folder)
 
     inp = np.random.rand(10).astype(np.float64)

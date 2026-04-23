@@ -1798,10 +1798,6 @@ class SDFG(ControlFlowRegion):
         """
         from dace.cli.sdfv import view
 
-        # Ensure external nested SDFGs are loaded.
-        for _ in self.all_sdfgs_recursive(load_ext=True):
-            pass
-
         view(self, filename=filename, verbose=verbose)
 
     @staticmethod
@@ -2465,7 +2461,7 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self, folder_version: Optional[str] = None) -> bool:
+    def is_loaded(self, folder_mode: Optional[str] = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
         Returns `False` if the file does not exist.
@@ -2474,16 +2470,16 @@ class SDFG(ControlFlowRegion):
         from dace.codegen import compiled_sdfg as cs, compiler
 
         build_folder = self.build_folder
-        if folder_version is None:
-            folder_version = compiler.get_folder_version(build_folder, probe=True)
-        if folder_version is None:
-            folder_version = Config.get('compiler', 'build_folder_version')
+        if folder_mode is None:
+            folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+        if folder_mode is None:
+            folder_mode = Config.get('compiler', 'build_folder_mode')
 
         # Note here is kind of a "leak". The issue is that while the library is not
         #  loaded the stub library is loaded. However, it is never unloaded, because
         #  the `unload()` function is not called. This is technically not an issue
         #  as `ctypes` will do that at some later point.
-        binary_filename = compiler.get_binary_name(self.build_folder, self.name, folder_version=folder_version)
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name, folder_mode=folder_mode)
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
@@ -2504,16 +2500,16 @@ class SDFG(ControlFlowRegion):
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
-        # Get the folder version, but if the folder already exist, then use the `VERSION` file.
-        folder_version = compiler.get_folder_version(build_folder, probe=True)
-        if folder_version is None:
-            folder_version = Config.get('compiler', 'build_folder_version')
+        # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
+        folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+        if folder_mode is None:
+            folder_mode = Config.get('compiler', 'build_folder_mode')
 
         if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
             lib_path = compiler.get_binary_name(object_folder=build_folder,
                                                 sdfg_name=self.name,
-                                                folder_version=folder_version)
+                                                folder_mode=folder_mode)
             if lib_path.is_file():
                 if return_program_handle:
                     # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
@@ -2539,7 +2535,7 @@ class SDFG(ControlFlowRegion):
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
-            while sdfg.is_loaded(folder_version=folder_version):
+            while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name and Config.get_bool('debugprint'):
@@ -2563,7 +2559,7 @@ class SDFG(ControlFlowRegion):
             program_folder = compiler.generate_program_folder(sdfg,
                                                               program_objects,
                                                               build_folder,
-                                                              folder_version=folder_version)
+                                                              folder_mode=folder_mode)
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
@@ -2571,7 +2567,7 @@ class SDFG(ControlFlowRegion):
             sdfg = self
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_version=folder_version)
+        shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_mode=folder_mode)
 
         # If provided, save output to path or filename
         if output_file is not None:
