@@ -154,17 +154,21 @@ def _descend_scope_memlets(state, edge, kind):
                 result.append((ie.data.dst_subset, bool(ie.data.dynamic)))
         return result
     if isinstance(node, nodes.NestedSDFG):
-        import os as _os
-        # Off by default: NSDFG descent needs more care (symbol_mapping translation,
-        # enumeration of inner writes in further-nested structures). Opt-in via env.
-        if _os.environ.get("L2M_DESCEND_NSDFG", "0") != "1":
+        # Only descend into NSDFGs with a simple straight-line body: a single
+        # top-level state, no nested LoopRegions/ConditionalBlocks/NSDFGs. This
+        # keeps the enumeration of inner accesses exhaustive and unconditional.
+        top_blocks = list(node.sdfg.nodes())
+        if len(top_blocks) != 1 or not isinstance(top_blocks[0], SDFGState):
+            return []
+        the_state = top_blocks[0]
+        if any(isinstance(n, nodes.NestedSDFG) for n in the_state.nodes()):
             return []
         # Inner "proxy" array is the connector name.
         inner_name = edge.dst_conn if kind == 'read' else edge.src_conn
         if not inner_name or inner_name not in node.sdfg.arrays:
             return []
         result = []
-        for st in node.sdfg.states():
+        for st in (the_state,):
             for dn in st.data_nodes():
                 if dn.data != inner_name:
                     continue
