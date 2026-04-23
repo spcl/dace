@@ -215,6 +215,91 @@ def test_conditional_interstate_unrelated_array_is_not_lifted():
     assert _count_loops(sdfg) == 1
 
 
+def _build_interstate_binop_sdfg(rhs_expr: str, accum_dtype=dace.int32, arr_dtype=dace.int32):
+    """Loop body = 2 empty states + interstate edge ``{accum: rhs_expr}``."""
+    safe = "".join(c if c.isalnum() else "_" for c in rhs_expr)
+    sdfg = dace.SDFG(f"interstate_binop_{safe}")
+    sdfg.add_symbol("accum", accum_dtype)
+    sdfg.add_array("B", [N], arr_dtype)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+    s1 = loop.add_state("s1", is_start_block=True)
+    s2 = loop.add_state("s2")
+    loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": rhs_expr}))
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    return sdfg
+
+
+def test_interstate_edge_bitwise_or_is_lifted():
+    """``{accum: accum | B[i]}`` -> Reduce with ``|`` WCR."""
+    sdfg = _build_interstate_binop_sdfg("accum | B[i]")
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a | b")
+
+
+def test_interstate_edge_bitwise_and_is_lifted():
+    """``{accum: accum & B[i]}`` -> Reduce with ``&`` WCR."""
+    sdfg = _build_interstate_binop_sdfg("accum & B[i]")
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a & b")
+
+
+def test_interstate_edge_logical_or_is_lifted():
+    """``{accum: accum or B[i]}`` -> Reduce with ``|`` WCR."""
+    sdfg = _build_interstate_binop_sdfg("accum or B[i]")
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a | b")
+
+
+def test_interstate_edge_logical_and_is_lifted():
+    """``{accum: accum and B[i]}`` -> Reduce with ``&`` WCR."""
+    sdfg = _build_interstate_binop_sdfg("accum and B[i]")
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a & b")
+
+
+def test_tasklet_body_boolop_or_is_lifted():
+    """Tasklet body ``out = a or b`` lifts to an OR reduction."""
+    sdfg = dace.SDFG("tasklet_boolop_or")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [N], dace.int32)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    r_a = state.add_read("A")
+    r_b = state.add_read("B")
+    w_a = state.add_write("A")
+    t = state.add_tasklet("or_t", {"a", "b"}, {"o"}, "o = a or b")
+    state.add_edge(r_a, None, t, "a", mm.Memlet("A[0]"))
+    state.add_edge(r_b, None, t, "b", mm.Memlet("B[i]"))
+    state.add_edge(t, "o", w_a, None, mm.Memlet("A[0]"))
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    lifted = LoopToReduce().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a | b")
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -223,3 +308,8 @@ if __name__ == "__main__":
     test_conditional_interstate_gt_lifts_to_max()
     test_conditional_interstate_lt_lifts_to_min()
     test_conditional_interstate_unrelated_array_is_not_lifted()
+    test_interstate_edge_bitwise_or_is_lifted()
+    test_interstate_edge_bitwise_and_is_lifted()
+    test_interstate_edge_logical_or_is_lifted()
+    test_interstate_edge_logical_and_is_lifted()
+    test_tasklet_body_boolop_or_is_lifted()
