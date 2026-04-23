@@ -6,8 +6,11 @@ import inspect
 import dace
 import numpy as np
 import pytest
+from typing import Optional, Dict, Any, Tuple, Sequence
+
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.frontend.python.common import ScheduleTreeConvertible
 
 __schedule_tree_callback_scale = 5
 
@@ -365,3 +368,83 @@ def test_decorated_nested_function_callback_outliner_recovers_callable_handle():
     assert callable(recovered_from_callsite)
     assert recovered_from_callsite(4) == 38
     assert recovered_from_callsite(3, y=4, twist=2) == 65
+
+
+def test_regression_convertibles():
+
+    class B(ScheduleTreeConvertible):
+
+        def __init__(self) -> None:
+            self._dace_program = dace.method(self.__call__).__get__(self)
+
+        def __schedule_tree__(self,
+                              *args,
+                              lambda_bindings: Optional[Dict[str, ast.AST]] = None,
+                              callable_bindings: Optional[Dict[str, Any]] = None,
+                              **kwargs) -> tn.ScheduleTreeRoot:
+
+            return self._dace_program.to_schedule_tree(*args, **kwargs)
+
+        def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+            return (["input_0", "input_1"], [])
+
+        def __call__(self, input_0, input_1):
+            input_0[:] += input_1[:]
+
+    class A(ScheduleTreeConvertible):
+
+        def __init__(self):
+            self._b = B()
+            self._tmp_input = np.zeros((10, ))
+            self._dace_program = dace.method(self.__call__).__get__(self)
+
+        def __schedule_tree__(self,
+                              *args,
+                              lambda_bindings: Optional[Dict[str, ast.AST]] = None,
+                              callable_bindings: Optional[Dict[str, Any]] = None,
+                              **kwargs) -> tn.ScheduleTreeRoot:
+
+            return self._dace_program.to_schedule_tree(*args, **kwargs)
+
+        def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+
+            return (["input_0", "input_optional"], [])
+
+        def __call__(self, input_0, input_optional=None):
+
+            if input_optional is None:
+                self._b(input_0, self._tmp_input)
+            else:
+                self._b(input_0, input_optional)
+
+    arr_0 = np.ones((10, ))
+    arr_1 = np.ones((10, ))
+
+    a = A()
+    stree = a._dace_program.to_schedule_tree(arr_0)
+    rendered = stree.as_string()
+
+    assert 'object at' not in rendered
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+    calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
+    assert len(calls) == 1
+    assert calls[0].call.callee_name == 'B'
+    assert calls[0].call.arguments == {'input_0': 'input_0', 'input_1': '__g_self__tmp_input'}
+    assert any(isinstance(node, tn.MapScope) for node in calls[0].preorder_traversal())
+
+    stree = a._dace_program.to_schedule_tree(arr_0, arr_1)
+    rendered = stree.as_string()
+
+    assert 'object at' not in rendered
+    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
+    calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
+    assert len(calls) == 2
+    assert calls[0].call.callee_name == 'B'
+    assert calls[0].call.arguments == {'input_0': 'input_0', 'input_1': '__g_self__tmp_input'}
+    assert calls[1].call.callee_name == 'B'
+    assert calls[1].call.arguments == {'input_0': 'input_0', 'input_1': 'input_optional'}
+    assert any(isinstance(node, tn.MapScope) for node in calls[0].preorder_traversal())
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])

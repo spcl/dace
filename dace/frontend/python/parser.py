@@ -176,11 +176,14 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                  ignore_type_hints: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
+        signature_source = f.__func__ if method and inspect.ismethod(f) and getattr(f, '__self__',
+                                                                                    None) is not None else f
+
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.resolve_functions = constant_functions
-        self.argnames = _get_argnames(f)
+        self.argnames = _get_argnames(signature_source)
         if method:
             self.objname = self.argnames[0]
             self.argnames = self.argnames[1:]
@@ -198,7 +201,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         self.ignore_type_hints = ignore_type_hints
 
         self.global_vars = _get_locals_and_globals(f)
-        self.signature = inspect.signature(f)
+        self.signature = inspect.signature(signature_source)
         self.default_args = {
             pname: pval.default
             for pname, pval in self.signature.parameters.items() if not _is_empty(pval.default)
