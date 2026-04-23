@@ -40,6 +40,9 @@ struct AccessInfo {
 ///   "call"        — callee, call_args[]
 ///   "reduce"      — target, reduce_src, reduce_wcr, reduce_identity,
 ///                   reduce_axes (empty = whole-array)
+///   "copy"        — target, reduce_src (source array name)
+///   "memset"      — target (memset always writes zero today; the
+///                   MemsetLibraryNode side is hard-coded for 0)
 struct ASTNode {
     std::string kind;
 

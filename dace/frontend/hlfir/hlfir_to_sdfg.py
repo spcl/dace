@@ -215,7 +215,48 @@ class SDFGBuilder:
             elif n.kind == "while": self._emit_while(ctx, n, region)
             elif n.kind == "conditional": self._emit_cond(ctx, n, region)
             elif n.kind == "reduce": self._emit_reduce(ctx, n, region)
+            elif n.kind == "copy": self._emit_copy(ctx, n, region)
+            elif n.kind == "memset": self._emit_memset(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
+
+    def _emit_copy(self, ctx: '_Ctx', n, region):
+        """Whole-array ``b = a`` → ``CopyLibraryNode`` with ``_in`` / ``_out``
+        memlets covering the full source / destination arrays."""
+        from dace.libraries.standard.nodes import CopyLibraryNode
+        ctx.flush(self)
+        ctx.ensure(region)
+        state = ctx.cur
+
+        src_name = n.reduce_src  # buildCopyNode stored the source here
+        tgt_name = n.target
+        src_desc = ctx.sdfg.arrays[src_name]
+        tgt_desc = ctx.sdfg.arrays[tgt_name]
+
+        cp = CopyLibraryNode(f"copy_{tgt_name}_{self.nid()}")
+        state.add_node(cp)
+
+        src_access = self._acc(state, src_name)
+        tgt_access = self._acc(state, tgt_name)
+        state.add_edge(src_access, None, cp, "_in", Memlet.from_array(src_name, src_desc))
+        state.add_edge(cp, "_out", tgt_access, None, Memlet.from_array(tgt_name, tgt_desc))
+
+    def _emit_memset(self, ctx: '_Ctx', n, region):
+        """Scalar-zero → array fill → ``MemsetLibraryNode`` with a single
+        ``_out`` memlet covering the destination."""
+        from dace.libraries.standard.nodes import MemsetLibraryNode
+        ctx.flush(self)
+        ctx.ensure(region)
+        state = ctx.cur
+
+        tgt_name = n.target
+        tgt_desc = ctx.sdfg.arrays[tgt_name]
+
+        ms = MemsetLibraryNode(f"memset_{tgt_name}_{self.nid()}")
+        ms.add_out_connector("_out")
+        state.add_node(ms)
+
+        tgt_access = self._acc(state, tgt_name)
+        state.add_edge(ms, "_out", tgt_access, None, Memlet.from_array(tgt_name, tgt_desc))
 
     def _emit_reduce(self, ctx: '_Ctx', n, region):
         """``target = sum(src)`` (and product / minval / maxval) lowered as

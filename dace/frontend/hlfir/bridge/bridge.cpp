@@ -198,6 +198,10 @@ NB_MODULE(hlfir_bridge, m) {
             if (n.kind == "reduce")
                 return std::string("Reduce(") + n.target + " = reduce("
                     + n.reduce_src + ", wcr=" + n.reduce_wcr + ")";
+            if (n.kind == "copy")
+                return std::string("Copy(") + n.target + " <- " + n.reduce_src + ")";
+            if (n.kind == "memset")
+                return std::string("Memset(") + n.target + ")";
             return std::string("<") + n.kind + ">";
         });
 

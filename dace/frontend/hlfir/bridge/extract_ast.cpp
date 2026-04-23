@@ -377,6 +377,72 @@ static int64_t traceLB(mlir::Value v) {
     return -1;
 }
 
+/// Peel `fir.ref<…>` / `fir.box<…>` / `fir.heap<…>` / `fir.ptr<…>` wrappers.
+static mlir::Type peelWrappers(mlir::Type t) {
+    for (int i = 0; i < 8; ++i) {
+        mlir::Type next = t;
+        if (auto b = mlir::dyn_cast<fir::BoxType>(next))       next = b.getEleTy();
+        else if (auto r = mlir::dyn_cast<fir::ReferenceType>(next)) next = r.getEleTy();
+        else if (auto h = mlir::dyn_cast<fir::HeapType>(next))      next = h.getEleTy();
+        else if (auto p = mlir::dyn_cast<fir::PointerType>(next))   next = p.getEleTy();
+        else break;
+        t = next;
+    }
+    return t;
+}
+
+/// True iff the MLIR type peels to a ``fir.array<...>``.
+static bool isArrayRef(mlir::Type t) {
+    return mlir::isa<fir::SequenceType>(peelWrappers(t));
+}
+
+/// True iff ``v`` traces back to an ``arith.constant`` with value zero
+/// (integer zero or floating-point +0.0 / -0.0).
+static bool isConstantZero(mlir::Value v) {
+    auto *def = v.getDefiningOp();
+    if (!def) return false;
+    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return isConstantZero(cv.getValue());
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
+        if (auto f = mlir::dyn_cast<mlir::FloatAttr>(c.getValue()))
+            return f.getValueAsDouble() == 0.0;
+        if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+            return i.getInt() == 0;
+    }
+    return false;
+}
+
+/// ``hlfir.assign %src to %dst`` where both sides are array boxes — a
+/// whole-array copy.  Emit ``kind="copy"`` and let hlfir_to_sdfg wire a
+/// ``standard.CopyLibraryNode``.
+static ASTNode buildCopyNode(hlfir::AssignOp assign) {
+    ASTNode n;
+    n.kind = "copy";
+    auto dest = assign.getOperand(1);
+    if (auto dd = dest.getDefiningOp())
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+            n.target = extractName(decl.getUniqName().str());
+    if (n.target.empty()) n.target = traceToDecl(dest);
+    n.target_is_array = true;
+    n.reduce_src = traceToDecl(assign.getOperand(0));
+    return n;
+}
+
+/// ``hlfir.assign %zero to %dst`` where source is a constant zero and dest
+/// is an array box — a zero-fill.  Emit ``kind="memset"`` so
+/// hlfir_to_sdfg can wire a ``standard.MemsetLibraryNode``.
+static ASTNode buildMemsetNode(hlfir::AssignOp assign) {
+    ASTNode n;
+    n.kind = "memset";
+    auto dest = assign.getOperand(1);
+    if (auto dd = dest.getDefiningOp())
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+            n.target = extractName(decl.getUniqName().str());
+    if (n.target.empty()) n.target = traceToDecl(dest);
+    n.target_is_array = true;
+    return n;
+}
+
 /// ``target = sum(a)`` / product / minval / maxval — one of the dedicated
 /// hlfir reduction ops appears as the source of an hlfir.assign.
 ///
@@ -691,11 +757,26 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             continue;
         }
         if (auto assign = mlir::dyn_cast<hlfir::AssignOp>(op)) {
+            auto src = assign.getOperand(0);
+            auto dst = assign.getOperand(1);
+            bool dst_is_array = isArrayRef(dst.getType());
+            bool src_is_array = isArrayRef(src.getType());
+
+            // Whole-array copy: both sides are array boxes / refs.
+            if (dst_is_array && src_is_array) {
+                nodes.push_back(buildCopyNode(assign));
+                continue;
+            }
+            // Scalar-zero → array fill: MemsetLibraryNode.
+            if (dst_is_array && !src_is_array && isConstantZero(src)) {
+                nodes.push_back(buildMemsetNode(assign));
+                continue;
+            }
+
             // b = <elementwise-expression>  — Flang wraps the RHS in one or
             // more composed hlfir.elemental ops, the outermost of which is
             // the assign's source.  Synthesise a nested loop over the shape
             // instead of treating it as a scalar assign.
-            auto src = assign.getOperand(0);
             if (auto *sd = src.getDefiningOp()) {
                 if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(sd)) {
                     for (auto &n : buildElementalAssign(assign, elem))
