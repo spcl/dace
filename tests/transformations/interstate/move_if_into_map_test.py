@@ -234,8 +234,7 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     pre = mid.add_state("pre", is_start_block=True)
     cb = ConditionalBlock("cb")
     mid.add_node(cb)
-    mid.add_edge(pre, cb, dace.InterstateEdge(
-        assignments={"_if_cond_24": "levmask[jb, 0]"}))
+    mid.add_edge(pre, cb, dace.InterstateEdge(assignments={"_if_cond_24": "levmask[jb, 0]"}))
 
     branch_body = ControlFlowRegion("branch", sdfg=mid)
     cb.add_branch(CodeBlock("(_if_cond_24 == 1)"), branch_body)
@@ -243,8 +242,10 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     ar = bstate.add_read("A_in")
     aw = bstate.add_write("A_out")
     me, mx = bstate.add_map("jc_map", {"jc": "0:N"})
-    me.add_in_connector("IN_a"); me.add_out_connector("OUT_a")
-    mx.add_in_connector("IN_a"); mx.add_out_connector("OUT_a")
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_a")
+    mx.add_out_connector("OUT_a")
     ns = bstate.add_nested_sdfg(inner, {"a_in"}, {"a_out"})
     bstate.add_edge(ar, None, me, "IN_a", mm.Memlet("A_in[0:M, 0:N]"))
     bstate.add_edge(me, "OUT_a", ns, "a_in", mm.Memlet("A_in[jb, jc]"))
@@ -263,8 +264,10 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     AW = ostate.add_write("A_out")
     OE, OX = ostate.add_map("jb_map", {"jb": "0:M"})
     for c in ("A_in", "levmask"):
-        OE.add_in_connector("IN_" + c); OE.add_out_connector("OUT_" + c)
-    OX.add_in_connector("IN_A_out"); OX.add_out_connector("OUT_A_out")
+        OE.add_in_connector("IN_" + c)
+        OE.add_out_connector("OUT_" + c)
+    OX.add_in_connector("IN_A_out")
+    OX.add_out_connector("OUT_A_out")
     mid_node = ostate.add_nested_sdfg(mid, {"A_in", "levmask"}, {"A_out"})
     ostate.add_edge(AR, None, OE, "IN_A_in", mm.Memlet("A_in[0:M, 0:N]"))
     ostate.add_edge(LR, None, OE, "IN_levmask", mm.Memlet("levmask[0:M, 0:N]"))
@@ -297,9 +300,8 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
             continue
         if g.name == "mid_tester":  # the enclosing SDFG
             for sym in e.data.assignments:
-                assert not sym.endswith("_cond"), (
-                    f"condition should be moved inside inner NSDFG, found {sym} on "
-                    f"mid-level edge: {e.data.assignments}")
+                assert not sym.endswith("_cond"), (f"condition should be moved inside inner NSDFG, found {sym} on "
+                                                   f"mid-level edge: {e.data.assignments}")
 
     # The inner NSDFG body should now contain a ConditionalBlock whose
     # guard reads ``_if_cond_24`` (piped through symbol_mapping).
