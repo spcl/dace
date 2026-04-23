@@ -500,7 +500,9 @@ class SDFGBuilder:
         and similar self-updates."""
         value = str(value)
         tokens = set(re.findall(r'[a-zA-Z_]\w*', value))
-        reads = [nm for nm in sorted(tokens, key=len, reverse=True) if nm in self.scalars and nm != target]
+        # ``nm != target`` was wrong — ``i = i + 1`` genuinely needs a read
+        # edge on the target itself.
+        reads = [nm for nm in sorted(tokens, key=len, reverse=True) if nm in self.scalars]
 
         code = value
         for nm in reads:
