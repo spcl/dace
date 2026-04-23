@@ -9,7 +9,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from sympy import Function
 import dace.sdfg.utils as sdutil
-from dace.sdfg.tasklet_utils import token_replace_dict, extract_bracket_tokens, remove_bracket_tokens
 
 
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
@@ -848,6 +847,8 @@ def array_is_used_in_sdfg_states(sdfg: dace.SDFG,
                 return True
 
     return False
+
+
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Utilities that operate on constructed SDFGs.
 

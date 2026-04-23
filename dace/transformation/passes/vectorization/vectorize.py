@@ -14,7 +14,6 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.vectorization_utils import *
 import dace.sdfg.tasklet_utils as tutil
-from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 
 
 @properties.make_properties

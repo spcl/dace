@@ -8,7 +8,6 @@ from dace import ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
-from dace.transformation.passes.symbol_propagation import SymbolPropagation
 import gc
 
 # klev, kidia, kfdia : Symbols
@@ -322,8 +321,10 @@ def test_map_ranges_offset_when_begin_expr_is_none():
     r = state.add_read("A")
     w = state.add_write("A")
     me, mx = state.add_map("m", {"i": "3:7"})
-    me.add_in_connector("IN_A"); me.add_out_connector("OUT_A")
-    mx.add_in_connector("IN_A"); mx.add_out_connector("OUT_A")
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
     t = state.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1")
     state.add_edge(r, None, me, "IN_A", mm.Memlet("A[3:7]"))
     state.add_edge(me, "OUT_A", t, "x", mm.Memlet("A[i]"))
@@ -331,8 +332,7 @@ def test_map_ranges_offset_when_begin_expr_is_none():
     state.add_edge(mx, "OUT_A", w, None, mm.Memlet("A[3:7]"))
     sdfg.validate()
 
-    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None,
-                       convert_leq_to_lt=False,
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None, convert_leq_to_lt=False,
                        normalize_loops=False).apply_pass(sdfg, {})
 
     entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]

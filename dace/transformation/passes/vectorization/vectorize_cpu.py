@@ -119,6 +119,7 @@ class VectorizeCPU(ppl.Pipeline):
             p: Pass
             yield p
 
+
 """
 N = dace.symbol("N", dtype=dace.int64)
 @dace.program
@@ -169,5 +170,5 @@ def if_add(A: dace.float64[N, N], B: dace.float64[N, N]):
         for ii, jj in dace.map[0:T, 0:T]: # In the transformation you need to tile the map outside (and then keep the symbols known while you process the nested SDFG)
             mask[0:T, 0:T] = gen_mask(A[i*T:(i+1)*T, j*T:(j+1)*T], lambda: A[i] > 0)
             apply(mask, B[i*T:(i+1)*T, j*T:(j+1)*T], lambda b, m: b-1.0 if m else b+1.0)
-            apply(~mask, B[i*T:(i+1)*T, j*T:(j+1)*T], lambda b, m: b-1.0 if m else b+1.0) 
+            apply(~mask, B[i*T:(i+1)*T, j*T:(j+1)*T], lambda b, m: b-1.0 if m else b+1.0)
 """

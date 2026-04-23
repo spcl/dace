@@ -1,11 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-import copy
-import pytest
-import numpy
-from dace.transformation.passes.explicit_vectorization import ExplicitVectorizationPipelineCPU, ExplicitVectorizationPipelineGPU
-from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 
 N = dace.symbol('N')
 

@@ -13,7 +13,8 @@ class PermuteDimensions(ppl.Pass):
         return (ppl.Modifies.States & ppl.Modifies.AccessNodes & ppl.Modifies.Edges & ppl.Modifies.Descriptors
                 & ppl.Modifies.NestedSDFGs & ppl.Modifies.Memlets)
 
-    def __init__(self, permute_map: Dict[str, List[int]],
+    def __init__(self,
+                 permute_map: Dict[str, List[int]],
                  add_permute_maps: bool,
                  use_permute_libnodes: bool = False,
                  column_major: bool = False):
@@ -31,7 +32,7 @@ class PermuteDimensions(ppl.Pass):
         return 0
 
     def _add_permute_map(self, sdfg: dace.SDFG, state: dace.SDFGState, old_shape: List[int], new_shape: List[int],
-                            permute_indices: List[int], old_name: str, new_name: str):
+                         permute_indices: List[int], old_name: str, new_name: str):
         """
         Adds a transpose that copies data from the original layout to the permuted layout
         using the TensorTranspose library node.
@@ -55,14 +56,13 @@ class PermuteDimensions(ppl.Pass):
             state.add_node(tnode)
 
             state.add_edge(old_access, None, tnode, "_inp_tensor",
-                        dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
+                           dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
             state.add_edge(tnode, "_out_tensor", new_access, None,
-                        dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
+                           dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
         else:
             # Map iterates over the OLD shape
             map_params = [f"__i{d}" for d in range(len(old_shape))]
-            map_ranges = {p: f"0:{s}" for p, s in zip(list(reversed(map_params)),
-                                                      list(reversed(old_shape)))}
+            map_ranges = {p: f"0:{s}" for p, s in zip(list(reversed(map_params)), list(reversed(old_shape)))}
 
             # Read indices: i0, i1, i2, ...
             read_indices = ", ".join(map_params)
@@ -177,12 +177,12 @@ class PermuteDimensions(ppl.Pass):
                     inverse_permute_indices = self._inverse_permute_indices(permute_map[old_name])
 
                     self._add_permute_map(sdfg=sdfg,
-                                            state=permute_out_state,
-                                            old_shape=new_shape,
-                                            new_shape=old_shape,
-                                            permute_indices=inverse_permute_indices,
-                                            old_name=new_name,
-                                            new_name=old_name)
+                                          state=permute_out_state,
+                                          old_shape=new_shape,
+                                          new_shape=old_shape,
+                                          permute_indices=inverse_permute_indices,
+                                          old_name=new_name,
+                                          new_name=old_name)
 
         # The transformation has added the permuted shapes and maps to permute them if the user requested it.
         # The transformation has yet permuted the memlets as we want to access the previous defined arrays

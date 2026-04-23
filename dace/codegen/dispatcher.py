@@ -7,7 +7,7 @@ functionality to registered code generators based on user-defined predicates.
 from dace.codegen.prettycode import CodeIOStream
 from dace import attr_enum, config, data as dt, dtypes, nodes
 from dace.memlet import Memlet
-from dace.codegen import exceptions as cgx, prettycode
+from dace.codegen import prettycode
 from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge

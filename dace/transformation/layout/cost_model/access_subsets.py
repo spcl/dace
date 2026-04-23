@@ -1,7 +1,6 @@
 import dace
 from typing import Dict, List
 import copy
-
 """
 for i in range(0, N):
     for j in range(0, M):
@@ -23,6 +22,7 @@ We assume both N and M are multiple of the block size (=8)
 
 Need to compute overlap between iterations, behavior
 """
+
 
 def get_access_subsets(
     state: dace.SDFGState,
@@ -53,9 +53,7 @@ def get_access_subsets(
     # ----- 2. Filter map entries and verify perfect nesting -----------
     #    Between consecutive map scopes there should be no tasklets or
     #    non-passthrough access nodes.  Collect map entries.
-    map_entries: List[dace.nodes.MapEntry] = [
-        n for n in all_scope_nodes if isinstance(n, dace.nodes.MapEntry)
-    ]
+    map_entries: List[dace.nodes.MapEntry] = [n for n in all_scope_nodes if isinstance(n, dace.nodes.MapEntry)]
 
     # Also collect the outermost entry itself
     all_entries = [entry_node] + map_entries
@@ -68,10 +66,8 @@ def get_access_subsets(
         direct_children = scope_children.get(entry, [])
         for child in direct_children:
             if isinstance(child, dace.nodes.Tasklet):
-                raise ValueError(
-                    f"Tasklet '{child.label}' found between map scopes — "
-                    f"loop nest is not perfectly nested."
-                )
+                raise ValueError(f"Tasklet '{child.label}' found between map scopes — "
+                                 f"loop nest is not perfectly nested.")
             if isinstance(child, (dace.nodes.MapEntry, dace.nodes.MapExit)):
                 continue
             # Access nodes used as connectors between maps are acceptable
@@ -97,9 +93,7 @@ def get_access_subsets(
 
     # ----- 5. Collect all tasklets within the innermost map -----------
     innermost_children = scope_children.get(innermost_entry, [])
-    tasklets: List[dace.nodes.Tasklet] = [
-        n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)
-    ]
+    tasklets: List[dace.nodes.Tasklet] = [n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)]
 
     if not tasklets:
         raise ValueError("No tasklets found in the innermost map scope.")
@@ -156,17 +150,12 @@ def _union_into(
         # Manual fallback: per-dimension bounding-box union via sympy
         import sympy as sp
 
-        if (not isinstance(existing, dace.subsets.Range)
-                or not isinstance(new_subset, dace.subsets.Range)):
+        if (not isinstance(existing, dace.subsets.Range) or not isinstance(new_subset, dace.subsets.Range)):
             # If one is an Indices subset, convert to Range first
             if isinstance(new_subset, dace.subsets.Indices):
-                new_subset = dace.subsets.Range(
-                    [(idx, idx, 1) for idx in new_subset]
-                )
+                new_subset = dace.subsets.Range([(idx, idx, 1) for idx in new_subset])
             if isinstance(existing, dace.subsets.Indices):
-                existing = dace.subsets.Range(
-                    [(idx, idx, 1) for idx in existing]
-                )
+                existing = dace.subsets.Range([(idx, idx, 1) for idx in existing])
 
         new_ranges = []
         for (rb, re, rs), (nb, ne, ns) in zip(existing.ranges, new_subset.ranges):

@@ -7,8 +7,6 @@ import dace
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
-from dace import dtypes
-from dace.codegen.targets.framecode import infer_expr_type
 from dace.transformation import pass_pipeline as ppl, transformation
 
 import ast

@@ -1,5 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
 """
 SplitArray Pass
 ===============
@@ -21,9 +20,9 @@ from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
 import dace
-from dace import SDFG, InterstateEdge, properties
+from dace import SDFG, properties
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_unroll import MapUnroll
 from dace.transformation.interstate.loop_unroll import LoopUnroll
@@ -84,9 +83,7 @@ def resolve_aliases(
     return resolved
 
 
-def copy_state_contents(
-    old_state: SDFGState, new_state: SDFGState
-) -> Dict[dace.nodes.Node, dace.nodes.Node]:
+def copy_state_contents(old_state: SDFGState, new_state: SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
     """Deep-copy all nodes and edges from ``old_state`` into ``new_state``.
 
     Returns a mapping from original nodes to their copies.
@@ -100,8 +97,10 @@ def copy_state_contents(
 
     for e in old_state.edges():
         new_state.add_edge(
-            node_map[e.src], e.src_conn,
-            node_map[e.dst], e.dst_conn,
+            node_map[e.src],
+            e.src_conn,
+            node_map[e.dst],
+            e.dst_conn,
             copy.deepcopy(e.data),
         )
 
@@ -274,9 +273,7 @@ class SplitArray(ppl.Pass):
             # because the full array may be passed to nested SDFGs
             ranges = [range(extent) for _, extent in split_dims]
             for indices in itertools.product(*ranges):
-                suffix = "_".join(
-                    str(self._name_map[array_name_map[i]][int(idx)]) for i, idx in enumerate(indices)
-                )
+                suffix = "_".join(str(self._name_map[array_name_map[i]][int(idx)]) for i, idx in enumerate(indices))
                 new_descs[f"{arr}_{suffix}"] = dace.data.Array(
                     shape=filtered_shape,
                     strides=filtered_strides,
@@ -322,15 +319,11 @@ class SplitArray(ppl.Pass):
                     new_name_expr.append(self._name_map[splitd][access_offset])
                 except Exception as e:
                     if access_mapping is None:
-                        raise Exception(
-                            f"Expression {b} is not an integer, can't resolve array"
-                            f" for {edge.data.data}[{edge.data.subset}],"
-                            f" {edge.src} -> {edge.dst}: {e}"
-                        )
+                        raise Exception(f"Expression {b} is not an integer, can't resolve array"
+                                        f" for {edge.data.data}[{edge.data.subset}],"
+                                        f" {edge.src} -> {edge.dst}: {e}")
                     if str(b) not in access_mapping:
-                        raise Exception(
-                            f"(Internal) access_mapping {access_mapping} missing key {b}"
-                        )
+                        raise Exception(f"(Internal) access_mapping {access_mapping} missing key {b}")
                     new_name_expr.append(self._name_map[splitd][access_mapping[str(b)]])
             else:
                 new_subset_expr.append((b, e, s))
@@ -399,8 +392,7 @@ class SplitArray(ppl.Pass):
             if len(all_data_dependent_dims) > 1:
                 sdfg.save("failing.sdfgz", compress=True)
             assert len(all_data_dependent_dims) == 1, (
-                f"Multiple data-dependent dims not supported: {all_data_dependent_dims} in {state}"
-            )
+                f"Multiple data-dependent dims not supported: {all_data_dependent_dims} in {state}")
             return all_data_dependent_dims.pop(), all_access_exprs
         return None, None
 
@@ -427,9 +419,7 @@ class SplitArray(ppl.Pass):
                         int(b)
                     except Exception:
                         if not any(str(expr) in str(b) for expr in exprs):
-                            raise Exception(
-                                f"Expected expression {exprs} in access {b}"
-                            )
+                            raise Exception(f"Expected expression {exprs} in access {b}")
                         if splitd != "None":
                             dims.add(splitd)
         return dims
@@ -527,10 +517,8 @@ class SplitArray(ppl.Pass):
                 return sp.Function(fname, commutative=False)(*new_args)
 
             dim_filter = split_map[fname]
-            assert len(dim_filter) == len(new_args), (
-                f"{fname}: split_config has {len(dim_filter)} dims "
-                f"but call has {len(new_args)} args: {expr}"
-            )
+            assert len(dim_filter) == len(new_args), (f"{fname}: split_config has {len(dim_filter)} dims "
+                                                      f"but call has {len(new_args)} args: {expr}")
 
             name_parts = []
             kept_args = []
@@ -554,9 +542,7 @@ class SplitArray(ppl.Pass):
             for k, v in iedge.data.assignments.items():
                 v_sym = dace.symbolic.pystr_to_symbolic(v)
                 v_new = _rewrite_expr(v_sym)
-                new_assignments[k] = dace.symbolic.symstr(
-                    v_new, arrayexprs=frozenset(sdfg.arrays.keys())
-                )
+                new_assignments[k] = dace.symbolic.symstr(v_new, arrayexprs=frozenset(sdfg.arrays.keys()))
                 if v_new is not v_sym:
                     changed = True
             if changed:
@@ -586,10 +572,8 @@ class SplitArray(ppl.Pass):
                     continue
 
                 # Multiple in-names combined with out-names is unsupported
-                assert len(in_names) <= 1 or len(out_names) == 0, (
-                    f"Multiple in-names with out-names unsupported: "
-                    f"in={in_names}, out={out_names} in {state}"
-                )
+                assert len(in_names) <= 1 or len(out_names) == 0, (f"Multiple in-names with out-names unsupported: "
+                                                                   f"in={in_names}, out={out_names} in {state}")
 
                 if len(out_names) > 0:
                     # <=1 in-name, multiple out-names -> split out-edges
@@ -611,7 +595,6 @@ class SplitArray(ppl.Pass):
                         state.add_edge(ie.src, ie.src_conn, dup, None, copy.deepcopy(ie.data))
                     state.remove_node(dnode)
 
-
     def _remove_split_arrays(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Remove original (pre-split) array descriptors from the SDFG."""
         for arr in split_map:
@@ -624,10 +607,8 @@ class SplitArray(ppl.Pass):
                 if isinstance(n, dace.nodes.NestedSDFG):
                     connectors = set(n.in_connectors) | set(n.out_connectors)
                     if any(name in split_map for name in connectors):
-                        raise Exception(
-                            f"TODO: Split arrays passed to nested SDFGs not supported yet."
-                            f" Found in {n} of {state}. Split arrays: {list(split_map.keys())}"
-                        )
+                        raise Exception(f"TODO: Split arrays passed to nested SDFGs not supported yet."
+                                        f" Found in {n} of {state}. Split arrays: {list(split_map.keys())}")
 
     # ------------------------------------------------------------------ #
     #  Entry point

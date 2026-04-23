@@ -1,7 +1,7 @@
 import ast
 import copy
 import numpy
-from sympy import Eq, Equality, Function, Integer, preorder_traversal, pycode
+from sympy import Function, preorder_traversal, pycode
 import re
 import sympy
 import dace

@@ -17,14 +17,12 @@ import numpy as np
 import pytest
 import copy
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.dataflow.map_interchange import MapInterchange
 
 # Symbols
 nblks_c = dace.symbol("nblks_c")
 nlev = dace.symbol("nlev")
 nproma = dace.symbol("nproma")
 nblk = 2
-
 
 N_BLKS, N_LEV, N_PROMA = 2, 4, 16
 
@@ -143,6 +141,7 @@ def test_permute_on_safe_indices(input_data):
 
     np.testing.assert_allclose(B, B_ref, atol=1e-14)
 
+
 @dace.program
 def interp_ekinh(
     z_kin_hor_e: dace.float64[nblk, nlev, nproma],
@@ -153,11 +152,10 @@ def interp_ekinh(
 ):
     for jb in range(nblk):
         for jk, jc in dace.map[0:nlev, 0:nproma]:
-            z_ekinh[jb, jk, jc] = (
-                e_bln_c_s[jb, 0, jc] * z_kin_hor_e[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]]
-              + e_bln_c_s[jb, 1, jc] * z_kin_hor_e[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]]
-              + e_bln_c_s[jb, 2, jc] * z_kin_hor_e[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]]
-            )
+            z_ekinh[jb, jk, jc] = (e_bln_c_s[jb, 0, jc] * z_kin_hor_e[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]] +
+                                   e_bln_c_s[jb, 1, jc] * z_kin_hor_e[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]] +
+                                   e_bln_c_s[jb, 2, jc] * z_kin_hor_e[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]])
+
 
 @pytest.mark.parametrize("seed", [42, 123, 7])
 def test_interp_ekinh(seed):
@@ -189,7 +187,8 @@ def test_interp_ekinh(seed):
         "ieidx": [1, 2, 0],
         "ieblk": [1, 2, 0],
         "z_ekinh": [0, 2, 1],
-    }, add_permute_maps=True).apply_pass(sdfg, {})
+    },
+                      add_permute_maps=True).apply_pass(sdfg, {})
     sdfg.save("after_permute_interp_ekinh.sdfgz", compress=True)
 
     sdfg(
@@ -207,6 +206,7 @@ def test_interp_ekinh(seed):
     print(f"DaCe:  {z_ekinh_dace.flat[:10]}")
     print(f"Ref:   {z_ekinh_ref.flat[:10]}")
     assert np.allclose(z_ekinh_dace, z_ekinh_ref), f"FAILED (seed={seed})"
+
 
 if __name__ == "__main__":
     for seed in [42, 123, 7]:

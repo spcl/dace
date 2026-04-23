@@ -1,11 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from typing import Dict, List, Set, Optional, Tuple
-from dace import SDFG, InterstateEdge, properties
+from typing import Dict, List, Optional, Tuple
+from dace import SDFG, properties
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 
 

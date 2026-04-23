@@ -29,7 +29,7 @@ def detect_cpu_vector_features():
             "sve2": False,
         }
     """
-    import platform, subprocess, sys
+    import platform, subprocess
 
     system = platform.machine().lower()
 

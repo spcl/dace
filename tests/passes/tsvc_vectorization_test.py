@@ -1,26 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import os
-from typing import Tuple
 import dace
-import copy
-import pytest
 import numpy as np
-from dace import InterstateEdge
 from dace import Union
-from dace.memlet import Memlet
-from dace.properties import CodeBlock
-from dace.sdfg import ControlFlowRegion
-from dace.sdfg.graph import Edge
-from dace.sdfg.state import ConditionalBlock
-from dace.transformation.interstate import LoopToMap, branch_elimination
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import eliminate_branches
-from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 import ctypes
 import subprocess
 import pathlib
-from math import sin, cos, log, exp, pow
+from math import sin, cos
 
 LEN_1D = dace.symbol("LEN_1D")
 LEN_2D = dace.symbol("LEN_2D")

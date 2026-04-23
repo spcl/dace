@@ -3,7 +3,6 @@ Unit tests for SSALoopIterators pass.
 """
 import dace
 import numpy as np
-import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
 from dace.transformation.passes.analysis import loop_analysis

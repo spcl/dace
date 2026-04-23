@@ -289,9 +289,7 @@ def _prune_memlet_path(state: dace.SDFGState, edge):
             except (KeyError, ValueError):
                 pass
         for ep in (e.src, e.dst):
-            if (isinstance(ep, dace.nodes.AccessNode)
-                    and ep in state.nodes()
-                    and state.degree(ep) == 0):
+            if (isinstance(ep, dace.nodes.AccessNode) and ep in state.nodes() and state.degree(ep) == 0):
                 state.remove_node(ep)
 
 

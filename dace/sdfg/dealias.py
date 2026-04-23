@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import copy
 from typing import Set, Dict
 
 from dace.sdfg.graph import MultiConnectorEdge

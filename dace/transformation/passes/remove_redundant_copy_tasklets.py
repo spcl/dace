@@ -1,15 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import defaultdict
 import copy
 from typing import Any, Dict, Optional, Set
 import dace
-from dace import SDFG, InterstateEdge
-from dace.sdfg import nodes as nd
+from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes import analysis as ap
 from dace import properties
-import dace.sdfg.construction_utils as cutil
 
 
 @properties.make_properties

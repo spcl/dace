@@ -3,9 +3,7 @@ import dace
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import utils as sdutil
 from typing import Optional
-import copy
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible

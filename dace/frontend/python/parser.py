@@ -15,7 +15,6 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
-from dace.sdfg.dealias import dealias
 
 try:
     import mpi4py

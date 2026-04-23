@@ -265,8 +265,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         repldict = dict()
                         multipliers = []
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self.do_not_check_begin or b == _get_expr_from_str(
-                                    self.begin_expr) or str(b) == str(self.begin_expr):
+                            if self.do_not_check_begin or b == _get_expr_from_str(self.begin_expr) or str(b) == str(
+                                    self.begin_expr):
                                 has_matches = True
 
                                 b_expr = dace.symbolic.SymExpr(

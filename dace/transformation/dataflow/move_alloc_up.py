@@ -2,12 +2,7 @@ from typing import List, Any
 import dace
 
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, symbolic, SDFG
-from dace.sdfg import nodes, utils as sdutil
-from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
 import copy
-import itertools
 
 
 def offset_memlets(state: dace.SDFGState, offsets: List[Any], entry_node: dace.nodes.MapEntry, name: str):

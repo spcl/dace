@@ -48,7 +48,9 @@ def _expr(val):
         return val.expr
     return val
 
+
 no_sync = os.environ.get('_DACE_NO_SYNC', '0').lower() in ('1', 'yes', 'on', 'true')
+
 
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """ Copy predicate from CPU to GPU that determines when a copy is illegal.

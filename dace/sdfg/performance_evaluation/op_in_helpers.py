@@ -11,6 +11,7 @@ from scipy.optimize import curve_fit
 import numpy as np
 from dace import symbol
 
+
 class CacheLineTracker:
     """ A CacheLineTracker maps data container accesses to the corresponding accessed cache line. """
 
@@ -128,8 +129,8 @@ class AccessStack:
                 curr.next = Node(x)
                 curr = curr.next
         return new_stack
-    
-    def replace_self(self, other:AccessStack):
+
+    def replace_self(self, other: AccessStack):
         self.top = other.top
         self.num_calls = other.num_calls
         self.lengh = other.length
