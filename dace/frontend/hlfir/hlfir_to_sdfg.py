@@ -171,7 +171,9 @@ class SDFGBuilder:
                 transient=(v.intent == ''),
             )
 
-        # Scalars as data nodes (not symbols).
+        # Scalars as Scalar descriptors — Fortran arrays of known size map
+        # to SDFG Arrays regardless of extent (``dimension(1)`` still gets
+        # add_array), but plain Fortran variables stay scalars.
         for v in self.scalars.values():
             sdfg.add_scalar(
                 v.fortran_name,
@@ -205,7 +207,7 @@ class SDFGBuilder:
         """
         ctx.flush(self)
         cond = n.condition if n.condition else "True"
-        loop = LoopRegion(label=f"while_{self.nid()}", condition_expr=self._promote_scalars_in_cond(cond, ctx.sdfg))
+        loop = LoopRegion(label=f"while_{self.nid()}", condition_expr=cond)
         region.add_node(loop)
         if ctx.cur is not None:
             region.add_edge(ctx.cur, loop, InterstateEdge())
@@ -219,21 +221,6 @@ class SDFGBuilder:
         inner_ctx.cur = body_start
         self._emit(inner_ctx, list(n.children), loop)
         inner_ctx.flush(self, loop)
-
-    def _promote_scalars_in_cond(self, cond: str, sdfg: SDFG) -> str:
-        """DaCe LoopRegion conditions evaluate symbolically.  A loop IV
-        that lives as a scalar data node can't appear directly; rewrite
-        ``name`` → ``name[0]`` so DaCe reads the scalar at the top of
-        each iteration.  Symbols pass through unchanged.
-        """
-
-        def repl(m):
-            nm = m.group(0)
-            if nm in self.scalars and nm in sdfg.arrays:
-                return f"{nm}[0]"
-            return nm
-
-        return re.sub(r'\b[a-zA-Z_]\w*\b', repl, cond)
 
     def _emit_assign(self, ctx: '_Ctx', n, region):
         """Scalar or symbol assignment."""
@@ -505,7 +492,28 @@ class SDFGBuilder:
         ctx.flush(self)
 
     def emit_scalar_assign(self, state, target: str, value: str):
-        t = state.add_tasklet(f"set_{target}", set(), {'_out'}, f"_out = {value}")
+        """Tasklet for ``target = value`` on a scalar target.
+
+        Inputs are derived from the identifier tokens that appear in
+        ``value`` — every one that names an SDFG scalar gets its own
+        input connector so the tasklet can read ``i`` for ``i = i + 1``
+        and similar self-updates."""
+        value = str(value)
+        tokens = set(re.findall(r'[a-zA-Z_]\w*', value))
+        reads = [nm for nm in sorted(tokens, key=len, reverse=True) if nm in self.scalars and nm != target]
+
+        code = value
+        for nm in reads:
+            code = re.sub(rf'\b{re.escape(nm)}\b', f'_in_{nm}', code)
+
+        in_c = {f"_in_{nm}" for nm in reads}
+        out_c = {'_out'}
+        t = state.add_tasklet(f"set_{target}", in_c, out_c, f"_out = {code}")
+
+        for nm in reads:
+            r = self._acc(state, nm)
+            state.add_edge(r, None, t, f"_in_{nm}", Memlet(data=nm, subset='0'))
+
         a = self._acc(state, target)
         state.add_edge(t, '_out', a, None, Memlet(data=target, subset='0'))
 
@@ -525,10 +533,11 @@ class _Ctx:
         self.pending = []
 
     def ensure(self, region=None):
-        if not self.cur:
-            # ``region or self.sdfg`` collapses when ``region`` is an empty
-            # LoopRegion (``__len__`` == 0 makes it falsy); use an explicit
-            # None check so fresh loop bodies get their states added inside.
+        # ``not self.cur`` misfires the same way ``region or self.sdfg`` did:
+        # SDFGState / LoopRegion define __len__ that returns 0 when empty,
+        # so a freshly-created state is treated as falsy even though we
+        # want to keep emitting into it.  Use explicit None checks.
+        if self.cur is None:
             r = self.sdfg if region is None else region
             self.cur = r.add_state(f"s_{self.builder.nid()}")
 
@@ -545,7 +554,7 @@ class _Ctx:
         self.flush(builder, region)
         r = self.sdfg if region is None else region
         s = r.add_state(label or f"s_{self.builder.nid()}")
-        if self.cur:
+        if self.cur is not None:
             r.add_edge(self.cur, s, InterstateEdge())
         self.cur = s
         return s
