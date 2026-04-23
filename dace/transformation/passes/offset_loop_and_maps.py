@@ -244,6 +244,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     self._apply(body)
             else:
                 assert isinstance(node, dace.SDFGState)
+                # Descend into NestedSDFGs so their maps/loops get
+                # offset too -- not just the ones at the enclosing
+                # SDFG's top level (e.g. loop bodies that ``LoopToMap``
+                # promoted into a ``loop_body`` nested SDFG).
+                for state_node in node.nodes():
+                    if isinstance(state_node, dace.nodes.NestedSDFG):
+                        self._apply(state_node.sdfg)
 
     def _find_scalar_write_expr_sets(self, sdfg: dace.SDFG) -> Dict[str, Set[str]]:
         write_expr_dict = dict()

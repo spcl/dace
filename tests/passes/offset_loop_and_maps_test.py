@@ -325,6 +325,62 @@ def test_empty_memlet_does_not_crash_offset_loops_and_maps():
     sdfg.validate()
 
 
+def test_maps_inside_nested_sdfg_are_offset():
+    """Regression: the pass previously only walked the enclosing SDFG's
+    direct ``ControlFlowRegion`` / ``ConditionalBlock`` children,
+    leaving maps that live inside ``NestedSDFG`` bodies unchanged (the
+    typical shape after ``LoopToMap`` promotes a loop body into a
+    ``loop_body`` NSDFG). The fix descends into each NestedSDFG so every
+    reachable map range is offset.
+    """
+    from dace import memlet as mm
+    from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+
+    # Inner SDFG with a 2D map -- tasklet produces the value, MapExit
+    # writes it back out (so only an ``A`` out-connector on the Map is
+    # needed).
+    inner = dace.SDFG("inner_with_map")
+    inner.add_array("A", [16, 16], dace.float64)
+    inner_state = inner.add_state("body", is_start_block=True)
+    w_inner = inner_state.add_write("A")
+    me, mx = inner_state.add_map("inner_map", {"i": "0:8", "j": "1:5"})
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    t = inner_state.add_tasklet("set", set(), {"y"}, "y = 1.0")
+    inner_state.add_nedge(me, t, mm.Memlet())
+    inner_state.add_edge(t, "y", mx, "IN_A", mm.Memlet("A[i, j]"))
+    inner_state.add_edge(mx, "OUT_A", w_inner, None, mm.Memlet("A[0:8, 1:5]"))
+
+    # Outer SDFG wraps ``inner`` in a NestedSDFG.
+    outer = dace.SDFG("outer_with_nsdfg")
+    outer.add_array("A", [16, 16], dace.float64)
+    ostate = outer.add_state("ostate", is_start_block=True)
+    aw = ostate.add_write("A")
+    ns = ostate.add_nested_sdfg(inner, set(), {"A"})
+    ostate.add_edge(ns, "A", aw, None, mm.Memlet("A[0:16, 0:16]"))
+    outer.validate()
+
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None).apply_pass(outer, {})
+    outer.validate()
+
+    # Walk the post-transform SDFG tree and find the inner 2D map; both
+    # axes must have been shifted by +1.
+    from dace.sdfg import nodes as _nodes
+    inner_map = None
+    for n, _ in outer.all_nodes_recursive():
+        if isinstance(n, _nodes.MapEntry) and n.map.params == ["i", "j"]:
+            inner_map = n
+            break
+    assert inner_map is not None, "inner 2D map vanished after the transformation"
+    (ib, ie, _), (jb, je, _) = inner_map.map.range.ranges
+    # ``0:8`` -> ``(0, 7, 1)`` -> after +1 -> ``(1, 8, 1)``.
+    assert str(ib) == "1", ib
+    assert str(ie) == "8", ie
+    # ``1:5`` -> ``(1, 4, 1)`` -> after +1 -> ``(2, 5, 1)``.
+    assert str(jb) == "2", jb
+    assert str(je) == "5", je
+
+
 if __name__ == "__main__":
     test_simple_element_wise()
     test_symbol_use_in_tasklet()
@@ -332,4 +388,5 @@ if __name__ == "__main__":
     test_loop_offsetting_w_begin_expr()
     test_begin_expr_condition()
     test_with_conditional()
+    test_maps_inside_nested_sdfg_are_offset()
     test_empty_memlet_does_not_crash_offset_loops_and_maps()
