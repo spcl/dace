@@ -100,7 +100,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
     def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
-        """Apply an NView override if applicable. Returns true if the NView was applied."""
+        """
+        Apply an NView override if applicable. Returns true if the NView was applied.
+
+        See `visit_NView()` for how we keep track of nested SDFG view nodes.
+        """
         length = len(self._nviews_free)
         for index, nview in enumerate(reversed(self._nviews_free), start=1):
             if nview.target == array_name and nview not in self._nviews_deferred_removal[id(sdfg)]:
@@ -197,11 +201,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                             # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                             if parent_sdfg.arrays[memlet.data].transient:
                                 sdfg.arrays[memlet.data].transient = False
-                                # TODO
-                                # ... unless they are only ever used inside the nested SDFG, in which case
-                                # we should delete them from the parent SDFG's array list.
-                                # NOTE This can probably be done automatically by a cleanup pass in the end.
-                                #      Something like DDE should be able to do this.
 
                         # Dev note: nview.target and memlet.data are identical
                         assert memlet.data not in to_connect["inputs"]
@@ -493,11 +492,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                             # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                             if parent_sdfg.arrays[memlet_data].transient:
                                 sdfg.arrays[memlet_data].transient = False
-                                # TODO
-                                # ... unless they are only ever used inside the nested SDFG, in which case
-                                # we should delete them from the parent SDFG's array list.
-                                # NOTE This can probably be done automatically by a cleanup pass in the end.
-                                #      Something like DDE should be able to do this.
 
                         # Dev note: nview.target and memlet_data are identical
                         assert memlet_data not in outer_to_connect["inputs"]
@@ -642,11 +636,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
-                            # TODO
-                            # ... unless they are only ever used inside the nested SDFG, in which case
-                            # we should delete them from the parent SDFG's array list.
-                            # NOTE This can probably be done automatically by a cleanup pass in the end.
-                            #      Something like DDE should be able to do this.
 
                     # Dev note: memlet.data and nview.target are identical
                     assert memlet.data not in to_connect["inputs"]
@@ -999,15 +988,11 @@ def _insert_and_split_assignments(
     """
     Insert given assignments splitting them in case of potential race conditions.
 
-    DaCe validation (currently) won't let us add multiple assignment with read after
-    write pattern on the same edge. We thus split them over multiple state transitions
-    (inserting empty states in between) to be safe.
+    The semantics of the SDFG dictates that we can not assume any order in the application
+    of inter-state edge assignments. The only order is that conditions precede assignments.
 
-    NOTE (later) This should be double-checked since python dictionaries preserve
-                 insertion order since python 3.7 (which we rely on in this function
-                 too). Depending on code generation it could(TM) be that we can
-                 weaken (best case remove) the corresponding check from the sdfg
-                 validator.
+    Since we just collect all inter-state assignments while parsing the schedule tree, we
+    need to make sure to split problematic assignments over multiple state transitions.
     """
     assignments = assignments if assignments is not None else {}
     cf_region = before_state.parent_graph
