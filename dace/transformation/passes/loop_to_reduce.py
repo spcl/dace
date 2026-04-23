@@ -71,8 +71,8 @@ class LoopToReduce(ppl.Pass):
         dtype=bool,
         default=False,
         desc="Enable extractors that make semantic assumptions about input "
-             "data (e.g. the ``any``/``all`` conditional-const-assign pattern "
-             "which assumes the guard array is 0/1-valued).",
+        "data (e.g. the ``any``/``all`` conditional-const-assign pattern "
+        "which assumes the guard array is 0/1-valued).",
     )
 
     def __init__(self, permissive: bool = False):
@@ -173,8 +173,8 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym,
-                         start, end) -> Optional["_Reduction"]:
+def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start,
+                         end) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-interstate-edge "any"/"all".
 
     Body = ``ConditionalBlock`` with one branch, guard ``arr[<subs>] <cmp> C``
@@ -203,8 +203,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     left, right = tree.left, tree.comparators[0]
 
     def _is_subscript_on_array(n):
-        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
-                and n.value.id in sdfg.arrays)
+        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id in sdfg.arrays)
 
     def _is_int_const(n):
         return isinstance(n, ast.Constant) and isinstance(n.value, int)
@@ -249,8 +248,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     ranges = []
     for i, a in enumerate(sym_args):
         if i == axis_for_iter:
-            ranges.append((symbolic.simplify(start + offset),
-                           symbolic.simplify(end + offset), 1))
+            ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
         else:
             ranges.append((a, a, 1))
     return _Reduction(
@@ -436,8 +434,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             # if the guard array happens to hold only 0/1 values, which the
             # pass cannot verify statically.
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
-                return _extract_any_pattern(cond, int(expr), target, sdfg,
-                                            loop_var_sym, start, end)
+                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
             if not (isinstance(expr, sympy.Function) and str(expr.func) in sdfg.arrays):
                 return None
