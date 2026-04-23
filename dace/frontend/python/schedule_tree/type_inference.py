@@ -55,7 +55,7 @@ def _normalize_dtype(dtype: Any) -> Optional[dtypes.typeclass]:
         return dtypes.string
     try:
         return dtypes.typeclass(dtype)
-    except TypeError:
+    except (KeyError, TypeError, ValueError):
         return None
 
 
