@@ -84,6 +84,122 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
+def _translate_subset_through_nsdfg(subset, nsdfg_node):
+    """Rewrite a subset expressed in an NSDFG's local symbols to the outer scope
+    using its symbol_mapping."""
+    if subset is None:
+        return None
+    try:
+        repl = {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+                for k, v in nsdfg_node.symbol_mapping.items()}
+    except Exception:
+        return None
+    new = []
+    for rb, re, st in subset.ndrange():
+        def _sub(x):
+            try:
+                return sp.sympify(x).xreplace(repl)
+            except Exception:
+                return x
+        new.append((_sub(rb), _sub(re), _sub(st)))
+    return subsets.Range(new)
+
+
+def _descend_scope_memlets(state, edge, kind):
+    """Follow an outer edge into {MapEntry|NestedSDFG} and return inner memlets with
+    tighter per-point subsets on the same outer-array. `kind` is 'read' or 'write'.
+
+    Reads: outer edge is AccessNode -> scope_in; descend via matching OUT_/inner access.
+    Writes: outer edge is scope_out -> AccessNode; descend via matching IN_/inner access.
+
+    Returns list of (subset, dynamic_bool). Empty list if we can't safely descend.
+    """
+    if state is None or edge is None:
+        return []
+    data = edge.data.data
+    if kind == 'read':
+        node = edge.dst
+    elif kind == 'write':
+        node = edge.src
+    else:
+        return []
+    if isinstance(node, nodes.MapEntry) and kind == 'read':
+        dst_conn = edge.dst_conn
+        if not dst_conn or not dst_conn.startswith("IN_"):
+            return []
+        out_conn = "OUT_" + dst_conn[len("IN_"):]
+        result = []
+        for oe in state.out_edges(node):
+            if oe.src_conn != out_conn:
+                continue
+            inner = _descend_scope_memlets(state, oe, 'read')
+            if inner:
+                result.extend(inner)
+            elif oe.data is not None and oe.data.data == data and oe.data.src_subset is not None:
+                result.append((oe.data.src_subset, bool(oe.data.dynamic)))
+        return result
+    if isinstance(node, nodes.MapExit) and kind == 'write':
+        src_conn = edge.src_conn
+        if not src_conn or not src_conn.startswith("OUT_"):
+            return []
+        in_conn = "IN_" + src_conn[len("OUT_"):]
+        result = []
+        for ie in state.in_edges(node):
+            if ie.dst_conn != in_conn:
+                continue
+            inner = _descend_scope_memlets(state, ie, 'write')
+            if inner:
+                result.extend(inner)
+            elif ie.data is not None and ie.data.data == data and ie.data.dst_subset is not None:
+                result.append((ie.data.dst_subset, bool(ie.data.dynamic)))
+        return result
+    if isinstance(node, nodes.NestedSDFG):
+        import os as _os
+        # Off by default: NSDFG descent needs more care (symbol_mapping translation,
+        # enumeration of inner writes in further-nested structures). Opt-in via env.
+        if _os.environ.get("L2M_DESCEND_NSDFG", "0") != "1":
+            return []
+        # Inner "proxy" array is the connector name.
+        inner_name = edge.dst_conn if kind == 'read' else edge.src_conn
+        if not inner_name or inner_name not in node.sdfg.arrays:
+            return []
+        result = []
+        for st in node.sdfg.states():
+            for dn in st.data_nodes():
+                if dn.data != inner_name:
+                    continue
+                if kind == 'read':
+                    edges = st.out_edges(dn)
+                    attr = 'src_subset'
+                else:
+                    edges = st.in_edges(dn)
+                    attr = 'dst_subset'
+                for ie in edges:
+                    if ie.data is None:
+                        continue
+                    sub = getattr(ie.data, attr)
+                    if sub is None:
+                        continue
+                    translated = _translate_subset_through_nsdfg(sub, node)
+                    if translated is not None:
+                        result.append((translated, bool(ie.data.dynamic)))
+        return result
+    return []
+
+
+def _descend_read_memlets(state, edge):
+    """Return a list of Memlet objects for per-point inner reads under `edge`."""
+    if edge is None or edge.data is None:
+        return []
+    data = edge.data.data
+    out = []
+    for sub, dyn in _descend_scope_memlets(state, edge, 'read'):
+        m = memlet.Memlet(data=data, subset=sub)
+        m.dynamic = dyn
+        out.append(m)
+    return out
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -209,7 +325,14 @@ class LoopToMap(xf.MultiStateTransformation):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, itervar, start)) and not permissive:
+                            ok = dst_subset and _check_range(dst_subset, a, itersym, b, step, itervar, start)
+                            if not ok:
+                                inner_writes = _descend_scope_memlets(state, e, 'write')
+                                if inner_writes and all(
+                                    _check_range(sub, a, itersym, b, step, itervar, start) for sub, _ in inner_writes
+                                ):
+                                    ok = True
+                            if not ok and not permissive:
                                 print(
                                     f"Cannot apply: Write pattern check failed for {dn.data} - dst_subset={dst_subset}")
                                 return False
@@ -323,7 +446,15 @@ class LoopToMap(xf.MultiStateTransformation):
             # If pointers are involved, give up
             return False
         if not _check_range(src_subset, a, itersym, b, step, itervar, start):
-            return False
+            # Fallback: try inner per-point reads if any exist. Only accept if
+            # every inner read passes _check_range (i.e. every access is linearly
+            # indexed by the itervar or is itervar-independent at a fixed index).
+            _inner = _descend_scope_memlets(state, edge, 'read') if (state and edge) else []
+            if not _inner or not all(
+                _check_range(sub, a, itersym, b, step, itervar, start) or (itervar not in sub.free_symbols)
+                for sub, _ in _inner
+            ):
+                return False
 
         # Always use the source data container for the memlet test
         if state is not None and edge is not None:
@@ -331,6 +462,17 @@ class LoopToMap(xf.MultiStateTransformation):
             data = mmlt.data
 
         pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
+
+        # For a potential false-positive due to subset hulling, try descending into
+        # the scope to enumerate per-point inner reads.
+        inner_reads = _descend_read_memlets(state, edge) if data == mmlt.data else []
+        inner_preads = []
+        for m in inner_reads:
+            if m.src_subset is None:
+                continue
+            p = propagate_subset([m], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
+            inner_preads.append((m.src_subset, p.src_subset))
+
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
@@ -352,9 +494,30 @@ class LoopToMap(xf.MultiStateTransformation):
                                       subsets.Range([(start, end, step)]),
                                       use_dst=True)
             t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
-            if subsets.intersects(t_pread, pwrite) is False:
+            pwrite_s = _sanitize_by_index(indices, pwrite.dst_subset)
+            if subsets.intersects(t_pread, pwrite_s) is False:
                 continue
+
+            # Hulled overlap. Retry with per-point inner reads (tighter).
+            if inner_preads:
+                inner_widx = _dependent_indices(itervar, candidate.dst_subset)
+                any_true_overlap = False
+                for raw_r, prop_r in inner_preads:
+                    r_idx = _dependent_indices(itervar, raw_r)
+                    i_indices = set(r_idx) | set(inner_widx)
+                    if not i_indices:
+                        i_indices = set(range(len(raw_r)))
+                    r_sani = _sanitize_by_index(i_indices, raw_r)
+                    w_sani = _sanitize_by_index(i_indices, candidate.dst_subset)
+                    if r_sani == w_sani:
+                        continue  # intra-iteration self-read, safe
+                    pr_sani = _sanitize_by_index(i_indices, prop_r)
+                    pw_sani = _sanitize_by_index(i_indices, pwrite.dst_subset)
+                    if subsets.intersects(pr_sani, pw_sani) is not False:
+                        any_true_overlap = True
+                        break
+                if not any_true_overlap:
+                    continue
             return False
 
         return True

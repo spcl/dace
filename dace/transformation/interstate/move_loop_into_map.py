@@ -179,6 +179,14 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         nsdfg.sdfg.remove_node(nested_state)
         nsdfg.sdfg.add_node(inner_loop, is_start_block=True)
 
+        # Ensure body's label doesn't collide with siblings already in `graph`.
+        existing_labels = {n.label for n in graph.nodes() if n is not self.loop}
+        if body.label in existing_labels:
+            base = body.label
+            suffix = 1
+            while f"{base}_{suffix}" in existing_labels:
+                suffix += 1
+            body.label = f"{base}_{suffix}"
         graph.add_node(body, is_start_block=(graph.start_block is self.loop))
         for ie in graph.in_edges(self.loop):
             graph.add_edge(ie.src, body, ie.data)
