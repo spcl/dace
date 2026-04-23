@@ -300,6 +300,94 @@ def test_tasklet_body_boolop_or_is_lifted():
     _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a | b")
 
 
+def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1"):
+    """Mirrors FOR_l_600_c_600 (tmp_call_13): a LoopRegion whose body is a
+    ConditionalBlock on an array element, with a constant-RHS assignment to
+    a symbol."""
+    sdfg = dace.SDFG(f"any_pattern_{assign_const}")
+    sdfg.add_symbol("tmp_call_13", dace.int32)
+    sdfg.add_array("B", [N], dace.int32)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i",
+                      initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock(guard), branch)
+    s1 = branch.add_state("s1", is_start_block=True)
+    s2 = branch.add_state("s2")
+    branch.add_edge(s1, s2, dace.InterstateEdge(assignments={"tmp_call_13": assign_const}))
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    return sdfg
+
+
+def test_any_pattern_not_lifted_without_permissive():
+    """Default (non-permissive) mode leaves the ``any`` pattern alone because
+    the lift assumes the guard array is 0/1-valued."""
+    sdfg = _build_any_pattern_sdfg()
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+    assert LoopToReduce().apply_pass(sdfg, {}) is None
+    assert _count_loops(sdfg) == 1
+
+
+def test_any_pattern_lifts_to_or_in_permissive():
+    """``{sym: "1"}`` gated by ``arr[f(i)] == 1`` lifts to a bitwise-OR
+    reduction over ``arr`` in permissive mode."""
+    sdfg = _build_any_pattern_sdfg(assign_const="1", guard="B[i] == 1")
+    sdfg.validate()
+    lifted = LoopToReduce(permissive=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    assert _count_loops(sdfg) == 0
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a | b")
+
+
+def test_all_pattern_lifts_to_and_in_permissive():
+    """``{sym: "0"}`` gated by ``arr[f(i)] == 0`` lifts to a bitwise-AND
+    reduction in permissive mode."""
+    sdfg = _build_any_pattern_sdfg(assign_const="0", guard="B[i] == 0")
+    sdfg.validate()
+    lifted = LoopToReduce(permissive=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+    assert _count_loops(sdfg) == 0
+    _assert_single_reduce_with_wcr(sdfg, "lambda a, b: a & b")
+
+
+def test_any_pattern_symbol_bridge_via_tmp_scalar():
+    """When the accumulator is a symbol, ``_lift`` introduces a transient
+    ``_red_tmp_<sym>`` scalar, seeds it from the symbol, and assigns the
+    symbol back on the outgoing interstate edge."""
+    from dace.libraries.standard.nodes.reduce import Reduce as _Reduce
+    sdfg = _build_any_pattern_sdfg()
+    LoopToReduce(permissive=True).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Bridge scalar exists and is transient.
+    bridge_names = [k for k in sdfg.arrays if k.startswith("_red_tmp_tmp_call_13")]
+    assert len(bridge_names) == 1
+    assert sdfg.arrays[bridge_names[0]].transient
+
+    # Reduce writes to the bridge scalar.
+    reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, _Reduce)]
+    assert len(reduces) == 1
+    red, state = reduces[0]
+    (out_edge, ) = state.out_edges(red)
+    assert out_edge.data.data == bridge_names[0]
+
+    # Outgoing interstate edge assigns the original symbol from the bridge.
+    for e in sdfg.all_interstate_edges():
+        if "tmp_call_13" in (e.data.assignments or {}):
+            assert e.data.assignments["tmp_call_13"] == bridge_names[0]
+            break
+    else:
+        raise AssertionError("no interstate edge assigning tmp_call_13 from the bridge")
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -313,3 +401,7 @@ if __name__ == "__main__":
     test_interstate_edge_logical_or_is_lifted()
     test_interstate_edge_logical_and_is_lifted()
     test_tasklet_body_boolop_or_is_lifted()
+    test_any_pattern_not_lifted_without_permissive()
+    test_any_pattern_lifts_to_or_in_permissive()
+    test_all_pattern_lifts_to_and_in_permissive()
+    test_any_pattern_symbol_bridge_via_tmp_scalar()
