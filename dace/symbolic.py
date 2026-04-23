@@ -1383,7 +1383,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         s = f"{fval:.15g}"
         if '.' not in s and 'e' not in s and 'E' not in s:
             s += '.0'
-        elif '.' in s:
+        elif '.' in s and 'e' not in s and 'E' not in s:
             # Strip trailing zeros but keep at least one after dot
             # to avoid unwanted promotions to integers
             int_part, frac_part = s.split('.')
