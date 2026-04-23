@@ -1,47 +1,114 @@
-"""``emit_bindings`` end-to-end template-assembly test.
+"""End-to-end emitter tests — the scaffold consumes
+``(FrozenSignature, OriginalInterface, FlattenPlan)`` triples and
+writes a ``<entry>_bindings.f90`` file that mirrors what
+``hlfir-flatten-structs`` recorded.
 
-This covers the scaffold: a real ``FrozenSignature`` + ``OriginalInterface``
-produces a well-formed Fortran module that:
-- declares the three C entry points with ``bind(c)``,
-- exposes the ``<entry>_dace`` wrapper subroutine preserving the
-  caller's signature,
-- emits ``c_f_pointer`` aliases for array args whose layout matches,
-- computes each SDFG free symbol via ``size(...)``,
-- guards the init with a ref-counted ``init_count``,
-- invokes ``__program_<entry>`` via the module-save handle.
-
-Concrete numerical end-to-end (compile + run) lives in a separate
-integration test that depends on flang + gfortran + DaCe codegen.
+Each test spells out a realistic fixture plan and asserts on the
+key Fortran shapes the wrapper should contain (or NOT contain, for
+the zero-copy guarantees).  No numerical compile-and-run here —
+those live in a separate integration test once the bridge side is
+wired.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from dace.frontend.hlfir.bindings import (
+    FlattenEntry,
+    FlattenPlan,
+    FlattenRecipe,
     FrozenArg,
     FrozenSignature,
-    emit_bindings,
-)
-from dace.frontend.hlfir.bindings.fortran_interface import (
     OriginalArg,
     OriginalInterface,
+    emit_bindings,
 )
 
+# --------------------------------------------------------------------------
+# Fixtures
+# --------------------------------------------------------------------------
 
-def _demo(tmp_path: Path) -> Path:
+
+def _two_real_array_struct(tmp_path: Path) -> str:
+    """``type(t_fields)`` with two plain ``real(c_double)`` members —
+    everything aliases."""
     frozen = FrozenSignature(
-        entry="compute",
-        mangled="_QPcompute",
+        entry="kernel",
+        mangled="_QPkernel",
         args=(
             FrozenArg(fortran_name="a",
-                      sdfg_name="a",
+                      sdfg_name="fld_a",
                       kind="array",
                       dtype="float64",
                       rank=2,
                       shape=("n", "m"),
-                      intent="in"),
+                      intent="inout",
+                      from_struct_member="fld%a",
+                      layout="same"),
             FrozenArg(fortran_name="b",
-                      sdfg_name="b",
+                      sdfg_name="fld_b",
+                      kind="array",
+                      dtype="float64",
+                      rank=2,
+                      shape=("n", "m"),
+                      intent="inout",
+                      from_struct_member="fld%b",
+                      layout="same"),
+        ),
+        free_symbols=("m", "n"),
+    )
+    iface = OriginalInterface(
+        entry="kernel",
+        args=(OriginalArg(name="fld", fortran_type="type(t_fields)", rank=0, intent="inout", struct_type="t_fields"),
+              OriginalArg(name="n", fortran_type="integer(c_int)", rank=0,
+                          intent="in"), OriginalArg(name="m", fortran_type="integer(c_int)", rank=0, intent="in")),
+        used_modules={"mo_fields": ("t_fields", )},
+    )
+    plan = FlattenPlan(entries=(
+        FlattenEntry(outer_expr="fld%a",
+                     outer_type="real(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("fld_a", ),
+                                          read_exprs=("fld%a($i1, $i2)", ),
+                                          rank=2,
+                                          shape_exprs=("size(fld%a, dim=1)", "size(fld%a, dim=2)"),
+                                          aliasable=True)),
+        FlattenEntry(outer_expr="fld%b",
+                     outer_type="real(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("fld_b", ),
+                                          read_exprs=("fld%b($i1, $i2)", ),
+                                          rank=2,
+                                          shape_exprs=("size(fld%b, dim=1)", "size(fld%b, dim=2)"),
+                                          aliasable=True)),
+    ))
+    out = tmp_path / "kernel_bindings.f90"
+    emit_bindings(frozen, iface, plan, str(out))
+    return out.read_text()
+
+
+def _complex_split_struct(tmp_path: Path) -> str:
+    """``st%z`` complex member + ``st%u`` plain real."""
+    frozen = FrozenSignature(
+        entry="kernel",
+        mangled="_QPkernel",
+        args=(
+            FrozenArg(fortran_name="z_re",
+                      sdfg_name="st_z_re",
+                      kind="array",
+                      dtype="float64",
+                      rank=2,
+                      shape=("n", "m"),
+                      intent="inout"),
+            FrozenArg(fortran_name="z_im",
+                      sdfg_name="st_z_im",
+                      kind="array",
+                      dtype="float64",
+                      rank=2,
+                      shape=("n", "m"),
+                      intent="inout"),
+            FrozenArg(fortran_name="u",
+                      sdfg_name="st_u",
                       kind="array",
                       dtype="float64",
                       rank=2,
@@ -51,58 +118,165 @@ def _demo(tmp_path: Path) -> Path:
         free_symbols=("m", "n"),
     )
     iface = OriginalInterface(
-        entry="compute",
-        args=(
-            OriginalArg(name="a", fortran_type="real(c_double)", rank=2, shape=("n", "m"), intent="in"),
-            OriginalArg(name="b", fortran_type="real(c_double)", rank=2, shape=("n", "m"), intent="inout"),
-        ),
+        entry="kernel",
+        args=(OriginalArg(name="st", fortran_type="type(t_state)", rank=0, intent="inout", struct_type="t_state"),
+              OriginalArg(name="n", fortran_type="integer(c_int)", rank=0,
+                          intent="in"), OriginalArg(name="m", fortran_type="integer(c_int)", rank=0, intent="in")),
+        used_modules={"mo_state": ("t_state", )},
     )
-    out = tmp_path / "compute_bindings.f90"
-    emit_bindings(frozen, iface, str(out))
-    return out
+    plan = FlattenPlan(entries=(
+        FlattenEntry(outer_expr="st%z",
+                     outer_type="complex(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("st_z_re", "st_z_im"),
+                                          read_exprs=("real(st%z($i1,$i2), kind=c_double)", "aimag(st%z($i1,$i2))"),
+                                          write_expr="cmplx(st_z_re($i1,$i2), st_z_im($i1,$i2), kind=c_double)",
+                                          rank=2,
+                                          shape_exprs=("size(st%z, dim=1)", "size(st%z, dim=2)"),
+                                          aliasable=False)),
+        FlattenEntry(outer_expr="st%u",
+                     outer_type="real(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("st_u", ),
+                                          read_exprs=("st%u($i1, $i2)", ),
+                                          rank=2,
+                                          shape_exprs=("size(st%u, dim=1)", "size(st%u, dim=2)"),
+                                          aliasable=True)),
+    ))
+    out = tmp_path / "kernel_bindings.f90"
+    emit_bindings(frozen, iface, plan, str(out))
+    return out.read_text()
 
 
-def test_emits_module_with_expected_symbols(tmp_path: Path):
-    src = _demo(tmp_path).read_text()
+def _nested_struct(tmp_path: Path) -> str:
+    """Two-level nested struct: ``st%a%v`` + ``st%b%v``, both aliased
+    with full ``%``-paths in ``c_loc(...)``."""
+    frozen = FrozenSignature(
+        entry="kernel",
+        mangled="_QPkernel",
+        args=(
+            FrozenArg(fortran_name="a_v",
+                      sdfg_name="st_a_v",
+                      kind="array",
+                      dtype="float64",
+                      rank=2,
+                      shape=("n", "m"),
+                      intent="inout"),
+            FrozenArg(fortran_name="b_v",
+                      sdfg_name="st_b_v",
+                      kind="array",
+                      dtype="float64",
+                      rank=2,
+                      shape=("n", "m"),
+                      intent="inout"),
+        ),
+        free_symbols=("m", "n"),
+    )
+    iface = OriginalInterface(
+        entry="kernel",
+        args=(OriginalArg(name="st", fortran_type="type(t_outer)", rank=0, intent="inout", struct_type="t_outer"),
+              OriginalArg(name="n", fortran_type="integer(c_int)", rank=0,
+                          intent="in"), OriginalArg(name="m", fortran_type="integer(c_int)", rank=0, intent="in")),
+        used_modules={"mo_types": ("t_outer", )},
+    )
+    plan = FlattenPlan(entries=(
+        FlattenEntry(outer_expr="st%a%v",
+                     outer_type="real(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("st_a_v", ),
+                                          read_exprs=("st%a%v($i1, $i2)", ),
+                                          rank=2,
+                                          shape_exprs=("size(st%a%v, dim=1)", "size(st%a%v, dim=2)"),
+                                          aliasable=True)),
+        FlattenEntry(outer_expr="st%b%v",
+                     outer_type="real(c_double)",
+                     writeback_intent="inout",
+                     recipe=FlattenRecipe(flat_names=("st_b_v", ),
+                                          read_exprs=("st%b%v($i1, $i2)", ),
+                                          rank=2,
+                                          shape_exprs=("size(st%b%v, dim=1)", "size(st%b%v, dim=2)"),
+                                          aliasable=True)),
+    ))
+    out = tmp_path / "kernel_bindings.f90"
+    emit_bindings(frozen, iface, plan, str(out))
+    return out.read_text()
 
-    # Module boilerplate.
-    assert "module compute_dace_bindings" in src
-    assert "use iso_c_binding" in src
-    assert "public :: compute_dace, compute_dace_finalize" in src
 
-    # bind(c) interface block to all three entry points.
-    assert "bind(c, name='__dace_init_compute')" in src
-    assert "bind(c, name='__program_compute')" in src
-    assert "bind(c, name='__dace_exit_compute')" in src
-
-    # Ref-counted init.
-    assert "init_count" in src
-    assert "c_null_ptr" in src
+# --------------------------------------------------------------------------
+# Two-real-array struct — zero-copy guarantee
+# --------------------------------------------------------------------------
 
 
-def test_emits_alias_for_matching_layouts(tmp_path: Path):
-    src = _demo(tmp_path).read_text()
-
-    # Same rank + same element type on both outer and frozen sides
-    # ⇒ zero-copy c_f_pointer / c_loc alias.
-    assert "call c_f_pointer(c_loc(a), a," in src
-    assert "call c_f_pointer(c_loc(b), b," in src
-
-
-def test_emits_symbol_population_from_size(tmp_path: Path):
-    src = _demo(tmp_path).read_text()
-
-    # Free symbols n, m → size(outer, dim=?) assignments.
-    assert "n = int(size(a, dim=1), c_int)" in src or "n = int(size(b, dim=1), c_int)" in src
-    assert "m = int(size(a, dim=2), c_int)" in src or "m = int(size(b, dim=2), c_int)" in src
-
-
-def test_emits_sdfg_call_with_handle(tmp_path: Path):
-    src = _demo(tmp_path).read_text()
-    assert "call dace_program_compute(dace_handle," in src
+def test_two_real_array_struct_all_aliased(tmp_path: Path):
+    """User's invariant: when every struct member has a matching
+    layout, the generated wrapper must NOT allocate scratch or
+    emit copy loops — pointer aliasing only.
+    """
+    src = _two_real_array_struct(tmp_path)
+    # No deep-copy artefacts.
+    assert "allocate(" not in src
+    assert "deallocate(" not in src
+    assert "do i1 =" not in src and "do i2 =" not in src
+    # Two c_f_pointer calls, one per member.
+    assert src.count("call c_f_pointer(c_loc(fld%a)") == 1
+    assert src.count("call c_f_pointer(c_loc(fld%b)") == 1
+    # Flat pointer declarations.
+    assert "real(c_double), pointer :: fld_a(:, :)" in src
+    assert "real(c_double), pointer :: fld_b(:, :)" in src
 
 
-def test_finalize_sub_present(tmp_path: Path):
-    src = _demo(tmp_path).read_text()
-    assert "subroutine compute_dace_finalize()" in src
-    assert "err = dace_exit_compute(dace_handle)" in src
+def test_two_real_array_struct_module_boilerplate(tmp_path: Path):
+    """Common boilerplate — bind(c), handle, finalize — still emitted."""
+    src = _two_real_array_struct(tmp_path)
+    assert "module kernel_dace_bindings" in src
+    assert "use mo_fields, only: t_fields" in src
+    assert "bind(c, name='__program_kernel')" in src
+    assert "subroutine kernel_dace_finalize()" in src
+
+
+# --------------------------------------------------------------------------
+# Complex-split — alloc + do-loop + dealloc
+# --------------------------------------------------------------------------
+
+
+def test_complex_split_emits_copy_in_loop(tmp_path: Path):
+    src = _complex_split_struct(tmp_path)
+    assert "allocate(st_z_re(size(st%z, dim=1), size(st%z, dim=2)))" in src
+    assert "allocate(st_z_im(size(st%z, dim=1), size(st%z, dim=2)))" in src
+    assert "st_z_re(i1, i2) = real(st%z(i1,i2), kind=c_double)" in src
+    assert "st_z_im(i1, i2) = aimag(st%z(i1,i2))" in src
+
+
+def test_complex_split_emits_copy_out_loop(tmp_path: Path):
+    src = _complex_split_struct(tmp_path)
+    assert "st%z(i1, i2) = cmplx(st_z_re(i1,i2), st_z_im(i1,i2), kind=c_double)" in src
+    assert "deallocate(st_z_re)" in src
+    assert "deallocate(st_z_im)" in src
+
+
+def test_complex_split_still_aliases_plain_member(tmp_path: Path):
+    """The ``st%u`` member (plain real) must alias, not copy."""
+    src = _complex_split_struct(tmp_path)
+    assert "call c_f_pointer(c_loc(st%u)" in src
+    # No second allocate for st_u — it's a pointer, not scratch.
+    assert "allocate(st_u" not in src
+
+
+# --------------------------------------------------------------------------
+# Nested struct — full %-path in c_loc
+# --------------------------------------------------------------------------
+
+
+def test_nested_struct_uses_full_path_in_c_loc(tmp_path: Path):
+    """``st%a%v`` is more than one-level nesting; the Fortran
+    compiler handles the ``%`` chain directly."""
+    src = _nested_struct(tmp_path)
+    assert "call c_f_pointer(c_loc(st%a%v)" in src
+    assert "call c_f_pointer(c_loc(st%b%v)" in src
+
+
+def test_nested_struct_no_copy_overhead(tmp_path: Path):
+    """Nested + aliasable ⇒ still zero-copy."""
+    src = _nested_struct(tmp_path)
+    assert "allocate(" not in src
+    assert "do i1 =" not in src
