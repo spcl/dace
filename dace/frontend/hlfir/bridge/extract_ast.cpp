@@ -76,9 +76,41 @@ std::string resolveIndex(mlir::Value idx) {
 ///   * hlfir.apply / hlfir.elemental composition (inlined at index)
 static std::string buildIndexExpr(mlir::Value v, int d = 0);
 static std::string buildExprWithSubscripts(mlir::Value val, int d = 0);
+static std::string buildBoolExpr(mlir::Value val, int d = 0);
+
+// Thread-local state for the faithful ``scf.while`` walker.  See the
+// block of helpers further down for what these are used for.
+static thread_local int kScfValueCounter = 0;
+static thread_local llvm::DenseMap<mlir::Value, std::string> kScfValueMap;
+
+// Bare ``fir.alloca`` (no ``hlfir.declare``) → synthetic scalar name.
+// Flang uses un-named i32 allocas as scratch counters for the lifted
+// ``scf.while`` shape.  Tracking them as synthetic scalars lets
+// buildExpr resolve the counter's value inside loop conditions and
+// assignments instead of returning ``?``.
+static thread_local int kAllocaCounter = 0;
+static thread_local llvm::DenseMap<mlir::Operation *, std::string> kAllocaMap;
+
+static std::string allocaSynthName(mlir::Value memref) {
+    auto *def = memref.getDefiningOp();
+    if (!def) return "";
+    auto it = kAllocaMap.find(def);
+    if (it != kAllocaMap.end()) return it->second;
+    std::string s = "__al_" + std::to_string(kAllocaCounter++);
+    kAllocaMap[def] = s;
+    return s;
+}
 
 static std::string buildExpr(mlir::Value val, int d = 0) {
     if (d > 30) return "?";
+    // Synthetic scalars minted for scf.if results: every downstream read of
+    // the result Value resolves to the scalar's name, not to walking into
+    // the scf.if itself (which has no single defining expression — the
+    // value comes from one of two arms).
+    {
+        auto it = kScfValueMap.find(val);
+        if (it != kScfValueMap.end()) return it->second;
+    }
     auto *def = val.getDefiningOp();
     if (!def) return "?";
 
@@ -158,6 +190,37 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
     if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
         return buildExpr(conv.getValue(), d + 1);
 
+    // MLIR bool/int casts used by lift-cf-to-scf when threading keep-going
+    // flags through scf.if yields.  All transparent: the synthetic scalars
+    // we mint for scf.if results already hold 0 / 1, and Python handles
+    // ``0 != 0`` as False / ``1 != 0`` as True uniformly.
+    if (nm == "arith.trunci" || nm == "arith.extui" || nm == "arith.extsi") {
+        if (def->getNumOperands() == 1)
+            return buildExpr(def->getOperand(0), d + 1);
+    }
+
+    // Comparisons flowing into integer casts (``extui %cmp : i1 to i32``
+    // yielded to a scf.if result) need to produce a usable expression,
+    // not ``?``.  Defer to buildBoolExpr which understands cmpf / cmpi.
+    if (nm == "arith.cmpf" || nm == "arith.cmpi") {
+        auto b = buildBoolExpr(val, d + 1);
+        if (b != "?") return b;
+    }
+    // ``xori %x, true`` → logical NOT; any other xori → Python ``!=``.
+    // MLIR's ``arith.constant true`` stores the i1 value as -1 (all-bits
+    // set) on most targets, so match both 1 and -1.
+    if (nm == "arith.xori" && def->getNumOperands() == 2) {
+        auto *rhs = def->getOperand(1).getDefiningOp();
+        if (auto c = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(rhs))
+            if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue())) {
+                auto v = ia.getInt();
+                if (v == 1 || v == -1)
+                    return "(not " + buildExpr(def->getOperand(0), d + 1) + ")";
+            }
+        return "(" + buildExpr(def->getOperand(0), d + 1) + " != "
+                   + buildExpr(def->getOperand(1), d + 1) + ")";
+    }
+
     // Scalar min / max idiom: Flang lowers ``min(a, b)`` on f32/f64 to
     // ``arith.select(arith.cmpf olt, a, b)`` (and ``max`` via ``ogt``).
     // Recognise that shape so the tasklet code gets a bare min/max call.
@@ -199,6 +262,12 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
                 return traceToDecl(dg.getMemref());
         auto n = traceToDecl(mem);
         if (!n.empty()) return n;
+        // Bare fir.alloca without a hlfir.declare — mint a synthetic
+        // scalar name.  Flang uses these as scratch counters for
+        // lift-cf-to-scf's lowered DO / DO-WHILE / DO+EXIT shapes.
+        if (auto *md = mem.getDefiningOp())
+            if (mlir::isa<fir::AllocaOp>(md))
+                return allocaSynthName(mem);
     }
 
     if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
@@ -875,14 +944,29 @@ static std::string buildExprWithSubscripts(mlir::Value val, int d) {
 /// ``xori %x, true``), and constant booleans.  Opaque inputs fall back to
 /// ``buildExpr`` (which may still produce a usable Python expression for the
 /// condition, or ``"?"`` when the shape isn't understood).
-static std::string buildBoolExpr(mlir::Value val, int d = 0) {
+static std::string buildBoolExpr(mlir::Value val, int d) {
     if (d > 30) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
 
-    // fir.convert (i1 <-> i1 kind, i8 -> i1, …) is transparent here.
+    // Synthetic scalars for scf.if results.  The assignments we emit for
+    // yielded values write 0/1 into them, so reading the name as-is is
+    // semantically a bool.
+    {
+        auto it = kScfValueMap.find(val);
+        if (it != kScfValueMap.end()) return it->second;
+    }
+
+    // fir.convert (i1 <-> i1 kind, i8 -> i1, …) and arith.trunci / extui
+    // are transparent here — DaCe codegen treats any non-zero integer as
+    // True inside a Python condition, so the cast is a no-op.
     if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
         return buildBoolExpr(conv.getValue(), d + 1);
+    auto nm2 = def->getName().getStringRef();
+    if (nm2 == "arith.trunci" || nm2 == "arith.extui" || nm2 == "arith.extsi") {
+        if (def->getNumOperands() == 1)
+            return buildBoolExpr(def->getOperand(0), d + 1);
+    }
 
     if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
         auto pred = cmpfPredStr(cmp.getPredicate());
@@ -922,63 +1006,167 @@ static std::string buildBoolExpr(mlir::Value val, int d = 0) {
     return buildExpr(val, d + 1);
 }
 
-/// Build a ``kind="while"`` ASTNode from Flang's lift-cf-to-scf shape.
+/// Faithful ``scf.while`` translator.
 ///
-/// The before-region emitted by lift-cf-to-scf for a Fortran ``DO WHILE``
-/// looks like:
+/// Rather than pattern-matching the shape ``lift-cf-to-scf`` produces, we
+/// copy every structural op in the before-region into the AST one-for-one:
 ///
-///     scf.while : () -> () {
-///        %cmp  = arith.cmpi <pred> %iv, %bound
-///        %y:2  = scf.if %cmp -> (i32, i32) {
-///           ... loop body ...
-///           scf.yield %c0, %c1 : i32, i32    // "continue"
-///         } else {
-///           scf.yield %c1, %c0 : i32, i32    // "exit"
-///         }
-///        %cont = arith.trunci %y#1 : i32 to i1
-///        scf.condition(%cont)
-///     } do {
-///        scf.yield
-///     }
+///   * ``scf.if`` (void)     → ``kind="conditional"`` with recursively walked arms.
+///   * ``scf.if -> T``       → same, but we allocate a ``__sc_<id>`` synthetic
+///                             int scalar per result; each arm ends with a
+///                             ``kind="assign"`` writing the yielded value to
+///                             that scalar so downstream reads of the result
+///                             find a real SDFG data descriptor.
+///   * ``scf.condition(%c)`` → ``if not (%c): break``.
+///   * ``hlfir.assign``       → existing ``buildAssignNode`` path.
 ///
-/// We grab the condition from the leading ``arith.cmpi`` and use the
-/// ``then`` region of the nested ``scf.if`` as the loop body.  If the shape
-/// doesn't match, ``condition`` is left as ``"?"`` and the children come
-/// from the before-region verbatim, which keeps the SDFG side at least
-/// structurally correct.
+/// Pure-value ops (``arith.cmp*``, ``fir.load``, ``arith.xori``, ``arith.trunci``,
+/// ``arith.extui``, ``fir.convert``, …) don't become AST nodes — their values
+/// are inlined by ``buildExpr`` / ``buildBoolExpr`` when downstream ops read
+/// them.
+///
+/// The synthetic-scalar trick means the whole translation is compositional:
+/// every MLIR op maps to one SDFG primitive, no special cases for EXIT or
+/// value-yielding scf.if nestings.  DaCe's IR-level simplification can
+/// re-flatten the result if it wants to.
+/// Synthetic scalar name for one scf.if result value.  Allocated on first
+/// reference; subsequent references return the same name.  DaCe's side
+/// auto-declares names starting with ``__sc_``.
+static std::string scfSynthName(mlir::Value v) {
+    auto it = kScfValueMap.find(v);
+    if (it != kScfValueMap.end()) return it->second;
+    std::string s = "__sc_" + std::to_string(kScfValueCounter++);
+    kScfValueMap[v] = s;
+    return s;
+}
+
+static bool isScfIfResult(mlir::Value v) {
+    auto *def = v.getDefiningOp();
+    return def && mlir::isa<mlir::scf::IfOp>(def);
+}
+
+static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block);
+
+/// Helper: convert a yielded value to a string for writing into a synthetic
+/// scalar.  scf.yield of an i32 constant / boolean / computed expression —
+/// just reuse buildExpr, which traces through arith ops and cast chains.
+static std::string yieldedExpr(mlir::Value v) {
+    auto s = buildExpr(v);
+    if (s == "?") s = buildBoolExpr(v);
+    return s;
+}
+
+static ASTNode buildScfIfAsConditional(mlir::scf::IfOp ifOp) {
+    ASTNode c;
+    c.kind = "conditional";
+    c.condition = buildBoolExpr(ifOp.getCondition());
+
+    auto walkArm = [&](mlir::Region &region) -> std::vector<ASTNode> {
+        if (region.empty()) return {};
+        auto arm = walkSCFBeforeRegion(region.front());
+        // If the scf.if yields values, append one scalar_assign per result
+        // reading the matching operand of the arm's scf.yield.
+        if (ifOp.getNumResults() > 0) {
+            mlir::scf::YieldOp yieldOp;
+            for (auto &op : region.front())
+                if (auto y = mlir::dyn_cast<mlir::scf::YieldOp>(op)) { yieldOp = y; break; }
+            if (yieldOp) {
+                for (unsigned i = 0; i < ifOp.getNumResults(); ++i) {
+                    auto target = scfSynthName(ifOp.getResult(i));
+                    auto expr = yieldedExpr(yieldOp.getOperand(i));
+                    ASTNode a;
+                    a.kind = "assign";
+                    a.target = target;
+                    a.expr = expr;
+                    a.target_is_array = false;
+                    arm.push_back(std::move(a));
+                }
+            }
+        }
+        return arm;
+    };
+
+    c.children = walkArm(ifOp.getThenRegion());
+    if (!ifOp.getElseRegion().empty())
+        c.else_children = walkArm(ifOp.getElseRegion());
+    return c;
+}
+
+static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
+    std::vector<ASTNode> out;
+    for (auto &op : block) {
+        if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+            out.push_back(buildScfIfAsConditional(ifOp));
+            continue;
+        }
+        if (auto condOp = mlir::dyn_cast<mlir::scf::ConditionOp>(op)) {
+            // ``scf.condition(%c)``: break when %c is false.
+            ASTNode guard;
+            guard.kind = "conditional";
+            auto b = buildBoolExpr(condOp.getCondition());
+            guard.condition = "not (" + b + ")";
+            ASTNode brk;
+            brk.kind = "break";
+            guard.children.push_back(std::move(brk));
+            out.push_back(std::move(guard));
+            continue;
+        }
+        if (auto assign = mlir::dyn_cast<hlfir::AssignOp>(op)) {
+            // Route through the normal assign dispatcher so copy/memset /
+            // reduction / elemental shapes stay recognised inside the loop.
+            auto src = assign.getOperand(0);
+            auto dst = assign.getOperand(1);
+            bool dst_is_array = isArrayRef(dst.getType());
+            bool src_is_array = isArrayRef(src.getType());
+            if (dst_is_array && src_is_array) {
+                out.push_back(buildCopyNode(assign));
+            } else if (dst_is_array && !src_is_array && isConstantZero(src)) {
+                out.push_back(buildMemsetNode(assign));
+            } else {
+                out.push_back(buildAssignNode(assign));
+            }
+            continue;
+        }
+        if (auto st = mlir::dyn_cast<fir::StoreOp>(op)) {
+            // IV / counter bump stores Flang emits inside the lifted
+            // scf.while body (``i = i + 1``, ``counter = counter - 1``).
+            // Handled uniformly for declared vars and bare-alloca scratch
+            // counters.
+            auto memref = st.getMemref();
+            auto target = traceToDecl(memref);
+            if (target.empty())
+                if (auto *md = memref.getDefiningOp())
+                    if (mlir::isa<fir::AllocaOp>(md))
+                        target = allocaSynthName(memref);
+            if (target.empty()) continue;
+            auto expr = buildExpr(st.getValue());
+            // Drop stores whose RHS we couldn't resolve.  These are almost
+            // always Flang's implicit IV writeback at the end of a
+            // ``fir.do_loop`` body: the stored value is a block arg of the
+            // surrounding do-loop that buildExpr can't express on its own
+            // — and the regular do-loop emitter already handles the IV
+            // through ``initialize_expr`` / ``update_expr``.
+            if (expr == "?") continue;
+            ASTNode a;
+            a.kind = "assign";
+            a.target = target;
+            a.expr = expr;
+            a.target_is_array = false;
+            out.push_back(std::move(a));
+            continue;
+        }
+        // Pure-value ops — no AST node, their values flow inline.
+    }
+    return out;
+}
+
 static ASTNode buildWhileNode(mlir::scf::WhileOp whileOp) {
     ASTNode n;
     n.kind = "while";
-    n.condition = "?";
+    n.condition = "True";  // all break decisions live inside the body.
 
     if (whileOp.getBefore().empty()) return n;
-    auto &beforeBlock = whileOp.getBefore().front();
-
-    // Look for the first arith.cmpi in the before-region.
-    mlir::arith::CmpIOp cmp;
-    for (auto &op : beforeBlock)
-        if (auto c = mlir::dyn_cast<mlir::arith::CmpIOp>(op)) { cmp = c; break; }
-
-    mlir::scf::IfOp ifOp;
-    for (auto &op : beforeBlock)
-        if (auto i = mlir::dyn_cast<mlir::scf::IfOp>(op)) { ifOp = i; break; }
-
-    if (cmp && ifOp) {
-        auto pred = cmpiPredStr(cmp.getPredicate());
-        auto lhs  = buildIndexExpr(cmp.getLhs());
-        auto rhs  = buildIndexExpr(cmp.getRhs());
-        if (!pred.empty() && lhs != "?" && rhs != "?")
-            n.condition = lhs + " " + pred + " " + rhs;
-    }
-
-    // Children come from the scf.if.then region when present; otherwise from
-    // the before-region itself (with cmp / scf.if / scf.condition filtered
-    // out by the main buildAST loop since it only handles statement-level
-    // ops it recognises).
-    if (ifOp && !ifOp.getThenRegion().empty())
-        n.children = buildAST(ifOp.getThenRegion().front());
-    else
-        n.children = buildAST(beforeBlock);
+    n.children = walkSCFBeforeRegion(whileOp.getBefore().front());
     return n;
 }
 
@@ -1135,6 +1323,33 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             nodes.push_back(buildSelectCaseChain(sel));
             continue;
         }
+        if (auto st = mlir::dyn_cast<fir::StoreOp>(op)) {
+            // Top-level ``fir.store`` is Flang's lowering for lifted
+            // DO / DO-WHILE init (``fir.store %c1 to %i``) and internal
+            // scratch counters.  Emit as a plain scalar assign.  Regular
+            // ``fir.do_loop``s' internal IV stores never reach here —
+            // they live inside the loop's body region, which we walk
+            // with the existing do-loop handler that takes care of the
+            // IV through ``init_expr`` / ``update_expr``.
+            auto memref = st.getMemref();
+            auto target = traceToDecl(memref);
+            if (target.empty())
+                if (auto *md = memref.getDefiningOp())
+                    if (mlir::isa<fir::AllocaOp>(md))
+                        target = allocaSynthName(memref);
+            if (target.empty()) continue;
+            auto expr = buildExpr(st.getValue());
+            // Drop stores with unresolvable RHS — see note in
+            // ``walkSCFBeforeRegion``'s fir.store handler.
+            if (expr == "?") continue;
+            ASTNode a;
+            a.kind = "assign";
+            a.target = target;
+            a.expr = expr;
+            a.target_is_array = false;
+            nodes.push_back(std::move(a));
+            continue;
+        }
     }
     return nodes;
 }
@@ -1144,6 +1359,14 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
 // ---------------------------------------------------------------------------
 
 std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
+    // Fresh synthetic-name counters / maps per module so two consecutive
+    // extractAST calls don't interleave __sc_5 / __al_2 across unrelated
+    // SDFGs.
+    kScfValueCounter = 0;
+    kScfValueMap.clear();
+    kAllocaCounter = 0;
+    kAllocaMap.clear();
+
     std::vector<ASTNode> result;
     module.walk([&](mlir::func::FuncOp func) {
         if (!result.empty()) return;  // first func only

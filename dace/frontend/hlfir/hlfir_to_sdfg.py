@@ -414,6 +414,36 @@ class SDFGBuilder:
         self._emit(inner_ctx, list(n.children), loop)
         inner_ctx.flush(self, loop)
 
+    def _auto_declare_synth(self, name: str, ctx: '_Ctx'):
+        """Lazy-declare a synthetic scalar minted by the bridge's faithful
+        scf.while walker.  ``__sc_N`` names materialise ``scf.if -> T``
+        results; ``__al_N`` names come from bare ``fir.alloca`` ops that
+        lift-cf-to-scf uses as scratch counters.  Both need an SDFG
+        descriptor + an entry in ``self.scalars`` so ``_emit_assign``'s
+        existing dispatch (scalar pending, or symbol state-change) can
+        fire normally.  Treated as transient ints — they only live for
+        the loop's lifetime and are read only by downstream generated
+        conditions."""
+        if name in self.scalars or name in self.symbols:
+            return
+        if not (name.startswith("__sc_") or name.startswith("__al_")):
+            return
+        # Fake a VarInfo-like record so _add_descriptors-consistent paths
+        # work.  A ``SimpleNamespace`` is enough — the scalar dispatch
+        # only reads ``.intent`` and ``.dtype``.
+        from types import SimpleNamespace
+        v = SimpleNamespace(fortran_name=name,
+                            intent='',
+                            dtype='int32',
+                            rank=0,
+                            is_dynamic=False,
+                            role='scalar',
+                            shape_symbols=[],
+                            lower_bounds=[])
+        self.scalars[name] = v
+        if name not in ctx.sdfg.arrays:
+            ctx.sdfg.add_scalar(name, dtype=dace.int32, transient=True)
+
     def _emit_assign(self, ctx: '_Ctx', n, region):
         """Scalar or symbol assignment.
 
@@ -429,6 +459,10 @@ class SDFGBuilder:
                              ``ctx.pending`` for a flat ``emit_scalar_assign``
                              tasklet at flush time.
         """
+        # Synthetic scalars (``__sc_N`` / ``__al_N``) from the faithful
+        # scf.while walker don't come in as ``hlfir.declare`` ops, so
+        # ``_add_descriptors`` never saw them.  Register on first assign.
+        self._auto_declare_synth(n.target, ctx)
         if n.target in self.symbols:
             ctx.flush(self)
             ctx.ensure(region)
@@ -578,16 +612,54 @@ class SDFGBuilder:
             r = self._acc(state, sc)
             state.add_edge(r, None, t, f"_in_{sc}", Memlet(data=sc, subset="0"))
 
-        # Self-update detection: if the target name appears in any of this
-        # tasklet's read sets — as a scalar (``temp = min(d, temp)``) or as
-        # an array written in place (``d(1) = d(1) * 2.0``) — reusing the
-        # cached access node would close a cycle in this state.  Same
-        # applies when an earlier tasklet in the state already wrote to the
-        # target.  Allocate a fresh write node and refresh the cache so
-        # later reads in the state pick up the latest value.
+        # ----------------------------------------------------------------
+        # Pick the write-side access node for the tasklet's output edge.
+        # ----------------------------------------------------------------
+        #
+        # An SDFGState is a DAG of AccessNodes and Tasklets.  For each
+        # data name we keep ONE "live sink" in ``state._hlfir_access[name]``
+        # — the access node that subsequent reads from that name should
+        # pull from (because it holds the latest write).  Two rules govern
+        # whether a new write reuses that sink or allocates a fresh one:
+        #
+        # 1. A write that is paired with a read of the SAME name in the
+        #    SAME tasklet must target a NEW access node, not the one the
+        #    read came from.  Otherwise the tasklet would have both an
+        #    incoming and outgoing edge on the same node — a cycle — and
+        #    DaCe's state validator would reject it.  Fortran patterns
+        #    that trigger this: ``i = i + 1`` (scalar self-update),
+        #    ``d(1) = d(1) * 2.0`` (array element self-update), and
+        #    ``temp = min(d(1), temp)`` (scalar target reads its own value
+        #    plus an array element).
+        #
+        # 2. A write whose cached sink has ALREADY been read by a later
+        #    tasklet in this state must also get a new access node.
+        #    Sharing it would give the DAG scheduler freedom to reorder
+        #    the new write before the earlier read — changing the
+        #    observable value of the read.  Concretely: if ``A`` has been
+        #    read after its last write, a further write creates a new
+        #    version of ``A``; the old version keeps the earlier read
+        #    wired to the right producer, the new version becomes the
+        #    live sink for any later reads.
+        #
+        # In every other case — pure write-only update over the latest
+        # sink, without intervening reads — we reuse the cached access
+        # node.  Multiple write edges into one access node are legal in
+        # a DAG (they just represent two writers on the same version),
+        # and sharing keeps the data-flow graph connected so later reads
+        # can chain off of it.
+        #
+        # The cache is refreshed on every fresh-allocation path so
+        # subsequent calls to ``self._acc(name)`` / reads through the
+        # cache always hit the most recent sink.
         cache = getattr(state, '_hlfir_access', None)
-        is_self_update = (target in r_scl or target in reads_by_name or (cache is not None and target in cache))
-        if is_self_update:
+        is_self_update = (target in r_scl) or (target in reads_by_name)
+        cached_has_readers = False
+        if cache is not None and target in cache:
+            # out_degree > 0 ⇒ some later tasklet already consumed this
+            # node, so writing to it again would race with that read.
+            cached_has_readers = state.out_degree(cache[target]) > 0
+        if is_self_update or cached_has_readers:
             w = state.add_access(target)
             if cache is not None:
                 cache[target] = w
@@ -764,21 +836,26 @@ class SDFGBuilder:
         if pre is not None:
             region.add_edge(pre, cond_block, InterstateEdge())
 
-        then_region = ControlFlowRegion(f"if_{uid}_then", sdfg=ctx.sdfg)
+        def _populate_branch(label: str, children: list) -> ControlFlowRegion:
+            region = ControlFlowRegion(label, sdfg=ctx.sdfg)
+            inner = _Ctx(ctx.sdfg, self)
+            inner.iter_map = ctx.iter_map
+            self._emit(inner, children, region)
+            inner.flush(self, region)
+            # An empty branch (e.g. the EXIT arm of a Flang-lowered DO+EXIT)
+            # still needs a start block, otherwise the validator complains.
+            # Add a trivial no-op state marked as start.
+            if len(region.nodes()) == 0:
+                region.add_state(f"{label}_noop", is_start_block=True)
+            return region
+
+        then_region = _populate_branch(f"if_{uid}_then", list(n.children))
         cond_block.add_branch(cond, then_region)
-        then_ctx = _Ctx(ctx.sdfg, self)
-        then_ctx.iter_map = ctx.iter_map
-        self._emit(then_ctx, list(n.children), then_region)
-        then_ctx.flush(self, then_region)
 
         else_children = list(n.else_children)
         if else_children:
-            else_region = ControlFlowRegion(f"if_{uid}_else", sdfg=ctx.sdfg)
+            else_region = _populate_branch(f"if_{uid}_else", else_children)
             cond_block.add_branch(None, else_region)
-            else_ctx = _Ctx(ctx.sdfg, self)
-            else_ctx.iter_map = ctx.iter_map
-            self._emit(else_ctx, else_children, else_region)
-            else_ctx.flush(self, else_region)
 
         # The ConditionalBlock is itself the "current" control-flow node;
         # subsequent statements get a fresh state edge-connected to it.
@@ -852,7 +929,11 @@ class _Ctx:
         from dace.sdfg.state import SDFGState
         if self.cur is None:
             r = self.sdfg if region is None else region
-            self.cur = r.add_state(f"s_{self.builder.nid()}")
+            # First state added to an otherwise-empty control-flow region
+            # must be marked as the starting block, otherwise DaCe's
+            # validator raises "Ambiguous or undefined starting block".
+            is_start = (len(r.nodes()) == 0)
+            self.cur = r.add_state(f"s_{self.builder.nid()}", is_start_block=is_start)
             return
         # After a ConditionalBlock (or any non-SDFGState control-flow block
         # like a LoopRegion), the next emitter needs a fresh successor state

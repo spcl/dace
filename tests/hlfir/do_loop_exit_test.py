@@ -43,10 +43,6 @@ def _f2py(src: Path, out_dir: Path, mod_name: str):
     return sys.modules[mod_name]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="HLFIR EXIT: lift-cf-to-scf produces an scf.while whose condition "
-                   "references the induction variable as a scalar load; the current "
-                   "_emit_while doesn't promote that to a symbol so codegen fails.")
 def test_do_loop_exit_numerical(tmp_path):
     mod = _f2py(_SRC_PATH, tmp_path / "ref", "do_exit_ref")
     sdfg_dir = tmp_path / "sdfg"
@@ -64,6 +60,9 @@ def test_do_loop_exit_numerical(tmp_path):
     mod.do_exit(np.asfortranarray(a), b_ref)
 
     b_sdfg = np.full(n, 9.0, dtype=np.float64)
-    sdfg(a=np.ascontiguousarray(a), b=b_sdfg, n=n)
+    # ``i`` is a local counter-symbol.  The SDFG initialises it via an
+    # interstate-edge ``i = 1`` on the first state, but DaCe's free-symbol
+    # analysis still lists it so the caller has to pass a placeholder.
+    sdfg(a=np.ascontiguousarray(a), b=b_sdfg, n=n, i=0)
 
     np.testing.assert_allclose(b_sdfg, b_ref, rtol=1e-12, atol=1e-12)
