@@ -1,8 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for ``dace.sdfg.sdfg_construction_utils`` helpers.
+"""Tests for ``prune_unused_nsdfg_connectors`` / ``..._recursive``.
 
-Exercises ``prune_unused_nsdfg_connectors`` using small SDFGs assembled via
-the SDFG construction API.
+Builds small SDFGs via the SDFG construction API where one or more
+input/output connectors of a nested SDFG are declared but never accessed
+internally. After pruning, the dead connectors, the outer access-node
+taps feeding them, and the map-entry/exit connector pairs must all be
+gone.
 """
 import numpy as np
 
