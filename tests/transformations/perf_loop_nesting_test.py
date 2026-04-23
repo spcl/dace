@@ -34,8 +34,7 @@ def _outer_state(sdfg: dace.SDFG) -> SDFGState:
 
 
 def _top_level_map_entries(state: SDFGState):
-    return [n for n in state.nodes()
-            if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
+    return [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
 
 
 def _prepare_nested_single_state(sdfg: dace.SDFG):
@@ -143,20 +142,26 @@ def test_two_state_nested_sdfg_is_rejected():
     s2 = inner.add_state("s2")
     inner.add_edge(s1, s2, dace.InterstateEdge())
 
-    r1 = s1.add_read("a_in"); w1 = s1.add_write("a_out")
+    r1 = s1.add_read("a_in")
+    w1 = s1.add_write("a_out")
     me1, mx1 = s1.add_map("m1", {"i": "0:N"})
-    me1.add_in_connector("IN_a"); me1.add_out_connector("OUT_a")
-    mx1.add_in_connector("IN_a"); mx1.add_out_connector("OUT_a")
+    me1.add_in_connector("IN_a")
+    me1.add_out_connector("OUT_a")
+    mx1.add_in_connector("IN_a")
+    mx1.add_out_connector("OUT_a")
     t1 = s1.add_tasklet("t1", {"x"}, {"y"}, "y = x + 1")
     s1.add_edge(r1, None, me1, "IN_a", mm.Memlet("a_in[0:N]"))
     s1.add_edge(me1, "OUT_a", t1, "x", mm.Memlet("a_in[i]"))
     s1.add_edge(t1, "y", mx1, "IN_a", mm.Memlet("a_out[i]"))
     s1.add_edge(mx1, "OUT_a", w1, None, mm.Memlet("a_out[0:N]"))
 
-    r2 = s2.add_read("b_in"); w2 = s2.add_write("b_out")
+    r2 = s2.add_read("b_in")
+    w2 = s2.add_write("b_out")
     me2, mx2 = s2.add_map("m2", {"i": "0:N"})
-    me2.add_in_connector("IN_b"); me2.add_out_connector("OUT_b")
-    mx2.add_in_connector("IN_b"); mx2.add_out_connector("OUT_b")
+    me2.add_in_connector("IN_b")
+    me2.add_out_connector("OUT_b")
+    mx2.add_in_connector("IN_b")
+    mx2.add_out_connector("OUT_b")
     t2 = s2.add_tasklet("t2", {"x"}, {"y"}, "y = x * 2")
     s2.add_edge(r2, None, me2, "IN_b", mm.Memlet("b_in[0:N]"))
     s2.add_edge(me2, "OUT_b", t2, "x", mm.Memlet("b_in[i]"))
@@ -167,14 +172,18 @@ def test_two_state_nested_sdfg_is_rejected():
     for name in ("A_in", "A_out", "B_in", "B_out"):
         outer.add_array(name, [M, N], dace.float64)
     ostate = outer.add_state("ostate", is_start_block=True)
-    Ar = ostate.add_read("A_in"); Br = ostate.add_read("B_in")
-    Aw = ostate.add_write("A_out"); Bw = ostate.add_write("B_out")
+    Ar = ostate.add_read("A_in")
+    Br = ostate.add_read("B_in")
+    Aw = ostate.add_write("A_out")
+    Bw = ostate.add_write("B_out")
 
     pe, px = ostate.add_map("parent", {"j": "0:M"})
     for c in ("a_in", "b_in"):
-        pe.add_in_connector("IN_" + c); pe.add_out_connector("OUT_" + c)
+        pe.add_in_connector("IN_" + c)
+        pe.add_out_connector("OUT_" + c)
     for c in ("a_out", "b_out"):
-        px.add_in_connector("IN_" + c); px.add_out_connector("OUT_" + c)
+        px.add_in_connector("IN_" + c)
+        px.add_out_connector("OUT_" + c)
 
     ns = ostate.add_nested_sdfg(inner, {"a_in", "b_in"}, {"a_out", "b_out"})
     ostate.add_edge(Ar, None, pe, "IN_a_in", mm.Memlet("A_in[0:M, 0:N]"))

@@ -23,7 +23,6 @@ holds.
 import copy as _copy
 from typing import Dict, Set
 
-import dace
 from dace import memlet as mm, nodes, properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
@@ -54,8 +53,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         inner_state = list(inner.states())[0]
         top_children = [
             n for n in inner_state.nodes()
-            if inner_state.entry_node(n) is None
-            and isinstance(n, (nodes.MapEntry, nodes.Tasklet))
+            if inner_state.entry_node(n) is None and isinstance(n, (nodes.MapEntry, nodes.Tasklet))
         ]
         return len(top_children) >= 2
 
@@ -71,15 +69,13 @@ class PerfLoopNesting(xf.SingleStateTransformation):
                 _wrap_tasklet_in_trivial_map(inner_state, n)
 
         child_entries = [
-            n for n in inner_state.nodes()
-            if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None
+            n for n in inner_state.nodes() if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None
         ]
         outer_in_by, outer_out_by = _outer_plumbing(graph, pe, px, orig_nsdfg)
 
         for ch_entry in child_entries:
             keep = _child_subgraph(inner_state, ch_entry)
-            _build_duplicate(graph, pe, px, orig_nsdfg, inner_state,
-                             keep, outer_in_by, outer_out_by)
+            _build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by)
 
         for ie in list(graph.in_edges(pe)):
             graph.remove_edge(ie)
@@ -98,8 +94,7 @@ def _copy_state_contents(src: SDFGState, dst: SDFGState) -> Dict[nodes.Node, nod
         dst.add_node(new_n)
         nmap[n] = new_n
     for e in src.edges():
-        dst.add_edge(nmap[e.src], e.src_conn, nmap[e.dst], e.dst_conn,
-                     _copy.deepcopy(e.data))
+        dst.add_edge(nmap[e.src], e.src_conn, nmap[e.dst], e.dst_conn, _copy.deepcopy(e.data))
     return nmap
 
 
@@ -119,8 +114,7 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
     return keep
 
 
-def _outer_plumbing(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit,
-                    orig_nsdfg: nodes.NestedSDFG):
+def _outer_plumbing(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG):
     in_by: Dict[str, list] = {}
     for e in graph.in_edges(orig_nsdfg):
         n_conn = e.dst_conn
@@ -169,10 +163,8 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_nedge(t, mx, mm.Memlet())
 
 
-def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit,
-                     orig_nsdfg: nodes.NestedSDFG, orig_inner_state: SDFGState,
-                     keep: Set[nodes.Node],
-                     outer_in_by: Dict[str, list],
+def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG,
+                     orig_inner_state: SDFGState, keep: Set[nodes.Node], outer_in_by: Dict[str, list],
                      outer_out_by: Dict[str, list]):
     new_inner_sdfg = SDFG(orig_nsdfg.sdfg.name + "_pn")
     for name, desc in orig_nsdfg.sdfg.arrays.items():
@@ -222,26 +214,23 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit,
     graph.add_node(new_pe)
     graph.add_node(new_px)
 
-    new_nsdfg = graph.add_nested_sdfg(
-        new_inner_sdfg, used_in, used_out,
-        symbol_mapping=_copy.copy(orig_nsdfg.symbol_mapping))
+    new_nsdfg = graph.add_nested_sdfg(new_inner_sdfg,
+                                      used_in,
+                                      used_out,
+                                      symbol_mapping=_copy.copy(orig_nsdfg.symbol_mapping))
 
     for conn in used_in:
         new_pe.add_in_connector("IN_" + conn)
         new_pe.add_out_connector("OUT_" + conn)
         for (outer_access, outer_memlet, inner_memlet) in outer_in_by.get(conn, []):
-            graph.add_edge(outer_access, None, new_pe, "IN_" + conn,
-                           _copy.deepcopy(outer_memlet))
-            graph.add_edge(new_pe, "OUT_" + conn, new_nsdfg, conn,
-                           _copy.deepcopy(inner_memlet))
+            graph.add_edge(outer_access, None, new_pe, "IN_" + conn, _copy.deepcopy(outer_memlet))
+            graph.add_edge(new_pe, "OUT_" + conn, new_nsdfg, conn, _copy.deepcopy(inner_memlet))
     for conn in used_out:
         new_px.add_in_connector("IN_" + conn)
         new_px.add_out_connector("OUT_" + conn)
         for (outer_access, outer_memlet, inner_memlet) in outer_out_by.get(conn, []):
-            graph.add_edge(new_nsdfg, conn, new_px, "IN_" + conn,
-                           _copy.deepcopy(inner_memlet))
-            graph.add_edge(new_px, "OUT_" + conn, outer_access, None,
-                           _copy.deepcopy(outer_memlet))
+            graph.add_edge(new_nsdfg, conn, new_px, "IN_" + conn, _copy.deepcopy(inner_memlet))
+            graph.add_edge(new_px, "OUT_" + conn, outer_access, None, _copy.deepcopy(outer_memlet))
 
     if not used_in:
         graph.add_nedge(new_pe, new_nsdfg, mm.Memlet())
