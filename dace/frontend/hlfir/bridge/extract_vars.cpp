@@ -8,6 +8,7 @@
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -144,6 +145,16 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 v.intent = "in";
             else if (bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::intent_out))
                 v.intent = "out";
+        }
+
+        // Dummy argument flag: the declare's memref operand traces back to a
+        // function block argument, or the declare has a dummy_scope operand.
+        if (op.getDummyScope()) {
+            v.is_dummy = true;
+        } else if (auto ba = mlir::dyn_cast<mlir::BlockArgument>(op.getMemref())) {
+            if (auto *parent = ba.getOwner()->getParentOp())
+                if (mlir::isa<mlir::func::FuncOp>(parent))
+                    v.is_dummy = true;
         }
 
         // Unwrap FIR type wrappers to find element type + rank.

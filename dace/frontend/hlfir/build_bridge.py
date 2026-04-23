@@ -78,7 +78,8 @@ def _find_llvm_cmake_dir(prefix: str, version: str) -> str:
         try:
             out = subprocess.check_output(
                 ["dpkg", "-L", pkg],
-                stderr=subprocess.DEVNULL, text=True,
+                stderr=subprocess.DEVNULL,
+                text=True,
             )
             for line in out.splitlines():
                 if line.endswith("LLVMConfig.cmake"):
@@ -96,14 +97,14 @@ def _detect_dirs():
     if not _LLVM_DIR:
         _LLVM_DIR = _find_llvm_cmake_dir(prefix, _LLVM_VERSION)
     if not _LLVM_DIR:
-        raise RuntimeError(
-            f"Cannot find LLVMConfig.cmake for LLVM {_LLVM_VERSION}.  "
-            "Set LLVM_DIR env var.")
+        raise RuntimeError(f"Cannot find LLVMConfig.cmake for LLVM {_LLVM_VERSION}.  "
+                           "Set LLVM_DIR env var.")
 
 
 # ---------------------------------------------------------------------------
 # Build logic
 # ---------------------------------------------------------------------------
+
 
 def _ext_suffix() -> str:
     """Python extension suffix, e.g. '.cpython-312-x86_64-linux-gnu.so'."""
@@ -155,22 +156,21 @@ def build(clean: bool = False, verbose: bool = True):
 
     # --- cmake configure ---
     cmake_args = [
-        "cmake", str(_HERE),
+        "cmake",
+        str(_HERE),
         f"-DLLVM_VERSION={_LLVM_VERSION}",
         f"-DLLVM_DIR={_LLVM_DIR}",
         f"-DPython_EXECUTABLE={python}",
         "-DCMAKE_BUILD_TYPE=Release",
     ]
     if verbose:
-        print(f"[build_bridge] configure: {' '.join(cmake_args)}",
-              file=sys.stderr)
+        print(f"[build_bridge] configure: {' '.join(cmake_args)}", file=sys.stderr)
     subprocess.check_call(cmake_args, cwd=_BUILD_DIR)
 
     # --- cmake build ---
     build_args = ["cmake", "--build", ".", f"-j{nproc}"]
     if verbose:
-        print(f"[build_bridge] build: {' '.join(build_args)}",
-              file=sys.stderr)
+        print(f"[build_bridge] build: {' '.join(build_args)}", file=sys.stderr)
     subprocess.check_call(build_args, cwd=_BUILD_DIR)
 
     # --- symlink .so next to this file ---
@@ -181,9 +181,8 @@ def build(clean: bool = False, verbose: bool = True):
         if candidates:
             target = candidates[0]
         else:
-            raise RuntimeError(
-                f"Build succeeded but cannot find {_so_name()} "
-                f"under {_BUILD_DIR}")
+            raise RuntimeError(f"Build succeeded but cannot find {_so_name()} "
+                               f"under {_BUILD_DIR}")
     link.unlink(missing_ok=True)
     link.symlink_to(target)
     if verbose:
@@ -194,6 +193,7 @@ def build(clean: bool = False, verbose: bool = True):
 # Import-or-build
 # ---------------------------------------------------------------------------
 
+
 def ensure_bridge():
     """Import hlfir_bridge, building first if necessary."""
     try:
@@ -201,8 +201,7 @@ def ensure_bridge():
     except ImportError:
         pass
 
-    print("[build_bridge] hlfir_bridge not found, building...",
-          file=sys.stderr)
+    print("[build_bridge] hlfir_bridge not found, building...", file=sys.stderr)
     build()
 
     here_str = str(_HERE)
@@ -215,8 +214,7 @@ def ensure_bridge():
 def ensure_fresh():
     """Import hlfir_bridge, rebuilding if any source is newer than the .so."""
     if needs_build():
-        print("[build_bridge] sources newer than .so, rebuilding...",
-              file=sys.stderr)
+        print("[build_bridge] sources newer than .so, rebuilding...", file=sys.stderr)
         build()
     return ensure_bridge()
 
@@ -224,17 +222,14 @@ def ensure_fresh():
 # Module-level singleton: import this from other files.
 hb = ensure_fresh()
 
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(
-        description="Build the hlfir_bridge nanobind extension.")
-    parser.add_argument("--clean", action="store_true",
-                        help="Wipe build dir before building.")
+    parser = argparse.ArgumentParser(description="Build the hlfir_bridge nanobind extension.")
+    parser.add_argument("--clean", action="store_true", help="Wipe build dir before building.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
