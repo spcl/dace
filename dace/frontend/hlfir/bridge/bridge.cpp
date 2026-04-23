@@ -175,6 +175,10 @@ NB_MODULE(hlfir_bridge, m) {
         .def_ro("condition",       &ASTNode::condition)
         .def_ro("callee",          &ASTNode::callee)
         .def_ro("call_args",       &ASTNode::call_args)
+        .def_ro("reduce_src",      &ASTNode::reduce_src)
+        .def_ro("reduce_wcr",      &ASTNode::reduce_wcr)
+        .def_ro("reduce_identity", &ASTNode::reduce_identity)
+        .def_ro("reduce_axes",     &ASTNode::reduce_axes)
         .def_ro("children",        &ASTNode::children)
         .def_ro("else_children",   &ASTNode::else_children)
         .def("__repr__", [](const ASTNode &n) {
@@ -191,6 +195,9 @@ NB_MODULE(hlfir_bridge, m) {
                 return std::string("If(") + n.condition + ")";
             if (n.kind == "call")
                 return std::string("Call(") + n.callee + ")";
+            if (n.kind == "reduce")
+                return std::string("Reduce(") + n.target + " = reduce("
+                    + n.reduce_src + ", wcr=" + n.reduce_wcr + ")";
             return std::string("<") + n.kind + ">";
         });
 

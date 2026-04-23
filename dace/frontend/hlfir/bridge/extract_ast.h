@@ -35,8 +35,11 @@ struct AccessInfo {
 ///
 ///   "loop"        — loop_iter, loop_bound, loop_lower, children[]
 ///   "assign"      — target, expr, target_is_array, accesses[]
+///   "while"       — condition, children[]
 ///   "conditional" — condition, children[], else_children[]
 ///   "call"        — callee, call_args[]
+///   "reduce"      — target, reduce_src, reduce_wcr, reduce_identity,
+///                   reduce_axes (empty = whole-array)
 struct ASTNode {
     std::string kind;
 
@@ -49,12 +52,18 @@ struct ASTNode {
     bool target_is_array = false;
     std::vector<AccessInfo> accesses;
 
-    // conditional
+    // conditional / while
     std::string condition;
 
     // call
     std::string callee;
     std::vector<std::string> call_args;
+
+    // reduce
+    std::string reduce_src;       // input array name
+    std::string reduce_wcr;       // lambda string, e.g. "lambda a, b: a + b"
+    std::string reduce_identity;  // initial-accumulator string, e.g. "0"
+    std::vector<int64_t> reduce_axes;  // empty = reduce all dimensions
 
     // recursive
     std::vector<ASTNode> children, else_children;

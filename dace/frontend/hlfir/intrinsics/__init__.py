@@ -49,3 +49,8 @@ def render_call(name: str, args: list[str]) -> str:
     if spec is not None:
         assert len(args) == spec.arity, (f"{name} expects {spec.arity} arg(s), got {len(args)}")
     return f"{name}({', '.join(args)})"
+
+
+def reduction_spec(name: str):
+    """Return the ``ReductionIntrinsic`` for ``name`` or ``None``."""
+    return REDUCTION_INTRINSICS.get(name)

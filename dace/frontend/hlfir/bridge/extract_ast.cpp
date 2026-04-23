@@ -377,6 +377,48 @@ static int64_t traceLB(mlir::Value v) {
     return -1;
 }
 
+/// ``target = sum(a)`` / product / minval / maxval — one of the dedicated
+/// hlfir reduction ops appears as the source of an hlfir.assign.
+///
+/// Returned ASTNode carries enough metadata for hlfir_to_sdfg to call
+/// ``state.add_reduce(wcr, axes, identity)`` and wire the input / output
+/// memlets.  ``axes`` is left empty for whole-array reductions — Flang
+/// signals that by emitting the reduction op with no ``dim`` operand.
+static ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
+                               std::string_view wcr,
+                               std::string_view identity) {
+    ASTNode n;
+    n.kind = "reduce";
+
+    // Target (LHS).
+    auto dest = assign.getOperand(1);
+    if (auto dd = dest.getDefiningOp())
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+            n.target = extractName(decl.getUniqName().str());
+    if (n.target.empty()) n.target = traceToDecl(dest);
+
+    // Target is scalar when the reduction produces a scalar; array when a
+    // ``dim=`` argument was supplied.  We only fire for the scalar case
+    // today so target_is_array stays false.
+    n.target_is_array = false;
+
+    // Source array — operand 0 of the reduction op.
+    if (redOp->getNumOperands() > 0)
+        n.reduce_src = traceToDecl(redOp->getOperand(0));
+    n.reduce_wcr = wcr;
+    n.reduce_identity = identity;
+
+    // ``hlfir.sum %arr dim %d`` — trace the second operand.  When absent
+    // (whole-array reduction) leave reduce_axes empty.
+    if (redOp->getNumOperands() >= 2) {
+        auto d = redOp->getOperand(1);
+        if (auto c = traceConstInt(d))
+            // Fortran ``dim`` is 1-based; DaCe axes are 0-based.
+            n.reduce_axes.push_back(*c - 1);
+    }
+    return n;
+}
+
 /// Forward declare — called from buildWhileNode to recurse into the body.
 static std::vector<ASTNode> buildAST(mlir::Block &block);
 
@@ -654,12 +696,38 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             // the assign's source.  Synthesise a nested loop over the shape
             // instead of treating it as a scalar assign.
             auto src = assign.getOperand(0);
-            if (auto *sd = src.getDefiningOp())
+            if (auto *sd = src.getDefiningOp()) {
                 if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(sd)) {
                     for (auto &n : buildElementalAssign(assign, elem))
                         nodes.push_back(std::move(n));
                     continue;
                 }
+                // Scalar reductions land as their own dedicated op; pattern-
+                // match each one and hand the shared reduce-lowering helper
+                // the right wcr + identity.
+                auto opName = sd->getName().getStringRef();
+                struct RedEntry {
+                    llvm::StringRef op;
+                    llvm::StringRef wcr;
+                    llvm::StringRef identity;
+                };
+                static const RedEntry kRedTable[] = {
+                    {"hlfir.sum",     "lambda a, b: a + b",   "0"},
+                    {"hlfir.product", "lambda a, b: a * b",   "1"},
+                    {"hlfir.minval",  "lambda a, b: min(a, b)", "math.inf"},
+                    {"hlfir.maxval",  "lambda a, b: max(a, b)", "-math.inf"},
+                };
+                bool matched = false;
+                for (auto &e : kRedTable) {
+                    if (opName == e.op) {
+                        nodes.push_back(buildReduceNode(
+                            assign, sd, e.wcr.str(), e.identity.str()));
+                        matched = true;
+                        break;
+                    }
+                }
+                if (matched) continue;
+            }
             nodes.push_back(buildAssignNode(assign));
             continue;
         }

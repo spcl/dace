@@ -183,15 +183,26 @@ class SDFGBuilder:
                 transient=(v.intent == ''),
             )
 
-        # Scalars as Scalar descriptors — Fortran arrays of known size map
-        # to SDFG Arrays regardless of extent (``dimension(1)`` still gets
-        # add_array), but plain Fortran variables stay scalars.
+        # Scalars: local variables (``intent=''``) keep the ``dace.data.Scalar``
+        # descriptor, while dummy-arg scalars (``intent(in|out|inout)``) land
+        # as length-1 ``dace.data.Array``.  DaCe doesn't add non-transient
+        # scalars to the SDFG signature at all — pass-by-reference only works
+        # through Array descriptors — so Fortran scalar parameters have to be
+        # modelled as size-1 arrays on the Python binding surface.
         for v in self.scalars.values():
-            sdfg.add_scalar(
-                v.fortran_name,
-                dtype=self._dt(v.dtype),
-                transient=True,
-            )
+            if v.intent == '':
+                sdfg.add_scalar(
+                    v.fortran_name,
+                    dtype=self._dt(v.dtype),
+                    transient=True,
+                )
+            else:
+                sdfg.add_array(
+                    v.fortran_name,
+                    shape=(1, ),
+                    dtype=self._dt(v.dtype),
+                    transient=False,
+                )
 
     # ------------------------------------------------------------------
     # Phase 3: Recursive AST walk → SDFG state machine
@@ -203,7 +214,42 @@ class SDFGBuilder:
             elif n.kind == "loop": self._emit_loop(ctx, n, region)
             elif n.kind == "while": self._emit_while(ctx, n, region)
             elif n.kind == "conditional": self._emit_cond(ctx, n, region)
+            elif n.kind == "reduce": self._emit_reduce(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
+
+    def _emit_reduce(self, ctx: '_Ctx', n, region):
+        """``target = sum(src)`` (and product / minval / maxval) lowered as
+        a DaCe ``standard.Reduce`` library node via
+        ``state.add_reduce(wcr, axes, identity)``.
+
+        ``axes=None`` reduces all dimensions (whole-array scalar result);
+        a non-empty ``reduce_axes`` list reduces along those dims only.
+        """
+        import math as _math
+        ctx.flush(self)
+        ctx.ensure(region)
+        state = ctx.cur
+
+        src_name = n.reduce_src
+        src_desc = ctx.sdfg.arrays.get(src_name)
+        if src_desc is None:
+            raise RuntimeError(f"reduction source {src_name!r} not registered as SDFG data")
+        axes = list(n.reduce_axes) if n.reduce_axes else None
+
+        # DaCe's Reduce expects a value (or None) for ``identity``.
+        # ``math.inf`` / ``-math.inf`` come through as strings and must
+        # evaluate against an environment that sees ``math``.
+        identity_val = None
+        if n.reduce_identity:
+            identity_val = eval(n.reduce_identity, {'math': _math})
+
+        red = state.add_reduce(n.reduce_wcr, axes, identity_val)
+
+        src_access = self._acc(state, src_name)
+        tgt_access = self._acc(state, n.target)
+        state.add_edge(src_access, None, red, None, Memlet.from_array(src_name, src_desc))
+        tgt_desc = ctx.sdfg.arrays[n.target]
+        state.add_edge(red, None, tgt_access, None, Memlet.from_array(n.target, tgt_desc))
 
     def _emit_while(self, ctx: '_Ctx', n, region):
         """Fortran ``DO WHILE`` — lifted by ``lift-cf-to-scf`` into scf.while

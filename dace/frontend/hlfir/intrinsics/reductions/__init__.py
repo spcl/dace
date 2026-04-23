@@ -10,5 +10,11 @@ fill this dict.
 from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import ReductionIntrinsic
+from dace.frontend.hlfir.intrinsics.reductions.scalar_reductions import (
+    SCALAR_REDUCTIONS, )
 
-REDUCTION_INTRINSICS: dict[str, ReductionIntrinsic] = {}
+REDUCTION_INTRINSICS: dict[str, ReductionIntrinsic] = {**SCALAR_REDUCTIONS}
+
+
+def lookup(name: str) -> ReductionIntrinsic | None:
+    return REDUCTION_INTRINSICS.get(name)
