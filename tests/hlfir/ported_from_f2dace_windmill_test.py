@@ -176,7 +176,6 @@ def _xfail(reason: str):
     return pytest.mark.xfail(strict=True, reason=reason)
 
 
-@_xfail("HLFIR frontend: _emit_cond is a stub; no IF/ELSE lowering")
 def test_ported_empty_if_else(tmp_path):
     """Port of ``empty_test``."""
     src = """
@@ -197,11 +196,16 @@ end subroutine pick
     d_ref = np.zeros(2, order="F")
     mod.pick(d_ref, True)
     d_sdfg = np.zeros(2, dtype=np.float64)
-    sdfg(d=d_sdfg, flag=True)
+    # Scalar dummy args with intent land as size-1 Array descriptors on the
+    # SDFG signature (DaCe strips non-transient Scalars from the argument
+    # list), so the caller has to box Python booleans.
+    sdfg(d=d_sdfg, flag=np.array([True]))
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR frontend: _emit_cond is a stub; no IF/ELSE lowering")
+@_xfail("HLFIR frontend: scalar target reads an array element "
+        "(``s = d(2,1) + 1.0``) — emit_scalar_assign doesn't wire "
+        "array-element reads yet.")
 def test_ported_cond_array(tmp_path):
     """Port of ``cond_array_test``."""
     src = """
@@ -227,7 +231,6 @@ end subroutine cond_arr
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR frontend: CYCLE/EXIT inside loops not lowered")
 def test_ported_if_cycle(tmp_path):
     """Port of ``ifcycle_test``."""
     src = """
@@ -360,8 +363,6 @@ end subroutine min_res
     np.testing.assert_allclose(r_sdfg, r_ref)
 
 
-@_xfail("HLFIR frontend: inter-subroutine calls not lowered "
-        "(hlfir-inline-all only inlines local callees)")
 def test_ported_intersub_call(tmp_path):
     """Port of ``multisdfg_construction_test.test_minimal``: two
     subroutines in one file, outer calls inner."""

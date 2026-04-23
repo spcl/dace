@@ -74,6 +74,8 @@ std::string resolveIndex(mlir::Value idx) {
 ///   * arith.constant integer / float literals
 ///   * fir.convert pass-through (numeric kind casts)
 ///   * hlfir.apply / hlfir.elemental composition (inlined at index)
+static std::string buildIndexExpr(mlir::Value v, int d);
+
 static std::string buildExpr(mlir::Value val, int d = 0) {
     if (d > 30) return "?";
     auto *def = val.getDefiningOp();
@@ -686,6 +688,129 @@ static std::string cmpiPredStr(mlir::arith::CmpIPredicate p) {
     return "";
 }
 
+/// Render an arith::cmpf predicate as a Python comparison operator.  Ordered
+/// and unordered predicates both collapse to the same Python operator; NaN
+/// handling is beyond what a Python condition string can express, so we
+/// accept the lossy mapping.
+static std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
+    using P = mlir::arith::CmpFPredicate;
+    switch (p) {
+    case P::OLT: case P::ULT: return "<";
+    case P::OLE: case P::ULE: return "<=";
+    case P::OGT: case P::UGT: return ">";
+    case P::OGE: case P::UGE: return ">=";
+    case P::OEQ: case P::UEQ: return "==";
+    case P::ONE: case P::UNE: return "!=";
+    default:                  return "";
+    }
+}
+
+/// Like ``buildExpr`` but keeps explicit array subscripts (``a[(i) - 1]``)
+/// when the value is a ``fir.load`` of a ``hlfir.designate``.  Used by
+/// ``buildBoolExpr`` so interstate-edge conditions can reference array
+/// elements directly — they're evaluated in the caller's frame, not by a
+/// tasklet, so they can't rely on memlet-wired connectors.
+static std::string buildExprWithSubscripts(mlir::Value val, int d = 0) {
+    if (d > 30 || !val) return "?";
+    auto *def = val.getDefiningOp();
+    if (!def) return "?";
+
+    if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return buildExprWithSubscripts(conv.getValue(), d + 1);
+
+    // fir.load of hlfir.designate: emit 0-based subscripts.
+    if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
+        auto mem = ld.getMemref();
+        if (auto md = mem.getDefiningOp())
+            if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(md)) {
+                auto arr = traceToDecl(dg.getMemref());
+                auto indices = dg.getIndices();
+                if (arr.empty()) return "?";
+                if (indices.empty()) return arr;
+                std::string s = arr + "[";
+                bool first = true;
+                for (auto idx : indices) {
+                    if (!first) s += ", ";
+                    s += "(" + buildIndexExpr(idx, d + 1) + ") - 1";
+                    first = false;
+                }
+                s += "]";
+                return s;
+            }
+    }
+
+    // Binary arith — recurse through the subscript-aware builder.
+    static const std::map<llvm::StringRef, std::string> bin_ops = {
+        {"arith.mulf", " * "}, {"arith.addf", " + "},
+        {"arith.subf", " - "}, {"arith.divf", " / "},
+        {"arith.muli", " * "}, {"arith.addi", " + "},
+        {"arith.subi", " - "}, {"arith.divsi", " // "}, {"arith.divui", " // "},
+    };
+    auto nm = def->getName().getStringRef();
+    if (auto it = bin_ops.find(nm); it != bin_ops.end() && def->getNumOperands() == 2)
+        return "(" + buildExprWithSubscripts(def->getOperand(0), d + 1) + it->second
+                   + buildExprWithSubscripts(def->getOperand(1), d + 1) + ")";
+    if (nm == "arith.negf" && def->getNumOperands() == 1)
+        return "(-" + buildExprWithSubscripts(def->getOperand(0), d + 1) + ")";
+
+    // Fall through to the plain expression builder for anything else
+    // (constants, math intrinsics, …).
+    return buildExpr(val, d + 1);
+}
+
+/// Build a Python-syntax boolean expression for an ``i1`` SSA value.
+/// Recognises ``arith.cmpf``, ``arith.cmpi``, ``arith.andi``, ``arith.ori``
+/// (used as boolean ops on i1), ``arith.xori`` (boolean xor / ``not`` pattern
+/// ``xori %x, true``), and constant booleans.  Opaque inputs fall back to
+/// ``buildExpr`` (which may still produce a usable Python expression for the
+/// condition, or ``"?"`` when the shape isn't understood).
+static std::string buildBoolExpr(mlir::Value val, int d = 0) {
+    if (d > 30) return "?";
+    auto *def = val.getDefiningOp();
+    if (!def) return "?";
+
+    // fir.convert (i1 <-> i1 kind, i8 -> i1, …) is transparent here.
+    if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return buildBoolExpr(conv.getValue(), d + 1);
+
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
+        auto pred = cmpfPredStr(cmp.getPredicate());
+        if (pred.empty()) return "?";
+        return "(" + buildExprWithSubscripts(cmp.getLhs(), d + 1) + " " + pred + " "
+             + buildExprWithSubscripts(cmp.getRhs(), d + 1) + ")";
+    }
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def)) {
+        auto pred = cmpiPredStr(cmp.getPredicate());
+        if (pred.empty()) return "?";
+        return "(" + buildExprWithSubscripts(cmp.getLhs(), d + 1) + " " + pred + " "
+             + buildExprWithSubscripts(cmp.getRhs(), d + 1) + ")";
+    }
+    auto nm = def->getName().getStringRef();
+    if (nm == "arith.andi" && def->getNumOperands() == 2)
+        return "(" + buildBoolExpr(def->getOperand(0), d + 1) + " and "
+                   + buildBoolExpr(def->getOperand(1), d + 1) + ")";
+    if (nm == "arith.ori" && def->getNumOperands() == 2)
+        return "(" + buildBoolExpr(def->getOperand(0), d + 1) + " or "
+                   + buildBoolExpr(def->getOperand(1), d + 1) + ")";
+    // ``xori %x, true`` is Flang's lowering of ``.not. x``.  Otherwise
+    // boolean xor — Python has no operator, use ``!=``.
+    if (nm == "arith.xori" && def->getNumOperands() == 2) {
+        auto *rhsDef = def->getOperand(1).getDefiningOp();
+        if (auto c = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(rhsDef))
+            if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+                if (ia.getInt() == 1)
+                    return "(not " + buildBoolExpr(def->getOperand(0), d + 1) + ")";
+        return "(" + buildBoolExpr(def->getOperand(0), d + 1) + " != "
+                   + buildBoolExpr(def->getOperand(1), d + 1) + ")";
+    }
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+        if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+            return ia.getInt() ? "True" : "False";
+
+    // Last resort: maybe the condition is a scalar bool read or plain expr.
+    return buildExpr(val, d + 1);
+}
+
 /// Build a ``kind="while"`` ASTNode from Flang's lift-cf-to-scf shape.
 ///
 /// The before-region emitted by lift-cf-to-scf for a Fortran ``DO WHILE``
@@ -862,7 +987,18 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
         if (auto ifOp = mlir::dyn_cast<fir::IfOp>(op)) {
             ASTNode n;
             n.kind = "conditional";
-            n.condition = "?";
+            n.condition = buildBoolExpr(ifOp.getCondition());
+            if (!ifOp.getThenRegion().empty())
+                n.children = buildAST(ifOp.getThenRegion().front());
+            if (!ifOp.getElseRegion().empty())
+                n.else_children = buildAST(ifOp.getElseRegion().front());
+            nodes.push_back(std::move(n));
+            continue;
+        }
+        if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+            ASTNode n;
+            n.kind = "conditional";
+            n.condition = buildBoolExpr(ifOp.getCondition());
             if (!ifOp.getThenRegion().empty())
                 n.children = buildAST(ifOp.getThenRegion().front());
             if (!ifOp.getElseRegion().empty())

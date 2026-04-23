@@ -91,6 +91,7 @@ class SDFGBuilder:
         'float32': dace.float32,
         'int32': dace.int32,
         'int64': dace.int64,
+        'bool': dace.bool_,
     }
 
     def __init__(self, hlfir_path: str, pipeline: str = DEFAULT_PIPELINE):
@@ -368,7 +369,13 @@ class SDFGBuilder:
         inner_ctx.flush(self, loop)
 
     def _emit_assign(self, ctx: '_Ctx', n, region):
-        """Scalar or symbol assignment."""
+        """Scalar or symbol assignment.
+
+        Array-targeted assigns inside a structured flow (``if`` branch, ``while``
+        body, …) land on the current state as a tasklet; the loop-only
+        optimised path in ``_emit_loop`` keeps its flat ``body`` state for pure
+        array-assign DO bodies.
+        """
         if n.target in self.symbols:
             ctx.flush(self)
             ctx.ensure(region)
@@ -377,6 +384,10 @@ class SDFGBuilder:
             ctx.cur = dst
         elif not n.target_is_array:
             ctx.pending.append((n.target, n.expr))
+        else:
+            ctx.flush(self, region)
+            ctx.ensure(region)
+            self._emit_tasklet(ctx.cur, n, self.nid(), ctx.iter_map)
 
     def _emit_loop(self, ctx: '_Ctx', n, region, iter_map=None):
         """Fortran DO loop → LoopRegion with exact Fortran bounds."""
@@ -406,8 +417,20 @@ class SDFGBuilder:
         children = n.children
         child_loops = [c for c in children if c.kind == "loop"]
         child_assigns = [c for c in children if c.kind == "assign"]
+        # Anything beyond nested DO loops and plain assignments (IF/ELSE,
+        # WHILE, reductions, library-node calls, …) forces the generic
+        # state-machine walk — the flat ``body`` tasklet path can't host
+        # interstate edges.
+        has_structured = any(c.kind not in ("loop", "assign") for c in children)
 
-        if child_loops:
+        if has_structured:
+            inner_ctx = _Ctx(ctx.sdfg, self)
+            inner_ctx.iter_map = iter_map
+            body_start = loop.add_state(f"body_{self.nid()}", is_start_block=True)
+            inner_ctx.cur = body_start
+            self._emit(inner_ctx, list(children), loop)
+            inner_ctx.flush(self, loop)
+        elif child_loops:
             inner_ctx = _Ctx(ctx.sdfg, self)
             for c in children:
                 if c.kind == "loop":
@@ -633,8 +656,52 @@ class SDFGBuilder:
         return ", ".join(parts)
 
     def _emit_cond(self, ctx: '_Ctx', n, region):
-        """TODO: branching states."""
+        """``if (cond) then ... else ... end if`` → two branch states joined
+        by interstate edges.  The ``then`` edge carries ``cond``; the other
+        edge carries ``not (cond)``.  Both branches merge at a shared
+        post-state that becomes the new ``ctx.cur``.
+
+        When ``else_children`` is empty we still emit the ``not (cond)``
+        edge (straight from the pre-state to the merge state) so the
+        interstate graph stays total — otherwise SDFG codegen would drop
+        the false branch on the floor.
+        """
         ctx.flush(self)
+        ctx.ensure(region)
+        pre = ctx.cur
+
+        cond = n.condition if n.condition and n.condition != "?" else "True"
+        # Substitute Fortran iterator names (``i``) with their unique DaCe
+        # loop-var names (``i_0``) picked by the enclosing ``_emit_loop``.
+        for fname, uname in ctx.iter_map.items():
+            cond = re.sub(rf'\b{re.escape(fname)}\b', uname, cond)
+        not_cond = f"not ({cond})"
+
+        end_state = region.add_state(f"if_end_{self.nid()}")
+
+        then_start = region.add_state(f"if_then_{self.nid()}")
+        region.add_edge(pre, then_start, InterstateEdge(condition=cond))
+        then_ctx = _Ctx(ctx.sdfg, self)
+        then_ctx.iter_map = ctx.iter_map
+        then_ctx.cur = then_start
+        self._emit(then_ctx, list(n.children), region)
+        then_ctx.flush(self, region)
+        region.add_edge(then_ctx.cur, end_state, InterstateEdge())
+
+        else_children = list(n.else_children)
+        if else_children:
+            else_start = region.add_state(f"if_else_{self.nid()}")
+            region.add_edge(pre, else_start, InterstateEdge(condition=not_cond))
+            else_ctx = _Ctx(ctx.sdfg, self)
+            else_ctx.iter_map = ctx.iter_map
+            else_ctx.cur = else_start
+            self._emit(else_ctx, else_children, region)
+            else_ctx.flush(self, region)
+            region.add_edge(else_ctx.cur, end_state, InterstateEdge())
+        else:
+            region.add_edge(pre, end_state, InterstateEdge(condition=not_cond))
+
+        ctx.cur = end_state
 
     def emit_scalar_assign(self, state, target: str, value: str):
         """Tasklet for ``target = value`` on a scalar target.
@@ -690,6 +757,11 @@ class _Ctx:
         self.builder = builder
         self.cur = None
         self.pending = []
+        # Active DO-loop iterator renames (Fortran name → unique DaCe name).
+        # Populated by ``_emit_loop`` for the duration of each loop body so
+        # downstream emitters (``_emit_cond`` / ``_emit_tasklet``) can
+        # substitute iterators referenced in conditions or RHS expressions.
+        self.iter_map = {}
 
     def ensure(self, region=None):
         # ``not self.cur`` misfires the same way ``region or self.sdfg`` did:

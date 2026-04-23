@@ -165,6 +165,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         else if (ty.isF32())       v.dtype = "float32";
         else if (ty.isInteger(32)) v.dtype = "int32";
         else if (ty.isInteger(64)) v.dtype = "int64";
+        else if (ty.isInteger(1))  v.dtype = "bool";
+        else if (mlir::isa<fir::LogicalType>(ty)) v.dtype = "bool";
         else {
             std::string s; llvm::raw_string_ostream os(s);
             ty.print(os); v.dtype = s;
