@@ -194,3 +194,6 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+# Fortran module files (from test f2py runs, etc.)
+*.mod
