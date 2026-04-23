@@ -129,6 +129,20 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (!n.empty()) symbolNames.insert(n);
     });
 
+    // Pass 2c: scalars used as array indices (``a(i)``) are also symbols.
+    // Catches the DO-with-EXIT / DO-WHILE shape where lift-cf-to-scf
+    // removed the fir.do_loop that pass 2a would otherwise trace, plus
+    // any index-only scalar the user declares by hand.  Writing to a
+    // symbol then routes through the interstate-edge path in
+    // _emit_assign, which is the state-change DaCe needs to keep the
+    // index value live across loop iterations.
+    module.walk([&](hlfir::DesignateOp dg) {
+        for (auto idx : dg.getIndices()) {
+            auto n = traceToDecl(idx);
+            if (!n.empty()) symbolNames.insert(n);
+        }
+    });
+
     // Pass 3: build one VarInfo per declare.
     for (auto &op : decls) {
         VarInfo v;
