@@ -125,3 +125,24 @@ Every supported construct has a seeded numerical test against
 gfortran + f2py in `tests/hlfir/`. Ad-hoc `/tmp/foo.f90` probes are
 **not** the right pattern — save every shape worth exploring as a
 permanent `tests/hlfir/<feature>.f90` + `_test.py` pair.
+
+### Dumping built SDFGs for inspection
+
+Set `__DACE_HLFIR_GEN_TEST_SDFGS` before running the suite and every
+test that calls `_util.build_sdfg(...).build()` will also save its
+constructed SDFG for offline inspection:
+
+```bash
+# dump to /tmp/hlfir_test_sdfgs/<subroutine>.sdfg
+__DACE_HLFIR_GEN_TEST_SDFGS=1 python3 -m pytest tests/hlfir/
+
+# dump to a custom directory
+__DACE_HLFIR_GEN_TEST_SDFGS=/tmp/my_sdfgs python3 -m pytest tests/hlfir/
+```
+
+A standalone dumper that walks every `tests/hlfir/*.f90` fixture
+without running the tests is also available:
+
+```bash
+python3 tools/dump_hlfir_sdfgs.py [output_dir]
+```

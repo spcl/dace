@@ -8,6 +8,7 @@ should skip collection accordingly.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,23 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HLFIR_DIR = _REPO_ROOT / "dace" / "frontend" / "hlfir"
+
+# When this env var is set, every ``build_sdfg(...).build()`` call dumps
+# its SDFG to the named directory for offline inspection.  Treating "1"
+# / "true" / "yes" as the shorthand for a default path under /tmp keeps
+# the common case ergonomic without hardcoding one.
+_DUMP_ENV = "__DACE_HLFIR_GEN_TEST_SDFGS"
+_DEFAULT_DUMP_DIR = Path("/tmp/hlfir_test_sdfgs")
+
+
+def _dump_dir() -> Path | None:
+    val = os.environ.get(_DUMP_ENV)
+    if not val:
+        return None
+    if val.lower() in ("1", "true", "yes", "on"):
+        return _DEFAULT_DUMP_DIR
+    return Path(val)
+
 
 # Prefer llvm-21 (matches build_bridge.py default); fall back to 20.
 _FLANG = shutil.which("flang-new-21") or shutil.which("flang-new-20")
@@ -40,6 +58,28 @@ def compile_to_hlfir(source: str, out_dir: Path, name: str = "src") -> Path:
     return hlfir
 
 
+class _DumpingBuilder:
+    """Thin proxy around ``SDFGBuilder`` that dumps the built SDFG when
+    ``__DACE_HLFIR_GEN_TEST_SDFGS`` is set.  Everything else flows through
+    to the wrapped builder unchanged (``.arrays`` / ``.scalars`` / … still
+    work the same way for tests that inspect them)."""
+
+    def __init__(self, inner, name: str, dump_dir: Path):
+        self._inner = inner
+        self._name = name
+        self._dump_dir = dump_dir
+
+    def __getattr__(self, attr):
+        return getattr(self._inner, attr)
+
+    def build(self):
+        sdfg = self._inner.build()
+        self._dump_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self._dump_dir / f"{self._name}.sdfg"
+        sdfg.save(str(out_path))
+        return sdfg
+
+
 def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None):
     """Compile inline Fortran to HLFIR and return a configured ``SDFGBuilder``.
 
@@ -52,7 +92,11 @@ def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None):
     _ensure_on_path()
     from hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE
     hlfir = compile_to_hlfir(source, out_dir, name)
-    return SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE))
+    builder = SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE))
+    dump = _dump_dir()
+    if dump is not None:
+        return _DumpingBuilder(builder, name, dump)
+    return builder
 
 
 def run_passes_dump(source: str, out_dir: Path, name: str = "src", pipeline: str = "builtin.module()") -> str:
