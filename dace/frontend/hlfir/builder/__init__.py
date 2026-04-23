@@ -128,14 +128,59 @@ class SDFGBuilder:
         self.scalars = {v.fortran_name: v for v in self.variables if v.role == "scalar"}
 
     def build(self) -> SDFG:
-        """Construct and return a validated SDFG."""
+        """Construct the SDFG and attach a frozen-signature snapshot.
+
+        The snapshot is later verified by ``codegen.generate_code``
+        before any C++ header gets emitted — any downstream
+        transformation that drifts the argument list will then raise
+        rather than silently invalidate a generated Fortran binding.
+        """
         self._id_counter = 0
         sdfg = SDFG(sdfg_name(self))
         add_descriptors(self, sdfg)
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)
+        self._attach_frozen_signature(sdfg)
         return sdfg
+
+    def _attach_frozen_signature(self, sdfg: SDFG) -> None:
+        """Snapshot ``sdfg.arglist()`` + free symbols into a
+        ``FrozenSignature`` and pin it on the SDFG.
+
+        Populated from the builder's per-variable ``VarInfo`` cache
+        (intent, dtype, rank, shape).  Kind is ``'array'`` when the
+        variable lives in ``self.arrays``, ``'symbol'`` when in
+        ``self.symbols``, ``'scalar'`` otherwise.
+        """
+        # Local import keeps the binding machinery optional — plain
+        # ``import dace.frontend.hlfir`` doesn't drag it in.
+        from dace.frontend.hlfir.bindings.frozen_signature import FrozenArg, FrozenSignature
+
+        args_list = []
+        for sdfg_name_, desc in sdfg.arglist().items():
+            v = (self.arrays.get(sdfg_name_) or self.symbols.get(sdfg_name_) or self.scalars.get(sdfg_name_))
+            kind = ('array' if sdfg_name_ in self.arrays else 'symbol' if sdfg_name_ in self.symbols else 'scalar')
+            dtype_obj = getattr(desc, 'dtype', None)
+            dtype_str = (getattr(dtype_obj, 'to_string', lambda: str(dtype_obj))() if dtype_obj is not None else '?')
+            shape = tuple(str(s) for s in getattr(desc, 'shape', ()))
+            args_list.append(
+                FrozenArg(
+                    fortran_name=v.fortran_name if v is not None else sdfg_name_,
+                    sdfg_name=sdfg_name_,
+                    kind=kind,
+                    dtype=dtype_str,
+                    rank=len(shape) if kind == 'array' else 0,
+                    shape=shape,
+                    intent=(v.intent if v is not None else ''),
+                ))
+        fs = FrozenSignature(
+            entry=sdfg.name,
+            mangled=next((v.mangled_name for v in self.arrays.values() if getattr(v, 'mangled_name', '')), sdfg.name),
+            args=tuple(args_list),
+            free_symbols=tuple(sorted(str(s) for s in sdfg.free_symbols)),
+        )
+        sdfg._frozen_signature = fs
 
     def nid(self) -> int:
         """Globally unique integer.  Shared across ``_Ctx`` instances so
