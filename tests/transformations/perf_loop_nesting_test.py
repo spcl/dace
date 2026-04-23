@@ -231,7 +231,8 @@ def _build_velocity_for_it_35_pattern():
     inner.add_scalar("dtime", dace.float64)
     inner.add_array("maxvcfl", [KLEV, NPROMA], dace.float64)
     inner.add_array("levmask", [NB, KLEV - 1], dace.int32)
-    inner.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2], dace.float64,
+    inner.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2],
+                    dace.float64,
                     storage=dtypes.StorageType.CPU_Heap)
     inner.add_scalar("tmp_call_7", dace.float64, transient=True)
 
@@ -253,14 +254,14 @@ def _build_velocity_for_it_35_pattern():
     # Inner map 1: _for_it_36 - computes cfl_clipping.
     me36, mx36 = ist.add_map("single_state_body_map", {"_for_it_36": "IST:IEN + 1"})
     for c in ("z_w_con_c", "cfl_w_limit", "ddqz"):
-        me36.add_in_connector("IN_" + c); me36.add_out_connector("OUT_" + c)
-    mx36.add_in_connector("IN_cfl_clipping"); mx36.add_out_connector("OUT_cfl_clipping")
+        me36.add_in_connector("IN_" + c)
+        me36.add_out_connector("OUT_" + c)
+    mx36.add_in_connector("IN_cfl_clipping")
+    mx36.add_out_connector("OUT_cfl_clipping")
 
-    ist.add_edge(r_zwcon, None, me36, "IN_z_w_con_c",
-                 mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ist.add_edge(r_zwcon, None, me36, "IN_z_w_con_c", mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
     ist.add_edge(r_cfllim, None, me36, "IN_cfl_w_limit", mm.Memlet("cfl_w_limit[0]"))
-    ist.add_edge(r_ddqz_1, None, me36, "IN_ddqz",
-                 mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
+    ist.add_edge(r_ddqz_1, None, me36, "IN_ddqz", mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
 
     t36a = ist.add_tasklet("T_abs", {"z_in"}, {"t_out"}, "t_out = abs(z_in)")
     tmp7 = ist.add_access("tmp_call_7")
@@ -271,28 +272,24 @@ def _build_velocity_for_it_35_pattern():
     ist.add_edge(t36a, "t_out", tmp7, None, mm.Memlet("tmp_call_7[0]"))
     ist.add_edge(tmp7, None, t36b, "t_in", mm.Memlet("tmp_call_7[0]"))
     ist.add_edge(me36, "OUT_cfl_w_limit", t36b, "lim_in", mm.Memlet("cfl_w_limit[0]"))
-    ist.add_edge(me36, "OUT_ddqz", t36b, "ddqz_in",
-                 mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0, 0, 0]"))
+    ist.add_edge(me36, "OUT_ddqz", t36b, "ddqz_in", mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0, 0, 0]"))
     ist.add_edge(t36b, "c_out", mx36, "IN_cfl_clipping", mm.Memlet("cfl_clipping[0, 0]"))
-    ist.add_edge(mx36, "OUT_cfl_clipping", w_cflclip, None,
-                 mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ist.add_edge(mx36, "OUT_cfl_clipping", w_cflclip, None, mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
 
     # Inner map 2: _for_it_37 - consumes cfl_clipping + others, writes levmask/maxvcfl/z_w_con_c.
     me37, mx37 = ist.add_map("single_state_body_0_map", {"_for_it_37": "IST:IEN + 1"})
     for c in ("cfl_clipping", "dtime", "z_w_con_c", "maxvcfl", "ddqz"):
-        me37.add_in_connector("IN_" + c); me37.add_out_connector("OUT_" + c)
+        me37.add_in_connector("IN_" + c)
+        me37.add_out_connector("OUT_" + c)
     for c in ("levmask", "maxvcfl", "z_w_con_c"):
-        mx37.add_in_connector("IN_" + c); mx37.add_out_connector("OUT_" + c)
+        mx37.add_in_connector("IN_" + c)
+        mx37.add_out_connector("OUT_" + c)
 
-    ist.add_edge(r_cflclip, None, me37, "IN_cfl_clipping",
-                 mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ist.add_edge(r_cflclip, None, me37, "IN_cfl_clipping", mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
     ist.add_edge(r_dtime, None, me37, "IN_dtime", mm.Memlet("dtime[0]"))
-    ist.add_edge(r_zwcon_2, None, me37, "IN_z_w_con_c",
-                 mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
-    ist.add_edge(r_maxvcfl, None, me37, "IN_maxvcfl",
-                 mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ist.add_edge(r_ddqz_2, None, me37, "IN_ddqz",
-                 mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
+    ist.add_edge(r_zwcon_2, None, me37, "IN_z_w_con_c", mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ist.add_edge(r_maxvcfl, None, me37, "IN_maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ist.add_edge(r_ddqz_2, None, me37, "IN_ddqz", mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
 
     t37 = ist.add_tasklet(
         "T_update",
@@ -306,18 +303,14 @@ def _build_velocity_for_it_35_pattern():
     ist.add_edge(me37, "OUT_z_w_con_c", t37, "zw_in", mm.Memlet("z_w_con_c[0, 0]"))
     ist.add_edge(me37, "OUT_maxvcfl", t37, "mv_in", mm.Memlet("maxvcfl[0, 0]"))
     ist.add_edge(me37, "OUT_dtime", t37, "dt_in", mm.Memlet("dtime[0]"))
-    ist.add_edge(me37, "OUT_ddqz", t37, "ddqz_in",
-                 mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0, 0, 0]"))
+    ist.add_edge(me37, "OUT_ddqz", t37, "ddqz_in", mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0, 0, 0]"))
 
     ist.add_edge(t37, "lv_out", mx37, "IN_levmask", mm.Memlet("levmask[0, 0]"))
     ist.add_edge(t37, "mv_out", mx37, "IN_maxvcfl", mm.Memlet("maxvcfl[0, 0]"))
     ist.add_edge(t37, "zw_out", mx37, "IN_z_w_con_c", mm.Memlet("z_w_con_c[0, 0]"))
-    ist.add_edge(mx37, "OUT_levmask", w_levmask, None,
-                 mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
-    ist.add_edge(mx37, "OUT_maxvcfl", w_maxvcfl, None,
-                 mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ist.add_edge(mx37, "OUT_z_w_con_c", w_zwcon, None,
-                 mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ist.add_edge(mx37, "OUT_levmask", w_levmask, None, mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
+    ist.add_edge(mx37, "OUT_maxvcfl", w_maxvcfl, None, mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ist.add_edge(mx37, "OUT_z_w_con_c", w_zwcon, None, mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
 
     # -- Outer SDFG: parent _for_it_35 around the NSDFG ------------------
     outer = SDFG("velocity_for_it_35")
@@ -327,24 +320,34 @@ def _build_velocity_for_it_35_pattern():
     outer.add_scalar("dtime", dace.float64)
     outer.add_array("maxvcfl", [KLEV, NPROMA], dace.float64)
     outer.add_array("levmask", [NB, KLEV - 1], dace.int32)
-    outer.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2], dace.float64,
+    outer.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2],
+                    dace.float64,
                     storage=dtypes.StorageType.CPU_Heap)
 
     ostate = outer.add_state("outer_state", is_start_block=True)
 
     pe, px = ostate.add_map("single_state_body_4_map", {"_for_it_35": "LEV_LO:LEV_HI"})
     for c in ("cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl", "ddqz"):
-        pe.add_in_connector("IN_" + c); pe.add_out_connector("OUT_" + c)
+        pe.add_in_connector("IN_" + c)
+        pe.add_out_connector("OUT_" + c)
     for c in ("levmask", "maxvcfl", "z_w_con_c", "cfl_clipping"):
-        px.add_in_connector("IN_" + c); px.add_out_connector("OUT_" + c)
+        px.add_in_connector("IN_" + c)
+        px.add_out_connector("OUT_" + c)
 
     nsdfg = ostate.add_nested_sdfg(
         inner,
-        inputs={"cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl",
-                "__CG_p_metrics__m_ddqz_z_half"},
+        inputs={"cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl", "__CG_p_metrics__m_ddqz_z_half"},
         outputs={"levmask", "maxvcfl", "z_w_con_c", "cfl_clipping"},
-        symbol_mapping={"NPROMA": NPROMA, "KLEV": KLEV, "NB": NB, "DD0": DD0, "DD2": DD2,
-                        "IST": 0, "IEN": NPROMA - 1, "_for_it_35": "_for_it_35"},
+        symbol_mapping={
+            "NPROMA": NPROMA,
+            "KLEV": KLEV,
+            "NB": NB,
+            "DD0": DD0,
+            "DD2": DD2,
+            "IST": 0,
+            "IEN": NPROMA - 1,
+            "_for_it_35": "_for_it_35"
+        },
     )
 
     r_cflclip_o = ostate.add_read("cfl_clipping")
@@ -358,45 +361,30 @@ def _build_velocity_for_it_35_pattern():
     w_zwcon_o = ostate.add_write("z_w_con_c")
     w_cflclip_o = ostate.add_write("cfl_clipping")
 
-    ostate.add_edge(r_cflclip_o, None, pe, "IN_cfl_clipping",
-                    mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
-    ostate.add_edge(r_zwcon_o, None, pe, "IN_z_w_con_c",
-                    mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(r_cflclip_o, None, pe, "IN_cfl_clipping", mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(r_zwcon_o, None, pe, "IN_z_w_con_c", mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
     ostate.add_edge(r_cfllim_o, None, pe, "IN_cfl_w_limit", mm.Memlet("cfl_w_limit[0]"))
     ostate.add_edge(r_dtime_o, None, pe, "IN_dtime", mm.Memlet("dtime[0]"))
-    ostate.add_edge(r_maxvcfl_o, None, pe, "IN_maxvcfl",
-                    mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ostate.add_edge(r_ddqz_o, None, pe, "IN_ddqz",
-                    mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
+    ostate.add_edge(r_maxvcfl_o, None, pe, "IN_maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ostate.add_edge(r_ddqz_o, None, pe, "IN_ddqz", mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
 
-    ostate.add_edge(pe, "OUT_cfl_clipping", nsdfg, "cfl_clipping",
-                    mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
-    ostate.add_edge(pe, "OUT_z_w_con_c", nsdfg, "z_w_con_c",
-                    mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(pe, "OUT_cfl_clipping", nsdfg, "cfl_clipping", mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(pe, "OUT_z_w_con_c", nsdfg, "z_w_con_c", mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
     ostate.add_edge(pe, "OUT_cfl_w_limit", nsdfg, "cfl_w_limit", mm.Memlet("cfl_w_limit[0]"))
     ostate.add_edge(pe, "OUT_dtime", nsdfg, "dtime", mm.Memlet("dtime[0]"))
-    ostate.add_edge(pe, "OUT_maxvcfl", nsdfg, "maxvcfl",
-                    mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ostate.add_edge(pe, "OUT_maxvcfl", nsdfg, "maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
     ostate.add_edge(pe, "OUT_ddqz", nsdfg, "__CG_p_metrics__m_ddqz_z_half",
                     mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
 
-    ostate.add_edge(nsdfg, "levmask", px, "IN_levmask",
-                    mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
-    ostate.add_edge(nsdfg, "maxvcfl", px, "IN_maxvcfl",
-                    mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ostate.add_edge(nsdfg, "z_w_con_c", px, "IN_z_w_con_c",
-                    mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
-    ostate.add_edge(nsdfg, "cfl_clipping", px, "IN_cfl_clipping",
-                    mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(nsdfg, "levmask", px, "IN_levmask", mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
+    ostate.add_edge(nsdfg, "maxvcfl", px, "IN_maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ostate.add_edge(nsdfg, "z_w_con_c", px, "IN_z_w_con_c", mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(nsdfg, "cfl_clipping", px, "IN_cfl_clipping", mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
 
-    ostate.add_edge(px, "OUT_levmask", w_levmask_o, None,
-                    mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
-    ostate.add_edge(px, "OUT_maxvcfl", w_maxvcfl_o, None,
-                    mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ostate.add_edge(px, "OUT_z_w_con_c", w_zwcon_o, None,
-                    mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
-    ostate.add_edge(px, "OUT_cfl_clipping", w_cflclip_o, None,
-                    mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(px, "OUT_levmask", w_levmask_o, None, mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
+    ostate.add_edge(px, "OUT_maxvcfl", w_maxvcfl_o, None, mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
+    ostate.add_edge(px, "OUT_z_w_con_c", w_zwcon_o, None, mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
+    ostate.add_edge(px, "OUT_cfl_clipping", w_cflclip_o, None, mm.Memlet("cfl_clipping[0:NPROMA, 0:KLEV]"))
 
     outer.validate()
     return outer, ostate
@@ -445,12 +433,10 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     wstate = wrapper.add_state("wstate", is_start_block=True)
     nested = wstate.add_nested_sdfg(
         inner_sdfg,
-        inputs={"cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl",
-                "__CG_p_metrics__m_ddqz_z_half"},
+        inputs={"cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl", "__CG_p_metrics__m_ddqz_z_half"},
         outputs={"levmask", "maxvcfl", "z_w_con_c", "cfl_clipping"},
     )
-    for name in ("cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl",
-                 "__CG_p_metrics__m_ddqz_z_half"):
+    for name in ("cfl_clipping", "z_w_con_c", "cfl_w_limit", "dtime", "maxvcfl", "__CG_p_metrics__m_ddqz_z_half"):
         r = wstate.add_read(name)
         wstate.add_edge(r, None, nested, name, mm.Memlet.from_array(name, wrapper.arrays[name]))
     for name in ("levmask", "maxvcfl", "z_w_con_c", "cfl_clipping"):
@@ -478,8 +464,9 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     PerfLoopNesting().apply_to(owning_sdfg, parent_entry=parent)
     wrapper.validate()
 
-    top_entries = [n for n in inner_state.nodes()
-                   if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None]
+    top_entries = [
+        n for n in inner_state.nodes() if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None
+    ]
     assert len(top_entries) == 2
 
 
