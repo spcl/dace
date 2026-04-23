@@ -67,6 +67,18 @@ class _Reduction(NamedTuple):
 class LoopToReduce(ppl.Pass):
     """Lift scalar-accumulator loops to Reduction library nodes."""
 
+    permissive = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Enable extractors that make semantic assumptions about input "
+             "data (e.g. the ``any``/``all`` conditional-const-assign pattern "
+             "which assumes the guard array is 0/1-valued).",
+    )
+
+    def __init__(self, permissive: bool = False):
+        super().__init__()
+        self.permissive = permissive
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
@@ -78,7 +90,7 @@ class LoopToReduce(ppl.Pass):
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
                 continue
-            info = _extract(node, sdfg)
+            info = _extract(node, sdfg, permissive=self.permissive)
             if info is None:
                 continue
             _lift(parent, node, info)
@@ -161,7 +173,96 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
+def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym,
+                         start, end) -> Optional["_Reduction"]:
+    """Match ``{sym: const}`` conditional-interstate-edge "any"/"all".
+
+    Body = ``ConditionalBlock`` with one branch, guard ``arr[<subs>] <cmp> C``
+    (C integer), branch = 2 empty states + interstate edge with assignment
+    ``{sym: <const_rhs>}`` where ``const_rhs`` is 0 or 1.
+
+    The guard array is assumed to be 0/1-valued, so ``any(arr[...] == 1)``
+    over the iteration range is equivalent to the bitwise-OR of ``arr[...]``
+    -- no predicate synthesis needed, a plain ``Reduce(|)`` over the array
+    slice suffices. ``const_rhs == 1`` lifts to OR; ``const_rhs == 0`` lifts
+    to AND.
+    """
+    if const_rhs == 1:
+        wcr = "lambda a, b: a | b"
+    elif const_rhs == 0:
+        wcr = "lambda a, b: a & b"
+    else:
+        return None
+
+    try:
+        tree = ast.parse(cond.as_string, mode="eval").body
+    except (SyntaxError, TypeError, ValueError):
+        return None
+    if not isinstance(tree, ast.Compare) or len(tree.ops) != 1:
+        return None
+    left, right = tree.left, tree.comparators[0]
+
+    def _is_subscript_on_array(n):
+        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+                and n.value.id in sdfg.arrays)
+
+    def _is_int_const(n):
+        return isinstance(n, ast.Constant) and isinstance(n.value, int)
+
+    if _is_subscript_on_array(left) and _is_int_const(right):
+        sub = left
+    elif _is_subscript_on_array(right) and _is_int_const(left):
+        sub = right
+    else:
+        return None
+
+    array = sub.value.id
+    slice_node = sub.slice
+    args_ast = slice_node.elts if isinstance(slice_node, ast.Tuple) else [slice_node]
+
+    try:
+        sym_args = [symbolic.pystr_to_symbolic(ast.unparse(a)) for a in args_ast]
+    except Exception:
+        return None
+
+    if len(sym_args) != len(sdfg.arrays[array].shape):
+        return None
+
+    # Exactly one axis must depend on the loop variable (linearly, offset ∉ sym).
+    axis_for_iter = None
+    offset = None
+    for i, a in enumerate(sym_args):
+        if a.has(loop_var_sym):
+            if axis_for_iter is not None:
+                return None
+            axis_for_iter = i
+            try:
+                off = symbolic.simplify(a - loop_var_sym)
+            except Exception:
+                return None
+            if off.has(loop_var_sym):
+                return None
+            offset = off
+    if axis_for_iter is None:
+        return None
+
+    ranges = []
+    for i, a in enumerate(sym_args):
+        if i == axis_for_iter:
+            ranges.append((symbolic.simplify(start + offset),
+                           symbolic.simplify(end + offset), 1))
+        else:
+            ranges.append((a, a, 1))
+    return _Reduction(
+        wcr=wcr,
+        accum=target,
+        accum_subset=subsets.Range([(0, 0, 1)]),
+        array=array,
+        array_subset=subsets.Range(ranges),
+    )
+
+
+def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional[_Reduction]:
     if not loop.loop_variable:
         return None
     start = loop_analysis.get_init_assignment(loop)
@@ -328,6 +429,15 @@ def _extract(loop: LoopRegion, sdfg: SDFG) -> Optional[_Reduction]:
             if arr_call is None or other != target_sym:
                 return None
         else:
+            # Conditional-interstate-edge path.
+            # "any"/"all" pattern: ``{sym: <const>}`` with an array-predicate
+            # guard; lifts to OR / AND over the (0/1-valued) guard array.
+            # Gated on ``permissive`` -- the lift is only semantically correct
+            # if the guard array happens to hold only 0/1 values, which the
+            # pass cannot verify statically.
+            if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
+                return _extract_any_pattern(cond, int(expr), target, sdfg,
+                                            loop_var_sym, start, end)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
             if not (isinstance(expr, sympy.Function) and str(expr.func) in sdfg.arrays):
                 return None
