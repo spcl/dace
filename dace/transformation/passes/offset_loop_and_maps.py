@@ -62,7 +62,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str, str]) -> dace.memlet.Memlet:
         """Create a new memlet with substituted subset ranges."""
-        if edge_data is None:
+        if edge_data is None or edge_data.subset is None:
             return None
         if edge_data.other_subset is not None:
             raise Exception("TODO: Other subset not supported")
