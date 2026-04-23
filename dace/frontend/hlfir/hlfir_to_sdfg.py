@@ -363,7 +363,11 @@ class SDFGBuilder:
         iteration.
         """
         ctx.flush(self)
-        cond = n.condition if n.condition else "True"
+        # ``?`` is the bridge's placeholder for an unextractable condition
+        # (EXIT shapes where ``buildWhileNode`` can't fold the keep-going
+        # predicate).  Default to ``True`` so ast.parse succeeds and leave
+        # the faithful structure visible in the SDFG for inspection.
+        cond = n.condition if n.condition and n.condition != "?" else "True"
         loop = LoopRegion(label=f"while_{self.nid()}", condition_expr=cond)
         region.add_node(loop)
         if ctx.cur is not None:
