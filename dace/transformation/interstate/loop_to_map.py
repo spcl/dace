@@ -511,24 +511,36 @@ class LoopToMap(xf.MultiStateTransformation):
             w = body.add_write(name)
             body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
-        # Propagate free symbols referenced by nested array shapes/strides/offsets:
-        # ``copy.deepcopy`` of the descriptor carries the symbols, but they
-        # must be added to the NestedSDFG's symbol mapping.
-        for desc in nsdfg.arrays.values():
-            for sym in desc.free_symbols:
-                sym_name = str(sym)
-                if sym_name in sdfg.symbols:
-                    if sym_name not in nsdfg.symbols:
-                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
-                    if sym_name not in cnode.symbol_mapping:
-                        cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
-
         # Fix SDFG symbols
         for sym in sdfg.free_symbols - fsymbols:
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
+
+        # Symbols that the nested SDFG assigns on its own interstate edges
+        # are internal -- they must not be surfaced onto the NestedSDFG
+        # node's ``symbol_mapping``. Doing so would make the outer SDFG
+        # appear to need them as free symbols; a later pruning pass that
+        # removes them from ``sdfg.symbols`` would then desync the mapping
+        # (codegen reads ``sdfg.symbols[sym]`` and raises ``KeyError``).
+        internally_defined = set()
+        for e in nsdfg.all_interstate_edges():
+            internally_defined.update(e.data.assignments.keys())
+
+        # Propagate free symbols referenced by nested array shapes/strides/offsets:
+        # ``copy.deepcopy`` of the descriptor carries the symbols, but they
+        # must be added to the NestedSDFG's symbol mapping.
+        for desc in nsdfg.arrays.values():
+            for sym in desc.free_symbols:
+                sym_name = str(sym)
+                if sym_name in internally_defined:
+                    continue
+                if sym_name in sdfg.symbols:
+                    if sym_name not in nsdfg.symbols:
+                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
+                    if sym_name not in cnode.symbol_mapping:
+                        cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
         # Propagate symbols, where types cannot be inferred
         alltypes = copy.deepcopy(nsdfg.symbols)
