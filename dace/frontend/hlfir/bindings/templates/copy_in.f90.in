@@ -1,0 +1,4 @@
+    ! {outer_expr} → {inner_name} (copy-in)
+{loop_prologue}
+      {element_expr}
+{loop_epilogue}

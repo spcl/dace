@@ -1,0 +1,2 @@
+    ! {outer_expr} → alias {inner_name} (zero-copy via c_loc + c_f_pointer)
+    call c_f_pointer(c_loc({outer_expr}), {inner_name}, [{shape_list}])

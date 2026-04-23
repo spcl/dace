@@ -1,0 +1,22 @@
+    ! Ref-counted init — first call allocates, subsequent calls reuse.
+    if (init_count == 0) then
+      dace_handle = dace_init_{entry}()
+    end if
+    init_count = init_count + 1
+
+    ! The actual SDFG invocation.
+    call dace_program_{entry}(dace_handle,  &
+{call_arg_list})
+
+  end subroutine {entry}_dace
+
+  subroutine {entry}_dace_finalize()
+    integer(c_int) :: err
+    if (init_count > 0) then
+      init_count = init_count - 1
+      if (init_count == 0) then
+        err = dace_exit_{entry}(dace_handle)
+        dace_handle = c_null_ptr
+      end if
+    end if
+  end subroutine {entry}_dace_finalize

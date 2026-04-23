@@ -1,0 +1,2 @@
+    ! SDFG free-symbol population from caller's Fortran storage.
+{symbol_assigns}
