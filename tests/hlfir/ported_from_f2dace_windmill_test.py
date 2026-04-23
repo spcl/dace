@@ -283,7 +283,6 @@ end subroutine while_count
     np.testing.assert_allclose(r_sdfg, r_ref)
 
 
-@_xfail("HLFIR frontend: SELECT CASE not lowered yet")
 def test_ported_select_case(tmp_path):
     """Port of ``case_test`` (simple scalar case)."""
     src = """
@@ -304,11 +303,14 @@ end subroutine case_pick
     mod = _f2py(src, tmp_path / "ref", "case_pick")
     sdfg = _build(src, tmp_path / "sdfg", name="case_pick")
 
-    o_ref = np.int32(0)
-    o_ref_out = mod.case_pick(2, o_ref)
-    o_sdfg = np.array(0, dtype=np.int32)
-    sdfg(v=2, out=o_sdfg)
-    assert int(o_sdfg) == int(o_ref_out)
+    o_ref = np.zeros(1, order="F", dtype=np.int32)
+    mod.case_pick(2, o_ref)
+    # Scalar intent(in) / intent(inout) args land as size-1 Arrays on the
+    # SDFG signature, so the caller boxes the Python ints.
+    v_sdfg = np.array([2], dtype=np.int32)
+    o_sdfg = np.zeros(1, dtype=np.int32)
+    sdfg(v=v_sdfg, out=o_sdfg)
+    assert int(o_sdfg[0]) == int(o_ref[0])
 
 
 @_xfail("HLFIR frontend: array-section assignment not lowered")

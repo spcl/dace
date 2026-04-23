@@ -675,6 +675,12 @@ class SDFGBuilder:
         # loop-var names (``i_0``) picked by the enclosing ``_emit_loop``.
         for fname, uname in ctx.iter_map.items():
             cond = re.sub(rf'\b{re.escape(fname)}\b', uname, cond)
+        # Scalars with intent land as size-1 Arrays on the SDFG signature,
+        # so referring to a bare name in an interstate condition would pick
+        # up the array pointer.  Subscript each one to read element 0.
+        for nm, v in self.scalars.items():
+            if v.intent:
+                cond = re.sub(rf'\b{re.escape(nm)}\b', f"{nm}[0]", cond)
         not_cond = f"not ({cond})"
 
         end_state = region.add_state(f"if_end_{self.nid()}")

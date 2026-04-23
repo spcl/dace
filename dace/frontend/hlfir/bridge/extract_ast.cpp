@@ -74,7 +74,8 @@ std::string resolveIndex(mlir::Value idx) {
 ///   * arith.constant integer / float literals
 ///   * fir.convert pass-through (numeric kind casts)
 ///   * hlfir.apply / hlfir.elemental composition (inlined at index)
-static std::string buildIndexExpr(mlir::Value v, int d);
+static std::string buildIndexExpr(mlir::Value v, int d = 0);
+static std::string buildExprWithSubscripts(mlir::Value val, int d = 0);
 
 static std::string buildExpr(mlir::Value val, int d = 0) {
     if (d > 30) return "?";
@@ -251,7 +252,7 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
 /// Build a display expression for an index value.  Mirrors Fortran syntax
 /// (1-based, square brackets for indirect access) so the Python side can
 /// pattern-match on it.  Depth-limited to avoid loops on malformed IR.
-static std::string buildIndexExpr(mlir::Value v, int d = 0) {
+static std::string buildIndexExpr(mlir::Value v, int d) {
     if (d > 20 || !v) return "?";
     auto *def = v.getDefiningOp();
     if (!def) return "?";
@@ -513,6 +514,116 @@ static ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
 /// Forward declare — called from buildWhileNode to recurse into the body.
 static std::vector<ASTNode> buildAST(mlir::Block &block);
 
+/// Synthesise a chain of nested ``kind="conditional"`` AST nodes from a
+/// ``fir.select_case`` terminator.  Fortran ``SELECT CASE`` has no direct
+/// equivalent in DaCe's control-flow vocabulary, so we fold every case
+/// label into a boolean guard and nest the rest in the ``else`` branch.
+///
+/// Case labels supported (from FIROps.td):
+///   - ``#fir.point %v``       → ``x == v``
+///   - ``#fir.interval %l %h`` → ``(x >= l) and (x <= h)``
+///   - ``#fir.lower %l``       → ``x >= l``
+///   - ``#fir.upper %h``       → ``x <= h``
+///   - ``unit``                → default (else at the innermost nesting)
+///
+/// Adjacent cases targeting the same successor block (``case (2, 3, 5)``
+/// lowers to three ``fir.point`` cases all pointing at the same ``^bb``)
+/// collapse into a single guard whose sub-predicates are OR-joined.
+static ASTNode buildSelectCaseChain(fir::SelectCaseOp sel) {
+    auto operands = sel.getOperands();
+    std::string xExpr = buildExprWithSubscripts(sel.getSelector(operands));
+
+    auto cases = sel.getCases();
+    unsigned numCases = cases.size();
+
+    // Per-case metadata for a first pass.
+    struct CaseInfo {
+        bool isDefault = false;
+        std::string guard;
+        mlir::Block *dest = nullptr;
+    };
+    std::vector<CaseInfo> infos;
+    infos.reserve(numCases);
+    for (unsigned i = 0; i < numCases; ++i) {
+        CaseInfo ci;
+        ci.dest = sel.getSuccessor(i);
+        auto tag = cases[i];
+        auto cmpOps = sel.getCompareOperands(operands, i);
+        if (mlir::isa<mlir::UnitAttr>(tag)) {
+            ci.isDefault = true;
+        } else if (mlir::isa<fir::PointIntervalAttr>(tag) && cmpOps && !cmpOps->empty()) {
+            ci.guard = "(" + xExpr + " == "
+                     + buildExprWithSubscripts((*cmpOps)[0]) + ")";
+        } else if (mlir::isa<fir::ClosedIntervalAttr>(tag) && cmpOps && cmpOps->size() >= 2) {
+            auto lo = buildExprWithSubscripts((*cmpOps)[0]);
+            auto hi = buildExprWithSubscripts((*cmpOps)[1]);
+            ci.guard = "((" + xExpr + " >= " + lo + ") and ("
+                     + xExpr + " <= " + hi + "))";
+        } else if (mlir::isa<fir::LowerBoundAttr>(tag) && cmpOps && !cmpOps->empty()) {
+            ci.guard = "(" + xExpr + " >= "
+                     + buildExprWithSubscripts((*cmpOps)[0]) + ")";
+        } else if (mlir::isa<fir::UpperBoundAttr>(tag) && cmpOps && !cmpOps->empty()) {
+            ci.guard = "(" + xExpr + " <= "
+                     + buildExprWithSubscripts((*cmpOps)[0]) + ")";
+        } else {
+            // Unknown shape — emit ``False`` so the case is never taken,
+            // keeping the rest of the chain well-formed.
+            ci.guard = "False";
+        }
+        infos.push_back(std::move(ci));
+    }
+
+    // Merge runs of non-default cases sharing the same destination block
+    // (Fortran ``case (2, 3, 5)`` → three fir.point cases all targeting
+    // the same successor).
+    struct Group {
+        std::string guard;     // OR-joined guards
+        mlir::Block *dest = nullptr;
+    };
+    std::vector<Group> groups;
+    std::vector<ASTNode> defaultBody;
+    for (auto &ci : infos) {
+        if (ci.isDefault) {
+            if (ci.dest) defaultBody = buildAST(*ci.dest);
+            continue;
+        }
+        if (!groups.empty() && groups.back().dest == ci.dest) {
+            groups.back().guard += " or " + ci.guard;
+        } else {
+            Group g;
+            g.guard = ci.guard;
+            g.dest = ci.dest;
+            groups.push_back(std::move(g));
+        }
+    }
+
+    // Build the nested conditional chain from the last non-default group
+    // backwards, folding each previous group into the next one's else.
+    ASTNode chain;
+    bool first = true;
+    for (auto it = groups.rbegin(); it != groups.rend(); ++it) {
+        ASTNode node;
+        node.kind = "conditional";
+        node.condition = "(" + it->guard + ")";
+        if (it->dest) node.children = buildAST(*it->dest);
+        if (first) {
+            node.else_children = defaultBody;
+            first = false;
+        } else {
+            node.else_children.push_back(std::move(chain));
+        }
+        chain = std::move(node);
+    }
+    // If every case was defaulted away (no non-default labels), fall back
+    // to the default body as-is wrapped in a trivial ``if True``.
+    if (first) {
+        chain.kind = "conditional";
+        chain.condition = "True";
+        chain.children = defaultBody;
+    }
+    return chain;
+}
+
 /// Resolve the extent of a fir.shape / fir.shape_shift operand at dim `d`,
 /// preferring a traced declare name (`"nproma"`), then a literal constant
 /// (`"10"`), and falling back to `"?"` if neither is available.
@@ -710,7 +821,7 @@ static std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
 /// ``buildBoolExpr`` so interstate-edge conditions can reference array
 /// elements directly — they're evaluated in the caller's frame, not by a
 /// tasklet, so they can't rely on memlet-wired connectors.
-static std::string buildExprWithSubscripts(mlir::Value val, int d = 0) {
+static std::string buildExprWithSubscripts(mlir::Value val, int d) {
     if (d > 30 || !val) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
@@ -1018,6 +1129,10 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
         }
         if (auto whileOp = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
             nodes.push_back(buildWhileNode(whileOp));
+            continue;
+        }
+        if (auto sel = mlir::dyn_cast<fir::SelectCaseOp>(op)) {
+            nodes.push_back(buildSelectCaseChain(sel));
             continue;
         }
     }
