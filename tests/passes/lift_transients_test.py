@@ -50,15 +50,13 @@ def _c_strides(shape):
     return s
 
 
-def _run_check(sdfg: dace.SDFG, expected: np.ndarray, *,
-               out_kw: str = "B", order: str = 'F', call_kwargs=None):
+def _run_check(sdfg: dace.SDFG, expected: np.ndarray, *, out_kw: str = "B", order: str = 'F', call_kwargs=None):
     _force_sequential_maps(sdfg)
     out = np.zeros(expected.shape, dtype=expected.dtype, order=order)
     kwargs = dict(call_kwargs or {})
     kwargs[out_kw] = out
     sdfg(**kwargs)
-    assert np.allclose(out, expected), (
-        f"SDFG output disagreed with numpy reference: got {out} vs {expected}")
+    assert np.allclose(out, expected), (f"SDFG output disagreed with numpy reference: got {out} vs {expected}")
 
 
 def _inner_1d(size: int, name: str = "t") -> SDFG:
@@ -74,10 +72,8 @@ def _inner_1d(size: int, name: str = "t") -> SDFG:
     mx.add_in_connector("IN_" + name)
     mx.add_out_connector("OUT_" + name)
     st.add_edge(task, "o", mx, "IN_" + name, mm.Memlet(data=name, subset="k"))
-    st.add_edge(mx, "OUT_" + name, t_acc, None,
-                mm.Memlet.from_array(name, inner.arrays[name]))
-    st.add_edge(t_acc, None, b_acc, None,
-                mm.Memlet.from_array("B", inner.arrays["B"]))
+    st.add_edge(mx, "OUT_" + name, t_acc, None, mm.Memlet.from_array(name, inner.arrays[name]))
+    st.add_edge(t_acc, None, b_acc, None, mm.Memlet.from_array("B", inner.arrays["B"]))
     return inner
 
 
@@ -95,10 +91,8 @@ def _inner_2d(M: int, N: int, layout: str) -> SDFG:
     mx.add_in_connector("IN_t")
     mx.add_out_connector("OUT_t")
     st.add_edge(task, "o", mx, "IN_t", mm.Memlet(data="t", subset="i, j"))
-    st.add_edge(mx, "OUT_t", t_acc, None,
-                mm.Memlet.from_array("t", inner.arrays["t"]))
-    st.add_edge(t_acc, None, b_acc, None,
-                mm.Memlet.from_array("B", inner.arrays["B"]))
+    st.add_edge(mx, "OUT_t", t_acc, None, mm.Memlet.from_array("t", inner.arrays["t"]))
+    st.add_edge(t_acc, None, b_acc, None, mm.Memlet.from_array("B", inner.arrays["B"]))
     return inner
 
 
@@ -157,8 +151,7 @@ def _inner_row_reduce(M: int, N: int, layout: str) -> SDFG:
     mx_z.add_out_connector("OUT_S")
     st_init.add_edge(me_z, None, z_task, None, mm.Memlet())
     st_init.add_edge(z_task, "o", mx_z, "IN_S", mm.Memlet(data="S", subset="i"))
-    st_init.add_edge(mx_z, "OUT_S", s_init, None,
-                     mm.Memlet.from_array("S", inner.arrays["S"]))
+    st_init.add_edge(mx_z, "OUT_S", s_init, None, mm.Memlet.from_array("S", inner.arrays["S"]))
 
     # State 3: row reduction via map + WCR on S. DaCe handles the
     # strided access correctly for both Fortran and C layouts.
@@ -173,8 +166,7 @@ def _inner_row_reduce(M: int, N: int, layout: str) -> SDFG:
     mx2.add_out_connector("OUT_S")
     st2.add_edge(t_r, None, me2, "IN_t", mm.Memlet.from_array("t", inner.arrays["t"]))
     st2.add_edge(me2, "OUT_t", rtask, "inp", mm.Memlet(data="t", subset="i, j"))
-    st2.add_edge(rtask, "out", mx2, "IN_S",
-                 mm.Memlet(data="S", subset="i", wcr="lambda a, b: a + b"))
+    st2.add_edge(rtask, "out", mx2, "IN_S", mm.Memlet(data="S", subset="i", wcr="lambda a, b: a + b"))
     st2.add_edge(mx2, "OUT_S", s_w, None, mm.Memlet.from_array("S", inner.arrays["S"]))
     return inner
 
@@ -207,8 +199,7 @@ def test_lift_1d_through_map_fortran_default_appends():
     size, K = 8, 4
     inner = _inner_1d(size)
     top = SDFG("top_1d_map_fortran")
-    top.add_array("B", [size, K], dace.float64,
-                  transient=False, strides=_fortran_strides((size, K)))
+    top.add_array("B", [size, K], dace.float64, transient=False, strides=_fortran_strides((size, K)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {}, {"B"})
@@ -236,8 +227,7 @@ def test_lift_through_map_with_nonzero_begin_uses_param_minus_begin():
     inner = _inner_1d(size)
     top = SDFG("top_1d_map_offset")
     top.add_symbol("B_start", dace.int32)
-    top.add_array("B", [size, K], dace.float64,
-                  transient=False, strides=_fortran_strides((size, K)))
+    top.add_array("B", [size, K], dace.float64, transient=False, strides=_fortran_strides((size, K)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"B_start : B_start + {K}"})
     n = st.add_nested_sdfg(inner, {}, {"B"})
@@ -245,13 +235,11 @@ def test_lift_through_map_with_nonzero_begin_uses_param_minus_begin():
     mx.add_in_connector("IN_B")
     mx.add_out_connector("OUT_B")
     st.add_edge(me, None, n, None, mm.Memlet())
-    st.add_edge(n, "B", mx, "IN_B",
-                mm.Memlet(data="B", subset=f"0:{size}, jb - B_start"))
+    st.add_edge(n, "B", mx, "IN_B", mm.Memlet(data="B", subset=f"0:{size}, jb - B_start"))
     st.add_edge(mx, "OUT_B", bw, None, mm.Memlet.from_array("B", top.arrays["B"]))
 
     expected = np.ones((size, K), dtype=np.float64)
-    _run_check(copy.deepcopy(top), expected, order='F',
-               call_kwargs={"B_start": 2})
+    _run_check(copy.deepcopy(top), expected, order='F', call_kwargs={"B_start": 2})
 
     lifted = lift_transients(top)
     top.validate()
@@ -279,7 +267,8 @@ def test_lift_with_suggestion_overrides_shape_and_indexes_from_begin():
     top.add_symbol("i_startblk", dace.int32)
     top.add_symbol("i_endblk", dace.int32)
     top.add_symbol("nblks_c", dace.int32)
-    top.add_array("B", [size, "nblks_c"], dace.float64,
+    top.add_array("B", [size, "nblks_c"],
+                  dace.float64,
                   transient=False,
                   strides=_fortran_strides((size, dace.symbol("nblks_c"))))
     st = top.add_state()
@@ -289,16 +278,14 @@ def test_lift_with_suggestion_overrides_shape_and_indexes_from_begin():
     mx.add_in_connector("IN_B")
     mx.add_out_connector("OUT_B")
     st.add_edge(me, None, n, None, mm.Memlet())
-    st.add_edge(n, "B", mx, "IN_B",
-                mm.Memlet(data="B", subset=f"0:{size}, jb - i_startblk"))
+    st.add_edge(n, "B", mx, "IN_B", mm.Memlet(data="B", subset=f"0:{size}, jb - i_startblk"))
     st.add_edge(mx, "OUT_B", bw, None, mm.Memlet.from_array("B", top.arrays["B"]))
 
     nblks = 6
     expected = np.zeros((size, nblks), dtype=np.float64)
     expected[:, 0:3] = 1.0
 
-    _run_check(copy.deepcopy(top), expected, order='F',
-               call_kwargs={"i_startblk": 1, "i_endblk": 4, "nblks_c": nblks})
+    _run_check(copy.deepcopy(top), expected, order='F', call_kwargs={"i_startblk": 1, "i_endblk": 4, "nblks_c": nblks})
 
     lifted = lift_transients(top, map_range_suggestions={
         ("i_startblk", "i_endblk"): "nblks_c",
@@ -321,16 +308,14 @@ def test_lift_with_suggestion_overrides_shape_and_indexes_from_begin():
     else:
         raise AssertionError("no incoming memlet on 't' connector found")
 
-    _run_check(top, expected, order='F',
-               call_kwargs={"i_startblk": 1, "i_endblk": 4, "nblks_c": nblks})
+    _run_check(top, expected, order='F', call_kwargs={"i_startblk": 1, "i_endblk": 4, "nblks_c": nblks})
 
 
 def test_lift_2d_fortran_through_map():
     M, N, K = 3, 4, 5
     inner = _inner_2d(M, N, "fortran")
     top = SDFG("top_2d_fortran")
-    top.add_array("B", [M, N, K], dace.float64,
-                  transient=False, strides=_fortran_strides((M, N, K)))
+    top.add_array("B", [M, N, K], dace.float64, transient=False, strides=_fortran_strides((M, N, K)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {}, {"B"})
@@ -338,12 +323,10 @@ def test_lift_2d_fortran_through_map():
     mx.add_in_connector("IN_B")
     mx.add_out_connector("OUT_B")
     st.add_edge(me, None, n, None, mm.Memlet())
-    st.add_edge(n, "B", mx, "IN_B",
-                mm.Memlet(data="B", subset=f"0:{M}, 0:{N}, jb"))
+    st.add_edge(n, "B", mx, "IN_B", mm.Memlet(data="B", subset=f"0:{M}, 0:{N}, jb"))
     st.add_edge(mx, "OUT_B", bw, None, mm.Memlet.from_array("B", top.arrays["B"]))
 
-    expected = np.fromfunction(
-        lambda i, j, k: 100 * i + j, (M, N, K), dtype=np.float64)
+    expected = np.fromfunction(lambda i, j, k: 100 * i + j, (M, N, K), dtype=np.float64)
 
     _run_check(copy.deepcopy(top), expected, order='F')
 
@@ -360,8 +343,7 @@ def test_lift_2d_c_through_map():
     M, N, K = 3, 4, 5
     inner = _inner_2d(M, N, "c")
     top = SDFG("top_2d_c")
-    top.add_array("B", [K, M, N], dace.float64,
-                  transient=False, strides=_c_strides((K, M, N)))
+    top.add_array("B", [K, M, N], dace.float64, transient=False, strides=_c_strides((K, M, N)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {}, {"B"})
@@ -369,12 +351,10 @@ def test_lift_2d_c_through_map():
     mx.add_in_connector("IN_B")
     mx.add_out_connector("OUT_B")
     st.add_edge(me, None, n, None, mm.Memlet())
-    st.add_edge(n, "B", mx, "IN_B",
-                mm.Memlet(data="B", subset=f"jb, 0:{M}, 0:{N}"))
+    st.add_edge(n, "B", mx, "IN_B", mm.Memlet(data="B", subset=f"jb, 0:{M}, 0:{N}"))
     st.add_edge(mx, "OUT_B", bw, None, mm.Memlet.from_array("B", top.arrays["B"]))
 
-    expected = np.fromfunction(
-        lambda k, i, j: 100 * i + j, (K, M, N), dtype=np.float64)
+    expected = np.fromfunction(lambda k, i, j: 100 * i + j, (K, M, N), dtype=np.float64)
 
     _run_check(copy.deepcopy(top), expected, order='C')
 
@@ -391,10 +371,8 @@ def test_lift_2d_fortran_with_input_through_map():
     M, N, K = 3, 4, 5
     inner = _inner_2d_with_input(M, N, "fortran")
     top = SDFG("top_2d_input_fortran")
-    top.add_array("A", [M, N, K], dace.float64,
-                  transient=False, strides=_fortran_strides((M, N, K)))
-    top.add_array("B", [M, N, K], dace.float64,
-                  transient=False, strides=_fortran_strides((M, N, K)))
+    top.add_array("A", [M, N, K], dace.float64, transient=False, strides=_fortran_strides((M, N, K)))
+    top.add_array("B", [M, N, K], dace.float64, transient=False, strides=_fortran_strides((M, N, K)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {"A"}, {"B"})
@@ -427,10 +405,8 @@ def test_lift_2d_c_with_input_through_map():
     M, N, K = 3, 4, 5
     inner = _inner_2d_with_input(M, N, "c")
     top = SDFG("top_2d_input_c")
-    top.add_array("A", [K, M, N], dace.float64,
-                  transient=False, strides=_c_strides((K, M, N)))
-    top.add_array("B", [K, M, N], dace.float64,
-                  transient=False, strides=_c_strides((K, M, N)))
+    top.add_array("A", [K, M, N], dace.float64, transient=False, strides=_c_strides((K, M, N)))
+    top.add_array("B", [K, M, N], dace.float64, transient=False, strides=_c_strides((K, M, N)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {"A"}, {"B"})
@@ -463,10 +439,8 @@ def test_lift_2d_with_row_reduction_fortran():
     M, N, K = 3, 4, 5
     inner = _inner_row_reduce(M, N, "fortran")
     top = SDFG("top_row_reduce")
-    top.add_array("A", [M, N, K], dace.float64,
-                  transient=False, strides=_fortran_strides((M, N, K)))
-    top.add_array("B", [M, K], dace.float64,
-                  transient=False, strides=_fortran_strides((M, K)))
+    top.add_array("A", [M, N, K], dace.float64, transient=False, strides=_fortran_strides((M, N, K)))
+    top.add_array("B", [M, K], dace.float64, transient=False, strides=_fortran_strides((M, K)))
     st = top.add_state()
     me, mx = st.add_map("outer", {"jb": f"0:{K}"})
     n = st.add_nested_sdfg(inner, {"A"}, {"S"})
@@ -500,8 +474,7 @@ def test_lift_through_two_levels_of_nested_sdfg_with_map():
     deep = _inner_1d(size)
 
     mid = SDFG("mid_two_level")
-    mid.add_array("B", [size, K_inner], dace.float64,
-                  transient=False, strides=_fortran_strides((size, K_inner)))
+    mid.add_array("B", [size, K_inner], dace.float64, transient=False, strides=_fortran_strides((size, K_inner)))
     mst = mid.add_state()
     me_m, mx_m = mst.add_map("mid_map", {"ji": f"0:{K_inner}"})
     dn = mst.add_nested_sdfg(deep, {}, {"B"})
@@ -513,8 +486,10 @@ def test_lift_through_two_levels_of_nested_sdfg_with_map():
     mst.add_edge(mx_m, "OUT_B", bm, None, mm.Memlet.from_array("B", mid.arrays["B"]))
 
     top = SDFG("top_two_level_map")
-    top.add_array("B", [size, K_inner, K_outer], dace.float64,
-                  transient=False, strides=_fortran_strides((size, K_inner, K_outer)))
+    top.add_array("B", [size, K_inner, K_outer],
+                  dace.float64,
+                  transient=False,
+                  strides=_fortran_strides((size, K_inner, K_outer)))
     st = top.add_state()
     me_t, mx_t = st.add_map("top_map", {"jo": f"0:{K_outer}"})
     mn = st.add_nested_sdfg(mid, {}, {"B"})
@@ -522,8 +497,7 @@ def test_lift_through_two_levels_of_nested_sdfg_with_map():
     mx_t.add_in_connector("IN_B")
     mx_t.add_out_connector("OUT_B")
     st.add_edge(me_t, None, mn, None, mm.Memlet())
-    st.add_edge(mn, "B", mx_t, "IN_B",
-                mm.Memlet(data="B", subset=f"0:{size}, 0:{K_inner}, jo"))
+    st.add_edge(mn, "B", mx_t, "IN_B", mm.Memlet(data="B", subset=f"0:{size}, 0:{K_inner}, jo"))
     st.add_edge(mx_t, "OUT_B", bw, None, mm.Memlet.from_array("B", top.arrays["B"]))
 
     expected = np.ones((size, K_inner, K_outer), dtype=np.float64)
@@ -580,8 +554,7 @@ def test_non_transient_left_alone():
     st = inner.add_state()
     u_acc = st.add_read("u")
     b_acc = st.add_write("B")
-    st.add_edge(u_acc, None, b_acc, None,
-                mm.Memlet.from_array("B", inner.arrays["B"]))
+    st.add_edge(u_acc, None, b_acc, None, mm.Memlet.from_array("B", inner.arrays["B"]))
 
     top = SDFG("top_pass_through")
     top.add_array("u", [8], dace.float64, transient=False)
@@ -693,8 +666,7 @@ def test_post_conditions_raise_on_internally_assigned_shape_symbol():
     entry = top.add_state("entry")
     mid = top.add_state("mid")
     top.add_edge(entry, mid, dace.InterstateEdge(assignments={"N": "5"}))
-    top.add_array("bad", ["N"], dace.float64, transient=True,
-                  lifetime=dtypes.AllocationLifetime.SDFG)
+    top.add_array("bad", ["N"], dace.float64, transient=True, lifetime=dtypes.AllocationLifetime.SDFG)
     from dace.transformation.passes.lift_transients import _verify_postconditions
     with pytest.raises(ValueError, match="internally-assigned"):
         _verify_postconditions(top)

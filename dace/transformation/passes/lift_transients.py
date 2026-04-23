@@ -51,7 +51,6 @@ from dace import SDFG, data, dtypes, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 
-
 RangeSuggestions = Dict[Tuple[str, str], str]
 
 
@@ -69,10 +68,7 @@ class LiftTransients(ppl.Pass):
         self._suggestions: RangeSuggestions = map_range_suggestions or {}
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.Descriptors
-                | ppl.Modifies.Edges
-                | ppl.Modifies.Nodes
-                | ppl.Modifies.States)
+        return (ppl.Modifies.Descriptors | ppl.Modifies.Edges | ppl.Modifies.Nodes | ppl.Modifies.States)
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes) != ppl.Modifies.Nothing
@@ -90,8 +86,7 @@ class LiftTransients(ppl.Pass):
         return total if total > 0 else None
 
 
-def lift_transients(sdfg: SDFG,
-                    map_range_suggestions: Optional[RangeSuggestions] = None) -> int:
+def lift_transients(sdfg: SDFG, map_range_suggestions: Optional[RangeSuggestions] = None) -> int:
     """Functional entry point. Runs :class:`LiftTransients` once and
     returns the number of promotions (0 if none)."""
     pass_obj = LiftTransients(map_range_suggestions=map_range_suggestions)
@@ -110,9 +105,8 @@ def _verify_postconditions(sdfg: SDFG):
     errors: List[str] = []
     for name, desc in sdfg.arrays.items():
         if desc.transient and desc.lifetime != dtypes.AllocationLifetime.SDFG:
-            errors.append(
-                f"top-level transient {name!r} has lifetime={desc.lifetime}, "
-                f"expected AllocationLifetime.SDFG")
+            errors.append(f"top-level transient {name!r} has lifetime={desc.lifetime}, "
+                          f"expected AllocationLifetime.SDFG")
 
     for n, _ in sdfg.all_nodes_recursive():
         if not isinstance(n, nodes.NestedSDFG):
@@ -122,9 +116,8 @@ def _verify_postconditions(sdfg: SDFG):
                 continue
             if tuple(desc.shape) == (1, ):
                 continue
-            errors.append(
-                f"nested SDFG {n.label!r} still declares transient {name!r} "
-                f"(shape={tuple(desc.shape)})")
+            errors.append(f"nested SDFG {n.label!r} still declares transient {name!r} "
+                          f"(shape={tuple(desc.shape)})")
 
     assigned = _assigned_symbols(sdfg)
     for name, desc in sdfg.arrays.items():
@@ -134,15 +127,12 @@ def _verify_postconditions(sdfg: SDFG):
             syms = symbolic.symlist(dim)
             bad = [s for s in syms if str(s) in assigned]
             if bad:
-                errors.append(
-                    f"top-level transient {name!r} shape {tuple(desc.shape)} "
-                    f"depends on internally-assigned symbol(s) {bad}")
+                errors.append(f"top-level transient {name!r} shape {tuple(desc.shape)} "
+                              f"depends on internally-assigned symbol(s) {bad}")
                 break
 
     if errors:
-        raise ValueError(
-            "LiftTransients post-conditions failed:\n  - "
-            + "\n  - ".join(errors))
+        raise ValueError("LiftTransients post-conditions failed:\n  - " + "\n  - ".join(errors))
 
 
 def _assigned_symbols(sdfg: SDFG) -> Set[str]:
@@ -191,8 +181,7 @@ def _is_fortran_layout(desc: data.Array) -> bool:
     return True
 
 
-def _lift_one(nsdfg_node: nodes.NestedSDFG, parent_state: dace.SDFGState, name: str,
-              suggestions: RangeSuggestions):
+def _lift_one(nsdfg_node: nodes.NestedSDFG, parent_state: dace.SDFGState, name: str, suggestions: RangeSuggestions):
     inner = nsdfg_node.sdfg
     parent_sdfg: SDFG = parent_state.sdfg
     desc = inner.arrays[name]
@@ -201,12 +190,10 @@ def _lift_one(nsdfg_node: nodes.NestedSDFG, parent_state: dace.SDFGState, name: 
     scope_entry = parent_state.entry_node(nsdfg_node)
     scope_exit = parent_state.exit_node(scope_entry) if scope_entry is not None else None
     map_params = list(scope_entry.map.params) if scope_entry is not None else []
-    map_range: Optional[subsets.Range] = (
-        scope_entry.map.range if scope_entry is not None else None)
+    map_range: Optional[subsets.Range] = (scope_entry.map.range if scope_entry is not None else None)
 
     # axes[i] = (param_name, begin_expr) for each added dim.
-    new_shape, axes = _extend_shape_with_map_dims(
-        desc.shape, map_range, map_params, suggestions, is_fortran)
+    new_shape, axes = _extend_shape_with_map_dims(desc.shape, map_range, map_params, suggestions, is_fortran)
 
     new_name = _unique(parent_sdfg.arrays, name)
     new_desc = copy.deepcopy(desc)
@@ -232,13 +219,11 @@ def _lift_one(nsdfg_node: nodes.NestedSDFG, parent_state: dace.SDFGState, name: 
     if not reads and not writes:
         return
 
-    _wire(parent_state, nsdfg_node, name, new_name, new_desc,
-          scope_entry, scope_exit, axes, is_fortran, reads, writes)
+    _wire(parent_state, nsdfg_node, name, new_name, new_desc, scope_entry, scope_exit, axes, is_fortran, reads, writes)
 
 
-def _extend_shape_with_map_dims(orig_shape, map_range: Optional[subsets.Range],
-                                map_params: List[str], suggestions: RangeSuggestions,
-                                is_fortran: bool):
+def _extend_shape_with_map_dims(orig_shape, map_range: Optional[subsets.Range], map_params: List[str],
+                                suggestions: RangeSuggestions, is_fortran: bool):
     """Return ``(new_shape, axes)`` where ``axes`` is one
     ``(param_name, begin_expr)`` entry per added dim. For Fortran
     (column-major) the map dims are APPENDED (so each slab stays
@@ -311,19 +296,16 @@ def _inner_rw(inner: SDFG, name: str) -> Tuple[bool, bool]:
     return reads, writes
 
 
-def _wire(parent_state: dace.SDFGState, nsdfg_node: nodes.NestedSDFG,
-         inner_name: str, outer_name: str, outer_desc: data.Array,
-         scope_entry: Optional[nodes.MapEntry], scope_exit: Optional[nodes.MapExit],
-         axes: List[Tuple[str, symbolic.SymbolicType]], is_fortran: bool,
-         reads: bool, writes: bool):
+def _wire(parent_state: dace.SDFGState, nsdfg_node: nodes.NestedSDFG, inner_name: str, outer_name: str,
+          outer_desc: data.Array, scope_entry: Optional[nodes.MapEntry], scope_exit: Optional[nodes.MapExit],
+          axes: List[Tuple[str, symbolic.SymbolicType]], is_fortran: bool, reads: bool, writes: bool):
     full = mm.Memlet.from_array(outer_name, outer_desc)
 
     if reads:
         nsdfg_node.add_in_connector(inner_name, force=True)
         access = parent_state.add_read(outer_name)
         if scope_entry is None:
-            parent_state.add_edge(access, None, nsdfg_node, inner_name,
-                                  copy.deepcopy(full))
+            parent_state.add_edge(access, None, nsdfg_node, inner_name, copy.deepcopy(full))
         else:
             ic = "IN_" + outer_name
             oc = "OUT_" + outer_name
@@ -337,8 +319,7 @@ def _wire(parent_state: dace.SDFGState, nsdfg_node: nodes.NestedSDFG,
         nsdfg_node.add_out_connector(inner_name, force=True)
         write = parent_state.add_write(outer_name)
         if scope_exit is None:
-            parent_state.add_edge(nsdfg_node, inner_name, write, None,
-                                  copy.deepcopy(full))
+            parent_state.add_edge(nsdfg_node, inner_name, write, None, copy.deepcopy(full))
         else:
             ic = "IN_" + outer_name
             oc = "OUT_" + outer_name
@@ -349,8 +330,7 @@ def _wire(parent_state: dace.SDFGState, nsdfg_node: nodes.NestedSDFG,
             parent_state.add_edge(scope_exit, oc, write, None, copy.deepcopy(full))
 
 
-def _inner_memlet(name: str, desc: data.Array,
-                  axes: List[Tuple[str, symbolic.SymbolicType]],
+def _inner_memlet(name: str, desc: data.Array, axes: List[Tuple[str, symbolic.SymbolicType]],
                   is_fortran: bool) -> mm.Memlet:
     """Per-iteration slab memlet addressing the OUTER array. For each
     ``(param, begin)`` in ``axes`` the memlet has a single-point range
