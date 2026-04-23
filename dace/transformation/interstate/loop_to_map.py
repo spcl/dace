@@ -167,9 +167,16 @@ class LoopToMap(xf.MultiStateTransformation):
                 if dn.data in write_set:
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
-                            # If pointers are involved, give up
-                            print(f"Cannot apply: Dynamic memlet without WCR for node {dn.data}")
-                            return False
+                            # A dynamic write (no WCR) is still safe across
+                            # outer-loop iterations if its destination subset
+                            # pins an axis to the iteration variable (same
+                            # ``a*i+b`` pattern enforced below for non-dynamic
+                            # writes). Each iteration then writes to a disjoint
+                            # slab -- whether a given lane fires or not
+                            # cannot race with another iteration's write.
+                            dst_subset = e.data.get_dst_subset(e, state)
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                                return False
                         if e.data is None:
                             continue
 
