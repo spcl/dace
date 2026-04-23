@@ -95,7 +95,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _create_new_memlet(self, edge_data, repldict: Dict[str, str]) -> dace.memlet.Memlet:
         """Create a new memlet with substituted subset ranges."""
-        if edge_data is None:
+        if edge_data is None or edge_data.subset is None:
             return None
         # Using symbols might create problems due to having different symbol objects with same symbols
         new_range_list = [(safe_subs(b, repldict), safe_subs(e, repldict), safe_subs(s, repldict))

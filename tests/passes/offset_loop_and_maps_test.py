@@ -294,6 +294,37 @@ def test_with_conditional():
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])
 
 
+def test_empty_memlet_does_not_crash_offset_loops_and_maps():
+    """Regression: ``_create_new_memlet`` iterated ``edge_data.subset``
+    unconditionally. Empty/pass-through memlets (e.g. tasklet→AccessNode
+    with no dataflow) carry ``subset=None`` and crashed the pass with
+    ``TypeError: 'NoneType' object is not iterable``. Trigger the
+    memlet-rewrite path via a LoopRegion whose body contains such an
+    empty-memlet edge.
+    """
+    from dace import memlet as mm
+    from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+
+    sdfg = dace.SDFG("empty_memlet_tester")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    loop = LoopRegion(
+        "loop",
+        condition_expr="i <= 3",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+    )
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    # AccessNode -> AccessNode edge with an empty memlet (no subset).
+    body.add_nedge(body.add_read("A"), body.add_write("B"), mm.Memlet())
+    sdfg.validate()
+
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None).apply_pass(sdfg, {})
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_simple_element_wise()
     test_symbol_use_in_tasklet()
@@ -301,3 +332,4 @@ if __name__ == "__main__":
     test_loop_offsetting_w_begin_expr()
     test_begin_expr_condition()
     test_with_conditional()
+    test_empty_memlet_does_not_crash_offset_loops_and_maps()
