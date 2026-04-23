@@ -2,7 +2,6 @@
 import copy
 from typing import Any, Dict
 from dace import SDFG, InterstateEdge, properties
-from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_to_map import LoopToMap

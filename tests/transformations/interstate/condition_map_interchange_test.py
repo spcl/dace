@@ -2,10 +2,8 @@
 """Tests the conditional map interchange transformation."""
 
 import numpy as np
-import pytest
 import dace
 from dace.transformation.interstate import ConditionMapInterchange
-from dace.sdfg.state import LoopRegion
 from copy import deepcopy
 
 

@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-import pytest
 
 from dace.sdfg.fp_utils.change_fp_types import change_fptype
 

@@ -1,15 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import copy
-from typing import Any, Dict, Optional, Set, Union
-from dace import SDFG, ControlFlowRegion
-from dace import symbolic
-from dace.properties import CodeBlock
-from dace.sdfg.sdfg import ConditionalBlock
+from typing import Any, Dict, Optional, Set
+from dace import SDFG
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-import dace.sdfg.utils as sdutil
 
 
 @transformation.explicit_cf_compatible

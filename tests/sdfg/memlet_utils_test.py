@@ -3,7 +3,6 @@
 import dace
 import numpy as np
 import pytest
-from dace import symbolic
 from dace.sdfg import memlet_utils as mu
 import re
 from typing import Tuple, Optional

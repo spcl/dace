@@ -1,7 +1,6 @@
 import dace
 from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import utils as sdutil
 from typing import Optional, Set, Dict
 import copy
 from dace.transformation.transformation import explicit_cf_compatible
@@ -22,7 +21,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet], access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
+    def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet],
+                       access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
         sdfg = state.sdfg
 
         if not isinstance(access_node, dace.nodes.AccessNode):
@@ -64,7 +64,6 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                 return None, None, None
 
         return access_node, an2, tasklet
-
 
     def _collect_other_state_data(self, sdfg: dace.SDFG, current_state: dace.SDFGState) -> Set[str]:
         """Collect all data names that appear in any state other than current_state."""
@@ -118,8 +117,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                                 assert ie.data.data == an2.data
                                 assert ie.data.other_subset is not None
                                 new_subset = copy.deepcopy(ie.data.other_subset)
-                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, 
-                                        dace.memlet.Memlet(data=an1.data, subset=new_subset))
+                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
+                                           dace.memlet.Memlet(data=an1.data, subset=new_subset))
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         # TODO: add a test involving other subset and then one not involving

@@ -3,9 +3,8 @@ import dace
 from typing import Any, Dict, Optional, Set
 import ast
 from dace import SDFG, properties, transformation
-from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
-from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 
 
 class PowerOperatorExpander(ast.NodeTransformer):

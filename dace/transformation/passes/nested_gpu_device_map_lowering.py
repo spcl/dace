@@ -1,16 +1,15 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, Iterator, Optional, Sequence, Set, Tuple
+from typing import Set
 
 import copy
 import sympy
 
 import dace
-from dace import SDFG, data, properties
-from dace.sdfg import nodes
+from dace import SDFG, properties
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 
 

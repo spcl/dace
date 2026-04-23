@@ -7,9 +7,8 @@ import warnings
 
 import sympy
 
-import dace
-from dace import Config, dtypes, symbolic
-from dace.properties import make_properties, Property
+from dace import Config, dtypes
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
 from dace.transformation import helpers, transformation
 from dace.transformation.dataflow.tiling import MapTiling

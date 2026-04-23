@@ -2,10 +2,7 @@ import numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 
 COMPILER_COLOR_MAP = {
     "gcc": "#1b9e77",  # green

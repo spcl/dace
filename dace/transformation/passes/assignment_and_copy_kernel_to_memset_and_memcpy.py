@@ -3,7 +3,7 @@
 import warnings
 import dace
 import copy
-from dace import Tuple, properties
+from dace import properties
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation

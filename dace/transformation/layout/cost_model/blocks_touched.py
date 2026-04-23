@@ -1,12 +1,10 @@
 import dace
-from typing import Dict, List, Iterable, Optional, NamedTuple, Set
-import copy
+from typing import Dict, List, Set
 
 import dace
 import sympy as sp
 
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
-
 """
 for i in range(0, N):
     for j in range(0, M):
@@ -36,13 +34,13 @@ def static_overlap_blocks_touched(loop_ranges, access_subsets, block_size, sdfg)
 
 
 def average_blocks_touched(
-    state: dace.SDFGState,
-    loop_nests: Set[dace.nodes.MapEntry], # Loop nests going from outer to inner
-    loop_ranges: List[Dict[str, dace.subsets.Range]], # Same order list of param->range
-    access_subsets: Dict[str, dace.subsets.Subset], # Dict mapping arrays to the subsets accessed
-    block_size: int, # Block (cache line) size
-    symbols_defined: Set[str], # Symbols available within the innermost nest
-    overlap: bool = False, # Whether to use static overlap to assess the block numbers
+        state: dace.SDFGState,
+        loop_nests: Set[dace.nodes.MapEntry],  # Loop nests going from outer to inner
+        loop_ranges: List[Dict[str, dace.subsets.Range]],  # Same order list of param->range
+        access_subsets: Dict[str, dace.subsets.Subset],  # Dict mapping arrays to the subsets accessed
+        block_size: int,  # Block (cache line) size
+        symbols_defined: Set[str],  # Symbols available within the innermost nest
+        overlap: bool = False,  # Whether to use static overlap to assess the block numbers
 ) -> Dict[str, sp.Basic]:
     """
     Returns dict of array_name -> symbolic average new blocks per iteration.
@@ -114,11 +112,12 @@ def average_blocks_touched(
 
 if __name__ == "__main__":
     N = dace.symbol("N")
+
     @dace.program
-    def madd(A : dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    def madd(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
         for i, j in dace.map[0:N, 0:N]:
             C[i, j] = B[j, i] + A[i, j]
-    
+
     sdfg = madd.to_sdfg()
     states = {s for s in sdfg.all_states()}
     assert len(states) == 1
@@ -130,10 +129,7 @@ if __name__ == "__main__":
     loop_nests = {n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)}
     assert len(loop_nests) == 1
 
-    loop_ranges = [
-        {k: r for k, r in zip(loop_nest.map.params, loop_nest.map.range)}
-        for loop_nest in loop_nests
-    ]
+    loop_ranges = [{k: r for k, r in zip(loop_nest.map.params, loop_nest.map.range)} for loop_nest in loop_nests]
     all_map_params = {s for lp in loop_nests for s in lp.params}
     print(all_map_params)
 
@@ -156,8 +152,6 @@ if __name__ == "__main__":
         block_size=2,
         symbols_defined=symbols,
     )
-
-
 """
 for i in range(4):
     for j in range(4):
@@ -171,30 +165,30 @@ for i in range(4):
 
 for i in range(N):
     for j in range(N):
-        C[i // 4, j // 4, i % 4, j % 4] = 
-            A[i // 4, j // 4, i % 4, j % 4] + 
+        C[i // 4, j // 4, i % 4, j % 4] =
+            A[i // 4, j // 4, i % 4, j % 4] +
             B[i // 4, j // 4, i % 4, j % 4]
 
 for i in range(N//4):
     for j in range(N//4):
         for ii in range(4):
             for jj in range(4):
-                C[i, j, ii, jj] = 
-                    A[i, j, ii, jj] + 
+                C[i, j, ii, jj] =
+                    A[i, j, ii, jj] +
                     B[i, j, ii, jj]
 
 
 for i in range(N):
     for j in range(N):
-        C[i // 4 + i % 4, j // 4 + j % 4] = 
-            A[i // 4 + i % 4, j // 4 + j % 4]+ 
+        C[i // 4 + i % 4, j // 4 + j % 4] =
+            A[i // 4 + i % 4, j // 4 + j % 4]+
             B[i // 4 + i % 4, j // 4 + j % 4]
 
 for i in range(N//4):
     for j in range(N//4):
         for ii in range(4):
             for jj in range(4):
-                C[i*4 + ii, j*4 + jj] = 
-                    A[i*4 + ii, j*4 + jj] + 
+                C[i*4 + ii, j*4 + jj] =
+                    A[i*4 + ii, j*4 + jj] +
                     B[i*4 + ii, j*4 + jj]
 """

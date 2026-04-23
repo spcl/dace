@@ -9,6 +9,7 @@ from .. import environments
 from dace.libraries.environments.cutensor import cuTensor
 import warnings
 
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """ Implements the pure expansion of TensorTranspose library node. """
@@ -85,6 +86,7 @@ class ExpandHPTT(ExpandTransformation):
 
         return tasklet
 
+
 @library.expansion
 class ExpandCuTensor(ExpandTransformation):
     """
@@ -116,11 +118,11 @@ class ExpandCuTensor(ExpandTransformation):
     #     1.0 * NaN destroys the original bits (e.g., -83 -> 2147483647).
     # For integer types, we fall back to the pure (map-based) expansion.
     _TYPE_MAP = {
-        dace.float16:    ('CUTENSOR_R_16F',  'CUTENSOR_COMPUTE_DESC_16F',  '__half'),
-        dace.float32:    ('CUTENSOR_R_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
-        dace.float64:    ('CUTENSOR_R_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
-        dace.complex64:  ('CUTENSOR_C_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
-        dace.complex128: ('CUTENSOR_C_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
+        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
+        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
+        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
+        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
+        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
     }
 
     @staticmethod
@@ -219,6 +221,7 @@ class ExpandCuTensor(ExpandTransformation):
                                 code,
                                 language=dace.dtypes.Language.CPP)
         return tasklet
+
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):

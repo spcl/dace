@@ -8,7 +8,6 @@ from dace import ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
-from dace.transformation.passes.symbol_propagation import SymbolPropagation
 import gc
 
 # klev, kidia, kfdia : Symbols
@@ -307,6 +306,131 @@ def test_with_conditional():
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])
 
 
+def test_map_ranges_offset_when_begin_expr_is_none():
+    """Regression: when ``begin_expr=None`` (do_not_check_begin=True), the
+    pass must shift every map range by ``offset_expr``. A stale
+    ``is None`` check caused map ranges to pass through unchanged while
+    the corresponding loop ranges were correctly shifted.
+    """
+    from dace import memlet as mm, nodes
+    from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+
+    sdfg = dace.SDFG("map_offset_tester")
+    sdfg.add_array("A", [16], dace.float64)
+    state = sdfg.add_state("body", is_start_block=True)
+    r = state.add_read("A")
+    w = state.add_write("A")
+    me, mx = state.add_map("m", {"i": "3:7"})
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    t = state.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1")
+    state.add_edge(r, None, me, "IN_A", mm.Memlet("A[3:7]"))
+    state.add_edge(me, "OUT_A", t, "x", mm.Memlet("A[i]"))
+    state.add_edge(t, "y", mx, "IN_A", mm.Memlet("A[i]"))
+    state.add_edge(mx, "OUT_A", w, None, mm.Memlet("A[3:7]"))
+    sdfg.validate()
+
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None, convert_leq_to_lt=False,
+                       normalize_loops=False).apply_pass(sdfg, {})
+
+    entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    assert len(entries) == 1
+    (b, e, s), = entries[0].map.range.ranges
+    # DaCe stores ``3:7`` as an inclusive (3, 6, 1) range. After +1
+    # offset: (4, 7, 1).
+    assert str(b) == "4", b
+    assert str(e) == "7", e
+
+
+def test_empty_memlet_does_not_crash_offset_loops_and_maps():
+    """Regression: ``_create_new_memlet`` iterated ``edge_data.subset``
+    unconditionally. Empty/pass-through memlets (e.g. AccessNode→
+    AccessNode with no dataflow) carry ``subset=None`` and crashed the
+    pass with ``TypeError: 'NoneType' object is not iterable``. Trigger
+    the memlet-rewrite path via a LoopRegion whose body contains such
+    an empty-memlet edge.
+    """
+    from dace import memlet as mm
+    from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+
+    sdfg = dace.SDFG("empty_memlet_tester")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    loop = LoopRegion(
+        "loop",
+        condition_expr="i <= 3",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+    )
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    # AccessNode -> AccessNode edge with an empty memlet (no subset).
+    body.add_nedge(body.add_read("A"), body.add_write("B"), mm.Memlet())
+    sdfg.validate()
+
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None).apply_pass(sdfg, {})
+    sdfg.validate()
+
+
+def test_maps_inside_nested_sdfg_are_offset():
+    """Regression: the pass previously only walked the enclosing SDFG's
+    direct ``ControlFlowRegion`` / ``ConditionalBlock`` children,
+    leaving maps that live inside ``NestedSDFG`` bodies unchanged (the
+    typical shape after ``LoopToMap`` promotes a loop body into a
+    ``loop_body`` NSDFG). The fix descends into each NestedSDFG so every
+    reachable map range is offset.
+    """
+    from dace import memlet as mm
+    from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+
+    # Inner SDFG with a 2D map -- tasklet produces the value, MapExit
+    # writes it back out (so only an ``A`` out-connector on the Map is
+    # needed).
+    inner = dace.SDFG("inner_with_map")
+    inner.add_array("A", [16, 16], dace.float64)
+    inner_state = inner.add_state("body", is_start_block=True)
+    w_inner = inner_state.add_write("A")
+    me, mx = inner_state.add_map("inner_map", {"i": "0:8", "j": "1:5"})
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    t = inner_state.add_tasklet("set", set(), {"y"}, "y = 1.0")
+    inner_state.add_nedge(me, t, mm.Memlet())
+    inner_state.add_edge(t, "y", mx, "IN_A", mm.Memlet("A[i, j]"))
+    inner_state.add_edge(mx, "OUT_A", w_inner, None, mm.Memlet("A[0:8, 1:5]"))
+
+    # Outer SDFG wraps ``inner`` in a NestedSDFG.
+    outer = dace.SDFG("outer_with_nsdfg")
+    outer.add_array("A", [16, 16], dace.float64)
+    ostate = outer.add_state("ostate", is_start_block=True)
+    aw = ostate.add_write("A")
+    ns = ostate.add_nested_sdfg(inner, set(), {"A"})
+    ostate.add_edge(ns, "A", aw, None, mm.Memlet("A[0:16, 0:16]"))
+    outer.validate()
+
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None).apply_pass(outer, {})
+    outer.validate()
+
+    # Walk the post-transform SDFG tree and find the inner 2D map; both
+    # axes must have been shifted by +1.
+    from dace.sdfg import nodes as _nodes
+    inner_map = None
+    for n, _ in outer.all_nodes_recursive():
+        if isinstance(n, _nodes.MapEntry) and n.map.params == ["i", "j"]:
+            inner_map = n
+            break
+    assert inner_map is not None, "inner 2D map vanished after the transformation"
+    (ib, ie, _), (jb, je, _) = inner_map.map.range.ranges
+    # ``0:8`` -> ``(0, 7, 1)`` -> after +1 -> ``(1, 8, 1)``.
+    assert str(ib) == "1", ib
+    assert str(ie) == "8", ie
+    # ``1:5`` -> ``(1, 4, 1)`` -> after +1 -> ``(2, 5, 1)``.
+    assert str(jb) == "2", jb
+    assert str(je) == "5", je
+
+
 if __name__ == "__main__":
     test_simple_element_wise()
     test_symbol_use_in_tasklet()
@@ -315,3 +439,6 @@ if __name__ == "__main__":
     test_loop_offsetting_w_begin_expr()
     test_begin_expr_condition()
     test_with_conditional()
+    test_map_ranges_offset_when_begin_expr_is_none()
+    test_maps_inside_nested_sdfg_are_offset()
+    test_empty_memlet_does_not_crash_offset_loops_and_maps()

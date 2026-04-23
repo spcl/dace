@@ -3,9 +3,7 @@ import dace
 
 import dace
 import numpy as np
-import pytest
 from dace.transformation.layout.split_array import SplitArray
-from itertools import product
 
 klev = dace.symbol('klev', dtype=dace.int32)
 klon = dace.symbol('klon', dtype=dace.int32)
@@ -401,7 +399,6 @@ def test_init_tendency():
     _check_split_result(args, inp_ref, NCLV, ['tendency_loc_cld'])
 
 
- 
 @dace.program
 def triang_elim_kernel(
     zqlhs: dace.float64[nclv, nclv, klon],
@@ -412,42 +409,38 @@ def triang_elim_kernel(
         for jm in range(jn + 1, nclv + 1):
             for ik in range(jn + 1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
-                    zqlhs[ik - 1, jm - 1, jl - 1] = (
-                        zqlhs[ik - 1, jm - 1, jl - 1]
-                        - zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1]
-                    )
+                    zqlhs[ik - 1, jm - 1, jl - 1] = (zqlhs[ik - 1, jm - 1, jl - 1] -
+                                                     zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1])
 
- 
+
 def triang_elim_ref(zqlhs, kidia_v, kfdia_v, nclv_v):
     for jn in range(1, nclv_v - 1 + 1):
         for jm in range(jn + 1, nclv_v + 1):
             for ik in range(jn + 1, nclv_v + 1):
                 for jl in range(kidia_v, kfdia_v + 1):
-                    zqlhs[ik - 1, jm - 1, jl - 1] -= (
-                        zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1]
-                    )
+                    zqlhs[ik - 1, jm - 1, jl - 1] -= (zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1])
 
 
 def test_triang_elim():
     KLON, NCLV = 512, 5
     KIDIA, KFDIA = 1, KLON
     SYM = dict(klon=KLON, nclv=NCLV)
- 
+
     # 1. DaCe without pass matches numpy reference
     inp_ref = dict(zqlhs=xfill((NCLV, NCLV, KLON), -1.0, 1.0))
     inp_dace = dict(zqlhs=inp_ref['zqlhs'].copy())
- 
+
     triang_elim_ref(inp_ref['zqlhs'], KIDIA, KFDIA, NCLV)
     triang_elim_kernel.compile(**SYM)(**inp_dace, kidia=KIDIA, kfdia=KFDIA, **SYM)
- 
+
     np.testing.assert_allclose(inp_dace['zqlhs'], inp_ref['zqlhs'], atol=1e-14)
- 
+
     # 2. DaCe + SplitArray pass matches numpy reference
     inp_ref = dict(zqlhs=xfill((NCLV, NCLV, KLON), -1.0, 1.0))
     inp_split = dict(zqlhs=inp_ref['zqlhs'].copy())
- 
+
     triang_elim_ref(inp_ref['zqlhs'], KIDIA, KFDIA, NCLV)
- 
+
     symbol_map = {
         "nclv": 5,
         "ncldql": 1,
@@ -460,22 +453,20 @@ def test_triang_elim():
     sdfg = triang_elim_kernel.to_sdfg()
     SplitArray(symbol_map=symbol_map, name_map=name_map).apply_pass(sdfg, {})
     csdfg = sdfg.compile()
- 
+
     args = dict(kidia=KIDIA, kfdia=KFDIA, **SYM)
     for i in range(NCLV):
         for j in range(NCLV):
             args[_make_split_name('zqlhs', i, j)] = inp_split['zqlhs'][i, j].copy()
- 
+
     csdfg(**args)
- 
-    rebuilt = np.array([
-        [args[_make_split_name('zqlhs', i, j)] for j in range(NCLV)]
-        for i in range(NCLV)
-    ])
-    np.testing.assert_allclose(
-        rebuilt, inp_ref['zqlhs'], atol=1e-14,
-        err_msg=f"zqlhs: max diff = {np.max(np.abs(rebuilt - inp_ref['zqlhs']))}"
-    )
+
+    rebuilt = np.array([[args[_make_split_name('zqlhs', i, j)] for j in range(NCLV)] for i in range(NCLV)])
+    np.testing.assert_allclose(rebuilt,
+                               inp_ref['zqlhs'],
+                               atol=1e-14,
+                               err_msg=f"zqlhs: max diff = {np.max(np.abs(rebuilt - inp_ref['zqlhs']))}")
+
 
 if __name__ == "__main__":
     test_condense()

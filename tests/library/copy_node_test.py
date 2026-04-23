@@ -102,7 +102,6 @@ def test_copy_cuda_gpu():
 
 @pytest.mark.gpu
 def test_copy_cuda_cpu():
-    import numpy as np
 
     # Even if using CUDA implementation, we can test on CPU arrays
     sdfg = _get_sdfg("CUDA", gpu=False)
@@ -115,7 +114,6 @@ def test_copy_cuda_cpu():
 
 @pytest.mark.gpu
 def test_copy_memcpy_cpu():
-    import numpy as np
 
     sdfg = _get_sdfg("CPU", gpu=False)
     sdfg.validate()

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-from sympy.core.numbers import comp
 import dace
 from common import compare_numpy_output
 

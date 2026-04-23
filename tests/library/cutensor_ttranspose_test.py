@@ -10,6 +10,7 @@ import dace
 from dace import dtypes
 from dace.libraries.standard import TensorTranspose
 
+
 # ---------------------------------------------------------------------------
 #  Helper: build an SDFG  host -> GPU -> TensorTranspose -> GPU -> host
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ dtype_params = [
     (np.float64, dace.float64, "f64"),
     (np.int32, dace.int32, "i32"),
 ]
+
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype_np,dtype_dace,type_name", dtype_params, ids=[p[2] for p in dtype_params])

@@ -6,7 +6,6 @@ from .. import environments
 from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
-import copy
 
 
 @library.expansion

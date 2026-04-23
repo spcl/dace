@@ -1,19 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
-import re
 import dace
 from typing import Dict, Optional, Set
 import sympy
-from sympy.printing.pycode import pycode
 from dace import SDFG
 from dace import properties
-from dace import Union
-from dace import ControlFlowRegion
-from dace.properties import Property
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.sdfg.nodes import CodeBlock
-import ast
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:

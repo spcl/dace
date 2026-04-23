@@ -1,15 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union
 
 import numpy as np
 import pytest
-from util import expand_maps, expand_reduce, fusion
+from util import expand_reduce
 
 import dace
-import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
-from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import ReduceExpansion
 
 M = dace.symbol('M')

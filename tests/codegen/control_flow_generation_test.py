@@ -4,7 +4,7 @@ import pytest
 import dace
 import numpy as np
 
-from dace.sdfg.state import ConditionalBlock, ReturnBlock
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 

@@ -6,13 +6,10 @@ from dace import SDFG, data, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes import FuseStates
 from dace import dtypes
-
-import ast
 
 # ------------------------------------------------------------
 # CONFIGURATION

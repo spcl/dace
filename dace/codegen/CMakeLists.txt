@@ -93,7 +93,7 @@ if(DACE_ENABLE_CUDA)
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
   enable_language(CUDA)
-  list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
+  list(APPEND DACE_LIBS CUDA::cudart)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
@@ -235,18 +235,15 @@ if(DACE_ENABLE_HIP)
     else()
       if(_arch_res EQUAL 0)
         set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+      else()
+        set(LOCAL_HIP_ARCHITECTURES "${DACE_HIP_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
+      message(STATUS "No local HIP-capable GPUs found. Using default: ${DACE_HIP_ARCHITECTURES_DEFAULT}")
       endif()
-      message(STATUS "No local HIP-capable GPUs found")
     endif()
   endif()
 
   # Add flags to compile for local AMD architectures
-  foreach(var ${LOCAL_HIP_ARCHITECTURES})
-    list(APPEND HIP_HIPCC_FLAGS --offload-arch=${var})
-  endforeach()
-
-  # Add flags from dace config
-  list(APPEND HIP_HIPCC_FLAGS ${EXTRA_HIP_FLAGS})
+  set(CMAKE_HIP_ARCHITECTURES "${LOCAL_HIP_ARCHITECTURES}")
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)

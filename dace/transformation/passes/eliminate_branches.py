@@ -5,7 +5,7 @@ from dace.sdfg.nodes import Dict
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
-from typing import Set, Tuple, Union, Optional
+from typing import Set, Tuple, Union
 import dace.sdfg.construction_utils as cutil
 
 
@@ -116,7 +116,6 @@ class EliminateBranches(ppl.Pass):
                                   sdfg: SDFG,
                                   parent_nsdfg_state: Union[SDFG, None] = None) -> Tuple[int, Set[str]]:
         """Apply EliminateBranches transformation to all eligible conditionals."""
-        from dace.transformation.interstate import branch_elimination
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
         # the transformation only runs on top-level ConditionalBlocks

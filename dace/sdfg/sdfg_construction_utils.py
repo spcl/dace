@@ -233,3 +233,112 @@ def add_missing_symbols_to_symbol_maps_of_nsdfgs(sdfg: dace.SDFG):
 
     for nsdfg in nsdfgs:
         add_missing_symbols_to_symbol_maps_of_nsdfgs(nsdfg)
+
+
+def _connector_is_live_in_nsdfg(inner: dace.SDFG, name: str) -> bool:
+    """Returns True if ``name`` is referenced anywhere inside ``inner`` --
+    access nodes, interstate-edge assignments/conditions, conditional-block
+    conditions, or loop conditions/updates/init statements. Conservative: a
+    substring match over a tokenised representation is used for expressions,
+    so false positives are possible but false negatives are not."""
+
+    def _tokens(expr: str) -> Set[str]:
+        return {s.strip() for s in re.split(r'[()\[\]\s,+\-*/%<>!=&|^~?:]+', expr) if s.strip()}
+
+    if array_is_used_in_the_sdfg(inner, name):
+        return True
+
+    for e in inner.all_interstate_edges():
+        data = e.data
+        if name in data.assignments:
+            return True
+        for v in data.assignments.values():
+            if name in _tokens(str(v)):
+                return True
+        cond = data.condition.as_string if data.condition is not None else ""
+        if cond and name in _tokens(cond):
+            return True
+
+    for region in inner.all_control_flow_regions():
+        if isinstance(region, LoopRegion):
+            for attr in ("loop_condition", "update_statement", "init_statement"):
+                code = getattr(region, attr, None)
+                text = code.as_string if isinstance(code, CodeBlock) else (str(code) if code else "")
+                if text and name in _tokens(text):
+                    return True
+
+    return False
+
+
+def _prune_memlet_path(state: dace.SDFGState, edge):
+    """Remove ``edge`` together with the full memlet path it belongs to,
+    cleaning up connectors on any intermediate map entries/exits and any
+    access-node taps that become orphan as a result."""
+    for e in list(state.memlet_path(edge)):
+        if e not in state.edges():
+            continue
+        state.remove_edge(e)
+        if e.src_conn is not None:
+            try:
+                e.src.remove_out_connector(e.src_conn)
+            except (KeyError, ValueError):
+                pass
+        if e.dst_conn is not None:
+            try:
+                e.dst.remove_in_connector(e.dst_conn)
+            except (KeyError, ValueError):
+                pass
+        for ep in (e.src, e.dst):
+            if (isinstance(ep, dace.nodes.AccessNode) and ep in state.nodes() and state.degree(ep) == 0):
+                state.remove_node(ep)
+
+
+def prune_unused_nsdfg_connectors(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG) -> int:
+    """Drop input/output connectors of ``nsdfg`` that are never accessed inside
+    its inner SDFG.
+
+    The surrounding memlet path (access-node taps outside any map scope, and
+    the pairs of connectors on any enclosing map entry/exit) is walked outward
+    and pruned along with the connector. Inner arrays that become unused as a
+    result are also dropped from ``nsdfg.sdfg`` so validation doesn't trip on
+    non-transient arrays without a feeding connector.
+
+    Returns the number of connector names removed.
+    """
+    inner = nsdfg.sdfg
+    names = set(nsdfg.in_connectors) | set(nsdfg.out_connectors)
+    removed = 0
+    for name in names:
+        if _connector_is_live_in_nsdfg(inner, name):
+            continue
+
+        for ie in list(state.in_edges_by_connector(nsdfg, name)):
+            _prune_memlet_path(state, ie)
+        for oe in list(state.out_edges_by_connector(nsdfg, name)):
+            _prune_memlet_path(state, oe)
+
+        if name in nsdfg.in_connectors:
+            nsdfg.remove_in_connector(name)
+        if name in nsdfg.out_connectors:
+            nsdfg.remove_out_connector(name)
+
+        if name in inner.arrays and not _connector_is_live_in_nsdfg(inner, name):
+            try:
+                inner.remove_data(name, validate=False)
+            except Exception:
+                inner.arrays.pop(name, None)
+        removed += 1
+    return removed
+
+
+def prune_unused_nsdfg_connectors_recursive(sdfg: dace.SDFG) -> int:
+    """Apply :func:`prune_unused_nsdfg_connectors` to every ``NestedSDFG`` in
+    the SDFG hierarchy, bottom-up so that outer nested SDFGs see already
+    cleaned inner ones."""
+    total = 0
+    for state in sdfg.all_states():
+        for node in list(state.nodes()):
+            if isinstance(node, dace.nodes.NestedSDFG):
+                total += prune_unused_nsdfg_connectors_recursive(node.sdfg)
+                total += prune_unused_nsdfg_connectors(state, node)
+    return total

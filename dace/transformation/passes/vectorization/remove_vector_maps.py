@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 from typing import Any, Dict
-from dace import SDFG, InterstateEdge, properties
+from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.vectorization_utils import *

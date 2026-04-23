@@ -118,3 +118,57 @@ class VectorizeCPU(ppl.Pipeline):
         for p in self.passes:
             p: Pass
             yield p
+
+
+"""
+N = dace.symbol("N", dtype=dace.int64)
+@dace.program
+def if_add(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    for i,j in dace.map[0:N, 0:N]:
+        if A[i, j] > 0:
+            C[i, j] = C[i, j] + B[i, j]
+        else:
+            C[i, j] = C[i, j] - B[i, j]
+
+N = dace.symbol("N", dtype=dace.int64)
+@dace.program
+def if_add(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i,j in dace.map[0:N, 0:N]:
+        if A[i, j] > 0:
+            B[i, j] = B[i, j] - 1.0
+        else:
+            B[i, j] = B[i, j] + 1.0
+
+# How to tile this, the "if-else" requires a state change therefore the
+# you need to handle the nested SDFGs, in the end for mask the code needs to look like this:
+
+# First you need to flatten if branch (I have a function for this)
+# you can use dace/sdfg/construction_utils.py -> move_branch_cfg_up_discard_conditions
+# It moves the branch condition up (but only keeps one body)
+# So you can do this by duplicating the CFG, pasting it behind the original (add_state_after)
+# then run this function separately then you have someting like
+@dace.program
+def if_add(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i,j in dace.map[0:N, 0:N]:
+        if A[i, j] > 0:
+            B[i, j] = B[i, j] - 1.0
+        if A[i, j] <= 0:
+            B[i, j] = B[i, j] + 1.0
+
+
+# You can assume there is only 1 nested SDFG node within the map for the analysis
+# Like, either 1 nsdfg node and no other nodes, or only non-nsdfg nodes
+# You can use: dace/sdfg/transformation/passes/vectorization/vectorization_utils:: map_consists_of_single_nsdfg_or_no_nsdfg
+# You can copy paste the function for now, after the pass is working we need to slowly PR these functions, we can do it together
+
+# Then in the end it should look like this where you have 3 lib nodes to generate a mask and for the operations of each branch
+N = dace.symbol("N", dtype=dace.int64)
+T = 8
+@dace.program
+def if_add(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i,j in dace.map[0:N//T, 0:N//T]:
+        for ii, jj in dace.map[0:T, 0:T]: # In the transformation you need to tile the map outside (and then keep the symbols known while you process the nested SDFG)
+            mask[0:T, 0:T] = gen_mask(A[i*T:(i+1)*T, j*T:(j+1)*T], lambda: A[i] > 0)
+            apply(mask, B[i*T:(i+1)*T, j*T:(j+1)*T], lambda b, m: b-1.0 if m else b+1.0)
+            apply(~mask, B[i*T:(i+1)*T, j*T:(j+1)*T], lambda b, m: b-1.0 if m else b+1.0)
+"""

@@ -62,7 +62,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str, str]) -> dace.memlet.Memlet:
         """Create a new memlet with substituted subset ranges."""
-        if edge_data is None:
+        if edge_data is None or edge_data.subset is None:
             return None
         if edge_data.other_subset is not None:
             raise Exception("TODO: Other subset not supported")
@@ -265,8 +265,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         repldict = dict()
                         multipliers = []
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self.do_not_check_begin is None or b == _get_expr_from_str(
-                                    self.begin_expr) or str(b) == str(self.begin_expr):
+                            if self.do_not_check_begin or b == _get_expr_from_str(self.begin_expr) or str(b) == str(
+                                    self.begin_expr):
                                 has_matches = True
 
                                 b_expr = dace.symbolic.SymExpr(
@@ -295,7 +295,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             else:
                                 new_range_list.append((b, e, s))
 
-                        print(new_range_list)
                         if has_matches:
                             new_range = dace.subsets.Range(new_range_list)
                             state_node.map.range = new_range
@@ -313,6 +312,15 @@ class OffsetLoopsAndMaps(ppl.Pass):
             if isinstance(node, ConditionalBlock):
                 for _, body in node.branches:
                     self._apply(body)
+            else:
+                assert isinstance(node, dace.SDFGState)
+                # Descend into NestedSDFGs so their maps/loops get
+                # offset too -- not just the ones at the enclosing
+                # SDFG's top level (e.g. loop bodies that ``LoopToMap``
+                # promoted into a ``loop_body`` nested SDFG).
+                for state_node in node.nodes():
+                    if isinstance(state_node, dace.nodes.NestedSDFG):
+                        self._apply(state_node.sdfg)
 
     def _split_expr_str_opt_rhs(self, expr_str: str, op_to_split: str) -> str:
         exprs = expr_str.split(op_to_split)

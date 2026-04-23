@@ -4,17 +4,11 @@ import dace
 
 import copy
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-import dace.transformation.helpers as helpers
-import networkx as nx
-from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import nodes, propagation, utils as sdutil
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace import sdfg as sd, symbol
+from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from sympy import diff
-from typing import List, Set, Tuple
 import dace.sdfg.construction_utils as cutil
-from dace.transformation.passes.analysis import loop_analysis
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):

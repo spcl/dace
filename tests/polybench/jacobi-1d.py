@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import polybench
-from absl import app, flags
 
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')

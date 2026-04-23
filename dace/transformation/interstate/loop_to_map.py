@@ -317,9 +317,16 @@ class LoopToMap(xf.MultiStateTransformation):
                 if dn.data in write_set:
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
-                            # If pointers are involved, give up
-                            print(f"Cannot apply: Dynamic memlet without WCR for node {dn.data}")
-                            return False
+                            # A dynamic write (no WCR) is still safe across
+                            # outer-loop iterations if its destination subset
+                            # pins an axis to the iteration variable (same
+                            # ``a*i+b`` pattern enforced below for non-dynamic
+                            # writes). Each iteration then writes to a disjoint
+                            # slab -- whether a given lane fires or not
+                            # cannot race with another iteration's write.
+                            dst_subset = e.data.get_dst_subset(e, state)
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, itervar, start)):
+                                return False
                         if e.data is None:
                             continue
 
@@ -708,6 +715,30 @@ class LoopToMap(xf.MultiStateTransformation):
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
 
+        # Symbols that the nested SDFG assigns on its own interstate edges
+        # are internal -- they must not be surfaced onto the NestedSDFG
+        # node's ``symbol_mapping``. Doing so would make the outer SDFG
+        # appear to need them as free symbols; a later pruning pass that
+        # removes them from ``sdfg.symbols`` would then desync the mapping
+        # (codegen reads ``sdfg.symbols[sym]`` and raises ``KeyError``).
+        internally_defined = set()
+        for e in nsdfg.all_interstate_edges():
+            internally_defined.update(e.data.assignments.keys())
+
+        # Propagate free symbols referenced by nested array shapes/strides/offsets:
+        # ``copy.deepcopy`` of the descriptor carries the symbols, but they
+        # must be added to the NestedSDFG's symbol mapping.
+        for desc in nsdfg.arrays.values():
+            for sym in desc.free_symbols:
+                sym_name = str(sym)
+                if sym_name in internally_defined:
+                    continue
+                if sym_name in sdfg.symbols:
+                    if sym_name not in nsdfg.symbols:
+                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
+                    if sym_name not in cnode.symbol_mapping:
+                        cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
+
         # Propagate symbols, where types cannot be inferred
         alltypes = copy.deepcopy(nsdfg.symbols)
         alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
@@ -880,8 +911,12 @@ class LoopToMap(xf.MultiStateTransformation):
         # Delete the loop and connected edges.
         graph.remove_node(self.loop)
 
-        # If this had made a variable a free symbol, we can remove it from the SDFG symbols
+        # If this had made a variable a free symbol, we can remove it from the SDFG symbols.
+        # Guard both branches with ``in sdfg.symbols`` -- the array-descriptor-symbol
+        # propagation above may have already cleared entries that were also free.
         for var in sdfg.free_symbols - fsymbols:
+            if var not in sdfg.symbols:
+                continue
             if sdfg.parent_nsdfg_node:
                 if var not in sdfg.parent_nsdfg_node.symbol_mapping:
                     sdfg.remove_symbol(var)
