@@ -196,10 +196,9 @@ end subroutine pick
     d_ref = np.zeros(2, order="F")
     mod.pick(d_ref, True)
     d_sdfg = np.zeros(2, dtype=np.float64)
-    # Scalar dummy args with intent land as size-1 Array descriptors on the
-    # SDFG signature (DaCe strips non-transient Scalars from the argument
-    # list), so the caller has to box Python booleans.
-    sdfg(d=d_sdfg, flag=np.array([True]))
+    # ``flag`` reads into a branch condition, so the classifier promotes
+    # it to an SDFG symbol — pass a Python bool (DaCe casts it to int).
+    sdfg(d=d_sdfg, flag=True)
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
@@ -251,10 +250,6 @@ end subroutine ifcyc
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR DO WHILE: SDFG now builds with a LoopRegion, but its "
-        "codegen side needs the IV promoted from scalar data to a symbol "
-        "(via interstate-edge IV = IV + step) before the while loop is "
-        "actually emitted")
 def test_ported_do_while(tmp_path):
     """Port of ``while_test``."""
     src = """
@@ -271,7 +266,13 @@ subroutine while_count(res)
 end subroutine while_count
 """
     mod = _f2py(src, tmp_path / "ref", "while_count")
-    sdfg = _build(src, tmp_path / "sdfg", name="while_count")
+    # Flang drops ``DO WHILE`` to raw cf.br + cf.cond_br; the ``lift-cf-to-scf``
+    # pass is what turns it into the scf.while our bridge walks, so this
+    # test needs a wider pipeline than the windmill ``_build`` helper's
+    # minimal hlfir-propagate-shapes.
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name="while_count").build()
 
     r_ref = np.zeros(2, order="F", dtype=np.float32)
     mod.while_count(r_ref)

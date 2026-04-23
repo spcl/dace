@@ -8,6 +8,8 @@
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -101,6 +103,55 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
     return "";
 }
 
+/// Walk the defining-op graph backwards from a control-flow condition
+/// Value, collecting the Fortran names of every ``hlfir.declare``'d
+/// scalar that feeds into it.  Used by pass 2d to promote loop /
+/// branch-condition scalars to symbols.
+///
+/// Recognised shape: ``arith.cmp*`` (the leaf comparison), and the
+/// transparent wrappers lift-cf-to-scf emits around it —
+/// ``arith.xori/andi/ori/trunci/extui/extsi`` and ``fir.convert``.
+/// Stops when it hits a ``fir.load`` (hands off to ``traceToDecl``) or
+/// an op it doesn't recognise.
+static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
+                                  int depth = 0) {
+    if (depth > 20 || !v) return;
+    auto *def = v.getDefiningOp();
+    if (!def) return;
+    auto nm = def->getName().getStringRef();
+
+    // Comparison leaves: recurse into both operands to catch both sides
+    // of ``i < n`` (i and n both become symbols if they're declared).
+    if (nm == "arith.cmpf" || nm == "arith.cmpi") {
+        for (auto operand : def->getOperands())
+            collectConditionReads(operand, out, depth + 1);
+        return;
+    }
+
+    // Logical combinators and int casts the lift-cf-to-scf chain emits.
+    if (nm == "arith.xori" || nm == "arith.andi" || nm == "arith.ori"
+        || nm == "arith.trunci" || nm == "arith.extui" || nm == "arith.extsi"
+        || nm == "fir.convert") {
+        for (auto operand : def->getOperands())
+            collectConditionReads(operand, out, depth + 1);
+        return;
+    }
+
+    // Scalar read: trace to its declare; every op on the trace chain
+    // (fir.load + hlfir.declare) resolves to the Fortran name.
+    if (mlir::isa<fir::LoadOp>(def)) {
+        auto n = traceToDecl(v);
+        if (!n.empty()) out.insert(n);
+        return;
+    }
+
+    // Anything else (constants, arith.addi used as index arithmetic, …)
+    // — trace through traceToDecl as a last resort; it already handles
+    // several pass-through ops.
+    auto n = traceToDecl(v);
+    if (!n.empty()) out.insert(n);
+}
+
 // ---------------------------------------------------------------------------
 // Main extraction
 // ---------------------------------------------------------------------------
@@ -141,6 +192,22 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             auto n = traceToDecl(idx);
             if (!n.empty()) symbolNames.insert(n);
         }
+    });
+
+    // Pass 2d: scalars read by any control-flow condition are also
+    // symbols.  Principle: loop variables, while-loop counters and
+    // if-branch guards all go through the symbol / interstate-edge
+    // write path so DaCe's condition evaluators see every update.
+    // Without this, ``DO WHILE (i < n)`` reads the scalar's initial
+    // zero-init and the loop body never runs.
+    module.walk([&](mlir::scf::IfOp ifOp) {
+        collectConditionReads(ifOp.getCondition(), symbolNames);
+    });
+    module.walk([&](fir::IfOp ifOp) {
+        collectConditionReads(ifOp.getCondition(), symbolNames);
+    });
+    module.walk([&](mlir::scf::ConditionOp condOp) {
+        collectConditionReads(condOp.getCondition(), symbolNames);
     });
 
     // Pass 3: build one VarInfo per declare.
