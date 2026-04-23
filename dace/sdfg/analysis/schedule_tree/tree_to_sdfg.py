@@ -1,6 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 from collections import defaultdict
+from dataclasses import dataclass
+from enum import Enum, auto
+from types import TracebackType
+from typing import Final
+
 from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
@@ -8,8 +14,6 @@ from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
-from enum import Enum, auto
-from typing import Final
 
 
 class StateBoundaryBehavior(Enum):
@@ -20,6 +24,47 @@ class StateBoundaryBehavior(Enum):
 PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
 PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
 MAX_NESTED_SDFGS: Final[int] = 1000
+
+
+@dataclass
+class _Context:
+    """Context information for transforming a schedule tree into an SDFG."""
+
+    root: tn.ScheduleTreeRoot
+    current_scope: tn.ScheduleTreeScope | None
+
+    access_cache: dict[tuple[SDFGState, str], dict[str, nodes.AccessNode]]
+    """Per scope (hashed by id(scope_node) access_cache."""
+
+
+class _TreeScope:
+    """Automatically set the current scope on the context to the given node."""
+
+    def __init__(self, node: tn.ScheduleTreeScope, ctx: _Context, state: SDFGState) -> None:
+        if ctx.current_scope is None and not isinstance(node, tn.ScheduleTreeRoot):
+            raise ValueError("ctx.current_scope is only allowed to be 'None' when node it tree root.")
+
+        self._ctx = ctx
+        self._parent_scope = ctx.current_scope
+        self._node = node
+        self._state = state
+
+        cache_key = (state, id(node))
+        assert cache_key not in self._ctx.access_cache
+        self._ctx.access_cache[cache_key] = {}
+
+    def __enter__(self) -> None:
+        assert not self._ctx.access_cache[(self._state, id(
+            self._node))], "Expecting an empty access_cache when entering the context."
+
+        self._ctx.current_scope = self._node
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None,
+                 exc_tb: TracebackType | None) -> None:
+        cache_key = (self._state, id(self._node))
+        assert cache_key in self._ctx.access_cache
+
+        self._ctx.current_scope = self._parent_scope
 
 
 class _StreeToSDFG(tn.ScheduleNodeVisitor):
@@ -107,8 +152,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         assert not self._interstate_symbols, "Expected empty list of symbols at root."
 
         self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
-        self._ctx = tn.Context(root=node, access_cache={}, current_scope=None)
-        with node.scope(self._current_state, self._ctx):
+        self._ctx = _Context(root=node, access_cache={}, current_scope=None)
+        with _TreeScope(node, self._ctx, self._current_state):
             self.visit(node.children, sdfg=sdfg)
 
         assert not self._state_stack, "Expected empty state stack."
@@ -302,7 +347,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
 
         # visit children
-        with node.scope(self._current_state, self._ctx):
+        with _TreeScope(node, self._ctx, self._current_state):
             self.visit(node.children, sdfg=inner_sdfg)
 
         # restore current state and stacks
@@ -391,12 +436,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if last_child_is_MapScope and all_others_are_Boundaries:
             # skip weirdly added StateBoundaryNode
             # tmp: use this - for now - to "backprop-insert" extra state boundaries for nested SDFGs
-            with node.scope(self._current_state, self._ctx):
+            with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
             self._insert_nestedSDFG_in_MapScope(node, sdfg)
         else:
-            with node.scope(self._current_state, self._ctx):
+            with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children, sdfg=sdfg)
 
         cache_key = (cache_state, id(self._ctx.current_scope))
