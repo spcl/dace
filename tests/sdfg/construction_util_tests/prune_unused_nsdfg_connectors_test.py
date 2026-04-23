@@ -1,16 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for ``prune_unused_nsdfg_connectors`` / ``..._recursive``.
 
-Builds small SDFGs via the SDFG construction API where one or more
-input/output connectors of a nested SDFG are declared but never accessed
-internally. After pruning, the dead connectors, the outer access-node
-taps feeding them, and the map-entry/exit connector pairs must all be
-gone.
-"""
 import numpy as np
 
 import dace
-from dace.sdfg.sdfg_construction_utils import (
+from dace.sdfg.construction_utils import (
     prune_unused_nsdfg_connectors,
     prune_unused_nsdfg_connectors_recursive,
 )
@@ -57,11 +50,6 @@ def _wrap_with_map(outer: dace.SDFG, inner: dace.SDFG, in_arrays, out_arrays, ex
         state.add_memlet_path(nsdfg, mx, wr, src_conn=name, memlet=dace.Memlet(f'{name}[0:N]'))
 
     return state, nsdfg
-
-
-# -----------------------------------------------------------------------
-# Tests
-# -----------------------------------------------------------------------
 
 
 def test_prune_unused_input_connector():
@@ -170,4 +158,3 @@ if __name__ == '__main__':
     test_prune_unused_input_connector()
     test_prune_unused_output_connector()
     test_prune_recursive_preserves_used_connectors()
-    print('All tests passed.')
