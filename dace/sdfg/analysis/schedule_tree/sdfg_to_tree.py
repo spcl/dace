@@ -43,8 +43,8 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
 
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
-        parent_edges_inputs: Dict[str, Memlet] = {}
-        parent_edges_outputs: Dict[str, Memlet] = {}
+        parent_edges_inputs: Dict[str, gr.MultiConnectorEdge[Memlet]] = {}
+        parent_edges_outputs: Dict[str, gr.MultiConnectorEdge[Memlet]] = {}
         to_unsqueeze: Set[str] = set()
 
         parent_sdfg = nsdfg.parent_sdfg
@@ -411,7 +411,10 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
             symbolic.safe_replace(per_state_mapping, lambda d: e.data.replace_dict(d, replace_keys=False))
 
 
-def _prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]:
+def _prepare_schedule_tree_edges(
+    state: SDFGState
+) -> tuple[Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode,
+                                                                          List[gr.MultiConnectorEdge[Memlet]]]]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
     This handles view edges, reference sets, and dynamic map inputs.
