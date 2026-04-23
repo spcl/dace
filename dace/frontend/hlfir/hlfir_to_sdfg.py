@@ -55,10 +55,20 @@ from build_bridge import hb
 # The default pipeline run before AST/variable extraction.  Shape
 # propagation fills in assumed-shape (:,:) dummies with real Fortran
 # names wherever callers supplied them.
-DEFAULT_PIPELINE = ("hlfir-inline-all,"
-                    "hlfir-flatten-structs,"
-                    "hlfir-propagate-shapes,"
-                    "hlfir-default-intent")
+DEFAULT_PIPELINE = (
+    "hlfir-inline-all,"
+    "hlfir-flatten-structs,"
+    "hlfir-propagate-shapes,"
+    "hlfir-default-intent,"
+    # Lift cf.br / cf.cond_br loops (Flang's DO WHILE shape)
+    # into scf.while so extract_ast can walk them.
+    "lift-cf-to-scf,"
+    # Constant propagation + fold + CSE after all the HLFIR
+    # rewrites have exposed as many constants as they will
+    # (inline dissolves call boundaries, flatten-structs
+    # exposes scalar member loads, lift-cf-to-scf makes IV
+    # bounds visible).
+    "sccp,canonicalize,cse")
 
 
 class SDFGBuilder:

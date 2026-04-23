@@ -112,7 +112,8 @@ endmacro()
 set(_MLIR_LIBS
     MLIRIR MLIRParser MLIRSupport
     MLIRPass MLIRTransforms
-    MLIRFuncDialect MLIRArithDialect
+    MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+    MLIRControlFlowToSCF
     MLIROptLib
 )
 foreach(_lib ${_MLIR_LIBS})
@@ -185,6 +186,7 @@ add_library(hlfir_bridge_passes STATIC
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core
     MLIRPass MLIRTransforms
+    MLIRControlFlowToSCF
 )
 
 # --- Python extension ---------------------------------------------------------

@@ -3,7 +3,9 @@
 // ============================================================================
 
 #include "passes/Passes.h"
+#include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace hlfir_bridge {
 
@@ -11,6 +13,14 @@ void registerAllBridgePasses() {
     static bool registered = false;
     if (registered) return;
     registered = true;
+
+    // Upstream MLIR conversion / transform passes we run as part of the
+    // default bridge pipeline.  The generated headers expose factories but
+    // not registry calls, so we wrap them ourselves.
+    mlir::registerPass([]() { return mlir::createLiftControlFlowToSCFPass(); });
+    mlir::registerPass([]() { return mlir::createSCCPPass(); });
+    mlir::registerPass([]() { return mlir::createCanonicalizerPass(); });
+    mlir::registerPass([]() { return mlir::createCSEPass(); });
 
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createPropagateShapesPass();
