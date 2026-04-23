@@ -5,6 +5,7 @@ from .attribute_rewriter import AttributeRewriter
 from .callback_support import CallbackHandler, CallbackOutliner
 from .callable_support import CallableArgumentSpecializer, CallableResolver
 from .desugaring import callback_reason, desugar_schedule_tree_expansions
+from .dynamic_scope_copy import promote_dynamic_scope_copies
 from .expression_support import ExpressionPlanningContext, GenericExpressionSupportLibrary
 from .function_inlining import resolve_function_calls
 from .numpy_support import NumpyLoweringContext, NumpySupportLibrary
@@ -20,6 +21,7 @@ __all__ = [
     'CallableResolver',
     'desugar_schedule_tree_expansions',
     'callback_reason',
+    'promote_dynamic_scope_copies',
     'ExpressionPlanningContext',
     'GenericExpressionSupportLibrary',
     'NumpyLoweringContext',

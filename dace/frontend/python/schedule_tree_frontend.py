@@ -30,7 +30,7 @@ from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPla
                                                 GenericExpressionSupportLibrary, NumpyLoweringContext,
                                                 NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
                                                 callback_reason, desugar_schedule_tree_expansions,
-                                                resolve_function_calls)
+                                                promote_dynamic_scope_copies, resolve_function_calls)
 from dace.frontend.python.schedule_tree.type_inference import _infer_static_subscript_descriptor
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -360,6 +360,7 @@ def build_schedule_tree(name: str,
                                         seed_bindings=seed_bindings,
                                         external_globals=external_globals)
     root = builder.build()
+    promote_dynamic_scope_copies(root)
     if inline_calls:
         resolve_function_calls(root)
     return root

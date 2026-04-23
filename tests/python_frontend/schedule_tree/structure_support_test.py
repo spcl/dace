@@ -107,6 +107,21 @@ def test_schedule_tree_supports_structure_member_copy():
     assert stree.children[0].memlet.data == 'bundle.data'
 
 
+def test_schedule_tree_supports_structure_member_index_read():
+    Bundle = dace.data.Structure({'data': dace.float64[4]}, name='Bundle')
+
+    @dace.program
+    def copy_member_index(bundle: Bundle, out: dace.float64[1]):
+        out[0] = bundle.data[1]
+
+    stree = copy_member_index.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'out'
+    assert stree.children[0].memlet.data == 'bundle.data'
+    assert str(stree.children[0].memlet.subset) == '1'
+
+
 def test_schedule_tree_supports_nested_structure_member_copy():
     Outer = dace.data.Structure({'inner': dace.data.Structure({'data': dace.float64[4]}, name='Inner')}, name='Outer')
 
@@ -119,6 +134,72 @@ def test_schedule_tree_supports_nested_structure_member_copy():
     assert isinstance(stree.children[0], tn.CopyNode)
     assert stree.children[0].target == 'out'
     assert stree.children[0].memlet.data == 'bundle.inner.data'
+
+
+def test_schedule_tree_supports_nested_structure_member_index_read():
+    Outer = dace.data.Structure({'inner': dace.data.Structure({'data': dace.float64[4]}, name='Inner')}, name='Outer')
+
+    @dace.program
+    def copy_member_index(bundle: Outer, out: dace.float64[1]):
+        out[0] = bundle.inner.data[1]
+
+    stree = copy_member_index.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'out'
+    assert stree.children[0].memlet.data == 'bundle.inner.data'
+    assert str(stree.children[0].memlet.subset) == '1'
+
+
+def test_schedule_tree_supports_structure_member_to_member_copy():
+    Bundle = dace.data.Structure({'data': dace.float64[4]}, name='Bundle')
+
+    @dace.program
+    def copy_member(dst: Bundle, src: Bundle):
+        dst.data[:] = src.data[:]
+
+    stree = copy_member.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'dst.data'
+    assert stree.children[0].memlet.data == 'src.data'
+
+
+def test_schedule_tree_supports_structure_member_array_map_bounds():
+    CSR = dace.data.Structure({
+        'indptr': dace.int32[5],
+        'indices': dace.int32[8],
+        'data': dace.float64[8],
+    },
+                              name='CSR')
+
+    @dace.program
+    def spmv_shape(A: CSR, out: dace.float64[8]):
+        for row in dace.map[0:4]:
+            for idx in dace.map[A.indptr[row]:A.indptr[row + 1]]:
+                out[idx] = A.data[idx]
+
+    stree = spmv_shape.to_schedule_tree()
+
+    assert isinstance(stree.children[0], tn.MapScope)
+    assert stree.children[0].node.params == ['row']
+    assert stree.children[0].node.ranges == [('0', '4', '1')]
+    assert isinstance(stree.children[0].children[0], tn.DynScopeCopyNode)
+    assert stree.children[0].children[0].target == '__stree_idx'
+    assert stree.children[0].children[0].memlet.data == 'A.indptr'
+    assert str(stree.children[0].children[0].memlet.subset) == 'row'
+    assert isinstance(stree.children[0].children[1], tn.DynScopeCopyNode)
+    assert stree.children[0].children[1].target == '__stree_idx1'
+    assert stree.children[0].children[1].memlet.data == 'A.indptr'
+    assert str(stree.children[0].children[1].memlet.subset) == 'row + 1'
+    inner_map = stree.children[0].children[2]
+    assert isinstance(inner_map, tn.MapScope)
+    assert inner_map.node.params == ['idx']
+    assert inner_map.node.ranges == [('__stree_idx', '__stree_idx1', '1')]
+    assert isinstance(inner_map.children[0], tn.CopyNode)
+    assert inner_map.children[0].target == 'out'
+    assert inner_map.children[0].memlet.data == 'A.data'
+    assert str(inner_map.children[0].memlet.subset) == 'idx'
 
 
 def test_schedule_tree_supports_python_class_member_copy():
