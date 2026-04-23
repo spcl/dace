@@ -71,8 +71,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return non_empty[0]
 
     @staticmethod
-    def _find_inner_map_pieces(
-            branch_state: SDFGState) -> Optional[Tuple[MapEntry, MapExit, NestedSDFG]]:
+    def _find_inner_map_pieces(branch_state: SDFGState) -> Optional[Tuple[MapEntry, MapExit, NestedSDFG]]:
         """Returns (map_entry, map_exit, inner_nsdfg) if ``branch_state`` has
         exactly one top-level map whose body is a single NestedSDFG (with
         access-node taps allowed around it)."""
@@ -160,9 +159,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         _, _, inner_nsdfg = self._find_inner_map_pieces(branch_state)  # type: ignore[misc]
         inner_sdfg: sd.SDFG = inner_nsdfg.sdfg
 
-        cond_sym = enclosing_sdfg.add_symbol(f"{cond_block.label}_cond",
-                                             dtypes.int32,
-                                             find_new_name=True)
+        cond_sym = enclosing_sdfg.add_symbol(f"{cond_block.label}_cond", dtypes.int32, find_new_name=True)
 
         if cond_sym not in inner_sdfg.symbols:
             inner_sdfg.add_symbol(cond_sym, dtypes.int32)
@@ -177,8 +174,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             copy_mapping[b] = new_b
             new_body_cfr.add_node(new_b, is_start_block=(b is original_start))
         for e in inner_sdfg.edges():
-            new_body_cfr.add_edge(copy_mapping[e.src], copy_mapping[e.dst],
-                                  copy.deepcopy(e.data))
+            new_body_cfr.add_edge(copy_mapping[e.src], copy_mapping[e.dst], copy.deepcopy(e.data))
 
         new_cond_block = ConditionalBlock(label=f"{cond_block.label}_moved")
         new_cond_block.add_branch(CodeBlock(f"{cond_sym} == 1"), new_body_cfr)
@@ -197,8 +193,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         if len(in_edges) == 0:
             pre_state = enclosing_sdfg.add_state(label=f"{cond_block.label}_materialize")
-            enclosing_sdfg.add_edge(pre_state, new_branch_state,
-                                    InterstateEdge(assignments=cond_assignment))
+            enclosing_sdfg.add_edge(pre_state, new_branch_state, InterstateEdge(assignments=cond_assignment))
             if was_start:
                 enclosing_sdfg.start_block = enclosing_sdfg.node_id(pre_state)
         else:
