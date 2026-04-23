@@ -187,8 +187,53 @@ class SDFGBuilder:
         for n in nodes:
             if n.kind == "assign": self._emit_assign(ctx, n, region)
             elif n.kind == "loop": self._emit_loop(ctx, n, region)
+            elif n.kind == "while": self._emit_while(ctx, n, region)
             elif n.kind == "conditional": self._emit_cond(ctx, n, region)
             # "call" → TODO: nested SDFG or library node
+
+    def _emit_while(self, ctx: '_Ctx', n, region):
+        """Fortran ``DO WHILE`` — lifted by ``lift-cf-to-scf`` into scf.while
+        and extracted as kind="while".  Emit a DaCe LoopRegion whose
+        condition is the before-region's comparison; no init / update
+        expression since the IV bookkeeping lives inside the body as
+        regular tasklets.
+
+        The induction variable is promoted from SDFG scalar data to a
+        symbol so the LoopRegion condition can evaluate symbolically, and
+        an interstate-edge assignment carries the IV into the loop on each
+        iteration.
+        """
+        ctx.flush(self)
+        cond = n.condition if n.condition else "True"
+        loop = LoopRegion(label=f"while_{self.nid()}", condition_expr=self._promote_scalars_in_cond(cond, ctx.sdfg))
+        region.add_node(loop)
+        if ctx.cur is not None:
+            region.add_edge(ctx.cur, loop, InterstateEdge())
+        ctx.cur = loop
+
+        # A start state is required for DaCe codegen to treat the loop body
+        # as non-empty.  We also use it as the insertion point for any
+        # trailing scalar flushes.
+        body_start = loop.add_state(f"while_body_{self.nid()}", is_start_block=True)
+        inner_ctx = _Ctx(ctx.sdfg, self)
+        inner_ctx.cur = body_start
+        self._emit(inner_ctx, list(n.children), loop)
+        inner_ctx.flush(self, loop)
+
+    def _promote_scalars_in_cond(self, cond: str, sdfg: SDFG) -> str:
+        """DaCe LoopRegion conditions evaluate symbolically.  A loop IV
+        that lives as a scalar data node can't appear directly; rewrite
+        ``name`` → ``name[0]`` so DaCe reads the scalar at the top of
+        each iteration.  Symbols pass through unchanged.
+        """
+
+        def repl(m):
+            nm = m.group(0)
+            if nm in self.scalars and nm in sdfg.arrays:
+                return f"{nm}[0]"
+            return nm
+
+        return re.sub(r'\b[a-zA-Z_]\w*\b', repl, cond)
 
     def _emit_assign(self, ctx: '_Ctx', n, region):
         """Scalar or symbol assignment."""
@@ -481,13 +526,16 @@ class _Ctx:
 
     def ensure(self, region=None):
         if not self.cur:
-            r = region or self.sdfg
+            # ``region or self.sdfg`` collapses when ``region`` is an empty
+            # LoopRegion (``__len__`` == 0 makes it falsy); use an explicit
+            # None check so fresh loop bodies get their states added inside.
+            r = self.sdfg if region is None else region
             self.cur = r.add_state(f"s_{self.builder.nid()}")
 
     def flush(self, builder: SDFGBuilder, region=None):
         if not self.pending:
             return
-        r = region or self.sdfg
+        r = self.sdfg if region is None else region
         self.ensure(r)
         for target, value in self.pending:
             builder.emit_scalar_assign(self.cur, target, value)
@@ -495,7 +543,7 @@ class _Ctx:
 
     def new_state(self, builder: SDFGBuilder, region=None, label=None):
         self.flush(builder, region)
-        r = region or self.sdfg
+        r = self.sdfg if region is None else region
         s = r.add_state(label or f"s_{self.builder.nid()}")
         if self.cur:
             r.add_edge(self.cur, s, InterstateEdge())

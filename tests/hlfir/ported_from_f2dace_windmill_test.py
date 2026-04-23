@@ -251,7 +251,10 @@ end subroutine ifcyc
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR frontend: DO WHILE not lowered yet")
+@_xfail("HLFIR DO WHILE: SDFG now builds with a LoopRegion, but its "
+        "codegen side needs the IV promoted from scalar data to a symbol "
+        "(via interstate-edge IV = IV + step) before the while loop is "
+        "actually emitted")
 def test_ported_do_while(tmp_path):
     """Port of ``while_test``."""
     src = """

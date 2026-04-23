@@ -12,6 +12,7 @@
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <functional>
@@ -191,6 +192,84 @@ static int64_t traceLB(mlir::Value v) {
     return -1;
 }
 
+/// Forward declare — called from buildWhileNode to recurse into the body.
+static std::vector<ASTNode> buildAST(mlir::Block &block);
+
+/// Render an arith::cmpi predicate as a Python comparison operator.  Returns
+/// an empty string for signed/unsigned variants we haven't wired up yet.
+static std::string cmpiPredStr(mlir::arith::CmpIPredicate p) {
+    using P = mlir::arith::CmpIPredicate;
+    switch (p) {
+    case P::slt: case P::ult: return "<";
+    case P::sle: case P::ule: return "<=";
+    case P::sgt: case P::ugt: return ">";
+    case P::sge: case P::uge: return ">=";
+    case P::eq:               return "==";
+    case P::ne:               return "!=";
+    }
+    return "";
+}
+
+/// Build a ``kind="while"`` ASTNode from Flang's lift-cf-to-scf shape.
+///
+/// The before-region emitted by lift-cf-to-scf for a Fortran ``DO WHILE``
+/// looks like:
+///
+///     scf.while : () -> () {
+///        %cmp  = arith.cmpi <pred> %iv, %bound
+///        %y:2  = scf.if %cmp -> (i32, i32) {
+///           ... loop body ...
+///           scf.yield %c0, %c1 : i32, i32    // "continue"
+///         } else {
+///           scf.yield %c1, %c0 : i32, i32    // "exit"
+///         }
+///        %cont = arith.trunci %y#1 : i32 to i1
+///        scf.condition(%cont)
+///     } do {
+///        scf.yield
+///     }
+///
+/// We grab the condition from the leading ``arith.cmpi`` and use the
+/// ``then`` region of the nested ``scf.if`` as the loop body.  If the shape
+/// doesn't match, ``condition`` is left as ``"?"`` and the children come
+/// from the before-region verbatim, which keeps the SDFG side at least
+/// structurally correct.
+static ASTNode buildWhileNode(mlir::scf::WhileOp whileOp) {
+    ASTNode n;
+    n.kind = "while";
+    n.condition = "?";
+
+    if (whileOp.getBefore().empty()) return n;
+    auto &beforeBlock = whileOp.getBefore().front();
+
+    // Look for the first arith.cmpi in the before-region.
+    mlir::arith::CmpIOp cmp;
+    for (auto &op : beforeBlock)
+        if (auto c = mlir::dyn_cast<mlir::arith::CmpIOp>(op)) { cmp = c; break; }
+
+    mlir::scf::IfOp ifOp;
+    for (auto &op : beforeBlock)
+        if (auto i = mlir::dyn_cast<mlir::scf::IfOp>(op)) { ifOp = i; break; }
+
+    if (cmp && ifOp) {
+        auto pred = cmpiPredStr(cmp.getPredicate());
+        auto lhs  = buildIndexExpr(cmp.getLhs());
+        auto rhs  = buildIndexExpr(cmp.getRhs());
+        if (!pred.empty() && lhs != "?" && rhs != "?")
+            n.condition = lhs + " " + pred + " " + rhs;
+    }
+
+    // Children come from the scf.if.then region when present; otherwise from
+    // the before-region itself (with cmp / scf.if / scf.condition filtered
+    // out by the main buildAST loop since it only handles statement-level
+    // ops it recognises).
+    if (ifOp && !ifOp.getThenRegion().empty())
+        n.children = buildAST(ifOp.getThenRegion().front());
+    else
+        n.children = buildAST(beforeBlock);
+    return n;
+}
+
 static std::string traceLoopIter(fir::DoLoopOp loop) {
     for (auto &op : loop.getRegion().front())
         if (auto st = mlir::dyn_cast<fir::StoreOp>(op)) {
@@ -247,6 +326,10 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                 ref->print(os); n.callee = s;
             }
             nodes.push_back(std::move(n));
+            continue;
+        }
+        if (auto whileOp = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+            nodes.push_back(buildWhileNode(whileOp));
             continue;
         }
     }
