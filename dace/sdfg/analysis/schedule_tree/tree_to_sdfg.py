@@ -23,7 +23,6 @@ class StateBoundaryBehavior(Enum):
 
 PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
 PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
-MAX_NESTED_SDFGS: Final[int] = 1000
 
 
 @dataclass
@@ -69,10 +68,13 @@ class _TreeScope:
 
 class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
-    def __init__(self,
-                 start_state: SDFGState | None = None,
-                 *,
-                 boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION) -> None:
+    def __init__(
+        self,
+        start_state: SDFGState | None = None,
+        *,
+        boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
+        max_nested_sdfg: int = 1000,
+    ) -> None:
         if boundary_behavior != StateBoundaryBehavior.STATE_TRANSITION:
             raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
 
@@ -105,6 +107,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
+        self._max_nested_sdfg = max_nested_sdfg
+
     def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
         """
         Apply an NView override if applicable. Returns true if the NView was applied.
@@ -132,11 +136,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         """Find the closest parent SDFG containing an array with the given name."""
         parent_sdfg = sdfg.parent.parent
         sdfg_counter = 1
-        while name not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
+        while name not in parent_sdfg.arrays and sdfg_counter < self._max_nested_sdfgs:
             parent_sdfg = parent_sdfg.parent.parent
             assert isinstance(parent_sdfg, SDFG)
             sdfg_counter += 1
-        assert sdfg_counter < MAX_NESTED_SDFGS, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
+        assert sdfg_counter < self._max_nested_sdfgs, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
         return parent_sdfg
 
     def _pop_state(self, label: str | None = None) -> SDFGState:
@@ -777,8 +781,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         return assignments
 
 
-def from_schedule_tree(stree: tn.ScheduleTreeRoot,
-                       state_boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION) -> SDFG:
+def from_schedule_tree(
+    stree: tn.ScheduleTreeRoot,
+    state_boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
+    max_nested_sdfgs: int = 1000,
+) -> SDFG:
     """
     Converts a schedule tree into an SDFG.
 
@@ -799,7 +806,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     stree = _insert_state_boundaries_to_tree(stree)
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
-    _StreeToSDFG().visit(stree, sdfg=result)
+    _StreeToSDFG(state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
     propagation.propagate_memlets_sdfg(result)
 
     return result
