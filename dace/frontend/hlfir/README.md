@@ -61,10 +61,14 @@ having normalised the IR:
 
 Python `SDFGBuilder` walks the normalised HLFIR:
 
-- `bridge/extract_vars.cpp` — classify variables (role =
-  `symbol`/`scalar`/`array`/`loop_iter`). Scalars used in array
-  indices OR in control-flow conditions become symbols so writes
-  become state-changing interstate edges.
+- `bridge/extract_vars.cpp` — classify variables as
+  `array` / `symbol` / `scalar`. A variable is a **symbol** if it's
+  a Fortran DO induction variable, an array shape extent, a DO upper
+  bound, an `hlfir.designate` index, or reads into a control-flow
+  condition (scf.if / fir.if / scf.while). Everything else scalar is
+  `scalar` (pure value, no state-change on write). Only symbols can
+  appear as array indices — scalars can't — so classification drives
+  whether a write becomes an interstate-edge assignment or a tasklet.
 - `bridge/extract_ast.cpp` — recursive `ASTNode` tree covering
   `loop` / `while` / `conditional` / `assign` / `copy` / `memset` /
   `libcall` / `reduce` / `break` / `return`.

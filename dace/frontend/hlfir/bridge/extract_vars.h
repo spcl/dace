@@ -23,7 +23,7 @@ namespace hlfir_bridge {
 ///                      2. fir.shape / fir.shape_shift operand
 ///                      3. synthetic "<var>_d<i>" for assumed-shape (:,:)
 ///   lower_bounds   — per-dim Fortran lower bound as string
-///   role           — "array" | "symbol" | "loop_iter" | "scalar"
+///   role           — "array" | "symbol" | "scalar"
 struct VarInfo {
     std::string fortran_name, mangled_name, intent, dtype;
     int rank = 0;

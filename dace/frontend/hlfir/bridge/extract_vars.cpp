@@ -163,15 +163,20 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     std::vector<hlfir::DeclareOp> decls;
     module.walk([&](hlfir::DeclareOp op) { decls.push_back(op); });
 
-    // Pass 2a: loop iterators.
-    std::set<std::string> loopIters;
+    // Pass 2a: loop iterators.  A Fortran DO induction variable is
+    // always a symbol downstream — the LoopRegion uses it as
+    // ``loop_var`` in its init / update / condition expressions, and
+    // any ``a(i)`` body uses it as an index (which only symbols may
+    // be).  Add to symbolNames directly; there's no reason to keep a
+    // separate ``loop_iter`` role when every consumer wants ``symbol``
+    // semantics.
+    std::set<std::string> symbolNames;
     module.walk([&](fir::DoLoopOp lp) {
         auto n = traceLoopIter(lp);
-        if (!n.empty()) loopIters.insert(n);
+        if (!n.empty()) symbolNames.insert(n);
     });
 
-    // Pass 2b: symbol names (scalars appearing in shapes or loop bounds).
-    std::set<std::string> symbolNames;
+    // Pass 2b: shape symbols + do-loop upper bounds.
     for (auto &op : decls)
         for (auto &s : resolveShapeSyms(op))
             if (s != "?") symbolNames.insert(s);
@@ -265,7 +270,6 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Classify.
         if (v.rank > 0)                             v.role = "array";
         else if (symbolNames.count(v.fortran_name)) v.role = "symbol";
-        else if (loopIters.count(v.fortran_name))   v.role = "loop_iter";
         else                                        v.role = "scalar";
 
         vars.push_back(std::move(v));

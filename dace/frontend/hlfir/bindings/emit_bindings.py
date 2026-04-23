@@ -120,18 +120,45 @@ def emit_bindings(frozen: FrozenSignature, iface: OriginalInterface, out_path: s
     outer_dummy_decls = "\n".join(f"    {a.fortran_type}, intent({a.intent or 'inout'}), target :: {a.name}"
                                   f"{_dim_spec(a.shape)}" for a in iface.args)
 
+    # For each frozen array arg, decide its strategy once — the
+    # emitted body + the per-arg declarations (pointer vs allocatable
+    # scratch) both depend on it.
+    outer_dummy_set = {a.name for a in iface.args}
+    strategies = _strategies_by_arg(frozen, iface)
+
     flat_ptr_lines: List[str] = []
     scratch_lines: List[str] = []
     for fa in frozen.args:
         if fa.kind != 'array':
             continue
         ftype = _f_type(fa.dtype)
-        # Flat pointer that the SDFG gets — one per flattened member.
-        flat_ptr_lines.append(f"    {ftype}, pointer :: {fa.sdfg_name}(:{', :' * (fa.rank - 1)})")
-        # Scratch only for complex-split / copy cases — emitted on
-        # demand below when we know the strategy.
+        shape = "(:" + ", :" * (fa.rank - 1) + ")"
+        strat = strategies.get(fa.sdfg_name)
+        if isinstance(strat, AliasStrategy):
+            # c_f_pointer aliases the caller's storage → pointer.
+            flat_ptr_lines.append(f"    {ftype}, pointer :: {fa.sdfg_name}{shape}")
+        else:
+            # Deep-copy target: allocate real scratch memory.
+            dim_decl = ",".join([":" for _ in range(fa.rank)])
+            scratch_lines.append(f"    {ftype}, allocatable, target :: {fa.sdfg_name}({dim_decl})")
 
-    symbol_decls = "\n".join(f"    integer(c_int) :: {s}" for s in frozen.free_symbols)
+    # Free-symbol declarations — skip any that are already outer dummies
+    # (Fortran won't let you redeclare a dummy as a local).
+    symbol_decls = "\n".join(f"    integer(c_int) :: {s}" for s in frozen.free_symbols if s not in outer_dummy_set)
+
+    # Loop-iter locals for emitted copy-in / copy-out nests.  Pick the
+    # max rank among deep-copy strategies and declare ``i1..iN``.
+    max_copy_rank = 0
+    for strat in strategies.values():
+        if isinstance(strat, (ComplexSplitStrategy, ExplicitCopyStrategy)):
+            max_copy_rank = max(max_copy_rank, len(strat.shape_exprs))
+    loop_iter_decls = ""
+    if max_copy_rank:
+        loop_iter_decls = "    integer(c_int) :: " + ", ".join(f"i{d + 1}" for d in range(max_copy_rank))
+
+    sym_and_loop_decls = symbol_decls
+    if loop_iter_decls:
+        sym_and_loop_decls = (sym_and_loop_decls + "\n" + loop_iter_decls) if sym_and_loop_decls else loop_iter_decls
 
     wrapper_head = wrapper_head_tpl.format(
         entry=iface.entry,
@@ -139,26 +166,62 @@ def emit_bindings(frozen: FrozenSignature, iface: OriginalInterface, out_path: s
         outer_dummy_decls=outer_dummy_decls or "    ! (no dummies)",
         flat_ptr_decls="\n".join(flat_ptr_lines) or "    ! (no flat pointers)",
         scratch_decls="\n".join(scratch_lines) or "    ! (no scratch)",
-        symbol_decls=symbol_decls or "    ! (no free symbols)",
+        symbol_decls=sym_and_loop_decls or "    ! (no free symbols)",
     )
 
-    # --- per-arg body: strategy stamp + symbol assigns ---
-    body_lines: List[str] = []
-    outer_by_name = {a.name: a for a in iface.args}
+    # --- per-arg body ---
+    # Track complex-split pairs so we emit the copy loop once per
+    # source (not once per _re + _im frozen arg).
+    emitted_complex_sources: set = set()
+
+    copy_in_lines: List[str] = []
+    copy_out_lines: List[str] = []
+    alloc_lines: List[str] = []
+    dealloc_lines: List[str] = []
     for fa in frozen.args:
         if fa.kind != 'array':
             continue
-        outer = _resolve_outer(fa, iface)
-        if outer is None:
-            body_lines.append(f"    ! TODO: no outer match for frozen arg {fa.sdfg_name!r}")
+        strat = strategies.get(fa.sdfg_name)
+        if strat is None:
+            copy_in_lines.append(f"    ! TODO: no outer match for frozen arg {fa.sdfg_name!r}")
             continue
-        strat = decide_strategy(fa, outer)
-        body_lines.append(_render_strategy(strat, alias_tpl, fa))
+        if isinstance(strat, AliasStrategy):
+            copy_in_lines.append(
+                alias_tpl.format(outer_expr=strat.outer_expr,
+                                 inner_name=strat.inner_name,
+                                 shape_list=", ".join(strat.shape_exprs)).rstrip())
+            continue
+        if isinstance(strat, ComplexSplitStrategy):
+            if strat.outer_expr in emitted_complex_sources:
+                continue  # pair already emitted from its _re partner
+            emitted_complex_sources.add(strat.outer_expr)
+            alloc_lines.extend(_allocate_pair_lines(strat))
+            copy_in_lines.extend(_complex_copy_in(strat))
+            if strat.writeback:
+                copy_out_lines.extend(_complex_copy_out(strat))
+            dealloc_lines.extend([
+                f"    deallocate({strat.re_name})",
+                f"    deallocate({strat.im_name})",
+            ])
+            continue
+        if isinstance(strat, ExplicitCopyStrategy):
+            copy_in_lines.append(f"    ! TODO: explicit copy-in for {strat.outer_expr} → "
+                                 f"{strat.inner_name} (shape={strat.shape_exprs})")
 
     # Symbol population — use size() on whichever outer arg carries
-    # the symbol in its shape.  For v1 we do a best-effort: first
-    # outer arg that mentions the symbol in its shape.
-    sym_assigns = _symbol_assigns(frozen, iface)
+    # the symbol in its shape.  Skip symbols that are already outer
+    # dummies; the caller-supplied value wins.
+    sym_assigns = [
+        line for line in _symbol_assigns(frozen, iface)
+        if not any(line.lstrip().startswith(f"{s} =") for s in outer_dummy_set)
+    ]
+
+    body_lines: List[str] = []
+    if alloc_lines:
+        body_lines.append("    ! ----- Scratch allocations for deep-copy members -----")
+        body_lines.extend(alloc_lines)
+    body_lines.append("    ! ----- Per-argument copy-in / alias -----")
+    body_lines.extend(copy_in_lines)
     if sym_assigns:
         body_lines.append("\n    ! ----- Symbol population -----")
         body_lines.extend(sym_assigns)
@@ -170,7 +233,17 @@ def emit_bindings(frozen: FrozenSignature, iface: OriginalInterface, out_path: s
         call_arg_list=call_args,
     )
 
+    # --- copy-out (intent out/inout, deep-copy strategies) -----------
+    copy_out_block = ""
+    if copy_out_lines or dealloc_lines:
+        copy_out_block = "\n    ! ----- Per-argument copy-back -----\n" + "\n".join(copy_out_lines + dealloc_lines)
+
     # --- Assemble the module ---
+    # wrapper_call_tpl has ``end subroutine <entry>_dace`` baked in;
+    # insert the copy-back block BEFORE that end-subroutine marker.
+    call_pieces = wrapper_call.split(f"  end subroutine {iface.entry}_dace", 1)
+    wrapper_call = call_pieces[0] + copy_out_block + f"\n  end subroutine {iface.entry}_dace" + call_pieces[1]
+
     wrapper_body = wrapper_head + "\n" + "\n".join(body_lines) + "\n" + wrapper_call
 
     use_statements = "\n".join(f"  use {mod}, only: {', '.join(syms)}"
@@ -221,6 +294,68 @@ def _resolve_outer(frozen_arg: FrozenArg, iface: OriginalInterface):
             return None
         return next((m for m in st.members if m.name == member_name), None)
     return next((a for a in iface.args if a.name == frozen_arg.fortran_name), None)
+
+
+def _strategies_by_arg(frozen: FrozenSignature, iface: OriginalInterface) -> dict:
+    """Run ``decide_strategy`` once per frozen array arg, keyed by
+    ``sdfg_name``.  Returns ``{name: Strategy | None}``."""
+    out: dict = {}
+    for fa in frozen.args:
+        if fa.kind != 'array':
+            continue
+        outer = _resolve_outer(fa, iface)
+        out[fa.sdfg_name] = decide_strategy(fa, outer) if outer is not None else None
+    return out
+
+
+def _allocate_pair_lines(strat) -> List[str]:
+    """Per-pair allocation for ComplexSplitStrategy.  The _re and _im
+    arrays share the same shape, computed from the outer complex
+    source via ``size(<outer>, dim=d)``."""
+    shape = ", ".join(strat.shape_exprs)
+    return [
+        f"    allocate({strat.re_name}({shape}))",
+        f"    allocate({strat.im_name}({shape}))",
+    ]
+
+
+def _complex_copy_in(strat) -> List[str]:
+    """Fortran nested-loop that splits complex source into _re / _im.
+    Uses one index variable per rank (i1, i2, ...).  Lines are
+    already indented with 4 spaces (wrapper-body indent)."""
+    rank = len(strat.shape_exprs)
+    idx_vars = [f"i{d + 1}" for d in range(rank)]
+    out: List[str] = [f"    ! Complex-split copy-in: {strat.outer_expr} → "
+                      f"{strat.re_name} / {strat.im_name}"]
+    # Loop headers — outer first so memory accesses are column-major.
+    for d in reversed(range(rank)):
+        out.append(f"    {' ' * ((rank - 1 - d) * 2)}do {idx_vars[d]} = 1, {strat.shape_exprs[d]}")
+    body_indent = ' ' * (rank * 2)
+    idx_expr = ", ".join(idx_vars)
+    out.append(f"    {body_indent}{strat.re_name}({idx_expr}) = "
+               f" real({strat.outer_expr}({idx_expr}), kind=c_double)")
+    out.append(f"    {body_indent}{strat.im_name}({idx_expr}) = "
+               f"aimag({strat.outer_expr}({idx_expr}))")
+    for d in range(rank):
+        out.append(f"    {' ' * ((rank - 1 - d) * 2)}end do")
+    return out
+
+
+def _complex_copy_out(strat) -> List[str]:
+    """Reverse of _complex_copy_in for intent(out|inout)."""
+    rank = len(strat.shape_exprs)
+    idx_vars = [f"i{d + 1}" for d in range(rank)]
+    out: List[str] = [f"    ! Complex-split copy-out: "
+                      f"{strat.re_name} / {strat.im_name} → {strat.outer_expr}"]
+    for d in reversed(range(rank)):
+        out.append(f"    {' ' * ((rank - 1 - d) * 2)}do {idx_vars[d]} = 1, {strat.shape_exprs[d]}")
+    body_indent = ' ' * (rank * 2)
+    idx_expr = ", ".join(idx_vars)
+    out.append(f"    {body_indent}{strat.outer_expr}({idx_expr}) = cmplx("
+               f"{strat.re_name}({idx_expr}), {strat.im_name}({idx_expr}), kind=c_double)")
+    for d in range(rank):
+        out.append(f"    {' ' * ((rank - 1 - d) * 2)}end do")
+    return out
 
 
 def _render_strategy(strat, alias_tpl: str, fa: FrozenArg) -> str:

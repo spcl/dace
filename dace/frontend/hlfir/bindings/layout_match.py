@@ -106,11 +106,22 @@ def decide_strategy(frozen: FrozenArg, outer: Union[OriginalArg, Member]) -> Str
     shape_exprs = tuple(f"size({outer_expr}, dim={d + 1})" for d in range(frozen.rank))
 
     # Complex-split — outer is complex, inner is two real arrays.
+    # Convention: the two frozen args for one complex source are named
+    # ``<base>_re`` and ``<base>_im``.  We strip either suffix to get
+    # the shared base, then derive the pair deterministically so both
+    # calls (one for _re, one for _im) report the same re/im names.
     if _is_complex(outer.fortran_type) and frozen.layout == 'complex_split':
+        name = frozen.sdfg_name
+        if name.endswith('_re'):
+            base = name[:-3]
+        elif name.endswith('_im'):
+            base = name[:-3]
+        else:
+            base = name
         return ComplexSplitStrategy(
             outer_expr=outer_expr,
-            re_name=frozen.sdfg_name,  # convention: the base name is _re
-            im_name=f"{frozen.sdfg_name}_im" if not frozen.sdfg_name.endswith('_re') else f"{frozen.sdfg_name[:-3]}_im",
+            re_name=f"{base}_re",
+            im_name=f"{base}_im",
             shape_exprs=shape_exprs,
             writeback=frozen.intent in ('out', 'inout'),
         )
