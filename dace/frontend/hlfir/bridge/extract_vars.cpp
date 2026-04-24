@@ -176,13 +176,19 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (!n.empty()) symbolNames.insert(n);
     });
 
-    // Pass 2b: shape symbols + do-loop upper bounds.
+    // Pass 2b: shape symbols + do-loop bounds (both lower and upper).
+    // Lower bounds are promoted symmetrically with upper bounds so
+    // ``DO jk = nflatlev, nlev`` recognises ``nflatlev`` as a symbol —
+    // otherwise codegen generates an int*-vs-int64_t mismatch in the
+    // loop initialiser.
     for (auto &op : decls)
         for (auto &s : resolveShapeSyms(op))
             if (s != "?") symbolNames.insert(s);
     module.walk([&](fir::DoLoopOp lp) {
-        auto n = traceToDecl(lp.getUpperBound());
-        if (!n.empty()) symbolNames.insert(n);
+        auto ub = traceToDecl(lp.getUpperBound());
+        if (!ub.empty()) symbolNames.insert(ub);
+        auto lb = traceToDecl(lp.getLowerBound());
+        if (!lb.empty()) symbolNames.insert(lb);
     });
 
     // Pass 2c: scalars used as array indices (``a(i)``) are also symbols.

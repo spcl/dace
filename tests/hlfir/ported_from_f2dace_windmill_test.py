@@ -222,7 +222,7 @@ end subroutine cond_arr
 
     d_ref = np.full((5, 5), 42.0, order="F", dtype=np.float32)
     mod.cond_arr(d_ref)
-    d_sdfg = np.full((5, 5), 42.0, dtype=np.float32)
+    d_sdfg = np.full((5, 5), 42.0, dtype=np.float32, order="F")
     sdfg(d=d_sdfg)
     np.testing.assert_allclose(d_sdfg, d_ref)
 

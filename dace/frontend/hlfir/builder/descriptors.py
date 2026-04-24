@@ -63,12 +63,28 @@ def add_descriptors(builder, sdfg: SDFG):
             return int(s)
         return dace.symbol(s)
 
+    def _fortran_strides(dims):
+        """Column-major strides: stride[i] = product of dims[0..i-1].
+        Fortran's declaration ``real :: a(nproma, nlev, nblks_e)`` has
+        nproma as the fastest-varying index (stride 1), matching what
+        Flang's HLFIR expects — so the SDFG descriptor must advertise
+        the same layout or DaCe's C-order default will mis-index when
+        called with numpy F-order inputs."""
+        strides = []
+        acc = 1
+        for d in dims:
+            strides.append(acc)
+            acc = acc * d
+        return strides
+
     for v in builder.arrays.values():
+        dims = [_dim(s) for s in v.shape_symbols]
         sdfg.add_array(
             v.fortran_name,
-            shape=[_dim(s) for s in v.shape_symbols],
+            shape=dims,
             dtype=dt(v.dtype),
             transient=(v.intent == ''),
+            strides=_fortran_strides(dims) if len(dims) > 1 else None,
         )
 
     for v in builder.scalars.values():

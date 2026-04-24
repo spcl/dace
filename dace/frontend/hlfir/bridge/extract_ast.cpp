@@ -1285,6 +1285,15 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                     n.loop_bound = std::to_string(*c);
             }
             n.loop_lower = traceLB(doLoop.getLowerBound());
+            if (n.loop_lower < 0) {
+                // Non-constant lower bound (e.g. ``DO jk = nflatlev, nlev``
+                // with ``nflatlev`` a dummy-arg scalar).  Capture the
+                // symbolic form so emit_loop can thread it through
+                // instead of silently defaulting to 1.
+                auto sym = traceToDecl(doLoop.getLowerBound());
+                if (!sym.empty())      n.loop_lower_expr = sym;
+                else                   n.loop_lower_expr = buildIndexExpr(doLoop.getLowerBound());
+            }
             n.children   = buildAST(doLoop.getRegion().front());
             nodes.push_back(std::move(n));
             continue;

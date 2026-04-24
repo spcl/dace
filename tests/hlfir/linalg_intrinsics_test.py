@@ -69,19 +69,20 @@ def test_linalg_ops_numerical(tmp_path):
     mod.linalg_ops(np.asfortranarray(a), np.asfortranarray(b), c_ref, at_ref, np.asfortranarray(v), w_ref,
                    np.asfortranarray(u), s_ref)
 
-    # SDFG. ``c``, ``at`` are matrices, ``w`` a vector; ``s`` is an inout
-    # scalar which lands as a size-1 Array descriptor on the signature.
-    c_sdfg = np.zeros((n, k), dtype=np.float64)
-    at_sdfg = np.zeros((m, n), dtype=np.float64)
+    # SDFG — frontend now emits Fortran-order strides for rank>1
+    # descriptors, so pass F-order arrays to the matmul/transpose ops
+    # to match the caller-side convention.
+    c_sdfg = np.zeros((n, k), dtype=np.float64, order="F")
+    at_sdfg = np.zeros((m, n), dtype=np.float64, order="F")
     w_sdfg = np.zeros(n, dtype=np.float64)
     s_sdfg = np.zeros(1, dtype=np.float64)
-    sdfg(a=np.ascontiguousarray(a),
-         b=np.ascontiguousarray(b),
+    sdfg(a=np.asfortranarray(a),
+         b=np.asfortranarray(b),
          c=c_sdfg,
          at=at_sdfg,
-         v=np.ascontiguousarray(v),
+         v=np.asfortranarray(v),
          w=w_sdfg,
-         u=np.ascontiguousarray(u),
+         u=np.asfortranarray(u),
          s=s_sdfg,
          n=n,
          m=m,

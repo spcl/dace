@@ -106,25 +106,18 @@ def test_indirect_access_numerical(tmp_path):
     sdfg = b.build()
     sdfg.validate()
 
-    # Random inputs.  Same logical data passed to both; Fortran reads it
-    # column-major, DaCe row-major, so each gets its own layout-matching copy.
+    # Random inputs.  Our frontend now emits Fortran-order (column-major)
+    # strides for every rank>1 array descriptor, so both sides share the
+    # same layout convention — pass Fortran-order numpy arrays to both.
     rng = np.random.default_rng(0)
     nc, ne, nk = 7, 13, 5
-    edge_idx = rng.integers(1, ne + 1, size=(nc, 3), dtype=np.int32)
-    e_bln = rng.standard_normal((nc, 3))
-    z_kin = rng.standard_normal((ne, nk))
+    edge_idx = np.asfortranarray(rng.integers(1, ne + 1, size=(nc, 3), dtype=np.int32))
+    e_bln = np.asfortranarray(rng.standard_normal((nc, 3)))
+    z_kin = np.asfortranarray(rng.standard_normal((ne, nk)))
 
-    # f2py receives Fortran-order views.
-    z_ekinh_fort = ind_fort.kin_to_cell(np.asfortranarray(z_kin), np.asfortranarray(e_bln), np.asfortranarray(edge_idx))
+    z_ekinh_fort = ind_fort.kin_to_cell(z_kin, e_bln, edge_idx)
 
-    # DaCe's default is C-order (row-major).  Pass C-contiguous copies.
-    z_ekinh_sdfg = np.zeros((nc, nk), dtype=np.float64)
-    sdfg(z_kin=np.ascontiguousarray(z_kin),
-         e_bln=np.ascontiguousarray(e_bln),
-         edge_idx=np.ascontiguousarray(edge_idx),
-         z_ekinh=z_ekinh_sdfg,
-         nc=nc,
-         ne=ne,
-         nk=nk)
+    z_ekinh_sdfg = np.zeros((nc, nk), dtype=np.float64, order="F")
+    sdfg(z_kin=z_kin, e_bln=e_bln, edge_idx=edge_idx, z_ekinh=z_ekinh_sdfg, nc=nc, ne=ne, nk=nk)
 
     np.testing.assert_allclose(z_ekinh_sdfg, z_ekinh_fort, rtol=1e-12, atol=1e-12)
