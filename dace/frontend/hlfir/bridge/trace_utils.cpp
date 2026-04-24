@@ -29,6 +29,12 @@ std::string traceToDecl(mlir::Value val, int max) {
             { val = l.getMemref(); continue; }
         if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d))
             { val = co.getRef(); continue; }
+        // Section / element designates (``a(lo:hi)``, ``a(i)``) — walk
+        // through to the underlying memref so a reduce over an
+        // ``hlfir.any %levmask(i_startblk:i_endblk, jk)`` resolves its
+        // source array to ``levmask``.
+        if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d))
+            { val = dg.getMemref(); continue; }
         if (auto s = mlir::dyn_cast<mlir::arith::SelectOp>(d))
             { val = s.getTrueValue(); continue; }
         break;

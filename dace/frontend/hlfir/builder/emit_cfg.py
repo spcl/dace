@@ -102,6 +102,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
         inner_ctx.flush(builder, loop)
     elif child_loops:
         inner_ctx = _Ctx(ctx.sdfg, builder)
+        inner_ctx.iter_map = iter_map
         for c in children:
             if c.kind == "loop":
                 emit_loop(builder, inner_ctx, c, loop, iter_map)

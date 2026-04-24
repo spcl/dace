@@ -19,6 +19,7 @@ DTYPE = {
     'int32': dace.int32,
     'int64': dace.int64,
     'bool': dace.bool_,
+    'uint8': dace.uint8,
 }
 
 

@@ -257,8 +257,21 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         else if (ty.isF32())       v.dtype = "float32";
         else if (ty.isInteger(32)) v.dtype = "int32";
         else if (ty.isInteger(64)) v.dtype = "int64";
-        else if (ty.isInteger(1))  v.dtype = "bool";
-        else if (mlir::isa<fir::LogicalType>(ty)) v.dtype = "bool";
+        // 1-bit int is the MLIR ``i1`` bool.  Surface as ``uint8`` rather
+        // than ``bool`` so numpy / DaCe / f2py all agree on a 1-byte
+        // storage layout — saves the caller-side dtype coercion.
+        else if (ty.isInteger(1))  v.dtype = "uint8";
+        // Fortran ``LOGICAL(kind)`` → ``kind``-byte storage.  Default
+        // LOGICAL is 4 bytes (LOGICAL(4)) which matches f2py's ABI
+        // convention; surface sized-logicals as the equivalent signed
+        // integer so mask arrays round-trip without dtype gymnastics.
+        else if (auto lt = mlir::dyn_cast<fir::LogicalType>(ty)) {
+            auto kind = lt.getFKind();
+            if (kind == 1)      v.dtype = "uint8";
+            else if (kind == 4) v.dtype = "int32";
+            else if (kind == 8) v.dtype = "int64";
+            else                v.dtype = "uint8";
+        }
         else {
             std::string s; llvm::raw_string_ostream os(s);
             ty.print(os); v.dtype = s;

@@ -654,6 +654,139 @@ static ASTNode buildLibCallNode(hlfir::AssignOp assign,
 /// ``state.add_reduce(wcr, axes, identity)`` and wire the input / output
 /// memlets.  ``axes`` is left empty for whole-array reductions — Flang
 /// signals that by emitting the reduction op with no ``dim`` operand.
+/// Lower ``target = ANY/ALL/SUM/PRODUCT(src(lo:hi, ...))`` as a
+/// loop-accumulator: an init-to-identity assign followed by a
+/// ``kind="loop"`` whose body ORs / ANDs / sums the next section
+/// element into ``target``.  Used when the reduction's input is a
+/// section designate — DaCe's ``Reduce`` library node would read the
+/// whole source array and produce a wrong result.
+///
+/// Handles the common shape where the destination is a scalar or an
+/// element designate (``levelmask(jk)``) and the source has exactly
+/// the section dims to loop over; non-section dims of the source
+/// thread through via their existing indices (``jk`` here).  Returns
+/// an empty vector when the shape doesn't fit so the caller falls
+/// back to whole-array ``buildReduceNode``.
+static std::vector<ASTNode> buildSectionReduceAssign(
+    hlfir::AssignOp assign, hlfir::DesignateOp src,
+    std::string_view pyOp, std::string_view identity) {
+
+    auto triplets = src.getIsTriplet();
+    if (triplets.empty()) return {};
+    auto srcIndices = src.getIndices();
+
+    struct DimSpec {
+        bool isTriplet = false;
+        mlir::Value lo, hi, stride;
+        mlir::Value index;
+    };
+    std::vector<DimSpec> dims;
+    unsigned cursor = 0;
+    for (bool t : triplets) {
+        DimSpec d; d.isTriplet = t;
+        if (t) {
+            if (cursor + 3 > srcIndices.size()) return {};
+            d.lo = srcIndices[cursor++];
+            d.hi = srcIndices[cursor++];
+            d.stride = srcIndices[cursor++];
+        } else {
+            if (cursor + 1 > srcIndices.size()) return {};
+            d.index = srcIndices[cursor++];
+        }
+        dims.push_back(d);
+    }
+    unsigned sectionRank = 0;
+    for (auto &d : dims) if (d.isTriplet) sectionRank++;
+    if (sectionRank == 0) return {};
+
+    std::vector<std::string> iterNames;
+    iterNames.reserve(sectionRank);
+    for (unsigned i = 0; i < sectionRank; ++i)
+        iterNames.push_back("ar_" + std::to_string(i));
+
+    // Target name + index expressions — target may be a scalar (no
+    // designate) or an element designate like ``levelmask(jk)``.
+    auto dst = assign.getOperand(1);
+    std::string tgtName;
+    hlfir::DesignateOp tgtDg;
+    if (auto *dd = dst.getDefiningOp())
+        tgtDg = mlir::dyn_cast<hlfir::DesignateOp>(dd);
+    if (tgtDg) tgtName = traceToDecl(tgtDg.getMemref());
+    else       tgtName = traceToDecl(dst);
+    if (tgtName.empty()) return {};
+
+    AccessInfo tgtWrite;
+    tgtWrite.array_name = tgtName;
+    tgtWrite.is_write = true;
+    if (tgtDg) {
+        for (auto idx : tgtDg.getIndices()) {
+            auto nm = resolveIndex(idx);
+            tgtWrite.index_vars.push_back(nm.empty() ? "?" : nm);
+            tgtWrite.index_exprs.push_back(buildIndexExpr(idx));
+        }
+    }
+    bool tgtIsArray = !tgtWrite.index_vars.empty();
+
+    AccessInfo tgtRead = tgtWrite;
+    tgtRead.is_write = false;
+    tgtRead.is_read = true;
+
+    // Source read — full base array name, indexed with section iters
+    // for triplet dims and the original indices for non-section dims.
+    std::string srcName = traceToDecl(src.getMemref());
+    AccessInfo srcRead;
+    srcRead.array_name = srcName;
+    srcRead.is_read = true;
+    unsigned sectionIdx = 0;
+    for (auto &d : dims) {
+        if (d.isTriplet) {
+            srcRead.index_vars.push_back(iterNames[sectionIdx]);
+            srcRead.index_exprs.push_back(iterNames[sectionIdx]);
+            sectionIdx++;
+        } else {
+            auto nm = resolveIndex(d.index);
+            srcRead.index_vars.push_back(nm.empty() ? "?" : nm);
+            srcRead.index_exprs.push_back(buildIndexExpr(d.index));
+        }
+    }
+
+    // Init assign: target = identity
+    ASTNode init;
+    init.kind = "assign";
+    init.target = tgtName;
+    init.target_is_array = tgtIsArray;
+    init.expr = std::string(identity);
+    init.accesses.push_back(tgtWrite);
+
+    // Accumulate assign: target = target <pyOp> src
+    ASTNode acc;
+    acc.kind = "assign";
+    acc.target = tgtName;
+    acc.target_is_array = tgtIsArray;
+    acc.expr = "(" + tgtName + " " + std::string(pyOp) + " " + srcName + ")";
+    acc.accesses.push_back(tgtWrite);
+    acc.accesses.push_back(tgtRead);
+    acc.accesses.push_back(srcRead);
+
+    // Wrap accumulate in one loop per section dim (outermost first,
+    // matching buildElementalAssign's convention).
+    ASTNode current = acc;
+    int revIdx = (int)sectionRank;
+    for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+        if (!it->isTriplet) continue;
+        --revIdx;
+        ASTNode wrap;
+        wrap.kind = "loop";
+        wrap.loop_iter = iterNames[revIdx];
+        wrap.loop_lower_expr = buildIndexExpr(it->lo);
+        wrap.loop_bound      = buildIndexExpr(it->hi);
+        wrap.children.push_back(current);
+        current = wrap;
+    }
+
+    return {init, current};
+}
+
 static ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
                                std::string_view wcr,
                                std::string_view identity) {
@@ -1394,20 +1527,59 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                 auto opName = sd->getName().getStringRef();
                 struct RedEntry {
                     llvm::StringRef op;
-                    llvm::StringRef wcr;
-                    llvm::StringRef identity;
+                    llvm::StringRef wcr;       // DaCe wcr lambda string
+                    llvm::StringRef identity;  // initial accumulator value
+                    llvm::StringRef py_op;     // Python binary op for
+                                               // section-reduce loop body;
+                                               // empty → fall back to
+                                               // buildReduceNode (whole-array)
                 };
                 static const RedEntry kRedTable[] = {
-                    {"hlfir.sum",     "lambda a, b: a + b",   "0"},
-                    {"hlfir.product", "lambda a, b: a * b",   "1"},
-                    {"hlfir.minval",  "lambda a, b: min(a, b)", "math.inf"},
-                    {"hlfir.maxval",  "lambda a, b: max(a, b)", "-math.inf"},
+                    {"hlfir.sum",     "lambda a, b: a + b",    "0",         "+"},
+                    {"hlfir.product", "lambda a, b: a * b",    "1",         "*"},
+                    {"hlfir.minval",  "lambda a, b: min(a, b)", "math.inf",  ""},
+                    {"hlfir.maxval",  "lambda a, b: max(a, b)", "-math.inf", ""},
+                    // Logical reductions — ANY / ALL on ``fir.logical``
+                    // arrays (ICON's levelmask / maskflag patterns).
+                    {"hlfir.any",     "lambda a, b: a or b",   "False",     "or"},
+                    {"hlfir.all",     "lambda a, b: a and b",  "True",      "and"},
+                    // count folds to an int sum of 1s where mask is true —
+                    // the loop form needs an int cast, left as TODO.
+                    {"hlfir.count",   "lambda a, b: a + b",    "0",         ""},
                 };
                 bool matched = false;
                 for (auto &e : kRedTable) {
                     if (opName == e.op) {
-                        nodes.push_back(buildReduceNode(
-                            assign, sd, e.wcr.str(), e.identity.str()));
+                        // If the reduction source is a section designate
+                        // (``mask(lo:hi, jk)``) we can't use DaCe's Reduce
+                        // node directly — it reduces whole arrays.  Fall
+                        // back to a loop-accumulator lowering when a
+                        // Python op is available.
+                        bool emitted = false;
+                        if (!e.py_op.empty() && sd->getNumOperands() > 0) {
+                            auto srcVal = sd->getOperand(0);
+                            if (auto *srcOp = srcVal.getDefiningOp()) {
+                                if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(srcOp)) {
+                                    bool hasTrip = false;
+                                    for (bool t : dg.getIsTriplet())
+                                        if (t) { hasTrip = true; break; }
+                                    if (hasTrip) {
+                                        auto built = buildSectionReduceAssign(
+                                            assign, dg, e.py_op.str(),
+                                            e.identity.str());
+                                        if (!built.empty()) {
+                                            for (auto &bn : built)
+                                                nodes.push_back(std::move(bn));
+                                            emitted = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!emitted) {
+                            nodes.push_back(buildReduceNode(
+                                assign, sd, e.wcr.str(), e.identity.str()));
+                        }
                         matched = true;
                         break;
                     }

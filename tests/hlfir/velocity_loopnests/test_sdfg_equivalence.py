@@ -252,8 +252,28 @@ def test_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
 
 def test_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
     """levelmask(jk) = ANY(levmask(i_startblk:i_endblk, jk))"""
-    pytest.xfail("levelmask reduction uses logical arrays + ANY — "
-                 "HLFIR frontend does not yet lower fir.reduce(OR) on logicals")
+    bundle = _HERE / "loopnest_6.f90"
+    flat_src = _extract_flat_kernel(bundle)
+    ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_6")
+    sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_6")
+
+    rng = np.random.default_rng(6)
+    nlev, nblks_c = 64, 12
+    i_startblk, i_endblk = 2, 10
+    jk_start, jk_end = 3, nlev - 3
+
+    # Fortran default LOGICAL(4) → int32 at the f2py / SDFG boundary.
+    levmask = np.asfortranarray((rng.random((nblks_c, nlev)) > 0.7).astype(np.int32))
+    levelmask_ref = np.zeros(nlev, dtype=np.int32)
+    levelmask_sdfg = np.zeros(nlev, dtype=np.int32)
+
+    ref.kernel_flat(levmask, levelmask_ref, jk_start, jk_end, i_startblk, i_endblk)
+
+    kw = dict(levmask=levmask, levelmask=levelmask_sdfg, nlev=nlev, nblks_c=nblks_c)
+    kw.update(_sdfg_call_args(sdfg, dict(jk_start=jk_start, jk_end=jk_end, i_startblk=i_startblk, i_endblk=i_endblk)))
+    sdfg(**kw)
+
+    np.testing.assert_array_equal(levelmask_sdfg, levelmask_ref)
 
 
 # ---------------------------------------------------------------------------
