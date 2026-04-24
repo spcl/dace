@@ -386,9 +386,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             rmed_count += 1
 
-            for memcpy_path in memcpy_paths:
-                for e in memcpy_path:
-                    joined_edges.add(e)
+            # Collect this path's edges for bulk removal later. (Adding all
+            # paths' edges inside the outer loop made this O(N^2).)
+            joined_edges.update(memcpy_path)
 
         self.rm_edges(state, joined_edges)
 
@@ -448,9 +448,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             rmed_count += 1
 
-            for memcpy_path in memset_paths:
-                for e in memcpy_path:
-                    joined_edges.add(e)
+            # Collect this path's edges once (was O(N^2) before).
+            joined_edges.update(memset_path)
 
         self.rm_edges(state, joined_edges)
 
