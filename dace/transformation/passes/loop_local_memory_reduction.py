@@ -131,6 +131,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
+        self.write_before_read_cache = {}
+        self.intra_loop_reach_cache = {}
 
         # Get analysis results
         if StateReachability.__name__ in pipeline_results:
@@ -164,6 +166,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
+        self.write_before_read_cache = {}
+        self.intra_loop_reach_cache = {}
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
@@ -268,11 +272,20 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 span = (read_ub - write_ub) / (-a)
                 cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
 
-            # If we have a span of one, it's enough that reads happen after writes in the loop.
-            if span == 0:
-                cond = all(
-                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.all_states()
-                    for an in st.data_nodes() if an.data == array_name)
+            # Relaxation: when writes are not strictly past all reads, the buffer can
+            # still be safely reused if every read happens after every write within the
+            # loop iteration. This generalises the K=1 (scalar collapse) case to any K
+            # and handles split-state patterns (e.g. unconditional init + conditional
+            # override + later read in a separate state). Only attempted when cond is
+            # a definite Python False — symbolic conds are left to the existing
+            # try/except below.
+            cond_is_concrete_false = False
+            try:
+                cond_is_concrete_false = bool(cond) is False
+            except TypeError:
+                pass
+            if cond_is_concrete_false:
+                cond = self._writes_precede_reads_in_loop(array_name, sdfg, loop)
 
             # Add positive symbol assumption
             if self.assume_positive_symbols and issymbolic(cond):
@@ -307,6 +320,131 @@ class LoopLocalMemoryReduction(ppl.Pass):
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
+
+    def _lift_to_loop_top(self, block, loop: LoopRegion):
+        # Walk up parent_graph from block until we hit a direct child of `loop`.
+        # Used so that a state inside a nested region (e.g. a conditional branch)
+        # can be matched against the loop's top-level CFG.
+        cur = block
+        while cur is not None:
+            parent = getattr(cur, 'parent_graph', None)
+            if parent is loop:
+                return cur
+            if parent is None:
+                return None
+            cur = parent
+        return None
+
+    def _intra_loop_block_reach(self, loop: LoopRegion):
+        # Forward reachability among the loop's *direct* children, using only the
+        # loop's own top-level edges. This deliberately omits the implicit back-edge
+        # to the loop entry, so reachability here means "in the same iteration".
+        if loop in self.intra_loop_reach_cache:
+            return self.intra_loop_reach_cache[loop]
+
+        children = set(loop.nodes())
+        succ = {c: set() for c in children}
+        for e in loop.edges():
+            if e.src in children and e.dst in children:
+                succ[e.src].add(e.dst)
+
+        reach = {}
+        for c in children:
+            visited = set()
+            stack = [c]
+            while stack:
+                n = stack.pop()
+                if n in visited:
+                    continue
+                visited.add(n)
+                for s in succ.get(n, ()):
+                    stack.append(s)
+            reach[c] = visited
+
+        self.intra_loop_reach_cache[loop] = reach
+        return reach
+
+    def _writes_precede_reads_in_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> bool:
+        # Returns True if every read of array_name within one iteration of `loop` happens
+        # after every write of array_name. This is the relaxed precondition for reusing
+        # a slot whose offset is also read in the same iteration: as long as the read
+        # observes the just-produced value, the buffer can collapse to size K = (write_ub
+        # - read_lb)/a + 1 (and to a Scalar when K == 1). Handles split-state patterns
+        # (unconditional init + conditional override + later read) by lifting each
+        # access state to the loop's direct child that contains it and walking the
+        # loop's own top-level CFG (no back-edge).
+        cache_key = (id(loop), array_name)
+        if cache_key in self.write_before_read_cache:
+            return self.write_before_read_cache[cache_key]
+
+        read_locations = []
+        write_locations = []
+        for st in loop.all_states():
+            for an in st.data_nodes():
+                if an.data != array_name:
+                    continue
+                if st.in_degree(an) > 0:
+                    write_locations.append((st, an))
+                if st.out_degree(an) > 0:
+                    read_locations.append((st, an))
+
+        if not read_locations or not write_locations:
+            self.write_before_read_cache[cache_key] = False
+            return False
+
+        intra_reach = self._intra_loop_block_reach(loop)
+        result = True
+        for st_r, an_r in read_locations:
+            r_lifted = self._lift_to_loop_top(st_r, loop)
+            if r_lifted is None:
+                result = False
+                break
+            for st_w, an_w in write_locations:
+                if an_w is an_r:
+                    # SDFG semantics: a single AccessNode synchronises its in-edges
+                    # (writes) before its out-edges (reads).
+                    continue
+                w_lifted = self._lift_to_loop_top(st_w, loop)
+                if w_lifted is None:
+                    result = False
+                    break
+                if w_lifted is r_lifted:
+                    # Both lifted to the same loop-direct block.
+                    if st_w is st_r:
+                        # Same state, different access nodes: traverse forward in
+                        # the state's data flow from the write node to the read node.
+                        visited = set()
+                        stack = [an_w]
+                        found = False
+                        while stack:
+                            n = stack.pop()
+                            if n is an_r:
+                                found = True
+                                break
+                            if n in visited:
+                                continue
+                            visited.add(n)
+                            for e in st_w.out_edges(n):
+                                stack.append(e.dst)
+                        if not found:
+                            result = False
+                            break
+                    else:
+                        # Different states inside the same nested region (e.g. two
+                        # branches of a conditional). We can't guarantee ordering.
+                        result = False
+                        break
+                else:
+                    # Different top-level blocks of the loop body. The read block
+                    # must be reachable from the write block via the loop's own CFG.
+                    if r_lifted not in intra_reach.get(w_lifted, set()):
+                        result = False
+                        break
+            if not result:
+                break
+
+        self.write_before_read_cache[cache_key] = result
+        return result
 
     def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG,
                              loop: LoopRegion) -> bool:
