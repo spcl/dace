@@ -10,7 +10,7 @@ from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_t
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 from numbers import Number
-from typing import List, Sequence, Tuple, Union
+from typing import Any, List, Sequence, Tuple, Union
 import warnings
 
 import numpy as np

@@ -4,7 +4,7 @@
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from dace import data, dtypes
 from dace.frontend.python import astutils

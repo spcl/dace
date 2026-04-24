@@ -4,8 +4,6 @@ import pytest
 
 torch = pytest.importorskip('torch', reason='PyTorch not installed. Please install with: pip install dace[ml]')
 
-import dace
-
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.schedule_tree.type_inference import ScheduleTreeTypeInference
 from dace.data.ml import ParameterArray

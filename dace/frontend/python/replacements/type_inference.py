@@ -6,13 +6,12 @@ registrations live next to their SDFG-level replacements in the respective
 ``replacements/*.py`` modules.
 """
 
-import math
 from numbers import Number
 from typing import Dict, Optional
 
 import numpy as np
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes
 from dace.frontend.python.replacements.utils import normalize_axes
 
 # -------------------------------------------------------------------- #

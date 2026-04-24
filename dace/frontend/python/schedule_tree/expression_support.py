@@ -68,8 +68,6 @@ import copy
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
-import numpy as np
-
 from dace import data, dtypes
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
