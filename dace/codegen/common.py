@@ -15,6 +15,21 @@ from typing import List, Optional, Set, Union
 import warnings
 
 
+_NO_SYNC_ENV = "__DACE_NO_SYNC"
+
+
+def no_sync_emission() -> bool:
+    """True when ``__DACE_NO_SYNC`` is set (to any truthy value) in the
+    environment at codegen time. When set, ``*Synchronize`` calls on
+    streams, events and the device are elided from the generated CUDA
+    code. Default is False (sync calls are emitted). Use as an escape
+    hatch while the codegen's sync emission has known issues; the
+    caller is then responsible for any host-side synchronization that
+    would otherwise have been implicit."""
+    v = os.environ.get(_NO_SYNC_ENV, "")
+    return v.lower() not in ("", "0", "false", "no", "off")
+
+
 def find_incoming_edges(node, dfg):
     # If it's an entire SDFG, look in each state
     if isinstance(dfg, SDFG):

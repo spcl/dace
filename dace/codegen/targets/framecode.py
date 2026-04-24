@@ -273,13 +273,16 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
 }}''', sdfg)
 
         for target in self._dispatcher.used_targets:
+            # Names are suffixed with ``sdfg.name`` so multiple SDFGs from
+            # distinct TUs can be linked into one binary without the
+            # per-target init/exit helpers colliding at link time.
             if target.has_initializer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
+                    f'DACE_EXPORTED int __dace_init_{target.target_name}_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
                     sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
+                    f'DACE_EXPORTED int __dace_exit_{target.target_name}_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
                     sdfg)
 
         callsite_stream.write(
@@ -300,7 +303,7 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
+                    '__result |= __dace_init_%s_%s(__state%s);' % (target.target_name, sdfg.name, initparamnames_comma), sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -360,7 +363,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             if target.has_finalizer:
                 callsite_stream.write(
                     f'''
-    int __err_{target.target_name} = __dace_exit_{target.target_name}(__state);
+    int __err_{target.target_name} = __dace_exit_{target.target_name}_{sdfg.name}(__state);
     if (__err_{target.target_name}) {{
         __err = __err_{target.target_name};
     }}
