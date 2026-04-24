@@ -80,7 +80,47 @@ class DefinedMemlets:
                 if name in scope:
                     return scope[name]
 
-        raise KeyError("Variable {} has not been defined".format(name))
+        # Build a detailed scope ancestry for debugging "not defined" errors.
+        scope_dump = []
+        for i, (p, s, cap) in enumerate(self._scopes):
+            ptype = type(p).__name__ if p is not None else 'None'
+            plbl = getattr(p, 'label', None) or getattr(p, 'name', None) or '?'
+            # Label alone is not unique in cloudsc — disambiguate.
+            extra = ''
+            if p is not None:
+                # MapEntry: show map params/range and guid
+                from dace.sdfg import nodes as _nds
+                if isinstance(p, _nds.MapEntry):
+                    try:
+                        extra = f' params={list(p.map.params)} range={p.map.range} guid={p.guid[:8]}'
+                    except Exception:
+                        extra = f' guid={getattr(p, "guid", "?")[:8]}'
+                elif hasattr(p, 'guid'):
+                    extra = f' guid={p.guid[:8]}'
+                # State: include parent CFR chain
+                if hasattr(p, 'parent_graph'):
+                    chain = []
+                    g = p.parent_graph
+                    hops = 0
+                    while g is not None and hops < 6:
+                        chain.append(f"{type(g).__name__}:{getattr(g, 'label', '?')}")
+                        g = getattr(g, 'parent_graph', None)
+                        hops += 1
+                    if chain:
+                        extra += f' parent_chain={chain}'
+            keys = list(s.keys())
+            near = [k for k in keys if name in k or (len(name) > 3 and k in name)]
+            near_str = f' near={near[:6]}' if near else ''
+            sample = sorted(keys)[:10]
+            scope_dump.append(
+                f"  [{i}] {ptype}:{plbl}{extra} can_access_parent={cap} "
+                f"#keys={len(keys)} sample={sample}{near_str}"
+            )
+        raise KeyError(
+            f"Variable {name!r} has not been defined. "
+            f"is_global={is_global}, ancestor={ancestor}. "
+            f"Defined-vars scope stack (inner -> outer):\n" + "\n".join(scope_dump)
+        )
 
     def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
         if not isinstance(name, str):

@@ -263,10 +263,18 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     if not constraints:  # No constraints found
         child_schedule = None
     elif len(constraints) > 1:
+        # Use state.parent_graph (the immediate CFR containing state) so this
+        # doesn't crash with NodeNotFoundError for states nested inside a
+        # LoopRegion / ConditionalBlock.
+        _cfr = getattr(state, 'parent_graph', None) or state.parent
+        try:
+            _sid = _cfr.node_id(state)
+        except Exception:
+            _sid = -1
         raise validation.InvalidSDFGNodeError(
             f'Cannot determine default schedule for node {node}. '
             'Multiple arrays that point to it say that it should be the following schedules: '
-            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+            f'{constraints}', state.parent, _sid, state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 
