@@ -23,14 +23,16 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     )
     apply_only_on_labels = properties.ListProperty(element_type=str, default=[], allow_none=False)
 
-    rmid = 0
-
-    def __init__(self, overapproximate_first_dimensions: bool = False, apply_only_on_labels: List[str] = list()):
+    def __init__(self, overapproximate_first_dimensions: bool = False, apply_only_on_labels: List[str] = None):
         self.overapproximate_first_dimension = overapproximate_first_dimensions
-        self.apply_only_on_labels = apply_only_on_labels
+        # Avoid mutable default argument sharing across instances.
+        self.apply_only_on_labels = list(apply_only_on_labels) if apply_only_on_labels else []
+        # Per-instance counter; also reset at the start of each apply_pass so
+        # library-node names never collide across runs on the same instance.
+        self._rmid = 0
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modeifies.Everything
+        return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -45,12 +47,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         for i in range(len(node_path) - 1):
             src = node_path[i]
             dst = node_path[i + 1]
-            oes = {oe for oe in state.out_edges(src) if oe.dst == dst}
-            if len(oes) != 1:
-                # Fail
-                return []
-            oe = oes.pop()
-            edges.append(oe)
+            # Early-exit: we only want the "exactly one" case. Bail the moment
+            # we see a second match (or find none).
+            match = None
+            for oe in state.out_edges(src):
+                if oe.dst is not dst:
+                    continue
+                if match is not None:
+                    return []  # >1 match, fail
+                match = oe
+            if match is None:
+                return []  # 0 matches, fail
+            edges.append(match)
         return edges
 
     def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
@@ -82,10 +90,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if path_candidate[0].dst_conn is None or (not path_candidate[0].src_conn.startswith("OUT_")):
                 continue
             ie = next(
-                state.in_edges_by_connector(path_candidate[0].src, path_candidate[0].src_conn.replace("OUT_", "IN_")))
+                state.in_edges_by_connector(path_candidate[0].src, path_candidate[0].src_conn.replace("OUT_", "IN_")),
+                None)
             oe = next(
                 state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
-                                                                                                         "OUT_")))
+                                                                                                         "OUT_")),
+                None)
+            if ie is None or oe is None:
+                continue
             tasklet = path_candidate[1].src
 
             # Tasklet in the middle
@@ -150,7 +162,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             oe = next(
                 state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
-                                                                                                         "OUT_")))
+                                                                                                         "OUT_")),
+                None)
+            if oe is None:
+                continue
             tasklet = path_candidate[1].src
 
             # Tasklet in the middle
@@ -266,38 +281,30 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     UserWarning)
                 return None, None, None
 
-        if in_edge.data.data is not None:
-            in_begin_exprs = [b for (b, e, s) in new_in_data_range]
-            in_length_exprs = [(e + 1) - b for (b, e, s) in new_in_data_range]
-        out_begin_exprs = [b for (b, e, s) in new_out_data_range]
-        out_length_exprs = [(e + 1) - b for (b, e, s) in new_out_data_range]
+        # We ensured the subset is contiguous, so the total element count is
+        # the product of per-dimension lengths. Begins are kept per-dimension
+        # in new_*_data_range and consumed by the caller via subsets.Range —
+        # no flat-offset collapse is needed here.
+        def _prod_lengths(ranges):
+            total = dace.symbolic.SymExpr(1)
+            for (b, e, s) in ranges:
+                total *= (e + 1) - b
+            return total
+
+        out_length_collapsed = _prod_lengths(new_out_data_range)
+
+        # Single-element writes aren't worth a cudaMemset/cudaMemcpy, and
+        # MemsetLibraryNode's expansion crashes when all output dims collapse
+        # to length 1 (empty inner map).
+        try:
+            if int(out_length_collapsed) <= 1:
+                return None, None, None
+        except (TypeError, ValueError):
+            pass  # symbolic length, keep going
 
         if in_edge.data.data is not None:
-            in_begin_collapsed = dace.symbolic.SymExpr(1)
-            in_length_collapsed = dace.symbolic.SymExpr(1)
-        out_begin_collapsed = dace.symbolic.SymExpr(1)
-        out_length_collapsed = dace.symbolic.SymExpr(1)
-
-        # We ensured the subset is contiguous, so we can get the length by multiplying each dimension's length
-        if in_edge.data.data is not None:
-            for i, b in enumerate(in_begin_exprs):
-                in_begin_collapsed *= b
-
-            for i, l in enumerate(in_length_exprs):
-                in_length_collapsed *= l
-
-        for i, b in enumerate(out_begin_exprs):
-            out_begin_collapsed *= b
-
-        for i, l in enumerate(out_length_exprs):
-            out_length_collapsed *= l
-
-        if in_edge.data.data is None:
-            in_begin_collapsed = None
-            in_length_collapsed = None
-
-        if in_length_collapsed is not None:
-            # This means the inner access is voer a non-unit stride dimension
+            in_length_collapsed = _prod_lengths(new_in_data_range)
+            # Lengths must match between the input and output subsets.
             if in_length_collapsed != out_length_collapsed:
                 return None, None, None
 
@@ -362,9 +369,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # Add a new memcpy tasklet
             tasklet = CopyLibraryNode(
-                name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}", )
+                name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self._rmid}", )
             state.add_node(tasklet)
-            self.rmid += 1
+            self._rmid += 1
             state.add_edge(new_src_access_node, None, tasklet, "_in",
                            dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
             state.add_edge(tasklet, "_out", new_dst_access_node, None,
@@ -426,10 +433,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             in_edges = state.in_edges(map_entry)
 
             # Add a new memset tasklet
-            tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
+            tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self._rmid}", )
             tasklet.add_out_connector("_out")
             state.add_node(tasklet)
-            self.rmid += 1
+            self._rmid += 1
             state.add_edge(tasklet, "_out", dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             # Redirect all dynamic input connectors
@@ -480,8 +487,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 if not self._has_passthrough_connectors(n) and state.in_degree(n) == 0:
                     state.remove_node(n)
 
-        for n in state.nodes():
-            if (state.degree(n) == 0):
+        # Snapshot before mutating: state.nodes() is a live view.
+        for n in list(state.nodes()):
+            if state.degree(n) == 0:
                 state.remove_node(n)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[int, Dict[dace.SDFGState, Set[dace.SDFGState]]]:
@@ -495,11 +503,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         rmed_memsets = dict()
 
         for (node, state) in map_entries:
-            sdfg.validate()
             assert node in state.nodes(), f"Map entry {node} not in state {state}"
             assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
 
-            if self.apply_only_on_labels != [] and self.apply_only_on_labels is not None and node.label not in self.apply_only_on_labels:
+            if self.apply_only_on_labels and node.label not in self.apply_only_on_labels:
                 continue
 
             if self._get_num_tasklets_within_map(state, node) == 0:
@@ -508,7 +515,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
             if rmed_memcpy > 0:
                 print(f"Removed {rmed_memcpy} memcpy from {node.label}")
-            sdfg.validate()
 
             # If the map is only used for 1 memcpy, then it might have been already removed
             if node in state.nodes():
@@ -517,12 +523,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     print(f"Removed {rmed_memset} memset from {node.label}")
             else:
                 rmed_memset = 0
-            sdfg.validate()
 
             assert node not in rmed_memsets
             assert node not in rmed_memcpies
             rmed_memcpies[node] = rmed_memcpy
             rmed_memsets[node] = rmed_memset
+
+        # One validation at the end of the pass is enough.
+        sdfg.validate()
 
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
