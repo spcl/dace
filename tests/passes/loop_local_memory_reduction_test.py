@@ -964,6 +964,135 @@ def test_cloudsc():
     check_transformation(sdfg, 1)
 
 
+# Explicit "LLMR has been applied" probe used by the BEFORE tests below, in
+# addition to check_transformation's apps>=N + memory-reduction assertions.
+def check_llmr_applies(sdfg: dace.SDFG, min_apps: int = 1):
+    test_sdfg = copy.deepcopy(sdfg)
+    llmr = LoopLocalMemoryReduction()
+    llmr.apply_pass(test_sdfg, {})
+    assert llmr.num_applications >= min_apps, \
+        f"Expected at least {min_apps} LLMR applications, got {llmr.num_applications}"
+
+
+# CloudSC pattern 1: temperature-dependent saturation lookup (ZFOEEWMT/ZQSMIX).
+# Mirrors src/cloudsc_fortran/cloudsc.F90:756-779 — array buffer written then read
+# at the same vertical index inside one fused loop. K=1 collapse expected.
+def test_cloudsc_saturation_before():
+    KLEV = 128
+
+    @dace.program
+    def tester(pt: dace.float64[KLEV], pap: dace.float64[KLEV], r2es: dace.float64, r3les: dace.float64,
+               r4les: dace.float64, rtt: dace.float64, retv: dace.float64, zqsmix: dace.float64[KLEV]):
+        zfoeewmt = dace.define_local([KLEV], dace.float64)
+        for jk in range(KLEV):
+            zfoeewmt[jk] = min((r2es * (r3les * (pt[jk] - rtt)) / (pt[jk] - r4les)) / pap[jk], 0.5)
+            zqsmix[jk] = zfoeewmt[jk] / (1.0 - retv * zfoeewmt[jk])
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_llmr_applies(sdfg)
+    check_transformation(sdfg, 1)
+
+
+# Mirrors src/cloudsc_gpu/cloudsc_gpu_scc_k_caching_mod.F90:738-763 — the same
+# saturation calculation already collapsed into a per-iteration scalar.
+def test_cloudsc_saturation_after():
+    KLEV = 128
+
+    @dace.program
+    def tester(pt: dace.float64[KLEV], pap: dace.float64[KLEV], r2es: dace.float64, r3les: dace.float64,
+               r4les: dace.float64, rtt: dace.float64, retv: dace.float64, zqsmix: dace.float64[KLEV]):
+        for jk in range(KLEV):
+            zfoeewmt_local = min((r2es * (r3les * (pt[jk] - rtt)) / (pt[jk] - r4les)) / pap[jk], 0.5)
+            zqsmix[jk] = zfoeewmt_local / (1.0 - retv * zfoeewmt_local)
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+# CloudSC pattern 2: vertical sedimentation flux integration with neighbor (jk-1)
+# read in the consumer. Mirrors cloudsc.F90:2795-2864 — buffer required across
+# adjacent iterations so K=2 (rotating window), not a full scalar collapse.
+def test_cloudsc_flux_before():
+    KLEV = 128
+
+    @dace.program
+    def tester(pap: dace.float64[KLEV], zqx: dace.float64[KLEV], zrg_r: dace.float64, pflux: dace.float64[KLEV]):
+        zsedflux = dace.define_local([KLEV], dace.float64)
+        zsedflux[0] = zqx[0] * pap[0] * zrg_r
+        pflux[0] = zsedflux[0]
+        for jk in range(1, KLEV):
+            zsedflux[jk] = zqx[jk] * pap[jk] * zrg_r
+            pflux[jk] = zsedflux[jk] - zsedflux[jk - 1]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_llmr_applies(sdfg)
+    check_transformation(sdfg, 1)
+
+
+# Mirrors cloudsc_gpu_scc_k_caching_mod.F90:2582-2623 — the previous-level value
+# is carried via a Python scalar (k-caching idiom), removing the profile array.
+def test_cloudsc_flux_after():
+    KLEV = 128
+
+    @dace.program
+    def tester(pap: dace.float64[KLEV], zqx: dace.float64[KLEV], zrg_r: dace.float64, pflux: dace.float64[KLEV]):
+        zsedflux_prev = zqx[0] * pap[0] * zrg_r
+        pflux[0] = zsedflux_prev
+        for jk in range(1, KLEV):
+            zsedflux_curr = zqx[jk] * pap[jk] * zrg_r
+            pflux[jk] = zsedflux_curr - zsedflux_prev
+            zsedflux_prev = zsedflux_curr
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+# CloudSC pattern 3: intermediate condensation products (ZLEVAPL/ZLEVAPI) written
+# under a conditional and consumed in the same iteration. Mirrors cloudsc.F90:1340-1363.
+# Two separate buffers, both K=1 → scalar collapse for each.
+def test_cloudsc_evap_before():
+    NPROMA = 128
+
+    @dace.program
+    def tester(za: dace.float64[NPROMA], zliqfrac: dace.float64[NPROMA], zicefrac: dace.float64[NPROMA],
+               zdqs: dace.float64[NPROMA], zlicld: dace.float64[NPROMA], zsolqa: dace.float64[NPROMA]):
+        zlevapl = dace.define_local([NPROMA], dace.float64)
+        zlevapi = dace.define_local([NPROMA], dace.float64)
+        for jl in range(NPROMA):
+            zlevapl[jl] = 0.0
+            zlevapi[jl] = 0.0
+            if zdqs[jl] > 0.0:
+                zlevap = za[jl] * min(zdqs[jl], zlicld[jl])
+                zlevapl[jl] = zliqfrac[jl] * zlevap
+                zlevapi[jl] = zicefrac[jl] * zlevap
+            zsolqa[jl] = zsolqa[jl] + zlevapl[jl] + zlevapi[jl]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_llmr_applies(sdfg, min_apps=2)
+    check_transformation(sdfg, 2)
+
+
+# Mirrors cloudsc_gpu_scc_k_caching_mod.F90:1352-1389 — both ZLEVAPL/ZLEVAPI are
+# replaced by Python scalars used immediately in the same iteration.
+def test_cloudsc_evap_after():
+    NPROMA = 128
+
+    @dace.program
+    def tester(za: dace.float64[NPROMA], zliqfrac: dace.float64[NPROMA], zicefrac: dace.float64[NPROMA],
+               zdqs: dace.float64[NPROMA], zlicld: dace.float64[NPROMA], zsolqa: dace.float64[NPROMA]):
+        for jl in range(NPROMA):
+            zlevapl_local = 0.0
+            zlevapi_local = 0.0
+            if zdqs[jl] > 0.0:
+                zlevap = za[jl] * min(zdqs[jl], zlicld[jl])
+                zlevapl_local = zliqfrac[jl] * zlevap
+                zlevapi_local = zicefrac[jl] * zlevap
+            zsolqa[jl] = zsolqa[jl] + zlevapl_local + zlevapi_local
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
 if __name__ == "__main__":
     test_simple()
     test_no_offsets()
@@ -1017,3 +1146,9 @@ if __name__ == "__main__":
     test_symbolic_sizes()
     test_symbolic_k()
     test_cloudsc()
+    test_cloudsc_saturation_before()
+    test_cloudsc_saturation_after()
+    test_cloudsc_flux_before()
+    test_cloudsc_flux_after()
+    test_cloudsc_evap_before()
+    test_cloudsc_evap_after()
