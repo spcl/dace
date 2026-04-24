@@ -529,7 +529,7 @@ def test_python_frontend_schedule_tree_nested_method_self_containers_do_not_conf
     assert stree.children[-1].values[0] == stree.children[-2].out_memlets['out'].data
 
 
-def test_python_frontend_schedule_tree_method_unresolved_new_field_assignment_stays_explicit():
+def test_python_frontend_schedule_tree_method_unresolved_new_field_assignment_uses_copy_node():
 
     class FieldWriter:
 
@@ -540,12 +540,12 @@ def test_python_frontend_schedule_tree_method_unresolved_new_field_assignment_st
 
     stree = FieldWriter().write.to_schedule_tree()
 
-    assert isinstance(stree.children[0], tn.StatementNode)
-    assert stree.children[0].code.as_string == 'self.new_field = A[0]'
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'self.new_field'
     assert 'self' in stree.containers
     assert isinstance(stree.containers['self'], dace.data.pydata.PythonClass)
     assert stree.containers['self'].name == 'FieldWriter'
-    assert stree.containers['self'].members == {}
+    assert isinstance(stree.containers['self'].members['new_field'], dace.data.Scalar)
     assert all('new_field' not in name for name in stree.containers)
 
 
@@ -706,8 +706,46 @@ def test_python_frontend_schedule_tree_direct_class_new_field_assignment_uses_py
         stree = prog.to_schedule_tree()
 
     assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
-    assert isinstance(stree.children[0], tn.StatementNode)
-    assert stree.children[0].code.as_string == 'holder.new_field = A[0]'
+    assert isinstance(stree.children[0], tn.CopyNode)
+    assert stree.children[0].target == 'holder.new_field'
+
+
+def test_python_frontend_schedule_tree_direct_class_new_array_field_assignment_uses_refset():
+
+    class Holder:
+        scalar: dace.float64
+
+    @dace.program
+    def prog(holder: Holder, A: dace.float64[8], out: dace.float64[8]):
+        holder.new_data = A
+        out[:] = holder.new_data[:]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.RefSetNode)
+    assert stree.children[0].target == 'holder.new_data'
+    assert isinstance(stree.children[1], tn.CopyNode)
+
+
+def test_python_frontend_schedule_tree_direct_class_literal_new_field_assignment_uses_tasklet():
+
+    class Holder:
+        scalar: dace.float64
+
+    @dace.program
+    def prog(holder: Holder):
+        holder.new_field = 4.25
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stree = prog.to_schedule_tree()
+
+    assert isinstance(stree.containers['holder'], dace.data.pydata.PythonClass)
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert stree.children[0].node.code.as_string == 'out = 4.25'
 
 
 def test_python_frontend_schedule_tree_direct_class_array_field_only_stays_structure():
@@ -865,8 +903,8 @@ def test_python_frontend_schedule_tree_direct_class_annotated_alias_new_field_as
     assert isinstance(stree.containers['alias'], dace.data.pydata.PythonClass)
     assert isinstance(stree.children[0], tn.RefSetNode)
     assert stree.children[0].target == 'alias'
-    assert isinstance(stree.children[1], tn.StatementNode)
-    assert stree.children[1].code.as_string == 'alias.new_field = A[0]'
+    assert isinstance(stree.children[1], tn.CopyNode)
+    assert stree.children[1].target == 'alias.new_field'
 
 
 def test_python_frontend_schedule_tree_optional_none_branch():

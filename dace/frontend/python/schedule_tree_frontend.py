@@ -18,11 +18,9 @@ from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
-from dace.frontend.python.schedule_tree.structure_support import (descriptor_from_structure,
-                                                                  direct_class_annotation_type,
-                                                                  nested_direct_class_owner,
-                                                                  python_class_requirement_for_member_assignment,
-                                                                  resolve_member_access)
+from dace.frontend.python.schedule_tree.structure_support import (
+    descriptor_from_structure, direct_class_annotation_type, ensure_nested_member_descriptor, nested_direct_class_owner,
+    python_class_requirement_for_member_assignment, resolve_member_access)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
@@ -1051,16 +1049,24 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._update_dict_subscript_binding(target, value)
 
         source_access = self._resolve_data_access(value)
+        self._ensure_pythonclass_member_target(target, value, source_access)
         if isinstance(target, ast.Name):
             self._handle_name_assignment(target.id, value, source_access, annotated_descriptor)
             return
 
         target_access = self._resolve_data_access(target)
         if source_access is not None and target_access is not None:
-            _, source_memlet, _, _ = source_access
-            target_name, target_memlet, _, _ = target_access
+            _, source_memlet, source_desc, _ = source_access
+            target_name, target_memlet, target_desc, _ = target_access
             memlet = copy.deepcopy(source_memlet)
             memlet.other_subset = copy.deepcopy(target_memlet.subset)
+            if isinstance(target_desc, data.Reference):
+                self._append_node(
+                    tn.RefSetNode(target=target_name,
+                                  memlet=memlet,
+                                  src_desc=_clone_descriptor(source_desc),
+                                  ref_desc=_clone_descriptor(target_desc)))
+                return
             self._append_node(tn.CopyNode(target=target_name, memlet=memlet))
             return
 
@@ -1411,13 +1417,57 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return True
 
         in_memlets = self._collect_input_memlets(value)
-        if not in_memlets:
+        if not in_memlets and not isinstance(target, ast.Attribute):
             return False
 
-        tasklet = tn.FrontendTasklet(name=self._tasklet_name(target),
-                                     code=CodeBlock(f'{_unparse(target)} = {_unparse(value)}'))
+        tasklet_code = f'out = {_unparse(value)}' if isinstance(
+            target, ast.Attribute) else f'{_unparse(target)} = {_unparse(value)}'
+        tasklet = tn.FrontendTasklet(name=self._tasklet_name(target), code=CodeBlock(tasklet_code))
         self._append_node(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets={'out': out_memlet}))
         return True
+
+    def _ensure_pythonclass_member_target(
+            self, target: ast.AST, value: ast.AST, source_access: Optional[Tuple[str, Memlet, data.Data,
+                                                                                 Optional[data.Data]]]) -> None:
+        if not isinstance(target, ast.Attribute):
+            return
+
+        root = self._attribute_root_and_members(target)
+        if root is None:
+            return
+        root_name, member_names = root
+
+        binding = self.bindings.get(root_name)
+        if binding is None or binding.descriptor is None or not isinstance(binding.descriptor, PythonClass):
+            return
+
+        member_descriptor = self._infer_pythonclass_member_descriptor(value, source_access)
+        if member_descriptor is None:
+            return
+
+        for descriptor in (binding.descriptor, self.root.containers.get(root_name), self.globals.get(root_name),
+                           self.scope_stack[-1].containers.get(root_name) if self.scope_stack else None):
+            if isinstance(descriptor, data.Data):
+                ensure_nested_member_descriptor(descriptor, member_names, member_descriptor)
+
+    def _infer_pythonclass_member_descriptor(
+            self, value: ast.AST, source_access: Optional[Tuple[str, Memlet, data.Data,
+                                                                Optional[data.Data]]]) -> Optional[data.Data]:
+        if source_access is not None:
+            _, memlet, source_desc, view_desc = source_access
+            if _is_singleton_scalar_memlet(memlet):
+                return data.Scalar(source_desc.dtype)
+            return data.Reference.view(view_desc or source_desc)
+
+        scalar_descriptor = self._infer_scalar_descriptor(value, None)
+        if scalar_descriptor is not None:
+            return scalar_descriptor
+
+        computed_descriptor = self._infer_compute_descriptor(value)
+        if isinstance(computed_descriptor, data.Scalar):
+            return computed_descriptor
+
+        return None
 
     def _format_runtime_expression(self, node: ast.AST) -> str:
         return _unparse(self.attribute_rewriter.rewrite_expression(node))

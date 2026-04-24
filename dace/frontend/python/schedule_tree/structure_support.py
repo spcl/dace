@@ -70,6 +70,34 @@ def resolve_member_access(base_name: str, descriptor: data.Data, member_name: st
     return StructureMemberAccess(data_name=structure_member_path(base_name, member_name), descriptor=member)
 
 
+def ensure_nested_member_descriptor(descriptor: data.Data, member_names: Sequence[str],
+                                    member: data.Data) -> Optional[data.Data]:
+    if not member_names:
+        return None
+
+    current = descriptor
+    for member_name in member_names[:-1]:
+        members = descriptor_members(current)
+        if members is None or member_name not in members:
+            return None
+        current = members[member_name]
+        stype = getattr(current, 'stype', None)
+        if stype is not None and hasattr(stype, 'members'):
+            current = stype
+
+    members = descriptor_members(current)
+    if members is None:
+        return None
+
+    leaf_name = member_names[-1]
+    if leaf_name not in members:
+        new_member = clone_descriptor(member)
+        new_member.transient = False
+        members[leaf_name] = new_member
+
+    return clone_descriptor(members[leaf_name])
+
+
 def direct_class_annotation_type(annotation: Any) -> Optional[type[Any]]:
     if not isinstance(annotation, type):
         return None
