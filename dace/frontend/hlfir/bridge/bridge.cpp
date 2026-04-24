@@ -176,6 +176,86 @@ public:
         return names;
     }
 
+    /// Read back the ``hlfir.flatten_plan`` module attribute stamped by
+    /// ``hlfir-flatten-structs`` into a plain Python dict that mirrors
+    /// ``FlattenPlan.to_dict()``.  Returns ``None``-shaped dict (empty
+    /// entries list) when no plan is present — callers can trust the
+    /// shape regardless of whether the pass ran.
+    ///
+    /// Shape:
+    ///     {"entries": [
+    ///         {"outer_expr": str, "outer_type": str,
+    ///          "writeback_intent": str,
+    ///          "recipe": {
+    ///              "flat_names": [str, ...],
+    ///              "read_exprs": [str, ...],
+    ///              "write_expr": str,
+    ///              "rank": int,
+    ///              "shape_exprs": [str, ...],
+    ///              "aliasable": bool,
+    ///              "scratch_dtype": str,
+    ///          },
+    ///         }, ...
+    ///     ]}
+    nb::object get_flatten_plan() {
+        if (!module_) return nb::dict();
+        auto attr = module_->getOperation()->getAttr("hlfir.flatten_plan");
+        nb::dict out;
+        nb::list entries;
+        out["entries"] = entries;
+        if (!attr) return out;
+
+        auto planDict = mlir::dyn_cast<mlir::DictionaryAttr>(attr);
+        if (!planDict) return out;
+        auto entriesAttr = planDict.get("entries");
+        if (!entriesAttr) return out;
+        auto entriesArr = mlir::dyn_cast<mlir::ArrayAttr>(entriesAttr);
+        if (!entriesArr) return out;
+
+        auto asStr = [](mlir::Attribute a) -> std::string {
+            if (auto s = mlir::dyn_cast<mlir::StringAttr>(a)) return s.str();
+            return "";
+        };
+        auto asInt = [](mlir::Attribute a) -> int64_t {
+            if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(a)) return i.getInt();
+            return 0;
+        };
+        auto asBool = [](mlir::Attribute a) -> bool {
+            if (auto b = mlir::dyn_cast<mlir::BoolAttr>(a)) return b.getValue();
+            return false;
+        };
+        auto asStrList = [&](mlir::Attribute a) -> nb::list {
+            nb::list out;
+            if (auto arr = mlir::dyn_cast<mlir::ArrayAttr>(a))
+                for (auto e : arr) out.append(asStr(e));
+            return out;
+        };
+
+        for (auto entryAttr : entriesArr) {
+            auto entry = mlir::dyn_cast<mlir::DictionaryAttr>(entryAttr);
+            if (!entry) continue;
+            nb::dict entryDict;
+            entryDict["outer_expr"]       = asStr(entry.get("outer_expr"));
+            entryDict["outer_type"]       = asStr(entry.get("outer_type"));
+            entryDict["writeback_intent"] = asStr(entry.get("writeback_intent"));
+
+            nb::dict recipeDict;
+            if (auto recipe = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(
+                    entry.get("recipe"))) {
+                recipeDict["flat_names"]    = asStrList(recipe.get("flat_names"));
+                recipeDict["read_exprs"]    = asStrList(recipe.get("read_exprs"));
+                recipeDict["write_expr"]    = asStr   (recipe.get("write_expr"));
+                recipeDict["rank"]          = asInt   (recipe.get("rank"));
+                recipeDict["shape_exprs"]   = asStrList(recipe.get("shape_exprs"));
+                recipeDict["aliasable"]     = asBool  (recipe.get("aliasable"));
+                recipeDict["scratch_dtype"] = asStr   (recipe.get("scratch_dtype"));
+            }
+            entryDict["recipe"] = recipeDict;
+            entries.append(entryDict);
+        }
+        return out;
+    }
+
     /// Mark ``name`` public and every other func.func private so a
     /// subsequent ``symbol-dce`` pass drops the siblings that
     /// ``hlfir-inline-all`` has finished folding into the entry.
@@ -327,5 +407,9 @@ NB_MODULE(hlfir_bridge, m) {
              "Names of every top-level func.func still in the module")
         .def("set_entry_symbol", &HLFIRModule::set_entry_symbol,
              "Mark the named function public and everything else private so "
-             "symbol-dce can drop post-inlining dead siblings");
+             "symbol-dce can drop post-inlining dead siblings")
+        .def("get_flatten_plan", &HLFIRModule::get_flatten_plan,
+             "Read back the ``hlfir.flatten_plan`` module attribute set by "
+             "``hlfir-flatten-structs`` as a plain dict that mirrors "
+             "``FlattenPlan.to_dict()``");
 }

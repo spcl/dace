@@ -65,6 +65,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace hlfir_bridge {
 
@@ -234,6 +235,72 @@ static bool isJaggedScalarStruct(fir::RecordType rec, mlir::Type &eleTy,
 }
 
 // ---------------------------------------------------------------------------
+// Fortran-name helpers — drive FlattenPlan construction in the pass
+// ---------------------------------------------------------------------------
+
+/// Extract the user-visible Fortran variable name from a Flang uniq_name.
+///
+/// Flang's mangled uniq_name carries the enclosing scope:
+///     ``_QF<sub>E<var>``          — dummy/local in subroutine ``<sub>``
+///     ``_QM<mod>F<sub>E<var>``    — in module ``<mod>``, subroutine ``<sub>``
+///     ``_QF<sub>E<var>_component``  — nested cases exist but keep the ``E``
+///                                    as the last separator for the outer
+///                                    user name.
+///
+/// Grabbing everything after the *last* ``E`` gives the declared
+/// Fortran name intact for the common case and degrades gracefully
+/// (returns the full string) for unfamiliar mangling schemes.
+static std::string demangleVarName(llvm::StringRef uniqName) {
+    auto epos = uniqName.rfind('E');
+    if (epos == llvm::StringRef::npos) return uniqName.str();
+    return uniqName.substr(epos + 1).str();
+}
+
+/// Map a Flang intent flag to the writeback_intent string the binding
+/// emitter expects (``in`` / ``out`` / ``inout`` / ``""``).  The
+/// emitter uses ``inout`` and ``out`` to gate copy-out code — ``in``
+/// and empty are both read-only.
+static std::string extractIntent(
+    std::optional<fir::FortranVariableFlagsEnum> flagsOpt) {
+    if (!flagsOpt) return "";
+    auto flags = *flagsOpt;
+    auto has = [&](fir::FortranVariableFlagsEnum f) {
+        return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(f)) != 0;
+    };
+    if (has(fir::FortranVariableFlagsEnum::intent_inout)) return "inout";
+    if (has(fir::FortranVariableFlagsEnum::intent_out))   return "out";
+    if (has(fir::FortranVariableFlagsEnum::intent_in))    return "in";
+    return "";
+}
+
+/// Pretty-print a Flang element type as the Fortran scratch dtype the
+/// Python ``FlattenRecipe`` carries (``float64`` / ``float32`` /
+/// ``int32`` / ``int64``).  Returns an empty string for types we don't
+/// map; the caller typically falls back to ``float64`` in that case.
+static std::string dtypeName(mlir::Type t) {
+    if (t.isF32()) return "float32";
+    if (t.isF64()) return "float64";
+    if (t.isInteger(32)) return "int32";
+    if (t.isInteger(64)) return "int64";
+    return "";
+}
+
+/// Element type of a member — unwraps fir.array to its element, or
+/// returns the scalar itself.  Used to pick the recipe dtype.
+static mlir::Type memberElementType(mlir::Type memTy) {
+    if (auto seq = mlir::dyn_cast<fir::SequenceType>(memTy))
+        return seq.getEleTy();
+    return memTy;
+}
+
+/// Return the rank of a member type (0 for scalars).
+static int memberRank(mlir::Type memTy) {
+    if (auto seq = mlir::dyn_cast<fir::SequenceType>(memTy))
+        return seq.getShape().size();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Shared designate rewrite
 // ---------------------------------------------------------------------------
 
@@ -295,9 +362,117 @@ struct FlattenStructsPass
                "allocations.";
     }
 
+    /// Collected FlattenEntry dicts — stamped on the module at the end
+    /// of ``runOnOperation`` as the ``hlfir.flatten_plan`` attribute.
+    llvm::SmallVector<mlir::Attribute, 4> planEntries;
+
     void runOnOperation() override {
+        planEntries.clear();
         getOperation().walk(
             [this](mlir::func::FuncOp f) { flattenFunc(f); });
+        if (planEntries.empty()) return;
+
+        // Stamp the plan as ``hlfir.flatten_plan = {entries = [...]}``.
+        // The binding emitter / bridge later reads this attribute back to
+        // reconstruct the Python FlattenPlan object.
+        auto *ctx = getOperation().getContext();
+        mlir::Builder b(ctx);
+        auto entries = b.getArrayAttr(planEntries);
+        auto plan = b.getDictionaryAttr({
+            b.getNamedAttr("entries", entries)
+        });
+        getOperation()->setAttr("hlfir.flatten_plan", plan);
+    }
+
+    /// Append one FlattenEntry dict to ``planEntries`` describing the
+    /// just-performed struct-dummy split.  Covers the *per-member* path
+    /// (``replaceStructArg``); the jagged-ELLPACK path is omitted from
+    /// the plan for now — callers of that path should fall back to the
+    /// looped copy-in emission without plan metadata.
+    void recordStructArgEntry(hlfir::DeclareOp argDecl, fir::RecordType rec,
+                              llvm::StringRef intentStr) {
+        auto *ctx = argDecl.getContext();
+        mlir::Builder b(ctx);
+        auto mkStr = [&](llvm::StringRef s) -> mlir::Attribute {
+            return b.getStringAttr(s);
+        };
+
+        std::string outerName = demangleVarName(argDecl.getUniqName());
+        // Outer type: dump the declared type as MLIR text — the Python
+        // side uses it only for commentary, so round-tripping the MLIR
+        // form is sufficient.
+        std::string outerType;
+        {
+            llvm::raw_string_ostream os(outerType);
+            argDecl.getResult(0).getType().print(os);
+        }
+
+        llvm::SmallVector<mlir::Attribute, 4> flatNames;
+        llvm::SmallVector<mlir::Attribute, 4> readExprs;
+        // All members of one recipe share a dtype in the current model.
+        // Record the element dtype of the first flat member (they match
+        // by construction — the per-member path rejects ragged member
+        // dtypes upstream in ``allMembersFlattenable``).
+        std::string scratchDtype = "float64";
+        int64_t maxRank = 0;
+
+        for (auto &pair : rec.getTypeList()) {
+            llvm::StringRef memName = pair.first;
+            mlir::Type memTy = pair.second;
+            int rank = memberRank(memTy);
+            if (rank > maxRank) maxRank = rank;
+
+            std::string flat = (outerName + "_" + memName).str();
+            flatNames.push_back(mkStr(flat));
+
+            // read_expr: "<outer>%<member>($i1, $i2, ..., $iN)".
+            // Scalars skip the ``($iN)`` suffix entirely.
+            std::string read = (outerName + "%" + memName).str();
+            if (rank > 0) {
+                read += "(";
+                for (int i = 1; i <= rank; ++i) {
+                    if (i > 1) read += ", ";
+                    read += "$i" + std::to_string(i);
+                }
+                read += ")";
+            }
+            readExprs.push_back(mkStr(read));
+
+            if (std::string dt = dtypeName(memberElementType(memTy)); !dt.empty())
+                scratchDtype = dt;
+        }
+
+        // Shape exprs for the recipe: one ``size(outer%<first_member>,
+        // dim=i)`` per loop dimension.  The first member is chosen
+        // arbitrarily — the non-jagged path guarantees matching shapes
+        // across members so which one we size against is immaterial.
+        llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
+        if (maxRank > 0 && !rec.getTypeList().empty()) {
+            llvm::StringRef first = rec.getTypeList()[0].first;
+            for (int i = 1; i <= maxRank; ++i) {
+                std::string s = ("size(" + outerName + "%" + first
+                                 + ", dim=" + std::to_string(i) + ")").str();
+                shapeExprs.push_back(mkStr(s));
+            }
+        }
+
+        auto recipe = b.getDictionaryAttr({
+            b.getNamedAttr("flat_names",    b.getArrayAttr(flatNames)),
+            b.getNamedAttr("read_exprs",    b.getArrayAttr(readExprs)),
+            b.getNamedAttr("write_expr",    mkStr("")),
+            b.getNamedAttr("rank",          b.getI64IntegerAttr(maxRank)),
+            b.getNamedAttr("shape_exprs",   b.getArrayAttr(shapeExprs)),
+            b.getNamedAttr("aliasable",     b.getBoolAttr(true)),
+            b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
+        });
+
+        auto entry = b.getDictionaryAttr({
+            b.getNamedAttr("outer_expr",       mkStr(outerName)),
+            b.getNamedAttr("outer_type",       mkStr(outerType)),
+            b.getNamedAttr("writeback_intent", mkStr(intentStr)),
+            b.getNamedAttr("recipe",           recipe),
+        });
+        planEntries.push_back(entry);
     }
 
     // -------------------------------------------------------------------
@@ -379,11 +554,20 @@ struct FlattenStructsPass
         for (auto &entry : llvm::reverse(plans)) {
             auto idx = entry.first;
             auto &p  = entry.second;
-            if (p.jagged)
+            if (p.jagged) {
                 replaceStructArgJagged(func, idx, p.argDecl, p.rec,
                                        p.jaggedEleTy, p.jaggedExtents);
-            else
-                replaceStructArg(func, idx, p.argDecl, p.rec);
+                // Jagged path is not represented in the plan yet.
+                continue;
+            }
+            // Record the entry BEFORE the declare is erased.  If
+            // ``replaceStructArg`` bails out (dangling users on the
+            // old declare), the entry still describes the intended
+            // recipe — but the SDFG won't carry the flat members so
+            // the emitter will just skip it downstream.
+            std::string intentStr = extractIntent(p.argDecl.getFortranAttrs());
+            recordStructArgEntry(p.argDecl, p.rec, intentStr);
+            replaceStructArg(func, idx, p.argDecl, p.rec);
         }
         return true;
     }

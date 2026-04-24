@@ -149,15 +149,24 @@ class FlattenPlan:
     """
     entries: Tuple[FlattenEntry, ...] = field(default_factory=tuple)
 
+    def to_dict(self) -> dict:
+        return {'entries': [e.to_dict() for e in self.entries]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'FlattenPlan':
+        """Rehydrate a plan from a plain dict — used by the bridge,
+        which returns the MLIR-side ``hlfir.flatten_plan`` attribute as
+        a nested dict of the same shape."""
+        return cls(entries=tuple(FlattenEntry.from_dict(e) for e in d.get('entries', [])))
+
     def to_json(self, path: str) -> None:
         with open(path, 'w') as fh:
-            json.dump({'entries': [e.to_dict() for e in self.entries]}, fh, indent=2)
+            json.dump(self.to_dict(), fh, indent=2)
 
     @classmethod
     def from_json(cls, path: str) -> 'FlattenPlan':
         with open(path) as fh:
-            d = json.load(fh)
-        return cls(entries=tuple(FlattenEntry.from_dict(e) for e in d.get('entries', [])))
+            return cls.from_dict(json.load(fh))
 
 
 # ---------------------------------------------------------------------------
