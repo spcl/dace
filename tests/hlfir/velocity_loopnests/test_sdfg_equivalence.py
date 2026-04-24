@@ -187,14 +187,44 @@ def _sdfg_call_args(sdfg, int_values: dict) -> dict:
 
 
 def test_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
-    """z_v_grad_w = z_v_grad_w*gradh(jk) + vn_ie*(...) + z_vt_ie*(...)
+    """z_v_grad_w = z_v_grad_w*gradh(jk) + vn_ie*(...) + z_vt_ie*(...)"""
+    bundle = _HERE / "loopnest_3.f90"
+    flat_src = _extract_flat_kernel(bundle)
+    ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_3")
+    sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_3")
 
-    Gated xfail: the nested Fortran expression
-    ``vn_ie * (vn_ie*invr(jk) - ft_e)`` surfaces as a ``?`` in our
-    tasklet body — buildExpr doesn't yet handle the parenthesised
-    subexpression.  Frontend gap, not a layout issue."""
-    pytest.xfail("buildExpr returns '?' for nested mul/sub subexpressions "
-                 "in loopnest 3 (see generated tasklet: '_in_vn_ie_0 * ?')")
+    rng = np.random.default_rng(3)
+    nproma, nlev, nblks_e = 32, 16, 8
+
+    def _f(shape):
+        return np.asfortranarray(rng.random(shape, dtype=np.float64))
+
+    vn_ie = _f((nproma, nlev, nblks_e))
+    z_vt_ie = _f((nproma, nlev, nblks_e))
+    ft_e = _f((nproma, nblks_e))
+    fn_e = _f((nproma, nblks_e))
+    gradh = _f((nlev, ))
+    invr = _f((nlev, ))
+    z_init = _f((nproma, nlev, nblks_e))
+    z_ref = np.array(z_init, order="F")
+    z_sdfg = np.array(z_init, order="F")
+
+    ref.kernel_flat(vn_ie, z_vt_ie, ft_e, fn_e, gradh, invr, z_ref, 1, nblks_e, 1, nproma)
+
+    kw = dict(vn_ie=vn_ie,
+              z_vt_ie=z_vt_ie,
+              ft_e=ft_e,
+              fn_e=fn_e,
+              gradh=gradh,
+              invr=invr,
+              z_v_grad_w=z_sdfg,
+              nproma=nproma,
+              nlev=nlev,
+              nblks_e=nblks_e)
+    kw.update(_sdfg_call_args(sdfg, dict(i_startblk=1, i_endblk=nblks_e, i_startidx=1, i_endidx=nproma)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(z_sdfg, z_ref, atol=1e-12, rtol=0)
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +235,14 @@ def test_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
 def test_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
     """vn_ie(je,1,jb) = vn(je,1,jb); vn_ie(je,nlevp1,jb) = weighted sum
 
-    Gated xfail: ``z_kin_hor_e = 0.5 * (vn**2 + vt**2)`` surfaces as
-    ``_out_z_kin_hor_e = (0.5 * ?)`` — buildExpr doesn't yet handle
-    the ``(a**2 + b**2)`` subexpression.  Frontend gap."""
-    pytest.xfail("buildExpr returns '?' for (vn**2 + vt**2) in loopnest 5")
+    Separate frontend gap from the ``**`` work just landed: literal
+    integer indices (``vn(je, 1, jb)``) fall through buildIndexExpr's
+    resolveIndex path and surface as ``?`` in the memlet subset, so
+    the SDFG picks up ``?`` as a free symbol.  Tracked alongside the
+    ``(vn**2 + vt**2)`` lowering which now works correctly."""
+    pytest.xfail("literal integer index (vn(je, 1, jb)) yields '?' in "
+                 "memlet subset; separate from math.fpowi handling "
+                 "which is now wired")
 
 
 # ---------------------------------------------------------------------------

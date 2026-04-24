@@ -173,8 +173,31 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
              + buildExpr(def->getOperand(0), d + 1) + ")";
     }
 
+    // Exponentiation ``a ** b``.  Flang's four variants
+    // (``math.fpowi`` float**int, ``math.powf`` float**float,
+    // ``math.powi`` / ``math.ipowi`` int**int) all surface as the
+    // Python ``**`` operator.  A downstream SDFG-level simplify pass
+    // recognises ``**`` and rewrites it based on the tasklet's
+    // input/output types — no variant marker needed at this layer.
+    static const std::set<llvm::StringRef> pow_ops = {
+        "math.fpowi", "math.powf", "math.powi", "math.ipowi",
+    };
+    if (pow_ops.count(nm) && def->getNumOperands() == 2) {
+        return "(" + buildExpr(def->getOperand(0), d + 1)
+             + " ** "
+             + buildExpr(def->getOperand(1), d + 1) + ")";
+    }
+
+    // ``hlfir.no_reassoc`` is a transparency wrapper Flang emits around
+    // parenthesised subexpressions to prevent the optimizer from
+    // reassociating them across ``**`` / ``+`` boundaries.  For our
+    // purposes it's a passthrough — recurse into its single operand so
+    // we don't strand ``pow`` / ``addf`` results as ``?``.
+    if (nm == "hlfir.no_reassoc" && def->getNumOperands() == 1) {
+        return buildExpr(def->getOperand(0), d + 1);
+    }
+
     static const std::map<llvm::StringRef, std::string> binary_math = {
-        {"math.powf",  "pow"}, {"math.ipowi", "pow"},
         {"math.atan2", "atan2"},
     };
     if (auto it = binary_math.find(nm); it != binary_math.end()
