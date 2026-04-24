@@ -14,6 +14,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Set, Tuple
 
+from dace.cli.progress import optional_progressbar
 from dace import data
 from dace.data.pydata import PythonClass
 from dace.memlet import Memlet
@@ -126,7 +127,8 @@ def _build_callee_trees(scopes: List[tn.FunctionCallScope]) -> Dict[int, tn.Sche
     results: Dict[int, tn.ScheduleTreeRoot] = {}
     with ThreadPoolExecutor() as pool:
         futures = {pool.submit(_parse_callee, scope): key for key, scope in unique.items()}
-        for future in as_completed(futures):
+        completed = optional_progressbar(as_completed(futures), title='Parsing nested DaCe functions', n=len(futures))
+        for future in completed:
             results[futures[future]] = future.result()
     return results
 

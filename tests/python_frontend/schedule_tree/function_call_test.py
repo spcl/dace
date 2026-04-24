@@ -3,6 +3,7 @@
 
 import numpy as np
 import dace
+from dace.frontend.python.schedule_tree import function_inlining
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
@@ -132,6 +133,46 @@ def test_nested_calls_a_b_c():
 
     # C's inlined body should contain actual computation.
     assert len(b_calls[0].children) >= 1
+
+
+def test_function_inlining_progress_tracks_unique_callees(monkeypatch):
+    progress_calls = []
+
+    def tracking_progressbar(iterable, title=None, n=None, progress=None, time_threshold=5.0):
+        progress_calls.append({
+            'title': title,
+            'n': n,
+            'completed': 0,
+        })
+        record = progress_calls[-1]
+        for item in iterable:
+            record['completed'] += 1
+            yield item
+
+    monkeypatch.setattr(function_inlining, 'optional_progressbar', tracking_progressbar)
+
+    @dace.program
+    def callee_a(X: dace.float64[4]):
+        return X + 1
+
+    @dace.program
+    def callee_b(X: dace.float64[4]):
+        return X + 2
+
+    @dace.program
+    def caller(A: dace.float64[4]):
+        left = callee_a(A)
+        right = callee_b(A)
+        return left + right
+
+    stree = caller.to_schedule_tree()
+
+    call_scopes = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
+    assert len(call_scopes) == 2
+    assert len(progress_calls) == 1
+    assert progress_calls[0]['title'] == 'Parsing nested DaCe functions'
+    assert progress_calls[0]['n'] == 2
+    assert progress_calls[0]['completed'] == 2
 
 
 def test_call_with_materialized_args():
