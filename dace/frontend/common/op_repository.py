@@ -292,6 +292,25 @@ def infers_method_descriptor(func: Callable, classname: str, method_name: str):
 
 
 @paramdec
+def infers_method_self_descriptor(func: Callable, classname: str, method_name: str):
+    """
+    Registers descriptor inference for a method call that mutates ``self``.
+
+    The function receives ``(self_descriptor, *args, **kwargs)`` where
+    *self_descriptor* is the :class:`dace.data.Data` descriptor of the
+    object the method is called on.  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors,
+    or ``None``.
+
+    :param func: The inference function.
+    :param classname: Data-descriptor class name (e.g. ``'Array'``).
+    :param method_name: Method name (e.g. ``'sum'``).
+    """
+    Replacements._dtype_method_self_rep[(classname, method_name)] = func
+    return func
+
+
+@paramdec
 def infers_attribute_descriptor(func: Callable, classname: str, attr_name: str):
     """
     Registers descriptor inference for an attribute access (e.g. ``a.T``).
