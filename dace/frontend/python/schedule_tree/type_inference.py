@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIter
 
 from dace import data, dtypes, symbolic, subsets
 from dace.data.pydata import PythonClass, PythonDict, PythonList, PythonTuple
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.array_literal_support import infer_array_literal_descriptor
 from dace.frontend.python.schedule_tree.dict_support import DictSupportContext, DictSupportLibrary, StaticDictBinding
@@ -38,6 +39,69 @@ def _clone_descriptor(descriptor: data.Data) -> data.Data:
 def _clone_binding(binding: _Binding) -> _Binding:
     descriptor = _clone_descriptor(binding.descriptor) if binding.descriptor is not None else None
     return _Binding(descriptor=descriptor, kind=binding.kind, structure=copy.deepcopy(binding.structure))
+
+
+def _normalize_inferred_structure(result: Any) -> Optional[Any]:
+    if isinstance(result, data.Data):
+        descriptor = _clone_descriptor(result)
+        descriptor.transient = True
+        return descriptor
+    if isinstance(result, tuple):
+        elements = []
+        for element in result:
+            normalized = _normalize_inferred_structure(element)
+            if normalized is None and element is not None:
+                return None
+            elements.append(normalized)
+        return tuple(elements)
+    if isinstance(result, list):
+        elements = []
+        for element in result:
+            normalized = _normalize_inferred_structure(element)
+            if normalized is None and element is not None:
+                return None
+            elements.append(normalized)
+        return elements
+    return None
+
+
+def _binding_from_inference_result(result: Any) -> Optional[_Binding]:
+    if result is None:
+        return None
+
+    if isinstance(result, data.Data):
+        descriptor = _clone_descriptor(result)
+        descriptor.transient = True
+        kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
+        structure = descriptor if isinstance(descriptor, data.Scalar) else None
+        return _Binding(descriptor=descriptor, kind=kind, structure=structure)
+
+    structure = _normalize_inferred_structure(result)
+    if structure is None:
+        return None
+    if isinstance(structure, (tuple, list)) and len(structure) == 0:
+        return _Binding(descriptor=None, kind='value', structure=structure)
+
+    descriptor = descriptor_from_structure(structure)
+    if descriptor is None:
+        return None
+    descriptor.transient = True
+    return _Binding(descriptor=descriptor, kind='container', structure=structure)
+
+
+def _resolve_ufunc_inference_target(node: ast.Call, env: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    func_value = try_resolve_static_value(node.func, env)
+    if isinstance(func_value, np.ufunc):
+        return 'ufunc', func_value.__name__
+
+    if not isinstance(node.func, ast.Attribute):
+        return None
+
+    owner_value = try_resolve_static_value(node.func.value, env)
+    if isinstance(owner_value, np.ufunc) and node.func.attr in {'reduce', 'accumulate', 'outer'}:
+        return node.func.attr, owner_value.__name__
+
+    return None
 
 
 def _unparse(node: ast.AST) -> str:
@@ -351,6 +415,9 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
                 self._store_binding(node.target.id, scalar_descriptor)
         self.generic_visit(node)
 
+    def visit_Expr(self, node: ast.Expr) -> None:
+        self._apply_method_self_descriptor_side_effect(node.value)
+
     def visit_For(self, node: ast.For) -> None:
         self._bind_loop_target(node.target)
         for stmt in node.body:
@@ -513,6 +580,10 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             descriptor = self.dict_support.infer_literal_descriptor(self._dict_support_context(), value)
             structure = self.dict_support.infer_literal_binding(self._dict_support_context(), value)
             return _Binding(descriptor=descriptor, kind='container', structure=structure)
+
+        replacement_binding = self._try_replacement_binding_inference(value)
+        if replacement_binding is not None:
+            return replacement_binding
 
         inferred_descriptor = self._infer_descriptor(value)
         if inferred_descriptor is not None:
@@ -880,6 +951,91 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return _clone_descriptor(binding.descriptor)
         return self._infer_descriptor(node)
 
+    def _infer_operator_operand(self, node: ast.AST) -> Optional[Any]:
+        binding = self._resolve_binding(node)
+        if binding is not None and binding.descriptor is not None:
+            return _clone_descriptor(binding.descriptor)
+
+        descriptor = self._infer_descriptor(node)
+        if descriptor is not None:
+            return descriptor
+
+        value = try_resolve_static_value(node, self._evaluation_context())
+        if value is not UNRESOLVED:
+            return value
+
+        return self._infer_scalar_descriptor(node, None)
+
+    def _infer_binop_descriptor(self, node: ast.BinOp) -> Optional[data.Data]:
+        left_operand = self._infer_operator_operand(node.left)
+        right_operand = self._infer_operator_operand(node.right)
+        if left_operand is None or right_operand is None:
+            return None
+
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+            type(node.op).__name__, left_operand, right_operand)
+        if infer_fn is None:
+            return None
+        try:
+            return infer_fn(left_operand, right_operand)
+        except Exception:
+            return None
+
+    def _infer_unaryop_descriptor(self, node: ast.UnaryOp) -> Optional[data.Data]:
+        operand = self._infer_operator_operand(node.operand)
+        if operand is None:
+            return None
+
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(type(node.op).__name__, operand)
+        if infer_fn is None:
+            return None
+        try:
+            return infer_fn(operand)
+        except Exception:
+            return None
+
+    def _infer_boolop_descriptor(self, node: ast.BoolOp) -> Optional[data.Data]:
+        if len(node.values) == 0:
+            return None
+
+        current = self._infer_operator_operand(node.values[0])
+        if current is None:
+            return None
+
+        for value in node.values[1:]:
+            next_operand = self._infer_operator_operand(value)
+            if next_operand is None:
+                return None
+            infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+                type(node.op).__name__, current, next_operand)
+            if infer_fn is None:
+                return None
+            try:
+                current = infer_fn(current, next_operand)
+            except Exception:
+                return None
+            if current is None:
+                return None
+        return current
+
+    def _infer_compare_descriptor(self, node: ast.Compare) -> Optional[data.Data]:
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            return None
+
+        left_operand = self._infer_operator_operand(node.left)
+        right_operand = self._infer_operator_operand(node.comparators[0])
+        if left_operand is None or right_operand is None:
+            return None
+
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+            type(node.ops[0]).__name__, left_operand, right_operand)
+        if infer_fn is None:
+            return None
+        try:
+            return infer_fn(left_operand, right_operand)
+        except Exception:
+            return None
+
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         if isinstance(node, ast.Dict):
             return self.dict_support.infer_literal_descriptor(self._dict_support_context(), node)
@@ -895,23 +1051,47 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             if binding is not None and binding.descriptor is not None:
                 return _clone_descriptor(binding.descriptor)
 
+        if isinstance(node, ast.BinOp):
+            inferred = self._infer_binop_descriptor(node)
+            if inferred is not None:
+                return inferred
+
+        if isinstance(node, ast.UnaryOp):
+            inferred = self._infer_unaryop_descriptor(node)
+            if inferred is not None:
+                return inferred
+
+        if isinstance(node, ast.BoolOp):
+            inferred = self._infer_boolop_descriptor(node)
+            if inferred is not None:
+                return inferred
+
+        if isinstance(node, ast.Compare):
+            inferred = self._infer_compare_descriptor(node)
+            if inferred is not None:
+                return inferred
+
         if isinstance(node, ast.Call):
             # Try the method descriptor-inference registry first (a.sum(), etc.)
             if isinstance(node.func, ast.Attribute):
                 inferred = self._try_method_descriptor_inference(node)
                 if inferred is not None:
-                    return inferred
+                    return inferred.descriptor
+
+            inferred = self._try_ufunc_descriptor_inference(node)
+            if inferred is not None:
+                return inferred.descriptor
 
             # Try the free-function descriptor-inference registry (numpy.sum(), etc.)
             inferred = self._try_descriptor_inference(node)
             if inferred is not None:
-                return inferred
+                return inferred.descriptor
 
         # Attribute inference (a.T, a.flat, a.real, a.imag, etc.)
         if isinstance(node, ast.Attribute):
             inferred = self._try_attribute_descriptor_inference(node)
             if inferred is not None:
-                return inferred
+                return inferred.descriptor
 
         return None
 
@@ -956,11 +1136,26 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return None
         return None
 
-    def _try_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:
+    def _try_replacement_binding_inference(self, node: ast.AST) -> Optional[_Binding]:
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                inferred = self._try_method_descriptor_inference(node)
+                if inferred is not None:
+                    return inferred
+            inferred = self._try_ufunc_descriptor_inference(node)
+            if inferred is not None:
+                return inferred
+            return self._try_descriptor_inference(node)
+
+        if isinstance(node, ast.Attribute):
+            return self._try_attribute_descriptor_inference(node)
+
+        return None
+
+    def _try_descriptor_inference(self, node: ast.Call) -> Optional[_Binding]:
         """Query the descriptor-inference registry for a call node."""
-        from dace.frontend.common.op_repository import Replacements
         call_name = astutils.rname(node.func)
-        infer_fn = Replacements.get_descriptor_inference(call_name)
+        infer_fn = oprepo.Replacements.get_descriptor_inference(call_name)
         if infer_fn is None:
             return None
         input_descs, args, kwargs = self._resolve_call_inputs_for_inference(node)
@@ -968,14 +1163,28 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             result = infer_fn(input_descs, *args, **kwargs)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        return _binding_from_inference_result(result)
 
-    def _try_method_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:
+    def _try_ufunc_descriptor_inference(self, node: ast.Call) -> Optional[_Binding]:
+        """Query the descriptor-inference registry for a NumPy ufunc call or ufunc method."""
+        target = _resolve_ufunc_inference_target(node, self._evaluation_context())
+        if target is None:
+            return None
+
+        method_name, ufunc_name = target
+        infer_fn = oprepo.Replacements.get_ufunc_descriptor_inference(method_name)
+        if infer_fn is None:
+            return None
+
+        input_descs, args, kwargs = self._resolve_call_inputs_for_inference(node)
+        try:
+            result = infer_fn(input_descs, ufunc_name, *args, **kwargs)
+        except Exception:
+            return None
+        return _binding_from_inference_result(result)
+
+    def _try_method_descriptor_inference(self, node: ast.Call) -> Optional[_Binding]:
         """Query the method descriptor-inference registry for ``obj.method(...)`` calls."""
-        from dace.frontend.common.op_repository import Replacements
         if not isinstance(node.func, ast.Attribute):
             return None
         # Resolve the object (e.g. ``a`` in ``a.sum()``)
@@ -985,7 +1194,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         obj_desc = obj_binding.descriptor
         classname = type(obj_desc).__name__  # 'Array', 'View', 'Scalar'
         method_name = node.func.attr
-        infer_fn = Replacements.get_method_descriptor_inference(classname, method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(classname, method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')
@@ -994,30 +1203,49 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             result = infer_fn(obj_desc, *args, **kwargs)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        return _binding_from_inference_result(result)
 
-    def _try_attribute_descriptor_inference(self, node: ast.Attribute) -> Optional[data.Data]:
+    def _apply_method_self_descriptor_side_effect(self, node: ast.AST) -> None:
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            return
+        if not isinstance(node.func.value, ast.Name):
+            return
+
+        obj_name = node.func.value.id
+        obj_binding = self.bindings.get(obj_name)
+        if obj_binding is None or obj_binding.descriptor is None:
+            return
+
+        infer_fn = oprepo.Replacements.get_method_self_descriptor_inference(
+            type(obj_binding.descriptor).__name__, node.func.attr)
+        if infer_fn is None:
+            return
+
+        _input_descs, args, kwargs = self._resolve_call_inputs_for_inference(node)
+        try:
+            updated_self = infer_fn(obj_binding.descriptor, *args, **kwargs)
+        except Exception:
+            return
+        if not isinstance(updated_self, data.Data):
+            return
+
+        self._store_binding(obj_name, updated_self, kind=obj_binding.kind)
+
+    def _try_attribute_descriptor_inference(self, node: ast.Attribute) -> Optional[_Binding]:
         """Query the attribute descriptor-inference registry for ``obj.attr`` accesses."""
-        from dace.frontend.common.op_repository import Replacements
         obj_binding = self._resolve_binding(node.value)
         if obj_binding is None or obj_binding.descriptor is None:
             return None
         obj_desc = obj_binding.descriptor
         classname = type(obj_desc).__name__
-        infer_fn = Replacements.get_attribute_descriptor_inference(classname, node.attr)
+        infer_fn = oprepo.Replacements.get_attribute_descriptor_inference(classname, node.attr)
         if infer_fn is None:
             return None
         try:
             result = infer_fn(obj_desc)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        return _binding_from_inference_result(result)
 
     def _resolve_call_inputs_for_inference(self, call_node: ast.Call) -> tuple:
         """Resolve call arguments to ``(input_descriptors, args, kwargs)``."""

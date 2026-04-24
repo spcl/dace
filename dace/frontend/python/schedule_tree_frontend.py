@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from dace import data, dtypes, symbolic, subsets
 from dace.config import Config
 from dace.data.pydata import PythonClass, PythonDict, PythonList, PythonTuple
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.array_literal_support import ArrayLiteralContext, ArrayLiteralSupportLibrary
@@ -29,7 +30,8 @@ from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPla
                                                 NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
                                                 callback_reason, desugar_schedule_tree_expansions,
                                                 promote_dynamic_scope_copies, resolve_function_calls)
-from dace.frontend.python.schedule_tree.type_inference import _infer_static_subscript_descriptor
+from dace.frontend.python.schedule_tree.type_inference import _binding_from_inference_result, \
+    _infer_static_subscript_descriptor, _resolve_ufunc_inference_target
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -523,6 +525,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                                                 value,
                                                                 materialize_root=False)
         if self._handle_expression(planned_value):
+            self._apply_method_self_descriptor_side_effect(planned_value)
             return
         if _requires_fstring_callback(planned_value):
             callback_expr = ast.copy_location(ast.Expr(value=copy.deepcopy(planned_value)), planned_value)
@@ -1615,6 +1618,83 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 result.transient = True
                 return result
 
+        def _infer_operator_operand(operand: ast.AST) -> Optional[Any]:
+            descriptor = self._infer_descriptor(operand, target_name)
+            if descriptor is not None:
+                return descriptor
+
+            value = try_resolve_static_value(operand, self._evaluation_context())
+            if value is not UNRESOLVED:
+                return value
+
+            return self._infer_scalar_descriptor(operand, None)
+
+        if isinstance(node, ast.BinOp):
+
+            left_operand = _infer_operator_operand(node.left)
+            right_operand = _infer_operator_operand(node.right)
+            if left_operand is not None and right_operand is not None:
+                infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+                    type(node.op).__name__, left_operand, right_operand)
+                if infer_fn is not None:
+                    try:
+                        inferred = infer_fn(left_operand, right_operand)
+                    except Exception:
+                        inferred = None
+                    if inferred is not None:
+                        return inferred
+
+        if isinstance(node, ast.UnaryOp):
+
+            operand = _infer_operator_operand(node.operand)
+            if operand is not None:
+                infer_fn = oprepo.Replacements.get_operator_descriptor_inference(type(node.op).__name__, operand)
+                if infer_fn is not None:
+                    try:
+                        inferred = infer_fn(operand)
+                    except Exception:
+                        inferred = None
+                    if inferred is not None:
+                        return inferred
+
+        if isinstance(node, ast.BoolOp) and len(node.values) > 0:
+
+            infer_fn = oprepo.Replacements.get_operator_descriptor_inference(type(node.op).__name__)
+            current = _infer_operator_operand(node.values[0])
+            if current is not None:
+                for value in node.values[1:]:
+                    next_operand = _infer_operator_operand(value)
+                    if current is None or next_operand is None:
+                        current = None
+                        break
+                    infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+                        type(node.op).__name__, current, next_operand)
+                    if infer_fn is None:
+                        current = None
+                        break
+                    try:
+                        current = infer_fn(current, next_operand)
+                    except Exception:
+                        current = None
+                        break
+                if current is not None:
+                    return current
+
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+
+            left_operand = _infer_operator_operand(node.left)
+            right_operand = _infer_operator_operand(node.comparators[0])
+            if left_operand is not None and right_operand is not None:
+                infer_fn = oprepo.Replacements.get_operator_descriptor_inference(
+                    type(node.ops[0]).__name__, left_operand, right_operand)
+                if infer_fn is not None:
+                    try:
+                        inferred = infer_fn(left_operand, right_operand)
+                    except Exception:
+                        inferred = None
+                    if inferred is not None:
+                        return inferred
+
         if isinstance(node, ast.Subscript):
             base_descriptor: Optional[data.Data] = None
             base_access = self._resolve_data_access(node.value)
@@ -1652,6 +1732,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 if inferred is not None:
                     return inferred
 
+            inferred = self._try_ufunc_descriptor_inference(node)
+            if inferred is not None:
+                return inferred
+
             # Try the free-function descriptor-inference registry (numpy.sum(), etc.)
             inferred = self._try_descriptor_inference(node)
             if inferred is not None:
@@ -1676,9 +1760,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _try_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:
         """Query the descriptor-inference registry for a call node."""
-        from dace.frontend.common.op_repository import Replacements
+
         call_name = self._resolved_callable_name(node.func)
-        infer_fn = Replacements.get_descriptor_inference(call_name)
+        infer_fn = oprepo.Replacements.get_descriptor_inference(call_name)
+        if infer_fn is None:
+            textual_name = astutils.rname(node.func)
+            if textual_name != call_name:
+                infer_fn = oprepo.Replacements.get_descriptor_inference(textual_name)
         if infer_fn is None:
             return None
         input_descs, args, kwargs = self._resolve_call_inputs(node)
@@ -1686,14 +1774,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             result = infer_fn(input_descs, *args, **kwargs)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        binding = _binding_from_inference_result(result)
+        return None if binding is None else binding.descriptor
 
     def _try_method_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:
         """Query the method descriptor-inference registry for ``obj.method(...)`` calls."""
-        from dace.frontend.common.op_repository import Replacements
+
         if not isinstance(node.func, ast.Attribute):
             return None
         # Resolve the object (e.g. ``a`` in ``a.sum()``)
@@ -1703,7 +1789,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         _, _, obj_desc, _ = obj_access
         classname = type(obj_desc).__name__  # 'Array', 'View', 'Scalar'
         method_name = node.func.attr
-        infer_fn = Replacements.get_method_descriptor_inference(classname, method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(classname, method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')
@@ -1712,30 +1798,75 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             result = infer_fn(obj_desc, *args, **kwargs)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        binding = _binding_from_inference_result(result)
+        return None if binding is None else binding.descriptor
+
+    def _apply_method_self_descriptor_side_effect(self, node: ast.AST) -> None:
+
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            return
+        if not isinstance(node.func.value, ast.Name):
+            return
+
+        obj_name = node.func.value.id
+        obj_access = self._resolve_data_access(node.func.value)
+        if obj_access is None:
+            return
+        _, _, obj_desc, _ = obj_access
+
+        infer_fn = oprepo.Replacements.get_method_self_descriptor_inference(type(obj_desc).__name__, node.func.attr)
+        if infer_fn is None:
+            return
+
+        _input_descs, args, kwargs = self._resolve_call_inputs(node)
+        try:
+            updated_self = infer_fn(obj_desc, *args, **kwargs)
+        except Exception:
+            return
+        if not isinstance(updated_self, data.Data):
+            return
+
+        kind = self.bindings.get(obj_name).kind if obj_name in self.bindings else _binding_kind_for_descriptor(
+            updated_self)
+        self._store_binding(obj_name, updated_self, kind=kind)
 
     def _try_attribute_descriptor_inference(self, node: ast.Attribute) -> Optional[data.Data]:
         """Query the attribute descriptor-inference registry for ``obj.attr`` accesses."""
-        from dace.frontend.common.op_repository import Replacements
+
         obj_access = self._resolve_data_access(node.value)
         if obj_access is None:
             return None
         _, _, obj_desc, _ = obj_access
         classname = type(obj_desc).__name__
-        infer_fn = Replacements.get_attribute_descriptor_inference(classname, node.attr)
+        infer_fn = oprepo.Replacements.get_attribute_descriptor_inference(classname, node.attr)
         if infer_fn is None:
             return None
         try:
             result = infer_fn(obj_desc)
         except Exception:
             return None
-        if result is not None:
-            result = _clone_descriptor(result)
-            result.transient = True
-        return result
+        binding = _binding_from_inference_result(result)
+        return None if binding is None else binding.descriptor
+
+    def _try_ufunc_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:
+        """Query the descriptor-inference registry for a NumPy ufunc call or ufunc method."""
+
+        target = _resolve_ufunc_inference_target(node, self._evaluation_context())
+        if target is None:
+            return None
+
+        method_name, ufunc_name = target
+        infer_fn = oprepo.Replacements.get_ufunc_descriptor_inference(method_name)
+        if infer_fn is None:
+            return None
+
+        input_descs, args, kwargs = self._resolve_call_inputs(node)
+        try:
+            result = infer_fn(input_descs, ufunc_name, *args, **kwargs)
+        except Exception:
+            return None
+        binding = _binding_from_inference_result(result)
+        return None if binding is None else binding.descriptor
 
     def _resolve_call_inputs(self, call_node: ast.Call) -> tuple:
         """Resolve call arguments to ``(input_descriptors, args, kwargs)``."""
@@ -2147,7 +2278,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return symbol_value
 
     def _library_info_for_call(self, node: ast.Call) -> Optional[Tuple[str, Dict[str, Any]]]:
-        from dace.frontend.common.op_repository import Replacements
 
         call_name = self._resolved_callable_name(node.func)
         if call_name in _INTERNAL_ITERATOR_HELPERS or call_name in {'range', 'prange', 'parrange'}:
@@ -2158,27 +2288,27 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if obj_access is not None:
                 _, _, obj_desc, _ = obj_access
                 classname = type(obj_desc).__name__
-                if (Replacements.get_method(classname, node.func.attr) is not None
-                        or Replacements.get_method_descriptor_inference(classname, node.func.attr) is not None):
+                if (oprepo.Replacements.get_method(classname, node.func.attr) is not None
+                        or oprepo.Replacements.get_method_descriptor_inference(classname, node.func.attr) is not None):
                     properties = self._library_properties(node)
                     properties['receiver_class'] = classname
                     properties['access_kind'] = 'method'
                     return (node.func.attr, properties)
 
-        if Replacements.get(call_name) is None and Replacements.get_descriptor_inference(call_name) is None:
+        if oprepo.Replacements.get(call_name) is None and oprepo.Replacements.get_descriptor_inference(
+                call_name) is None:
             return None
         return (call_name, self._library_properties(node))
 
     def _library_info_for_attribute(self, node: ast.Attribute) -> Optional[Tuple[str, Dict[str, Any]]]:
-        from dace.frontend.common.op_repository import Replacements
 
         obj_access = self._resolve_data_access(node.value)
         if obj_access is None:
             return None
         _, _, obj_desc, _ = obj_access
         classname = type(obj_desc).__name__
-        if (Replacements.get_attribute(classname, node.attr) is None
-                and Replacements.get_attribute_descriptor_inference(classname, node.attr) is None):
+        if (oprepo.Replacements.get_attribute(classname, node.attr) is None
+                and oprepo.Replacements.get_attribute_descriptor_inference(classname, node.attr) is None):
             return None
         return (node.attr, {'receiver_class': classname, 'access_kind': 'attribute'})
 

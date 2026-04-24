@@ -1,9 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
+from numbers import Number
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+
+import numpy as np
+
+from dace import symbolic
 from dace.dtypes import paramdec, deduplicate
 
 MethodType = Callable[..., Tuple[str]]
+_INFERENCE_MISSING = object()
 
 
 def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
@@ -35,8 +41,10 @@ class Replacements(object):
     _attr_rep: Dict[Tuple[str, str], MethodType] = {}
     _dtype_rep: Dict[str, Callable] = {}  # Lightweight descriptor inference (free functions)
     _dtype_method_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, method) -> fn(self_desc, *a, **kw)
+    _dtype_method_self_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, method) -> fn(self_desc, *a, **kw)
     _dtype_attr_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, attr) -> fn(self_desc)
-    _dtype_op_rep: Dict[str, Callable] = {}  # optype -> fn(left_desc, right_desc)
+    _dtype_ufunc_rep: Dict[str, Callable] = {}  # ufunc method -> fn(input_descs, ufunc_name, *a, **kw)
+    _dtype_op_rep: Dict[Tuple[Optional[str], Optional[str], str], Callable] = {}
 
     @staticmethod
     def get(name: str):
@@ -101,6 +109,14 @@ class Replacements(object):
         return None
 
     @staticmethod
+    def get_method_self_descriptor_inference(class_or_name: Union[str, Type], method_name: str):
+        """Returns a self-mutating inference function for a method call, or None."""
+        for classname in _get_all_bases(class_or_name):
+            if (classname, method_name) in Replacements._dtype_method_self_rep:
+                return Replacements._dtype_method_self_rep[(classname, method_name)]
+        return None
+
+    @staticmethod
     def get_attribute_descriptor_inference(class_or_name: Union[str, Type], attr_name: str):
         """Returns a descriptor-inference function for an attribute access, or None."""
         for classname in _get_all_bases(class_or_name):
@@ -108,10 +124,50 @@ class Replacements(object):
                 return Replacements._dtype_attr_rep[(classname, attr_name)]
         return None
 
+    def get_ufunc_descriptor_inference(ufunc_method: Optional[str] = None):
+        """Returns a descriptor-inference function for a NumPy ufunc call or method, or None."""
+        key = ufunc_method or 'ufunc'
+        return Replacements._dtype_ufunc_rep.get(key, None)
+
     @staticmethod
-    def get_operator_descriptor_inference(optype: str):
+    def get_operator_descriptor_inference(optype: str,
+                                          left_operand: Any = _INFERENCE_MISSING,
+                                          right_operand: Any = _INFERENCE_MISSING):
         """Returns a descriptor-inference function for an operator, or None."""
-        return Replacements._dtype_op_rep.get(optype, None)
+        if left_operand is _INFERENCE_MISSING and right_operand is _INFERENCE_MISSING:
+            return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+        left_types = _get_inference_operand_types(left_operand)
+        if right_operand is _INFERENCE_MISSING:
+            for left_type in left_types:
+                if (left_type, None, optype) in Replacements._dtype_op_rep:
+                    return Replacements._dtype_op_rep[(left_type, None, optype)]
+            return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+        right_types = _get_inference_operand_types(right_operand)
+        for left_type, right_type in itertools.product(left_types, right_types):
+            if (left_type, right_type, optype) in Replacements._dtype_op_rep:
+                return Replacements._dtype_op_rep[(left_type, right_type, optype)]
+
+        return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+
+def _get_inference_operand_types(operand: Any) -> List[Optional[str]]:
+    if operand is _INFERENCE_MISSING:
+        return [None]
+    if isinstance(operand, (bool, np.bool_)):
+        return ['BoolConstant']
+    if isinstance(operand, Number):
+        return ['NumConstant']
+    if symbolic.issymbolic(operand):
+        return ['symbol']
+    if isinstance(operand, list):
+        return ['ListLiteral']
+    if isinstance(operand, tuple):
+        return ['TupleLiteral']
+    if isinstance(operand, str):
+        return ['StringLiteral']
+    return _get_all_bases(type(operand))
 
 
 @paramdec
@@ -203,9 +259,11 @@ def infers_descriptor(func: Callable, name: str):
     *input_descriptors* maps array-argument names to their
     :class:`dace.data.Data` descriptors and the remaining arguments are
     compile-time values (numbers, symbolic expressions, strings, or
-    ``None`` when static evaluation failed).  It must return a
-    :class:`dace.data.Data` descriptor for the call result, or ``None``
-    if inference is not possible.
+    ``None`` when static evaluation failed).  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors
+    for structured multi-result calls, or ``None`` if inference is not
+    possible. Empty tuples or lists denote a successful zero-output
+    inference.
 
     :param func: The inference function.
     :param name: Fully-qualified function name (e.g. ``'numpy.sum'``).
@@ -221,8 +279,9 @@ def infers_method_descriptor(func: Callable, classname: str, method_name: str):
 
     The function receives ``(self_descriptor, *args, **kwargs)`` where
     *self_descriptor* is the :class:`dace.data.Data` descriptor of the
-    object the method is called on.  Returns a :class:`dace.data.Data`
-    descriptor for the result, or ``None``.
+    object the method is called on.  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors,
+    or ``None``.
 
     :param func: The inference function.
     :param classname: Data-descriptor class name (e.g. ``'Array'``).
@@ -237,8 +296,9 @@ def infers_attribute_descriptor(func: Callable, classname: str, attr_name: str):
     """
     Registers descriptor inference for an attribute access (e.g. ``a.T``).
 
-    The function receives ``(self_descriptor,)`` and returns a
-    :class:`dace.data.Data` descriptor for the result, or ``None``.
+    The function receives ``(self_descriptor,)`` and returns either a
+    single :class:`dace.data.Data` descriptor, a tuple or list of
+    descriptors, or ``None``.
 
     :param func: The inference function.
     :param classname: Data-descriptor class name (e.g. ``'Array'``).
@@ -249,16 +309,36 @@ def infers_attribute_descriptor(func: Callable, classname: str, attr_name: str):
 
 
 @paramdec
-def infers_operator_descriptor(func: Callable, optype: str):
+def infers_ufunc_descriptor(func: Callable, name: str):
     """
-    Registers descriptor inference for a binary operator (e.g. ``A @ B``).
+    Registers lightweight descriptor inference for a NumPy ufunc call or ufunc method.
 
-    The function receives ``(left_descriptor, right_descriptor)`` and
-    returns a :class:`dace.data.Data` descriptor for the result, or
-    ``None``.
+    The function receives ``(input_descriptors, ufunc_name, *args, **kwargs)`` and may return a
+    single :class:`dace.data.Data` descriptor, a tuple or list of descriptors, or ``None``.
+
+    :param func: The inference function.
+    :param name: ``'ufunc'`` for a direct ufunc call or the ufunc method name, such as ``'reduce'``.
+    """
+    Replacements._dtype_ufunc_rep[name] = func
+    return func
+
+
+@paramdec
+def infers_operator_descriptor(func: Callable,
+                               optype: str,
+                               classname: Optional[str] = None,
+                               otherclass: Optional[str] = None):
+    """
+    Registers descriptor inference for an operator (e.g. ``A @ B`` or ``-A``).
+
+    The function receives one or more operand descriptors, depending on
+    the AST operator form being inferred, and returns a
+    :class:`dace.data.Data` descriptor for the result, or ``None``.
 
     :param func: The inference function.
     :param optype: AST operator name (e.g. ``'MatMult'``).
+    :param classname: Optional left operand category name.
+    :param otherclass: Optional right operand category name.
     """
-    Replacements._dtype_op_rep[optype] = func
+    Replacements._dtype_op_rep[(classname, otherclass, optype)] = func
     return func

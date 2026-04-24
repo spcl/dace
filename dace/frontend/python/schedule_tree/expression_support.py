@@ -71,6 +71,7 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 
 from dace import data, dtypes
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.replacements.utils import broadcast_together
 from dace.memlet import Memlet
@@ -354,8 +355,7 @@ class _OperatorAssignmentPass:
         if left_descriptor is None or right_descriptor is None:
             return None
 
-        from dace.frontend.common.op_repository import Replacements
-        infer_fn = Replacements.get_operator_descriptor_inference(registry_name)
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(registry_name)
         if infer_fn is not None:
             try:
                 result = infer_fn(left_descriptor, right_descriptor)
