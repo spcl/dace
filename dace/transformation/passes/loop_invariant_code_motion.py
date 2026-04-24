@@ -761,7 +761,9 @@ def _hoist_tasklet_out_of_map(
 
 def _prune_unused_map_connectors(state: SDFGState, me: nodes.MapEntry) -> None:
     # Find IN_x connectors whose OUT_x has no outgoing edges to scope; drop
-    # the pair + the outer feeding edge.
+    # the pair + the outer feeding edge. Any AccessNodes that become isolated
+    # after the cut are removed too.
+    freed_sources: List[nodes.Node] = []
     for in_conn in list(me.in_connectors.keys()):
         if not in_conn.startswith("IN_"):
             continue
@@ -771,10 +773,17 @@ def _prune_unused_map_connectors(state: SDFGState, me: nodes.MapEntry) -> None:
             continue
         # No internal consumer — remove outer feed and connector pair.
         for oe in list(state.in_edges_by_connector(me, in_conn)):
+            freed_sources.append(oe.src)
             state.remove_edge(oe)
         me.remove_in_connector(in_conn)
         if out_conn in me.out_connectors:
             me.remove_out_connector(out_conn)
+
+    # Remove any now-isolated outer AccessNodes that were feeding the pruned
+    # connector. AccessNodes with other uses stay.
+    for src in freed_sources:
+        if src in state.nodes() and state.degree(src) == 0 and isinstance(src, nodes.AccessNode):
+            state.remove_node(src)
 
 
 def _route_into_scope(

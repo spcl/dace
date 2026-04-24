@@ -135,6 +135,11 @@ def test_invariant_load_without_inloop_writer_is_hoisted():
     hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
     sdfg.validate()
     assert hoisted == 1
+    assert "id" not in {t.label for t in _state_tasklets(body)}
+    preheaders = _preheaders(sdfg, loop)
+    assert len(preheaders) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("id")
+               for n in preheaders[0].nodes())
 
     def py_ref(A, outp, N):
         for i in range(N):
@@ -220,6 +225,11 @@ def test_transitive_chain_is_hoisted():
     assert "add_u" not in body_labels
     assert "mul_v" not in body_labels
     assert hoisted >= 2
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    pre_labels = {n.label for n in pre[0].nodes() if isinstance(n, nodes.Tasklet)}
+    assert any(lbl.startswith("add_u") for lbl in pre_labels)
+    assert any(lbl.startswith("mul_v") for lbl in pre_labels)
 
     def py_ref(a, b, c, outp, N):
         u = a[0] + b[0]
@@ -340,6 +350,9 @@ def test_wcr_output_is_not_hoisted():
     hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
     sdfg.validate()
     assert not hoisted
+    # WCR tasklet stays in the body, no preheader was created.
+    assert any(tt.label == "inc" for tt in _state_tasklets(body))
+    assert len(_preheaders(sdfg, loop)) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +380,8 @@ def test_loop_index_dependent_load_not_hoisted():
     hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
     sdfg.validate()
     assert not hoisted
+    assert any(tt.label == "id" for tt in _state_tasklets(body))
+    assert len(_preheaders(sdfg, loop)) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +553,509 @@ def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
     _run_and_check(sdfg, py_ref,
                    a=np.zeros(5), b=rng.normal(size=5), c=rng.normal(size=5),
                    N=5, K=2)
+
+
+# ---------------------------------------------------------------------------
+# Numpy ports of canonical LLVM `llvm/test/Transforms/LICM/*.ll` tests.
+# (LLVM aliasing-focused tests are deliberately omitted — DaCe assumes
+# non-aliasing inputs.)
+# ---------------------------------------------------------------------------
+
+
+def test_llvm_basictest_scalar_times_literal_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/basictest.ll``:
+    ``for j in range(N): out[j] = c * 17`` — ``c * 17`` is loop-invariant
+    (depends only on a scalar argument) and must be hoisted to the preheader.
+    """
+    sdfg = dace.SDFG("licm_llvm_basictest")
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    cr = body.add_read("c")
+    tw = body.add_tasklet("mul17", {"x"}, {"y"}, "y = x * 17.0")
+    tnode = body.add_access("t")
+    body.add_edge(cr, None, tw, "x", mm.Memlet("c[0]"))
+    body.add_edge(tw, "y", tnode, None, mm.Memlet("t[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(tnode, None, cpy, "ti", mm.Memlet("t[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "mul17" not in {t.label for t in _state_tasklets(body)}
+    assert len(_preheaders(sdfg, loop)) == 1
+
+    def py_ref(c, outp, N):
+        for j in range(N):
+            outp[j] = c[0] * 17.0
+
+    _run_and_check(sdfg, py_ref,
+                   c=np.array([3.5]), outp=np.zeros(6), N=6)
+
+
+def test_llvm_hoist_binop_chain_both_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/hoist-binop.ll``:
+    two chained binary ops whose operands are all loop-invariant should both
+    be hoisted. Body: ``u = a * b; v = u + c; out[j] = v``.
+    """
+    sdfg = dace.SDFG("licm_llvm_hoist_binop")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("u", [1], dace.float64)
+    sdfg.add_transient("v", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    ar = body.add_read("a")
+    br = body.add_read("b")
+    cr = body.add_read("c")
+    mul = body.add_tasklet("mul_u", {"x", "y"}, {"r"}, "r = x * y")
+    u = body.add_access("u")
+    body.add_edge(ar, None, mul, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, mul, "y", mm.Memlet("b[0]"))
+    body.add_edge(mul, "r", u, None, mm.Memlet("u[0]"))
+
+    add = body.add_tasklet("add_v", {"x", "y"}, {"r"}, "r = x + y")
+    v = body.add_access("v")
+    body.add_edge(u, None, add, "x", mm.Memlet("u[0]"))
+    body.add_edge(cr, None, add, "y", mm.Memlet("c[0]"))
+    body.add_edge(add, "r", v, None, mm.Memlet("v[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(v, None, cpy, "ti", mm.Memlet("v[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    body_labels = {t.label for t in _state_tasklets(body)}
+    assert "mul_u" not in body_labels
+    assert "add_v" not in body_labels
+    assert hoisted >= 2
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    pre_labels = {n.label for n in pre[0].nodes() if isinstance(n, nodes.Tasklet)}
+    assert any(lbl.startswith("mul_u") for lbl in pre_labels)
+    assert any(lbl.startswith("add_v") for lbl in pre_labels)
+
+    def py_ref(a, b, c, outp, N):
+        u = a[0] * b[0]
+        v = u + c[0]
+        for j in range(N):
+            outp[j] = v
+
+    _run_and_check(sdfg, py_ref,
+                   a=np.array([2.0]), b=np.array([3.0]), c=np.array([1.5]),
+                   outp=np.zeros(5), N=5)
+
+
+def test_llvm_mustexec_unconditional_load_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/hoist-mustexec.ll``:
+    an invariant load in the loop's unconditionally-executed start block is
+    hoisted. The key property is execution guarantee, not just value
+    invariance.
+    """
+    sdfg = dace.SDFG("licm_llvm_mustexec")
+    sdfg.add_array("p", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("loaded", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "k", "N")
+    body = loop.add_state("body", is_start_block=True)
+    pr = body.add_read("p")
+    ld = body.add_tasklet("load", {"x"}, {"y"}, "y = x")
+    lnode = body.add_access("loaded")
+    body.add_edge(pr, None, ld, "x", mm.Memlet("p[0]"))
+    body.add_edge(ld, "y", lnode, None, mm.Memlet("loaded[0]"))
+
+    ow = body.add_write("outp")
+    use = body.add_tasklet("use", {"v"}, {"o"}, "o = v + 1.0")
+    body.add_edge(lnode, None, use, "v", mm.Memlet("loaded[0]"))
+    body.add_edge(use, "o", ow, None, mm.Memlet("outp[k]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "load" not in {t.label for t in _state_tasklets(body)}
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load")
+               for n in pre[0].nodes())
+
+    def py_ref(p, outp, N):
+        loaded = p[0]
+        for k in range(N):
+            outp[k] = loaded + 1.0
+
+    _run_and_check(sdfg, py_ref,
+                   p=np.array([2.25]), outp=np.zeros(4), N=4)
+
+
+def test_llvm_hoist_add_sub_chain_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/hoist-add-sub.ll``:
+    ``for j: out[j] = a + b - c`` — the add-then-sub chain is hoisted.
+    """
+    sdfg = dace.SDFG("licm_llvm_add_sub")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("u", [1], dace.float64)
+    sdfg.add_transient("v", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    ar = body.add_read("a")
+    br = body.add_read("b")
+    cr = body.add_read("c")
+    add = body.add_tasklet("add", {"x", "y"}, {"r"}, "r = x + y")
+    u = body.add_access("u")
+    body.add_edge(ar, None, add, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, add, "y", mm.Memlet("b[0]"))
+    body.add_edge(add, "r", u, None, mm.Memlet("u[0]"))
+
+    sub = body.add_tasklet("sub", {"x", "y"}, {"r"}, "r = x - y")
+    v = body.add_access("v")
+    body.add_edge(u, None, sub, "x", mm.Memlet("u[0]"))
+    body.add_edge(cr, None, sub, "y", mm.Memlet("c[0]"))
+    body.add_edge(sub, "r", v, None, mm.Memlet("v[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(v, None, cpy, "ti", mm.Memlet("v[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted >= 2
+    body_labels = {t.label for t in _state_tasklets(body)}
+    assert "add" not in body_labels and "sub" not in body_labels
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    pre_labels = {n.label for n in pre[0].nodes() if isinstance(n, nodes.Tasklet)}
+    assert any(lbl.startswith("add") for lbl in pre_labels)
+    assert any(lbl.startswith("sub") for lbl in pre_labels)
+
+    def py_ref(a, b, c, outp, N):
+        v = a[0] + b[0] - c[0]
+        for j in range(N):
+            outp[j] = v
+
+    _run_and_check(sdfg, py_ref,
+                   a=np.array([5.0]), b=np.array([2.0]), c=np.array([1.5]),
+                   outp=np.zeros(5), N=5)
+
+
+def test_llvm_hoist_fast_fdiv_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/hoist-fast-fdiv.ll``:
+    invariant floating-point division ``a / b`` in the loop body is hoisted.
+    (Non-trapping fp is an agreed assumption of this pass.)
+    """
+    sdfg = dace.SDFG("licm_llvm_fdiv")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("q", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    ar = body.add_read("a")
+    br = body.add_read("b")
+    div = body.add_tasklet("fdiv", {"x", "y"}, {"r"}, "r = x / y")
+    q = body.add_access("q")
+    body.add_edge(ar, None, div, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, div, "y", mm.Memlet("b[0]"))
+    body.add_edge(div, "r", q, None, mm.Memlet("q[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(q, None, cpy, "ti", mm.Memlet("q[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "fdiv" not in {t.label for t in _state_tasklets(body)}
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("fdiv")
+               for n in pre[0].nodes())
+
+    def py_ref(a, b, outp, N):
+        q = a[0] / b[0]
+        for j in range(N):
+            outp[j] = q
+
+    _run_and_check(sdfg, py_ref,
+                   a=np.array([7.0]), b=np.array([2.0]),
+                   outp=np.zeros(5), N=5)
+
+
+def test_llvm_call_hoisting_pure_math_call_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/call-hoisting.ll``:
+    an invariant pure call such as ``math.sin(x)`` is hoisted.
+    """
+    sdfg = dace.SDFG("licm_llvm_call")
+    sdfg.add_array("x", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("s", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    xr = body.add_read("x")
+    t = body.add_tasklet("sine", {"v"}, {"r"}, "r = math.sin(v)")
+    s = body.add_access("s")
+    body.add_edge(xr, None, t, "v", mm.Memlet("x[0]"))
+    body.add_edge(t, "r", s, None, mm.Memlet("s[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(s, None, cpy, "ti", mm.Memlet("s[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "sine" not in {t.label for t in _state_tasklets(body)}
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("sine")
+               for n in pre[0].nodes())
+
+    def py_ref(x, outp, N):
+        s = math.sin(x[0])
+        for j in range(N):
+            outp[j] = s
+
+    _run_and_check(sdfg, py_ref,
+                   x=np.array([0.75]), outp=np.zeros(5), N=5)
+
+
+def test_llvm_expr_reassociate_four_operand_chain_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/expr-reassociate.ll``:
+    a four-operand invariant chain ``((a + b) + c) + d`` hoists in full
+    when invariance is exposed explicitly in the dataflow.
+    """
+    sdfg = dace.SDFG("licm_llvm_reassoc")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("d", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("ab", [1], dace.float64)
+    sdfg.add_transient("abc", [1], dace.float64)
+    sdfg.add_transient("abcd", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "j", "N")
+    body = loop.add_state("body", is_start_block=True)
+    ar = body.add_read("a")
+    br = body.add_read("b")
+    cr = body.add_read("c")
+    dr = body.add_read("d")
+
+    t1 = body.add_tasklet("add_ab", {"x", "y"}, {"r"}, "r = x + y")
+    ab = body.add_access("ab")
+    body.add_edge(ar, None, t1, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, t1, "y", mm.Memlet("b[0]"))
+    body.add_edge(t1, "r", ab, None, mm.Memlet("ab[0]"))
+
+    t2 = body.add_tasklet("add_abc", {"x", "y"}, {"r"}, "r = x + y")
+    abc = body.add_access("abc")
+    body.add_edge(ab, None, t2, "x", mm.Memlet("ab[0]"))
+    body.add_edge(cr, None, t2, "y", mm.Memlet("c[0]"))
+    body.add_edge(t2, "r", abc, None, mm.Memlet("abc[0]"))
+
+    t3 = body.add_tasklet("add_abcd", {"x", "y"}, {"r"}, "r = x + y")
+    abcd = body.add_access("abcd")
+    body.add_edge(abc, None, t3, "x", mm.Memlet("abc[0]"))
+    body.add_edge(dr, None, t3, "y", mm.Memlet("d[0]"))
+    body.add_edge(t3, "r", abcd, None, mm.Memlet("abcd[0]"))
+
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(abcd, None, cpy, "ti", mm.Memlet("abcd[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[j]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted >= 3
+    body_labels = {t.label for t in _state_tasklets(body)}
+    for lbl in ("add_ab", "add_abc", "add_abcd"):
+        assert lbl not in body_labels
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    pre_labels = {n.label for n in pre[0].nodes() if isinstance(n, nodes.Tasklet)}
+    for lbl in ("add_ab", "add_abc", "add_abcd"):
+        assert any(p.startswith(lbl) for p in pre_labels)
+
+    def py_ref(a, b, c, d, outp, N):
+        s = ((a[0] + b[0]) + c[0]) + d[0]
+        for j in range(N):
+            outp[j] = s
+
+    _run_and_check(sdfg, py_ref,
+                   a=np.array([1.0]), b=np.array([2.0]),
+                   c=np.array([3.0]), d=np.array([4.0]),
+                   outp=np.zeros(5), N=5)
+
+
+def test_llvm_infinite_loops_style_while_loop_hoisted():
+    """Port of ``llvm/test/Transforms/LICM/infinite_loops.ll``:
+    a bounded-via-condition-only loop (no init/update) with an invariant
+    body tasklet still hoists the invariant. Here we express it as a
+    ``LoopRegion`` whose ``loop_condition`` is a plain symbol comparison
+    with an external counter managed outside the region.
+    """
+    sdfg = dace.SDFG("licm_llvm_while")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+
+    # Plain loop region with symbolic counter ``i`` initialized outside the
+    # loop; update is done inside by an interstate edge (while-style).
+    loop = LoopRegion("while_loop",
+                      condition_expr="i < N",
+                      loop_var="i",
+                      initialize_expr="i = 0",
+                      update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    ar = body.add_read("a")
+    br = body.add_read("b")
+    tw = body.add_tasklet("mul", {"x", "y"}, {"r"}, "r = x * y")
+    tnode = body.add_access("t")
+    body.add_edge(ar, None, tw, "x", mm.Memlet("a[0]"))
+    body.add_edge(br, None, tw, "y", mm.Memlet("b[0]"))
+    body.add_edge(tw, "r", tnode, None, mm.Memlet("t[0]"))
+    ow = body.add_write("outp")
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(tnode, None, cpy, "ti", mm.Memlet("t[0]"))
+    body.add_edge(cpy, "o", ow, None, mm.Memlet("outp[i]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "mul" not in {t.label for t in _state_tasklets(body)}
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("mul")
+               for n in pre[0].nodes())
+
+    def py_ref(a, b, outp, N):
+        t = a[0] * b[0]
+        i = 0
+        while i < N:
+            outp[i] = t
+            i += 1
+
+    _run_and_check(sdfg, py_ref,
+                   a=np.array([3.0]), b=np.array([2.5]),
+                   outp=np.zeros(6), N=6)
+
+
+def test_llvm_hoist_invariant_load_multi_consumer():
+    """Port of ``llvm/test/Transforms/LICM/hoist-invariant-load.ll``:
+    one invariant load, two in-loop consumers. After LICM the load lives in
+    the preheader and both consumers read from the same transient.
+    """
+    sdfg = dace.SDFG("licm_llvm_invload")
+    sdfg.add_array("p", [1], dace.float64)
+    sdfg.add_array("outp1", [N], dace.float64)
+    sdfg.add_array("outp2", [N], dace.float64)
+    sdfg.add_transient("loaded", [1], dace.float64)
+
+    loop = _build_loop(sdfg, "k", "N")
+    body = loop.add_state("body", is_start_block=True)
+    pr = body.add_read("p")
+    ld = body.add_tasklet("load", {"x"}, {"y"}, "y = x")
+    lnode = body.add_access("loaded")
+    body.add_edge(pr, None, ld, "x", mm.Memlet("p[0]"))
+    body.add_edge(ld, "y", lnode, None, mm.Memlet("loaded[0]"))
+
+    o1 = body.add_write("outp1")
+    u1 = body.add_tasklet("u1", {"v"}, {"o"}, "o = v + 1.0")
+    body.add_edge(lnode, None, u1, "v", mm.Memlet("loaded[0]"))
+    body.add_edge(u1, "o", o1, None, mm.Memlet("outp1[k]"))
+
+    o2 = body.add_write("outp2")
+    u2 = body.add_tasklet("u2", {"v"}, {"o"}, "o = v * 2.0")
+    body.add_edge(lnode, None, u2, "v", mm.Memlet("loaded[0]"))
+    body.add_edge(u2, "o", o2, None, mm.Memlet("outp2[k]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    assert "load" not in {t.label for t in _state_tasklets(body)}
+    pre = _preheaders(sdfg, loop)
+    assert len(pre) == 1
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load")
+               for n in pre[0].nodes())
+
+    def py_ref(p, outp1, outp2, N):
+        v = p[0]
+        for k in range(N):
+            outp1[k] = v + 1.0
+            outp2[k] = v * 2.0
+
+    _run_and_check(sdfg, py_ref,
+                   p=np.array([1.5]),
+                   outp1=np.zeros(4), outp2=np.zeros(4), N=4)
+
+
+def test_llvm_gep_reassociate_map_scope_invariant_load():
+    """Port spirit of ``llvm/test/Transforms/LICM/gep-reassociate.ll``:
+    inside a Map scope, an address-invariant load (subset uses no map param)
+    is pulled outside the map. Maps in DaCe play the role of the loop.
+    """
+    sdfg = dace.SDFG("licm_llvm_gep_map")
+    sdfg.add_array("base", [1], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("scalar_b", [1], dace.float64)
+
+    state = sdfg.add_state("st", is_start_block=True)
+    me, mx = state.add_map("m", {"i": "0:N"})
+    basep = state.add_read("base")
+    br = state.add_read("b")
+    ow = state.add_write("outp")
+
+    ld = state.add_tasklet("load_base", {"x"}, {"y"}, "y = x")
+    lnode = state.add_access("scalar_b")
+    use = state.add_tasklet("use", {"xb", "xl"}, {"o"}, "o = xb + xl")
+
+    state.add_memlet_path(basep, me, ld, dst_conn="x", memlet=mm.Memlet("base[0]"))
+    state.add_edge(ld, "y", lnode, None, mm.Memlet("scalar_b[0]"))
+    state.add_edge(lnode, None, use, "xl", mm.Memlet("scalar_b[0]"))
+    state.add_memlet_path(br, me, use, dst_conn="xb", memlet=mm.Memlet("b[i]"))
+    state.add_memlet_path(use, mx, ow, src_conn="o", memlet=mm.Memlet("outp[i]"))
+
+    hoisted = LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert hoisted == 1
+    sdict = state.scope_dict()
+    # load_base must end up outside the map scope.
+    assert not any(t.label == "load_base"
+                   for t in state.nodes()
+                   if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
+
+    def py_ref(base, b, outp, N):
+        bv = base[0]
+        for i in range(N):
+            outp[i] = b[i] + bv
+
+    _run_and_check(sdfg, py_ref,
+                   base=np.array([10.0]),
+                   b=np.arange(6, dtype=np.float64),
+                   outp=np.zeros(6), N=6)
 
 
 if __name__ == "__main__":
