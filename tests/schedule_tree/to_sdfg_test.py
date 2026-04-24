@@ -232,7 +232,7 @@ def test_create_state_boundary_state_transition(control_flow: bool):
 
 @pytest.mark.xfail(reason="Not yet implemented")
 def test_create_state_boundary_empty_memlet():
-    t2s._StreeToSDFG(t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+    t2s._StreeToSDFG(boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
 
 
 def test_create_tasklet_raw():
@@ -253,10 +253,12 @@ def test_create_tasklet_raw():
     state = sdfg.states()[0]
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
 
+    assert isinstance(first_tasklet, nodes.Tasklet)
     assert first_tasklet.label == "bla"
     assert not first_tasklet.in_connectors
     assert first_tasklet.out_connectors.keys() == {"out"}
 
+    assert isinstance(second_tasklet, nodes.Tasklet)
     assert second_tasklet.label == "bla2"
     assert second_tasklet.in_connectors.keys() == {"inp"}
     assert second_tasklet.out_connectors.keys() == {"out"}
@@ -332,7 +334,8 @@ def test_create_loop_for():
     loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
     assert len(loops) == 1, "SDFG contains one LoopRegion"
 
-    loop: LoopRegion = loops[0]
+    loop = loops[0]
+    assert isinstance(loop, LoopRegion)
     assert loop.loop_variable == "i"
     assert loop.init_statement == CodeBlock("i = 0")
     assert loop.loop_condition == CodeBlock("i < 3")
@@ -366,7 +369,8 @@ def test_create_loop_while():
     loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
     assert len(loops) == 1, "SDFG contains one LoopRegion"
 
-    loop: LoopRegion = loops[0]
+    loop = loops[0]
+    assert isinstance(loop, LoopRegion)
     assert loop.loop_variable == ""
     assert loop.init_statement == None
     assert loop.loop_condition == CodeBlock("A[1] > 5")
@@ -402,7 +406,8 @@ def test_create_if_else():
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
 
-    block: ConditionalBlock = blocks[0]
+    block = blocks[0]
+    assert isinstance(block, ConditionalBlock)
     assert len(block.branches) == 2, "Block contains two branches"
 
     if_branch = list(filter(lambda x: x[0] is not None, block.branches))[0]
@@ -444,7 +449,8 @@ def test_create_if_elif_else() -> None:
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
 
-    block: ConditionalBlock = blocks[0]
+    block = blocks[0]
+    assert isinstance(block, ConditionalBlock)
     assert len(block.branches) == 3, "Block contains three branches"
 
 
@@ -467,7 +473,8 @@ def test_create_if_without_else():
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
 
-    block: ConditionalBlock = blocks[0]
+    block = blocks[0]
+    assert isinstance(block, ConditionalBlock)
     assert len(block.branches) == 1, "Block contains one branch"
 
     branch = list(filter(lambda x: x[0] is not None, block.branches))[0]

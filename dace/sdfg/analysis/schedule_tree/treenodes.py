@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import sympy
 
@@ -206,7 +207,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     """
     name: str
     containers: dict[str, data.Data]
-    symbols: dict[str, dtypes.typeclass]
+    symbols: Mapping[str, dtypes.typeclass | symbolic.symbol]
     constants: dict[str, tuple[data.Data, Any]]
     callback_mapping: dict[str, str]
     arg_names: list[str]
@@ -217,7 +218,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         name: str,
         children: list[ScheduleTreeNode],
         containers: dict[str, data.Data] | None = None,
-        symbols: dict[str, dtypes.typeclass] | None = None,
+        symbols: Mapping[str, dtypes.typeclass | symbolic.symbol] | None = None,
         constants: dict[str, tuple[data.Data, Any]] | None = None,
         callback_mapping: dict[str, str] | None = None,
         arg_names: list[str] | None = None,
