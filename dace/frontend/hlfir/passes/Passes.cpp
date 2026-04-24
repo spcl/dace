@@ -21,6 +21,10 @@ void registerAllBridgePasses() {
     mlir::registerPass([]() { return mlir::createSCCPPass(); });
     mlir::registerPass([]() { return mlir::createCanonicalizerPass(); });
     mlir::registerPass([]() { return mlir::createCSEPass(); });
+    mlir::registerPass([]() { return mlir::createSymbolDCEPass(); });
+    // Upstream interprocedural inliner — relies on FIRInlinerInterface
+    // registered by the Flang dialect to know how to inline fir.call.
+    mlir::registerPass([]() { return mlir::createInlinerPass(); });
 
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createPropagateShapesPass();
@@ -33,6 +37,9 @@ void registerAllBridgePasses() {
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createDefaultIntentPass();
+    });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createVerifyNoUnresolvedCallsPass();
     });
 }
 

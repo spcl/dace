@@ -50,41 +50,27 @@ namespace {
 // ---------------------------------------------------------------------------
 
 /// Permissive inliner interface that allows inlining any callable into any
-/// call site.  We override the legality hooks to always return true.
+/// call site.  We override the legality hooks to always return true, and
+/// defer the transformation hooks (``handleTerminator`` / ``handleArgument``
+/// / ``handleResult``) to the per-dialect ``DialectInlinerInterface`` that
+/// Flang registers for FIR and the core dialects — overriding them here
+/// would short-circuit the correct per-op behaviour and can corrupt the IR.
 struct AggressiveInlinerInterface : public mlir::InlinerInterface {
     using mlir::InlinerInterface::InlinerInterface;
 
-    /// Allow inlining into any region.
     bool isLegalToInline(mlir::Operation *call, mlir::Operation *callable,
                          bool wouldBeCloned) const final {
         return true;
     }
-
     bool isLegalToInline(mlir::Region *dest, mlir::Region *src,
                          bool wouldBeCloned,
                          mlir::IRMapping &valueMapping) const final {
         return true;
     }
-
     bool isLegalToInline(mlir::Operation *op, mlir::Region *dest,
                          bool wouldBeCloned,
                          mlir::IRMapping &valueMapping) const final {
         return true;
-    }
-
-    /// Handle the return-like terminator of the inlined region.
-    /// For func.func the terminator is func.return — we replace uses of
-    /// the call results with the return operands.
-    void handleTerminator(mlir::Operation *op,
-                          mlir::ValueRange valuesToRepl) const final {
-        // func.return operands map 1:1 to call results.
-        auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(op);
-        if (!retOp) return;
-
-        for (auto [ret, repl] :
-             llvm::zip(retOp.getOperands(), valuesToRepl)) {
-            repl.replaceAllUsesWith(ret);
-        }
     }
 };
 

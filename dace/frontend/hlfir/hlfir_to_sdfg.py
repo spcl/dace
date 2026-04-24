@@ -9,10 +9,21 @@ modules under ``builder/``.
 "imported but unused" by linters (F401) — no per-line suppressions
 needed.
 """
-from dace.frontend.hlfir.builder import SDFGBuilder, DEFAULT_PIPELINE, generate_sdfg
+from dace.frontend.hlfir.builder import (
+    DEFAULT_PIPELINE,
+    MULTI_FILE_PIPELINE,
+    SDFGBuilder,
+    generate_sdfg,
+)
 from dace.frontend.hlfir.builder.context import _Ctx
 
-__all__ = ["SDFGBuilder", "DEFAULT_PIPELINE", "generate_sdfg", "_Ctx"]
+__all__ = [
+    "SDFGBuilder",
+    "DEFAULT_PIPELINE",
+    "MULTI_FILE_PIPELINE",
+    "generate_sdfg",
+    "_Ctx",
+]
 
 if __name__ == "__main__":
     # Minimal CLI preserved for quick manual inspection:

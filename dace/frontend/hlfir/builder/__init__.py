@@ -91,6 +91,22 @@ DEFAULT_PIPELINE = (
     # exposed as many constants as it will.
     "sccp,canonicalize,cse")
 
+# Multi-file pipeline: skips ``hlfir-inline-all`` (currently broken inside
+# MLIR's inlineCall for FIR-bodied callees — see InlineAll.cpp), then
+# marks non-entry functions private so ``symbol-dce`` can drop them, then
+# errors out on any remaining unresolved call, then runs the usual
+# HLFIR rewrite chain.  Note: without inlining, the SDFG builder only
+# emits the entry's own body; fir.calls to helper subroutines are
+# silently elided by the current _emit dispatch.  Re-enable inlining
+# once the upstream MLIR issue is resolved.
+MULTI_FILE_PIPELINE = ("symbol-dce,"
+                       "hlfir-verify-no-unresolved-calls,"
+                       "hlfir-flatten-structs,"
+                       "hlfir-propagate-shapes,"
+                       "hlfir-default-intent,"
+                       "lift-cf-to-scf,"
+                       "sccp,canonicalize,cse")
+
 
 class SDFGBuilder:
     """Walks the HLFIR ASTNode tree and emits a DaCe SDFG.
@@ -121,6 +137,42 @@ class SDFGBuilder:
         if pipeline:
             self.module.run_passes(pipeline)
 
+        self._classify()
+
+    @classmethod
+    def from_files(cls, hlfir_paths, *, entry: str, pipeline: str = MULTI_FILE_PIPELINE) -> "SDFGBuilder":
+        """Parse and merge several HLFIR files, keep ``entry`` as the only
+        public function, verify every remaining call resolves, then run
+        the rewrite chain.
+
+        Use this when the entry subroutine and its dependencies live in
+        separate ``.hlfir`` files — e.g. the ICON multi-module flow where
+        each module compiles to its own HLFIR.  ``parse_files`` dedups
+        by symbol name so shared external declarations don't conflict.
+
+        Arguments:
+            hlfir_paths: list of paths to HLFIR files.  The first file
+                         becomes the base; the rest are merged in.
+            entry:       mangled Flang symbol (``_QPkernel`` /
+                         ``_QMmodPsub``) of the subroutine the SDFG
+                         should represent.
+            pipeline:    pass pipeline to run before extraction.
+        """
+        obj = cls.__new__(cls)
+        obj.module = hb.HLFIRModule()
+        if not obj.module.parse_files(list(hlfir_paths)):
+            raise RuntimeError(f"Cannot parse one of {hlfir_paths}")
+        obj.module.set_entry_symbol(entry)
+        if pipeline:
+            obj.module.run_passes(pipeline)
+        remaining = obj.module.list_functions()
+        if entry not in remaining:
+            raise RuntimeError(f"entry '{entry}' dropped by pipeline; remaining: {remaining}")
+        obj._classify()
+        return obj
+
+    def _classify(self):
+        """Shared post-parse extraction: variables + AST + role split."""
         self.variables = self.module.get_variables()
         self.ast = self.module.get_ast()
         self.arrays = {v.fortran_name: v for v in self.variables if v.role == "array"}
@@ -219,6 +271,28 @@ class SDFGBuilder:
         emit_scalar_assign(self, state, target, value)
 
 
-def generate_sdfg(path: str, pipeline: str = DEFAULT_PIPELINE) -> SDFG:
-    """One-liner: parse HLFIR file → run passes → validated DaCe SDFG."""
-    return SDFGBuilder(path, pipeline=pipeline).build()
+def generate_sdfg(path: str = None, *, pipeline: str = None, entry: str = None, hlfir_files=None) -> SDFG:
+    """Build an SDFG from one or several HLFIR files.
+
+    Single-file form (back-compat):
+        ``generate_sdfg("code.hlfir")`` — parses + DEFAULT_PIPELINE.
+
+    Multi-file form (ICON-style linked entry):
+        ``generate_sdfg(entry="_QPkernel", hlfir_files=[...])`` — parses
+        every file, merges them, drops non-entry siblings, errors on
+        unresolved calls, then runs the HLFIR rewrite chain.
+    """
+    if hlfir_files is not None:
+        if entry is None:
+            raise ValueError("entry= is required when hlfir_files= is supplied")
+        return SDFGBuilder.from_files(
+            hlfir_files,
+            entry=entry,
+            pipeline=(pipeline if pipeline is not None else MULTI_FILE_PIPELINE),
+        ).build()
+    if path is None:
+        raise TypeError("generate_sdfg: pass a path or hlfir_files=[...]")
+    return SDFGBuilder(
+        path,
+        pipeline=(pipeline if pipeline is not None else DEFAULT_PIPELINE),
+    ).build()

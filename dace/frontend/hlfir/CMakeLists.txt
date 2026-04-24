@@ -182,6 +182,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/InlineAll.cpp
     passes/FlattenStructs.cpp
     passes/DefaultIntent.cpp
+    passes/VerifyNoUnresolvedCalls.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core

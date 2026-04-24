@@ -77,6 +77,60 @@ public:
         return static_cast<bool>(module_);
     }
 
+    /// Parse several HLFIR files and merge them into one logical module so
+    /// ``hlfir-inline-all`` can flatten cross-file call trees in the later
+    /// pipeline.  The first file becomes the base; each subsequent file's
+    /// top-level symbols are moved across, deduplicated by symbol name.
+    /// If both sides expose the same name, a definition wins over an external
+    /// declaration; otherwise the base's version stays.  Mangled Flang names
+    /// (``_QM<mod>F<sub>`` etc.) are unique per compilation unit so real
+    /// collisions should only happen for runtime/external declarations.
+    bool parse_files(const std::vector<std::string> &paths) {
+        if (paths.empty()) return false;
+        module_ = mlir::parseSourceFile<mlir::ModuleOp>(
+            llvm::StringRef(paths[0]), &ctx_);
+        if (!module_) return false;
+        if (paths.size() == 1) return true;
+
+        auto &baseBody = module_->getBodyRegion().front();
+        mlir::SymbolTable baseTab(*module_);
+        auto symName = [](mlir::Operation *op) -> llvm::StringRef {
+            if (auto a = op->getAttrOfType<mlir::StringAttr>(
+                    mlir::SymbolTable::getSymbolAttrName()))
+                return a.getValue();
+            return {};
+        };
+
+        for (size_t i = 1; i < paths.size(); ++i) {
+            auto extra = mlir::parseSourceFile<mlir::ModuleOp>(
+                llvm::StringRef(paths[i]), &ctx_);
+            if (!extra) return false;
+            auto &extraBody = extra->getBodyRegion().front();
+
+            // Move each op individually so inc_range is safe under mutation.
+            for (auto &op : llvm::make_early_inc_range(extraBody)) {
+                auto nm = symName(&op);
+                if (!nm.empty()) {
+                    if (auto *existing = baseTab.lookup(nm)) {
+                        auto existingFn = mlir::dyn_cast<mlir::func::FuncOp>(existing);
+                        auto newFn      = mlir::dyn_cast<mlir::func::FuncOp>(&op);
+                        if (existingFn && newFn &&
+                            existingFn.isDeclaration() && !newFn.isDeclaration()) {
+                            baseTab.erase(existingFn);  // replace decl with def
+                        } else {
+                            op.erase();                 // keep base's version
+                            continue;
+                        }
+                    }
+                }
+                op.remove();
+                baseBody.push_back(&op);
+                if (!nm.empty()) baseTab.insert(&op);
+            }
+        }
+        return true;
+    }
+
     /// Run an mlir-opt-syntax pipeline.  Example:
     ///   run_passes("builtin.module(hlfir-propagate-shapes)")
     /// Every bridge pass is registered by registerAllBridgePasses() in
@@ -108,6 +162,41 @@ public:
     std::vector<ASTNode> get_ast() {
         if (!module_) return {};
         return extractAST(*module_);
+    }
+
+    /// List every top-level func.func symbol name currently in the module.
+    /// Used by the multi-file driver to sanity-check that the requested
+    /// entry survived the inlining + symbol-dce pass pipeline.
+    std::vector<std::string> list_functions() {
+        std::vector<std::string> names;
+        if (!module_) return names;
+        module_->walk([&](mlir::func::FuncOp f) {
+            names.push_back(f.getSymName().str());
+        });
+        return names;
+    }
+
+    /// Mark ``name`` public and every other func.func private so a
+    /// subsequent ``symbol-dce`` pass drops the siblings that
+    /// ``hlfir-inline-all`` has finished folding into the entry.
+    /// Raises if the entry isn't in the module.
+    void set_entry_symbol(const std::string &name) {
+        if (!module_)
+            throw std::runtime_error("set_entry_symbol: no module parsed");
+        bool found = false;
+        module_->walk([&](mlir::func::FuncOp f) {
+            if (f.getSymName() == name) {
+                mlir::SymbolTable::setSymbolVisibility(
+                    f, mlir::SymbolTable::Visibility::Public);
+                found = true;
+            } else {
+                mlir::SymbolTable::setSymbolVisibility(
+                    f, mlir::SymbolTable::Visibility::Private);
+            }
+        });
+        if (!found)
+            throw std::runtime_error(
+                "set_entry_symbol: '" + name + "' not found");
     }
 
 private:
@@ -222,6 +311,9 @@ NB_MODULE(hlfir_bridge, m) {
              "Parse HLFIR from a string")
         .def("parse_file",    &HLFIRModule::parse_file,
              "Parse HLFIR from a file path")
+        .def("parse_files",   &HLFIRModule::parse_files,
+             "Parse multiple HLFIR files and merge them into one module "
+             "(dedup by symbol name; definition wins over declaration)")
         .def("run_passes",    &HLFIRModule::run_passes,
              "Run an mlir-opt-syntax pipeline "
              "(e.g. 'builtin.module(hlfir-propagate-shapes)')")
@@ -230,5 +322,10 @@ NB_MODULE(hlfir_bridge, m) {
         .def("get_variables", &HLFIRModule::get_variables,
              "Classify all hlfir.declare ops -> list[VarInfo]")
         .def("get_ast",       &HLFIRModule::get_ast,
-             "Recursive AST of the subroutine body -> list[ASTNode]");
+             "Recursive AST of the subroutine body -> list[ASTNode]")
+        .def("list_functions", &HLFIRModule::list_functions,
+             "Names of every top-level func.func still in the module")
+        .def("set_entry_symbol", &HLFIRModule::set_entry_symbol,
+             "Mark the named function public and everything else private so "
+             "symbol-dce can drop post-inlining dead siblings");
 }

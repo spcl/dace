@@ -20,6 +20,7 @@ std::unique_ptr<mlir::Pass> createPropagateShapesPass();
 std::unique_ptr<mlir::Pass> createInlineAllPass();
 std::unique_ptr<mlir::Pass> createFlattenStructsPass();
 std::unique_ptr<mlir::Pass> createDefaultIntentPass();
+std::unique_ptr<mlir::Pass> createVerifyNoUnresolvedCallsPass();
 
 // --- Registry ---
 
