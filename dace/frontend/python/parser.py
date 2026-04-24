@@ -1,9 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 import ast
-from dataclasses import dataclass
 import inspect
-import itertools
 import copy
 import os
 import sympy
@@ -174,7 +172,6 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                  method: bool = False,
                  use_explicit_cf: bool = True,
                  ignore_type_hints: bool = False):
-        from dace.codegen import compiled_sdfg  # Avoid import loops
 
         signature_source = f.__func__ if method and inspect.ismethod(f) and getattr(f, '__self__',
                                                                                     None) is not None else f
@@ -870,8 +867,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
         """
-        from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path)
+        from dace.codegen import compiler as sdfg_compiler  # Avoid import loop
+        csdfg = sdfg_compiler.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version

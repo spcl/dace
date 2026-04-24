@@ -4,7 +4,6 @@
 import dace
 from dace import subsets
 import numpy as np
-from scipy import signal
 
 H = dace.symbol('H')
 W = dace.symbol('W')

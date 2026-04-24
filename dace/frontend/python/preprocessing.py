@@ -13,17 +13,13 @@ import sympy
 import threading
 import warnings
 
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
-from dace import data, dtypes, symbolic, sdfg
+from dace import data, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, ScheduleTreeConvertible,
-                                         StringLiteral)
-
-if TYPE_CHECKING:
-    from dace.frontend.python.parser import DaceProgram
+from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
 class DaceRecursionError(Exception):

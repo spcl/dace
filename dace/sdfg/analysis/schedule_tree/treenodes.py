@@ -5,7 +5,7 @@ import copy
 from dace import dtypes, nodes, data, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union

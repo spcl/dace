@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for default storage/schedule inference. """
 import dace
-from dace.sdfg.state import SDFGState
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.transformation.helpers import get_parent_map

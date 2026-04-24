@@ -3,18 +3,12 @@
 Integration with the dace python frontend
 """
 
-from contextlib import contextmanager
 import copy
 from typing import Optional, Union, Sequence
 import itertools
-import warnings
 
-import torch
-import torch.autograd
-
-from dace import SDFG, SDFGState, config, data
+from dace import SDFG, SDFGState, data
 import dace.sdfg.sdfg
-from dace.transformation import optimizer
 from dace.frontend.python import common
 from dace.frontend.common import op_repository
 from dace.frontend.python import newast

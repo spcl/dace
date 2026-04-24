@@ -115,6 +115,16 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            build_folder_mode:
+                type: str
+                default: development
+                title: Save mode for the build folder
+                description: >
+                  Selects which content should be saved in the build folder.
+                  Two modes are currently supported: `development`, that includes
+                  everything; and `production`, that saves only the compiled library
+                  and the folder mode file.
+
             library_prefix:
                 type: str
                 default: ""
@@ -201,7 +211,7 @@ required:
                 description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
-                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
+                    are represented using 64 bits). If the property is set to "C", C's semantics will be
                     used (`float` and `int` are represented using 32bits).
 
             unique_functions:
@@ -250,6 +260,18 @@ required:
                 description: >
                     If set, specifies additional arguments to the initial invocation
                     of ``cmake``.
+
+            lineinfo:
+                type: str
+                default: "inspect"
+                title: Add line info
+                description: >
+                    Wether or not to add line info from the parsed code in the
+                    generated SDFG. Valid options are `inspect` and `none`.
+                    "inspect": During parsing, inspect the python call stack and
+                    automatically add line info from the parsed source code in the
+                    resulting SDFG.
+                    "none": Do not save any line info in the resulting SDFG.
 
             #############################################
             # CPU compiler

@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import numpy as np
 
 from dace import symbolic
-from dace.dtypes import paramdec, deduplicate
+from dace.dtypes import paramdec
 
 MethodType = Callable[..., Tuple[str]]
 _INFERENCE_MISSING = object()

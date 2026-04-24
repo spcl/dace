@@ -3,7 +3,6 @@ import argparse
 import numpy as np
 import os
 import copy
-import pytest
 from typing import Tuple
 
 import dace

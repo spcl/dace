@@ -1,6 +1,4 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import pytest
 
 # TODO: Investigate why pytest parses the DaCeProgram, even when the test is not supposed to run.
 # @pytest.mark.py312
