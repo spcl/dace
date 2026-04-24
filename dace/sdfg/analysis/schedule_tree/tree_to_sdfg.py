@@ -11,7 +11,7 @@ from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, LoopRegion
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 
@@ -228,7 +228,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         assert current_state is not None
         cf_region = current_state.parent_graph
 
-        loop_region = node.loop
+        loop_region = LoopRegion(label=node.loop.label,
+                                 condition_expr=node.loop.loop_condition,
+                                 loop_var=node.loop.loop_variable,
+                                 initialize_expr=node.loop.init_statement,
+                                 update_expr=node.loop.update_statement,
+                                 unroll=node.loop.unroll,
+                                 unroll_factor=node.loop.unroll_factor)
         cf_region.add_node(loop_region)
         loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
 
