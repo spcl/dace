@@ -352,6 +352,7 @@ NB_MODULE(hlfir_bridge, m) {
         .def_ro("loop_iter",       &ASTNode::loop_iter)
         .def_ro("loop_bound",      &ASTNode::loop_bound)
         .def_ro("loop_lower",      &ASTNode::loop_lower)
+        .def_ro("loop_lower_expr", &ASTNode::loop_lower_expr)
         .def_ro("target",          &ASTNode::target)
         .def_ro("expr",            &ASTNode::expr)
         .def_ro("accesses",        &ASTNode::accesses)

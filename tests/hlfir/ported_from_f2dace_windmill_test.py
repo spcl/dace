@@ -311,7 +311,6 @@ end subroutine case_pick
     assert int(o_sdfg[0]) == int(o_ref[0])
 
 
-@_xfail("HLFIR frontend: array-section assignment not lowered")
 def test_ported_array_section_assign(tmp_path):
     """Port of ``struct_test``'s array-section assignment: ``res(a:b) = 42``."""
     src = """

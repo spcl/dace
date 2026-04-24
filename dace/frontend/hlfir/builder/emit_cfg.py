@@ -66,7 +66,10 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     iter_map = {**iter_map, n.loop_iter: uid}
 
     bound = n.loop_bound
-    lower = n.loop_lower if n.loop_lower >= 0 else 1
+    # Prefer the string form when non-empty (section-assign / symbolic
+    # lowers); fall back to the int form for fir.do_loop bounds that
+    # Flang resolved to a constant.
+    lower = n.loop_lower_expr if n.loop_lower_expr else (n.loop_lower if n.loop_lower >= 0 else 1)
 
     loop = LoopRegion(
         label=f"loop_{uid}",

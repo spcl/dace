@@ -57,7 +57,13 @@ struct ASTNode {
 
     // loop
     std::string loop_iter, loop_bound;
+    // Lower bound — int form covers the common ``DO i = 1, n`` case from
+    // fir.do_loop where Flang resolves the lower to a constant.  For
+    // symbolic lowers (e.g. ``res(a:b) = ...`` from array-section
+    // assign) set ``loop_lower_expr`` to a Fortran expression string;
+    // the emitter prefers the string whenever it is non-empty.
     int64_t loop_lower = -1;
+    std::string loop_lower_expr;
 
     // assign
     std::string target, expr;

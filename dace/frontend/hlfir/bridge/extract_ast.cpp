@@ -503,6 +503,92 @@ static ASTNode buildCopyNode(hlfir::AssignOp assign) {
 /// ``hlfir.assign %zero to %dst`` where source is a constant zero and dest
 /// is an array box — a zero-fill.  Emit ``kind="memset"`` so
 /// hlfir_to_sdfg can wire a ``standard.MemsetLibraryNode``.
+/// Return ``dg`` if ``v`` comes from an ``hlfir.designate`` whose
+/// ``is_triplet`` attribute marks at least one dimension as a section
+/// (lower:upper:stride).  Used by the Phase-1 array-section lowering to
+/// split section assignments off from plain indexed designates before
+/// the reduce / elemental dispatch.
+static hlfir::DesignateOp asSectionDesignate(mlir::Value v) {
+    auto *def = v.getDefiningOp();
+    if (!def) return {};
+    auto dg = mlir::dyn_cast<hlfir::DesignateOp>(def);
+    if (!dg) return {};
+    for (bool t : dg.getIsTriplet())
+        if (t) return dg;
+    return {};
+}
+
+/// Lower ``<section_designate> = <scalar>`` as a rank-N nested
+/// ``kind="loop"`` wrapper around an inner ``kind="assign"`` that
+/// writes the scalar into ``target[as_0, ..., as_{R-1}]``.  Mirrors
+/// the tail of ``buildElementalAssign`` but sources loop bounds from
+/// the designate's triplet operands instead of an elemental's shape.
+///
+/// Returns an empty vector if any non-triplet (single-index) dim is
+/// mixed into the designate — Phase 1 doesn't synthesise loops for
+/// mixed slice + index designates; those fall back to the caller's
+/// default assign handling.
+static std::vector<ASTNode> buildSectionScalarAssign(
+    hlfir::AssignOp assign, hlfir::DesignateOp dst) {
+
+    llvm::ArrayRef<bool> triplets = dst.getIsTriplet();
+    if (triplets.empty()) return {};
+
+    // Split the designate's flat index operand list into per-dim groups
+    // of three (lower, upper, stride) for triplet dims.  A non-triplet
+    // dim bails Phase 1 — we'd need a separate "fixed at k" index to
+    // thread into the inner assign.
+    auto indices = dst.getIndices();
+    std::vector<std::array<mlir::Value, 3>> triples;
+    unsigned cursor = 0;
+    for (bool t : triplets) {
+        if (!t) return {};
+        if (cursor + 3 > indices.size()) return {};
+        triples.push_back({indices[cursor], indices[cursor + 1],
+                           indices[cursor + 2]});
+        cursor += 3;
+    }
+    if (triples.empty()) return {};
+
+    unsigned rank = triples.size();
+    std::vector<std::string> iter_names;
+    iter_names.reserve(rank);
+    for (unsigned i = 0; i < rank; ++i)
+        iter_names.push_back("as_" + std::to_string(i));
+
+    // Inner assign: target[iter_names] = <scalar_rhs>.
+    ASTNode inner;
+    inner.kind = "assign";
+    inner.target = traceToDecl(dst.getMemref());
+    inner.target_is_array = true;
+    inner.expr = buildExpr(assign.getOperand(0));
+
+    AccessInfo wa;
+    wa.array_name = inner.target;
+    wa.is_write = true;
+    for (unsigned i = 0; i < rank; ++i) {
+        wa.index_vars.push_back(iter_names[i]);
+        wa.index_exprs.push_back(iter_names[i]);
+    }
+    inner.accesses.push_back(std::move(wa));
+
+    // Wrap descending so the outermost ASTNode is the outermost loop.
+    // Lower bound goes into loop_lower_expr (string form) so symbolic
+    // lowers like ``res(a:b)`` survive — emit_loop prefers it over the
+    // int ``loop_lower`` when non-empty.
+    ASTNode current = inner;
+    for (int i = rank - 1; i >= 0; --i) {
+        ASTNode wrap;
+        wrap.kind = "loop";
+        wrap.loop_iter = iter_names[i];
+        wrap.loop_lower_expr = buildIndexExpr(triples[i][0]);
+        wrap.loop_bound      = buildIndexExpr(triples[i][1]);
+        wrap.children.push_back(current);
+        current = wrap;
+    }
+    return {current};
+}
+
 static ASTNode buildMemsetNode(hlfir::AssignOp assign) {
     ASTNode n;
     n.kind = "memset";
@@ -1218,6 +1304,22 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             if (dst_is_array && !src_is_array && isConstantZero(src)) {
                 nodes.push_back(buildMemsetNode(assign));
                 continue;
+            }
+
+            // Array-section ``res(a:b) = <scalar>`` — detect the LHS
+            // hlfir.designate with triplet operands and synthesise a
+            // nested loop over the section bounds.  Handled before the
+            // elemental dispatch below because Flang emits a plain
+            // scalar RHS here (no hlfir.elemental wrapping).
+            if (!src_is_array) {
+                if (auto sec = asSectionDesignate(dst)) {
+                    auto built = buildSectionScalarAssign(assign, sec);
+                    if (!built.empty()) {
+                        for (auto &built_n : built)
+                            nodes.push_back(std::move(built_n));
+                        continue;
+                    }
+                }
             }
 
             // b = <elementwise-expression>  — Flang wraps the RHS in one or
