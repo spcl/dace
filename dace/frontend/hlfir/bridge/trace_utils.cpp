@@ -51,7 +51,7 @@ std::string traceToDecl(mlir::Value val, int max) {
 }
 
 std::optional<int64_t> traceConstInt(mlir::Value v) {
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < limits::kTraceConstIntMax; ++i) {
         auto *d = v.getDefiningOp();
         if (!d) break;
         if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(d))
@@ -76,7 +76,7 @@ hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
     // callee's body into the caller.
     if (decl.getShape()) return {};
     auto mr = decl.getMemref();
-    for (int i = 0; i < 8 && mr; ++i) {
+    for (int i = 0; i < limits::kAliasMemrefWalkDepth && mr; ++i) {
         auto *d = mr.getDefiningOp();
         if (!d) break;
         if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d))

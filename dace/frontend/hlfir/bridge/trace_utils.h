@@ -18,6 +18,46 @@
 
 namespace hlfir_bridge {
 
+/// Recursion and walk-length budgets for the bridge's SSA tracing and
+/// expression reconstruction.  All are defensive guards against
+/// pathological IR shapes (malformed input, cyclic defs, runaway
+/// inlining) — bumping them never changes semantics on well-formed
+/// HLFIR, only reduces false-``?`` fallbacks on deep chains.
+namespace limits {
+
+/// Maximum recursion depth for ``buildExpr`` / ``buildExprWithSubscripts``
+/// / ``buildBoolExpr``.  Arithmetic trees from composed ``hlfir.elemental``
+/// + ``hlfir.apply`` chains fused by ``hlfir-flatten-structs`` can run
+/// 40+ deep on real ICON kernels.
+inline constexpr int kBuildExprDepth = 128;
+
+/// Maximum recursion depth for ``buildIndexExpr``.  Index expressions
+/// stay shallower than general expressions (one index operand per
+/// designate dim, narrower op set), but inherit the same budget.
+inline constexpr int kBuildIndexExprDepth = 64;
+
+/// Maximum ``fir.convert`` chain length while walking a single SSA
+/// value inside ``resolveIndex``.  Flang occasionally stacks several
+/// converts for index/integer kind coercions.
+inline constexpr int kConvertChainDepth = 32;
+
+/// Maximum wrapper-peel depth for type unwrapping (``fir.box``,
+/// ``fir.ref``, ``fir.heap``, ``fir.pointer``).  Nested-pointer
+/// chains are rare but legal: ``box<ref<heap<array<...>>>>``.
+inline constexpr int kTypeWrapperPeelDepth = 32;
+
+/// Default walk budget for ``traceToDecl`` / ``traceConstInt``.  These
+/// are long-running walks through fir.convert / fir.load / designate
+/// chains back to the originating declare or constant.
+inline constexpr int kTraceToDeclMax = 1024;
+inline constexpr int kTraceConstIntMax = 64;
+
+/// Maximum memref-walk depth inside ``asAssumedShapeAlias`` (peels
+/// fir.convert ops between the alias declare and the outer declare).
+inline constexpr int kAliasMemrefWalkDepth = 32;
+
+}  // namespace limits
+
 /// Name of the shape-hint attribute that PropagateShapes attaches to
 /// assumed-shape dummy declares.  Value is an ArrayAttr of StringAttrs,
 /// one per dimension (empty string if that dim disagreed across callers).
@@ -30,7 +70,7 @@ std::string extractName(const std::string &mangled);
 /// Trace an SSA value backwards to the hlfir.declare / fir.declare that
 /// introduced it.  Peels fir.convert → fir.load → arith.select transparently.
 /// Returns the Fortran name, or "" if the chain breaks before a declare.
-std::string traceToDecl(mlir::Value val, int max = 200);
+std::string traceToDecl(mlir::Value val, int max = limits::kTraceToDeclMax);
 
 /// Trace an SSA value to a compile-time integer constant through
 /// any number of fir.convert wrappings.  nullopt if not constant-foldable.

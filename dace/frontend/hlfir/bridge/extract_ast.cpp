@@ -43,7 +43,7 @@ std::vector<std::pair<mlir::Value, std::string>> &indexStack() {
 std::string resolveIndex(mlir::Value idx) {
     // Look up through fir.convert chains since the index might be wrapped.
     mlir::Value cur = idx;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < limits::kConvertChainDepth; ++i) {
         for (auto it = indexStack().rbegin(); it != indexStack().rend(); ++it)
             if (it->first == cur) return it->second;
         if (auto *d = cur.getDefiningOp())
@@ -133,7 +133,7 @@ static std::string allocaSynthName(mlir::Value memref) {
 }
 
 static std::string buildExpr(mlir::Value val, int d = 0) {
-    if (d > 30) return "?";
+    if (d > limits::kBuildExprDepth) return "?";
     // Synthetic scalars minted for scf.if results: every downstream read of
     // the result Value resolves to the scalar's name, not to walking into
     // the scf.if itself (which has no single defining expression — the
@@ -376,7 +376,7 @@ static std::string buildExpr(mlir::Value val, int d = 0) {
 /// (1-based, square brackets for indirect access) so the Python side can
 /// pattern-match on it.  Depth-limited to avoid loops on malformed IR.
 static std::string buildIndexExpr(mlir::Value v, int d) {
-    if (d > 20 || !v) return "?";
+    if (d > limits::kBuildIndexExprDepth || !v) return "?";
     auto *def = v.getDefiningOp();
     if (!def) return "?";
 
@@ -511,7 +511,7 @@ static int64_t traceLB(mlir::Value v) {
 
 /// Peel `fir.ref<…>` / `fir.box<…>` / `fir.heap<…>` / `fir.ptr<…>` wrappers.
 static mlir::Type peelWrappers(mlir::Type t) {
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < limits::kTypeWrapperPeelDepth; ++i) {
         mlir::Type next = t;
         if (auto b = mlir::dyn_cast<fir::BoxType>(next))       next = b.getEleTy();
         else if (auto r = mlir::dyn_cast<fir::ReferenceType>(next)) next = r.getEleTy();
@@ -1172,7 +1172,7 @@ static std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
 /// elements directly — they're evaluated in the caller's frame, not by a
 /// tasklet, so they can't rely on memlet-wired connectors.
 static std::string buildExprWithSubscripts(mlir::Value val, int d) {
-    if (d > 30 || !val) return "?";
+    if (d > limits::kBuildExprDepth || !val) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
 
@@ -1226,7 +1226,7 @@ static std::string buildExprWithSubscripts(mlir::Value val, int d) {
 /// ``buildExpr`` (which may still produce a usable Python expression for the
 /// condition, or ``"?"`` when the shape isn't understood).
 static std::string buildBoolExpr(mlir::Value val, int d) {
-    if (d > 30) return "?";
+    if (d > limits::kBuildExprDepth) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
 
