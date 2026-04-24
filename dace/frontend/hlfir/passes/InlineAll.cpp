@@ -126,13 +126,21 @@ struct InlineAllPass
             auto callableIface = mlir::dyn_cast<mlir::CallableOpInterface>(callee.getOperation());
             if (!callIface || !callableIface) continue;
 
-            // Default clone callback — just does a straight clone.
+            // Clone callback for inlineCall: insert cloned blocks BEFORE
+            // ``postInsertBlock`` so the layout becomes
+            //     [inlineBlock (inlined-into), cloned..., postInsertBlock].
+            // Inserting at ``inlineBlock`` instead demotes the caller's
+            // original entry block and drops its block-argument list,
+            // which then trips func.func's signature verifier.
             auto cloneCallback = [](mlir::OpBuilder &builder, mlir::Region *src,
                                     mlir::Block *inlineBlock, mlir::Block *postBlock,
                                     mlir::IRMapping &mapper, bool shouldClone) {
                 if (shouldClone) {
                     src->cloneInto(inlineBlock->getParent(),
-                                inlineBlock->getIterator(), mapper);
+                                   postBlock->getIterator(), mapper);
+                } else {
+                    src->getBlocks().splice(postBlock->getIterator(),
+                                            src->getBlocks());
                 }
             };
 

@@ -91,15 +91,15 @@ DEFAULT_PIPELINE = (
     # exposed as many constants as it will.
     "sccp,canonicalize,cse")
 
-# Multi-file pipeline: skips ``hlfir-inline-all`` (currently broken inside
-# MLIR's inlineCall for FIR-bodied callees — see InlineAll.cpp), then
-# marks non-entry functions private so ``symbol-dce`` can drop them, then
-# errors out on any remaining unresolved call, then runs the usual
-# HLFIR rewrite chain.  Note: without inlining, the SDFG builder only
-# emits the entry's own body; fir.calls to helper subroutines are
-# silently elided by the current _emit dispatch.  Re-enable inlining
-# once the upstream MLIR issue is resolved.
-MULTI_FILE_PIPELINE = ("symbol-dce,"
+# Multi-file pipeline: flatten cross-file calls into the entry, drop
+# the now-dead sibling definitions, fail fast on anything left
+# unresolved, then run the usual HLFIR rewrite chain.  The
+# ``hlfir-inline-all`` pass needs the per-dialect
+# DialectInlinerInterface to be attached to the MLIRContext, which
+# the bridge's constructor now does via ``mlir::func::
+# registerInlinerExtension`` + ``fir::addFIRInlinerExtension``.
+MULTI_FILE_PIPELINE = ("hlfir-inline-all,"
+                       "symbol-dce,"
                        "hlfir-verify-no-unresolved-calls,"
                        "hlfir-flatten-structs,"
                        "hlfir-propagate-shapes,"
