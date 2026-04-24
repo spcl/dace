@@ -9,7 +9,7 @@ from dace import dtypes
 from dace.frontend.common import op_repository as oprepo
 import dace.frontend.python.replacements as replacements_pkg
 
-_KNOWN_OPTIONAL_DEPENDENCIES = {'torch'}
+_KNOWN_OPTIONAL_DEPENDENCIES = {'torch', 'onnx'}
 _REPLACEMENTS_IMPORTED = False
 
 
