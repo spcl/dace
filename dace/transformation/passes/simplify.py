@@ -20,6 +20,7 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
+from dace.transformation.passes.simplify_induction_variables import SimplifyInductionVariables
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -38,6 +39,7 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
     ContinueToCondition,
     EmptyLoopElimination,
+    SimplifyInductionVariables,
 ]
 
 _nonrecursive_passes = [

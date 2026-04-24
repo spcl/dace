@@ -532,6 +532,12 @@ class SDFG(ControlFlowRegion):
         self._propagate = propagate
         self._parent = parent
         self.symbols = {}
+        # Per-SDFG symbol object registry. Maps a symbol name to the canonical
+        # `symbolic.symbol` object with its assumptions (integer, positive,
+        # nonnegative, ...). This ensures the same name always resolves to the
+        # same object -- preventing two symbols with the same name but
+        # conflicting conditions from coexisting in the SDFG.
+        self._symbol_objects: Dict[str, symbolic.symbol] = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -877,20 +883,78 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype, find_new_name: bool = False):
+    def add_symbol(self, name, stype, find_new_name: bool = False, **assumptions):
         """ Adds a symbol to the SDFG.
+
+            A symbol is fully identified by its name, its DaCe type, and its
+            sympy assumptions (``integer``, ``positive``, ``nonnegative``, ...).
+            The SDFG keeps a per-name registry of canonical symbol objects;
+            re-adding the same name with matching conditions is a no-op and
+            returns the existing object. Adding the same name with conflicting
+            conditions is rejected -- pass ``find_new_name=True`` to allocate a
+            fresh name instead.
 
             :param name: Symbol name.
             :param stype: Symbol type.
-            :param find_new_name: Find a new name.
+            :param find_new_name: Find a new name if the existing symbol has
+                                  different conditions.
+            :param assumptions: Extra sympy assumptions forwarded to the
+                                canonical ``symbolic.symbol`` object (e.g.,
+                                ``positive=True``, ``nonnegative=True``).
         """
-        if find_new_name:
+        if not isinstance(stype, dtypes.typeclass):
+            stype = dtypes.dtype_to_typeclass(stype)
+
+        # Build the canonical symbol object we would register for this call.
+        # Some special placeholder names (e.g. "?" for UndefinedSymbol) cannot
+        # be constructed via ``symbolic.symbol`` -- for those we fall back to
+        # dtype-only registration and skip the object registry.
+        try:
+            new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+        except (NameError, TypeError):
+            new_sym = None
+
+        if name in self.symbols:
+            existing_sym = self._symbol_objects.get(name)
+            if new_sym is None:
+                # Best we can do without an object: compare dtypes.
+                if self.symbols[name] == stype:
+                    return name
+            elif existing_sym is None:
+                # Legacy entry -- only dtype was tracked. Adopt the new object
+                # if dtype matches and no assumptions were given (i.e., the
+                # two registrations are compatible under the old contract).
+                if self.symbols[name] == stype and not assumptions:
+                    self._symbol_objects[name] = new_sym
+                    return name
+                if self.symbols[name] == stype and assumptions:
+                    # Upgrading a legacy (no-assumptions) entry with explicit
+                    # assumptions would change the symbol's conditions.
+                    pass  # fall through to rename-or-raise
+            elif self._symbol_conditions_match(existing_sym, new_sym):
+                return name
+            # Mismatch -- fall through to either rename or raise.
+            if find_new_name:
+                name = self._find_new_name(name)
+                try:
+                    new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+                except (NameError, TypeError):
+                    new_sym = None
+            else:
+                existing_desc = self._describe_symbol(existing_sym, self.symbols[name])
+                raise FileExistsError(
+                    f'Symbol "{name}" already exists in SDFG with {existing_desc}; '
+                    f'cannot add with different conditions (dtype={stype}, '
+                    f'assumptions={assumptions or "{}"})')
+        elif find_new_name:
             name = self._find_new_name(name)
+            try:
+                new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+            except (NameError, TypeError):
+                new_sym = None
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
             if name in self.arrays:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
@@ -899,10 +963,51 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
             if name in self._pgrids:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
+
         self.symbols[name] = stype
+        if new_sym is not None:
+            self._symbol_objects[name] = new_sym
         return name
+
+    def get_symbol(self, name: str) -> symbolic.symbol:
+        """ Returns the canonical ``symbolic.symbol`` object for ``name``.
+
+            If the symbol was registered without explicit assumptions, a
+            default object is constructed (and cached) from the registered
+            dtype. Callers that construct symbols directly via
+            ``symbolic.symbol(name, ...)`` should prefer this method to get
+            the same object the SDFG is tracking.
+        """
+        if name not in self.symbols:
+            raise KeyError(f'Symbol "{name}" is not defined in the SDFG')
+        sym = self._symbol_objects.get(name)
+        if sym is None:
+            sym = symbolic.symbol(name, dtype=self.symbols[name])
+            self._symbol_objects[name] = sym
+        return sym
+
+    @staticmethod
+    def _symbol_conditions_match(a: 'symbolic.symbol', b: 'symbolic.symbol') -> bool:
+        """Two symbols are considered the same object iff their DaCe dtype and
+        their full set of sympy assumptions (explicit + derived) agree.
+        `assumptions0` captures both the user-provided assumptions and the
+        assumptions the sympy core derives from them (e.g., ``integer=True``
+        implies ``rational=True``, ``real=True``, ...), so comparing the dicts
+        directly catches any meaningful divergence in "conditions".
+        """
+        if a.dtype != b.dtype:
+            return False
+        return a.assumptions0 == b.assumptions0
+
+    @staticmethod
+    def _describe_symbol(sym: Optional['symbolic.symbol'], stype) -> str:
+        if sym is None:
+            return f'type {stype}'
+        # Only report non-default assumptions to keep the message concise.
+        relevant = {k: v for k, v in sym.assumptions0.items() if v}
+        if relevant:
+            return f'type {sym.dtype}, assumptions={relevant}'
+        return f'type {sym.dtype}'
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.

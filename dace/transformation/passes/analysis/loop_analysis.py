@@ -3,7 +3,8 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional, Set, Tuple
 from dace.frontend.python import astutils
 
 import sympy
@@ -97,3 +98,240 @@ def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     if update_assignment:
         return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)
     return None
+
+
+@dataclass(frozen=True)
+class InductionVariable:
+    """
+    Record describing how a symbol evolves across iterations of a LoopRegion.
+
+    Basic and affine-derived IVs share the same shape: ``start`` is the value
+    at iteration 0 and ``step`` is the per-iteration increment, pre-flattened
+    so consumers do not need to walk a basis chain. For a derived IV
+    ``d = scale * basis + offset`` we store:
+
+        start = scale * basis.start + offset
+        step  = scale * basis.step
+
+    The ``basis``, ``scale`` and ``offset`` fields are retained for diagnostic
+    inspection but callers should generally rely on ``start`` / ``step``.
+    """
+    name: str
+    start: symbolic.SymbolicType
+    step: symbolic.SymbolicType
+    loop: LoopRegion
+    kind: str  # 'basic' | 'derived'
+    basis: Optional['InductionVariable'] = None
+    scale: Optional[symbolic.SymbolicType] = None
+    offset: Optional[symbolic.SymbolicType] = None
+
+
+def affine_in_iv(
+    expr: symbolic.SymbolicType,
+    ivs: Dict[str, 'InductionVariable'],
+    invariant_syms: Optional[Set[str]] = None,
+) -> Optional[Tuple[Optional[str], symbolic.SymbolicType, symbolic.SymbolicType]]:
+    """
+    If ``expr`` equals ``scale * iv + offset`` for some iv in ``ivs`` with
+    loop-invariant ``scale`` and ``offset``, return a triple
+    ``(iv_name, scale, offset)``. A pure-invariant expression (no IV
+    referenced) returns ``(None, 0, expr)`` so callers can treat constants
+    uniformly — this matches the zero-scale convention used by LLMR's
+    subscript matcher at ``loop_local_memory_reduction.py:172-187``.
+
+    Returns ``None`` if the expression is not affine in any single IV, or if
+    ``scale`` / ``offset`` reference another IV.
+
+    When ``invariant_syms`` is provided, ``scale`` and ``offset`` must have
+    all free symbols inside that set; otherwise the match is rejected. This
+    lets a caller restrict which outer-scope symbols are acceptable.
+    """
+    if expr is None:
+        return None
+    e = sympy.sympify(expr)
+    iv_names = set(ivs)
+    # DaCe uses its own ``symbolic.symbol`` subclass; sympy treats it as a
+    # distinct Symbol from ``sympy.Symbol(name)``, so match by name string.
+    sym_by_name = {str(s): s for s in e.free_symbols}
+    free = set(sym_by_name)
+
+    referenced = free & iv_names
+    if not referenced:
+        if invariant_syms is not None and not (free <= invariant_syms):
+            return None
+        return (None, sympy.Integer(0), e)
+
+    for iv_name in referenced:
+        iv_sym = sym_by_name[iv_name]
+        try:
+            scale = sympy.simplify(sympy.diff(e, iv_sym))
+        except Exception:
+            continue
+        scale_free = {str(s) for s in scale.free_symbols}
+        if scale_free & iv_names:
+            continue
+        try:
+            offset = sympy.simplify(e - scale * iv_sym)
+        except Exception:
+            continue
+        offset_free = {str(s) for s in offset.free_symbols}
+        if iv_name in offset_free:
+            continue
+        if offset_free & iv_names:
+            continue
+        if invariant_syms is not None:
+            if not ((scale_free | offset_free) <= invariant_syms):
+                continue
+        return (iv_name, scale, offset)
+
+    return None
+
+
+def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> None:
+    """
+    Populate ``pending`` with single-assignment Python tasklets in the loop's
+    start state that write to a scalar data descriptor. The key is the data
+    name (not the tasklet connector). Consumers that want to substitute must
+    understand this refers to a data descriptor, not a DaCe symbol.
+    """
+    # Local imports to avoid import cycles at module load.
+    from dace.sdfg import nodes
+    from dace.sdfg.state import SDFGState
+    from dace import dtypes
+
+    try:
+        start = loop.start_block
+    except ValueError:
+        return
+    if not isinstance(start, SDFGState):
+        return
+    for n in start.nodes():
+        if not isinstance(n, nodes.Tasklet):
+            continue
+        if n.language != dtypes.Language.Python:
+            continue
+        try:
+            if n.side_effects:
+                continue
+        except AttributeError:
+            pass
+        out_edges = list(start.out_edges(n))
+        if len(out_edges) != 1:
+            continue
+        oe = out_edges[0]
+        if not isinstance(oe.dst, nodes.AccessNode):
+            continue
+        if oe.data is not None and oe.data.wcr is not None:
+            continue
+        out_data = oe.dst.data
+        # Must be the only writer to that data anywhere in the loop.
+        writers = 0
+        for state in loop.all_states():
+            for nn in state.data_nodes():
+                if nn.data == out_data and state.in_degree(nn) > 0:
+                    writers += 1
+        if writers != 1:
+            continue
+        code = n.code.code if hasattr(n.code, 'code') else n.code
+        if not isinstance(code, list) or len(code) != 1:
+            continue
+        stmt = code[0]
+        if not isinstance(stmt, astutils.ast.Assign):
+            continue
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], astutils.ast.Name):
+            continue
+        rhs_str = astutils.unparse(stmt.value)
+        pending.setdefault(out_data, rhs_str)
+
+
+def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]:
+    """
+    Classify induction variables of ``loop``: the loop variable itself as a
+    basic IV, plus any symbol assigned on an interstate edge within the loop,
+    or scalar data written by a single-assign Python tasklet in the loop's
+    start state, whose RHS is an affine function of an already-classified IV
+    with loop-invariant scale and offset.
+
+    Returns an empty dict if the loop cannot be classified — missing
+    ``loop_variable``, missing ``init_statement`` / ``update_statement``, or a
+    self-referential step such as ``i = i * 2``.
+
+    Detection is syntactic: it does not reason about trip counts or early
+    exits. Callers that need trip-count accuracy should combine this with
+    ``get_loop_end``.
+    """
+    ivs: Dict[str, InductionVariable] = {}
+    if not loop.loop_variable:
+        return ivs
+    start = get_init_assignment(loop)
+    step = get_loop_stride(loop)
+    if start is None or step is None:
+        return ivs
+    if loop.loop_variable in {str(s) for s in sympy.sympify(step).free_symbols}:
+        return ivs
+
+    ivs[loop.loop_variable] = InductionVariable(
+        name=loop.loop_variable,
+        start=start,
+        step=step,
+        loop=loop,
+        kind='basic',
+    )
+
+    # Collect candidate derived IV assignments.
+    pending: Dict[str, str] = {}
+    rejected: Set[str] = set()
+    for e in loop.all_interstate_edges():
+        for name, rhs in e.data.assignments.items():
+            if name == loop.loop_variable:
+                continue
+            if name in pending and pending[name] != rhs:
+                # Multiple conflicting assignments to the same name — cannot
+                # classify conservatively.
+                rejected.add(name)
+                continue
+            pending[name] = rhs
+    for name in rejected:
+        pending.pop(name, None)
+
+    _collect_tasklet_derived_ivs(loop, pending)
+
+    changed = True
+    while changed and pending:
+        changed = False
+        for name in list(pending):
+            rhs = pending[name]
+            try:
+                rhs_sym = symbolic.pystr_to_symbolic(rhs)
+            except Exception:
+                pending.pop(name)
+                continue
+            # Reject self-referential assignments like ``j = j + i``: the RHS
+            # must not mention the name being classified.
+            if name in {str(s) for s in sympy.sympify(rhs_sym).free_symbols}:
+                pending.pop(name)
+                continue
+            result = affine_in_iv(rhs_sym, ivs)
+            if result is None:
+                pending.pop(name)
+                continue
+            basis_name, scale, offset = result
+            if basis_name is None:
+                # Pure invariant — not an IV.
+                pending.pop(name)
+                continue
+            basis_iv = ivs[basis_name]
+            ivs[name] = InductionVariable(
+                name=name,
+                start=scale * basis_iv.start + offset,
+                step=scale * basis_iv.step,
+                loop=loop,
+                kind='derived',
+                basis=basis_iv,
+                scale=scale,
+                offset=offset,
+            )
+            pending.pop(name)
+            changed = True
+
+    return ivs

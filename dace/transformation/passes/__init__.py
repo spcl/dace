@@ -12,6 +12,7 @@ from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
+from .simplify_induction_variables import SimplifyInductionVariables
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
 from .offset_loop_and_maps import OffsetLoopsAndMaps
