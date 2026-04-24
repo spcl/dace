@@ -19,8 +19,16 @@ std::string traceToDecl(mlir::Value val, int max) {
     for (int i = 0; i < max && val; ++i) {
         auto *d = val.getDefiningOp();
         if (!d) break;
-        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d))
+        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+            // Walk through inlined assumed-shape aliases to the outer
+            // caller declare so downstream SDFG emission references
+            // the real storage by its caller-side name.
+            if (auto outer = asAssumedShapeAlias(dc)) {
+                val = outer.getResult(0);
+                continue;
+            }
             return extractName(dc.getUniqName().str());
+        }
         if (auto dc = mlir::dyn_cast<fir::DeclareOp>(d))
             return extractName(dc.getUniqName().str());
         if (auto c = mlir::dyn_cast<fir::ConvertOp>(d))
@@ -58,6 +66,50 @@ std::optional<int64_t> traceConstInt(mlir::Value v) {
         break;
     }
     return std::nullopt;
+}
+
+hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
+    // Signature: no shape operand, memref produced by a fir.convert
+    // whose input (possibly behind more converts) is another
+    // hlfir.declare.  This is precisely what Flang emits for the
+    // callee's dummy_scope declare after hlfir-inline-all splices the
+    // callee's body into the caller.
+    if (decl.getShape()) return {};
+    auto mr = decl.getMemref();
+    for (int i = 0; i < 8 && mr; ++i) {
+        auto *d = mr.getDefiningOp();
+        if (!d) break;
+        if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d))
+            return outer;
+        if (auto conv = mlir::dyn_cast<fir::ConvertOp>(d)) {
+            mr = conv.getValue();
+            continue;
+        }
+        break;
+    }
+    return {};
+}
+
+std::vector<std::optional<int64_t>> declareLowerBounds(hlfir::DeclareOp decl) {
+    std::vector<std::optional<int64_t>> lbs;
+    auto shape = decl.getShape();
+    if (!shape) return lbs;
+    auto *def = shape.getDefiningOp();
+    if (!def) return lbs;
+    if (auto sh = mlir::dyn_cast<fir::ShapeOp>(def)) {
+        // Plain fir.shape: every dim defaults to lbound=1.
+        for (unsigned i = 0; i < sh.getExtents().size(); ++i)
+            lbs.push_back(std::optional<int64_t>(1));
+        return lbs;
+    }
+    if (auto ss = mlir::dyn_cast<fir::ShapeShiftOp>(def)) {
+        // shape_shift operands alternate: lb0, ext0, lb1, ext1, ...
+        auto ops = ss->getOperands();
+        for (unsigned i = 0; i < ops.size(); i += 2)
+            lbs.push_back(traceConstInt(ops[i]));
+        return lbs;
+    }
+    return lbs;
 }
 
 llvm::SmallVector<mlir::Value, 4> extractExtents(mlir::Value shape) {

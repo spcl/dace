@@ -139,17 +139,6 @@ def test_inlined_hlfir_has_assumed_shape_alias_declare(tmp_path: Path):
     assert "fir.convert" in dump
 
 
-@pytest.mark.xfail(reason=("Assumed-shape re-basing through inlining: the inlined callee's "
-                           "hlfir.declare (no shape operand, memref = fir.convert of the outer "
-                           "declare) registers as a second SDFG array 'arr' disjoint from the "
-                           "caller's 'x'. Fix needs three coordinated changes: "
-                           "(a) extract_vars skips alias declares, "
-                           "(b) extract_ast's AccessInfo builder rewrites accesses via the alias "
-                           "to reference the outer array with index_expr rebased by "
-                           "(outer_lbound - callee_lbound), "
-                           "(c) traceToDecl walks through alias declares to the outer name. "
-                           "See assumed_shape_test.test_inlined_hlfir_has_assumed_shape_alias_declare "
-                           "for the structural IR this test relies on."))
 def test_inline_rebase_storage(tmp_path: Path):
     """After inlining, ``arr(1) = 999`` in the callee must land in
     ``x(-2)`` (the first storage slot)."""
@@ -164,7 +153,6 @@ def test_inline_rebase_storage(tmp_path: Path):
     assert x.tolist() == [999, 20, 30, 40, 50], x.tolist()
 
 
-@pytest.mark.xfail(reason="same gap as test_inline_rebase_storage")
 def test_sdfg_matches_gfortran_reference(tmp_path: Path):
     """The SDFG built from the two-file setup must match a single
     f2py-compiled combined reference bit-for-bit."""

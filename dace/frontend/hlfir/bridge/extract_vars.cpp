@@ -159,9 +159,16 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     std::vector<VarInfo> vars;
 
-    // Pass 1: collect every hlfir.declare.
+    // Pass 1: collect every hlfir.declare.  Skip assumed-shape alias
+    // declares inserted by ``hlfir-inline-all`` — they share storage
+    // with the caller's outer declare, and downstream SDFG emission
+    // routes accesses to the outer name via traceToDecl.  Registering
+    // both would give DaCe two non-transient arrays over one buffer.
     std::vector<hlfir::DeclareOp> decls;
-    module.walk([&](hlfir::DeclareOp op) { decls.push_back(op); });
+    module.walk([&](hlfir::DeclareOp op) {
+        if (asAssumedShapeAlias(op)) return;
+        decls.push_back(op);
+    });
 
     // Pass 2a: loop iterators.  A Fortran DO induction variable is
     // always a symbol downstream — the LoopRegion uses it as

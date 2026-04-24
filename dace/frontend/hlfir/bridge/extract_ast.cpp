@@ -78,6 +78,37 @@ static std::string buildIndexExpr(mlir::Value v, int d = 0);
 static std::string buildExprWithSubscripts(mlir::Value val, int d = 0);
 static std::string buildBoolExpr(mlir::Value val, int d = 0);
 
+/// Build the index expression string for the ``dim``-th operand of a
+/// ``hlfir.designate``, applying the assumed-shape rebase when the
+/// designate's base is an inlined alias declare.  Rebase rule (Flang
+/// convention: assumed-shape dummies implicitly carry lbound = 1):
+///
+///     outer_fortran_index = inner_fortran_index + outer_lbound - 1
+///
+/// so ``arr(i)`` with ``i`` in the callee's 1-based frame becomes
+/// ``outer(i + outer_lbound - 1)`` — downstream ``build_memlet_index``
+/// then subtracts ``outer_lbound``, net result ``i - 1``, the same
+/// 1-based-to-0-based shift the callee view already expected.
+static std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
+                                           unsigned dim,
+                                           mlir::Value idx,
+                                           int depth = 0) {
+    std::string raw = buildIndexExpr(idx, depth);
+    auto memref = dg.getMemref();
+    auto *defOp = memref.getDefiningOp();
+    if (!defOp) return raw;
+    auto declOp = mlir::dyn_cast<hlfir::DeclareOp>(defOp);
+    if (!declOp) return raw;
+    auto outer = asAssumedShapeAlias(declOp);
+    if (!outer) return raw;
+    auto lbs = declareLowerBounds(outer);
+    if (dim >= lbs.size() || !lbs[dim]) return raw;
+    int64_t adjust = *lbs[dim] - 1;
+    if (adjust == 0) return raw;
+    if (adjust > 0) return "(" + raw + " + " + std::to_string(adjust) + ")";
+    return "(" + raw + " - " + std::to_string(-adjust) + ")";
+}
+
 // Thread-local state for the faithful ``scf.while`` walker.  See the
 // block of helpers further down for what these are used for.
 static thread_local int kScfValueCounter = 0;
@@ -364,10 +395,12 @@ static std::string buildIndexExpr(mlir::Value v, int d) {
                 if (arrName.empty()) return "?";
                 std::string s = arrName + "[";
                 bool first = true;
+                unsigned di = 0;
                 for (auto idx : dg.getIndices()) {
                     if (!first) s += ",";
-                    s += buildIndexExpr(idx, d + 1);
+                    s += buildDesignateIndexExpr(dg, di, idx, d + 1);
                     first = false;
+                    ++di;
                 }
                 s += "]";
                 return s;
@@ -409,10 +442,12 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             AccessInfo wa;
             wa.array_name = node.target;
             wa.is_write = true;
+            unsigned di = 0;
             for (auto idx : dg.getIndices()) {
                 auto n = resolveIndex(idx);
                 wa.index_vars.push_back(n.empty() ? "?" : n);
-                wa.index_exprs.push_back(buildIndexExpr(idx));
+                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
+                ++di;
             }
             node.accesses.push_back(std::move(wa));
         } else {
@@ -447,10 +482,12 @@ static ASTNode buildAssignNode(hlfir::AssignOp assign) {
             AccessInfo ra;
             ra.array_name = traceToDecl(dg.getMemref());
             ra.is_read = true;
+            unsigned di = 0;
             for (auto idx : dg.getIndices()) {
                 auto n = resolveIndex(idx);
                 ra.index_vars.push_back(n.empty() ? "?" : n);
-                ra.index_exprs.push_back(buildIndexExpr(idx));
+                ra.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
+                ++di;
                 // Keep descending into the index operand too, so inner
                 // indirect loads (edge_idx used below z_kin) are captured as
                 // their own AccessInfo entries for extract_vars to see.
@@ -1032,10 +1069,12 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                 AccessInfo ra;
                 ra.array_name = traceToDecl(dg.getMemref());
                 ra.is_read = true;
+                unsigned di = 0;
                 for (auto idx : dg.getIndices()) {
                     auto n = resolveIndex(idx);
                     ra.index_vars.push_back(n.empty() ? "?" : n);
-                    ra.index_exprs.push_back(buildIndexExpr(idx));
+                    ra.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
+                    ++di;
                     collectReads(idx);
                 }
                 inner.accesses.push_back(std::move(ra));

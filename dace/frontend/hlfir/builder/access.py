@@ -123,6 +123,14 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
             parts.append(offset_index_token(expr, lb, iter_map))
             continue
 
+        # Closed-form arithmetic expression from the bridge (e.g. the
+        # assumed-shape rebase ``(1 - 3)`` on an aliased declare).
+        # Use it verbatim as the Fortran-side index and apply the
+        # outer array's ``lb`` offset uniformly.
+        if any(op in expr for op in "+-*/") or expr.startswith("("):
+            parts.append(_apply_lb(expr, lb))
+            continue
+
         uid = iter_map.get(v, v)
 
         if lb == "0":
@@ -140,3 +148,18 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
                 parts.append(f"{uid} - {lb}")
 
     return ", ".join(parts)
+
+
+def _apply_lb(expr: str, lb: str) -> str:
+    """Render ``expr - lb`` keeping both int and symbolic ``lb`` forms
+    readable.  ``lb`` can be a Python int (as string), a Fortran symbol,
+    or ``"?"`` (use as-is)."""
+    try:
+        lb_int = int(lb)
+    except (TypeError, ValueError):
+        return f"({expr}) - {lb}"
+    if lb_int == 0:
+        return expr
+    if lb_int > 0:
+        return f"({expr}) - {lb_int}"
+    return f"({expr}) + {-lb_int}"
