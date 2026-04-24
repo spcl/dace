@@ -22,6 +22,14 @@
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/HLFIR/HLFIRDialect.h"
 
+// DialectInlinerInterface registration — without these, mlir::inlineCall
+// segfaults inside InlinerInterface::handleArgument because no per-dialect
+// interface is attached.  The func / LLVM / FIR extensions each supply the
+// dialect-side hooks (legality, arg handling, terminator handling) that
+// the stock inliner dispatches to.
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
+
 // Standard MLIR dialects needed by Flang's HLFIR output
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -61,6 +69,13 @@ public:
             mlir::cf::ControlFlowDialect, mlir::vector::VectorDialect,
             mlir::affine::AffineDialect, mlir::omp::OpenMPDialect,
             mlir::acc::OpenACCDialect, mlir::LLVM::LLVMDialect>();
+        // Attach DialectInlinerInterface for every dialect we may need to
+        // inline across.  Flang's InitFIR.h makes the same three calls in
+        // ``registerNonCodegenDialects`` + ``addFIRExtensions`` — without
+        // them ``mlir::inlineCall`` dereferences a null dialect interface.
+        mlir::func::registerInlinerExtension(registry_);
+        mlir::LLVM::registerInlinerInterface(registry_);
+        fir::addFIRInlinerExtension(registry_);
         ctx_.appendDialectRegistry(registry_);
         ctx_.loadAllAvailableDialects();
     }
