@@ -308,6 +308,288 @@ def test_descriptor_inference_numpy_sum_full_reduction():
     assert desc.dtype == dace.float64
 
 
+def test_descriptor_inference_numpy_where():
+    """numpy.where(cond, A, 1.0) should preserve the runtime replacement's x/y broadcasted shape."""
+
+    @dace.program
+    def prog(cond: dace.bool_[2, 1], A: dace.float32[2, 3]):
+        x = np.where(cond, A, 1.0)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    lib_calls = [n for n in stree.preorder_traversal() if isinstance(n, tn.LibraryCall)]
+    assert len(lib_calls) >= 1, f'Expected LibraryCall for numpy.where, got:\n{stree.as_string()}'
+    where_call = [lc for lc in lib_calls if lc.node.name == 'numpy.where']
+    assert len(where_call) == 1, f'Expected one numpy.where LibraryCall, got:\n{stree.as_string()}'
+
+    out_memlet = list(where_call[0].out_memlets.values())[0]
+    out_name = out_memlet.data
+    assert out_name in stree.containers
+    desc = stree.containers[out_name]
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 3)
+    assert desc.dtype == dace.float32
+
+
+def test_descriptor_inference_numpy_select():
+    """numpy.select should match the runtime replacement's nested where descriptor shape and dtype."""
+
+    @dace.program
+    def prog(cond: dace.bool_[2, 1], A: dace.float32[2, 3]):
+        x = np.select([cond], [A], default=1.0)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    lib_calls = [n for n in stree.preorder_traversal() if isinstance(n, tn.LibraryCall)]
+    assert len(lib_calls) >= 1, f'Expected LibraryCall for numpy.select, got:\n{stree.as_string()}'
+    select_call = [lc for lc in lib_calls if lc.node.name == 'numpy.select']
+    assert len(select_call) == 1, f'Expected one numpy.select LibraryCall, got:\n{stree.as_string()}'
+
+    out_memlet = list(select_call[0].out_memlets.values())[0]
+    out_name = out_memlet.data
+    assert out_name in stree.containers
+    desc = stree.containers[out_name]
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 3)
+    assert desc.dtype == dace.float32
+
+
+def test_descriptor_inference_numpy_clip():
+    """numpy.clip should infer through the same ufunc-based branching as the runtime replacement."""
+
+    @dace.program
+    def prog(A: dace.float32[2, 3]):
+        x = np.clip(A, 1.0, 3.0)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    lib_calls = [n for n in stree.preorder_traversal() if isinstance(n, tn.LibraryCall)]
+    assert len(lib_calls) >= 1, f'Expected LibraryCall for numpy.clip, got:\n{stree.as_string()}'
+    clip_call = [lc for lc in lib_calls if lc.node.name == 'numpy.clip']
+    assert len(clip_call) == 1, f'Expected one numpy.clip LibraryCall, got:\n{stree.as_string()}'
+
+    out_memlet = list(clip_call[0].out_memlets.values())[0]
+    out_name = out_memlet.data
+    assert out_name in stree.containers
+    desc = stree.containers[out_name]
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 3)
+    assert desc.dtype == dace.float32
+
+
+def test_descriptor_inference_numpy_rot90():
+    """numpy.rot90 should swap the selected axes for odd k values."""
+
+    @dace.program
+    def prog(A: dace.float64[2, 3]):
+        x = np.rot90(A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (3, 2)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_fft():
+    """numpy.fft.fft should preserve shape and promote real inputs to complex."""
+
+    @dace.program
+    def prog(A: dace.float32[8]):
+        x = np.fft.fft(A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (8, )
+    assert desc.dtype == dace.complex64
+
+
+def test_descriptor_inference_numpy_ifft():
+    """numpy.fft.ifft should preserve shape and complex dtype."""
+
+    @dace.program
+    def prog(A: dace.complex64[8]):
+        x = np.fft.ifft(A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (8, )
+    assert desc.dtype == dace.complex64
+
+
+def test_descriptor_inference_numpy_linalg_inv():
+    """numpy.linalg.inv should preserve matrix shape and dtype."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 4]):
+        x = np.linalg.inv(A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 4)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_linalg_solve():
+    """numpy.linalg.solve should infer the shape and dtype of the right-hand side."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 4], B: dace.float64[4]):
+        x = np.linalg.solve(A, B)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, )
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_linalg_cholesky():
+    """numpy.linalg.cholesky should preserve matrix shape and dtype."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 4]):
+        x = np.linalg.cholesky(A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 4)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_dot():
+    """numpy.dot should follow the current frontend replacement's matrix-multiplication branch for 2D inputs."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 3], B: dace.float64[3, 2]):
+        x = np.dot(A, B)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 2)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_tensordot():
+    """numpy.tensordot should infer the non-contracted output modes from the runtime replacement rules."""
+
+    @dace.program
+    def prog(A: dace.float64[2, 3, 4], B: dace.float64[4, 3, 5]):
+        x = np.tensordot(A, B, axes=([2, 1], [0, 1]))
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 5)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_einsum():
+    """numpy.einsum should infer its output shape from the parsed output subscripts."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 3], B: dace.float64[3, 2]):
+        x = np.einsum('ik,kj->ij', A, B)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 2)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_einsum_multi_contraction():
+    """numpy.einsum should preserve only the non-contracted modes for multi-dimensional contractions."""
+
+    A_dim, B_dim, C_dim, D_dim, E_dim = (dace.symbol(name) for name in ('A_dim', 'B_dim', 'C_dim', 'D_dim', 'E_dim'))
+
+    @dace.program
+    def prog(A: dace.float64[A_dim, B_dim, C_dim, D_dim], B: dace.float64[B_dim, D_dim, C_dim, E_dim]):
+        x = np.einsum('abcd,bdce->ae', A, B)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (A_dim, E_dim)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_einsum_repeated_output_index():
+    """numpy.einsum should allow repeated output labels like i->ii for diagonal expansion."""
+
+    vec_len = dace.symbol('vec_len')
+
+    @dace.program
+    def prog(A: dace.float64[vec_len]):
+        x = np.einsum('i->ii', A)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (vec_len, vec_len)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_einsum_contracts_away_input():
+    """numpy.einsum should handle outputs that keep labels from only one input, like j,k->k."""
+
+    reduced_dim, kept_dim = (dace.symbol(name) for name in ('reduced_dim', 'kept_dim'))
+
+    @dace.program
+    def prog(A: dace.float64[reduced_dim], B: dace.float64[kept_dim]):
+        x = np.einsum('j,k->k', A, B)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (kept_dim, )
+    assert desc.dtype == dace.float64
+
+
 def test_descriptor_inference_numpy_mean():
     """numpy.mean should promote integer input to float64."""
 
@@ -359,6 +641,91 @@ def test_descriptor_inference_numpy_transpose():
     desc = stree.containers['x']
     assert isinstance(desc, dace.data.Array)
     assert tuple(desc.shape) == (5, 3)
+
+
+def test_descriptor_inference_numpy_vstack():
+
+    @dace.program
+    def prog(A: dace.float64[2, 3], B: dace.float64[2, 3]):
+        x = np.vstack((A, B))
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 3)
+
+
+def test_descriptor_inference_numpy_split_structured_result():
+
+    @dace.program
+    def prog(A: dace.float64[6]):
+        left, right = np.split(A, 2)
+        return left
+
+    stree = prog.to_schedule_tree()
+
+    assert 'left' in stree.containers
+    left_desc = stree.containers['left']
+    assert isinstance(left_desc, dace.data.Array)
+    assert tuple(left_desc.shape) == (3, )
+
+    assert 'right' in stree.containers
+    right_desc = stree.containers['right']
+    assert isinstance(right_desc, dace.data.Array)
+    assert tuple(right_desc.shape) == (3, )
+
+    def test_attribute_inference_size_scalar():
+
+        @dace.program
+        def prog(a: dace.float64[3, 5]):
+            x = a.size
+            return x
+
+        stree = prog.to_schedule_tree()
+
+        assert 'x' in stree.containers
+        desc = stree.containers['x']
+        assert isinstance(desc, dace.data.Scalar)
+        assert desc.dtype == dace.int64
+
+
+def test_descriptor_inference_len_is_scalar():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5]):
+        n = len(A)
+        return n
+
+    stree = prog.to_schedule_tree()
+
+    assert 'n' in stree.containers
+    desc = stree.containers['n']
+    assert isinstance(desc, dace.data.Scalar)
+    assert desc.dtype == dace.int64
+
+
+def test_descriptor_inference_linspace_retstep_structured_result():
+
+    @dace.program
+    def prog():
+        space, step = np.linspace(2.5, 10.0, num=3, retstep=True)
+        return space
+
+    stree = prog.to_schedule_tree()
+
+    assert 'space' in stree.containers
+    space_desc = stree.containers['space']
+    assert isinstance(space_desc, dace.data.Array)
+    assert tuple(space_desc.shape) == (3, )
+    assert space_desc.dtype == dace.float64
+
+    assert 'step' in stree.containers
+    step_desc = stree.containers['step']
+    assert isinstance(step_desc, dace.data.Scalar)
+    assert step_desc.dtype == dace.float64
 
 
 # -------------------------------------------------------------------- #
@@ -457,6 +824,73 @@ def test_operator_inference_matmul():
     desc = stree.containers[out_name]
     assert isinstance(desc, dace.data.Array)
     assert tuple(desc.shape) == (4, 2)
+
+
+def test_operator_inference_add_broadcast():
+    """A + B should infer the broadcasted output descriptor."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 1], B: dace.float64[1, 3]):
+        x = A + B
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, 3)
+    assert desc.dtype == dace.float64
+
+
+def test_operator_inference_compare_bool_array():
+    """A < 0 should infer a boolean output array."""
+
+    @dace.program
+    def prog(A: dace.float64[4]):
+        x = A < 0.0
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, )
+    assert desc.dtype == dace.bool_
+
+
+def test_operator_inference_unary_negate_array():
+    """-A should preserve the array shape and dtype class."""
+
+    @dace.program
+    def prog(A: dace.float64[4]):
+        x = -A
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (4, )
+    assert desc.dtype == dace.float64
+
+
+def test_operator_inference_boolop_scalar_and():
+    """Scalar boolean `and` should infer a boolean scalar result."""
+
+    @dace.program
+    def prog(a: dace.bool_, b: dace.bool_):
+        x = a and b
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Scalar)
+    assert desc.dtype == dace.bool_
 
 
 # -------------------------------------------------------------------- #

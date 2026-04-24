@@ -4,7 +4,7 @@ Contains replacements of Python mathematical operations.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
-from dace import dtypes, symbolic, SDFG, SDFGState
+from dace import data, dtypes, symbolic, SDFG, SDFGState
 
 from numbers import Number
 from typing import Union
@@ -126,9 +126,24 @@ def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, N
 #  Descriptor inference for math attributes (schedule-tree frontend)     #
 # -------------------------------------------------------------------- #
 
-from dace import data
-from dace.frontend.common.op_repository import infers_attribute_descriptor
+from dace.frontend.common.op_repository import infers_attribute_descriptor, infers_descriptor, infers_method_descriptor
 from dace.frontend.python.replacements.utils import complex_to_scalar as _complex_to_scalar
+from dace.frontend.python.replacements.type_inference import _get_desc
+
+
+def _clone_shape_preserving_descriptor(desc: data.Data, dtype=None):
+    out_dtype = desc.dtype if dtype is None else dtype
+    retval = desc.clone()
+    retval.dtype = out_dtype
+    retval.transient = True
+    return retval
+
+
+def _infer_shape_preserving_math_descriptor(input_descs, input, dtype=None, **_kw):
+    desc = _get_desc(input_descs, input)
+    if desc is None:
+        return None
+    return _clone_shape_preserving_descriptor(desc, dtype=dtype)
 
 
 def _infer_attr_real(self_desc):
@@ -145,6 +160,44 @@ def _infer_attr_imag(self_desc):
     return data.Array(out_dtype, list(self_desc.shape), transient=True)
 
 
+for _name in ('exp', 'dace.exp', 'numpy.exp', 'math.exp', 'sin', 'dace.sin', 'numpy.sin', 'math.sin', 'cos', 'dace.cos',
+              'numpy.cos', 'math.cos', 'sqrt', 'dace.sqrt', 'numpy.sqrt', 'math.sqrt', 'log', 'dace.log', 'numpy.log',
+              'math.log', 'log10', 'dace.log10', 'math.log10', 'abs'):
+    infers_descriptor(_name)(_infer_shape_preserving_math_descriptor)
+
+for _name in ('math.floor', 'math.ceil', 'round'):
+    infers_descriptor(_name)(lambda input_descs, input, **_kw: _infer_shape_preserving_math_descriptor(
+        input_descs, input, dtype=dtypes.typeclass(int)))
+
+
+@infers_descriptor('conj')
+@infers_descriptor('dace.conj')
+@infers_descriptor('numpy.conj')
+def _infer_conj(input_descs, input, **_kw):
+    return _infer_shape_preserving_math_descriptor(input_descs, input)
+
+
+@infers_descriptor('real')
+@infers_descriptor('dace.real')
+@infers_descriptor('numpy.real')
+def _infer_real(input_descs, input, **_kw):
+    desc = _get_desc(input_descs, input)
+    if desc is None:
+        return None
+    return _infer_attr_real(desc)
+
+
+@infers_descriptor('imag')
+@infers_descriptor('dace.imag')
+@infers_descriptor('numpy.imag')
+def _infer_imag(input_descs, input, **_kw):
+    desc = _get_desc(input_descs, input)
+    if desc is None:
+        return None
+    return _infer_attr_imag(desc)
+
+
 for _cls in ('Array', 'Scalar', 'View'):
     infers_attribute_descriptor(_cls, 'real')(_infer_attr_real)
     infers_attribute_descriptor(_cls, 'imag')(_infer_attr_imag)
+    infers_method_descriptor(_cls, 'conj')(lambda self_desc, **_kw: _clone_shape_preserving_descriptor(self_desc))

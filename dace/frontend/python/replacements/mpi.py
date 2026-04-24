@@ -3,7 +3,7 @@ import dace
 import itertools
 import sympy as sp
 
-from dace import dtypes, symbolic
+from dace import data, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
@@ -1383,3 +1383,138 @@ def _distr_matmult(pv: ProgramVisitor,
     state.add_edge(tasklet, '_c', cnode, None, Memlet.from_array(*out))
 
     return out[0]
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for MPI/distributed replacements               #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_descriptor, infers_method_descriptor, infers_operator_descriptor
+from dace.frontend.python.replacements.type_inference import _get_desc
+
+
+def _pyobject_scalar_descriptor():
+    return data.Scalar(dtypes.pyobject(), transient=True)
+
+
+def _request_descriptor():
+    return data.Array(dtypes.opaque('MPI_Request'), [1], transient=True)
+
+
+def _int_vector_descriptor(length: int):
+    return data.Array(dtypes.int32, [length], transient=True)
+
+
+def _zero_output(*_args, **_kwargs):
+    return ()
+
+
+@infers_descriptor('mpi4py.MPI.COMM_WORLD.Create_cart')
+@infers_descriptor('dace.comm.Cart_create')
+def _infer_cart_create(input_descs, dims, **_kw):
+    return _pyobject_scalar_descriptor()
+
+
+@infers_method_descriptor('Intracomm', 'Create_cart')
+def _infer_intracomm_create(self_desc, dims, **_kw):
+    return _pyobject_scalar_descriptor()
+
+
+@infers_descriptor('dace.comm.Cart_sub')
+def _infer_cart_sub(input_descs, parent_grid, color, exact_grid=None, **_kw):
+    return _pyobject_scalar_descriptor()
+
+
+@infers_method_descriptor('ProcessGrid', 'Sub')
+def _infer_pgrid_sub(self_desc, color, **_kw):
+    return _pyobject_scalar_descriptor()
+
+
+for _name in ('mpi4py.MPI.COMM_WORLD.Bcast', 'dace.comm.Bcast', 'mpi4py.MPI.COMM_WORLD.Reduce', 'dace.comm.Reduce',
+              'mpi4py.MPI.COMM_WORLD.Alltoall', 'dace.comm.Alltoall', 'mpi4py.MPI.COMM_WORLD.Allreduce',
+              'dace.comm.Allreduce', 'mpi4py.MPI.COMM_WORLD.Scatter', 'dace.comm.Scatter',
+              'mpi4py.MPI.COMM_WORLD.Gather', 'dace.comm.Gather', 'mpi4py.MPI.COMM_WORLD.Send', 'dace.comm.Send',
+              'mpi4py.MPI.COMM_WORLD.Recv', 'dace.comm.Recv', 'dace.comm.Wait', 'mpi4py.MPI.Request.Waitall',
+              'dace.comm.Waitall', 'dace.comm.BCGather'):
+    infers_descriptor(_name)(_zero_output)
+
+for _cls, _method in (('Cartcomm', 'Bcast'), ('Intracomm', 'Bcast'), ('ProcessGrid', 'Bcast'),
+                      ('Intracomm', 'Alltoall'), ('ProcessGrid',
+                                                  'Alltoall'), ('Intracomm', 'Allreduce'), ('ProcessGrid', 'Allreduce'),
+                      ('Intracomm', 'Send'), ('ProcessGrid', 'Send'), ('Intracomm', 'Recv'), ('ProcessGrid', 'Recv')):
+    infers_method_descriptor(_cls, _method)(_zero_output)
+
+
+@infers_descriptor('mpi4py.MPI.COMM_WORLD.Isend')
+@infers_descriptor('dace.comm.Isend')
+def _infer_isend(input_descs, buffer, dst, tag, request=None, grid=None, **_kw):
+    if request is None:
+        return _request_descriptor()
+    return ()
+
+
+@infers_descriptor('mpi4py.MPI.COMM_WORLD.Irecv')
+@infers_descriptor('dace.comm.Irecv')
+def _infer_irecv(input_descs, buffer, src, tag, request=None, grid=None, **_kw):
+    if request is None:
+        return _request_descriptor()
+    return ()
+
+
+for _cls, _method in (('Intracomm', 'Isend'), ('ProcessGrid', 'Isend'), ('Intracomm', 'Irecv'), ('ProcessGrid',
+                                                                                                 'Irecv')):
+    infers_method_descriptor(_cls, _method)(lambda self_desc, *args, **_kw: _request_descriptor())
+
+
+def _comm_bool_result(*_args, **_kwargs):
+    return data.Scalar(dtypes.bool_, transient=True)
+
+
+for _left_cls, _right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], repeat=2):
+    for _op in ('Eq', 'NotEq', 'Is', 'IsNot'):
+        infers_operator_descriptor(_op, _left_cls, _right_cls)(_comm_bool_result)
+
+for _cls_a, _cls_b, _op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'],
+                                             ['Eq', 'NotEq', 'Is', 'IsNot']):
+    infers_operator_descriptor(_op, _cls_a, _cls_b)(_comm_bool_result)
+    infers_operator_descriptor(_op, _cls_b, _cls_a)(_comm_bool_result)
+
+for _name in ('dace.comm.Subarray', 'dace.comm.BlockScatter', 'dace.comm.BlockGather', 'dace.comm.Redistribute'):
+    infers_descriptor(_name)(lambda input_descs, *args, **_kw: _pyobject_scalar_descriptor())
+
+
+@infers_descriptor('dace.comm.BCScatter')
+def _infer_bcscatter(input_descs, in_buffer, out_buffer, block_sizes, **_kw):
+    return (_int_vector_descriptor(9), _int_vector_descriptor(9))
+
+
+@infers_descriptor('dace.distr.MatMult')
+@infers_descriptor('distr.MatMult')
+def _infer_distr_matmult(input_descs,
+                         opa,
+                         opb,
+                         shape,
+                         a_block_sizes=None,
+                         b_block_sizes=None,
+                         c_block_sizes=None,
+                         **_kw):
+    desc_a = _get_desc(input_descs, opa)
+    desc_b = _get_desc(input_descs, opb)
+    if not isinstance(desc_a, data.Data) or not isinstance(desc_b, data.Data):
+        return None
+
+    if len(desc_a.shape) == 2 and len(desc_b.shape) == 2:
+        return data.Array(desc_a.dtype, [desc_a.shape[0], desc_b.shape[-1]], transient=True)
+    if len(desc_a.shape) == 2 and len(desc_b.shape) == 1:
+        if isinstance(c_block_sizes, (tuple, list)) and c_block_sizes:
+            out_dim = c_block_sizes[0]
+        else:
+            out_dim = desc_a.shape[0]
+        return data.Array(desc_a.dtype, [out_dim], transient=True)
+    if len(desc_a.shape) == 1 and len(desc_b.shape) == 2:
+        if isinstance(c_block_sizes, (tuple, list)) and c_block_sizes:
+            out_dim = c_block_sizes[0]
+        else:
+            out_dim = desc_b.shape[1]
+        return data.Array(desc_b.dtype, [out_dim], transient=True)
+    return None

@@ -577,6 +577,11 @@ def _infer_empty_zeros_ones_like(input_descs, prototype, dtype=None, shape=None,
     return result
 
 
+@infers_descriptor('numpy.full_like')
+def _infer_full_like(input_descs, prototype, fill_value=None, dtype=None, shape=None, **_kw):
+    return _infer_empty_zeros_ones_like(input_descs, prototype, dtype=dtype, shape=shape)
+
+
 @infers_descriptor('numpy.eye')
 def _infer_eye(input_descs, N, M=None, k=0, dtype=None, **_kw):
     n = _to_int(N)
@@ -595,6 +600,11 @@ def _infer_eye(input_descs, N, M=None, k=0, dtype=None, **_kw):
         except (TypeError, ValueError):
             return None
     return data.Array(dtype, [N, M], transient=True)
+
+
+@infers_descriptor('numpy.identity')
+def _infer_identity(input_descs, n, dtype=None, **_kw):
+    return _infer_eye(input_descs, n, M=n, dtype=dtype)
 
 
 @infers_descriptor('numpy.arange')
@@ -650,7 +660,27 @@ def _infer_linspace(input_descs,
             dtype = dtypes.dtype_to_typeclass(dtype)
         except (TypeError, ValueError):
             return None
-    return data.Array(dtype, [num if n is None else n], transient=True)
+
+    start_desc = _get_desc(input_descs, start)
+    stop_desc = _get_desc(input_descs, stop)
+    start_shape = list(start_desc.shape) if start_desc is not None and hasattr(start_desc, 'shape') else []
+    stop_shape = list(stop_desc.shape) if stop_desc is not None and hasattr(stop_desc, 'shape') else []
+
+    try:
+        shape, _ranges, _outind, _ind1, _ind2 = broadcast_together(start_shape, stop_shape)
+        shape_with_axis = _add_axis_to_shape(shape, axis, num if n is None else n)
+    except (TypeError, ValueError):
+        return None
+
+    array_result = data.Array(dtype, list(shape_with_axis), transient=True)
+    if not retstep:
+        return array_result
+
+    if shape:
+        step_result = data.Array(dtype, list(shape), transient=True)
+    else:
+        step_result = data.Scalar(dtype, transient=True)
+    return (array_result, step_result)
 
 
 @infers_descriptor('numpy.copy')
@@ -672,3 +702,4 @@ def _infer_method_copy(self_desc, **_kw):
 
 for _cls in ('Array', 'Scalar', 'View'):
     infers_method_descriptor(_cls, 'copy')(_infer_method_copy)
+    infers_method_descriptor(_cls, 'fill')(lambda self_desc, value=None, **_kw: ())

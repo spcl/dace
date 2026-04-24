@@ -6,7 +6,7 @@ and Sorting, Searching, and Counting Functions (e.g., ``numpy.argmax``).
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.nested_call import NestedCall
 from dace.frontend.python.replacements.utils import ProgramVisitor, normalize_axes
-from dace import dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
+from dace import data, dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 import copy
 import functools
@@ -88,6 +88,13 @@ def reduce(pv: ProgramVisitor,
         return outarr
     else:
         return []
+
+
+@oprepo.infers_descriptor('dace.reduce')
+def _infer_reduce(input_descs, redfunction, in_array, out_array=None, axis=None, identity=None, **_kw):
+    if out_array is not None:
+        return ()
+    return _reduction_descriptor(input_descs, in_array, axis)
 
 
 @oprepo.replaces('numpy.sum')
@@ -410,6 +417,41 @@ def _infer_basic_reduction(input_descs, arr, axis=None, **_kw):
 for _name in ('numpy.sum', 'numpy.prod', 'numpy.max', 'numpy.amax', 'numpy.min', 'numpy.amin', 'numpy.any',
               'numpy.all'):
     infers_descriptor(_name)(_infer_basic_reduction)
+
+
+@infers_descriptor('sum')
+def _infer_builtin_sum(input_descs, arr, **_kw):
+    return _reduction_descriptor(input_descs, arr, axis=0)
+
+
+def _infer_builtin_minmax(input_descs, first_arg, *args, **_kw):
+    from dace.frontend.python.replacements.operators import result_type
+
+    operands = []
+    for arg in (first_arg, ) + args:
+        desc = _get_desc(input_descs, arg)
+        if isinstance(desc, data.Data) and not isinstance(desc, data.Scalar):
+            return None
+        if desc is not None:
+            operands.append(desc)
+            continue
+        if isinstance(arg, (Number, symbolic.symbol)):
+            operands.append(arg)
+            continue
+        return None
+
+    try:
+        out_dtype, _casts = result_type(operands)
+    except Exception:
+        return None
+
+    if not isinstance(out_dtype, dtypes.typeclass):
+        return None
+    return data.Scalar(out_dtype, transient=True)
+
+
+for _name in ('max', 'min'):
+    infers_descriptor(_name)(_infer_builtin_minmax)
 
 
 @infers_descriptor('numpy.mean')

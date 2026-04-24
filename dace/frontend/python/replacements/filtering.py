@@ -176,3 +176,73 @@ def _array_array_select(visitor: ProgramVisitor,
                 right_operand_node = nd
 
     return out_operand
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for filtering (schedule-tree frontend)         #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_descriptor
+from dace.frontend.python.replacements.type_inference import _get_desc
+from dace.frontend.python.replacements.operators import result_type
+
+
+def _where_operand_value(input_descs, operand):
+    desc = _get_desc(input_descs, operand)
+    if desc is not None:
+        return desc
+    return operand
+
+
+def _where_operand_shape(operand) -> List[int]:
+    if isinstance(operand, data.Data):
+        return list(operand.shape)
+    return [1]
+
+
+@infers_descriptor('numpy.where')
+def _infer_where(input_descs, cond_operand, left_operand=None, right_operand=None, **_kw):
+    if left_operand is None or right_operand is None:
+        return None
+
+    cond_desc = _get_desc(input_descs, cond_operand)
+    if cond_desc is None:
+        return None
+
+    left_value = _where_operand_value(input_descs, left_operand)
+    right_value = _where_operand_value(input_descs, right_operand)
+
+    if not isinstance(left_value, data.Data) and not isinstance(right_value, data.Data):
+        return None
+
+    try:
+        result_dtype, _casting = result_type([left_value, right_value])
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    try:
+        out_shape, _all_idx, _out_idx, _left_idx, _right_idx = broadcast_together(_where_operand_shape(left_value),
+                                                                                  _where_operand_shape(right_value))
+        broadcast_together(list(cond_desc.shape), out_shape)
+    except Exception:
+        return None
+
+    return data.Array(result_dtype, list(out_shape), transient=True)
+
+
+@infers_descriptor('numpy.select')
+def _infer_select(input_descs, cond_list, choice_list, default=None, **_kw):
+    if not isinstance(cond_list, (tuple, list)) or not isinstance(choice_list, (tuple, list)):
+        return None
+    if len(cond_list) != len(choice_list) or len(cond_list) == 0:
+        return None
+
+    current = 0 if default is None else default
+    for cond_operand, left_operand in reversed(list(zip(cond_list, choice_list))):
+        current = _infer_where(input_descs, cond_operand, left_operand, current)
+        if current is None:
+            return None
+    return current

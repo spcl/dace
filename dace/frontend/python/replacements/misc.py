@@ -6,8 +6,9 @@ calls element-wise operations on data containers.
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.replacements.type_inference import _get_desc
 from dace.frontend.python.replacements.utils import ProgramVisitor
-from dace import Memlet, SDFG, SDFGState, dtypes
+from dace import Memlet, SDFG, SDFGState, data, dtypes
 
 import ast
 import functools
@@ -19,11 +20,26 @@ def _slice(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     return (slice(*args, **kwargs), )
 
 
+@oprepo.infers_descriptor('slice')
+def _infer_slice(input_descs, *args, **kwargs):
+    return (data.Scalar(dtypes.pyobject(), transient=True), )
+
+
 @oprepo.replaces_operator('Array', 'MatMult', otherclass='StorageType')
 def _cast_storage(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, stype: dtypes.StorageType) -> str:
     desc = sdfg.arrays[arr]
     desc.storage = stype
     return arr
+
+
+@oprepo.infers_operator_descriptor('MatMult', 'Array', 'StorageType')
+def _infer_cast_storage(arr_desc, stype: dtypes.StorageType):
+    if not isinstance(stype, dtypes.StorageType):
+        return None
+    result = arr_desc.clone()
+    result.storage = stype
+    result.transient = True
+    return result
 
 
 @oprepo.replaces('dace.elementwise')
@@ -78,3 +94,16 @@ def elementwise(pv: 'ProgramVisitor',
             external_edges=True)
 
     return out_array
+
+
+@oprepo.infers_descriptor('dace.elementwise')
+def _infer_elementwise(input_descs, func: Union[StringLiteral, str], in_array: str, out_array=None, **_kw):
+    desc = _get_desc(input_descs, out_array) if out_array is not None else None
+    if desc is None:
+        desc = _get_desc(input_descs, in_array)
+    if not isinstance(desc, data.Data):
+        return None
+    result = desc.clone()
+    if out_array is None:
+        result.transient = True
+    return result

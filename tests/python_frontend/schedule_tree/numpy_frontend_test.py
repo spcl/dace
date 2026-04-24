@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -802,3 +803,7 @@ def test_python_frontend_schedule_tree_numpy_literal_slice_lowers_to_map():
     assert isinstance(tasklet, tn.TaskletNode)
     assert tasklet.node.code.as_string == 'out = 2'
     assert str(tasklet.out_memlets['out'].subset) == '__i0'
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])

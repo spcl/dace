@@ -244,6 +244,35 @@ def _infer_local_structure_descriptor(input_descs, dtype: data.Structure, **_kw)
     return descriptor
 
 
+def _normalize_inferred_dtype(dtype: dtypes.typeclass) -> Optional[dtypes.typeclass]:
+    if dtype is None:
+        return None
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    try:
+        return dtypes.dtype_to_typeclass(dtype)
+    except (TypeError, ValueError):
+        return None
+
+
+@oprepo.infers_descriptor('dace.define_stream')
+def _infer_stream_descriptor(input_descs, dtype: dtypes.typeclass, buffer_size: Size = 1, **_kw):
+    out_dtype = _normalize_inferred_dtype(dtype)
+    if out_dtype is None:
+        return None
+    return data.Stream(out_dtype, buffer_size, transient=True)
+
+
+@oprepo.infers_descriptor('dace.define_streamarray')
+@oprepo.infers_descriptor('dace.stream')
+def _infer_streamarray_descriptor(input_descs, shape: Shape, dtype: dtypes.typeclass, buffer_size: Size = 1, **_kw):
+    out_shape = _normalize_allocator_shape(shape)
+    out_dtype = _normalize_inferred_dtype(dtype)
+    if out_shape is None or out_dtype is None:
+        return None
+    return data.Stream(out_dtype, buffer_size, shape=out_shape, transient=True)
+
+
 @oprepo.infers_descriptor('numpy.array')
 @oprepo.infers_descriptor('dace.array')
 def _infer_literal_array_descriptor(input_descs,

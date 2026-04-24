@@ -5,8 +5,8 @@ Contains replacements for NumPy ufuncs.
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
-from dace.frontend.python.replacements.utils import (ProgramVisitor, Shape, UfuncInput, UfuncOutput, normalize_axes,
-                                                     sym_type)
+from dace.frontend.python.replacements.utils import (ProgramVisitor, Shape, UfuncInput, UfuncOutput, broadcast_together,
+                                                     normalize_axes, representative_num, sym_type)
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import InterstateEdge, Memlet, SDFG, SDFGState
 from dace import dtypes, data, symbolic, nodes
@@ -1876,8 +1876,253 @@ def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 #  Descriptor inference for method reductions (schedule-tree frontend)   #
 # -------------------------------------------------------------------- #
 
-from dace.frontend.common.op_repository import infers_method_descriptor
+from dace.frontend.common.op_repository import infers_descriptor, infers_method_descriptor, infers_ufunc_descriptor
 from dace.frontend.python.replacements.type_inference import _method_reduction_descriptor
+
+
+def _clone_inferred_output(output):
+    if isinstance(output, data.Data):
+        result = copy.deepcopy(output)
+        result.transient = True
+        return result
+    if isinstance(output, tuple):
+        return tuple(_clone_inferred_output(element) for element in output)
+    if isinstance(output, list):
+        return [_clone_inferred_output(element) for element in output]
+    return None
+
+
+def _resolve_inference_output(input_descs: Dict[str, data.Data], output):
+    if isinstance(output, str) and output in input_descs:
+        return _clone_inferred_output(input_descs[output])
+    return _clone_inferred_output(output)
+
+
+def _resolve_inference_operand(input_descs: Dict[str, data.Data], arg):
+    if isinstance(arg, str) and arg in input_descs:
+        return input_descs[arg]
+    return arg
+
+
+def _descriptor_from_dtype_and_shape(dtype: dtypes.typeclass, shape: Sequence[Any]) -> data.Data:
+    if len(shape) == 0:
+        return data.Scalar(dtype, transient=True)
+    return data.Array(dtype, list(shape), transient=True)
+
+
+def _descriptor_from_sample(sample, shape: Sequence[Any], dtype_override: Optional[dtypes.typeclass] = None):
+    out_dtype = dtype_override
+    if out_dtype is None:
+        try:
+            out_dtype = dtypes.dtype_to_typeclass(np.asarray(sample).dtype.type)
+        except Exception:
+            return None
+    return _descriptor_from_dtype_and_shape(out_dtype, shape)
+
+
+def _resolve_dtype_override(dtype) -> Optional[dtypes.typeclass]:
+    if dtype is None:
+        return None
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    try:
+        return dtypes.dtype_to_typeclass(np.dtype(dtype).type)
+    except Exception:
+        return None
+
+
+def _sample_operand_value(operand):
+    if isinstance(operand, data.Data):
+        return representative_num(operand.dtype)
+    if isinstance(operand, dtypes.typeclass):
+        return representative_num(operand)
+    if symbolic.issymbolic(operand):
+        return representative_num(sym_type(operand))
+    if isinstance(operand, np.generic):
+        return operand.item()
+    if isinstance(operand, (Number, bool)):
+        return operand
+    return None
+
+
+def _broadcast_shape_from_operands(operands: Sequence[Any]) -> Optional[List[Any]]:
+    array_shapes = [
+        list(operand.shape) for operand in operands
+        if isinstance(operand, data.Data) and not isinstance(operand, data.Scalar)
+    ]
+    if not array_shapes:
+        return []
+
+    out_shape = array_shapes[0]
+    for shape in array_shapes[1:]:
+        try:
+            out_shape, _, _, _, _ = broadcast_together(out_shape, shape)
+        except Exception:
+            return None
+    return list(out_shape)
+
+
+def _resolve_explicit_output(input_descs: Dict[str, data.Data], outputs):
+    if not outputs:
+        return None
+    if len(outputs) == 1:
+        return _resolve_inference_output(input_descs, outputs[0])
+    return tuple(_resolve_inference_output(input_descs, output) for output in outputs)
+
+
+def _infer_reduce_shape(desc: data.Data, axis, keepdims: bool) -> Optional[List[Any]]:
+    shape = list(getattr(desc, 'shape', []))
+    if axis is None:
+        return [1] * len(shape) if keepdims and shape else []
+
+    if not isinstance(axis, (tuple, list)):
+        axis = (axis, )
+    try:
+        axis = tuple(normalize_axes(tuple(int(a) for a in axis), len(shape)))
+    except Exception:
+        return None
+
+    if keepdims:
+        return [1 if i in axis else dim for i, dim in enumerate(shape)]
+    return [dim for i, dim in enumerate(shape) if i not in axis]
+
+
+def _infer_reduce_dtype(ufunc_name: str, desc: data.Data, method_name: str) -> Optional[dtypes.typeclass]:
+    try:
+        sample_array = np.array([representative_num(desc.dtype)], dtype=desc.dtype.as_numpy_dtype())
+        ufunc = getattr(np, ufunc_name)
+        if method_name == 'reduce':
+            result = ufunc.reduce(sample_array)
+        elif method_name == 'accumulate':
+            result = ufunc.accumulate(sample_array)
+        else:
+            result = ufunc.outer(sample_array, sample_array)
+        return dtypes.dtype_to_typeclass(np.asarray(result).dtype.type)
+    except Exception:
+        return None
+
+
+@infers_ufunc_descriptor('ufunc')
+def _infer_ufunc_descriptor(input_descs: Dict[str, data.Data], ufunc_name: str, *args, **kwargs):
+    impl = ufuncs.get(ufunc_name)
+    if impl is None:
+        return None
+
+    num_inputs = len(impl['inputs'])
+    explicit_outputs = list(args[num_inputs:])
+    kw_out = kwargs.get('out')
+    if kw_out is not None:
+        explicit_outputs = list(kw_out if isinstance(kw_out, tuple) else (kw_out, ))
+    explicit_result = _resolve_explicit_output(input_descs, explicit_outputs)
+    if explicit_result is not None:
+        return explicit_result
+
+    operands = [_resolve_inference_operand(input_descs, arg) for arg in args[:num_inputs]]
+    if any(operand is None for operand in operands):
+        return None
+
+    sample_args = [_sample_operand_value(operand) for operand in operands]
+    if any(sample is None for sample in sample_args):
+        return None
+
+    out_shape = _broadcast_shape_from_operands(operands)
+    if out_shape is None:
+        return None
+
+    try:
+        sample_result = getattr(np, ufunc_name)(*sample_args)
+    except Exception:
+        return None
+
+    dtype_override = _resolve_dtype_override(kwargs.get('dtype'))
+    if isinstance(sample_result, tuple):
+        results = tuple(_descriptor_from_sample(sample, out_shape) for sample in sample_result)
+        return None if any(result is None for result in results) else results
+    return _descriptor_from_sample(sample_result, out_shape, dtype_override)
+
+
+@infers_descriptor('numpy.clip')
+def _infer_clip(input_descs: Dict[str, data.Data], a, a_min=None, a_max=None, **kwargs):
+    if a_min is None and a_max is None:
+        return None
+    if a_min is None:
+        return _infer_ufunc_descriptor(input_descs, 'minimum', a, a_max, **kwargs)
+    if a_max is None:
+        return _infer_ufunc_descriptor(input_descs, 'maximum', a, a_min, **kwargs)
+    return _infer_ufunc_descriptor(input_descs, 'clip', a, a_min, a_max, **kwargs)
+
+
+@infers_ufunc_descriptor('reduce')
+def _infer_ufunc_reduce_descriptor(input_descs: Dict[str, data.Data],
+                                   ufunc_name: str,
+                                   arr,
+                                   axis=0,
+                                   dtype=None,
+                                   out=None,
+                                   keepdims=False,
+                                   **_kwargs):
+    desc = _resolve_inference_operand(input_descs, arr)
+    if not isinstance(desc, data.Data):
+        return None
+
+    explicit_result = _resolve_explicit_output(input_descs, [out] if out is not None else [])
+    if explicit_result is not None:
+        return explicit_result
+
+    out_dtype = _resolve_dtype_override(dtype) or _infer_reduce_dtype(ufunc_name, desc, 'reduce') or desc.dtype
+    out_shape = _infer_reduce_shape(desc, axis, keepdims)
+    if out_shape is None:
+        return None
+    return _descriptor_from_dtype_and_shape(out_dtype, out_shape)
+
+
+@infers_ufunc_descriptor('accumulate')
+def _infer_ufunc_accumulate_descriptor(input_descs: Dict[str, data.Data],
+                                       ufunc_name: str,
+                                       arr,
+                                       axis=0,
+                                       dtype=None,
+                                       out=None,
+                                       **_kwargs):
+    desc = _resolve_inference_operand(input_descs, arr)
+    if not isinstance(desc, data.Data):
+        return None
+
+    explicit_result = _resolve_explicit_output(input_descs, [out] if out is not None else [])
+    if explicit_result is not None:
+        return explicit_result
+
+    del axis
+    out_dtype = _resolve_dtype_override(dtype) or _infer_reduce_dtype(ufunc_name, desc, 'accumulate') or desc.dtype
+    shape = list(getattr(desc, 'shape', []))
+    return _descriptor_from_dtype_and_shape(out_dtype, shape)
+
+
+@infers_ufunc_descriptor('outer')
+def _infer_ufunc_outer_descriptor(input_descs: Dict[str, data.Data], ufunc_name: str, left, right, out=None, **kwargs):
+    explicit_result = _resolve_explicit_output(input_descs, [out] if out is not None else [])
+    if explicit_result is not None:
+        return explicit_result
+
+    left_operand = _resolve_inference_operand(input_descs, left)
+    right_operand = _resolve_inference_operand(input_descs, right)
+    left_sample = _sample_operand_value(left_operand)
+    right_sample = _sample_operand_value(right_operand)
+    if left_sample is None or right_sample is None:
+        return None
+
+    try:
+        sample_result = getattr(np, ufunc_name)(left_sample, right_sample)
+    except Exception:
+        return None
+
+    left_shape = [] if not isinstance(left_operand, data.Data) or isinstance(left_operand, data.Scalar) else list(
+        left_operand.shape)
+    right_shape = [] if not isinstance(right_operand, data.Data) or isinstance(right_operand, data.Scalar) else list(
+        right_operand.shape)
+    out_shape = left_shape + right_shape
+    dtype_override = _resolve_dtype_override(kwargs.get('dtype'))
+    return _descriptor_from_sample(sample_result, out_shape, dtype_override)
 
 
 def _infer_method_reduction(self_desc, axis=None, **_kw):

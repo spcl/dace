@@ -17,6 +17,8 @@ import numpy as np
 import sympy as sp
 import dace  # For evaluation of data types
 
+from dace.frontend.common.op_repository import infers_operator_descriptor
+
 numpy_version = np.lib.NumpyVersion(np.__version__)
 
 
@@ -990,3 +992,69 @@ _boolop_to_method = {
 }
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+def _operand_shape(operand) -> List[Any]:
+    if isinstance(operand, data.Scalar):
+        return []
+    if isinstance(operand, data.Data):
+        return list(operand.shape)
+    return []
+
+
+def _elementwise_binary_descriptor(left_desc, right_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([left_desc, right_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    left_shape = _operand_shape(left_desc)
+    right_shape = _operand_shape(right_desc)
+
+    try:
+        out_shape, _ranges, _out_idx, _left_idx, _right_idx = broadcast_together(left_shape, right_shape)
+    except Exception:
+        return None
+
+    if len(out_shape) == 0:
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(out_shape), transient=True)
+
+
+def _elementwise_unary_descriptor(operand_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([operand_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    if not isinstance(operand_desc, data.Data) or isinstance(operand_desc, data.Scalar):
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(operand_desc.shape), transient=True)
+
+
+def _register_unary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(operand_desc):
+        return _elementwise_unary_descriptor(operand_desc, opname)
+
+
+def _register_binary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(left_desc, right_desc):
+        return _elementwise_binary_descriptor(left_desc, right_desc, opname)
+
+
+for _descriptor_op in ('Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Mod', 'Pow', 'LShift', 'RShift', 'BitOr', 'BitXor',
+                       'BitAnd', 'And', 'Or', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'Is', 'IsNot'):
+    _register_binary_operator_descriptor(_descriptor_op)
+
+for _descriptor_unary_op in ('UAdd', 'USub', 'Not', 'Invert'):
+    _register_unary_operator_descriptor(_descriptor_unary_op)
