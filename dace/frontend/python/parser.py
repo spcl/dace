@@ -469,6 +469,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
+        annotated_argtypes, _, _, _ = self._get_type_annotations(args, kwargs)
         # Reconstruct keyword arguments
         result.update({aname: arg for aname, arg in zip(self.argnames, args) if aname not in self.constant_args})
         result.update(kwargs)
@@ -481,10 +482,11 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
 
         # Update arguments with symbols in data shapes
         result.update(
-            infer_symbols_from_datadescriptor(sdfg, {
-                k: create_datadescriptor(v)
-                for k, v in result.items() if k not in self.constant_args
-            }))
+            infer_symbols_from_datadescriptor(
+                sdfg, {
+                    k: annotated_argtypes[k] if k in annotated_argtypes else create_datadescriptor(v)
+                    for k, v in result.items() if k not in self.constant_args
+                }))
         return result
 
     def __call__(self, *args, **kwargs):

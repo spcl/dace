@@ -259,6 +259,7 @@ class PythonClass(Structure):
 
     def __init__(self, members, name: str = 'PythonClass', **kwargs):
         super().__init__(members=members, name=name, **kwargs)
+        self.dtype = dtypes.pyobject()
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -283,3 +284,17 @@ class PythonClass(Structure):
     def from_class(cls, class_type: Type[Any], **overrides) -> 'PythonClass':
         members = infer_structured_class_members(class_type, **overrides)
         return cls(members, name=class_type.__name__)
+
+    def clone(self):
+        return PythonClass(self.members,
+                           self.name,
+                           transient=self.transient,
+                           storage=self.storage,
+                           location=self.location,
+                           lifetime=self.lifetime,
+                           debuginfo=self.debuginfo)
+
+    def as_python_arg(self, with_types: bool = True, for_call: bool = False, name: str = None):
+        if not with_types or for_call:
+            return name
+        return f'{name}: object'
