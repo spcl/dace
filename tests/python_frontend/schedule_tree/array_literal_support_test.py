@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+import pytest
 
 import dace
 from dace import data
@@ -41,3 +42,7 @@ def test_infer_numpy_array_literal_descriptor_respects_dtype_and_ndmin():
     assert isinstance(descriptor, data.Array)
     assert descriptor.dtype == dace.float32
     assert tuple(descriptor.shape) == (1, 2)
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])

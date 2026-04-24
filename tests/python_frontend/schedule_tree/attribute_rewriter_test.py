@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+import pytest
 
 from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree import AttributeRewriter
@@ -77,3 +78,7 @@ def test_attribute_rewriter_preserves_plain_attribute_syntax():
 
     assert _rewrite_expression('holder.value', context) == 'holder.value'
     assert _rewrite_assignment('holder.value = A', context) is None
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])
