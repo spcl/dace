@@ -294,18 +294,23 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
     in_value_typed = one_elem and in_is_cpu
     out_value_typed = one_elem and out_is_cpu
 
-    in_conn = inp.dtype if in_value_typed else dace.dtypes.pointer(inp.dtype)
-    out_conn = out.dtype if out_value_typed else dace.dtypes.pointer(out.dtype)
+    in_conn_type = inp.dtype if in_value_typed else dace.dtypes.pointer(inp.dtype)
+    out_conn_type = out.dtype if out_value_typed else dace.dtypes.pointer(out.dtype)
     in_arg = '&_memcpy_in' if in_value_typed else '_memcpy_in'
     out_arg = '&_memcpy_out' if out_value_typed else '_memcpy_out'
 
+    # Use the set-based ``tasklet_inputs`` so any extra connectors injected by
+    # ``_stream_expr_for_tasklet`` (notably ``_stream_in``) come along; we apply
+    # the explicit pointer/value type to ``_memcpy_in`` after construction.
     tasklet = state.add_tasklet(name="memcpy_tasklet",
-                                inputs={"_memcpy_in": in_conn},
-                                outputs={"_memcpy_out": out_conn},
+                                inputs=tasklet_inputs,
+                                outputs={"_memcpy_out"},
                                 code=(f"cudaMemcpyAsync({out_arg}, {in_arg}, "
                                       f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), "
                                       f"cudaMemcpy{direction}, {stream_expr});"),
                                 language=dace.Language.CPP)
+    tasklet.in_connectors["_memcpy_in"] = in_conn_type
+    tasklet.out_connectors["_memcpy_out"] = out_conn_type
     tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
     state.add_edge(in_access, None, tasklet, "_memcpy_in",

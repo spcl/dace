@@ -1,4 +1,4 @@
-name: Pauli GPU Tests
+name: Pauli GPU Tests (ExperimentalCUDACodeGen)
 
 on:
   workflow_dispatch:
@@ -13,13 +13,15 @@ env:
   CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  # Force the experimental CUDA codegen for every test in this workflow.
+  DACE_compiler_cuda_implementation: experimental
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
 jobs:
-  test-gpu:
+  test-gpu-experimental:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, gpu]
     steps:
@@ -46,15 +48,16 @@ jobs:
         source ~/.venv/bin/activate # activate venv
         nvidia-smi
 
-    - name: Run pytest GPU
+    - name: Run pytest GPU (experimental codegen)
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=single
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
+        echo "DACE_compiler_cuda_implementation: $DACE_compiler_cuda_implementation"
         pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu"
 
-    - name: Run extra GPU tests
+    - name: Run extra GPU tests (experimental codegen)
       run: |
         source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
