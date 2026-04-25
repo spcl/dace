@@ -1873,11 +1873,10 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
                         node.out_connectors[out_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
 
-    # Swap symbols. ``set_symbol_type`` rebuilds the canonical object so the
-    # dtype table and the symbol object registry stay in sync.
-    for sym_name, sym_type in list(sdfg.symbols.items()):
+    # Swap symbols
+    for sym_name, sym_type in sdfg.symbols.items():
         if sym_type == from_type:
-            sdfg.set_symbol_type(sym_name, to_type)
+            sdfg.symbols[sym_name] = to_type
             swaps_count += 1
 
     # Swap array types

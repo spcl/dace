@@ -503,7 +503,7 @@ class LoopToMap(xf.MultiStateTransformation):
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
-                    nsdfg.add_symbol(s, sdfg.symbols[s])
+                    nsdfg.symbols[s] = sdfg.symbols[s]
         for name in read_set:
             r = body.add_read(name)
             body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
@@ -516,7 +516,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.add_symbol(sym, dtype)
+            nsdfg.symbols[sym] = dtype
 
         # Symbols that the nested SDFG assigns on its own interstate edges
         # are internal -- they must not be surfaced onto the NestedSDFG
@@ -538,7 +538,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     continue
                 if sym_name in sdfg.symbols:
                     if sym_name not in nsdfg.symbols:
-                        nsdfg.add_symbol(sym_name, sdfg.symbols[sym_name])
+                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
                     if sym_name not in cnode.symbol_mapping:
                         cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
@@ -565,7 +565,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
                 # Only add explicit type, if it cannot be inferred
                 if vtype is None:
-                    nsdfg.add_symbol(k, ktype)
+                    nsdfg.symbols[k] = ktype
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
