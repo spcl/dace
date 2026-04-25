@@ -264,10 +264,45 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg, direction):
     tasklet_inputs = {"_memcpy_in"}
     stream_expr = _stream_expr_for_tasklet(tasklet_inputs, stream_input)
 
+    # Connector typing for ``cudaMemcpyAsync(dst, src, ...)``:
+    #
+    # ``cudaMemcpyAsync`` wants both arguments as ``void *``. The naive choice
+    # is to type both connectors as ``T*`` -- and that works when the SDFG
+    # has multi-element subsets (the codegen passes the data through as a
+    # pointer parameter at every level). It breaks for **single-element CPU
+    # subsets**, because the codegen emits the function parameter as ``T&``
+    # (a reference) rather than ``T*``: the input-side binding then drops
+    # the reference and produces ``const T x = ref;`` (a stack value),
+    # which fails to convert to ``void *`` at the call site.
+    #
+    # We dodge the codegen quirk in the expansion. For each side:
+    #   - GPU storage: always pointer-typed connector. The codegen always
+    #     emits a ``T*`` parameter for GPU memory, so ``T*`` connector is
+    #     consistent and ``cudaMemcpyAsync`` gets the address it expects.
+    #   - CPU storage with a single-element subset: leave the connector
+    #     value-typed so the codegen emits its natural ``T x = ref`` binding
+    #     to a stack local, and use ``&_memcpy_<side>`` in the tasklet code
+    #     to pass the address of that local to ``cudaMemcpyAsync``.
+    #   - CPU storage with a multi-element subset: parameter is already a
+    #     pointer, pointer-typed connector matches.
+    #
+    # ``direction`` is "HostToDevice" / "DeviceToHost" / "DeviceToDevice"
+    # so the prefix/suffix tells us which side is CPU.
+    in_is_cpu = direction.startswith("Host")
+    out_is_cpu = direction.endswith("Host")
+    one_elem = (cp_size == 1)
+    in_value_typed = one_elem and in_is_cpu
+    out_value_typed = one_elem and out_is_cpu
+
+    in_conn = inp.dtype if in_value_typed else dace.dtypes.pointer(inp.dtype)
+    out_conn = out.dtype if out_value_typed else dace.dtypes.pointer(out.dtype)
+    in_arg = '&_memcpy_in' if in_value_typed else '_memcpy_in'
+    out_arg = '&_memcpy_out' if out_value_typed else '_memcpy_out'
+
     tasklet = state.add_tasklet(name="memcpy_tasklet",
-                                inputs=tasklet_inputs,
-                                outputs={"_memcpy_out"},
-                                code=(f"cudaMemcpyAsync(_memcpy_out, _memcpy_in, "
+                                inputs={"_memcpy_in": in_conn},
+                                outputs={"_memcpy_out": out_conn},
+                                code=(f"cudaMemcpyAsync({out_arg}, {in_arg}, "
                                       f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), "
                                       f"cudaMemcpy{direction}, {stream_expr});"),
                                 language=dace.Language.CPP)
@@ -509,11 +544,25 @@ class ExpandCPU(ExpandTransformation):
         in_access = state.add_access(inp_name)
         out_access = state.add_access(out_name)
 
+        # Connector typing for ``memcpy(dst, src, n)``:
+        #
+        # Both sides are CPU. The codegen passes single-element CPU subsets
+        # as ``T&`` (reference) and multi-element subsets as ``T*``. We keep
+        # the value-typed connector for the single-element case and prefix
+        # ``&`` in the tasklet code, which works regardless of which side
+        # the codegen made a reference. See the longer note in
+        # ``_make_cuda_memcpy_expansion`` for the codegen-side reasoning.
+        one_elem = (cp_size == 1)
+        in_conn = inp.dtype if one_elem else dace.dtypes.pointer(inp.dtype)
+        out_conn = out.dtype if one_elem else dace.dtypes.pointer(out.dtype)
+        in_arg = '&_memcpy_in' if one_elem else '_memcpy_in'
+        out_arg = '&_memcpy_out' if one_elem else '_memcpy_out'
+
         tasklet = state.add_tasklet(
             name="memcpy_tasklet",
-            inputs={"_memcpy_in"},
-            outputs={"_memcpy_out"},
-            code=f"memcpy(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
+            inputs={"_memcpy_in": in_conn},
+            outputs={"_memcpy_out": out_conn},
+            code=f"memcpy({out_arg}, {in_arg}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
             language=dace.Language.CPP)
 
         state.add_edge(
