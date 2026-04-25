@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement the double buffering pattern. """
 
 import copy
@@ -188,7 +188,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         sd.replace(nstate, '__dace_db_param', new_expr)
 
         # Remove symbol once done
-        del nsdfg_node.sdfg.symbols['__dace_db_param']
+        nsdfg_node.sdfg.remove_symbol('__dace_db_param')
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
         return nsdfg_node

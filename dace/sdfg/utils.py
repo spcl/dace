@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -2097,7 +2097,7 @@ def prune_symbols(sdfg: SDFG):
                 free_symbols = node.sdfg.free_symbols
                 defined_symbols = declared_symbols - free_symbols
                 for s in defined_symbols:
-                    del node.sdfg.symbols[s]
+                    node.sdfg.remove_symbol(s)
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
 

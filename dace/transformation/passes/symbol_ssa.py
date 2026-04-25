@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
@@ -48,7 +48,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
             for write, shadowed_reads in scope_dict.items():
                 if write is not None:
                     newname = sdfg.find_new_symbol(name)
-                    sdfg.symbols[newname] = sdfg.symbols[name]
+                    sdfg.add_symbol(newname, sdfg.symbols[name])
 
                     # Replace the write to this symbol with a write to the new symbol.
                     try:
