@@ -26,8 +26,12 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     e = next(state.out_edges_by_connector(node, cname))
     if cname is None:
         return None
-    scalar = (e.data.subset and e.data.subset.num_elements() == 1
-              and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
+    # bool() coerces away an edge case where ``e.data.subset`` is a Range
+    # whose ``__bool__`` is False (e.g. CopyLibraryNode emitting a single-
+    # element subset): the ``and`` chain would otherwise leak the Range
+    # object out and the later ``scalar |= ...`` would fail with TypeError.
+    scalar = bool(e.data.subset and e.data.subset.num_elements() == 1
+                  and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
     else:
