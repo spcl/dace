@@ -1,13 +1,13 @@
 name: Pauli GPU Tests (ExperimentalCUDACodeGen)
 
 on:
-  workflow_dispatch
-  #push:
-  #  branches: [ main, ci-fix ]
-  #pull_request:
-  #  branches: [ main, ci-fix ]
-  #merge_group:
-  #  branches: [ main, ci-fix ]
+  workflow_dispatch:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc
