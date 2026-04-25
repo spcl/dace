@@ -7,7 +7,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes import SimplifyInductionVariables, LoopLocalMemoryReduction
+from dace.transformation.passes import SimplifyInductionVariables
 
 
 def _compile_and_run_works() -> bool:
@@ -85,8 +85,12 @@ def test_no_action_when_no_derived_iv():
     sdfg = dace.SDFG('no_derived')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [100], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i', initialize_expr='i = 0',
-                      update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     an = body.add_access('A')
@@ -119,8 +123,12 @@ def test_chained_derived_ivs():
     sdfg = dace.SDFG('chain')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i', initialize_expr='i = 0',
-                      update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     mid = loop.add_state('mid')
@@ -287,8 +295,12 @@ def _simple_loop_with_derived(sdfg_name: str, derived_assignments):
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
     sdfg.add_array('B', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i',
-                      initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     use = loop.add_state('use')
@@ -304,8 +316,12 @@ def test_llvm_symbolic_bounds_with_derived_iv():
     sdfg.add_symbol('END', dace.int64)
     sdfg.add_symbol('OFF', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < END', loop_var='i',
-                      initialize_expr='i = START', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < END',
+                      loop_var='i',
+                      initialize_expr='i = START',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     use = loop.add_state('use')
@@ -346,8 +362,12 @@ def test_llvm_non_unit_step_basic_with_derived():
     sdfg = dace.SDFG('nonunit')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i',
-                      initialize_expr='i = 0', update_expr='i = i + 3', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 3',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     use = loop.add_state('use')
@@ -396,11 +416,14 @@ def test_llvm_nested_loop_outer_iv_as_invariant_inside_inner():
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_symbol('M', dace.int64)
     sdfg.add_array('A', [4000], dace.float64)
-    outer = LoopRegion('outer', condition_expr='i < N', loop_var='i',
-                       initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    outer = LoopRegion('outer',
+                       condition_expr='i < N',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       sdfg=sdfg)
     sdfg.add_node(outer, is_start_block=True)
-    inner = LoopRegion('inner', condition_expr='j < M', loop_var='j',
-                       initialize_expr='j = 0', update_expr='j = j + 1')
+    inner = LoopRegion('inner', condition_expr='j < M', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
     outer.add_node(inner, is_start_block=True)
     ibody = inner.add_state('ibody', is_start_block=True)
     iuse = inner.add_state('iuse')
@@ -438,8 +461,12 @@ def test_llvm_reverse_loop_with_derived_iv():
     sdfg = dace.SDFG('reverse')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i >= 0', loop_var='i',
-                      initialize_expr='i = N', update_expr='i = i - 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i >= 0',
+                      loop_var='i',
+                      initialize_expr='i = N',
+                      update_expr='i = i - 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     use = loop.add_state('use')
@@ -467,8 +494,12 @@ def test_llvm_rejects_loop_carried_mid_body_assignment():
     sdfg.add_array('A', [400], dace.float64)
     sdfg.add_array('B', [400], dace.float64)
     sdfg.add_symbol('im1', dace.int64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i',
-                      initialize_expr='i = 1', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 1',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     read_state = loop.add_state('read_state', is_start_block=True)
     update_state = loop.add_state('update_state')
@@ -496,18 +527,20 @@ def test_llvm_rejects_conflicting_branch_assignments():
     sdfg = dace.SDFG('branching')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i',
-                      initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     # Two edges out of body, each with a different RHS for `j`.
     path_a = loop.add_state('path_a')
     path_b = loop.add_state('path_b')
     merge = loop.add_state('merge')
-    loop.add_edge(body, path_a,
-                  dace.InterstateEdge(condition='i < N/2', assignments={'j': '2*i'}))
-    loop.add_edge(body, path_b,
-                  dace.InterstateEdge(condition='i >= N/2', assignments={'j': '2*i + 100'}))
+    loop.add_edge(body, path_a, dace.InterstateEdge(condition='i < N/2', assignments={'j': '2*i'}))
+    loop.add_edge(body, path_b, dace.InterstateEdge(condition='i >= N/2', assignments={'j': '2*i + 100'}))
     loop.add_edge(path_a, merge, dace.InterstateEdge())
     loop.add_edge(path_b, merge, dace.InterstateEdge())
     an = merge.add_access('A')
@@ -529,8 +562,12 @@ def test_llvm_two_independent_derived_ivs_same_basis():
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
     sdfg.add_array('B', [400], dace.float64)
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i',
-                      initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     use = loop.add_state('use')

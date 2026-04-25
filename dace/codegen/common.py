@@ -14,7 +14,6 @@ import subprocess
 from typing import List, Optional, Set, Union
 import warnings
 
-
 _NO_SYNC_ENV = "__DACE_NO_SYNC"
 
 

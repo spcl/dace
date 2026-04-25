@@ -303,7 +303,8 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s_%s(__state%s);' % (target.target_name, sdfg.name, initparamnames_comma), sdfg)
+                    '__result |= __dace_init_%s_%s(__state%s);' % (target.target_name, sdfg.name, initparamnames_comma),
+                    sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:

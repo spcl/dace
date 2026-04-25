@@ -32,7 +32,6 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
-import os
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -499,9 +498,8 @@ void __dace_gpu_set_all_streams_{sdfg_name}({sdfg_state_name} *__state, gpuStrea
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
-           exit_device_sync=(
-               '' if common.no_sync_emission()
-               else f'if (__err == 0)\n        __err = static_cast<int>({self.backend}DeviceSynchronize());'),
+           exit_device_sync=('' if common.no_sync_emission() else
+                             f'if (__err == 0)\n        __err = static_cast<int>({self.backend}DeviceSynchronize());'),
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
@@ -1605,8 +1603,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # when they happen to share a map label. ``__dace_runkernel_<kernel_name>``
         # and the generated ``<kernel_name>(...)`` device function both
         # inherit this suffix.
-        kernel_name = '%s_%d_%d_%d_%s' % (scope_entry.map.label, cfg.cfg_id,
-                                          state.block_id, state.node_id(scope_entry),
+        kernel_name = '%s_%d_%d_%d_%s' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry),
                                           self._global_sdfg.name)
 
         # Comprehend grid/block dimensions from scopes

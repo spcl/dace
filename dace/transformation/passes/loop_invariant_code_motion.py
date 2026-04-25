@@ -22,11 +22,9 @@ import ast
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import sympy
-
 from dace import SDFG, SDFGState, properties, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
@@ -76,6 +74,7 @@ class LoopInvariantCodeMotion(ppl.Pass):
 # Depth helpers (innermost-first ordering)
 # ---------------------------------------------------------------------------
 
+
 def _loop_nesting_depth(loop: LoopRegion) -> int:
     depth = 0
     p = loop.parent_graph
@@ -99,6 +98,7 @@ def _map_scope_depth(state: SDFGState, me: nodes.MapEntry) -> int:
 # ---------------------------------------------------------------------------
 # LoopRegion path
 # ---------------------------------------------------------------------------
+
 
 def _hoist_loop_region(loop: LoopRegion) -> int:
     """Hoist invariant tasklets and whole sub-regions out of one LoopRegion."""
@@ -198,7 +198,10 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
 
     # Determine the insertion order: preserve the order in which the children
     # appear along the start-to-end path of ``loop``.
-    order_map = {n: i for i, n in enumerate(loop.bfs_nodes(loop.start_block) if hasattr(loop, "bfs_nodes") else loop.nodes())}
+    order_map = {
+        n: i
+        for i, n in enumerate(loop.bfs_nodes(loop.start_block) if hasattr(loop, "bfs_nodes") else loop.nodes())
+    }
     hoistable.sort(key=lambda n: order_map.get(n, 0))
 
     # Surgery: remove each hoistable child from ``loop`` and insert it as a
@@ -265,8 +268,7 @@ def _region_has_work(region: Any) -> bool:
     """True iff ``region`` contains at least one compute / dataflow node."""
     if isinstance(region, SDFGState):
         for n in region.nodes():
-            if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG,
-                              nodes.LibraryNode, nodes.MapEntry)):
+            if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG, nodes.LibraryNode, nodes.MapEntry)):
                 return True
         return False
     if hasattr(region, "all_states"):
@@ -327,9 +329,9 @@ def _get_or_create_preheader(loop: LoopRegion) -> SDFGState:
 
 
 def _find_one_invariant_tasklet(
-        state: SDFGState,
-        variant_syms: Set[str],
-        variant_data: Set[str],
+    state: SDFGState,
+    variant_syms: Set[str],
+    variant_data: Set[str],
 ) -> Optional[nodes.Tasklet]:
     for n in state.nodes():
         if not isinstance(n, nodes.Tasklet):
@@ -340,10 +342,10 @@ def _find_one_invariant_tasklet(
 
 
 def _is_tasklet_invariant(
-        state: SDFGState,
-        tasklet: nodes.Tasklet,
-        variant_syms: Set[str],
-        variant_data: Set[str],
+    state: SDFGState,
+    tasklet: nodes.Tasklet,
+    variant_syms: Set[str],
+    variant_data: Set[str],
 ) -> bool:
     # Side effects / WCR
     try:
@@ -477,9 +479,9 @@ def _has_integer_div_mod_by_possibly_zero(tasklet: nodes.Tasklet) -> bool:
 
 
 def _hoist_tasklet_to_preheader(
-        body: SDFGState,
-        tasklet: nodes.Tasklet,
-        preheader: SDFGState,
+    body: SDFGState,
+    tasklet: nodes.Tasklet,
+    preheader: SDFGState,
 ) -> bool:
     """Move ``tasklet`` and its input read chain from ``body`` into ``preheader``.
 
@@ -519,15 +521,19 @@ def _hoist_tasklet_to_preheader(
 
     for ie in in_edges:
         preheader.add_edge(
-            new_reads[ie.src.data], None,
-            new_tasklet, ie.dst_conn,
+            new_reads[ie.src.data],
+            None,
+            new_tasklet,
+            ie.dst_conn,
             copy.deepcopy(ie.data),
         )
 
     new_out_access = preheader.add_access(out_access.data)
     preheader.add_edge(
-        new_tasklet, out_edge.src_conn,
-        new_out_access, None,
+        new_tasklet,
+        out_edge.src_conn,
+        new_out_access,
+        None,
         copy.deepcopy(out_edge.data),
     )
 
@@ -548,6 +554,7 @@ def _hoist_tasklet_to_preheader(
 # ---------------------------------------------------------------------------
 # Map scope path
 # ---------------------------------------------------------------------------
+
 
 def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     """Hoist invariant tasklets out of a Map scope to the enclosing state."""
@@ -577,10 +584,10 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
 
 
 def _find_one_map_invariant_tasklet(
-        state: SDFGState,
-        me: nodes.MapEntry,
-        variant_syms: Set[str],
-        variant_data: Set[str],
+    state: SDFGState,
+    me: nodes.MapEntry,
+    variant_syms: Set[str],
+    variant_data: Set[str],
 ) -> Optional[nodes.Tasklet]:
     mx = state.exit_node(me)
     inside = state.all_nodes_between(me, mx) or set()
@@ -597,11 +604,11 @@ def _find_one_map_invariant_tasklet(
 
 
 def _is_map_tasklet_invariant(
-        state: SDFGState,
-        me: nodes.MapEntry,
-        tasklet: nodes.Tasklet,
-        variant_syms: Set[str],
-        variant_data: Set[str],
+    state: SDFGState,
+    me: nodes.MapEntry,
+    tasklet: nodes.Tasklet,
+    variant_syms: Set[str],
+    variant_data: Set[str],
 ) -> bool:
     try:
         if tasklet.side_effects:
@@ -653,8 +660,7 @@ def _is_map_tasklet_invariant(
     if oe.data is not None and oe.data.subset is not None:
         if _subset_uses_any(oe.data.subset, variant_syms):
             return False
-    writers = sum(1 for n in state.data_nodes()
-                  if n.data == oe.dst.data and state.in_degree(n) > 0)
+    writers = sum(1 for n in state.data_nodes() if n.data == oe.dst.data and state.in_degree(n) > 0)
     if writers != 1:
         return False
 
@@ -672,10 +678,10 @@ def _matching_outer_conn(src_conn: Optional[str]) -> Optional[str]:
 
 
 def _hoist_tasklet_out_of_map(
-        state: SDFGState,
-        me: nodes.MapEntry,
-        tasklet: nodes.Tasklet,
-        sdfg: SDFG,
+    state: SDFGState,
+    me: nodes.MapEntry,
+    tasklet: nodes.Tasklet,
+    sdfg: SDFG,
 ) -> bool:
     in_edges = list(state.in_edges(tasklet))
     out_edges = list(state.out_edges(tasklet))
@@ -726,8 +732,10 @@ def _hoist_tasklet_out_of_map(
         # Use the outer edge's memlet (which describes the subset into the
         # source array) — the inner memlet is already a scalar read.
         state.add_edge(
-            outer_reads[src_access.data], None,
-            new_tasklet, ie.dst_conn,
+            outer_reads[src_access.data],
+            None,
+            new_tasklet,
+            ie.dst_conn,
             copy.deepcopy(outer_edge.data),
         )
 
@@ -735,8 +743,10 @@ def _hoist_tasklet_out_of_map(
     # it back into the map scope through a new connector pair.
     outer_out_access = state.add_access(out_access.data)
     state.add_edge(
-        new_tasklet, oe.src_conn,
-        outer_out_access, None,
+        new_tasklet,
+        oe.src_conn,
+        outer_out_access,
+        None,
         copy.deepcopy(oe.data),
     )
 
@@ -787,11 +797,11 @@ def _prune_unused_map_connectors(state: SDFGState, me: nodes.MapEntry) -> None:
 
 
 def _route_into_scope(
-        state: SDFGState,
-        me: nodes.MapEntry,
-        outer_access: nodes.AccessNode,
-        inner_access: nodes.AccessNode,
-        sdfg: SDFG,
+    state: SDFGState,
+    me: nodes.MapEntry,
+    outer_access: nodes.AccessNode,
+    inner_access: nodes.AccessNode,
+    sdfg: SDFG,
 ) -> None:
     """Add an outer→MapEntry→inner edge carrying ``outer_access``'s data.
 

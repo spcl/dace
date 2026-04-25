@@ -36,8 +36,7 @@ class SimplifyInductionVariables(ppl.Pass):
     CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges
-                | ppl.Modifies.Nodes | ppl.Modifies.Descriptors)
+        return (ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Nodes | ppl.Modifies.Descriptors)
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.InterstateEdges | ppl.Modifies.Nodes))

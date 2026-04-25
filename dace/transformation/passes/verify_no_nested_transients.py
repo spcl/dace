@@ -36,11 +36,9 @@ class VerifyNoNestedTransients(ppl.Pass):
         offenders = _find_offenders(sdfg)
         if not offenders:
             return None
-        details = "\n  - ".join(
-            f"nested SDFG {label!r} declares transient {name!r} (shape={shape})"
-            for label, name, shape in offenders)
-        raise ValueError(
-            f"VerifyNoNestedTransients failed: {len(offenders)} offender(s):\n  - {details}")
+        details = "\n  - ".join(f"nested SDFG {label!r} declares transient {name!r} (shape={shape})"
+                                for label, name, shape in offenders)
+        raise ValueError(f"VerifyNoNestedTransients failed: {len(offenders)} offender(s):\n  - {details}")
 
 
 def verify_no_nested_transients(sdfg: SDFG):

@@ -5,8 +5,7 @@ from dace import memlet as mm, subsets as subs, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.simplify_expressions import (
-    SimplifyExpressions, simplify_expressions)
+from dace.transformation.passes.simplify_expressions import (SimplifyExpressions, simplify_expressions)
 
 
 def _sdfg_with_symbol(name: str = "s", sym: str = "x") -> SDFG:
@@ -35,9 +34,7 @@ def test_memlet_subset_is_simplified():
     ar = state.add_read("A")
     aw = state.add_write("A")
     m = mm.Memlet(data="A",
-                  subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL),
-                                       symbolic.pystr_to_symbolic(_UNSIMPL),
-                                       1)]))
+                  subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL), symbolic.pystr_to_symbolic(_UNSIMPL), 1)]))
     state.add_edge(ar, None, aw, None, m)
 
     count = simplify_expressions(sdfg)
@@ -68,8 +65,7 @@ def test_interstate_assignment_rhs_is_simplified():
     """Interstate-edge assignment RHS is simplified too."""
     sdfg = _sdfg_with_symbol(sym="k")
     s2 = sdfg.add_state("mid")
-    sdfg.add_edge(sdfg.start_state, s2,
-                  dace.InterstateEdge(assignments={"k": "2 * 3 + k - k + 1"}))
+    sdfg.add_edge(sdfg.start_state, s2, dace.InterstateEdge(assignments={"k": "2 * 3 + k - k + 1"}))
 
     count = simplify_expressions(sdfg)
 
@@ -99,8 +95,7 @@ def test_array_subscript_not_rewritten_as_function_call():
     the pass would emit ``A(0)`` and break generated code."""
     sdfg = _sdfg_with_symbol(sym="n")
     s2 = sdfg.add_state("mid")
-    sdfg.add_edge(sdfg.start_state, s2,
-                  dace.InterstateEdge(assignments={"n": "A[0] + 0"}))
+    sdfg.add_edge(sdfg.start_state, s2, dace.InterstateEdge(assignments={"n": "A[0] + 0"}))
 
     simplify_expressions(sdfg)
 
@@ -160,11 +155,10 @@ def test_nested_sdfg_is_reached():
     st = inner.add_state(is_start_block=True)
     br = st.add_read("B")
     bw = st.add_write("B")
-    st.add_edge(br, None, bw, None,
-                mm.Memlet(data="B",
-                          subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL),
-                                               symbolic.pystr_to_symbolic(_UNSIMPL),
-                                               1)])))
+    st.add_edge(
+        br, None, bw, None,
+        mm.Memlet(data="B",
+                  subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL), symbolic.pystr_to_symbolic(_UNSIMPL), 1)])))
 
     top = SDFG("top")
     top.add_array("B", [8], dace.float64)
@@ -201,11 +195,10 @@ def test_pass_class_apply_pass_returns_count_or_none():
     state = sdfg.start_state
     ar = state.add_read("A")
     aw = state.add_write("A")
-    state.add_edge(ar, None, aw, None,
-                   mm.Memlet(data="A",
-                             subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL),
-                                                  symbolic.pystr_to_symbolic(_UNSIMPL),
-                                                  1)])))
+    state.add_edge(
+        ar, None, aw, None,
+        mm.Memlet(data="A",
+                  subset=subs.Range([(symbolic.pystr_to_symbolic(_UNSIMPL), symbolic.pystr_to_symbolic(_UNSIMPL), 1)])))
     # First run: one rewrite.
     assert SimplifyExpressions().apply_pass(sdfg, {}) == 1
     # Second run: nothing to do.

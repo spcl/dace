@@ -138,9 +138,7 @@ def _try_simplify_range(r):
     if not isinstance(r, subs.Range):
         return None
     try:
-        new_ranges = [(symbolic.simplify(b),
-                       symbolic.simplify(e),
-                       symbolic.simplify(s)) for b, e, s in r.ndrange()]
+        new_ranges = [(symbolic.simplify(b), symbolic.simplify(e), symbolic.simplify(s)) for b, e, s in r.ndrange()]
     except Exception:
         return None
     return subs.Range(new_ranges)

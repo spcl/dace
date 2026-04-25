@@ -1,10 +1,9 @@
 import dace
 
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Tuple
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes as nd
 from dace.sdfg.core_dialect import require_core_dialect
-from dace.sdfg.utils import find_upstream_nodes
 from dataclasses import dataclass
 
 
@@ -54,9 +53,8 @@ def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState
             if covered:
                 candidates.append((state, producer))
     if len(candidates) != 1:
-        raise ValueError(
-            f"Cannot permute transient '{name}': expected exactly one full-extent writer state, "
-            f"found {len(candidates)}.")
+        raise ValueError(f"Cannot permute transient '{name}': expected exactly one full-extent writer state, "
+                         f"found {len(candidates)}.")
     return candidates[0]
 
 

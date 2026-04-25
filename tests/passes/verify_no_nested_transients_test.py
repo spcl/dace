@@ -5,28 +5,24 @@ import pytest
 import dace
 from dace import memlet as mm
 from dace.sdfg import SDFG
-from dace.transformation.passes.verify_no_nested_transients import (
-    VerifyNoNestedTransients, verify_no_nested_transients)
+from dace.transformation.passes.verify_no_nested_transients import (VerifyNoNestedTransients,
+                                                                    verify_no_nested_transients)
 
 
 def _top_with_nested(inner: SDFG, in_conns=None, out_conns=None):
     top = SDFG("top_wrap")
     for name in (in_conns or ()):
-        top.add_array(name, inner.arrays[name].shape, inner.arrays[name].dtype,
-                      transient=False)
+        top.add_array(name, inner.arrays[name].shape, inner.arrays[name].dtype, transient=False)
     for name in (out_conns or ()):
-        top.add_array(name, inner.arrays[name].shape, inner.arrays[name].dtype,
-                      transient=False)
+        top.add_array(name, inner.arrays[name].shape, inner.arrays[name].dtype, transient=False)
     st = top.add_state()
     n = st.add_nested_sdfg(inner, set(in_conns or ()), set(out_conns or ()))
     for name in (in_conns or ()):
         top_r = st.add_read(name)
-        st.add_edge(top_r, None, n, name,
-                    mm.Memlet.from_array(name, top.arrays[name]))
+        st.add_edge(top_r, None, n, name, mm.Memlet.from_array(name, top.arrays[name]))
     for name in (out_conns or ()):
         top_w = st.add_write(name)
-        st.add_edge(n, name, top_w, None,
-                    mm.Memlet.from_array(name, top.arrays[name]))
+        st.add_edge(n, name, top_w, None, mm.Memlet.from_array(name, top.arrays[name]))
     return top
 
 

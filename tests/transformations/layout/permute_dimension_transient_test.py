@@ -5,9 +5,7 @@ Covers:
 - transient with non-zero init: permute lands AFTER the init state
 - transient with no full-extent writer: pass raises ValueError
 """
-import copy
 
-import numpy as np
 import pytest
 
 import dace
@@ -28,7 +26,10 @@ def _zero_init_sdfg() -> dace.SDFG:
     # T[i, j] = 0 over full extent
     init.add_mapped_tasklet(
         name='zero_T',
-        map_ranges={'i': f'0:{N}', 'j': f'0:{N}'},
+        map_ranges={
+            'i': f'0:{N}',
+            'j': f'0:{N}'
+        },
         inputs={},
         code='__out = 0.0',
         outputs={'__out': dace.Memlet.simple('T', 'i, j')},
@@ -38,7 +39,10 @@ def _zero_init_sdfg() -> dace.SDFG:
     # B[i, j] = A[i, j] + T[i, j]
     body.add_mapped_tasklet(
         name='use_T',
-        map_ranges={'i': f'0:{N}', 'j': f'0:{N}'},
+        map_ranges={
+            'i': f'0:{N}',
+            'j': f'0:{N}'
+        },
         inputs={
             '__a': dace.Memlet.simple('A', 'i, j'),
             '__t': dace.Memlet.simple('T', 'i, j'),
@@ -63,7 +67,10 @@ def _nonzero_init_sdfg() -> dace.SDFG:
 
     init.add_mapped_tasklet(
         name='ramp_T',
-        map_ranges={'i': f'0:{N}', 'j': f'0:{N}'},
+        map_ranges={
+            'i': f'0:{N}',
+            'j': f'0:{N}'
+        },
         inputs={},
         code='__out = i + j',
         outputs={'__out': dace.Memlet.simple('T', 'i, j')},
@@ -72,7 +79,10 @@ def _nonzero_init_sdfg() -> dace.SDFG:
 
     body.add_mapped_tasklet(
         name='use_T',
-        map_ranges={'i': f'0:{N}', 'j': f'0:{N}'},
+        map_ranges={
+            'i': f'0:{N}',
+            'j': f'0:{N}'
+        },
         inputs={
             '__a': dace.Memlet.simple('A', 'i, j'),
             '__t': dace.Memlet.simple('T', 'i, j'),
@@ -93,7 +103,9 @@ def test_transient_zero_init_skips_permute_in_out():
     assert sdfg.arrays['T'].transient
 
     PermuteDimensions(
-        permute_map={'T': [1, 0]},
+        permute_map={
+            'T': [1, 0]
+        },
         add_permute_maps=True,
     ).apply_pass(sdfg=sdfg, pipeline_results={})
 
@@ -110,7 +122,9 @@ def test_transient_zero_init_skips_permute_in_out():
 def test_transient_nonzero_init_inserts_permute_after_state():
     sdfg = _nonzero_init_sdfg()
     PermuteDimensions(
-        permute_map={'T': [1, 0]},
+        permute_map={
+            'T': [1, 0]
+        },
         add_permute_maps=True,
     ).apply_pass(sdfg=sdfg, pipeline_results={})
 
@@ -134,7 +148,10 @@ def test_transient_without_full_extent_writer_raises():
     init = sdfg.add_state('init')
     init.add_mapped_tasklet(
         name='partial_T',
-        map_ranges={'i': '0:1', 'j': '0:1'},  # writes T[0,0] only
+        map_ranges={
+            'i': '0:1',
+            'j': '0:1'
+        },  # writes T[0,0] only
         inputs={},
         code='__out = 1.0',
         outputs={'__out': dace.Memlet.simple('T', 'i, j')},
@@ -143,7 +160,10 @@ def test_transient_without_full_extent_writer_raises():
     body = sdfg.add_state_after(init, 'body')
     body.add_mapped_tasklet(
         name='use_T',
-        map_ranges={'i': f'0:{N}', 'j': f'0:{N}'},
+        map_ranges={
+            'i': f'0:{N}',
+            'j': f'0:{N}'
+        },
         inputs={
             '__a': dace.Memlet.simple('A', 'i, j'),
             '__t': dace.Memlet.simple('T', 'i, j'),
@@ -155,7 +175,9 @@ def test_transient_without_full_extent_writer_raises():
 
     with pytest.raises(ValueError, match="full-extent writer"):
         PermuteDimensions(
-            permute_map={'T': [1, 0]},
+            permute_map={
+                'T': [1, 0]
+            },
             add_permute_maps=True,
         ).apply_pass(sdfg=sdfg, pipeline_results={})
 

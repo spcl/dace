@@ -26,10 +26,10 @@ from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantC
 N = dace.symbol("N")
 K = dace.symbol("K")
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_loop(sdfg: dace.SDFG, loop_var: str, end_sym: str, label: str = "loop") -> LoopRegion:
     loop = LoopRegion(label,
@@ -47,8 +47,10 @@ def _state_tasklets(state):
 
 def _preheaders(sdfg: dace.SDFG, loop: LoopRegion):
     parent = loop.parent_graph
-    return [e.src for e in parent.in_edges(loop)
-            if hasattr(e.src, "label") and e.src.label.startswith(f"{loop.label}_licm_preheader")]
+    return [
+        e.src for e in parent.in_edges(loop)
+        if hasattr(e.src, "label") and e.src.label.startswith(f"{loop.label}_licm_preheader")
+    ]
 
 
 def _run_and_check(sdfg: dace.SDFG, reference_fn, **inputs):
@@ -69,6 +71,7 @@ def _run_and_check(sdfg: dace.SDFG, reference_fn, **inputs):
 # ---------------------------------------------------------------------------
 # 1. Pure scalar tasklet with outer inputs is hoisted to the preheader.
 # ---------------------------------------------------------------------------
+
 
 def test_pure_tasklet_hoisted_from_loop_region():
     sdfg = dace.SDFG("licm_pure_hoist")
@@ -104,14 +107,13 @@ def test_pure_tasklet_hoisted_from_loop_region():
         for i in range(N):
             outp[i] = a[0] + b[0]
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([2.5]), b=np.array([1.5]),
-                   outp=np.zeros(7), N=7)
+    _run_and_check(sdfg, py_ref, a=np.array([2.5]), b=np.array([1.5]), outp=np.zeros(7), N=7)
 
 
 # ---------------------------------------------------------------------------
 # 2. Memory read with no in-body writer: hoisted.
 # ---------------------------------------------------------------------------
+
 
 def test_invariant_load_without_inloop_writer_is_hoisted():
     sdfg = dace.SDFG("licm_invariant_load")
@@ -138,20 +140,19 @@ def test_invariant_load_without_inloop_writer_is_hoisted():
     assert "id" not in {t.label for t in _state_tasklets(body)}
     preheaders = _preheaders(sdfg, loop)
     assert len(preheaders) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("id")
-               for n in preheaders[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("id") for n in preheaders[0].nodes())
 
     def py_ref(A, outp, N):
         for i in range(N):
             outp[i] = A[0]
 
-    _run_and_check(sdfg, py_ref,
-                   A=np.array([4.0]), outp=np.zeros(5), N=5)
+    _run_and_check(sdfg, py_ref, A=np.array([4.0]), outp=np.zeros(5), N=5)
 
 
 # ---------------------------------------------------------------------------
 # 3. Memory read with an in-body writer: NOT hoisted (alias).
 # ---------------------------------------------------------------------------
+
 
 def test_load_with_inloop_writer_is_not_hoisted():
     sdfg = dace.SDFG("licm_aliased_load")
@@ -186,6 +187,7 @@ def test_load_with_inloop_writer_is_not_hoisted():
 # ---------------------------------------------------------------------------
 # 4. Transitive invariance chain: two dependent tasklets both hoisted.
 # ---------------------------------------------------------------------------
+
 
 def test_transitive_chain_is_hoisted():
     sdfg = dace.SDFG("licm_chain")
@@ -237,14 +239,13 @@ def test_transitive_chain_is_hoisted():
         for i in range(N):
             outp[i] = v
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([2.0]), b=np.array([3.0]),
-                   c=np.array([4.0]), outp=np.zeros(6), N=6)
+    _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([4.0]), outp=np.zeros(6), N=6)
 
 
 # ---------------------------------------------------------------------------
 # 5. Map scope: pure tasklet on outer data is hoisted through MapEntry.
 # ---------------------------------------------------------------------------
+
 
 def test_map_scope_pure_tasklet_hoisted():
     sdfg = dace.SDFG("licm_map_hoist")
@@ -273,26 +274,22 @@ def test_map_scope_pure_tasklet_hoisted():
 
     assert hoisted == 1
     sdict = state.scope_dict()
-    assert not any(t.label == "add"
-                   for t in state.nodes()
-                   if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
-    assert any(t.label.startswith("add")
-               for t in state.nodes()
-               if isinstance(t, nodes.Tasklet) and sdict.get(t) is None)
+    assert not any(t.label == "add" for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
+    assert any(
+        t.label.startswith("add") for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is None)
 
     def py_ref(a, b, outp, N):
         for i in range(N):
             outp[i] = a[0] + b[0]
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([1.0]), b=np.array([7.0]),
-                   outp=np.zeros(4), N=4)
+    _run_and_check(sdfg, py_ref, a=np.array([1.0]), b=np.array([7.0]), outp=np.zeros(4), N=4)
 
 
 # ---------------------------------------------------------------------------
 # 6. Nested loop `for nl: for i: a[i] = b[i] + 1.0` — inner loop hoisted,
 #    outer body collapses to an empty hull. TSVC2 s000-family.
 # ---------------------------------------------------------------------------
+
 
 def test_tsvc2_s000_inner_loop_hoisted_leaves_hull():
     sdfg = dace.SDFG("licm_tsvc_s000")
@@ -325,14 +322,13 @@ def test_tsvc2_s000_inner_loop_hoisted_leaves_hull():
             for i in range(N):
                 a[i] = b[i] + 1.0
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.zeros(4), b=np.arange(4, dtype=np.float64),
-                   N=4, K=3)
+    _run_and_check(sdfg, py_ref, a=np.zeros(4), b=np.arange(4, dtype=np.float64), N=4, K=3)
 
 
 # ---------------------------------------------------------------------------
 # 7. WCR output: never hoisted (observable side effect).
 # ---------------------------------------------------------------------------
+
 
 def test_wcr_output_is_not_hoisted():
     sdfg = dace.SDFG("licm_wcr")
@@ -358,6 +354,7 @@ def test_wcr_output_is_not_hoisted():
 # ---------------------------------------------------------------------------
 # 8. Loop-index-dependent memlet subset is not hoisted.
 # ---------------------------------------------------------------------------
+
 
 def test_loop_index_dependent_load_not_hoisted():
     sdfg = dace.SDFG("licm_idx_load")
@@ -387,6 +384,7 @@ def test_loop_index_dependent_load_not_hoisted():
 # ---------------------------------------------------------------------------
 # 9. Hull is not re-hoisted (regression against an earlier infinite-loop bug).
 # ---------------------------------------------------------------------------
+
 
 def test_hull_is_not_rehoisted():
     sdfg = dace.SDFG("licm_hull_fp")
@@ -439,8 +437,7 @@ def test_tsvc2_s451_like_inner_loop_with_sin_cos_hoisted():
     br = body.add_read("b")
     cr = body.add_read("c")
     aw = body.add_write("a")
-    t = body.add_tasklet("sc", {"xb", "xc"}, {"y"},
-                         "y = math.sin(xb) + math.cos(xc)")
+    t = body.add_tasklet("sc", {"xb", "xc"}, {"y"}, "y = math.sin(xb) + math.cos(xc)")
     body.add_edge(br, None, t, "xb", mm.Memlet("b[i]"))
     body.add_edge(cr, None, t, "xc", mm.Memlet("c[i]"))
     body.add_edge(t, "y", aw, None, mm.Memlet("a[i]"))
@@ -456,11 +453,7 @@ def test_tsvc2_s451_like_inner_loop_with_sin_cos_hoisted():
                 a[i] = math.sin(b[i]) + math.cos(c[i])
 
     rng = np.random.default_rng(0)
-    _run_and_check(sdfg, py_ref,
-                   a=np.zeros(5),
-                   b=rng.normal(size=5),
-                   c=rng.normal(size=5),
-                   N=5, K=3)
+    _run_and_check(sdfg, py_ref, a=np.zeros(5), b=rng.normal(size=5), c=rng.normal(size=5), N=5, K=3)
 
 
 def test_tsvc2_s431_like_inner_loop_aw_read_blocks_hoist():
@@ -501,10 +494,7 @@ def test_tsvc2_s431_like_inner_loop_aw_read_blocks_hoist():
             for i in range(N):
                 a[i] = a[i] + b[i]
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([1.0, 2.0, 3.0, 4.0]),
-                   b=np.array([0.5, 0.5, 0.5, 0.5]),
-                   N=4, K=3)
+    _run_and_check(sdfg, py_ref, a=np.array([1.0, 2.0, 3.0, 4.0]), b=np.array([0.5, 0.5, 0.5, 0.5]), N=4, K=3)
 
 
 def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
@@ -550,9 +540,7 @@ def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
                 a[i] = b[i] + c[i] * (i + 1)
 
     rng = np.random.default_rng(1)
-    _run_and_check(sdfg, py_ref,
-                   a=np.zeros(5), b=rng.normal(size=5), c=rng.normal(size=5),
-                   N=5, K=2)
+    _run_and_check(sdfg, py_ref, a=np.zeros(5), b=rng.normal(size=5), c=rng.normal(size=5), N=5, K=2)
 
 
 # ---------------------------------------------------------------------------
@@ -595,8 +583,7 @@ def test_llvm_basictest_scalar_times_literal_hoisted():
         for j in range(N):
             outp[j] = c[0] * 17.0
 
-    _run_and_check(sdfg, py_ref,
-                   c=np.array([3.5]), outp=np.zeros(6), N=6)
+    _run_and_check(sdfg, py_ref, c=np.array([3.5]), outp=np.zeros(6), N=6)
 
 
 def test_llvm_hoist_binop_chain_both_hoisted():
@@ -652,9 +639,7 @@ def test_llvm_hoist_binop_chain_both_hoisted():
         for j in range(N):
             outp[j] = v
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([2.0]), b=np.array([3.0]), c=np.array([1.5]),
-                   outp=np.zeros(5), N=5)
+    _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([1.5]), outp=np.zeros(5), N=5)
 
 
 def test_llvm_mustexec_unconditional_load_hoisted():
@@ -687,16 +672,14 @@ def test_llvm_mustexec_unconditional_load_hoisted():
     assert "load" not in {t.label for t in _state_tasklets(body)}
     pre = _preheaders(sdfg, loop)
     assert len(pre) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load")
-               for n in pre[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load") for n in pre[0].nodes())
 
     def py_ref(p, outp, N):
         loaded = p[0]
         for k in range(N):
             outp[k] = loaded + 1.0
 
-    _run_and_check(sdfg, py_ref,
-                   p=np.array([2.25]), outp=np.zeros(4), N=4)
+    _run_and_check(sdfg, py_ref, p=np.array([2.25]), outp=np.zeros(4), N=4)
 
 
 def test_llvm_hoist_add_sub_chain_hoisted():
@@ -749,9 +732,7 @@ def test_llvm_hoist_add_sub_chain_hoisted():
         for j in range(N):
             outp[j] = v
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([5.0]), b=np.array([2.0]), c=np.array([1.5]),
-                   outp=np.zeros(5), N=5)
+    _run_and_check(sdfg, py_ref, a=np.array([5.0]), b=np.array([2.0]), c=np.array([1.5]), outp=np.zeros(5), N=5)
 
 
 def test_llvm_hoist_fast_fdiv_hoisted():
@@ -786,17 +767,14 @@ def test_llvm_hoist_fast_fdiv_hoisted():
     assert "fdiv" not in {t.label for t in _state_tasklets(body)}
     pre = _preheaders(sdfg, loop)
     assert len(pre) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("fdiv")
-               for n in pre[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("fdiv") for n in pre[0].nodes())
 
     def py_ref(a, b, outp, N):
         q = a[0] / b[0]
         for j in range(N):
             outp[j] = q
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([7.0]), b=np.array([2.0]),
-                   outp=np.zeros(5), N=5)
+    _run_and_check(sdfg, py_ref, a=np.array([7.0]), b=np.array([2.0]), outp=np.zeros(5), N=5)
 
 
 def test_llvm_call_hoisting_pure_math_call_hoisted():
@@ -827,16 +805,14 @@ def test_llvm_call_hoisting_pure_math_call_hoisted():
     assert "sine" not in {t.label for t in _state_tasklets(body)}
     pre = _preheaders(sdfg, loop)
     assert len(pre) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("sine")
-               for n in pre[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("sine") for n in pre[0].nodes())
 
     def py_ref(x, outp, N):
         s = math.sin(x[0])
         for j in range(N):
             outp[j] = s
 
-    _run_and_check(sdfg, py_ref,
-                   x=np.array([0.75]), outp=np.zeros(5), N=5)
+    _run_and_check(sdfg, py_ref, x=np.array([0.75]), outp=np.zeros(5), N=5)
 
 
 def test_llvm_expr_reassociate_four_operand_chain_hoisted():
@@ -901,10 +877,14 @@ def test_llvm_expr_reassociate_four_operand_chain_hoisted():
         for j in range(N):
             outp[j] = s
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([1.0]), b=np.array([2.0]),
-                   c=np.array([3.0]), d=np.array([4.0]),
-                   outp=np.zeros(5), N=5)
+    _run_and_check(sdfg,
+                   py_ref,
+                   a=np.array([1.0]),
+                   b=np.array([2.0]),
+                   c=np.array([3.0]),
+                   d=np.array([4.0]),
+                   outp=np.zeros(5),
+                   N=5)
 
 
 def test_llvm_infinite_loops_style_while_loop_hoisted():
@@ -947,8 +927,7 @@ def test_llvm_infinite_loops_style_while_loop_hoisted():
     assert "mul" not in {t.label for t in _state_tasklets(body)}
     pre = _preheaders(sdfg, loop)
     assert len(pre) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("mul")
-               for n in pre[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("mul") for n in pre[0].nodes())
 
     def py_ref(a, b, outp, N):
         t = a[0] * b[0]
@@ -957,9 +936,7 @@ def test_llvm_infinite_loops_style_while_loop_hoisted():
             outp[i] = t
             i += 1
 
-    _run_and_check(sdfg, py_ref,
-                   a=np.array([3.0]), b=np.array([2.5]),
-                   outp=np.zeros(6), N=6)
+    _run_and_check(sdfg, py_ref, a=np.array([3.0]), b=np.array([2.5]), outp=np.zeros(6), N=6)
 
 
 def test_llvm_hoist_invariant_load_multi_consumer():
@@ -997,8 +974,7 @@ def test_llvm_hoist_invariant_load_multi_consumer():
     assert "load" not in {t.label for t in _state_tasklets(body)}
     pre = _preheaders(sdfg, loop)
     assert len(pre) == 1
-    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load")
-               for n in pre[0].nodes())
+    assert any(isinstance(n, nodes.Tasklet) and n.label.startswith("load") for n in pre[0].nodes())
 
     def py_ref(p, outp1, outp2, N):
         v = p[0]
@@ -1006,9 +982,7 @@ def test_llvm_hoist_invariant_load_multi_consumer():
             outp1[k] = v + 1.0
             outp2[k] = v * 2.0
 
-    _run_and_check(sdfg, py_ref,
-                   p=np.array([1.5]),
-                   outp1=np.zeros(4), outp2=np.zeros(4), N=4)
+    _run_and_check(sdfg, py_ref, p=np.array([1.5]), outp1=np.zeros(4), outp2=np.zeros(4), N=4)
 
 
 def test_llvm_gep_reassociate_map_scope_invariant_load():
@@ -1043,19 +1017,14 @@ def test_llvm_gep_reassociate_map_scope_invariant_load():
     assert hoisted == 1
     sdict = state.scope_dict()
     # load_base must end up outside the map scope.
-    assert not any(t.label == "load_base"
-                   for t in state.nodes()
-                   if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
+    assert not any(t.label == "load_base" for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
 
     def py_ref(base, b, outp, N):
         bv = base[0]
         for i in range(N):
             outp[i] = b[i] + bv
 
-    _run_and_check(sdfg, py_ref,
-                   base=np.array([10.0]),
-                   b=np.arange(6, dtype=np.float64),
-                   outp=np.zeros(6), N=6)
+    _run_and_check(sdfg, py_ref, base=np.array([10.0]), b=np.arange(6, dtype=np.float64), outp=np.zeros(6), N=6)
 
 
 if __name__ == "__main__":

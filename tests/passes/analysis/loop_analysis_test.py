@@ -60,7 +60,7 @@ def test_derived_iv_interstate_edge():
     assert set(ivs) == {'i', 'j'}
     assert ivs['j'].kind == 'derived'
     assert ivs['j'].start == 5  # 2*0 + 5
-    assert ivs['j'].step == 2   # 2*1
+    assert ivs['j'].step == 2  # 2*1
 
 
 def test_derived_iv_chained():
@@ -79,7 +79,12 @@ def test_derived_iv_chained():
 
 def test_derived_iv_tasklet_scalar():
     sdfg = dace.SDFG('t')
-    loop = LoopRegion('L', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     sdfg.add_scalar('j', dace.int64, transient=True)
     body = loop.add_state('body', is_start_block=True)
@@ -132,7 +137,12 @@ def test_missing_init_returns_empty():
 
 def test_nested_loops_outer_iv_invariant_to_inner():
     sdfg = dace.SDFG('t')
-    outer = LoopRegion('outer', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
+    outer = LoopRegion('outer',
+                       condition_expr='i < N',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       sdfg=sdfg)
     sdfg.add_node(outer, is_start_block=True)
     inner = LoopRegion('inner', condition_expr='j < M', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
     outer.add_node(inner, is_start_block=True)
