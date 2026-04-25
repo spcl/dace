@@ -1872,7 +1872,7 @@ def traverse_sdfg_with_defined_symbols(
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
     # Start with global symbols and scalar constants
-    symbols = copy.copy(sdfg.symbols)
+    symbols = dict(sdfg.symbols)
     symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})

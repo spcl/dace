@@ -85,35 +85,25 @@ class NestedDict(dict):
         return result
 
 
-class _SymbolDict(collections.abc.MutableMapping):
-    """A guarded mapping for SDFG symbol bookkeeping.
+class SymbolDict(collections.abc.MutableMapping):
+    """The mapping type stored in ``SDFG.symbols``.
 
-    All mutation paths -- ``sdfg.symbols['N'] = ...``, ``del sdfg.symbols['N']``,
-    ``pop``/``popitem``/``update``/``setdefault``/``clear`` -- raise
-    ``RuntimeError`` and point the caller at the official API:
-    ``sdfg.add_symbol``, ``sdfg.remove_symbol``, ``sdfg.set_symbol_type``,
-    or ``sdfg.replace``.
-
-    Implementation note: this class is a ``MutableMapping`` over a private
-    backing dict rather than a ``dict`` subclass, on purpose. Subclassing
-    ``dict`` would leave the C-level slots ``dict.__setitem__`` /
-    ``dict.__delitem__`` / ``dict.update`` / ... callable directly on instances
-    and bypassing any Python-level overrides. Composition closes that hole.
-
-    Internal callers may mutate by entering ``allow_mutation()``.
+    Reads behave like a dict. In-place mutation raises -- callers must use
+    ``sdfg.add_symbol`` / ``set_symbol_type`` / ``remove_symbol`` / ``replace``.
+    Not a ``dict`` subclass on purpose: that would expose ``dict.__setitem__``
+    etc. as C-level slots that bypass Python overrides.
     """
 
     _MUTATE_ERR = (
         'Direct mutation of sdfg.symbols is not allowed. Use sdfg.add_symbol, '
         'sdfg.remove_symbol, sdfg.set_symbol_type, or sdfg.replace.')
 
-    __slots__ = ('_data', '_guard')
+    __slots__ = ('_data', )
 
     def __init__(self, mapping=None):
         object.__setattr__(self, '_data', dict(mapping or {}))
-        object.__setattr__(self, '_guard', True)
 
-    # --- mapping read protocol -------------------------------------------------
+    # --- mapping read protocol ------------------------------------------------
     def __getitem__(self, key):
         return self._data[key]
 
@@ -127,102 +117,93 @@ class _SymbolDict(collections.abc.MutableMapping):
         return key in self._data
 
     def __repr__(self):
-        return f'_SymbolDict({self._data!r})'
+        return f'SymbolDict({self._data!r})'
 
     def __eq__(self, other):
-        if isinstance(other, _SymbolDict):
+        if isinstance(other, SymbolDict):
             return self._data == other._data
         return self._data == other
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    def __hash__(self):  # type: ignore[override]
-        return None  # mapping is mutable -> unhashable, like dict
+    __hash__ = None  # mutable mapping -> unhashable
 
-    # --- mutation protocol -- guarded -----------------------------------------
-    def allow_mutation(self):
-        return _SymbolDictGuard(self)
+    # --- dict-like read operators ---------------------------------------------
+    def copy(self):
+        """ Return a shallow copy as a :class:`SymbolDict`. """
+        return SymbolDict(self._data)
 
+    def __or__(self, other):
+        # Returns a plain dict (matches the type produced by ``dict | dict``
+        # being a ``dict``; the result is not tied to any SDFG).
+        if isinstance(other, SymbolDict):
+            other = other._data
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return {**self._data, **other}
+
+    def __ror__(self, other):
+        if isinstance(other, SymbolDict):
+            other = other._data
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return {**other, **self._data}
+
+    def __ior__(self, other):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    # --- mutation: rejected on the public surface -----------------------------
     def __setitem__(self, key, value):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        self._data[key] = value
+        raise RuntimeError(self._MUTATE_ERR)
 
     def __delitem__(self, key):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        del self._data[key]
+        raise RuntimeError(self._MUTATE_ERR)
 
     def pop(self, key, *args):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        return self._data.pop(key, *args)
+        raise RuntimeError(self._MUTATE_ERR)
 
     def popitem(self):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        return self._data.popitem()
+        raise RuntimeError(self._MUTATE_ERR)
 
     def update(self, *args, **kwargs):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        self._data.update(*args, **kwargs)
+        raise RuntimeError(self._MUTATE_ERR)
 
     def setdefault(self, key, default=None):
-        if self._guard and key not in self._data:
-            raise RuntimeError(self._MUTATE_ERR)
-        return self._data.setdefault(key, default)
+        if key in self._data:
+            return self._data[key]
+        raise RuntimeError(self._MUTATE_ERR)
 
     def clear(self):
-        if self._guard:
-            raise RuntimeError(self._MUTATE_ERR)
-        self._data.clear()
+        raise RuntimeError(self._MUTATE_ERR)
 
     # --- cloning --------------------------------------------------------------
-    # Local clones (validation, codegen) need to be freely mutable. Return a
-    # plain dict so the guard does not contaminate downstream code.
+    # Cloning preserves the SymbolDict type. Local accumulator code that wants
+    # a freely-mutable copy should call ``dict(sdfg.symbols)`` explicitly.
     def __copy__(self):
-        return dict(self._data)
+        return SymbolDict(self._data)
 
     def __deepcopy__(self, memo):
         import copy as _copy
-        return {k: _copy.deepcopy(v, memo) for k, v in self._data.items()}
+        new = SymbolDict()
+        memo[id(self)] = new
+        new._data.update({k: _copy.deepcopy(v, memo) for k, v in self._data.items()})
+        return new
 
 
-class _SymbolDictGuard:
-
-    def __init__(self, d: _SymbolDict):
-        self._d = d
-
-    def __enter__(self):
-        object.__setattr__(self._d, '_guard', False)
-        return self._d
-
-    def __exit__(self, exc_type, exc, tb):
-        object.__setattr__(self._d, '_guard', True)
-        return False
-
-
-class _SymbolDictProperty(DictProperty):
-    """``DictProperty`` variant that always materializes a ``_SymbolDict`` so
-    that the strict-mutation guard is preserved across (de)serialization and
-    direct attribute assignment."""
+class SymbolDictProperty(DictProperty):
+    """ ``DictProperty`` that materializes a :class:`SymbolDict`. """
 
     def __set__(self, obj, val):
-        # Coerce/validate the input the same way DictProperty does, but funnel
-        # the result through ``_SymbolDict`` so the guard is preserved. We
-        # avoid super().__set__ because its dict-isinstance branch produces a
-        # plain dict that then has to be re-wrapped.
         if isinstance(val, str):
             import ast as _ast
             val = _ast.literal_eval(val)
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
-        if isinstance(val, _SymbolDict):
+        if isinstance(val, SymbolDict):
             new = val
         elif isinstance(val, collections.abc.Mapping):
-            new = _SymbolDict({
+            new = SymbolDict({
                 (k if self.is_key(k) else self.key_type(k)):
                 (v if self.is_value(v) else self.value_type(v))
                 for k, v in val.items()
@@ -232,9 +213,6 @@ class _SymbolDictProperty(DictProperty):
         else:
             raise TypeError(
                 f'Expected mapping for property {self.attr_name}, got {type(val).__name__}')
-        # Bypass the descriptor's parent __set__ altogether and store the
-        # _SymbolDict directly. Using object.__setattr__ skips any custom
-        # SDFG.__setattr__ -- we know what we're doing here.
         object.__setattr__(obj, '_' + self.attr_name, new)
 
 
@@ -610,7 +588,7 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    symbols = _SymbolDictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbols = SymbolDictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -656,19 +634,6 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
-    def __setattr__(self, name, value):
-        # Refuse to replace the symbols backing storage with anything other
-        # than a guarded ``_SymbolDict``. Without this check, callers could
-        # bypass the registry by writing ``sdfg._symbols = {...}`` directly.
-        # The official path to seed/reset the registry is to assign the
-        # ``symbols`` property, which routes through ``_SymbolDictProperty``.
-        if name == '_symbols' and not isinstance(value, _SymbolDict):
-            raise RuntimeError(
-                'Cannot replace SDFG._symbols with a plain mapping. Assign '
-                'sdfg.symbols = ... (the property re-wraps it) or use '
-                'sdfg.add_symbol / sdfg.remove_symbol / sdfg.set_symbol_type.')
-        super().__setattr__(name, value)
-
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -698,12 +663,11 @@ class SDFG(ControlFlowRegion):
 
         self._propagate = propagate
         self._parent = parent
-        # ``self.symbols`` is a guarded dict: only ``add_symbol`` /
-        # ``remove_symbol`` / ``set_symbol_type`` / ``replace`` may mutate it
-        # (they enter ``self.symbols.allow_mutation()``). All other writes
-        # raise ``RuntimeError`` -- this keeps the dtype table and the symbol
-        # object registry from drifting apart.
-        self.symbols = _SymbolDict()
+        # ``self.symbols`` is a :class:`SymbolDict`. Reads behave like a dict;
+        # in-place mutations raise -- callers must use ``add_symbol`` /
+        # ``remove_symbol`` / ``set_symbol_type`` / ``replace``. Internal
+        # mutators inside this class write to ``self._symbols._data`` directly.
+        self.symbols = SymbolDict()
         # Per-SDFG symbol object registry. Maps a symbol name to the canonical
         # `symbolic.symbol` object with its assumptions (integer, positive,
         # nonnegative, ...). This ensures the same name always resolves to the
@@ -747,13 +711,6 @@ class SDFG(ControlFlowRegion):
             # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
                      '_cfg_list', '_transformation_hist', 'guid'):
-                continue
-            if k == '_symbols':
-                # ``_SymbolDict.__deepcopy__`` deliberately returns a plain dict
-                # so local accumulator code (validation/codegen) can mutate
-                # freely. When cloning an entire SDFG we re-wrap into a guarded
-                # ``_SymbolDict`` to preserve the registry invariant.
-                object.__setattr__(result, '_symbols', _SymbolDict(copy.deepcopy(v, memo)))
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -1051,8 +1008,7 @@ class SDFG(ControlFlowRegion):
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
-                    with self.symbols.allow_mutation():
-                        _replace_dict_keys(self.symbols, name, new_name)
+                    _replace_dict_keys(self._symbols._data, name, new_name)
                     # Rebuild the symbol object under the new name so that
                     # `get_symbol(new_name).name == new_name` (the underlying
                     # sympy.Symbol carries the name internally; just renaming
@@ -1155,8 +1111,7 @@ class SDFG(ControlFlowRegion):
             if name in self._pgrids:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
 
-        with self.symbols.allow_mutation():
-            self.symbols[name] = stype
+        self._symbols._data[name] = stype
         if new_sym is not None:
             self._symbol_objects[name] = new_sym
         return name
@@ -1173,8 +1128,7 @@ class SDFG(ControlFlowRegion):
             raise KeyError(f'Symbol "{name}" is not defined in the SDFG')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
-        with self.symbols.allow_mutation():
-            self.symbols[name] = stype
+        self._symbols._data[name] = stype
         self._symbol_objects.pop(name, None)
 
     def get_symbol(self, name: str) -> symbolic.symbol:
@@ -1222,8 +1176,7 @@ class SDFG(ControlFlowRegion):
 
             :param name: Symbol name.
         """
-        with self.symbols.allow_mutation():
-            del self.symbols[name]
+        del self._symbols._data[name]
         self._symbol_objects.pop(name, None)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node

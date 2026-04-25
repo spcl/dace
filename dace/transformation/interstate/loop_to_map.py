@@ -485,7 +485,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.add_symbol(sym, dtype)
 
         # Propagate symbols, where types cannot be inferred
-        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes = dict(nsdfg.symbols)
         alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
         for e in self.loop.all_interstate_edges():
             for k, v in e.data.assignments.items():
