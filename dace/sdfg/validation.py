@@ -335,7 +335,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         initialized_transients = {'__pystate'}
         initialized_transients.update(sdfg.constants_prop.keys())
-        symbols = copy.deepcopy(sdfg.symbols)
+        symbols = dict(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
         for desc in sdfg.arrays.values():

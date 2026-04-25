@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop to map transformation """
 
 from collections import defaultdict
@@ -482,10 +482,10 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.symbols[sym] = dtype
+            nsdfg.add_symbol(sym, dtype)
 
         # Propagate symbols, where types cannot be inferred
-        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes = dict(nsdfg.symbols)
         alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
         for e in self.loop.all_interstate_edges():
             for k, v in e.data.assignments.items():
@@ -507,7 +507,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
                 # Only add explicit type, if it cannot be inferred
                 if vtype is None:
-                    nsdfg.symbols[k] = ktype
+                    nsdfg.add_symbol(k, ktype)
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.

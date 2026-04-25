@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Moves a loop around a map into the map """
 
 import copy
@@ -189,7 +189,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         if itervar in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
-            del sdfg.symbols[itervar]
+            sdfg.remove_symbol(itervar)
 
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:

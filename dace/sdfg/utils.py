@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -1872,7 +1872,7 @@ def traverse_sdfg_with_defined_symbols(
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
     # Start with global symbols and scalar constants
-    symbols = copy.copy(sdfg.symbols)
+    symbols = dict(sdfg.symbols)
     symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
@@ -2097,7 +2097,7 @@ def prune_symbols(sdfg: SDFG):
                 free_symbols = node.sdfg.free_symbols
                 defined_symbols = declared_symbols - free_symbols
                 for s in defined_symbols:
-                    del node.sdfg.symbols[s]
+                    node.sdfg.remove_symbol(s)
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
 

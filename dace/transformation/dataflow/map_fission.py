@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
@@ -231,14 +231,14 @@ class MapFission(transformation.SingleStateTransformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
+                    nsdfg_node.sdfg.add_symbol(symname, graph.symbols_defined_at(nsdfg_node)[symname])
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
                 if str(name) in nsdfg_node.symbol_mapping:
                     del nsdfg_node.symbol_mapping[str(name)]
                 if str(name) in nsdfg_node.sdfg.symbols:
-                    del nsdfg_node.sdfg.symbols[str(name)]
+                    nsdfg_node.sdfg.remove_symbol(str(name))
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)

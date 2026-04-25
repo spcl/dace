@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+import collections.abc
 import copy
 import ctypes
 import gzip
@@ -82,6 +83,124 @@ class NestedDict(dict):
             if isinstance(v, dt.Structure):
                 result |= set(map(lambda x: k + '.' + x, v.keys()))
         return result
+
+
+class SymbolDict(collections.abc.MutableMapping):
+    """ The mapping type stored in ``SDFG.symbols``.
+
+        Reads behave like a dict. In-place mutation raises ``RuntimeError`` --
+        callers must use ``sdfg.add_symbol`` / ``set_symbol_type`` /
+        ``remove_symbol`` / ``replace``. Composition over ``dict`` (rather
+        than subclassing) closes the ``dict.__setitem__`` C-slot bypass.
+    """
+
+    _MUTATE_ERR = ('Direct mutation of sdfg.symbols is not allowed. Use sdfg.add_symbol, '
+                   'sdfg.remove_symbol, sdfg.set_symbol_type, or sdfg.replace.')
+
+    __slots__ = ('_data', )
+
+    def __init__(self, mapping=None):
+        self._data = dict(mapping or {})
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __repr__(self):
+        return f'SymbolDict({self._data!r})'
+
+    def __eq__(self, other):
+        if isinstance(other, SymbolDict):
+            return self._data == other._data
+        return self._data == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = None  # mutable mapping -> unhashable, like dict
+
+    def copy(self):
+        """ Return a shallow copy as a :class:`SymbolDict`. """
+        return SymbolDict(self._data)
+
+    def __or__(self, other):
+        # Matches ``dict | dict``: result is a plain ``dict``, not bound to an SDFG.
+        if isinstance(other, SymbolDict):
+            other = other._data
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return {**self._data, **other}
+
+    def __ror__(self, other):
+        if isinstance(other, SymbolDict):
+            other = other._data
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return {**other, **self._data}
+
+    def __ior__(self, other):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def __setitem__(self, key, value):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def __delitem__(self, key):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def pop(self, key, *args):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def popitem(self):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def update(self, *args, **kwargs):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def setdefault(self, key, default=None):
+        if key in self._data:
+            return self._data[key]
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def clear(self):
+        raise RuntimeError(self._MUTATE_ERR)
+
+    def __copy__(self):
+        return SymbolDict(self._data)
+
+    def __deepcopy__(self, memo):
+        new = SymbolDict()
+        memo[id(self)] = new
+        new._data.update({k: copy.deepcopy(v, memo) for k, v in self._data.items()})
+        return new
+
+
+class SymbolDictProperty(DictProperty):
+    """ ``DictProperty`` that materializes a :class:`SymbolDict`. """
+
+    def __set__(self, obj, val):
+        if isinstance(val, str):
+            val = ast.literal_eval(val)
+        elif isinstance(val, (tuple, list)):
+            val = {k[0]: k[1] for k in val}
+        if isinstance(val, SymbolDict):
+            new = val
+        elif isinstance(val, collections.abc.Mapping):
+            new = SymbolDict({(k if self.is_key(k) else self.key_type(k)):
+                              (v if self.is_value(v) else self.value_type(v))
+                              for k, v in val.items()})
+        elif val is None and self.allow_none:
+            new = None
+        else:
+            raise TypeError(f'Expected mapping for property {self.attr_name}, got {type(val).__name__}')
+        object.__setattr__(obj, '_' + self.attr_name, new)
 
 
 def _arrays_to_json(arrays):
@@ -456,7 +575,7 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbols = SymbolDictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -531,7 +650,17 @@ class SDFG(ControlFlowRegion):
 
         self._propagate = propagate
         self._parent = parent
-        self.symbols = {}
+        # ``self.symbols`` is a :class:`SymbolDict`. Reads behave like a dict;
+        # in-place mutations raise -- callers must use ``add_symbol`` /
+        # ``remove_symbol`` / ``set_symbol_type`` / ``replace``. Internal
+        # mutators inside this class write to ``self._symbols._data`` directly.
+        self.symbols = SymbolDict()
+        # Per-SDFG symbol object registry. Maps a symbol name to the canonical
+        # `symbolic.symbol` object with its assumptions (integer, positive,
+        # nonnegative, ...). This ensures the same name always resolves to the
+        # same object -- preventing two symbols with the same name but
+        # conflicting conditions from coexisting in the SDFG.
+        self._symbol_objects: Dict[str, symbolic.symbol] = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -866,7 +995,18 @@ class SDFG(ControlFlowRegion):
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
-                    _replace_dict_keys(self.symbols, name, new_name)
+                    _replace_dict_keys(self._symbols._data, name, new_name)
+                    # Rebuild the symbol object under the new name so that
+                    # `get_symbol(new_name).name == new_name` (the underlying
+                    # sympy.Symbol carries the name internally; just renaming
+                    # the dict key is not enough).
+                    if name in self._symbol_objects:
+                        old_sym = self._symbol_objects.pop(name)
+                        try:
+                            self._symbol_objects[new_name] = symbolic.symbol(
+                                new_name, dtype=old_sym.dtype, **old_sym.assumptions0)
+                        except (NameError, TypeError):
+                            pass  # placeholder name -- registry stays unset
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
@@ -877,20 +1017,72 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype, find_new_name: bool = False):
-        """ Adds a symbol to the SDFG.
+    def add_symbol(self, name, stype, find_new_name: bool = False, **assumptions):
+        """ Registers a symbol identified by ``(name, stype, assumptions)``.
+
+            Re-adding with matching identity is a no-op. Conflicting identity
+            raises ``FileExistsError`` unless ``find_new_name=True``, in which
+            case a fresh name is allocated.
 
             :param name: Symbol name.
-            :param stype: Symbol type.
-            :param find_new_name: Find a new name.
+            :param stype: DaCe type.
+            :param find_new_name: Allocate a new name on conflict.
+            :param assumptions: sympy assumptions forwarded to
+                                ``symbolic.symbol`` (e.g. ``positive=True``).
         """
-        if find_new_name:
+        if not isinstance(stype, dtypes.typeclass):
+            stype = dtypes.dtype_to_typeclass(stype)
+
+        # Build the canonical symbol object we would register for this call.
+        # Some special placeholder names (e.g. "?" for UndefinedSymbol) cannot
+        # be constructed via ``symbolic.symbol`` -- for those we fall back to
+        # dtype-only registration and skip the object registry.
+        try:
+            new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+        except (NameError, TypeError):
+            new_sym = None
+
+        if name in self.symbols:
+            existing_sym = self._symbol_objects.get(name)
+            if new_sym is None:
+                # Best we can do without an object: compare dtypes.
+                if self.symbols[name] == stype:
+                    return name
+            elif existing_sym is None:
+                # Legacy entry -- only dtype was tracked. Adopt the new object
+                # if dtype matches and no assumptions were given (i.e., the
+                # two registrations are compatible under the old contract).
+                if self.symbols[name] == stype and not assumptions:
+                    self._symbol_objects[name] = new_sym
+                    return name
+                if self.symbols[name] == stype and assumptions:
+                    # Upgrading a legacy (no-assumptions) entry with explicit
+                    # assumptions would change the symbol's conditions.
+                    pass  # fall through to rename-or-raise
+            elif self._symbol_conditions_match(existing_sym, new_sym):
+                return name
+            # Mismatch -- fall through to either rename or raise.
+            if find_new_name:
+                name = self._find_new_name(name)
+                try:
+                    new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+                except (NameError, TypeError):
+                    new_sym = None
+            else:
+                existing_desc = self._describe_symbol(existing_sym, self.symbols[name])
+                raise FileExistsError(
+                    f'Symbol "{name}" already exists in SDFG with {existing_desc}; '
+                    f'cannot add with different conditions (dtype={stype}, '
+                    f'assumptions={assumptions or "{}"})')
+        elif find_new_name:
             name = self._find_new_name(name)
+            try:
+                new_sym = symbolic.symbol(name, dtype=stype, **assumptions)
+            except (NameError, TypeError):
+                new_sym = None
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
             if name in self.arrays:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
@@ -899,17 +1091,66 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
             if name in self._pgrids:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
+
+        self._symbols._data[name] = stype
+        if new_sym is not None:
+            self._symbol_objects[name] = new_sym
+        return name
+
+    def set_symbol_type(self, name: str, stype) -> None:
+        """ In-place dtype swap for an already-registered symbol.
+
+            The cached canonical object is rebuilt on next ``get_symbol``.
+            Raises ``KeyError`` if ``name`` is not registered -- use
+            ``add_symbol`` to add-or-update.
+        """
+        if name not in self.symbols:
+            raise KeyError(f'Symbol "{name}" is not defined in the SDFG')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
-        self.symbols[name] = stype
-        return name
+        self._symbols._data[name] = stype
+        self._symbol_objects.pop(name, None)
+
+    def get_symbol(self, name: str) -> symbolic.symbol:
+        """ Returns the canonical :class:`symbolic.symbol` for ``name``.
+
+            Identity is stable within one SDFG. For deserialized entries that
+            pre-date the registry, the object is lazily constructed from the
+            stored dtype on first access.
+        """
+        if name not in self.symbols:
+            raise KeyError(f'Symbol "{name}" is not defined in the SDFG')
+        sym = self._symbol_objects.get(name)
+        if sym is None:
+            sym = symbolic.symbol(name, dtype=self.symbols[name])
+            self._symbol_objects[name] = sym
+        return sym
+
+    @staticmethod
+    def _symbol_conditions_match(a: 'symbolic.symbol', b: 'symbolic.symbol') -> bool:
+        """ Two symbols match iff their dtype and full sympy ``assumptions0``
+            agree (explicit + sympy-derived assumptions). """
+        if a.dtype != b.dtype:
+            return False
+        return a.assumptions0 == b.assumptions0
+
+    @staticmethod
+    def _describe_symbol(sym: Optional['symbolic.symbol'], stype) -> str:
+        if sym is None:
+            return f'type {stype}'
+        # Only report non-default assumptions to keep the message concise.
+        relevant = {k: v for k, v in sym.assumptions0.items() if v}
+        if relevant:
+            return f'type {sym.dtype}, assumptions={relevant}'
+        return f'type {sym.dtype}'
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
 
             :param name: Symbol name.
         """
-        del self.symbols[name]
+        del self._symbols._data[name]
+        self._symbol_objects.pop(name, None)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
