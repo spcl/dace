@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Simplified SDFG Dialect compliance check.
+"""Core Dialect compliance check.
 
-Constructs disallowed by the dialect:
+The Core Dialect is the subset of the SDFG IR that downstream passes (the
+experimental CUDA codegen, layout-permutation transformations, etc.) are
+expected to consume. Constructs disallowed by Core Dialect:
 
 - control flow: ``ConsumeEntry`` scopes, ``Stream`` data descriptors and their
   access nodes, conditional interstate edges;
@@ -15,8 +17,8 @@ from dace import data as dt, dtypes
 from dace.sdfg import SDFG, nodes
 
 
-class SimplifiedDialectCompliant:
-    """Per-feature compliance checks for the Simplified SDFG Dialect.
+class CoreDialectCompliant:
+    """Per-feature Core Dialect compliance checks.
 
     Every ``check_*`` method returns ``True`` when the SDFG contains none of the
     corresponding forbidden construct; ``offenders_*`` returns human-readable
@@ -179,21 +181,22 @@ class SimplifiedDialectCompliant:
 
     @classmethod
     def is_compliant(cls, sdfg: SDFG) -> bool:
-        """Return ``True`` iff the SDFG is compliant with every feature of the dialect."""
+        """Return ``True`` iff the SDFG is core-dialect-compliant."""
         return not cls.collect(sdfg)
 
 
-def warn_if_not_simplified_dialect(sdfg: SDFG) -> None:
-    """Emit a ``UserWarning`` if ``sdfg`` violates the Simplified SDFG Dialect.
+def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
+    """Emit a ``UserWarning`` if ``sdfg`` violates Core Dialect.
 
     The warning enumerates each offending feature together with up to five concrete locators.
-    It never raises; the experimental codegen proceeds best-effort.
+    It never raises; the caller proceeds best-effort.
 
     :param sdfg: the SDFG to check.
+    :param source: short tag identifying the caller, included in the warning header.
     """
     import warnings
 
-    offenders_by_feature = SimplifiedDialectCompliant.collect(sdfg)
+    offenders_by_feature = CoreDialectCompliant.collect(sdfg)
     if not offenders_by_feature:
         return
 
@@ -210,9 +213,23 @@ def warn_if_not_simplified_dialect(sdfg: SDFG) -> None:
     body = '\n'.join(lines)
     warnings.warn(
         f'\n{banner}\n'
-        f'ExperimentalCUDACodeGen: SDFG is NOT compliant with the Simplified SDFG Dialect.\n'
+        f'{source}: SDFG is NOT core-dialect-compliant.\n'
         f'Generated code may be incorrect. Offending feature(s):\n'
         f'{body}\n'
         f'{banner}',
         stacklevel=2,
     )
+
+
+def require_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
+    """Raise ``ValueError`` if ``sdfg`` violates Core Dialect. Strict counterpart to ``warn_if_not_core_dialect``."""
+    offenders_by_feature = CoreDialectCompliant.collect(sdfg)
+    if not offenders_by_feature:
+        return
+    lines = []
+    for label, offenders in offenders_by_feature:
+        shown = offenders[:5]
+        extra = len(offenders) - len(shown)
+        suffix = f' ... and {extra} more' if extra > 0 else ''
+        lines.append(f'{label}: {", ".join(shown)}{suffix}')
+    raise ValueError(f'{source} requires core-dialect-compliant SDFG. Offenders: ' + '; '.join(lines))

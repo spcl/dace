@@ -34,7 +34,7 @@ from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import In
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
-from dace.codegen.targets.experimental_cuda_helpers.reduced_ir_check import warn_if_not_simplified_dialect
+from dace.sdfg.core_dialect import warn_if_not_core_dialect
 
 from dace.codegen.targets import cpp
 
@@ -98,7 +98,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def preprocess(self, sdfg: SDFG) -> None:
         """Prepare the SDFG for GPU code generation."""
-        warn_if_not_simplified_dialect(sdfg)
+        warn_if_not_core_dialect(sdfg, source='ExperimentalCUDACodeGen')
 
         # Strided GPU<->GPU AccessNode-to-AccessNode edges that do not collapse to a single
         # cudaMemcpy / cudaMemcpy2D pattern are lowered to explicit maps.
