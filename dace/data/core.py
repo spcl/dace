@@ -270,6 +270,13 @@ class Scalar(Data):
     def __repr__(self):
         return 'Scalar (dtype=%s)' % self.dtype
 
+    def is_packed_fortran_strides(self) -> bool:
+        # A scalar is a single element; any layout question is trivially yes.
+        return True
+
+    def is_packed_c_strides(self) -> bool:
+        return True
+
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
                       self.debuginfo)
