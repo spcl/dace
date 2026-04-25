@@ -1,8 +1,82 @@
 import dace
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 from dace.transformation import pass_pipeline as ppl
+from dace.sdfg import nodes as nd
+from dace.sdfg.core_dialect import require_core_dialect
+from dace.sdfg.utils import find_upstream_nodes
 from dataclasses import dataclass
+
+
+def _is_zero_init_tasklet(t: 'nd.Tasklet') -> bool:
+    if not isinstance(t, nd.Tasklet):
+        return False
+    if len(t.in_connectors) != 0 or len(t.out_connectors) != 1:
+        return False
+    out_conn = next(iter(t.out_connectors))
+    code = t.code.as_string.strip().rstrip(';').strip()
+    if t.language == dace.Language.Python:
+        return code in (f"{out_conn} = 0", f"{out_conn} = 0.0")
+    return code in (f"{out_conn} = 0", f"{out_conn} = 0.0")
+
+
+def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState, 'nd.Node']:
+    """Locate the unique state + producer node that initializes ``name``.
+
+    Returns (state, producer). Raises ``ValueError`` if zero or more than
+    one full-extent writer state qualifies.
+    """
+    candidates: List[Tuple[dace.SDFGState, 'nd.Node']] = []
+    desc = sdfg.arrays[name]
+    full_volume = 1
+    for s in desc.shape:
+        full_volume = full_volume * s
+    for state in sdfg.all_states():
+        for an in state.data_nodes():
+            if an.data != name:
+                continue
+            in_edges = state.in_edges(an)
+            if not in_edges:
+                continue
+            covered = False
+            producer = None
+            for ie in in_edges:
+                m = ie.data
+                if m is None or m.data is None:
+                    continue
+                try:
+                    if m.subset is not None and m.subset.num_elements() == full_volume:
+                        covered = True
+                        producer = ie.src
+                        break
+                except Exception:
+                    pass
+            if covered:
+                candidates.append((state, producer))
+    if len(candidates) != 1:
+        raise ValueError(
+            f"Cannot permute transient '{name}': expected exactly one full-extent writer state, "
+            f"found {len(candidates)}.")
+    return candidates[0]
+
+
+def _is_zero_initialized(sdfg: dace.SDFG, name: str) -> bool:
+    """True iff the initialization writer for ``name`` is a map-zero pattern.
+
+    The pattern is a MapEntry whose body has a single zero-write Tasklet
+    feeding the AccessNode for ``name`` over its full extent.
+    """
+    try:
+        state, producer = _find_full_extent_writer(sdfg, name)
+    except ValueError:
+        return False
+    if isinstance(producer, nd.MapExit):
+        scope = state.scope_subgraph(state.entry_node(producer))
+        tasklets = [n for n in scope.nodes() if isinstance(n, nd.Tasklet)]
+        return len(tasklets) == 1 and _is_zero_init_tasklet(tasklets[0])
+    if isinstance(producer, nd.Tasklet):
+        return _is_zero_init_tasklet(producer)
+    return False
 
 
 @dataclass
@@ -28,6 +102,10 @@ class PermuteDimensions(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+        # PermuteDimensions operates on Core Dialect: no views, no WCR memlets, no
+        # other_subset memlets, no streams or implicit AN->AN copies. Refuse
+        # to run on non-core-dialect SDFGs rather than silently miscompiling.
+        require_core_dialect(sdfg, source='PermuteDimensions')
         self._permute_index(sdfg, sdfg, self._permute_map, self._add_permute_maps)
         return 0
 
@@ -148,41 +226,77 @@ class PermuteDimensions(ppl.Pass):
 
         if root == sdfg:
             if add_permute_maps:
-                permute_state = sdfg.add_state_before(sdfg.start_state, "permute_in")
-                permute_states_to_skip.add(permute_state)
-                final_block = [v for v in sdfg.nodes() if sdfg.out_degree(v) == 0][0]
-                permute_out_state = sdfg.add_state_after(final_block, "permute_out")
-                permute_states_to_skip.add(permute_out_state)
+                # Split into input (non-transient) and transient sub-maps.
+                # Inputs go through the wrap-around permute_in/permute_out
+                # states. Transients are handled per-array: zero-initialized
+                # transients need no copy; non-zero-initialized transients
+                # get an in-place permute right after their initialization
+                # (assumed to cover the full extent — see
+                # _find_full_extent_writer).
+                input_name_map = {n: m for n, m in name_map.items() if not sdfg.arrays[n].transient}
+                transient_name_map = {n: m for n, m in name_map.items() if sdfg.arrays[n].transient}
 
-                # Add maps to permute the input arrays to their permuted shape
-                for old_name, new_name in name_map.items():
+                if input_name_map:
+                    permute_state = sdfg.add_state_before(sdfg.start_state, "permute_in")
+                    permute_states_to_skip.add(permute_state)
+                    final_block = [v for v in sdfg.nodes() if sdfg.out_degree(v) == 0][0]
+                    permute_out_state = sdfg.add_state_after(final_block, "permute_out")
+                    permute_states_to_skip.add(permute_out_state)
+
+                    # Add maps to permute the input arrays to their permuted shape
+                    for old_name, new_name in input_name_map.items():
+                        old_shape = sdfg.arrays[old_name].shape
+                        new_shape = sdfg.arrays[new_name].shape
+                        permute_indices = permute_map[old_name]
+
+                        self._add_permute_map(sdfg=sdfg,
+                                              state=permute_state,
+                                              old_shape=old_shape,
+                                              new_shape=new_shape,
+                                              permute_indices=permute_indices,
+                                              old_name=old_name,
+                                              new_name=new_name)
+
+                    # Add maps to permute the arrays back to their original shape
+                    for old_name, new_name in input_name_map.items():
+                        old_shape = sdfg.arrays[old_name].shape
+                        new_shape = sdfg.arrays[new_name].shape
+                        # Permute map is of form map[old] = new, we need to invert it
+                        inverse_permute_indices = self._inverse_permute_indices(permute_map[old_name])
+
+                        self._add_permute_map(sdfg=sdfg,
+                                              state=permute_out_state,
+                                              old_shape=new_shape,
+                                              new_shape=old_shape,
+                                              permute_indices=inverse_permute_indices,
+                                              old_name=new_name,
+                                              new_name=old_name)
+
+                # Per-transient handling. Done before the memlet rewrite
+                # below so the inserted permute states see the original
+                # array names; the rewrite loop then renames them in step
+                # with the rest of the SDFG.
+                for old_name, new_name in transient_name_map.items():
+                    if _is_zero_initialized(sdfg, old_name):
+                        # Zero-init: the same map running over the permuted
+                        # iteration domain rezeros the descriptor; no copy
+                        # state needed.
+                        permute_states_to_skip.add(None)  # no-op marker
+                        continue
+                    init_state, _producer = _find_full_extent_writer(sdfg, old_name)
+                    permute_after_state = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
+                    permute_states_to_skip.add(permute_after_state)
+
                     old_shape = sdfg.arrays[old_name].shape
                     new_shape = sdfg.arrays[new_name].shape
                     permute_indices = permute_map[old_name]
-
-                    # Only non-transient glb arrays are input arrays
                     self._add_permute_map(sdfg=sdfg,
-                                          state=permute_state,
+                                          state=permute_after_state,
                                           old_shape=old_shape,
                                           new_shape=new_shape,
                                           permute_indices=permute_indices,
                                           old_name=old_name,
                                           new_name=new_name)
-
-                # Add maps to permute the arrays back to their original shape
-                for old_name, new_name in name_map.items():
-                    old_shape = sdfg.arrays[old_name].shape
-                    new_shape = sdfg.arrays[new_name].shape
-                    # Permute map is of form map[old] = new, we need to invert it
-                    inverse_permute_indices = self._inverse_permute_indices(permute_map[old_name])
-
-                    self._add_permute_map(sdfg=sdfg,
-                                          state=permute_out_state,
-                                          old_shape=new_shape,
-                                          new_shape=old_shape,
-                                          permute_indices=inverse_permute_indices,
-                                          old_name=new_name,
-                                          new_name=old_name)
 
         # The transformation has added the permuted shapes and maps to permute them if the user requested it.
         # The transformation has yet permuted the memlets as we want to access the previous defined arrays
