@@ -13,13 +13,10 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import ge
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGPUStreams(ppl.Pass):
-    """
-    Inserts a GPU stream array into the top-level SDFG and propagates it to all
-    nested SDFGs that require it, including intermediate SDFGs along the hierarchy.
+    """Insert the GPU stream array into the top-level SDFG and propagate it to nested SDFGs that need it.
 
-    This pass guarantees that every relevant SDFG has the array defined, avoiding
-    duplication and allowing subsequent passes in the GPU stream pipeline to rely
-    on its presence without redefining it.
+    Every intermediate SDFG along the path to a user gets the array and a matching nested-SDFG
+    in-connector, so subsequent passes can rely on its presence everywhere it's needed.
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
@@ -32,13 +29,10 @@ class InsertGPUStreams(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
-        """
-        Ensure that a GPU stream array is available in all SDFGs that require it.
+        """Create the GPU stream array at the top level and wire it through every nested SDFG that needs it.
 
-        The pass creates the array once at the top-level SDFG and propagates it
-        down the hierarchy by inserting matching arrays in child SDFGs and wiring
-        them through nested SDFG connectors. This way, all SDFGs share a consistent
-        reference to the same GPU stream array.
+        All relevant SDFGs end up sharing a consistent reference to the same stream array, so
+        subsequent pipeline passes can rely on its presence without redefining it.
         """
 
         # Extract stream array name and number of streams to allocate
@@ -97,28 +91,13 @@ class InsertGPUStreams(ppl.Pass):
 
         return {}
 
-    def find_child_sdfgs_requiring_gpu_stream(self, sdfg) -> Set[SDFG]:
-        """
-        Identify all child SDFGs that require a GPU stream array in their
-        array descriptor store. A child SDFG requires a GPU stream if:
+    def find_child_sdfgs_requiring_gpu_stream(self, sdfg: SDFG) -> Set[SDFG]:
+        """Identify all child SDFGs that need a GPU stream array in their array descriptor store.
 
-        - It launches GPU kernels (MapEntry/MapExit with GPU_Device schedule).
-        - It contains ``CopyLibraryNode`` or ``MemsetLibraryNode`` instances
-          targeting GPU storage (these lower to stream-bound memcpy /
-          kernel launches and need an explicit stream handle threaded in).
-        - It accesses GPU global memory outside device-level GPU scopes, which
-          implies memory copies or kernel data feeds.
-
-        Parameters
-        ----------
-        sdfg : SDFG
-            The root SDFG to inspect.
-
-        Returns
-        -------
-        Set[SDFG]
-            The set of child SDFGs that need a GPU stream array in their array descriptor
-            store.
+        A child SDFG requires a GPU stream if it launches GPU kernels, contains a
+        ``CopyLibraryNode`` / ``MemsetLibraryNode`` targeting GPU storage (these lower to
+        stream-bound memcpy/kernel launches), or accesses GPU global memory outside a
+        device-level scope.
         """
         requiring_gpu_stream = set()
         for child_sdfg in sdfg.all_sdfgs_recursive():
@@ -138,7 +117,7 @@ class InsertGPUStreams(ppl.Pass):
                     # Case 2: Copy / memset library nodes targeting GPU storage.
                     # Their expansions take an explicit `stream` in-connector,
                     # so the enclosing SDFG must have the stream array.
-                    if _is_gpu_copy_or_memset(node):
+                    if _is_gpu_copy_or_memset(node, state, child_sdfg):
                         requiring_gpu_stream.add(child_sdfg)
                         break
 

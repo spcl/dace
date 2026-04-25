@@ -1,21 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Unified pass that wires stream-using nodes (GPU kernels, ``CopyLibraryNode``
-and ``MemsetLibraryNode`` instances) into a single per-stream chain of
-``gpu_streams`` AccessNodes.
+"""Wire stream-using nodes (GPU kernels, ``CopyLibraryNode``, ``MemsetLibraryNode``) into per-stream chains.
 
-For each state and each stream ``i`` the pass builds:
-
-    src -> n0 -> mid_0 -> n1 -> mid_1 -> ... -> n_{k-1} -> sink
-
-where every AccessNode represents ``gpu_streams[i]``.  Each edge entering
-a node carries the real memlet ``gpu_streams[i]`` (consumed by the
-node's codegen / expansion to pick up the stream handle); each edge
-leaving a node is a dependency edge (empty memlet) that threads the
-stream state forward to the next user on the same stream.
-
-Consecutive nodes share the intermediate AccessNode, so no dedicated
-topology-simplification pass is needed afterwards.
+For each state and each stream ``i`` the pass builds
+``src -> n0 -> mid_0 -> n1 -> ... -> n_{k-1} -> sink`` of ``gpu_streams[i]`` AccessNodes.
+Incoming edges carry the real ``gpu_streams[i]`` memlet (the node's codegen picks up the stream handle);
+outgoing edges are empty-memlet dependencies that thread stream state to the next user.
 """
 from collections import defaultdict
 from typing import Any, Dict, List, Set, Type, Union
@@ -89,7 +78,7 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
                 continue
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                 per_stream[stream_id].append(node)
-            elif _is_gpu_copy_or_memset(node):
+            elif _is_gpu_copy_or_memset(node, state, state.sdfg):
                 per_stream[stream_id].append(node)
 
         for stream_id, stream_users in per_stream.items():

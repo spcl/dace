@@ -273,8 +273,9 @@ def test_three_kernels_dependent_and_independent():
         copy_nodes = [n for n in kernel_state.nodes() if isinstance(n, CopyLibraryNode)]
         assert copy_nodes
         for c in copy_nodes:
-            crosses = ((c.src_storage == gpu and c.dst_storage in cpu_like)
-                       or (c.src_storage in cpu_like and c.dst_storage == gpu))
+            src = c.src_storage(kernel_state, kernel_state.sdfg)
+            dst = c.dst_storage(kernel_state, kernel_state.sdfg)
+            crosses = (src == gpu and dst in cpu_like) or (src in cpu_like and dst == gpu)
             assert crosses
 
 
@@ -306,9 +307,7 @@ def test_single_copy_library_node():
 
     a = state.add_access("A")
     b = state.add_access("B")
-    cp = CopyLibraryNode(name="copy_A_to_B",
-                         src_storage=dace.dtypes.StorageType.CPU_Heap,
-                         dst_storage=dace.dtypes.StorageType.GPU_Global)
+    cp = CopyLibraryNode(name="copy_A_to_B")
     state.add_node(cp)
     state.add_edge(a, None, cp, "_in", dace.Memlet("A[0:128]"))
     state.add_edge(cp, "_out", b, None, dace.Memlet("B[0:128]"))
