@@ -133,22 +133,56 @@ def test_nested_sdfg_propagates_outer_symbol():
     assert len([s for s in outer.symbols if s == 'N']) == 1
 
 
-def test_legacy_entry_without_object_can_be_upgraded_then_locked():
-    """Simulates a symbol that was registered pre-registry (only dtype stored).
-    The first add_symbol with matching dtype + no assumptions fills in the
-    registry. Subsequent adds with different assumptions must be rejected.
-    """
+def test_direct_mutation_of_symbols_is_blocked():
+    """The strict guard on ``sdfg.symbols`` rejects all mutation paths that
+    bypass the official API."""
     sdfg = dace.SDFG('host')
-    # Simulate a legacy registration (dtype-only, no canonical object).
-    sdfg.symbols['K'] = dtypes.int32
+    sdfg.add_symbol('K', dtypes.int32)
+    with pytest.raises(RuntimeError):
+        sdfg.symbols['K'] = dtypes.float64
+    with pytest.raises(RuntimeError):
+        del sdfg.symbols['K']
+    with pytest.raises(RuntimeError):
+        sdfg.symbols.pop('K')
+    with pytest.raises(RuntimeError):
+        sdfg.symbols.update({'M': dtypes.int64})
+    with pytest.raises(RuntimeError):
+        sdfg.symbols.clear()
 
-    sdfg.add_symbol('K', dtypes.int32)  # upgrades registry
-    assert 'K' in sdfg._symbol_objects
-    assert sdfg.get_symbol('K').dtype == dtypes.int32
 
-    # Now adding with a new assumption must fail.
-    with pytest.raises(FileExistsError):
-        sdfg.add_symbol('K', dtypes.int32, positive=True)
+def test_set_symbol_type_swaps_dtype():
+    """``set_symbol_type`` is the official path for in-place dtype swaps; it
+    rebuilds the canonical object so dtype and registry stay in sync."""
+    sdfg = dace.SDFG('host')
+    sdfg.add_symbol('K', dtypes.int32)
+    sdfg.set_symbol_type('K', dtypes.float64)
+    assert sdfg.symbols['K'] == dtypes.float64
+    assert sdfg.get_symbol('K').dtype == dtypes.float64
+
+
+def test_remove_symbol_clears_registry():
+    sdfg = dace.SDFG('host')
+    sdfg.add_symbol('N', dtypes.int64, positive=True)
+    assert 'N' in sdfg._symbol_objects
+    sdfg.remove_symbol('N')
+    assert 'N' not in sdfg.symbols
+    assert 'N' not in sdfg._symbol_objects
+    # After removal we must be able to re-register with new conditions.
+    sdfg.add_symbol('N', dtypes.float32)
+    assert sdfg.get_symbol('N').dtype == dtypes.float32
+
+
+def test_replace_renames_in_registry():
+    sdfg = dace.SDFG('host')
+    sdfg.add_symbol('N', dtypes.int64, positive=True)
+    sdfg.replace('N', 'M')
+    assert 'N' not in sdfg.symbols
+    assert 'M' in sdfg.symbols
+    # After rename the canonical object's name must follow.
+    new_sym = sdfg.get_symbol('M')
+    assert new_sym.name == 'M'
+    assert new_sym.dtype == dtypes.int64
+    assert new_sym.assumptions0.get('positive') is True
 
 
 def test_placeholder_name_still_accepted():
@@ -172,6 +206,9 @@ if __name__ == '__main__':
     test_find_new_name_only_kicks_in_on_conflict()
     test_get_symbol_returns_stable_object()
     test_nested_sdfg_propagates_outer_symbol()
-    test_legacy_entry_without_object_can_be_upgraded_then_locked()
+    test_direct_mutation_of_symbols_is_blocked()
+    test_set_symbol_type_swaps_dtype()
+    test_remove_symbol_clears_registry()
+    test_replace_renames_in_registry()
     test_placeholder_name_still_accepted()
     print('All nested symbol-registry tests passed.')

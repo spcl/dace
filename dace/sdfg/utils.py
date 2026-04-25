@@ -2101,7 +2101,7 @@ def prune_symbols(sdfg: SDFG):
                 free_symbols = node.sdfg.free_symbols
                 defined_symbols = declared_symbols - free_symbols
                 for s in defined_symbols:
-                    del node.sdfg.symbols[s]
+                    node.sdfg.remove_symbol(s)
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
 

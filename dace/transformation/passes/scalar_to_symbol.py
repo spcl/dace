@@ -613,7 +613,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
-                        dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
+                        dst.sdfg.add_symbol(tmp_symname, sdfg.arrays[node.data].dtype)
                         dst.symbol_mapping[tmp_symname] = symname
                     elif isinstance(dst, nodes.EntryNode) and e.dst_conn and not e.dst_conn.startswith('IN_'):
                         # Dynamic scope input, replace in node

@@ -188,7 +188,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         sd.replace(nstate, '__dace_db_param', new_expr)
 
         # Remove symbol once done
-        del nsdfg_node.sdfg.symbols['__dace_db_param']
+        nsdfg_node.sdfg.remove_symbol('__dace_db_param')
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
         return nsdfg_node
