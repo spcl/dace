@@ -145,9 +145,54 @@ def test_direct_mutation_of_symbols_is_blocked():
     with pytest.raises(RuntimeError):
         sdfg.symbols.pop('K')
     with pytest.raises(RuntimeError):
+        sdfg.symbols.popitem()
+    with pytest.raises(RuntimeError):
         sdfg.symbols.update({'M': dtypes.int64})
     with pytest.raises(RuntimeError):
+        sdfg.symbols.setdefault('M', dtypes.int64)
+    with pytest.raises(RuntimeError):
         sdfg.symbols.clear()
+
+
+def test_dict_class_method_bypass_is_blocked():
+    """Calling ``dict.__setitem__`` / ``dict.update`` etc. directly on the
+    instance is a known way to bypass Python-level overrides on ``dict``
+    subclasses. ``_SymbolDict`` is a ``MutableMapping`` (composition, not
+    inheritance), so those C-level slots simply do not apply to it."""
+    sdfg = dace.SDFG('host')
+    sdfg.add_symbol('K', dtypes.int32)
+    for fn in (
+        lambda: dict.__setitem__(sdfg.symbols, 'M', dtypes.int64),
+        lambda: dict.__delitem__(sdfg.symbols, 'K'),
+        lambda: dict.pop(sdfg.symbols, 'K'),
+        lambda: dict.update(sdfg.symbols, {'M': dtypes.int64}),
+        lambda: dict.clear(sdfg.symbols),
+    ):
+        with pytest.raises(TypeError):
+            fn()
+
+
+def test_replacing_backing_storage_is_blocked():
+    """Writing ``sdfg._symbols = some_plain_dict`` -- attempting to swap the
+    underlying storage with an unguarded mapping -- is rejected by
+    ``SDFG.__setattr__``. Note: assignments via ``object.__setattr__`` or
+    ``sdfg.__dict__`` deliberately bypass any class-level ``__setattr__`` and
+    are out of scope -- they are explicit Python introspection, not normal
+    code paths."""
+    sdfg = dace.SDFG('host')
+    sdfg.add_symbol('K', dtypes.int32)
+    with pytest.raises(RuntimeError):
+        sdfg._symbols = {'M': dtypes.int64}
+
+
+def test_property_assignment_rewraps():
+    """Assigning ``sdfg.symbols = {...}`` (the property path) re-wraps the
+    new dict so it stays guarded."""
+    sdfg = dace.SDFG('host')
+    sdfg.symbols = {'Q': dtypes.int64}
+    assert type(sdfg.symbols).__name__ == '_SymbolDict'
+    with pytest.raises(RuntimeError):
+        sdfg.symbols['R'] = dtypes.int64
 
 
 def test_set_symbol_type_swaps_dtype():
@@ -207,6 +252,9 @@ if __name__ == '__main__':
     test_get_symbol_returns_stable_object()
     test_nested_sdfg_propagates_outer_symbol()
     test_direct_mutation_of_symbols_is_blocked()
+    test_dict_class_method_bypass_is_blocked()
+    test_replacing_backing_storage_is_blocked()
+    test_property_assignment_rewraps()
     test_set_symbol_type_swaps_dtype()
     test_remove_symbol_clears_registry()
     test_replace_renames_in_registry()

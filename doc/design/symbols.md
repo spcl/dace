@@ -59,5 +59,30 @@ which preserves the inner registry's invariants.
 
 `copy.copy` and `copy.deepcopy` of `_SymbolDict` deliberately return plain
 `dict` instances so that local accumulators (validation, codegen) can mutate
-freely. Cloning a whole SDFG goes through the property descriptor, which
-re-wraps the resulting dict in a fresh guarded `_SymbolDict`.
+freely. Cloning a whole SDFG goes through `SDFG.__deepcopy__`, which re-wraps
+the cloned `_symbols` in a fresh guarded `_SymbolDict`.
+
+## Bypass coverage
+
+What the guard catches (raises `RuntimeError` / `TypeError`):
+
+- `sdfg.symbols[k] = v`, `del sdfg.symbols[k]`, `sdfg.symbols.pop`,
+  `popitem`, `update`, `setdefault` (new key), `clear`.
+- `dict.__setitem__(sdfg.symbols, ...)` and the other `dict.*` C-slots —
+  `_SymbolDict` is a `MutableMapping` (composition over `dict`), so the C-slot
+  descriptors of `dict` simply don't apply.
+- `sdfg._symbols = some_plain_mapping` — `SDFG.__setattr__` rejects writes
+  that aren't a `_SymbolDict`. Use `sdfg.symbols = ...` (the property) for the
+  rare legitimate full-replacement case.
+
+What the guard does **not** catch (deliberate Python introspection):
+
+- `object.__setattr__(sdfg, '_symbols', plain_dict)` — bypasses the class
+  `__setattr__` by construction.
+- `sdfg.__dict__['_symbols'] = plain_dict` — same.
+- Any C-extension that pokes at the underlying object.
+
+These paths require explicit introspection — they are not normal coding
+patterns, and Python provides no in-process mechanism to prevent them. The
+guard is designed to catch *accidental* misuse; code that goes out of its way
+to bypass it is on its own to maintain the invariants.
