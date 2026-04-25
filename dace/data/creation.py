@@ -119,11 +119,6 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, np.number):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, type):
-        try:
-            return Structure.from_class(obj)
-        except TypeError:
-            pass
     elif isinstance(obj, (Number, np.number, np.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):
@@ -131,6 +126,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
     elif isinstance(obj, str) or obj is str:
         return Scalar(dtypes.string)
+    elif isinstance(obj, type):
+        try:
+            return Structure.from_class(obj)
+        except TypeError:
+            pass
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))

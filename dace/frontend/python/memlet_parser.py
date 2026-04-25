@@ -130,10 +130,10 @@ def _wrap_slice_bound(index_expr, extent, *, inclusive_stop: bool):
     return wrapped
 
 
-def _fill_missing_slices(das, ast_ndslice, array, indices):
+def _fill_missing_slices(das, ast_ndslice, shape):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
-    ndslice = [None] * len(array.shape)
+    ndslice = [None] * len(shape)
     offsets = []
     new_axes = []
     arrdims: Dict[int, str] = {}
@@ -150,7 +150,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             dim = ast.Name(id=dim)
 
         if isinstance(dim, tuple):
-            dim_extent = array.shape[indices[idx]]
+            dim_extent = shape[idx]
             rb = _wrap_slice_bound(_parse_dim_atom(das, dim[0] or 0), dim_extent, inclusive_stop=False)
             re = _wrap_slice_bound(_parse_dim_atom(das, dim[1] or dim_extent), dim_extent, inclusive_stop=True)
             rs = _parse_dim_atom(das, dim[2] or 1)
@@ -165,7 +165,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             has_ellipsis = True
             remaining_dims = len(ast_ndslice) - num_new_axes - idx - 1
             for j in range(idx, len(ndslice) - remaining_dims):
-                ndslice[j] = (0, array.shape[j] - 1, 1)
+                ndslice[j] = (0, shape[j] - 1, 1)
                 idx += 1
                 new_idx += 1
         elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None) or inner_eval_ast(das, dim) is None):
@@ -174,8 +174,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             # NOTE: Do not increment idx here
         elif isinstance(dim, ast.Name) and isinstance(dim.id, (list, tuple)):
             # List/tuple literal
-            ndslice[idx] = (0, array.shape[idx] - 1, 1)
-            arrdims[indices[idx]] = dim.id
+            ndslice[idx] = (0, shape[idx] - 1, 1)
+            arrdims[idx] = dim.id
             idx += 1
             new_idx += 1
         elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], slice):
@@ -184,11 +184,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             if rb is None:
                 rb = 0
             if re is None:
-                re = array.shape[indices[idx]]
+                re = shape[idx]
             if rs is None:
                 rs = 1
 
-            dim_extent = array.shape[indices[idx]]
+            dim_extent = shape[idx]
             ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
                             _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
@@ -200,11 +200,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             if rb is None:
                 rb = 0
             if re is None:
-                re = array.shape[indices[idx]]
+                re = shape[idx]
             if rs is None:
                 rs = 1
 
-            dim_extent = array.shape[indices[idx]]
+            dim_extent = shape[idx]
             ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
                             _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
@@ -216,7 +216,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 # Boolean array indexing
                 if len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(array.shape):
+                if tuple(desc.shape) != tuple(shape):
                     raise IndexError(f'Invalid indexing into array "{dim.id}". '
                                      'Shape of boolean index must match original array.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
@@ -229,16 +229,16 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
             if data._prod(desc.shape) == 1:
                 # Special case: one-element array treated as scalar
-                scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), array.shape[indices[idx]])
+                scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), shape[idx])
                 ndslice[idx] = (scalar_expr, scalar_expr, 1)
             else:
-                ndslice[idx] = (0, array.shape[idx] - 1, 1)
-                arrdims[indices[idx]] = dim.id
+                ndslice[idx] = (0, shape[idx] - 1, 1)
+                arrdims[idx] = dim.id
 
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Scalar)):
-            scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), array.shape[indices[idx]])
+            scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), shape[idx])
             ndslice[idx] = (scalar_expr, scalar_expr, 1)
             idx += 1
             new_idx += 1
@@ -246,16 +246,16 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             r = pyexpr_to_symbolic(das, dim)
             if getattr(r, 'is_Boolean', False) or getattr(r, 'is_Relational', False) or isinstance(r, Relational):
                 raise IndexError('Boolean expressions are not supported as scalar memlet indices')
-            r = _wrap_scalar_index(r, array.shape[indices[idx]])
+            r = _wrap_scalar_index(r, shape[idx])
             ndslice[idx] = r
             idx += 1
             new_idx += 1
 
     # Extend slices to unspecified dimensions
-    for i in range(idx, len(array.shape)):
-        # ndslice[i] = (0, array.shape[idx] - 1, 1)
+    for i in range(idx, len(shape)):
+        # ndslice[i] = (0, shape[idx] - 1, 1)
         # idx += 1
-        ndslice[i] = (0, array.shape[i] - 1, 1)
+        ndslice[i] = (0, shape[i] - 1, 1)
         offsets.append(i)
 
     return ndslice, offsets, new_axes, arrdims
@@ -288,22 +288,26 @@ def parse_memlet_subset(array: data.Data,
             cnode = node
         ast_ndslices = astutils.subscript_to_ast_slice_recursive(cnode)
         offsets = list(range(len(array.shape)))
+        current_shape = list(array.shape)
 
         # Loop over nd-slices (A[i][j][k]...)
         subset_array = []
         for idx, ast_ndslice in enumerate(ast_ndslices):
-            # Cut out dimensions that were indexed in the previous slice
-            narray = copy.deepcopy(array)
-            narray.shape = [s for i, s in enumerate(array.shape) if i in offsets]
+            # Each nested slice indices into the surviving dimensions of the
+            # previous slice, not the original array extents.
+            current_offsets = offsets
 
             # Loop over the N dimensions
-            ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, narray, offsets)
+            ndslice, local_offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, current_shape)
+            local_subset = _ndslice_to_subset(ndslice)
+            offsets = [current_offsets[i] for i in local_offsets]
+            current_shape = [local_subset.size()[i] for i in local_offsets]
             if new_extra_dims and idx != (len(ast_ndslices) - 1):
                 raise NotImplementedError('New axes only implemented for last slice')
             if arrdims and len(ast_ndslices) != 1:
                 raise NotImplementedError('Array dimensions not implemented for consecutive subscripts')
             extra_dims = new_extra_dims
-            subset_array.append(_ndslice_to_subset(ndslice))
+            subset_array.append(local_subset)
 
         subset = subset_array[0]
 

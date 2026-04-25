@@ -403,7 +403,7 @@ def test_persistent_loop_bound():
     Code originates from Issue #1550.
     Tests both ``for`` and OpenMP parallel ``for`` loop bounds with persistent storage.
     """
-    N = dace.symbol('N')
+    N = dace.symbol('N', dace.int64)
 
     @dace.program(auto_optimize=True)
     def tester(L: dace.float64[N, N], index: dace.uint64, active_size: dace.uint64):
