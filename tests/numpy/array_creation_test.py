@@ -441,3 +441,8 @@ if __name__ == "__main__":
     test_zeros_symbolic_size_scalar()
     test_ones_scalar_size_scalar()
     test_ones_scalar_size()
+    test_array_literal_inside_expression()
+    test_array_literal_from_dynamic_scalar_elements()
+    test_list_literal_inside_array_expression()
+    test_constant_list_literal_inside_array_expression_materializes_as_one_constant_array()
+    test_broadcast_mixed_tuple_and_list_literals_inside_expression()

@@ -17,8 +17,8 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
-                                         StringLiteral)
+from dace.frontend.python.common import (DaceSyntaxError, ListLiteral, SDFGClosure, SDFGConvertible, TupleLiteral,
+                                         inverse_dict_lookup, StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -1410,8 +1410,19 @@ class ProgramVisitor(ExtNodeVisitor):
         # return the name of the left-hand side of the assignment.
         if len(self.current_ast_stack) > 1 and isinstance(self.current_ast_stack[-2], ast.Assign):
             target = self.current_ast_stack[-2].targets[0]
-            if isinstance(target, ast.Tuple) and len(target.elts) > output_index:
-                candidate = self._get_name_from_node(target.elts[output_index])
+            candidate = None
+            if isinstance(target, (ast.Tuple, ast.List)):
+                flat_targets = []
+                pending_targets = list(target.elts)
+                while pending_targets:
+                    current_target = pending_targets.pop(0)
+                    if isinstance(current_target, (ast.Tuple, ast.List)):
+                        pending_targets = list(current_target.elts) + pending_targets
+                    else:
+                        flat_targets.append(current_target)
+
+                if len(flat_targets) > output_index:
+                    candidate = self._get_name_from_node(flat_targets[output_index])
             elif isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
                 candidate = self._get_name_from_node(target)
 
@@ -3477,11 +3488,27 @@ class ProgramVisitor(ExtNodeVisitor):
                     tuple_found = True
                     break
 
+        assignment_output_index = 0
+
+        def _collect_assignment_results(value: ast.AST) -> List[Tuple[str, str]]:
+            nonlocal assignment_output_index
+            if isinstance(value, (ast.Tuple, ast.List)):
+                unpacked = []
+                for element in value.elts:
+                    unpacked.extend(_collect_assignment_results(element))
+                return unpacked
+
+            old_output_index = self.default_output_index
+            self.default_output_index = assignment_output_index
+            assignment_output_index += 1
+            try:
+                return self._gettype(value)
+            finally:
+                self.default_output_index = old_output_index
+
         results = []
-        if isinstance(node.value, (ast.Tuple, ast.List)):
-            for i, n in enumerate(node.value.elts):
-                self.default_output_index = i
-                results.extend(self._gettype(n))
+        if len(elts) > 1 and isinstance(node.value, (ast.Tuple, ast.List)):
+            results.extend(_collect_assignment_results(node.value))
             self.default_output_index = 0
         else:
             rval = self._gettype(node.value)
@@ -5238,6 +5265,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
+        if isinstance(opnode, ast.List):
+            return [(ListLiteral(tuple(self.visit(opnode))), ListLiteral)]
+        if isinstance(opnode, ast.Tuple):
+            return [(TupleLiteral(tuple(self.visit(opnode))), TupleLiteral)]
+
         if isinstance(opnode, ast.AST):
             operands = self.visit(opnode)
         else:
