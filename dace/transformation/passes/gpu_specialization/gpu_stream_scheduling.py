@@ -57,10 +57,9 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         return self.assign(sdfg)
 
     def assign(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
-        raise NotImplementedError(
-            f"{type(self).__name__} did not implement assign(sdfg). "
-            "Subclass GPUStreamSchedulingStrategy and override assign, or "
-            "use NaiveGPUStreamScheduler -- the default for the GPU stream pipeline.")
+        raise NotImplementedError(f"{type(self).__name__} did not implement assign(sdfg). "
+                                  "Subclass GPUStreamSchedulingStrategy and override assign, or "
+                                  "use NaiveGPUStreamScheduler -- the default for the GPU stream pipeline.")
 
 
 # Process-wide override of the default scheduler. ``None`` means
@@ -75,9 +74,8 @@ def register_gpu_stream_scheduler(strategy_cls: 'Optional[Type[GPUStreamScheduli
     """
     global _REGISTERED_SCHEDULER
     if strategy_cls is not None and not issubclass(strategy_cls, GPUStreamSchedulingStrategy):
-        raise TypeError(
-            f"{strategy_cls.__name__} must subclass GPUStreamSchedulingStrategy "
-            "(it doesn't, so the pipeline cannot use it as a stream scheduler).")
+        raise TypeError(f"{strategy_cls.__name__} must subclass GPUStreamSchedulingStrategy "
+                        "(it doesn't, so the pipeline cannot use it as a stream scheduler).")
     _REGISTERED_SCHEDULER = strategy_cls
 
 

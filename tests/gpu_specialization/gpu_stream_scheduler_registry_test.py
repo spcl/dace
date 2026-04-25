@@ -53,6 +53,7 @@ def test_register_custom_strategy():
 
     class SingleStreamScheduler(GPUStreamSchedulingStrategy):
         """Pin every node to stream 0 -- useful for debugging."""
+
         def assign(self, sdfg) -> Dict[nodes.Node, int]:
             return {n: 0 for s in sdfg.states() for n in s.nodes()}
 
@@ -62,7 +63,9 @@ def test_register_custom_strategy():
 
 
 def test_register_none_restores_default():
+
     class Dummy(GPUStreamSchedulingStrategy):
+
         def assign(self, sdfg) -> Dict[nodes.Node, int]:
             return {}
 
@@ -76,6 +79,7 @@ def test_register_rejects_non_strategy_class():
     """ Refuse to register classes that don't implement the strategy
         interface -- catches the typo case where a user passes a bare class
         and wonders why the pipeline blows up later. """
+
     class NotAStrategy:
         pass
 

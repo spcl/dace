@@ -21,7 +21,6 @@ from typing import Callable, Dict
 import numpy as np
 import pytest
 
-import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
@@ -144,20 +143,24 @@ def _run_through_new_gpu_pipeline(kernel,
 
 # --- Polybench kernel cases -----------------------------------------------------
 
+
 @pytest.mark.gpu
 def test_atax():
     M, N = 12, 16
     A, x, _y = atax_test.init_data(M, N)
-    _run_through_new_gpu_pipeline(atax_test.kernel, lambda: dict(A=A.copy(), x=x.copy()), dict(M=M, N=N),
-                                  rtol=1e-5, atol=1e-6)
+    _run_through_new_gpu_pipeline(atax_test.kernel,
+                                  lambda: dict(A=A.copy(), x=x.copy()),
+                                  dict(M=M, N=N),
+                                  rtol=1e-5,
+                                  atol=1e-6)
 
 
 @pytest.mark.gpu
 def test_bicg():
     M, N = 12, 16
     A, p, r = bicg_test.initialize(M, N)
-    _run_through_new_gpu_pipeline(bicg_test.bicg_kernel, lambda: dict(A=A.copy(), p=p.copy(), r=r.copy()),
-                                  dict(M=M, N=N))
+    _run_through_new_gpu_pipeline(bicg_test.bicg_kernel, lambda: dict(A=A.copy(), p=p.copy(), r=r.copy()), dict(M=M,
+                                                                                                                N=N))
 
 
 @pytest.mark.gpu
@@ -173,18 +176,16 @@ def test_gemm():
 def test_k2mm():
     NI, NJ, NK, NL = 8, 10, 12, 14
     alpha, beta, A, B, C, D = k2mm_test.initialize(NI, NJ, NK, NL)
-    _run_through_new_gpu_pipeline(
-        k2mm_test.k2mm_kernel,
-        lambda: dict(alpha=alpha, beta=beta, A=A.copy(), B=B.copy(), C=C.copy(), D=D.copy()),
-        dict(NI=NI, NJ=NJ, NK=NK, NL=NL))
+    _run_through_new_gpu_pipeline(k2mm_test.k2mm_kernel,
+                                  lambda: dict(alpha=alpha, beta=beta, A=A.copy(), B=B.copy(), C=C.copy(), D=D.copy()),
+                                  dict(NI=NI, NJ=NJ, NK=NK, NL=NL))
 
 
 @pytest.mark.gpu
 def test_k3mm():
     NI, NJ, NK, NL, NM = 6, 8, 10, 12, 14
     A, B, C, D = k3mm_test.initialize(NI, NJ, NK, NL, NM)
-    _run_through_new_gpu_pipeline(k3mm_test.k3mm_kernel,
-                                  lambda: dict(A=A.copy(), B=B.copy(), C=C.copy(), D=D.copy()),
+    _run_through_new_gpu_pipeline(k3mm_test.k3mm_kernel, lambda: dict(A=A.copy(), B=B.copy(), C=C.copy(), D=D.copy()),
                                   dict(NI=NI, NJ=NJ, NK=NK, NL=NL, NM=NM))
 
 
@@ -192,9 +193,9 @@ def test_k3mm():
 def test_mvt():
     N = 16
     x1, x2, y_1, y_2, A = mvt_test.initialize(N)
-    _run_through_new_gpu_pipeline(
-        mvt_test.mvt_kernel,
-        lambda: dict(x1=x1.copy(), x2=x2.copy(), y_1=y_1.copy(), y_2=y_2.copy(), A=A.copy()), dict(N=N))
+    _run_through_new_gpu_pipeline(mvt_test.mvt_kernel,
+                                  lambda: dict(x1=x1.copy(), x2=x2.copy(), y_1=y_1.copy(), y_2=y_2.copy(), A=A.copy()),
+                                  dict(N=N))
 
 
 @pytest.mark.gpu
@@ -202,8 +203,7 @@ def test_gesummv():
     N = 16
     alpha, beta, A, B, x = gesummv_test.initialize(N)
     _run_through_new_gpu_pipeline(gesummv_test.gesummv_kernel,
-                                  lambda: dict(alpha=alpha, beta=beta, A=A.copy(), B=B.copy(), x=x.copy()),
-                                  dict(N=N))
+                                  lambda: dict(alpha=alpha, beta=beta, A=A.copy(), B=B.copy(), x=x.copy()), dict(N=N))
 
 
 @pytest.mark.gpu
@@ -211,9 +211,17 @@ def test_gemver():
     N = 16
     alpha, beta, A, u1, v1, u2, v2, w, x, y, z = gemver_test.initialize(N)
     _run_through_new_gpu_pipeline(
-        gemver_test.gemver_kernel,
-        lambda: dict(alpha=alpha, beta=beta, A=A.copy(), u1=u1.copy(), v1=v1.copy(), u2=u2.copy(),
-                     v2=v2.copy(), w=w.copy(), x=x.copy(), y=y.copy(), z=z.copy()), dict(N=N))
+        gemver_test.gemver_kernel, lambda: dict(alpha=alpha,
+                                                beta=beta,
+                                                A=A.copy(),
+                                                u1=u1.copy(),
+                                                v1=v1.copy(),
+                                                u2=u2.copy(),
+                                                v2=v2.copy(),
+                                                w=w.copy(),
+                                                x=x.copy(),
+                                                y=y.copy(),
+                                                z=z.copy()), dict(N=N))
 
 
 @pytest.mark.gpu
@@ -221,8 +229,10 @@ def test_syrk():
     N, M = 12, 16
     alpha, beta, C, A = syrk_test.init_data(N, M)
     _run_through_new_gpu_pipeline(syrk_test.kernel,
-                                  lambda: dict(alpha=alpha, beta=beta, C=C.copy(), A=A.copy()), dict(M=M, N=N),
-                                  rtol=1e-5, atol=1e-6)
+                                  lambda: dict(alpha=alpha, beta=beta, C=C.copy(), A=A.copy()),
+                                  dict(M=M, N=N),
+                                  rtol=1e-5,
+                                  atol=1e-6)
 
 
 @pytest.mark.gpu
@@ -255,8 +265,8 @@ def test_trmm():
 def test_trisolv():
     N = 16
     L, x, b = trisolv_test.initialize(N)
-    _run_through_new_gpu_pipeline(trisolv_test.trisolv_kernel,
-                                  lambda: dict(L=L.copy(), x=x.copy(), b=b.copy()), dict(N=N))
+    _run_through_new_gpu_pipeline(trisolv_test.trisolv_kernel, lambda: dict(L=L.copy(), x=x.copy(), b=b.copy()),
+                                  dict(N=N))
 
 
 @pytest.mark.gpu
@@ -298,8 +308,8 @@ def test_ludcmp():
 def test_correlation():
     M, N = 12, 16
     float_n, data = correlation_test.initialize(M, N)
-    _run_through_new_gpu_pipeline(correlation_test.correlation_kernel,
-                                  lambda: dict(float_n=float_n, data=data.copy()), dict(M=M, N=N))
+    _run_through_new_gpu_pipeline(correlation_test.correlation_kernel, lambda: dict(float_n=float_n, data=data.copy()),
+                                  dict(M=M, N=N))
 
 
 @pytest.mark.gpu
@@ -307,32 +317,37 @@ def test_covariance():
     M, N = 12, 16
     float_n, data = covariance_test.init_data(M, N)
     _run_through_new_gpu_pipeline(covariance_test.covariance_kernel,
-                                  lambda: dict(float_n=float_n, data=data.copy()), dict(M=M, N=N),
-                                  rtol=1e-4, atol=1e-5)
+                                  lambda: dict(float_n=float_n, data=data.copy()),
+                                  dict(M=M, N=N),
+                                  rtol=1e-4,
+                                  atol=1e-5)
 
 
 @pytest.mark.gpu
 def test_gramschmidt():
     M, N = 14, 10
     A = gramschmidt_test.initialize(M, N)
-    _run_through_new_gpu_pipeline(gramschmidt_test.gramschmidt_kernel, lambda: dict(A=A.copy()), dict(M=M, N=N),
-                                  rtol=1e-6, atol=1e-8)
+    _run_through_new_gpu_pipeline(gramschmidt_test.gramschmidt_kernel,
+                                  lambda: dict(A=A.copy()),
+                                  dict(M=M, N=N),
+                                  rtol=1e-6,
+                                  atol=1e-8)
 
 
 @pytest.mark.gpu
 def test_doitgen():
     NR, NQ, NP = 4, 6, 8
     A, C4 = doitgen_test.initialize(NR, NQ, NP)
-    _run_through_new_gpu_pipeline(doitgen_test.doitgen_kernel,
-                                  lambda: dict(A=A.copy(), C4=C4.copy()), dict(NR=NR, NQ=NQ, NP=NP))
+    _run_through_new_gpu_pipeline(doitgen_test.doitgen_kernel, lambda: dict(A=A.copy(), C4=C4.copy()),
+                                  dict(NR=NR, NQ=NQ, NP=NP))
 
 
 @pytest.mark.gpu
 def test_deriche():
     W, H = 16, 20
     alpha, imgIn = deriche_test.initialize(W, H)
-    _run_through_new_gpu_pipeline(deriche_test.deriche_kernel,
-                                  lambda: dict(alpha=alpha, imgIn=imgIn.copy()), dict(W=W, H=H))
+    _run_through_new_gpu_pipeline(deriche_test.deriche_kernel, lambda: dict(alpha=alpha, imgIn=imgIn.copy()),
+                                  dict(W=W, H=H))
 
 
 @pytest.mark.gpu
@@ -362,16 +377,18 @@ def test_jacobi_2d():
     N = 16
     A, B = jacobi_2d_test.init_data(N)
     _run_through_new_gpu_pipeline(jacobi_2d_test.kernel,
-                                  lambda: dict(TSTEPS=_TSTEPS_SMALL, A=A.copy(), B=B.copy()), dict(N=N),
-                                  rtol=1e-5, atol=1e-6)
+                                  lambda: dict(TSTEPS=_TSTEPS_SMALL, A=A.copy(), B=B.copy()),
+                                  dict(N=N),
+                                  rtol=1e-5,
+                                  atol=1e-6)
 
 
 @pytest.mark.gpu
 def test_seidel_2d():
     N = 16
     A = seidel_2d_test.initialize(N)
-    _run_through_new_gpu_pipeline(seidel_2d_test.seidel_2d_kernel,
-                                  lambda: dict(TSTEPS=_TSTEPS_SMALL, A=A.copy()), dict(N=N))
+    _run_through_new_gpu_pipeline(seidel_2d_test.seidel_2d_kernel, lambda: dict(TSTEPS=_TSTEPS_SMALL, A=A.copy()),
+                                  dict(N=N))
 
 
 @pytest.mark.gpu
@@ -394,23 +411,27 @@ def test_fdtd_2d():
     NX, NY = 12, 16
     TMAX = _TSTEPS_SMALL
     ex, ey, hz, _fict_ = fdtd_2d_test.init_data(TMAX, NX, NY)
-    _run_through_new_gpu_pipeline(
-        fdtd_2d_test.kernel,
-        lambda: dict(ex=ex.copy(), ey=ey.copy(), hz=hz.copy(), _fict_=_fict_.copy()),
-        dict(TMAX=TMAX, NX=NX, NY=NY), rtol=1e-5, atol=1e-6)
+    _run_through_new_gpu_pipeline(fdtd_2d_test.kernel,
+                                  lambda: dict(ex=ex.copy(), ey=ey.copy(), hz=hz.copy(), _fict_=_fict_.copy()),
+                                  dict(TMAX=TMAX, NX=NX, NY=NY),
+                                  rtol=1e-5,
+                                  atol=1e-6)
 
 
 # --- NPBench misc / weather kernels (newly ported) -----------------------------
+
 
 @pytest.mark.gpu
 def test_cavity_flow():
     """Lid-driven cavity flow (NPBench misc), a small Navier-Stokes solver."""
     ny, nx, nt, nit, rho, nu = 21, 21, 4, 5, 1.0, 0.1
     u, v, p, dx, dy, dt = cavity_flow_test.initialize(ny, nx)
-    build_args = lambda: dict(nt=nt, nit=nit, u=u.copy(), v=v.copy(),
-                              dt=dt, dx=dx, dy=dy, p=p.copy(), rho=rho, nu=nu)
-    _run_through_new_gpu_pipeline(cavity_flow_test.dace_cavity_flow, build_args,
-                                  dict(ny=ny, nx=nx), rtol=1e-6, atol=1e-8)
+    build_args = lambda: dict(nt=nt, nit=nit, u=u.copy(), v=v.copy(), dt=dt, dx=dx, dy=dy, p=p.copy(), rho=rho, nu=nu)
+    _run_through_new_gpu_pipeline(cavity_flow_test.dace_cavity_flow,
+                                  build_args,
+                                  dict(ny=ny, nx=nx),
+                                  rtol=1e-6,
+                                  atol=1e-8)
 
 
 @pytest.mark.gpu
@@ -418,10 +439,12 @@ def test_channel_flow():
     """Channel flow with periodic BC (NPBench misc)."""
     ny, nx, nit, rho, nu, F = 21, 21, 5, 1.0, 0.1, 1.0
     u, v, p, dx, dy, dt = channel_flow_test.initialize(ny, nx)
-    build_args = lambda: dict(nit=nit, u=u.copy(), v=v.copy(), dt=dt, dx=dx, dy=dy,
-                              p=p.copy(), rho=rho, nu=nu, F=F)
-    _run_through_new_gpu_pipeline(channel_flow_test.dace_channel_flow, build_args,
-                                  dict(ny=ny, nx=nx), rtol=1e-6, atol=1e-8)
+    build_args = lambda: dict(nit=nit, u=u.copy(), v=v.copy(), dt=dt, dx=dx, dy=dy, p=p.copy(), rho=rho, nu=nu, F=F)
+    _run_through_new_gpu_pipeline(channel_flow_test.dace_channel_flow,
+                                  build_args,
+                                  dict(ny=ny, nx=nx),
+                                  rtol=1e-6,
+                                  atol=1e-8)
 
 
 @pytest.mark.gpu
@@ -430,8 +453,7 @@ def test_hdiff():
     I, J, K = 16, 16, 8
     in_field, out_field, coeff = hdiff_test.initialize(I, J, K)
     build_args = lambda: dict(in_field=in_field.copy(), out_field=out_field.copy(), coeff=coeff.copy())
-    _run_through_new_gpu_pipeline(hdiff_test.hdiff_kernel, build_args, dict(I=I, J=J, K=K),
-                                  rtol=1e-10, atol=1e-12)
+    _run_through_new_gpu_pipeline(hdiff_test.hdiff_kernel, build_args, dict(I=I, J=J, K=K), rtol=1e-10, atol=1e-12)
 
 
 @pytest.mark.gpu
@@ -439,11 +461,13 @@ def test_vadv():
     """Vertical advection stencil (NPBench weather)."""
     I, J, K = 16, 16, 8
     dtr_stage, utens_stage, u_stage, wcon, u_pos, utens = vadv_test.initialize(I, J, K)
-    build_args = lambda: dict(utens_stage=utens_stage.copy(), u_stage=u_stage.copy(),
-                              wcon=wcon.copy(), u_pos=u_pos.copy(), utens=utens.copy(),
+    build_args = lambda: dict(utens_stage=utens_stage.copy(),
+                              u_stage=u_stage.copy(),
+                              wcon=wcon.copy(),
+                              u_pos=u_pos.copy(),
+                              utens=utens.copy(),
                               dtr_stage=dtr_stage)
-    _run_through_new_gpu_pipeline(vadv_test.vadv_kernel, build_args, dict(I=I, J=J, K=K),
-                                  rtol=1e-10, atol=1e-12)
+    _run_through_new_gpu_pipeline(vadv_test.vadv_kernel, build_args, dict(I=I, J=J, K=K), rtol=1e-10, atol=1e-12)
 
 
 if __name__ == '__main__':
