@@ -3472,7 +3472,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Get targets (elts) and results
         elts = None
         results = None
-        if isinstance(node_target, (ast.Tuple, ast.List)):
+        unpack_target = isinstance(node_target, (ast.Tuple, ast.List))
+        if unpack_target:
             elts = list(node_target.elts)
         else:
             elts = [node_target]
@@ -3507,7 +3508,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.default_output_index = old_output_index
 
         results = []
-        if len(elts) > 1 and isinstance(node.value, (ast.Tuple, ast.List)):
+        if unpack_target and isinstance(node.value, (ast.Tuple, ast.List)):
             results.extend(_collect_assignment_results(node.value))
             self.default_output_index = 0
         else:
