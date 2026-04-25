@@ -164,11 +164,11 @@ def test_dict_class_method_bypass_is_blocked():
     sdfg = dace.SDFG('host')
     sdfg.add_symbol('K', dtypes.int32)
     for fn in (
-        lambda: dict.__setitem__(sdfg.symbols, 'M', dtypes.int64),
-        lambda: dict.__delitem__(sdfg.symbols, 'K'),
-        lambda: dict.pop(sdfg.symbols, 'K'),
-        lambda: dict.update(sdfg.symbols, {'M': dtypes.int64}),
-        lambda: dict.clear(sdfg.symbols),
+            lambda: dict.__setitem__(sdfg.symbols, 'M', dtypes.int64),
+            lambda: dict.__delitem__(sdfg.symbols, 'K'),
+            lambda: dict.pop(sdfg.symbols, 'K'),
+            lambda: dict.update(sdfg.symbols, {'M': dtypes.int64}),
+            lambda: dict.clear(sdfg.symbols),
     ):
         with pytest.raises(TypeError):
             fn()

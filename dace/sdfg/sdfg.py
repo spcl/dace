@@ -193,9 +193,10 @@ class SymbolDictProperty(DictProperty):
         if isinstance(val, SymbolDict):
             new = val
         elif isinstance(val, collections.abc.Mapping):
-            new = SymbolDict({(k if self.is_key(k) else self.key_type(k)):
-                              (v if self.is_value(v) else self.value_type(v))
-                              for k, v in val.items()})
+            new = SymbolDict({
+                (k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
+                for k, v in val.items()
+            })
         elif val is None and self.allow_none:
             new = None
         else:
@@ -1003,8 +1004,9 @@ class SDFG(ControlFlowRegion):
                     if name in self._symbol_objects:
                         old_sym = self._symbol_objects.pop(name)
                         try:
-                            self._symbol_objects[new_name] = symbolic.symbol(
-                                new_name, dtype=old_sym.dtype, **old_sym.assumptions0)
+                            self._symbol_objects[new_name] = symbolic.symbol(new_name,
+                                                                             dtype=old_sym.dtype,
+                                                                             **old_sym.assumptions0)
                         except (NameError, TypeError):
                             pass  # placeholder name -- registry stays unset
                     _replace_dict_keys(self.constants_prop, name, new_name)
@@ -1070,10 +1072,9 @@ class SDFG(ControlFlowRegion):
                     new_sym = None
             else:
                 existing_desc = self._describe_symbol(existing_sym, self.symbols[name])
-                raise FileExistsError(
-                    f'Symbol "{name}" already exists in SDFG with {existing_desc}; '
-                    f'cannot add with different conditions (dtype={stype}, '
-                    f'assumptions={assumptions or "{}"})')
+                raise FileExistsError(f'Symbol "{name}" already exists in SDFG with {existing_desc}; '
+                                      f'cannot add with different conditions (dtype={stype}, '
+                                      f'assumptions={assumptions or "{}"})')
         elif find_new_name:
             name = self._find_new_name(name)
             try:

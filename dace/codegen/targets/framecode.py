@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import copy
 import pathlib
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
