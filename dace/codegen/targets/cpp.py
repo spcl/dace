@@ -1325,16 +1325,24 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                            callsite_stream: CodeIOStream):
-    state_dfg: SDFGState = cfg.nodes()[state_id]
+    # Recover the SDFGState from ``dfg`` directly. With explicit control flow
+    # ``cfg.nodes()[state_id]`` may be a nested region (e.g. ``LoopRegion``)
+    # whose direct child is another region rather than the enclosing state.
+    state_dfg: SDFGState = dfg.graph if not isinstance(dfg, SDFGState) else dfg
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
+    # Resolve the (cfg, state_id) pair to whichever region directly owns the
+    # state, so ``callsite_stream.write`` -> ``cfg.state(state_id)`` lands on
+    # an SDFGState.
+    enclosing_cfg = state_dfg.parent_graph
+    enclosing_state_id = enclosing_cfg.node_id(state_dfg)
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
             cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
                 "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
-                sdfg,
-                state_id,
+                enclosing_cfg,
+                enclosing_state_id,
                 [e.src, e.dst],
             )
 

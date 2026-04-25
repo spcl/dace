@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, List, Set, Type, Union
+from typing import Dict, List, Optional, Set, Type, Union
 
 import dace
 from dace import SDFG, SDFGState, properties
@@ -33,9 +33,65 @@ def _is_gpu_copy_or_memset(node, state: SDFGState, sdfg: SDFG) -> bool:
     return False
 
 
+class GPUStreamSchedulingStrategy(ppl.Pass):
+    """ Base class for stream-assignment strategies plugged into the GPU stream
+        pipeline.
+
+        Subclasses override ``assign(sdfg) -> Dict[nodes.Node, int]`` mapping
+        each node to a backend stream id. The base class itself raises on
+        ``assign`` -- it is a contract, not a default. The default fallback
+        when nobody registers a custom strategy is :class:`NaiveGPUStreamScheduler`
+        (see :func:`get_gpu_stream_scheduler`).
+    """
+
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
+        return {}
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _) -> Dict[nodes.Node, int]:
+        return self.assign(sdfg)
+
+    def assign(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
+        raise NotImplementedError(
+            f"{type(self).__name__} did not implement assign(sdfg). "
+            "Subclass GPUStreamSchedulingStrategy and override assign, or "
+            "use NaiveGPUStreamScheduler -- the default for the GPU stream pipeline.")
+
+
+# Process-wide override of the default scheduler. ``None`` means
+# ``NaiveGPUStreamScheduler`` is used. Set via ``register_gpu_stream_scheduler``.
+_REGISTERED_SCHEDULER: 'Optional[Type[GPUStreamSchedulingStrategy]]' = None
+
+
+def register_gpu_stream_scheduler(strategy_cls: 'Optional[Type[GPUStreamSchedulingStrategy]]') -> None:
+    """ Register ``strategy_cls`` as the default stream-assignment strategy.
+        Pass ``None`` to clear the registration and fall back to
+        :class:`NaiveGPUStreamScheduler`.
+    """
+    global _REGISTERED_SCHEDULER
+    if strategy_cls is not None and not issubclass(strategy_cls, GPUStreamSchedulingStrategy):
+        raise TypeError(
+            f"{strategy_cls.__name__} must subclass GPUStreamSchedulingStrategy "
+            "(it doesn't, so the pipeline cannot use it as a stream scheduler).")
+    _REGISTERED_SCHEDULER = strategy_cls
+
+
+def get_gpu_stream_scheduler() -> 'GPUStreamSchedulingStrategy':
+    """ Returns a fresh instance of the registered stream-scheduling strategy,
+        or :class:`NaiveGPUStreamScheduler` if no strategy was registered.
+    """
+    cls = _REGISTERED_SCHEDULER if _REGISTERED_SCHEDULER is not None else NaiveGPUStreamScheduler
+    return cls()
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class NaiveGPUStreamScheduler(ppl.Pass):
+class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     """Assign backend GPU streams (CUDA/HIP) to nodes via weakly-connected-component grouping.
 
     Strategy:
@@ -53,21 +109,12 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         # Cached locally for frequent reuse.
         self._max_concurrent_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
-    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {}
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nothing
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, _) -> Dict[nodes.Node, int]:
-        """Return a dict mapping each node to its assigned GPU stream."""
+    def assign(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
+        """ Returns a ``{node: stream_id}`` mapping per the WCC strategy in the
+            class docstring. """
         stream_assignments: Dict[nodes.Node, int] = dict()
         for state in sdfg.states():
             self._assign_gpu_streams_in_state(sdfg, False, state, stream_assignments, 0)
-
         return stream_assignments
 
     def _assign_gpu_streams_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState,
