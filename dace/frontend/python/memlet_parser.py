@@ -178,9 +178,10 @@ def _fill_missing_slices(das, ast_ndslice, shape):
             arrdims[idx] = dim.id
             idx += 1
             new_idx += 1
-        elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], slice):
-            # compile-time slice object
-            rb, re, rs = das[dim.id].start, das[dim.id].stop, das[dim.id].step
+        elif isinstance(inner_eval_ast(das, dim), slice):
+            # slice literal
+            resolved = inner_eval_ast(das, dim)
+            rb, re, rs = resolved.start, resolved.stop, resolved.step
             if rb is None:
                 rb = 0
             if re is None:
@@ -193,10 +194,9 @@ def _fill_missing_slices(das, ast_ndslice, shape):
                             _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
             new_idx += 1
-        elif isinstance(inner_eval_ast(das, dim), slice):
-            # slice literal
-            resolved = inner_eval_ast(das, dim)
-            rb, re, rs = resolved.start, resolved.stop, resolved.step
+        elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], slice):
+            # compile-time slice object
+            rb, re, rs = das[dim.id].start, das[dim.id].stop, das[dim.id].step
             if rb is None:
                 rb = 0
             if re is None:

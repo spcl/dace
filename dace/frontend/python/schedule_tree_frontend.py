@@ -342,13 +342,17 @@ def build_schedule_tree(name: str,
     :return: A schedule tree rooted at a top-level scope.
     """
     desugared_ast = preprocessing.PreprocessedAST(
-        parsed_ast.filename, parsed_ast.src_line, parsed_ast.src,
+        parsed_ast.filename,
+        parsed_ast.src_line,
+        parsed_ast.src,
         desugar_schedule_tree_expansions(parsed_ast.preprocessed_ast,
                                          filename=parsed_ast.filename,
                                          global_vars=parsed_ast.program_globals,
                                          known_descriptors=argtypes,
                                          seed_bindings=seed_bindings,
-                                         callable_bindings=callable_bindings), parsed_ast.program_globals)
+                                         callable_bindings=callable_bindings),
+        parsed_ast.program_globals,
+        resolved_arg_annotations=copy.deepcopy(parsed_ast.resolved_arg_annotations))
     builder = PythonScheduleTreeBuilder(name,
                                         desugared_ast,
                                         argtypes,
@@ -1976,9 +1980,22 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if program.args.kwarg is not None:
             arguments.append(program.args.kwarg)
 
+        resolved_arg_annotations = self.parsed_ast.resolved_arg_annotations or {}
+
         for argument in arguments:
-            descriptor = self._evaluate_descriptor(argument.annotation)
-            class_type = self._evaluate_annotation_class_type(argument.annotation)
+            resolved_annotation = resolved_arg_annotations.get(argument.arg, None)
+            descriptor = None
+            class_type = None
+            if resolved_annotation is not None:
+                class_type = direct_class_annotation_type(resolved_annotation)
+                if isinstance(resolved_annotation, data.Data):
+                    descriptor = _clone_descriptor(resolved_annotation)
+
+            if descriptor is None:
+                descriptor = self._evaluate_descriptor(argument.annotation)
+            if class_type is None:
+                class_type = self._evaluate_annotation_class_type(argument.annotation)
+
             if class_type is not None:
                 self.annotated_class_types[argument.arg] = class_type
             elif isinstance(descriptor, data.Structure):

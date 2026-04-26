@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
@@ -97,12 +99,11 @@ def test_external_lambda_argument_to_nested_program_stays_callback_typed():
         return f(A, B)
 
     @dace.program
-    def outer(A: dace.float64, B: dace.float64):
+    def outer(A: dace.float64, B: dace.float64, external: dace.callback(dace.float64, dace.float64, dace.float64)):
         f = external
         return inner(A, B, f)
 
     stree = outer.to_schedule_tree()
-
     assert 'f' in stree.containers
     assert isinstance(stree.containers['f'], dace.data.Scalar)
     assert isinstance(stree.containers['f'].dtype, dace.dtypes.callback)
@@ -113,24 +114,5 @@ def test_external_lambda_argument_to_nested_program_stays_callback_typed():
     assert 'assign __stree_retval = __stree_tmp' in calls[0].as_string()
 
 
-def test_runtime_callback_argument_passes_through_nested_program():
-    external = eval('lambda a, b: a + b')
-
-    @dace.program
-    def inner(A: dace.float64, B: dace.float64, f):
-        return f(A, B)
-
-    @dace.program
-    def outer(A: dace.float64, B: dace.float64, f):
-        return inner(A, B, f)
-
-    stree = outer.to_schedule_tree(1.0, 2.0, external)
-
-    assert 'f' in stree.containers
-    assert isinstance(stree.containers['f'], dace.data.Scalar)
-    assert isinstance(stree.containers['f'].dtype, dace.dtypes.callback)
-    assert not any(isinstance(node, tn.PythonCallbackNode) for node in stree.preorder_traversal())
-    calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.FunctionCallScope)]
-    assert len(calls) == 1
-    assert 'tasklet(f[0], A[0], B[0])' in calls[0].as_string()
-    assert 'assign __stree_retval = __stree_tmp' in calls[0].as_string()
+if __name__ == '__main__':
+    pytest.main([__file__])

@@ -48,6 +48,27 @@ def _get_cell_contents_or_none(cell):
         return None
 
 
+def _collect_annotation_class_globals(annotation: Any) -> Dict[str, type]:
+    result: Dict[str, type] = {}
+
+    origin = get_origin(annotation)
+    if origin is not None:
+        for arg in get_args(annotation):
+            result.update(_collect_annotation_class_globals(arg))
+        return result
+
+    if not isinstance(annotation, type):
+        return result
+
+    try:
+        data.Structure.from_class(annotation)
+    except (TypeError, ValueError):
+        return result
+
+    result[annotation.__name__] = annotation
+    return result
+
+
 def _get_locals_and_globals(f):
     """ Retrieves a list of local and global variables for the function ``f``.
         This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
@@ -77,6 +98,14 @@ def _get_locals_and_globals(f):
                 for k, v in zip(annotate_func.__code__.co_freevars,
                                 [_get_cell_contents_or_none(x) for x in annotate_func.__closure__])
             })
+
+    # Python 3.10-3.13 do not expose annotation-only local names through
+    # ``__annotate__``. Recover direct class annotations from resolved
+    # annotations so schedule-tree lowering can still identify PythonClass
+    # promotion candidates.
+    for annotation in getattr(f, '__annotations__', {}).values():
+        for name, value in _collect_annotation_class_globals(annotation).items():
+            result.setdefault(name, value)
 
     return result
 
@@ -613,6 +642,36 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             # Evaluating arbitrary code - anything can happen. Good luck.
             return dtypes.compiletime
 
+    def _resolved_schedule_tree_arg_annotations(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+
+        for aname, sig_arg in self.signature.parameters.items():
+            if self.objname is not None and aname == self.objname:
+                continue
+
+            ann = sig_arg.annotation
+            if self.ignore_type_hints or _is_empty(ann) or ann is dtypes.compiletime:
+                continue
+
+            try:
+                if get_origin(ann) is Union:
+                    hint_args = get_args(ann)
+                    if len(hint_args) == 1:
+                        ann = hint_args[0]
+                    elif len(hint_args) == 2 and (hint_args[0] is type(None) or hint_args[1] is type(None)):
+                        ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
+
+                ann = self._evaluate_annotation(ann)
+            except (TypeError, ValueError):
+                continue
+
+            if ann is dtypes.compiletime:
+                continue
+
+            result[aname] = ann
+
+        return result
+
     def _get_type_annotations(
             self, given_args: Tuple[Any],
             given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
@@ -964,6 +1023,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             preserve_fstrings=True,
             preserve_uninlinable_context_managers=True,
             preserve_call_expansions=True)
+        parsed_ast.resolved_arg_annotations = self._resolved_schedule_tree_arg_annotations()
 
         self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
         self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args

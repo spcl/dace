@@ -141,7 +141,7 @@ def _is_scalar_subscript(node: ast.Subscript, subset: subsets.Range, new_axes: S
         for element in node.slice.elts:
             if isinstance(element, ast.Slice):
                 return False
-            if isinstance(element, ast.Constant) and element.value in {None, Ellipsis}:
+            if isinstance(element, ast.Constant) and (element.value is None or element.value is Ellipsis):
                 return False
     for (start, end, step), tile in zip(subset.ranges, subset.tile_sizes):
         if tile != 1 or step != 1 or start != end:
