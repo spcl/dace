@@ -357,6 +357,35 @@ def test_insert_view_round_trip_inserts_two_intermediates():
     assert in_e[0].src.data != out_e[0].dst.data, ("the two intermediates must be distinct fresh transients")
 
 
+def test_insert_self_copy_subset_is_dst_side():
+    """Self-copy edge ``A -> A`` (e.g. ``p[:, -1] = p[:, -2]``): memlet.data
+    matches both endpoints, so the side picked for ``subset`` vs
+    ``other_subset`` must come from the DaCe convention (subset = dst).
+    Reversing them silently produces a backwards copy that runs without
+    error."""
+    sdfg = dace.SDFG("self_copy_subset_dst")
+    sdfg.add_array("p", [4, 5], dace.float64)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("p")
+    b = st.add_access("p")
+    st.add_edge(a, None, b, None, Memlet(data="p", subset="0:4, 4", other_subset="0:4, 3"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    copies = [n for n in st.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1
+    cn = copies[0]
+    in_e = [e for e in st.in_edges(cn) if e.dst_conn == "_in"][0]
+    out_e = [e for e in st.out_edges(cn) if e.src_conn == "_out"][0]
+
+    # The destination side (column 4) must be on the `_out` edge; the source
+    # side (column 3) on the `_in` edge.
+    assert str(in_e.data.subset) == "0:4, 3", (f"src side should read column 3 (other_subset); got {in_e.data.subset}")
+    assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
+
+
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
     """Repeated ``apply_pass`` invocations on the same SDFG must not
     accumulate ``_view_buf_*`` transients. The GPU pipeline calls this pass

@@ -260,18 +260,16 @@ class InsertExplicitCopies(ppl.Pass):
             dst_name = dst_node.data
 
             # `Memlet` carries `data` (which array `subset` refers to) plus an
-            # optional `other_subset` (the other side). Decide which side is
-            # which from `memlet.data` rather than blindly assuming `subset`
-            # is the source range — `Memlet.simple(dst, ...)` is a common
-            # idiom that puts the subset on the destination side.
-            if memlet.data == src_name:
-                src_subset = memlet.subset
-                dst_subset = memlet.other_subset
-            elif memlet.data == dst_name:
+            # optional `other_subset`. For self-copies (src_name == dst_name)
+            # `memlet.data` matches both endpoints; the DaCe convention there
+            # is that `subset` is the destination range, so check dst first.
+            if memlet.data == dst_name:
                 dst_subset = memlet.subset
                 src_subset = memlet.other_subset
+            elif memlet.data == src_name:
+                src_subset = memlet.subset
+                dst_subset = memlet.other_subset
             else:
-                # ``data`` matches neither endpoint (rare; defensive fallback).
                 src_subset = memlet.subset
                 dst_subset = memlet.other_subset
 
