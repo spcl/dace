@@ -1,10 +1,150 @@
 import dace
+import warnings
 
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Optional, Tuple
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes as nd
 from dace.sdfg.core_dialect import require_core_dialect
 from dataclasses import dataclass
+
+
+def _is_full_extent(memlet, arr) -> bool:
+    """True iff ``memlet`` covers ``arr``'s full extent."""
+    if memlet is None or memlet.subset is None:
+        return False
+    full = 1
+    for s in arr.shape:
+        full = full * s
+    try:
+        return memlet.subset.num_elements() == full
+    except Exception:
+        return False
+
+
+def _is_memcpy_tasklet_between(state, src_an, dst_an) -> bool:
+    """True iff there's a single tasklet whose name starts with
+    ``memcpy_`` between ``src_an`` and ``dst_an``, with full-extent
+    memlets on both edges."""
+    for oe in state.out_edges(src_an):
+        if not isinstance(oe.dst, nd.Tasklet):
+            continue
+        if not oe.dst.label.startswith('memcpy_'):
+            continue
+        for tasklet_oe in state.out_edges(oe.dst):
+            if tasklet_oe.dst is dst_an:
+                src_arr = state.parent.arrays.get(src_an.data)
+                dst_arr = state.parent.arrays.get(dst_an.data)
+                if (src_arr and dst_arr
+                        and _is_full_extent(oe.data, src_arr)
+                        and _is_full_extent(tasklet_oe.data, dst_arr)):
+                    return True
+    return False
+
+
+def _has_init_copy_in(state, t_name: str) -> bool:
+    """``state`` initialises ``t_name`` via a non-transient -> transient
+    full-extent copy (implicit AN->AN, or AN->memcpy_tasklet->AN)."""
+    sdfg = state.parent
+    t_arr = sdfg.arrays.get(t_name)
+    if t_arr is None or not t_arr.transient:
+        return False
+    for an in state.data_nodes():
+        if an.data != t_name:
+            continue
+        for ie in state.in_edges(an):
+            # Implicit AN -> AN
+            if isinstance(ie.src, nd.AccessNode):
+                src_arr = sdfg.arrays.get(ie.src.data)
+                if src_arr and not src_arr.transient and _is_full_extent(ie.data, t_arr):
+                    return True
+            # Lifted: AN(non-trans) -> memcpy_tasklet -> AN(T)
+            elif isinstance(ie.src, nd.Tasklet) and ie.src.label.startswith('memcpy_'):
+                for tin in state.in_edges(ie.src):
+                    if isinstance(tin.src, nd.AccessNode):
+                        src_arr = sdfg.arrays.get(tin.src.data)
+                        if (src_arr and not src_arr.transient
+                                and _is_memcpy_tasklet_between(state, tin.src, an)):
+                            return True
+    return False
+
+
+def _has_final_copy_in(state, t_name: str) -> bool:
+    """``state`` drains ``t_name`` to a non-transient via a full-extent
+    copy (mirror of ``_has_init_copy_in``)."""
+    sdfg = state.parent
+    t_arr = sdfg.arrays.get(t_name)
+    if t_arr is None or not t_arr.transient:
+        return False
+    for an in state.data_nodes():
+        if an.data != t_name:
+            continue
+        for oe in state.out_edges(an):
+            if isinstance(oe.dst, nd.AccessNode):
+                dst_arr = sdfg.arrays.get(oe.dst.data)
+                if dst_arr and not dst_arr.transient and _is_full_extent(oe.data, t_arr):
+                    return True
+            elif isinstance(oe.dst, nd.Tasklet) and oe.dst.label.startswith('memcpy_'):
+                for tout in state.out_edges(oe.dst):
+                    if isinstance(tout.dst, nd.AccessNode):
+                        dst_arr = sdfg.arrays.get(tout.dst.data)
+                        if (dst_arr and not dst_arr.transient
+                                and _is_memcpy_tasklet_between(state, an, tout.dst)):
+                            return True
+    return False
+
+
+def _find_init_copy_state(sdfg, t_name: str):
+    for state in sdfg.all_states():
+        if _has_init_copy_in(state, t_name):
+            return state
+    return None
+
+
+def _find_final_copy_state(sdfg, t_name: str):
+    for state in sdfg.all_states():
+        if _has_final_copy_in(state, t_name):
+            return state
+    return None
+
+
+def _warn_unhandled_full_extent_ops(sdfg, t_name: str,
+                                    init_state, final_state) -> None:
+    """Emit a loud warning for any top-level full-extent write/read of
+    ``t_name`` that ISN'T the init copy, the final copy, or a body
+    Map writer/reader (which the rename loop handles via subscript
+    rewrite)."""
+    arr = sdfg.arrays[t_name]
+    for state in sdfg.all_states():
+        if state is init_state or state is final_state:
+            continue
+        sdict = state.scope_dict()
+        for an in state.data_nodes():
+            if an.data != t_name or sdict[an] is not None:
+                continue
+            for ie in state.in_edges(an):
+                if isinstance(ie.src, nd.MapExit):
+                    continue  # body kernel write -- handled by rename loop
+                if _is_full_extent(ie.data, arr):
+                    warnings.warn(
+                        f"PermuteDimensions: full-extent write to transient "
+                        f"'{t_name}' in state '{state.label}' is neither an "
+                        f"init copy nor a body Map writer; the permutation "
+                        f"may produce wrong output. Source node type: "
+                        f"{type(ie.src).__name__}.",
+                        stacklevel=2,
+                    )
+            for oe in state.out_edges(an):
+                if isinstance(oe.dst, nd.MapEntry):
+                    continue
+                if _is_full_extent(oe.data, arr):
+                    warnings.warn(
+                        f"PermuteDimensions: full-extent read of transient "
+                        f"'{t_name}' in state '{state.label}' is neither a "
+                        f"final copy nor a body Map reader; the permutation "
+                        f"may produce wrong output. Sink node type: "
+                        f"{type(oe.dst).__name__}.",
+                        stacklevel=2,
+                    )
 
 
 def _is_zero_init_tasklet(t: 'nd.Tasklet') -> bool:
@@ -270,31 +410,57 @@ class PermuteDimensions(ppl.Pass):
                                               old_name=new_name,
                                               new_name=old_name)
 
-                # Per-transient handling. Done before the memlet rewrite
-                # below so the inserted permute states see the original
-                # array names; the rewrite loop then renames them in step
-                # with the rest of the SDFG.
+                # Per-transient handling. For each transient T being
+                # permuted, look for two structural patterns:
+                #
+                #   * INIT  -- a state that initialises T via a non-trans
+                #              -> trans full-extent copy (cudaMemcpy or
+                #              the lifted memcpy_<...> tasklet). If found,
+                #              insert ``permute_after_<T>`` immediately
+                #              after it (forward permute T -> permuted_T).
+                #   * FINAL -- a state that drains T to a non-trans via
+                #              a full-extent copy. If found, insert
+                #              ``permute_before_<T>`` immediately before
+                #              it (inverse permute permuted_T -> T).
+                #
+                # If neither pattern exists (pure-scratch transient,
+                # zero-init, body-only writers), no extra state is
+                # inserted; the rename loop further down rewrites every
+                # body memlet's subscripts, which is a sufficient and
+                # correct transform on its own.
+                #
+                # Any other top-level full-extent write/read of T (e.g. a
+                # bare Tasklet or LibraryNode that fully writes T outside
+                # a body Map) is unhandled and triggers a loud warning.
                 for old_name, new_name in transient_name_map.items():
                     if _is_zero_initialized(sdfg, old_name):
-                        # Zero-init: the same map running over the permuted
-                        # iteration domain rezeros the descriptor; no copy
-                        # state needed.
                         permute_states_to_skip.add(None)  # no-op marker
                         continue
-                    init_state, _producer = _find_full_extent_writer(sdfg, old_name)
-                    permute_after_state = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
-                    permute_states_to_skip.add(permute_after_state)
+
+                    init_state = _find_init_copy_state(sdfg, old_name)
+                    final_state = _find_final_copy_state(sdfg, old_name)
+                    _warn_unhandled_full_extent_ops(sdfg, old_name, init_state, final_state)
 
                     old_shape = sdfg.arrays[old_name].shape
                     new_shape = sdfg.arrays[new_name].shape
                     permute_indices = permute_map[old_name]
-                    self._add_permute_map(sdfg=sdfg,
-                                          state=permute_after_state,
-                                          old_shape=old_shape,
-                                          new_shape=new_shape,
-                                          permute_indices=permute_indices,
-                                          old_name=old_name,
-                                          new_name=new_name)
+
+                    if init_state is not None:
+                        after = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
+                        permute_states_to_skip.add(after)
+                        self._add_permute_map(sdfg=sdfg, state=after,
+                                              old_shape=old_shape, new_shape=new_shape,
+                                              permute_indices=permute_indices,
+                                              old_name=old_name, new_name=new_name)
+
+                    if final_state is not None:
+                        before = sdfg.add_state_before(final_state, f"permute_before_{old_name}")
+                        permute_states_to_skip.add(before)
+                        inverse = self._inverse_permute_indices(permute_indices)
+                        self._add_permute_map(sdfg=sdfg, state=before,
+                                              old_shape=new_shape, new_shape=old_shape,
+                                              permute_indices=inverse,
+                                              old_name=new_name, new_name=old_name)
 
         # The transformation has added the permuted shapes and maps to permute them if the user requested it.
         # The transformation has yet permuted the memlets as we want to access the previous defined arrays
