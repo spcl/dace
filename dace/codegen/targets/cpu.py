@@ -196,6 +196,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
+        if edge is None:
+            return
+
         # We need to know if this is a read or a write variation
         is_write = edge.src is node
 

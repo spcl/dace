@@ -116,6 +116,85 @@ def test_copy_cpu_copynd():
     np.testing.assert_array_equal(B[50:100], A[150:200])
 
 
+def test_copy_copynd_rejects_non_c_packed():
+    """``CopyND`` requires C-packed (row-major contiguous) strides on both
+    endpoints. Manually setting it on a Fortran-packed or padded-strides
+    array must raise at expansion time rather than silently mis-copy
+    (the runtime template derives stride args under the C-packed
+    assumption)."""
+    sdfg = dace.SDFG("copy_copynd_rejects_non_c")
+
+    # Fortran-packed (column-major) strides on both sides: shape (4, 5, 6),
+    # strides (1, 4, 20).
+    sdfg.add_array(name="src",
+                   shape=(4, 5, 6),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 4, 20),
+                   total_size=120,
+                   transient=False)
+    sdfg.add_array(name="dst",
+                   shape=(4, 5, 6),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 4, 20),
+                   total_size=120,
+                   transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+
+    libnode = CopyLibraryNode(name="cp_fortran")
+    libnode.implementation = "CopyND"
+
+    state.add_edge(src, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_out", dst, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+
+    sdfg.validate()
+    with pytest.raises(ValueError, match="C-packed"):
+        sdfg.expand_library_nodes()
+
+
+def test_copy_copynd_rejects_padded_strides():
+    """Padded strides (e.g. ``[20, 21, 22]`` with strides ``(1, 32, 32*21)``
+    where 32 != 20) are *also* not C-packed. CopyND must reject them — the
+    test from ``copy_to_map_test::test_preprocess`` exercises exactly this
+    case; the new pipeline should fall through to a different lowering."""
+    sdfg = dace.SDFG("copy_copynd_rejects_padded")
+
+    # CPU same-side, but with column-major + padding: shape [20, 21, 22],
+    # strides (1, 32, 32*21). Not C-packed. Not Fortran-packed either
+    # (Fortran-packed would be (1, 20, 20*21)).
+    sdfg.add_array(name="src",
+                   shape=(20, 21, 22),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 32, 32 * 21),
+                   total_size=14784,
+                   transient=False)
+    sdfg.add_array(name="dst",
+                   shape=(20, 21, 22),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 32, 32 * 21),
+                   total_size=14784,
+                   transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+
+    libnode = CopyLibraryNode(name="cp_padded")
+    libnode.implementation = "CopyND"
+    state.add_edge(src, None, libnode, "_in", dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
+    state.add_edge(libnode, "_out", dst, None, dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
+
+    sdfg.validate()
+    with pytest.raises(ValueError, match="C-packed"):
+        sdfg.expand_library_nodes()
+
+
 @pytest.mark.gpu
 def test_copy_pure_gpu():
     """Pure (mapped tasklet) expansion on GPU_Global -> GPU_Global."""
@@ -273,6 +352,187 @@ def test_copy_cuda_4d_strided_host_to_device():
 
     expected = A[1:6, 1:7, 1:8, 1:9]
     cp.testing.assert_array_equal(B, cp.asarray(expected))
+
+
+def _fortran_strides(shape):
+    """Column-major (Fortran) strides for a packed array of given shape.
+
+    Uses ``dace.data.Array._get_packed_fortran_strides`` so the test stays
+    consistent with what ``Array.is_packed_fortran_strides`` checks against.
+    """
+    return dace.data.Array(dace.float64, shape=shape)._get_packed_fortran_strides()
+
+
+def test_copy_fortran_packed_cpu_default_pure():
+    """Same-side CPU copy with Fortran-packed strides lowers via the
+    default ``pure`` mapped tasklet — DaCe's stride-aware element indexing
+    handles arbitrary packing without any refine-time intervention."""
+    shape = (4, 5, 6)
+    f_strides = _fortran_strides(shape)
+    total = int(np.prod(shape))
+
+    sdfg = dace.SDFG("copy_fortran_cpu")
+    sdfg.add_array("src",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    sdfg.add_array("dst",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    state = sdfg.add_state("main")
+    s_a = state.add_access("src")
+    d_a = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_fortran_cpu")
+    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+
+    A = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
+    B = np.zeros(shape, dtype=np.float64, order='F')
+    exe(src=A, dst=B)
+    np.testing.assert_array_equal(B, A)
+
+
+@pytest.mark.gpu
+def test_copy_fortran_packed_gpu_falls_back_to_pure():
+    """Same-side GPU copy with Fortran-packed strides must lower via the
+    ``pure`` mapped tasklet."""
+    import cupy as cp
+
+    shape = (4, 5, 6)
+    f_strides = _fortran_strides(shape)
+    total = int(np.prod(shape))
+
+    sdfg = dace.SDFG("copy_fortran_gpu")
+    sdfg.add_array("src",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    sdfg.add_array("dst",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    state = sdfg.add_state("main")
+    s_a = state.add_access("src")
+    d_a = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_fortran_gpu")
+    libnode.implementation = "CUDA"
+    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+
+    host = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
+    A = cp.asfortranarray(cp.asarray(host))
+    B = cp.asfortranarray(cp.zeros(shape, dtype=cp.float64))
+    exe(src=A, dst=B)
+    cp.testing.assert_array_equal(B, A)
+
+
+@pytest.mark.gpu
+def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
+    """Cross-CPU/GPU copy of a Fortran-packed array must lower to
+    ``CUDANDStrided`` chunked along the *outermost* axis (the stride-1
+    axis for column-major), not the innermost as for row-major."""
+    import cupy as cp
+
+    shape = (4, 5, 6)
+    f_strides = _fortran_strides(shape)
+    total = int(np.prod(shape))
+
+    sdfg = dace.SDFG("copy_fortran_h2d")
+    sdfg.add_array("src",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    sdfg.add_array("dst",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   strides=f_strides,
+                   total_size=total,
+                   transient=False)
+    state = sdfg.add_state("main")
+    s_a = state.add_access("src")
+    d_a = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_fortran_h2d")
+    libnode.implementation = "CUDAHostToDevice"
+    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+
+    host = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
+    dev = cp.asfortranarray(cp.zeros(shape, dtype=cp.float64))
+    exe(src=host, dst=dev)
+    cp.testing.assert_array_equal(dev, cp.asarray(host))
+
+
+def test_copy_no_common_stride1_axis_raises():
+    """Cross-CPU/GPU copy where src and dst have no common stride-1 axis
+    cannot be expressed as a chunked cudaMemcpy and must raise at refine
+    time (per design — no element-wise fallback across the boundary).
+
+    Uses a non-contiguous partial subset so the contiguous-subset early
+    exit doesn't mask the strided-pattern check.
+    """
+    sdfg = dace.SDFG("copy_no_common_stride1")
+    # src: C-packed (innermost stride 1). dst: Fortran-packed (outermost
+    # stride 1). After the partial slice neither subset is contiguous in
+    # its own layout — refine sees rank-3 src strides (30,6,1) and rank-3
+    # dst strides (1,4,20), with no shared stride-1 axis.
+    shape = (4, 5, 6)
+    sdfg.add_array("src",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(30, 6, 1),
+                   total_size=120,
+                   transient=False)
+    sdfg.add_array("dst",
+                   shape,
+                   dace.float64,
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   strides=(1, 4, 20),
+                   total_size=120,
+                   transient=False)
+    state = sdfg.add_state("main")
+    s_a = state.add_access("src")
+    d_a = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_no_common")
+    libnode.implementation = "CUDAHostToDevice"
+    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:4, 0:5]"))
+    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:4, 0:5]"))
+
+    sdfg.validate()
+    with pytest.raises(ValueError, match="cross-CPU/GPU"):
+        sdfg.expand_library_nodes()
 
 
 def test_copy_node_storage_from_edges():

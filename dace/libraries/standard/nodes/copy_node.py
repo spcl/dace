@@ -132,19 +132,29 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
             and in_shape_collapsed[0] == out_shape_collapsed[0]):
         return 'CUDA2D'
 
-    # Same-side strided ND (e.g. GPU<->GPU) that cannot be collapsed to 1D/2D
-    # falls through to the CopyND runtime helper (`dace::CopyNDDynamic`).
+    # Same-side strided ND (e.g. GPU<->GPU) that cannot be collapsed to 1D/2D.
+    # CopyND is the efficient route but assumes both endpoints are C-packed
+    # (row-major contiguous, no padding in any dim) — its template stride
+    # args are derived per-dim under that assumption. For Fortran-packed or
+    # padded arrays fall back to the `pure` mapped tasklet, which addresses
+    # each element through the array's own stride-aware indexing and so
+    # handles arbitrary same-side stride patterns.
     if not _is_cross_cpu_gpu(inp.storage, out.storage):
-        return 'CopyND'
+        if inp.is_packed_c_strides() and out.is_packed_c_strides():
+            return 'CopyND'
+        return 'pure'
 
-    # Cross-boundary ND-strided with stride-1 innermost dim: expand into a
-    # Sequential SDFG Map of cudaMemcpyAsync (one per innermost contiguous row).
+    # Cross-boundary ND-strided: expand into a Sequential SDFG Map of
+    # cudaMemcpyAsync where the chunked dimension is any axis with stride 1
+    # on both sides (innermost for C-packed, outermost for Fortran-packed).
     if (len(in_shape_collapsed) == len(out_shape_collapsed) and len(in_shape_collapsed) >= 1
-            and in_strides_collapsed[-1] == 1 and out_strides_collapsed[-1] == 1):
+            and any(in_strides_collapsed[d] == 1 and out_strides_collapsed[d] == 1
+                    for d in range(len(in_shape_collapsed)))):
         return 'CUDANDStrided'
 
-    raise ValueError(f"CopyLibraryNode '{node.name}' has a strided copy pattern that cannot be lowered "
-                     f"to a single cudaMemcpy or cudaMemcpy2DAsync "
+    raise ValueError(f"CopyLibraryNode '{node.name}' has a strided cross-CPU/GPU copy pattern that "
+                     f"cannot be lowered to a single cudaMemcpy or cudaMemcpy2DAsync and has no "
+                     f"common stride-1 axis for chunked memcpy "
                      f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
                      f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "
                      f"pick an explicit implementation manually.")
@@ -489,6 +499,19 @@ class ExpandCopyND(ExpandTransformation):
             raise ValueError("CopyND expansion cannot handle copies across the CPU/GPU "
                              f"boundary (got {inp.storage} -> {out.storage}).")
 
+        # CopyND assumes both endpoints are C-packed (row-major contiguous,
+        # no padding). Its `dace::CopyND<>` template stride args are derived
+        # per-dim under that assumption. Reject explicitly so a caller that
+        # forced ``implementation='CopyND'`` on a Fortran-packed or
+        # padded-strides array gets a clean error instead of a silent
+        # mis-copy at runtime.
+        if not inp.is_packed_c_strides() or not out.is_packed_c_strides():
+            raise ValueError(f"CopyND expansion requires C-packed (row-major contiguous) strides on both "
+                             f"endpoints; got src strides {tuple(inp.strides)} for shape {tuple(inp.shape)} "
+                             f"and dst strides {tuple(out.strides)} for shape {tuple(out.shape)}. "
+                             f"Use a different expansion (e.g. 'pure' for same-storage, or convert to a Map "
+                             f"via CopyToMap before expansion).")
+
         # Operate on the *collapsed* rank consistently: the wrapper SDFG's
         # arrays are sized by collapsed shape ([_make_expansion_sdfg] creates
         # them with `in_shape_collapsed` / `out_shape_collapsed`). Mixing in
@@ -674,12 +697,14 @@ class ExpandCUDANDStrided(ExpandTransformation):
 
     Fallback for ≥3D-strided patterns that cannot be expressed as a single
     ``cudaMemcpyAsync`` or ``cudaMemcpy2DAsync``. The expansion returns a
-    nested SDFG containing a ``Sequential`` Map over the outer ``ndims - 1``
-    collapsed dimensions; each map iteration's tasklet issues one
-    ``cudaMemcpyAsync`` for the innermost contiguous row (``stride==1`` on
-    both sides). The kind of memcpy (``HostToDevice`` / ``DeviceToHost`` /
-    ``HostToHost`` / ``DeviceToDevice``) is selected from the endpoint
-    storages.
+    nested SDFG containing a ``Sequential`` Map over all collapsed
+    dimensions except the *chunk axis* — the axis with ``stride == 1`` on
+    both sides. Each map iteration's tasklet issues one
+    ``cudaMemcpyAsync`` for the contiguous run along the chunk axis. For
+    C-packed arrays this is the innermost dim; for Fortran-packed arrays
+    it is the outermost. The kind of memcpy (``HostToDevice`` /
+    ``DeviceToHost`` / ``HostToHost`` / ``DeviceToDevice``) is selected
+    from the endpoint storages.
 
     The inner tasklet's stream connector is named ``_cpy_stream`` (not
     ``stream``) to avoid shadowing the wrapper SDFG's ``stream`` AccessNode/
@@ -700,13 +725,20 @@ class ExpandCUDANDStrided(ExpandTransformation):
         ndims = len(in_shape_collapsed)
         if ndims < 1:
             raise NotImplementedError("ExpandCUDANDStrided requires at least one collapsed dimension.")
-        if in_strides_collapsed[-1] != 1 or out_strides_collapsed[-1] != 1:
-            raise NotImplementedError(
-                "ExpandCUDANDStrided requires the innermost collapsed stride to be 1 on both sides "
-                f"(got src_strides={in_strides_collapsed}, dst_strides={out_strides_collapsed}).")
+
+        # Pick the chunk axis: any dim with stride 1 on both sides. Prefer
+        # the innermost (C-packed) when multiple match.
+        chunk_dim = None
+        for d in reversed(range(ndims)):
+            if in_strides_collapsed[d] == 1 and out_strides_collapsed[d] == 1:
+                chunk_dim = d
+                break
+        if chunk_dim is None:
+            raise NotImplementedError("ExpandCUDANDStrided requires at least one common stride-1 axis on both sides "
+                                      f"(got src_strides={in_strides_collapsed}, dst_strides={out_strides_collapsed}).")
 
         ctype = inp.dtype.ctype
-        chunk = sym2cpp(in_shape_collapsed[-1])
+        chunk = sym2cpp(in_shape_collapsed[chunk_dim])
 
         src_loc = "Device" if inp.storage == dtypes.StorageType.GPU_Global else "Host"
         dst_loc = "Device" if out.storage == dtypes.StorageType.GPU_Global else "Host"
@@ -718,14 +750,27 @@ class ExpandCUDANDStrided(ExpandTransformation):
         _INNER_STREAM_CONN = "_cpy_stream"
         stream_expr = _INNER_STREAM_CONN if has_stream else "__dace_current_stream"
 
-        # Map over the outer ndims-1 collapsed dimensions; the innermost dim
-        # is the contiguous row passed to cudaMemcpyAsync. ndims == 1
-        # degenerates to a single contiguous memcpy (no map).
-        map_params = [f"__cpy_i{d}" for d in range(ndims - 1)]
-        map_ranges = {p: f"0:{sym2cpp(in_shape_collapsed[d])}" for d, p in enumerate(map_params)}
+        # Map over all dims except chunk_dim; the chunk axis is the contiguous
+        # run passed to cudaMemcpyAsync. ndims == 1 degenerates to a single
+        # contiguous memcpy (no map).
+        map_axes = [d for d in range(ndims) if d != chunk_dim]
+        map_params = [f"__cpy_i{d}" for d in map_axes]
+        map_ranges = {p: f"0:{sym2cpp(in_shape_collapsed[d])}" for d, p in zip(map_axes, map_params)}
+
+        def _row_subset(shape):
+            parts = []
+            map_pi = 0
+            for d in range(ndims):
+                if d == chunk_dim:
+                    parts.append(f"0:{sym2cpp(shape[d])}")
+                else:
+                    parts.append(map_params[map_pi])
+                    map_pi += 1
+            return ", ".join(parts)
+
         if ndims > 1:
-            row_in = ", ".join(list(map_params) + [f"0:{sym2cpp(in_shape_collapsed[-1])}"])
-            row_out = ", ".join(list(map_params) + [f"0:{sym2cpp(out_shape_collapsed[-1])}"])
+            row_in = _row_subset(in_shape_collapsed)
+            row_out = _row_subset(out_shape_collapsed)
         else:
             row_in = f"0:{sym2cpp(in_shape_collapsed[0])}"
             row_out = f"0:{sym2cpp(out_shape_collapsed[0])}"
