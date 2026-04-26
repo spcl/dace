@@ -493,6 +493,9 @@ class _ElementwiseExpressionAnalyzer:
         try:
             result_dtype = infer_expr_type(_unparse(typing_value), scalar_types)
         except Exception:
+            result_dtype = None
+
+        if result_dtype is None:
             result_dtype = self.accesses[0].descriptor.dtype
 
         return _ExpressionAnalysis(tasklet_value=ast.fix_missing_locations(tasklet_value),
@@ -1430,4 +1433,4 @@ def _clone_descriptor(descriptor: data.Data) -> data.Data:
 
 
 def _unparse(node: ast.AST) -> str:
-    return astutils.unparse(copy.deepcopy(node))
+    return astutils.unparse(node)
