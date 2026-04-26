@@ -589,6 +589,13 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         if (nodedesc.storage == dtypes.StorageType.GPU_Global or nodedesc.storage == dtypes.StorageType.CPU_Pinned):
             result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer, ctypedef)
+            # Also register in defined_vars at the declaration's scope (the
+            # current scope when declare_array fires, which is the SDFG scope
+            # for SDFG-lifetime arrays). Without this, the subsequent allocate
+            # call at a later state scope adds defined_vars at THAT state, and
+            # the entry vanishes when the state exits — leaving downstream
+            # kernel-scope lookups failing with "Variable not defined".
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             raise NotImplementedError('Dynamic shared memory unsupported')
         elif nodedesc.storage == dtypes.StorageType.Register:
