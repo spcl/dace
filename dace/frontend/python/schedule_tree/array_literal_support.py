@@ -235,7 +235,7 @@ def _is_array_constructor_call(node: ast.Call, evaluation_context: EvaluationCon
 
 def _rewrite_with_connectors(node: ast.AST,
                              resolve_data_access: DataAccessResolver) -> Tuple[ast.AST, Dict[str, Memlet]]:
-    rewritten = copy.deepcopy(node)
+    rewritten = astutils.copy_tree(node)
     input_memlets: Dict[str, Memlet] = {}
     connector_names: Dict[Tuple[str, str, str], str] = {}
 

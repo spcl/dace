@@ -179,7 +179,7 @@ def _descriptor_from_static_key(slice_node: ast.AST,
     if key_value is UNRESOLVED:
         return None
     try:
-        descriptor = copy.deepcopy(create_datadescriptor(key_value))
+        descriptor = create_datadescriptor(key_value)
     except Exception:
         return None
     descriptor.transient = True

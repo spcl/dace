@@ -2,8 +2,8 @@
 """Helpers for lowering Python ``match`` statements to simpler AST forms."""
 
 import ast
-import copy
 from typing import Dict, List, Optional, Tuple
+from dace.frontend.python import astutils
 
 
 class UnsupportedMatchPatternError(TypeError):
@@ -25,17 +25,17 @@ def lower_match_to_statements(node: ast.Match, subject_expr: ast.AST) -> List[as
 
     for case in reversed(node.cases):
         condition, bindings = _lower_pattern(case.pattern, subject_expr)
-        binding_map = {name: copy.deepcopy(expr) for name, expr in bindings}
+        binding_map = {name: astutils.copy_tree(expr) for name, expr in bindings}
 
         if case.guard is not None:
             guard = _substitute_capture_loads(case.guard, binding_map)
             condition = guard if condition is None else ast.BoolOp(op=ast.And(), values=[condition, guard])
 
         body: List[ast.stmt] = [
-            ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=copy.deepcopy(expr))
+            ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=astutils.copy_tree(expr))
             for name, expr in bindings
         ]
-        body.extend(copy.deepcopy(case.body))
+        body.extend(astutils.copy_tree(case.body))
 
         if condition is None:
             lowered = body
@@ -50,7 +50,8 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
         return _eq_condition(subject_expr, pattern.value), []
 
     if isinstance(pattern, ast.MatchSingleton):
-        return ast.Compare(left=copy.deepcopy(subject_expr), ops=[ast.Is()],
+        return ast.Compare(left=astutils.copy_tree(subject_expr),
+                           ops=[ast.Is()],
                            comparators=[ast.Constant(pattern.value)]), []
 
     if isinstance(pattern, ast.MatchSequence):
@@ -60,7 +61,9 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
         conditions: List[ast.AST] = [_fixed_length_sequence_condition(subject_expr, len(pattern.patterns))]
         bindings: _Bindings = []
         for index, subpattern in enumerate(pattern.patterns):
-            element_expr = ast.Subscript(value=copy.deepcopy(subject_expr), slice=ast.Constant(index), ctx=ast.Load())
+            element_expr = ast.Subscript(value=astutils.copy_tree(subject_expr),
+                                         slice=ast.Constant(index),
+                                         ctx=ast.Load())
             element_condition, element_bindings = _lower_pattern(subpattern, element_expr)
             if element_condition is not None:
                 conditions.append(element_condition)
@@ -71,11 +74,11 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
         if pattern.pattern is None:
             if pattern.name is None:
                 return None, []
-            return None, [(pattern.name, copy.deepcopy(subject_expr))]
+            return None, [(pattern.name, astutils.copy_tree(subject_expr))]
 
         condition, bindings = _lower_pattern(pattern.pattern, subject_expr)
         if pattern.name is not None:
-            bindings = bindings + [(pattern.name, copy.deepcopy(subject_expr))]
+            bindings = bindings + [(pattern.name, astutils.copy_tree(subject_expr))]
         return condition, bindings
 
     if isinstance(pattern, ast.MatchOr):
@@ -93,7 +96,7 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
 
 
 def _eq_condition(left: ast.AST, right: ast.AST) -> ast.Compare:
-    return ast.Compare(left=copy.deepcopy(left), ops=[ast.Eq()], comparators=[copy.deepcopy(right)])
+    return ast.Compare(left=astutils.copy_tree(left), ops=[ast.Eq()], comparators=[astutils.copy_tree(right)])
 
 
 def _fixed_length_sequence_condition(subject_expr: ast.AST, length: int) -> ast.AST:
@@ -101,16 +104,16 @@ def _fixed_length_sequence_condition(subject_expr: ast.AST, length: int) -> ast.
         ast.BoolOp(op=ast.Or(),
                    values=[
                        ast.Call(func=ast.Name(id='isinstance', ctx=ast.Load()),
-                                args=[copy.deepcopy(subject_expr),
+                                args=[astutils.copy_tree(subject_expr),
                                       ast.Name(id='tuple', ctx=ast.Load())],
                                 keywords=[]),
                        ast.Call(func=ast.Name(id='isinstance', ctx=ast.Load()),
-                                args=[copy.deepcopy(subject_expr),
+                                args=[astutils.copy_tree(subject_expr),
                                       ast.Name(id='list', ctx=ast.Load())],
                                 keywords=[]),
                    ]),
         ast.Compare(left=ast.Call(func=ast.Name(id='len', ctx=ast.Load()),
-                                  args=[copy.deepcopy(subject_expr)],
+                                  args=[astutils.copy_tree(subject_expr)],
                                   keywords=[]),
                     ops=[ast.Eq()],
                     comparators=[ast.Constant(length)]),
@@ -129,7 +132,7 @@ def _substitute_capture_loads(node: ast.AST, bindings: Dict[str, ast.AST]) -> as
 
         def visit_Name(self, inner: ast.Name) -> ast.AST:
             if isinstance(inner.ctx, ast.Load) and inner.id in bindings:
-                return copy.deepcopy(bindings[inner.id])
+                return astutils.copy_tree(bindings[inner.id])
             return inner
 
-    return ast.fix_missing_locations(_CaptureSubstituter().visit(copy.deepcopy(node)))
+    return ast.fix_missing_locations(_CaptureSubstituter().visit(astutils.copy_tree(node)))

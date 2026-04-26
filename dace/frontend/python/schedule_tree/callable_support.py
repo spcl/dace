@@ -21,7 +21,7 @@ from dace.frontend.python.schedule_tree.type_inference import _Binding
 
 
 def _binding_to_descriptor(value: Any) -> data.Data:
-    descriptor = copy.deepcopy(data.create_datadescriptor(value))
+    descriptor = data.create_datadescriptor(value)
     if isinstance(descriptor, data.View):
         descriptor = descriptor.as_array()
     descriptor.transient = False
@@ -59,7 +59,7 @@ class _ASTInlineCallable:
         if not src_ast.body or not isinstance(src_ast.body[0], ast.FunctionDef):
             raise TypeError('Expected a FunctionDef when wrapping a Python callable for schedule-tree inlining')
 
-        self.function_ast = ast.fix_missing_locations(copy.deepcopy(src_ast.body[0]))
+        self.function_ast = ast.fix_missing_locations(astutils.copy_tree(src_ast.body[0]))
         self.filename = src_file
         self.src_line = src_line
         self.src = src
@@ -107,7 +107,7 @@ class _ASTInlineCallable:
             seed_bindings[self._self_parameter] = _Binding(descriptor=self_descriptor, kind='container')
 
         parsed_ast = preprocessing.PreprocessedAST(self.filename, self.src_line, self.src,
-                                                   copy.deepcopy(self.function_ast), program_globals)
+                                                   astutils.copy_tree(self.function_ast), program_globals)
         return schedule_tree_frontend.build_schedule_tree(
             self.name,
             parsed_ast,

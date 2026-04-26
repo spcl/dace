@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data
 from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.dunder_support import (rewrite_augassign, rewrite_subscript_assignment,
                                                                rewrite_subscript_delete, rewrite_sugared_expression)
@@ -157,7 +158,8 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             if ex.is_sdfg_call:
                 self._raise_dynamic_sdfg_error(ex.node)
             temp_name = self._fresh_name('__stree_retval')
-            assign_stmt = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=copy.deepcopy(node.value))
+            assign_stmt = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())],
+                                     value=astutils.copy_tree(node.value))
             assign_stmt = self._mark_callback(ast.copy_location(assign_stmt, node.value), 'call expansion')
             return_stmt = ast.copy_location(ast.Return(value=ast.Name(id=temp_name, ctx=ast.Load())), node)
             return [assign_stmt, ast.fix_missing_locations(return_stmt)]
@@ -270,7 +272,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
 
     def _rewrite_nested_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
         saved = self._expansion_bindings
-        self._expansion_bindings = copy.deepcopy(saved)
+        self._expansion_bindings = {k: astutils.copy_tree(v) for k, v in saved.items()}
         rewritten = self._rewrite_body(body)
         self._expansion_bindings = saved
         return rewritten
@@ -279,7 +281,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                                        template_node: ast.stmt) -> List[ast.stmt]:
         result: List[ast.stmt] = []
         for target, value in assignments:
-            assign_stmt = ast.Assign(targets=[copy.deepcopy(target)], value=copy.deepcopy(value))
+            assign_stmt = ast.Assign(targets=[astutils.copy_tree(target)], value=astutils.copy_tree(value))
             assign_stmt = ast.copy_location(assign_stmt, template_node)
             rewritten = self.visit(assign_stmt)
             if rewritten is None:
@@ -339,7 +341,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                 rewritten = rewrite_sugared_expression(expr_node, outer.callable_resolver)
                 return rewritten if rewritten is not None else expr_node
 
-        return _ExpressionRewriter().visit(copy.deepcopy(node))
+        return _ExpressionRewriter().visit(astutils.copy_tree(node))
 
     def _evaluation_context(self) -> Dict[str, Any]:
         context = copy.copy(pybuiltins.__dict__)
@@ -365,24 +367,25 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                 expanded = self._resolve_static_sequence_nodes(argument.value)
                 if expanded is None:
                     return None
-                args.extend(copy.deepcopy(value) for value in expanded)
+                args.extend(astutils.copy_tree(value) for value in expanded)
             else:
-                args.append(copy.deepcopy(argument))
+                args.append(astutils.copy_tree(argument))
 
         for keyword in node.keywords:
             if keyword.arg is None:
                 expanded_items = self._resolve_static_mapping_items(keyword.value)
                 if expanded_items is None:
                     return None
-                keywords.extend(ast.keyword(arg=name, value=copy.deepcopy(value)) for name, value in expanded_items)
+                keywords.extend(
+                    ast.keyword(arg=name, value=astutils.copy_tree(value)) for name, value in expanded_items)
             else:
-                keywords.append(ast.keyword(arg=keyword.arg, value=copy.deepcopy(keyword.value)))
-        return ast.copy_location(ast.Call(func=copy.deepcopy(node.func), args=args, keywords=keywords), node)
+                keywords.append(ast.keyword(arg=keyword.arg, value=astutils.copy_tree(keyword.value)))
+        return ast.copy_location(ast.Call(func=astutils.copy_tree(node.func), args=args, keywords=keywords), node)
 
     def _normalized_static_expansion_ast(self, node: ast.AST) -> Optional[ast.AST]:
         if isinstance(node, ast.Name):
             cached = self._expansion_bindings.get(node.id)
-            return copy.deepcopy(cached) if cached is not None else None
+            return astutils.copy_tree(cached) if cached is not None else None
 
         if isinstance(node, (ast.Tuple, ast.List)):
             elements: List[ast.AST] = []
@@ -391,9 +394,9 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                     expanded = self._resolve_static_sequence_nodes(element.value)
                     if expanded is None:
                         return None
-                    elements.extend(copy.deepcopy(value) for value in expanded)
+                    elements.extend(astutils.copy_tree(value) for value in expanded)
                 else:
-                    elements.append(copy.deepcopy(element))
+                    elements.append(astutils.copy_tree(element))
             sequence_type = ast.Tuple if isinstance(node, ast.Tuple) else ast.List
             return ast.copy_location(sequence_type(elts=elements, ctx=ast.Load()), node)
 
@@ -407,14 +410,14 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
                         return None
                     for expanded_key, expanded_value in expanded_items:
                         keys.append(ast.copy_location(ast.Constant(expanded_key), value))
-                        values.append(copy.deepcopy(expanded_value))
+                        values.append(astutils.copy_tree(expanded_value))
                     continue
 
                 resolved_key = try_resolve_static_value(key, self._evaluation_context())
                 if not isinstance(resolved_key, str):
                     return None
                 keys.append(ast.copy_location(ast.Constant(resolved_key), key))
-                values.append(copy.deepcopy(value))
+                values.append(astutils.copy_tree(value))
             return ast.copy_location(ast.Dict(keys=keys, values=values), node)
 
         return None
@@ -422,7 +425,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
     def _resolve_static_sequence_nodes(self, node: ast.AST) -> Optional[List[ast.AST]]:
         normalized = self._normalized_static_expansion_ast(node)
         if isinstance(normalized, (ast.Tuple, ast.List)):
-            return [copy.deepcopy(element) for element in normalized.elts]
+            return [astutils.copy_tree(element) for element in normalized.elts]
         return None
 
     def _resolve_static_mapping_items(self, node: ast.AST) -> Optional[List[Tuple[str, ast.AST]]]:
@@ -435,23 +438,23 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             resolved_key = try_resolve_static_value(key, self._evaluation_context())
             if not isinstance(resolved_key, str):
                 return None
-            result.append((resolved_key, copy.deepcopy(value)))
+            result.append((resolved_key, astutils.copy_tree(value)))
         return result
 
     def _expand_starred_assignment(self, target: ast.AST, value: ast.AST) -> Optional[List[Tuple[ast.AST, ast.AST]]]:
         if isinstance(target, ast.Name):
-            return [(copy.deepcopy(target), copy.deepcopy(value))]
+            return [(astutils.copy_tree(target), astutils.copy_tree(value))]
 
         if isinstance(target, ast.Starred):
             elements = self._resolve_static_sequence_nodes(value)
             if elements is None:
                 return None
             list_value = ast.copy_location(
-                ast.List(elts=[copy.deepcopy(element) for element in elements], ctx=ast.Load()), value)
-            return [(copy.deepcopy(target.value), list_value)]
+                ast.List(elts=[astutils.copy_tree(element) for element in elements], ctx=ast.Load()), value)
+            return [(astutils.copy_tree(target.value), list_value)]
 
         if not isinstance(target, (ast.Tuple, ast.List)):
-            return [(copy.deepcopy(target), copy.deepcopy(value))]
+            return [(astutils.copy_tree(target), astutils.copy_tree(value))]
 
         elements = self._resolve_static_sequence_nodes(value)
         if elements is None:
@@ -489,7 +492,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
             assignments.extend(expanded)
 
         middle_list = ast.copy_location(
-            ast.List(elts=[copy.deepcopy(element) for element in middle_values], ctx=ast.Load()), value)
+            ast.List(elts=[astutils.copy_tree(element) for element in middle_values], ctx=ast.Load()), value)
         expanded_middle = self._expand_starred_assignment(target.elts[starred_index], middle_list)
         if expanded_middle is None:
             return None
@@ -518,7 +521,7 @@ class ScheduleTreeExpansionDesugarer(ast.NodeTransformer):
         temp_assign = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=normalized_value)
         temp_assign = ast.copy_location(temp_assign, node)
 
-        rewritten_assign = ast.Assign(targets=[copy.deepcopy(target) for target in node.targets],
+        rewritten_assign = ast.Assign(targets=[astutils.copy_tree(target) for target in node.targets],
                                       value=ast.Name(id=temp_name, ctx=ast.Load()))
         rewritten_assign = ast.copy_location(rewritten_assign, node)
         return self._rewrite_generated_statements([temp_assign, rewritten_assign])
@@ -644,7 +647,7 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
         if not prologue:
             return node
 
-        guard = ast.If(test=ast.UnaryOp(op=ast.Not(), operand=copy.deepcopy(test)), body=[ast.Break()], orelse=[])
+        guard = ast.If(test=ast.UnaryOp(op=ast.Not(), operand=astutils.copy_tree(test)), body=[ast.Break()], orelse=[])
         guard = ast.fix_missing_locations(ast.copy_location(guard, node.test))
         rewritten = ast.While(test=ast.Constant(value=True), body=prologue + [guard] + node.body, orelse=[])
         rewritten = ast.fix_missing_locations(ast.copy_location(rewritten, node))
@@ -748,13 +751,13 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
                                                              in_index_context=in_index_context,
                                                              hoist_safe=hoist_safe)
             prologue.extend(right_prologue)
-            return prologue, ast.copy_location(ast.BinOp(left=left, op=copy.deepcopy(node.op), right=right), node)
+            return prologue, ast.copy_location(ast.BinOp(left=left, op=astutils.copy_tree(node.op), right=right), node)
 
         if isinstance(node, ast.UnaryOp):
             prologue, operand = self._outline_expression(node.operand,
                                                          in_index_context=in_index_context,
                                                          hoist_safe=hoist_safe)
-            return prologue, ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=operand), node)
+            return prologue, ast.copy_location(ast.UnaryOp(op=astutils.copy_tree(node.op), operand=operand), node)
 
         if isinstance(node, ast.BoolOp):
             prologue: List[ast.stmt] = []
@@ -765,7 +768,7 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
                                                                            hoist_safe=hoist_safe and index == 0)
                 prologue.extend(value_prologue)
                 values.append(rewritten_value)
-            return prologue, ast.copy_location(ast.BoolOp(op=copy.deepcopy(node.op), values=values), node)
+            return prologue, ast.copy_location(ast.BoolOp(op=astutils.copy_tree(node.op), values=values), node)
 
         if isinstance(node, ast.Compare):
             prologue, left = self._outline_expression(node.left,
@@ -780,7 +783,7 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
                 prologue.extend(comparator_prologue)
                 comparators.append(rewritten_comparator)
             return prologue, ast.copy_location(
-                ast.Compare(left=left, ops=copy.deepcopy(node.ops), comparators=comparators), node)
+                ast.Compare(left=left, ops=astutils.copy_tree(node.ops), comparators=comparators), node)
 
         if isinstance(node, ast.IfExp):
             prologue, test = self._outline_expression(node.test,
@@ -824,7 +827,7 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
                 elements.append(rewritten_element)
             return prologue, ast.copy_location(ast.List(elts=elements, ctx=node.ctx), node)
 
-        return [], copy.deepcopy(node)
+        return [], astutils.copy_tree(node)
 
     def _outline_subscript_slice(self, node: ast.AST, *, hoist_safe: bool = True) -> Tuple[List[ast.stmt], ast.AST]:
         if isinstance(node, ast.Slice):
@@ -848,7 +851,7 @@ class ScheduleTreeSubscriptIndexDesugarer(ast.NodeTransformer):
 
     def _outline_to_temp(self, value: ast.AST, prologue: List[ast.stmt]) -> Tuple[List[ast.stmt], ast.AST]:
         temp_name = self._fresh_name('__stree_idx')
-        assign = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=copy.deepcopy(value))
+        assign = ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=astutils.copy_tree(value))
         assign = ast.fix_missing_locations(ast.copy_location(assign, value))
         prologue.append(assign)
         return prologue, ast.copy_location(ast.Name(id=temp_name, ctx=ast.Load()), value)
@@ -1276,7 +1279,7 @@ class ScheduleTreeNegativeIndexNormalizer(ast.NodeTransformer):
             return node
 
         magnitude = self._negative_magnitude(node, resolved)
-        return ast.copy_location(ast.BinOp(left=copy.deepcopy(extent), op=ast.Sub(), right=magnitude), node)
+        return ast.copy_location(ast.BinOp(left=astutils.copy_tree(extent), op=ast.Sub(), right=magnitude), node)
 
     @staticmethod
     def _is_definitely_negative_value(value: Any) -> bool:
@@ -1293,10 +1296,10 @@ class ScheduleTreeNegativeIndexNormalizer(ast.NodeTransformer):
     @staticmethod
     def _negative_magnitude(node: ast.AST, resolved: Any) -> ast.AST:
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-            return copy.deepcopy(node.operand)
+            return astutils.copy_tree(node.operand)
         if isinstance(resolved, numbers.Integral) and not isinstance(resolved, bool):
             return ast.Constant(value=abs(int(resolved)))
-        return ast.UnaryOp(op=ast.USub(), operand=copy.deepcopy(node))
+        return ast.UnaryOp(op=ast.USub(), operand=astutils.copy_tree(node))
 
     @staticmethod
     def _is_newaxis(node: ast.AST) -> bool:
@@ -1309,7 +1312,7 @@ class ScheduleTreeNegativeIndexNormalizer(ast.NodeTransformer):
     @staticmethod
     def _extent_ast(extent: Any) -> ast.AST:
         if isinstance(extent, ast.AST):
-            return copy.deepcopy(extent)
+            return astutils.copy_tree(extent)
         return ast.parse(str(extent), mode='eval').body
 
 
@@ -1322,7 +1325,7 @@ def desugar_schedule_tree_expansions(parsed_ast: ast.AST,
                                      callable_bindings: Optional[Dict[str, Any]] = None) -> ast.AST:
     """Rewrite schedule-tree-specific syntax before AST lowering."""
     expanded = ScheduleTreeExpansionDesugarer(filename, global_vars,
-                                              callable_bindings=callable_bindings).visit(copy.deepcopy(parsed_ast))
+                                              callable_bindings=callable_bindings).visit(astutils.copy_tree(parsed_ast))
     canonical = ScheduleTreeNegativeIndexNormalizer(global_vars,
                                                     known_descriptors=known_descriptors,
                                                     seed_bindings=seed_bindings,

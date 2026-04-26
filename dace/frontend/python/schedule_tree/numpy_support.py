@@ -242,7 +242,7 @@ def _promote_arange_scalar_expression(context: NumpyLoweringContext,
     context.register_binding(transient_name, transient_descriptor, 'scalar')
 
     input_memlets: Dict[str, Memlet] = {}
-    tasklet_value = copy.deepcopy(node)
+    tasklet_value = astutils.copy_tree(node)
     if analysis is not None:
         tasklet_value = analysis.tasklet_value
         for access in analysis.accesses:
@@ -294,7 +294,7 @@ class _ElementwiseAssignmentPass:
                     input_memlets.update(access_memlets)
             input_memlets.update(advanced_target.input_memlets)
 
-            tasklet_value = analysis.tasklet_value if analysis is not None else copy.deepcopy(value)
+            tasklet_value = analysis.tasklet_value if analysis is not None else astutils.copy_tree(value)
             tasklet = tn.FrontendTasklet(
                 name=context.tasklet_name(target),
                 code=CodeBlock(f'{_unparse(advanced_target.target_expr)} = {_unparse(tasklet_value)}'))
@@ -332,7 +332,7 @@ class _ElementwiseAssignmentPass:
                         return None
                     input_memlets.update(access_memlet)
 
-            tasklet_value = analysis.tasklet_value if analysis is not None else copy.deepcopy(value)
+            tasklet_value = analysis.tasklet_value if analysis is not None else astutils.copy_tree(value)
             tasklet = tn.FrontendTasklet(name=context.tasklet_name(target),
                                          code=CodeBlock(f'out = {_unparse(tasklet_value)}'))
             return tn.TaskletNode(
@@ -353,7 +353,7 @@ class _ElementwiseAssignmentPass:
                 input_memlets.update(access_memlets)
 
         output_memlet = _build_output_memlet(target_name, iteration_plan)
-        tasklet_value = analysis.tasklet_value if analysis is not None else copy.deepcopy(value)
+        tasklet_value = analysis.tasklet_value if analysis is not None else astutils.copy_tree(value)
         tasklet = tn.FrontendTasklet(name=context.tasklet_name(target),
                                      code=CodeBlock(f'out = {_unparse(tasklet_value)}'))
         tasklet_node = tn.TaskletNode(node=tasklet, in_memlets=input_memlets, out_memlets={'out': output_memlet})
@@ -389,13 +389,14 @@ class _ElementwiseAssignmentPass:
                 input_memlets.update(access_memlets)
             rhs_tasklet = rhs_analysis.tasklet_value
         else:
-            rhs_tasklet = copy.deepcopy(value.right)
+            rhs_tasklet = astutils.copy_tree(value.right)
 
         input_memlets['cur'] = Memlet(data=advanced_target.name,
                                       subset=copy.deepcopy(advanced_target.output_memlet.subset),
                                       volume=advanced_target.output_memlet.volume)
         tasklet_value = ast.copy_location(
-            ast.BinOp(left=ast.Name(id='cur', ctx=ast.Load()), op=copy.deepcopy(value.op), right=rhs_tasklet), value)
+            ast.BinOp(left=ast.Name(id='cur', ctx=ast.Load()), op=astutils.copy_tree(value.op), right=rhs_tasklet),
+            value)
         tasklet = tn.FrontendTasklet(
             name=context.tasklet_name(target),
             code=CodeBlock(f'{_unparse(advanced_target.target_expr)} = {_unparse(tasklet_value)}'))
@@ -436,13 +437,13 @@ class _ElementwiseAssignmentPass:
                     return None
                 input_memlets.update(access_memlets)
         else:
-            rhs_tasklet = copy.deepcopy(rhs_node)
+            rhs_tasklet = astutils.copy_tree(rhs_node)
 
         if is_augassign:
             current_memlet = Memlet(data=boolean_target.name, subset=copy.deepcopy(boolean_target.output_memlet.subset))
             input_memlets['cur'] = current_memlet
             rhs_tasklet = ast.copy_location(
-                ast.BinOp(left=ast.Name(id='cur', ctx=ast.Load()), op=copy.deepcopy(value.op), right=rhs_tasklet),
+                ast.BinOp(left=ast.Name(id='cur', ctx=ast.Load()), op=astutils.copy_tree(value.op), right=rhs_tasklet),
                 value)
 
         if boolean_target.guard_expr is None:
@@ -480,7 +481,7 @@ class _ElementwiseExpressionAnalyzer:
         self.access_map: Dict[Tuple[str, str, Tuple[str, ...]], _ResolvedAccess] = {}
 
     def analyze(self, node: ast.AST) -> Optional[_ExpressionAnalysis]:
-        rewritten = self._rewrite(copy.deepcopy(node))
+        rewritten = self._rewrite(astutils.copy_tree(node))
         if rewritten is None or not self.accesses:
             return None
 
@@ -511,49 +512,49 @@ class _ElementwiseExpressionAnalyzer:
                     ast.copy_location(ast.Name(id=access.array_connector, ctx=ast.Load()), node))
 
         if isinstance(node, ast.Constant):
-            copied = copy.deepcopy(node)
-            return (copied, copy.deepcopy(copied))
+            copied = astutils.copy_tree(node)
+            return (copied, astutils.copy_tree(copied))
 
         if isinstance(node, ast.Name):
             if not _is_scalar_leaf(node, self.context):
                 return None
-            copied = copy.deepcopy(node)
-            return (copied, copy.deepcopy(copied))
+            copied = astutils.copy_tree(node)
+            return (copied, astutils.copy_tree(copied))
 
         if isinstance(node, ast.Attribute):
             if not _is_scalar_leaf(node, self.context):
                 return None
-            copied = copy.deepcopy(node)
-            return (copied, copy.deepcopy(copied))
+            copied = astutils.copy_tree(node)
+            return (copied, astutils.copy_tree(copied))
 
         if isinstance(node, ast.Subscript):
             if not _is_scalar_leaf(node, self.context):
                 return None
-            copied = copy.deepcopy(node)
-            return (copied, copy.deepcopy(copied))
+            copied = astutils.copy_tree(node)
+            return (copied, astutils.copy_tree(copied))
 
         if isinstance(node, ast.BinOp):
             left = self._rewrite(node.left)
             right = self._rewrite(node.right)
             if left is None or right is None:
                 return None
-            return (ast.copy_location(ast.BinOp(left=left[0], op=copy.deepcopy(node.op), right=right[0]), node),
-                    ast.copy_location(ast.BinOp(left=left[1], op=copy.deepcopy(node.op), right=right[1]), node))
+            return (ast.copy_location(ast.BinOp(left=left[0], op=astutils.copy_tree(node.op), right=right[0]), node),
+                    ast.copy_location(ast.BinOp(left=left[1], op=astutils.copy_tree(node.op), right=right[1]), node))
 
         if isinstance(node, ast.UnaryOp):
             operand = self._rewrite(node.operand)
             if operand is None:
                 return None
-            return (ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=operand[0]), node),
-                    ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=operand[1]), node))
+            return (ast.copy_location(ast.UnaryOp(op=astutils.copy_tree(node.op), operand=operand[0]), node),
+                    ast.copy_location(ast.UnaryOp(op=astutils.copy_tree(node.op), operand=operand[1]), node))
 
         if isinstance(node, ast.BoolOp):
             values = [self._rewrite(value) for value in node.values]
             if any(value is None for value in values):
                 return None
-            return (ast.copy_location(ast.BoolOp(op=copy.deepcopy(node.op), values=[value[0] for value in values]),
+            return (ast.copy_location(ast.BoolOp(op=astutils.copy_tree(node.op), values=[value[0] for value in values]),
                                       node),
-                    ast.copy_location(ast.BoolOp(op=copy.deepcopy(node.op), values=[value[1] for value in values]),
+                    ast.copy_location(ast.BoolOp(op=astutils.copy_tree(node.op), values=[value[1] for value in values]),
                                       node))
 
         if isinstance(node, ast.Compare):
@@ -562,11 +563,12 @@ class _ElementwiseExpressionAnalyzer:
             if left is None or any(comp is None for comp in comparators):
                 return None
             return (ast.copy_location(
-                ast.Compare(left=left[0], ops=copy.deepcopy(node.ops), comparators=[comp[0] for comp in comparators]),
-                node),
+                ast.Compare(left=left[0],
+                            ops=astutils.copy_tree(node.ops),
+                            comparators=[comp[0] for comp in comparators]), node),
                     ast.copy_location(
                         ast.Compare(left=left[1],
-                                    ops=copy.deepcopy(node.ops),
+                                    ops=astutils.copy_tree(node.ops),
                                     comparators=[comp[1] for comp in comparators]), node))
 
         if isinstance(node, ast.IfExp):
@@ -593,11 +595,11 @@ class _ElementwiseExpressionAnalyzer:
                     (ast.keyword(arg=keyword.arg,
                                  value=rewritten_value[0]), ast.keyword(arg=keyword.arg, value=rewritten_value[1])))
             return (ast.copy_location(
-                ast.Call(func=copy.deepcopy(node.func),
+                ast.Call(func=astutils.copy_tree(node.func),
                          args=[arg[0] for arg in args],
                          keywords=[kw[0] for kw in keywords]), node),
                     ast.copy_location(
-                        ast.Call(func=copy.deepcopy(node.func),
+                        ast.Call(func=astutils.copy_tree(node.func),
                                  args=[arg[1] for arg in args],
                                  keywords=[kw[1] for kw in keywords]), node))
 

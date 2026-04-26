@@ -14,11 +14,11 @@ Example:
 from __future__ import annotations
 
 import ast
-import copy
 import inspect
 from typing import Any, Callable, Dict, Optional
 
 from dace import data, dtypes, symbolic
+from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 
 
@@ -55,7 +55,7 @@ class AttributeRewriter:
                 return ast.copy_location(rewritten, attr_node)
 
         try:
-            working = copy.deepcopy(node)
+            working = astutils.copy_tree(node)
         except Exception:
             working = node
         rewritten = _AttributeLoadRewriter(self).visit(working)
@@ -70,8 +70,8 @@ class AttributeRewriter:
         if base_value is UNRESOLVED or self._is_builtin_like_base(base_value):
             return None
 
-        owner_expr = self._type_expr(copy.deepcopy(target.value))
-        obj_expr = copy.deepcopy(target.value)
+        owner_expr = self._type_expr(astutils.copy_tree(target.value))
+        obj_expr = astutils.copy_tree(target.value)
         objtype = type(base_value)
         rewritten_value = self.rewrite_expression(value)
 
@@ -81,14 +81,15 @@ class AttributeRewriter:
             static_attr = None
 
         if static_attr is not None and self._is_descriptor(static_attr) and hasattr(static_attr, '__set__'):
-            descriptor_expr = self._descriptor_expr(copy.deepcopy(target.value), target.attr)
+            descriptor_expr = self._descriptor_expr(astutils.copy_tree(target.value), target.attr)
             return ast.Call(func=ast.Attribute(value=descriptor_expr, attr='__set__', ctx=ast.Load()),
                             args=[obj_expr, rewritten_value],
                             keywords=[])
 
         setattr_method = objtype.__dict__.get('__setattr__')
         if setattr_method is not None and setattr_method is not object.__setattr__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__setattr__', ctx=ast.Load()),
+            return ast.Call(func=ast.Attribute(value=astutils.copy_tree(owner_expr), attr='__setattr__',
+                                               ctx=ast.Load()),
                             args=[obj_expr, ast.Constant(target.attr), rewritten_value],
                             keywords=[])
 
@@ -102,8 +103,8 @@ class AttributeRewriter:
         if base_value is UNRESOLVED or self._is_builtin_like_base(base_value):
             return None
 
-        owner_expr = self._type_expr(copy.deepcopy(node.value))
-        obj_expr = copy.deepcopy(node.value)
+        owner_expr = self._type_expr(astutils.copy_tree(node.value))
+        obj_expr = astutils.copy_tree(node.value)
         objtype = type(base_value)
 
         try:
@@ -112,20 +113,22 @@ class AttributeRewriter:
             static_attr = None
 
         if static_attr is not None and self._is_descriptor(static_attr) and hasattr(static_attr, '__get__'):
-            descriptor_expr = self._descriptor_expr(copy.deepcopy(node.value), node.attr)
+            descriptor_expr = self._descriptor_expr(astutils.copy_tree(node.value), node.attr)
             return ast.Call(func=ast.Attribute(value=descriptor_expr, attr='__get__', ctx=ast.Load()),
-                            args=[obj_expr, copy.deepcopy(owner_expr)],
+                            args=[obj_expr, astutils.copy_tree(owner_expr)],
                             keywords=[])
 
         getattribute = objtype.__dict__.get('__getattribute__')
         if getattribute is not None and getattribute is not object.__getattribute__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__getattribute__',
+            return ast.Call(func=ast.Attribute(value=astutils.copy_tree(owner_expr),
+                                               attr='__getattribute__',
                                                ctx=ast.Load()),
                             args=[obj_expr, ast.Constant(node.attr)],
                             keywords=[])
 
         if static_attr is None and '__getattr__' in objtype.__dict__:
-            return ast.Call(func=ast.Attribute(value=copy.deepcopy(owner_expr), attr='__getattr__', ctx=ast.Load()),
+            return ast.Call(func=ast.Attribute(value=astutils.copy_tree(owner_expr), attr='__getattr__',
+                                               ctx=ast.Load()),
                             args=[obj_expr, ast.Constant(node.attr)],
                             keywords=[])
 

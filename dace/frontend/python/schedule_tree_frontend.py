@@ -63,7 +63,7 @@ def _clone_binding(binding: _Binding) -> _Binding:
 
 def _unparse(node: ast.AST) -> str:
     try:
-        working_node = copy.deepcopy(node)
+        working_node = astutils.copy_tree(node)
     except Exception:
         working_node = node
     sanitized = _sanitize_ast_for_unparse(working_node)
@@ -252,14 +252,14 @@ class _NestedFunctionProgram:
                  callback_mapping: Dict[str, str], seed_bindings: Dict[str, _Binding],
                  lambda_bindings: Dict[str, ast.Lambda], callable_bindings: Dict[str, Any]) -> None:
         self.name = name
-        self.function_ast = ast.fix_missing_locations(copy.deepcopy(function_ast))
+        self.function_ast = ast.fix_missing_locations(astutils.copy_tree(function_ast))
         self.program_globals = copy.copy(program_globals)
         self.external_globals = copy.copy(external_globals)
         self.captured_names = set(captured_names)
         self.constants = {key: (_clone_descriptor(desc), value) for key, (desc, value) in constants.items()}
         self.callback_mapping = dict(callback_mapping)
         self.seed_bindings = {key: _clone_binding(binding) for key, binding in seed_bindings.items()}
-        self.lambda_bindings = {key: copy.deepcopy(value) for key, value in lambda_bindings.items()}
+        self.lambda_bindings = {key: astutils.copy_tree(value) for key, value in lambda_bindings.items()}
         self.callable_bindings = dict(callable_bindings)
         self.signature = _function_signature_from_ast(function_ast)
         self.argnames = [parameter.name for parameter in self.signature.parameters.values()]
@@ -280,8 +280,11 @@ class _NestedFunctionProgram:
         bound_args = self.signature.bind_partial(*args, **kwargs)
         argtypes = {name: _binding_to_descriptor(value) for name, value in bound_args.arguments.items()}
 
-        active_lambda_bindings = {key: copy.deepcopy(value) for key, value in self.lambda_bindings.items()}
-        active_lambda_bindings.update({key: copy.deepcopy(value) for key, value in (lambda_bindings or {}).items()})
+        active_lambda_bindings = {key: astutils.copy_tree(value) for key, value in self.lambda_bindings.items()}
+        active_lambda_bindings.update({
+            key: astutils.copy_tree(value)
+            for key, value in (lambda_bindings or {}).items()
+        })
 
         active_callable_bindings = dict(self.callable_bindings)
         active_callable_bindings.update(dict(callable_bindings or {}))
@@ -292,7 +295,8 @@ class _NestedFunctionProgram:
         }
 
         parsed_ast = preprocessing.PreprocessedAST('<nested function>', getattr(self.function_ast, 'lineno', 0), '',
-                                                   copy.deepcopy(self.function_ast), copy.copy(self.program_globals))
+                                                   astutils.copy_tree(self.function_ast),
+                                                   copy.copy(self.program_globals))
         return build_schedule_tree(self.name,
                                    parsed_ast,
                                    argtypes,
@@ -404,7 +408,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.annotated_class_types: Dict[str, type[Any]] = {}
         self.explicit_structure_argument_names: set[str] = set()
         self.lambda_bindings: Dict[str, ast.Lambda] = {
-            key: copy.deepcopy(value)
+            key: astutils.copy_tree(value)
             for key, value in (lambda_bindings or {}).items()
         }
         self.callable_bindings: Dict[str, Any] = dict(callable_bindings or {})
@@ -505,7 +509,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if reason is not None:
             self.callback_handler.wrap_node(node, reason)
             return
-        value = ast.BinOp(left=copy.deepcopy(node.target), op=node.op, right=copy.deepcopy(node.value))
+        value = ast.BinOp(left=astutils.copy_tree(node.target), op=node.op, right=astutils.copy_tree(node.value))
         self._handle_assignment(node.target, value)
 
     def visit_Expr(self, node: ast.Expr) -> None:
@@ -532,7 +536,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._apply_method_self_descriptor_side_effect(planned_value)
             return
         if _requires_fstring_callback(planned_value):
-            callback_expr = ast.copy_location(ast.Expr(value=copy.deepcopy(planned_value)), planned_value)
+            callback_expr = ast.copy_location(ast.Expr(value=astutils.copy_tree(planned_value)), planned_value)
             self.callback_handler.wrap_node(callback_expr, 'f-string')
             return
         self._append_node(tn.StatementNode(code=CodeBlock(self._format_runtime_expression(planned_value))))
@@ -702,10 +706,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         """Return parseable source code for a callback-wrapped AST node."""
         if isinstance(node, ast.stmt):
             try:
-                return ast.unparse(_sanitize_ast_for_unparse(copy.deepcopy(node)))
+                return ast.unparse(_sanitize_ast_for_unparse(astutils.copy_tree(node)))
             except Exception:
                 try:
-                    return astutils.unparse(_sanitize_ast_for_unparse(copy.deepcopy(node)))
+                    return astutils.unparse(_sanitize_ast_for_unparse(astutils.copy_tree(node)))
                 except Exception:
                     return 'pass'
 
@@ -716,7 +720,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return _unparse(node)
             except Exception:
                 try:
-                    return ast.unparse(copy.deepcopy(node))
+                    return ast.unparse(node)
                 except Exception:
                     return 'None'
 

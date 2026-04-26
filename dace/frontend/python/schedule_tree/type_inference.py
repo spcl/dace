@@ -105,7 +105,7 @@ def _resolve_ufunc_inference_target(node: ast.Call, env: Dict[str, Any]) -> Opti
 
 
 def _unparse(node: ast.AST) -> str:
-    return astutils.unparse(copy.deepcopy(node))
+    return astutils.unparse(node)
 
 
 def _normalize_dtype(dtype: Any) -> Optional[dtypes.typeclass]:
@@ -433,7 +433,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
 
     def visit_Match(self, node: ast.Match) -> None:
         try:
-            lowered = lower_match_to_statements(node, copy.deepcopy(node.subject))
+            lowered = lower_match_to_statements(node, astutils.copy_tree(node.subject))
         except UnsupportedMatchPatternError:
             return
         for stmt in lowered:

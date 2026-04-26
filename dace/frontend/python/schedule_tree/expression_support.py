@@ -64,7 +64,6 @@ Chained matmul:
 """
 
 import ast
-import copy
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
@@ -155,7 +154,7 @@ class _ExpressionPlanner:
         emitting the final ReturnNode.
         """
 
-        rewritten = self._rewrite(copy.deepcopy(node))
+        rewritten = self._rewrite(astutils.copy_tree(node))
         if materialize_root and self._should_materialize(rewritten):
             return self._materialize(rewritten)
         return rewritten
@@ -164,22 +163,22 @@ class _ExpressionPlanner:
         if isinstance(node, ast.BinOp):
             return ast.copy_location(
                 ast.BinOp(left=self._rewrite_binop_child(node.left, node.right),
-                          op=copy.deepcopy(node.op),
+                          op=astutils.copy_tree(node.op),
                           right=self._rewrite_binop_child(node.right, node.left)), node)
 
         if isinstance(node, ast.UnaryOp):
-            return ast.copy_location(ast.UnaryOp(op=copy.deepcopy(node.op), operand=self._rewrite_child(node.operand)),
-                                     node)
+            return ast.copy_location(
+                ast.UnaryOp(op=astutils.copy_tree(node.op), operand=self._rewrite_child(node.operand)), node)
 
         if isinstance(node, ast.BoolOp):
             return ast.copy_location(
-                ast.BoolOp(op=copy.deepcopy(node.op), values=[self._rewrite_child(value) for value in node.values]),
-                node)
+                ast.BoolOp(op=astutils.copy_tree(node.op),
+                           values=[self._rewrite_child(value) for value in node.values]), node)
 
         if isinstance(node, ast.Compare):
             return ast.copy_location(
                 ast.Compare(left=self._rewrite_child(node.left),
-                            ops=copy.deepcopy(node.ops),
+                            ops=astutils.copy_tree(node.ops),
                             comparators=[self._rewrite_child(comp) for comp in node.comparators]), node)
 
         if isinstance(node, ast.IfExp):
@@ -225,14 +224,14 @@ class _ExpressionPlanner:
                 ast.Attribute(value=self._rewrite_child(func.value, materialize_pyobject_call=iterator_protocol_call),
                               attr=func.attr,
                               ctx=func.ctx), func)
-        return copy.deepcopy(func)
+        return astutils.copy_tree(func)
 
     def _rewrite_child(self,
                        node: ast.AST,
                        *,
                        materialize_pyobject_call: bool = False,
                        preserve_array_literal: bool = False) -> ast.AST:
-        rewritten = self._rewrite(copy.deepcopy(node))
+        rewritten = self._rewrite(astutils.copy_tree(node))
         if preserve_array_literal:
             return rewritten
         if self._should_materialize(rewritten):
@@ -242,14 +241,14 @@ class _ExpressionPlanner:
         return rewritten
 
     def _rewrite_binop_child(self, node: ast.AST, sibling: ast.AST) -> ast.AST:
-        rewritten = self._rewrite(copy.deepcopy(node))
+        rewritten = self._rewrite(astutils.copy_tree(node))
         array_literal_descriptor = None
         if isinstance(rewritten, (ast.List, ast.Tuple)):
             array_literal_descriptor = self.context.infer_descriptor(
                 ast.Call(func=ast.Attribute(value=ast.Name(id='numpy', ctx=ast.Load()), attr='array', ctx=ast.Load()),
-                         args=[copy.deepcopy(rewritten)],
+                         args=[astutils.copy_tree(rewritten)],
                          keywords=[]))
-            sibling_descriptor = self.context.infer_descriptor(copy.deepcopy(sibling))
+            sibling_descriptor = self.context.infer_descriptor(astutils.copy_tree(sibling))
             if (array_literal_descriptor is not None and sibling_descriptor is not None
                     and not isinstance(sibling_descriptor, data.Scalar)):
                 return self.context.materialize_expression(rewritten, array_literal_descriptor)

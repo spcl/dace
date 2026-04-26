@@ -8,7 +8,6 @@ Example:
 """
 
 import ast
-import copy
 import inspect
 from typing import Any, Dict, Optional
 
@@ -37,7 +36,7 @@ def extract_lambda_ast(func) -> Optional[ast.Lambda]:
     if len(candidates) != 1:
         return None
 
-    return ast.fix_missing_locations(copy.deepcopy(candidates[0]))
+    return ast.fix_missing_locations(astutils.copy_tree(candidates[0]))
 
 
 def inline_lambda_call(lambda_node: ast.Lambda, call_node: ast.Call) -> ast.AST:
@@ -48,13 +47,13 @@ def inline_lambda_call(lambda_node: ast.Lambda, call_node: ast.Call) -> ast.AST:
 
         def visit_Name(self, node: ast.Name) -> ast.AST:
             if isinstance(node.ctx, ast.Load) and node.id in bindings:
-                return copy.deepcopy(bindings[node.id])
+                return astutils.copy_tree(bindings[node.id])
             return node
 
         def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
             return node
 
-    return ast.fix_missing_locations(_LambdaInliner().visit(copy.deepcopy(lambda_node.body)))
+    return ast.fix_missing_locations(_LambdaInliner().visit(astutils.copy_tree(lambda_node.body)))
 
 
 def _bind_lambda_arguments(args: ast.arguments, call_node: ast.Call) -> Dict[str, ast.AST]:
@@ -71,16 +70,16 @@ def _bind_lambda_arguments(args: ast.arguments, call_node: ast.Call) -> Dict[str
         raise TypeError('Too many positional arguments for lambda call')
 
     for parameter, actual in zip(parameters, positional):
-        bindings[parameter.arg] = copy.deepcopy(actual)
+        bindings[parameter.arg] = astutils.copy_tree(actual)
 
     remaining_keywords = {kw.arg: kw.value for kw in call_node.keywords if kw.arg is not None}
     for index, parameter in enumerate(parameters[len(positional):], start=len(positional)):
         if parameter.arg in remaining_keywords:
-            bindings[parameter.arg] = copy.deepcopy(remaining_keywords.pop(parameter.arg))
+            bindings[parameter.arg] = astutils.copy_tree(remaining_keywords.pop(parameter.arg))
             continue
         default_index = index - default_offset
         if default_index >= 0:
-            bindings[parameter.arg] = copy.deepcopy(defaults[default_index])
+            bindings[parameter.arg] = astutils.copy_tree(defaults[default_index])
             continue
         raise TypeError(f'Missing argument {parameter.arg!r} for lambda call')
 
@@ -131,25 +130,25 @@ class LambdaResolver:
             self.lambda_bindings.pop(name, None)
             return
         self.lambda_bindings[name] = lambda_node
-        self._global_lambda_cache[name] = copy.deepcopy(lambda_node)
+        self._global_lambda_cache[name] = astutils.copy_tree(lambda_node)
 
     def resolve_known_lambda_node(self, node: ast.AST) -> Optional[ast.Lambda]:
         if isinstance(node, ast.Lambda):
-            return copy.deepcopy(node)
+            return astutils.copy_tree(node)
         if not isinstance(node, ast.Name):
             return None
         if node.id in self.lambda_bindings:
-            return copy.deepcopy(self.lambda_bindings[node.id])
+            return astutils.copy_tree(self.lambda_bindings[node.id])
         if node.id in self.callable_bindings:
             lambda_node = self.resolve_global_lambda_node(self.callable_bindings[node.id])
-            return copy.deepcopy(lambda_node) if lambda_node is not None else None
+            return astutils.copy_tree(lambda_node) if lambda_node is not None else None
         if node.id in self._global_lambda_cache:
             cached = self._global_lambda_cache[node.id]
-            return copy.deepcopy(cached) if cached is not None else None
+            return astutils.copy_tree(cached) if cached is not None else None
         value = self.globals.get(node.id)
         lambda_node = self.resolve_global_lambda_node(value) if value is not None else None
-        self._global_lambda_cache[node.id] = copy.deepcopy(lambda_node) if lambda_node is not None else None
-        return copy.deepcopy(lambda_node) if lambda_node is not None else None
+        self._global_lambda_cache[node.id] = astutils.copy_tree(lambda_node) if lambda_node is not None else None
+        return astutils.copy_tree(lambda_node) if lambda_node is not None else None
 
     def resolve_global_lambda_node(self, value: Any) -> Optional[ast.Lambda]:
         lambda_node = extract_lambda_ast(value)
@@ -165,7 +164,7 @@ class LambdaResolver:
             for name, captured_value in lambda_globals.items() if _can_inline_lambda_capture(captured_value)
         }
         if not inline_globals:
-            return copy.deepcopy(lambda_node)
+            return astutils.copy_tree(lambda_node)
 
         return _rewrite_lambda_free_names(lambda_node, inline_globals)
 
@@ -188,7 +187,7 @@ class LambdaResolver:
                     return ast.copy_location(rewritten, call_node)
                 return ast.copy_location(self.visit(inlined), call_node)
 
-        return ast.fix_missing_locations(_KnownLambdaInliner().visit(copy.deepcopy(node)))
+        return ast.fix_missing_locations(_KnownLambdaInliner().visit(astutils.copy_tree(node)))
 
 
 def _resolve_lambda_environment(value: Any) -> Dict[str, Any]:
@@ -238,12 +237,12 @@ def _can_inline_lambda_capture(value: Any) -> bool:
 
 def _rewrite_lambda_free_names(lambda_node: ast.Lambda, env: Dict[str, Any]) -> ast.Lambda:
     rewriter = _LambdaFreeNameRewriter(env)
-    return ast.fix_missing_locations(rewriter.visit(copy.deepcopy(lambda_node)))
+    return ast.fix_missing_locations(rewriter.visit(astutils.copy_tree(lambda_node)))
 
 
 def _value_to_ast(value: Any, template_node: ast.AST) -> Optional[ast.AST]:
     if isinstance(value, ast.AST):
-        return ast.copy_location(copy.deepcopy(value), template_node)
+        return ast.copy_location(astutils.copy_tree(value), template_node)
 
     if isinstance(value, symbolic.symbol):
         return ast.copy_location(ast.Name(id=value.name, ctx=ast.Load()), template_node)
@@ -398,7 +397,7 @@ def _lambda_loaded_names(lambda_node: Optional[ast.Lambda]) -> set[str]:
     if lambda_node is None:
         return set()
     collector = _LambdaLoadedNameCollector()
-    collector.visit(copy.deepcopy(lambda_node))
+    collector.visit(astutils.copy_tree(lambda_node))
     return collector.loaded_names
 
 

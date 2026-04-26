@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ast
 import builtins as pybuiltins
-import copy
 import inspect
 import math
 from typing import Dict, Optional, Tuple
 
+from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED
 
@@ -107,7 +107,9 @@ def rewrite_augassign(target: ast.AST, op: ast.operator, value: ast.AST,
                       callable_resolver: CallableResolver) -> Optional[ast.stmt]:
     if isinstance(target, ast.Subscript):
         current_value = ast.copy_location(
-            ast.Subscript(value=copy.deepcopy(target.value), slice=copy.deepcopy(target.slice), ctx=ast.Load()), target)
+            ast.Subscript(value=astutils.copy_tree(target.value),
+                          slice=astutils.copy_tree(target.slice),
+                          ctx=ast.Load()), target)
         getter_call = _rewrite_subscript(current_value, callable_resolver)
         updated = _rewrite_augassign_value(getter_call, op, value, template=target) if getter_call is not None else None
         if updated is None:
@@ -124,7 +126,7 @@ def rewrite_augassign(target: ast.AST, op: ast.operator, value: ast.AST,
     if updated is None:
         return None
 
-    assign = ast.Assign(targets=[copy.deepcopy(target)], value=updated)
+    assign = ast.Assign(targets=[astutils.copy_tree(target)], value=updated)
     return ast.copy_location(assign, target)
 
 
@@ -270,11 +272,12 @@ def _build_method_call(operand: ast.AST,
                        *,
                        template: ast.AST,
                        keywords: Optional[list[ast.keyword]] = None) -> ast.Call:
-    method = ast.copy_location(ast.Attribute(value=copy.deepcopy(operand), attr=method_name, ctx=ast.Load()), template)
+    method = ast.copy_location(ast.Attribute(value=astutils.copy_tree(operand), attr=method_name, ctx=ast.Load()),
+                               template)
     return ast.copy_location(
         ast.Call(func=method,
-                 args=[copy.deepcopy(arg) for arg in args],
-                 keywords=[copy.deepcopy(keyword) for keyword in (keywords or [])]), template)
+                 args=[astutils.copy_tree(arg) for arg in args],
+                 keywords=[astutils.copy_tree(keyword) for keyword in (keywords or [])]), template)
 
 
 def _resolve_dunder_method(operand: ast.AST, method_name: str, callable_resolver: CallableResolver):
@@ -319,7 +322,7 @@ def _is_parseable_dunder_value(value) -> bool:
 
 
 def _load_context_copy(target: ast.AST) -> Optional[ast.AST]:
-    copied = copy.deepcopy(target)
+    copied = astutils.copy_tree(target)
     if isinstance(copied, ast.Name):
         copied.ctx = ast.Load()
         return copied

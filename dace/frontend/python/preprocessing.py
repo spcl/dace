@@ -2146,13 +2146,13 @@ class NamedExprDesugarer(ast.NodeTransformer):
             def visit_NamedExpr(self, ne: ast.NamedExpr) -> ast.AST:
                 # Recurse into the value first
                 ne.value = self.visit(ne.value)
-                assign = ast.Assign(targets=[copy.deepcopy(ne.target)], value=ne.value)
+                assign = ast.Assign(targets=[astutils.copy_tree(ne.target)], value=ne.value)
                 ast.copy_location(assign, ne)
                 assignments.append(assign)
                 replacement = ast.Name(id=ne.target.id, ctx=ast.Load())
                 return ast.copy_location(replacement, ne)
 
-        rewritten = _Replacer().visit(copy.deepcopy(node))
+        rewritten = _Replacer().visit(astutils.copy_tree(node))
         return assignments, rewritten
 
     def _has_named_expr(self, node: ast.AST) -> bool:
@@ -2178,7 +2178,7 @@ class NamedExprDesugarer(ast.NodeTransformer):
         node.test = new_test
         # Add re-evaluation at end of loop body
         for assign in assignments:
-            node.body.append(copy.deepcopy(assign))
+            node.body.append(astutils.copy_tree(assign))
         ast.fix_missing_locations(node)
         return assignments + [node]
 
@@ -2332,7 +2332,7 @@ class ComprehensionDesugarer(ast.NodeTransformer):
                 prefix_stmts.extend(stmts)
                 return ast.Name(id=name, ctx=ast.Load())
 
-        rewritten = _Replacer().visit(copy.deepcopy(node))
+        rewritten = _Replacer().visit(astutils.copy_tree(node))
         return prefix_stmts, rewritten
 
     def _has_comprehension(self, node: ast.AST) -> bool:
@@ -2419,7 +2419,7 @@ class AugAssignExpander(ast.NodeTransformer):
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
         value = self.generic_visit(node.value)
-        newvalue = ast.copy_location(ast.BinOp(left=copy.deepcopy(target), op=node.op, right=value), value)
+        newvalue = ast.copy_location(ast.BinOp(left=astutils.copy_tree(target), op=node.op, right=value), value)
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue), node)
 
 

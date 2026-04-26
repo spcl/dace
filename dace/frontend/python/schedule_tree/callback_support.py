@@ -18,7 +18,6 @@ Example:
 from __future__ import annotations
 
 import ast
-import copy
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -27,6 +26,7 @@ from dace.properties import CodeBlock
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
+from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 
@@ -67,7 +67,7 @@ class CallbackOutliner:
     @staticmethod
     def code_block(body: CallbackBody) -> CodeBlock:
         """Return a ``CodeBlock`` for the original callback body."""
-        return CodeBlock(copy.deepcopy(CallbackOutliner._body_nodes(body)))
+        return CodeBlock(CallbackOutliner._body_nodes(body))
 
     @staticmethod
     def outline(body: CallbackBody, *, callback_name: str, input_names: Sequence[str],
@@ -75,7 +75,7 @@ class CallbackOutliner:
         """Build outlined function and call-site scaffolding for ``body``."""
         input_names = list(input_names)
         output_names = list(output_names)
-        function_body = copy.deepcopy(CallbackOutliner._body_nodes(body))
+        function_body = CallbackOutliner._body_nodes(body)
         if output_names:
             returned = ast.Name(id=output_names[0], ctx=ast.Load())
             if len(output_names) > 1:
@@ -112,11 +112,11 @@ class CallbackOutliner:
     @staticmethod
     def _body_nodes(body: CallbackBody) -> List[ast.stmt]:
         if isinstance(body, Sequence) and not isinstance(body, ast.AST):
-            return [copy.deepcopy(statement) for statement in body]
+            return [astutils.copy_tree(statement) for statement in body]
         if isinstance(body, ast.stmt):
-            return [copy.deepcopy(body)]
+            return [astutils.copy_tree(body)]
         if isinstance(body, ast.AST):
-            return [ast.Expr(value=copy.deepcopy(body))]
+            return [ast.Expr(value=astutils.copy_tree(body))]
         return [ast.Pass()]
 
 
@@ -167,7 +167,7 @@ class CallbackHandler:
                         f'program: {child.id}')
 
     def wrap_node(self, node: ast.AST, reason: str) -> None:
-        node = ast.fix_missing_locations(copy.deepcopy(node))
+        node = ast.fix_missing_locations(astutils.copy_tree(node))
         try:
             code = CodeBlock(self.render_callback_code(node))
         except Exception:
@@ -207,7 +207,7 @@ class CallbackHandler:
                           'annotate the assignment target, e.g. val: dace.float64 = next(gen).')
         kind = self.binding_kind_for_descriptor(descriptor)
         self.register_binding(name, descriptor, kind)
-        callback_assign = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=copy.deepcopy(value))
+        callback_assign = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=astutils.copy_tree(value))
         callback_assign = ast.copy_location(callback_assign, value)
         self.wrap_node(callback_assign, reason)
 
