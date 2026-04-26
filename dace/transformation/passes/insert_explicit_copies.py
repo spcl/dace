@@ -19,18 +19,16 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     """Pick a destination subset for a memlet that omits ``other_subset``/``dst_subset``.
 
     Convention used by implicit copy edges: if the destination array's shape
-    matches the source subset's volume shape, the implicit destination range
-    is the full destination (offset 0 on every dimension). Otherwise we fall
-    back to ``src_subset`` for backward compatibility — that path is only
+    matches the source subset's volume shape (either directly, or after
+    squeezing singleton dimensions), the implicit destination range is the
+    full destination (offset 0 on every dimension). Otherwise we fall back
+    to ``src_subset`` for backward compatibility — that path is only
     correct when the two arrays share the same shape.
     """
     from dace import subsets as _subsets
 
     src_size = list(src_subset.size())
     dst_shape = list(dst_desc.shape)
-
-    if len(src_size) != len(dst_shape):
-        return src_subset
 
     # DaCe symbols are interned by name but `sympy.simplify` can leave
     # `N - N` un-simplified when the two `N` instances belong to different
@@ -44,8 +42,30 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
         except Exception:
             return False
 
-    if all(_eq(s, d) for s, d in zip(src_size, dst_shape)):
+    def _shapes_match(a, b):
+        return len(a) == len(b) and all(_eq(s, d) for s, d in zip(a, b))
+
+    # Direct match: ranks and per-dim sizes line up exactly.
+    if _shapes_match(src_size, dst_shape):
         return _subsets.Range.from_array(dst_desc)
+
+    # Rank-reducing case: drop singleton dims from the source subset and
+    # try again. Pattern: ``A[i, j, 0:N]`` -> 1-D destination of size ``N``
+    # where the singleton index dims are implicit on the source side only.
+    src_size_squeezed = [s for s in src_size if not _eq(s, 1)]
+    if _shapes_match(src_size_squeezed, dst_shape):
+        return _subsets.Range.from_array(dst_desc)
+
+    # Rank match (after squeezing) but per-dim sizes differ symbolically.
+    # This catches cases where the subset's stepped range produces a size
+    # symbolically different from the destination's declared shape (e.g.
+    # ``1:N-1:2`` -> ``ceiling(N/2) - 1`` vs ``floor(N/2) - 1``) even
+    # though they agree at runtime for valid ``N``. Trust the user's
+    # intent that the volumes line up and pick the destination's full
+    # natural range.
+    if len(src_size_squeezed) == len(dst_shape):
+        return _subsets.Range.from_array(dst_desc)
+
     return src_subset
 
 
@@ -153,17 +173,30 @@ class InsertExplicitCopies(ppl.Pass):
 
             src_name = src_node.data
             dst_name = dst_node.data
-            src_subset = memlet.src_subset or memlet.subset
-            dst_subset = memlet.dst_subset or memlet.other_subset
+
+            # `Memlet` carries `data` (which array `subset` refers to) plus an
+            # optional `other_subset` (the other side). Decide which side is
+            # which from `memlet.data` rather than blindly assuming `subset`
+            # is the source range — `Memlet.simple(dst, ...)` is a common
+            # idiom that puts the subset on the destination side.
+            if memlet.data == src_name:
+                src_subset = memlet.subset
+                dst_subset = memlet.other_subset
+            elif memlet.data == dst_name:
+                dst_subset = memlet.subset
+                src_subset = memlet.other_subset
+            else:
+                # ``data`` matches neither endpoint (rare; defensive fallback).
+                src_subset = memlet.subset
+                dst_subset = memlet.other_subset
+
+            # Fill in either side that wasn't carried by the memlet, deriving
+            # a matching range on the absent side from the array shape when
+            # the volumes line up (common for implicit copies between
+            # different-shaped but same-volume arrays).
+            if src_subset is None:
+                src_subset = _derive_matching_dst_subset(dst_subset, src_desc, dst_desc)
             if dst_subset is None:
-                # Implicit memlets on AccessNode→AccessNode edges often carry
-                # only `subset` (the source side) and rely on the codegen to
-                # derive a matching destination range. If the destination
-                # array's shape equals the source-subset volume shape, use the
-                # full destination range (offset 0). Otherwise fall back to
-                # `src_subset` — this preserves prior behavior for same-shape
-                # arrays but will be out-of-bounds for shape-mismatched cases
-                # (the user should specify `other_subset` explicitly).
                 dst_subset = _derive_matching_dst_subset(src_subset, dst_desc, src_desc)
 
             in_memlet = Memlet(data=src_name, subset=_copy.deepcopy(src_subset))
