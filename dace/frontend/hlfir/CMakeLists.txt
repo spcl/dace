@@ -183,6 +183,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/FlattenStructs.cpp
     passes/DefaultIntent.cpp
     passes/VerifyNoUnresolvedCalls.cpp
+    passes/FoldElementAliases.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core

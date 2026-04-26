@@ -15,6 +15,20 @@ import re
 
 _INDIRECT_RE = re.compile(r'^(\w+)\[([^\]]*)\]$')
 
+# Process-level monotonic counter used to mint stable, grep-able names for
+# inline indirection loads (``<arr>_at<gid>``).  Kept process-level rather
+# than per-SDFG so multi-file runs don't re-issue the same name in two
+# unrelated kernels — each lift gets a unique tag, easy to find in
+# transcripts and SDFG dumps.
+_INDIRECTION_GID_COUNTER = 0
+
+
+def _next_indirection_gid() -> int:
+    global _INDIRECTION_GID_COUNTER
+    gid = _INDIRECTION_GID_COUNTER
+    _INDIRECTION_GID_COUNTER += 1
+    return gid
+
 
 def acc(builder, state, name: str):
     """Single access node for ``name`` in ``state``, reused across reads /
@@ -55,15 +69,43 @@ def indirect_host(expr: str) -> str:
 
 def collect_indirect(builder, assigns: list) -> dict:
     """Walk every access in ``assigns`` and mint a fresh SDFG symbol for
-    each distinct indirect index expression.  Returns a map from the
-    Fortran-style expression (``edge_idx[jc,1]``) to the symbol name."""
+    each distinct *inline* indirect index expression.  Returns a map from
+    the Fortran-style expression (``edge_idx[jc,1]``) to the symbol name.
+
+    Naming: ``<arr>_at<gid>`` — the prefix carries the source array's
+    Fortran name so the SDFG dump shows which load the symbol holds; the
+    process-level monotonic ``gid`` disambiguates same-expression-different-
+    call-site without us having to normalise the inner expression.
+    """
     out = {}
     for a in assigns:
         for ac in a.accesses:
             for expr in getattr(ac, 'index_exprs', None) or []:
                 if '[' in expr and expr not in out:
-                    out[expr] = f"_idx_{builder.nid()}"
+                    arr = indirect_host(expr) or "idx"
+                    out[expr] = f"{arr}_at{_next_indirection_gid()}"
     return out
+
+
+def array_read_to_dace_expr(builder, assign_node, iter_map: dict) -> str:
+    """Render a scalar-target assign whose RHS is a single array read
+    (``ci0 = icidx(je, jb, 1)``) as a DaCe-style indexed expression with
+    Fortran→0-based offsets and ``iter_map`` remap applied.  Used to lift
+    the assign onto an interstate-edge assignment so the loaded value
+    becomes a live SDFG symbol the consuming tasklet's memlet can index
+    by.  Falls back to ``assign_node.expr`` if there's no array read."""
+    reads = [ac for ac in assign_node.accesses if ac.is_read and ac.array_name in builder.arrays]
+    if not reads:
+        return assign_node.expr
+    ac = reads[0]
+    arr = ac.array_name
+    info = builder.arrays.get(arr)
+    lbs = info.lower_bounds if info else []
+    parts = []
+    for dim, raw in enumerate(ac.index_exprs):
+        lb = lbs[dim] if dim < len(lbs) else "1"
+        parts.append(offset_index_token(raw.strip(), lb, iter_map))
+    return f"{arr}[{', '.join(parts)}]"
 
 
 def indirect_to_dace(builder, expr: str, iter_map: dict) -> str:
@@ -124,11 +166,13 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
             continue
 
         # Closed-form arithmetic expression from the bridge (e.g. the
-        # assumed-shape rebase ``(1 - 3)`` on an aliased declare).
-        # Use it verbatim as the Fortran-side index and apply the
-        # outer array's ``lb`` offset uniformly.
+        # assumed-shape rebase ``(1 - 3)`` on an aliased declare, or
+        # ``arr(k-1)`` -> ``(k - 1)``).  The bridge prints the raw
+        # Fortran iter name; rewrite it through ``iter_map`` so the
+        # subset matches the LoopRegion's uniquified loop_var, then
+        # apply the outer array's ``lb`` offset uniformly.
         if any(op in expr for op in "+-*/") or expr.startswith("("):
-            parts.append(_apply_lb(expr, lb))
+            parts.append(_apply_lb(_remap_iters(expr, iter_map), lb))
             continue
 
         uid = iter_map.get(v, v)
@@ -148,6 +192,16 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
                 parts.append(f"{uid} - {lb}")
 
     return ", ".join(parts)
+
+
+def _remap_iters(expr: str, iter_map: dict) -> str:
+    """Replace each whole-word Fortran iter name in ``expr`` with its
+    uniquified counterpart from ``iter_map``.  Used for closed-form
+    arithmetic subscripts where the bridge printed the raw block-arg
+    name; the plain-identifier path does this lookup elsewhere."""
+    if not iter_map:
+        return expr
+    return re.sub(r"\b([A-Za-z_]\w*)\b", lambda m: iter_map.get(m.group(1), m.group(1)), expr)
 
 
 def _apply_lb(expr: str, lb: str) -> str:

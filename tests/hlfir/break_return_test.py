@@ -6,12 +6,19 @@ either absorbs them into an ``scf.while`` condition or gives up — so
 bridge-side detection is a separate workstream.  This test covers the
 other side of that future pipe: given a ``SDFGBuilder`` seeded with an
 AST that contains ``kind="break"`` / ``kind="return"`` nodes, the
-emitted SDFG must be structurally correct, validate, compile, and
-produce the right numerical output.
+emitted SDFG must be structurally correct, validate, compile, and run
+end-to-end.
 
 The AST is a stub class (not the nanobind-bound ASTNode) since we
 can't construct those from Python — it just needs the fields the
 emitters read.
+
+Each emitted SDFG also gets called with concrete inputs and the
+resulting array contents are checked numerically against a hand-rolled
+reference.  Bridge-side ``EXIT`` is covered end-to-end through real
+Fortran source by ``do_loop_exit_test.py`` (where Flang's lift-cf-to-scf
+turns the EXIT into an ``scf.while`` keep-going condition); these tests
+are the focused unit-test for the emit handlers themselves.
 """
 from __future__ import annotations
 
@@ -59,22 +66,20 @@ class _Node:
 
 def test_return_block_wired_at_top_level(tmp_path):
     """An SDFG whose AST contains a top-level RETURN emits a
-    ``ReturnBlock`` that the codegen turns into an early ``return``
-    from the generated C++ entry point.  Arrays touched before the
-    return retain their written values; arrays touched after don't."""
+    ``ReturnBlock`` that codegen turns into an early ``return`` from
+    the generated C++ entry point.  Calling the resulting SDFG must
+    leave its inputs untouched — the body has no compute before the
+    return."""
     import dace
     from dace import SDFG
     from hlfir_to_sdfg import SDFGBuilder
 
-    # Bypass the normal bridge path: build a stub VarInfo set + AST,
-    # then run the descriptor pass and _emit directly.
     builder = SDFGBuilder.__new__(SDFGBuilder)
     builder.variables = []
     builder.arrays = {}
     builder.symbols = {}
     builder.scalars = {}
     builder._id_counter = 0
-    # Minimal SDFG with one array.
     sdfg = SDFG("early_ret")
     sdfg.add_symbol("n", dace.int64)
     sdfg.add_array("a", shape=(dace.symbol("n"), ), dtype=dace.float64, transient=False)
@@ -82,18 +87,24 @@ def test_return_block_wired_at_top_level(tmp_path):
     from hlfir_to_sdfg import _Ctx
     ctx = _Ctx(sdfg, builder)
 
-    # AST: just a Return node at top level.  Upstream detection would
-    # guard it on a condition via ConditionalBlock; here we verify the
-    # primitive.
     ast = [_Node(kind="return")]
     builder._emit(ctx, ast, sdfg)
     ctx.flush(builder, sdfg)
     sdfg.validate()
 
+    # Numerical check: the SDFG is a bare top-level RETURN — calling it
+    # must compile, run, and leave ``a`` element-wise unchanged.
+    a_init = np.array([1.5, -2.5, 3.5, 4.5], dtype=np.float64)
+    a = a_init.copy()
+    sdfg(a=a, n=a.size)
+    np.testing.assert_array_equal(a, a_init)
+
 
 def test_break_block_inside_loop_region(tmp_path):
     """A LoopRegion containing a ConditionalBlock whose true-arm is a
-    BreakBlock behaves like an early-exit ``while`` in C++."""
+    BreakBlock behaves like an early-exit ``while`` in C++.  The empty
+    body never writes ``a``, so a successful e2e run must return the
+    array unchanged regardless of where the break fires."""
     import dace
     from dace import SDFG
     from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
@@ -132,18 +143,24 @@ def test_break_block_inside_loop_region(tmp_path):
     builder._emit(_Ctx(sdfg, builder), [_Node(kind="break")], break_region)
 
     else_region = ControlFlowRegion("body_branch", sdfg=sdfg)
-    # ControlFlowRegion requires a start block; give the else-arm a
-    # trivial state even though there's nothing to do.
     else_region.add_state("body_noop", is_start_block=True)
     cond_block.add_branch(None, else_region)
 
     sdfg.validate()
 
-    # Numerical check — loop must stop at the first a[i] > 100.
-    a = np.array([1.0, 2.0, 3.0, 200.0, 5.0], dtype=np.float64)
-    sdfg(a=a, n=5, i=0)
-    # The body doesn't write anything; we're just proving the SDFG
-    # compiles and runs to completion without hanging.
+    # Numerical check — the loop body has no writes.  Whether the break
+    # fires (a[3] > 100 below) or not, ``a`` must come back unchanged.
+    a_init = np.array([1.0, 2.0, 3.0, 200.0, 5.0], dtype=np.float64)
+    a = a_init.copy()
+    sdfg(a=a, n=a.size, i=0)
+    np.testing.assert_array_equal(a, a_init)
+
+    # Also exercise the no-break path: every element below threshold so
+    # the loop exits naturally on the counter.
+    a_no_break = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
+    a_nb = a_no_break.copy()
+    sdfg(a=a_nb, n=a_nb.size, i=0)
+    np.testing.assert_array_equal(a_nb, a_no_break)
 
 
 if __name__ == "__main__":

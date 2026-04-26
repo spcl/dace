@@ -8,12 +8,33 @@
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
+#include <unordered_map>
+
 namespace hlfir_bridge {
 
 std::string extractName(const std::string &m) {
     auto p = m.rfind('E');
     return p != std::string::npos ? m.substr(p + 1) : m;
 }
+
+// Allocatable re-allocation alias map.  Keyed by the raw Fortran name
+// (what the declare chain alone would resolve to).  Updated as the
+// bridge's IR walker passes ``fir.allocmem``-bound ``fir.store`` ops
+// (see extract_ast.cpp); read by ``traceToDecl`` so every downstream
+// access lands on the currently-live SDFG transient.
+static thread_local std::unordered_map<std::string, std::string> kAllocAlias;
+
+std::string allocAliasFor(const std::string &raw) {
+    auto it = kAllocAlias.find(raw);
+    return it == kAllocAlias.end() ? raw : it->second;
+}
+
+void setAllocAlias(const std::string &raw, const std::string &alias) {
+    if (alias == raw) kAllocAlias.erase(raw);
+    else              kAllocAlias[raw] = alias;
+}
+
+void clearAllocAliases() { kAllocAlias.clear(); }
 
 std::string traceToDecl(mlir::Value val, int max) {
     for (int i = 0; i < max && val; ++i) {
@@ -27,10 +48,10 @@ std::string traceToDecl(mlir::Value val, int max) {
                 val = outer.getResult(0);
                 continue;
             }
-            return extractName(dc.getUniqName().str());
+            return allocAliasFor(extractName(dc.getUniqName().str()));
         }
         if (auto dc = mlir::dyn_cast<fir::DeclareOp>(d))
-            return extractName(dc.getUniqName().str());
+            return allocAliasFor(extractName(dc.getUniqName().str()));
         if (auto c = mlir::dyn_cast<fir::ConvertOp>(d))
             { val = c.getValue(); continue; }
         if (auto l = mlir::dyn_cast<fir::LoadOp>(d))

@@ -50,6 +50,8 @@ its predecessors having reshaped the IR:
 
 | Pass | Purpose |
 | --- | --- |
+| `hlfir-fold-element-aliases` | Erase element-scoped alias declares left by inlined elemental / scalar-arg procedures |
+| `symbol-dce` | Drop now-private callee bodies once `hlfir-inline-all` has folded them in |
 | `hlfir-flatten-structs` | AoS → SoA; emits `hlfir.flatten_plan` module attribute |
 | `hlfir-propagate-shapes` | Assumed-shape dummies acquire real extent symbols |
 | `hlfir-default-intent` | Intent-less dummies default to `intent_inout` |
@@ -130,6 +132,67 @@ init-to-identity assign plus a `kind="loop"` whose body accumulates
 via the appropriate Python operator. DaCe's Reduce can't express a
 dynamic-section input directly.
 
+**ELEMENTAL procedures → loop + scalar tasklet.** A Fortran
+`elemental` procedure is a scalar body that, when called on array
+actuals, Flang lowers as `fir.do_loop { hlfir.designate per-arg;
+fir.call scalar_body }` for the subroutine form, or as
+`hlfir.elemental { hlfir.designate; fir.call; yield_element }` for
+the function form. `hlfir-inline-all` splices the callee's body in;
+the per-element `hlfir.declare`s that remain (callee dummies named
+after outer array elements) are semantic no-ops that carry the
+callee's Fortran names into the body. `hlfir-fold-element-aliases`
+erases those — whatever reads them rewires to the outer array's
+`hlfir.designate`, so the SDFG builder sees the same shape as a
+hand-written per-element loop. `fir.do_loop` block args with no
+store-to-alloca sibling (produced by this fold) get a synthetic
+iter name (`_doit_N`) pushed onto `indexStack()` so `resolveIndex`
+still resolves raw block-arg uses inside the body.
+
+**Sibling-assign RAW hazards in loop bodies.** When a `fir.do_loop`
+body contains multiple assigns (`f = c*c; a = a - b*f; …`) into
+`hlfir.declare`-backed storage, the naïve "one tasklet per assign,
+all in one body state" wiring races: non-transient access nodes
+share the underlying SDFG array, so a second tasklet's write can
+clobber a first tasklet's read even with distinct access nodes. The
+loop emitter detects any read-write name overlap across siblings
+and serialises them into a chain of states (one tasklet per state,
+interstate edges between). Siblings with no hazard still share a
+single state — the check is per-loop-body, not a blanket pessimisation.
+
+**OPTIONAL dummies → companion present-flag.** Fortran `OPTIONAL`
+args compile to `hlfir.declare` with `fortran_attrs = optional`, and
+`present(x)` lowers to `fir.is_present %x : (!fir.ref<T>) -> i1`.
+The bridge's `buildBoolExpr` renders that op as the identifier
+`<name>_present`, and `extract_vars` registers a corresponding
+`int32` symbol `VarInfo` right after each optional declare. The
+flag lands on the SDFG signature alongside its host (`sdfg(a=…,
+a_present=…)`); non-zero = present, zero = absent. The existing
+if/else lowering reads the flag exactly like any other scalar
+condition — no new AST kind. Intent-less optionals default to
+`intent_in` so `descriptors.py` doesn't misclassify them as
+transients. Correctness relies on Fortran's guarantee that every
+non-`present()` use of an absent optional is dominated by a
+`present` check; the SDFG simply threads that check through.
+
+**AoS → SoA flattening.** `hlfir-flatten-structs` is the bridge's
+answer to Fortran derived types: DaCe has no record/struct data
+descriptor, so every member is hoisted out as its own top-level
+dummy. Each struct-typed `hlfir.declare` is replaced by one
+`hlfir.declare` per member (plus shape-ferrying ops), every
+`hlfir.designate` onto a struct field rewires to the lifted member,
+and the pass stamps a `hlfir.flatten_plan` module attribute
+recording the original AoS shape: which dummy each member came from,
+its offset in the record, whether it's aliasable (contiguous,
+pointer-valid), and the scratch dtype for non-aliasable spill. The
+downstream SDFG sees only flat arrays, no knowledge of the parent
+type. Stage (5) re-assembles the AoS view on the caller side:
+`bindings/loop_copy.py` reads the `FlattenPlan` and emits, per
+member, either a zero-copy `c_f_pointer` alias (contiguous +
+lifetime-compatible) or an explicit Fortran `do`-loop copy into a
+scratch member-typed array. The original caller's signature stays
+intact — the binding module is the AoS↔SoA boundary, the SDFG only
+ever sees SoA.
+
 **Signature freezing.** `codegen.generate_code` verifies
 `sdfg._frozen_signature` before emitting the C++ header. Drift from
 the snapshot raises `SignatureDriftError`. Transformations mutate
@@ -154,6 +217,7 @@ dace/frontend/hlfir/
 │   └── trace_utils.cpp         SSA tracing + alias helpers + depth limits
 ├── passes/            C++ — HLFIR → HLFIR rewrites
 │   ├── InlineAll.cpp
+│   ├── FoldElementAliases.cpp  erase elemental-body alias declares
 │   ├── FlattenStructs.cpp      stamps hlfir.flatten_plan
 │   ├── PropagateShapes.cpp
 │   ├── DefaultIntent.cpp

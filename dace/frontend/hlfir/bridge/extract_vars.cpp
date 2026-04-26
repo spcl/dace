@@ -68,6 +68,50 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     return syms;
 }
 
+/// Collect every ``fir.allocmem`` whose ``uniq_name`` matches
+/// ``<declUniqName>.alloc``, in IR walk order.  Multiple matches indicate
+/// that the user wrote more than one ``ALLOCATE`` for the variable
+/// (e.g. across an explicit ``DEALLOCATE`` + re-``ALLOCATE``).
+static std::vector<fir::AllocMemOp> collectAllocSites(
+    const std::string &declName, mlir::ModuleOp module) {
+    std::vector<fir::AllocMemOp> sites;
+    if (declName.empty()) return sites;
+    std::string allocName = declName + ".alloc";
+    module.walk([&](fir::AllocMemOp a) {
+        auto un = a.getUniqName();
+        if (un && un->str() == allocName)
+            sites.push_back(a);
+    });
+    return sites;
+}
+
+/// Resolve the runtime shape of one ``fir.allocmem`` site to a symbol
+/// name list, the same way ``resolveShapeSyms`` resolves a static
+/// declare's shape — trace each size operand to its host declare
+/// (preferred), fall back to a constant literal, then to ``?``.
+static std::vector<std::string> shapeFromAllocSite(fir::AllocMemOp alloc) {
+    std::vector<std::string> syms;
+    for (auto sz : alloc.getShape()) {
+        auto n = traceToDecl(sz);
+        if (!n.empty()) { syms.push_back(n); continue; }
+        if (auto c = traceConstInt(sz)) {
+            syms.push_back(std::to_string(*c));
+            continue;
+        }
+        syms.push_back("?");
+    }
+    return syms;
+}
+
+/// First ALLOCATE keeps the allocatable's original Fortran name (so
+/// every existing single-allocation test stays green); subsequent
+/// allocations mint fresh transient names ``<x>_alloc1``,
+/// ``<x>_alloc2``, … one per re-allocation site.
+std::string allocAliasName(const std::string &fortran, unsigned site) {
+    if (site == 0) return fortran;
+    return fortran + "_alloc" + std::to_string(site);
+}
+
 static std::vector<std::string> resolveLowerBounds(hlfir::DeclareOp decl) {
     std::vector<std::string> lbs;
     auto shape = decl.getShape();
@@ -243,14 +287,46 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 v.intent = "in";
             else if (bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::intent_out))
                 v.intent = "out";
+            // An OPTIONAL dummy without an explicit intent is still a
+            // dummy — treat it as ``intent(in)`` by default so
+            // descriptors.py doesn't misclassify it as a transient
+            // local.  The Fortran spec allows any intent for an
+            // unspecified OPTIONAL; ``in`` is the common case (and
+            // widens safely to ``inout`` via the caller's own buffer).
+            if (v.intent.empty()
+                && bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::optional))
+                v.intent = "in";
         }
 
         // Unwrap FIR type wrappers to find element type + rank.
+        //
+        // Plain dummy / local arrays surface a single layer (Box, Ref,
+        // Heap, or Ptr) over the SequenceType, so the original
+        // sequential ``if``s suffice — preserving every non-allocatable
+        // declare's existing classification.  Allocatable declares add
+        // two extra layers (``ref<box<heap<array<…>>>>``); only loop
+        // through the wrappers when we know the declare is allocatable
+        // so POINTER and other box-typed dummies keep their previous
+        // (rank = 0 → scalar passthrough) classification.
         auto ty = op.getResult(0).getType();
-        if (auto b = mlir::dyn_cast<fir::BoxType>(ty)) ty = b.getEleTy();
-        if (auto r = mlir::dyn_cast<fir::ReferenceType>(ty)) ty = r.getEleTy();
-        if (auto h = mlir::dyn_cast<fir::HeapType>(ty)) ty = h.getEleTy();
-        if (auto p = mlir::dyn_cast<fir::PointerType>(ty)) ty = p.getEleTy();
+        bool isAllocatableAttr = false;
+        if (auto a = op.getFortranAttrs())
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::allocatable))
+                isAllocatableAttr = true;
+        if (isAllocatableAttr) {
+            for (int peel = 0; peel < 6; ++peel) {
+                if (auto b = mlir::dyn_cast<fir::BoxType>(ty))       { ty = b.getEleTy(); continue; }
+                if (auto r = mlir::dyn_cast<fir::ReferenceType>(ty)) { ty = r.getEleTy(); continue; }
+                if (auto h = mlir::dyn_cast<fir::HeapType>(ty))      { ty = h.getEleTy(); continue; }
+                if (auto p = mlir::dyn_cast<fir::PointerType>(ty))   { ty = p.getEleTy(); continue; }
+                break;
+            }
+        } else {
+            if (auto b = mlir::dyn_cast<fir::BoxType>(ty)) ty = b.getEleTy();
+            if (auto r = mlir::dyn_cast<fir::ReferenceType>(ty)) ty = r.getEleTy();
+            if (auto h = mlir::dyn_cast<fir::HeapType>(ty)) ty = h.getEleTy();
+            if (auto p = mlir::dyn_cast<fir::PointerType>(ty)) ty = p.getEleTy();
+        }
         if (auto seq = mlir::dyn_cast<fir::SequenceType>(ty)) {
             for (auto d : seq.getShape())
                 if (d == fir::SequenceType::getUnknownExtent())
@@ -287,6 +363,33 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         v.shape_symbols = resolveShapeSyms(op);
         v.lower_bounds  = resolveLowerBounds(op);
 
+        // Allocatable: hlfir.declare has no shape; pull it from the
+        // matching ``fir.allocmem`` site(s).  One ALLOCATE → use the
+        // first site for ``x``'s shape.  Multiple ALLOCATEs (re-
+        // allocation across an explicit DEALLOCATE) → register one
+        // extra synthetic VarInfo per additional site, named
+        // ``x_alloc1``, ``x_alloc2``, … (allocAliasName); the bridge's
+        // alias map (see extract_ast.cpp) will route per-site reads /
+        // writes to the right transient at AST-build time.
+        bool isAllocatable = false;
+        if (auto a = op.getFortranAttrs())
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::allocatable))
+                isAllocatable = true;
+        std::vector<fir::AllocMemOp> allocSites;
+        if (isAllocatable && v.rank > 0)
+            allocSites = collectAllocSites(v.mangled_name, module);
+        if (!allocSites.empty()
+            && (v.shape_symbols.empty()
+                || std::all_of(v.shape_symbols.begin(), v.shape_symbols.end(),
+                               [](const std::string &s){ return s == "?"; }))) {
+            auto from_alloc = shapeFromAllocSite(allocSites.front());
+            if (!from_alloc.empty()) {
+                v.shape_symbols = std::move(from_alloc);
+                if (v.lower_bounds.size() != v.shape_symbols.size())
+                    v.lower_bounds.assign(v.shape_symbols.size(), "1");
+            }
+        }
+
         // Assumed-shape fallback: synthesise per-dim symbol names.
         if (v.shape_symbols.empty() && v.rank > 0)
             for (int dim = 0; dim < v.rank; ++dim)
@@ -297,6 +400,52 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (v.rank > 0)                             v.role = "array";
         else if (symbolNames.count(v.fortran_name)) v.role = "symbol";
         else                                        v.role = "scalar";
+
+        // OPTIONAL dummy → companion presence flag.  Fortran's
+        // ``present(x)`` lowers to ``fir.is_present %x -> i1``, and the
+        // bridge renders that as the name ``<x>_present``.  Register a
+        // symbol VarInfo for that name here so callers see it on the
+        // SDFG signature (non-zero = present, 0 = absent).  We register
+        // it BEFORE pushing v, since the caller position should follow
+        // the Fortran dummy order — the flag sits alongside its host.
+        bool isOptional = false;
+        if (auto a = op.getFortranAttrs()) {
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::optional))
+                isOptional = true;
+        }
+        if (isOptional) {
+            VarInfo pv;
+            pv.fortran_name = v.fortran_name + "_present";
+            pv.mangled_name = v.mangled_name + "_present";
+            pv.dtype        = "int32";  // plain Fortran integer
+            pv.rank         = 0;
+            pv.intent       = "in";
+            pv.role         = "symbol";
+            vars.push_back(std::move(pv));
+        }
+
+        // For an allocatable with N ALLOCATE sites, register N-1
+        // additional synthetic transients alongside the primary
+        // VarInfo.  Each gets the per-site shape (n1, n2, …) and the
+        // ``x_allocK`` alias name; the AST builder will redirect reads
+        // / writes after the K-th ALLOCATE through this name.
+        if (allocSites.size() > 1) {
+            for (unsigned site = 1; site < allocSites.size(); ++site) {
+                VarInfo av;
+                av.fortran_name  = allocAliasName(v.fortran_name, site);
+                av.mangled_name  = v.mangled_name + "_alloc" + std::to_string(site);
+                av.intent        = "";        // local transient, no caller-side ABI
+                av.dtype         = v.dtype;
+                av.rank          = v.rank;
+                av.is_dynamic    = v.is_dynamic;
+                av.shape_symbols = shapeFromAllocSite(allocSites[site]);
+                if (av.shape_symbols.size() < (size_t)av.rank)
+                    av.shape_symbols.assign(av.rank, "?");
+                av.lower_bounds.assign(av.shape_symbols.size(), "1");
+                av.role          = "array";
+                vars.push_back(std::move(av));
+            }
+        }
 
         vars.push_back(std::move(v));
     }

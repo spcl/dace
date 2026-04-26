@@ -386,9 +386,11 @@ end subroutine outer
     np.testing.assert_allclose(d_sdfg, d_ref)
 
 
-@_xfail("HLFIR frontend: OPTIONAL dummy arguments not lowered")
 def test_ported_optional_arg(tmp_path):
-    """Port of ``optional_args_test`` (scalar optional, present branch)."""
+    """Port of ``optional_args_test`` — ``present()`` on a scalar optional
+    resolves to a companion ``<name>_present`` symbol on the SDFG ABI.
+    Caller passes the flag alongside the dummy: non-zero = present,
+    zero = absent.  Covers both branches of the Fortran ``if present()``."""
     src = """
 subroutine opt_sum(res, a)
   implicit none
@@ -404,17 +406,34 @@ end subroutine opt_sum
     mod = _f2py(src, tmp_path / "ref", "opt_sum")
     sdfg = _build(src, tmp_path / "sdfg", name="opt_sum")
 
+    # Present branch: caller supplies a and sets a_present=1.
     r_ref = np.zeros(2, order="F", dtype=np.int32)
     mod.opt_sum(r_ref, 5)
     r_sdfg = np.zeros(2, dtype=np.int32)
-    sdfg(res=r_sdfg, a=5)
+    sdfg(res=r_sdfg, a=np.array([5], dtype=np.int32), a_present=np.int32(1))
     np.testing.assert_array_equal(r_sdfg, r_ref)
 
+    # Absent branch: reference call omits the argument entirely; SDFG
+    # caller passes any placeholder value for ``a`` and sets the flag
+    # to zero.  Fortran guarantees the callee doesn't read ``a`` in
+    # that branch, so the placeholder's value is immaterial.
+    r_ref_absent = np.zeros(2, order="F", dtype=np.int32)
+    mod.opt_sum(r_ref_absent)
+    r_sdfg_absent = np.zeros(2, dtype=np.int32)
+    sdfg(res=r_sdfg_absent, a=np.array([0], dtype=np.int32), a_present=np.int32(0))
+    np.testing.assert_array_equal(r_sdfg_absent, r_ref_absent)
 
-@_xfail("HLFIR frontend: ELEMENTAL procedures not lowered")
+
 def test_ported_elemental(tmp_path):
-    """Port of ``elemental_test`` — elemental subroutine called on arrays."""
-    src = """
+    """Port of ``elemental_test`` — elemental subroutine called on arrays.
+
+    The SDFG is built from the ELEMENTAL form (the feature under test).
+    f2py can't compile a module-contained elemental (upstream bug in
+    its Fortran parser), so the reference uses an explicit per-element
+    DO loop that implements the same scalar body.  A numpy-only check
+    would work too, but going through gfortran gives us a real Fortran
+    reference, matching the rest of this file's pattern."""
+    sdfg_src = """
 module elemod
   implicit none
 contains
@@ -435,8 +454,28 @@ subroutine apply_delta(od, scat_od, g)
   call delta(od, scat_od, g)
 end subroutine apply_delta
 """
-    mod = _f2py(src, tmp_path / "ref", "apply_delta")
-    sdfg = _build(src, tmp_path / "sdfg", name="apply_delta")
+    ref_src = """
+subroutine apply_delta(od, scat_od, g)
+  implicit none
+  real(8), intent(inout) :: od(14), scat_od(14), g(14)
+  real(8) :: f
+  integer :: i
+  do i = 1, 14
+     f           = g(i) * g(i)
+     od(i)       = od(i) - scat_od(i) * f
+     scat_od(i)  = scat_od(i) * (1.0d0 - f)
+     g(i)        = g(i) / (1.0d0 + g(i))
+  end do
+end subroutine apply_delta
+"""
+    mod = _f2py(ref_src, tmp_path / "ref", "apply_delta")
+    # ELEMENTAL lowering needs inline-all + fold-element-aliases +
+    # symbol-dce, all in the default pipeline.  The minimal ``_build``
+    # pipeline is for straight-line Fortran.  ``entry`` marks the
+    # public module-scope ``delta`` private so its dummies don't leak
+    # into extract_vars alongside ``apply_delta`` 's own dummies.
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(sdfg_src, tmp_path / "sdfg", name="apply_delta", entry="_QPapply_delta").build()
 
     rng = np.random.default_rng(7)
     od = rng.standard_normal(14)
@@ -450,3 +489,5 @@ end subroutine apply_delta
                                np.ascontiguousarray(g.copy()))
     sdfg(od=od_sdfg, scat_od=s_sdfg, g=g_sdfg)
     np.testing.assert_allclose(od_sdfg, od_ref, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(s_sdfg, s_ref, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(g_sdfg, g_ref, rtol=1e-12, atol=1e-12)

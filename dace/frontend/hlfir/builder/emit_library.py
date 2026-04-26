@@ -19,12 +19,18 @@ from dace import InterstateEdge, Memlet
 from dace.frontend.hlfir.builder.access import acc
 
 # Per-library-node connector conventions.  Kept here rather than on
-# ``LibNodeIntrinsic`` because the names are a property of the DaCe node,
-# not of the Fortran intrinsic.
+# ``LibNodeIntrinsic`` because the names are a property of the DaCe
+# library node, not of the Fortran intrinsic.  Each entry maps a
+# bridge-side ``LibNodeIntrinsic`` callee tag to ``(input_conns, output_conn)``;
+# library nodes with their own dedicated emitters (CopyLibraryNode,
+# MemsetLibraryNode, MergeLibraryNode, CountLibraryNode) bypass this
+# generic dispatch table and live in the per-emitter functions below.
 _LIBCALL_CONNECTORS = {
     "MatMul": (("_a", "_b"), "_c"),
     "Dot": (("_x", "_y"), "_result"),
     "Transpose": (("_inp", ), "_out"),
+    "MergeLibraryNode": (("_t", "_f", "_mask"), "_out"),
+    "CountLibraryNode": (("_mask", ), "_out"),
 }
 
 
@@ -88,11 +94,20 @@ def emit_libcall(builder, ctx, n, region):
     in_conns, out_conn = _LIBCALL_CONNECTORS[spec.node_cls]
 
     # ``Transpose`` needs an explicit ``dtype`` so its expansion can
-    # produce the right element type; every other library node picks
-    # types up from the attached memlets.
+    # produce the right element type; ``CountLibraryNode`` consumes its
+    # Fortran-1-based ``dim`` from ``reduce_axes`` (set by the bridge's
+    # ``buildLibCallNode`` when the source ``hlfir.count`` carries a dim
+    # operand); every other library node picks types up from the
+    # attached memlets.
     tgt_desc = ctx.sdfg.arrays[n.target]
     if spec.node_cls == "Transpose":
         node = cls(f"{spec.name}_{n.target}_{builder.nid()}", dtype=tgt_desc.dtype)
+    elif spec.node_cls == "CountLibraryNode":
+        # Bridge stores the (0-based) reduce axis the same way it does
+        # for whole-array vs per-dim Reduce nodes.  CountLibraryNode's
+        # constructor wants Fortran 1-based, so convert back.
+        dim = (n.reduce_axes[0] + 1) if n.reduce_axes else -1
+        node = cls(f"{spec.name}_{n.target}_{builder.nid()}", dim=dim)
     else:
         node = cls(f"{spec.name}_{n.target}_{builder.nid()}")
     state.add_node(node)
@@ -111,7 +126,15 @@ def emit_reduce(builder, ctx, n, region):
 
     ``axes=None`` reduces all dimensions (whole-array scalar result); a
     non-empty ``reduce_axes`` list reduces along those dims only.
+
+    When ``n.target_is_array`` is true and ``n.accesses[0]`` carries a
+    write AccessInfo (LHS was ``res(i) = MINVAL(...)``), the output
+    memlet covers only that element — otherwise multiple reductions
+    in the same routine all write through the whole destination and
+    the last one wins.
     """
+    from dace.frontend.hlfir.builder.access import build_memlet_index
+
     ctx.flush(builder)
     ctx.ensure(region)
     state = ctx.cur
@@ -122,20 +145,44 @@ def emit_reduce(builder, ctx, n, region):
         raise RuntimeError(f"reduction source {src_name!r} not registered as SDFG data")
     axes = list(n.reduce_axes) if n.reduce_axes else None
 
-    # DaCe's Reduce expects a value (or None) for ``identity``.
-    # ``math.inf`` / ``-math.inf`` come through as strings and must
-    # evaluate against an environment that sees ``math``.
+    # DaCe's Reduce expects a value (or None) for ``identity``.  The
+    # bridge emits the float-extreme identities as bare ``inf`` /
+    # ``-inf`` (so the section-reduce init tasklet renders to a valid
+    # ``INFINITY`` C++ literal); patch the eval namespace so this
+    # whole-array path resolves them too.
+    #
+    # Fortran spec: ``MINVAL`` / ``MAXVAL`` on an empty array returns
+    # ``HUGE(x)`` / ``-HUGE(x)`` (the dtype's representable extreme),
+    # not ``±inf``.  Substitute the identity per destination dtype so
+    # the empty-array case matches gfortran exactly and the integer
+    # path doesn't truncate ``inf`` to a garbage int.
+    import numpy as _np
+    tgt_desc = ctx.sdfg.arrays[n.target]
     identity_val = None
     if n.reduce_identity:
-        identity_val = eval(n.reduce_identity, {'math': math})
+        identity_val = eval(n.reduce_identity, {'math': math, 'inf': math.inf})
+        if identity_val in (math.inf, -math.inf):
+            np_dt = tgt_desc.dtype.as_numpy_dtype()
+            if _np.issubdtype(np_dt, _np.integer):
+                info = _np.iinfo(np_dt)
+                identity_val = info.max if identity_val == math.inf else info.min
+            elif _np.issubdtype(np_dt, _np.floating):
+                info = _np.finfo(np_dt)
+                identity_val = float(info.max if identity_val == math.inf else info.min)
 
     red = state.add_reduce(n.reduce_wcr, axes, identity_val)
 
     src_access = acc(builder, state, src_name)
     tgt_access = acc(builder, state, n.target)
     state.add_edge(src_access, None, red, None, Memlet.from_array(src_name, src_desc))
-    tgt_desc = ctx.sdfg.arrays[n.target]
-    state.add_edge(red, None, tgt_access, None, Memlet.from_array(n.target, tgt_desc))
+
+    write_acc = next((ac for ac in n.accesses if ac.is_write), None) if n.accesses else None
+    if n.target_is_array and write_acc is not None and write_acc.index_exprs:
+        subset = build_memlet_index(builder, n.target, write_acc, iter_map={})
+        out_memlet = Memlet(f"{n.target}[{subset}]")
+    else:
+        out_memlet = Memlet.from_array(n.target, tgt_desc)
+    state.add_edge(red, None, tgt_access, None, out_memlet)
 
 
 def emit_break(builder, ctx, n, region):

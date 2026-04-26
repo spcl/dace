@@ -80,19 +80,24 @@ class _DumpingBuilder:
         return sdfg
 
 
-def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None):
+def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None, entry: str | None = None):
     """Compile inline Fortran to HLFIR and return a configured ``SDFGBuilder``.
 
     :param source: Fortran source as a string.
     :param out_dir: scratch directory (typically ``tmp_path`` from pytest).
     :param name: base filename for the .f90/.hlfir pair.
     :param pipeline: override the default MLIR pass pipeline.
+    :param entry: mangled Flang symbol name of the subroutine the SDFG
+                  should represent (e.g. ``_QPapply_delta``).  Needed
+                  when the source declares additional public functions
+                  in a module — those would otherwise leak their dummy
+                  declares into the variable extraction.
     :return: ``SDFGBuilder`` with variables classified and the AST extracted.
     """
     _ensure_on_path()
     from hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE
     hlfir = compile_to_hlfir(source, out_dir, name)
-    builder = SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE))
+    builder = SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE), entry=entry)
     dump = _dump_dir()
     if dump is not None:
         return _DumpingBuilder(builder, name, dump)

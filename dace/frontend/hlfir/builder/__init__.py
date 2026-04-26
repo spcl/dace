@@ -61,6 +61,7 @@ from dace.frontend.hlfir.builder.descriptors import (
     add_descriptors,
     auto_declare_synth,
     dt,
+    emit_declare_transient,
     sdfg_name,
 )
 from dace.frontend.hlfir.builder.emit_library import (
@@ -82,6 +83,14 @@ from dace.frontend.hlfir.builder.emit_tasklet import emit_scalar_assign, emit_ta
 # Default bridge pass pipeline.  Order matters — see ``README.md``.
 DEFAULT_PIPELINE = (
     "hlfir-inline-all,"
+    # Erase element-scoped alias declares left by inlining scalar-arg
+    # procedures (elemental subroutines, most commonly) — runs before
+    # flatten-structs so the rewrite's designate chains are already
+    # single-declare rooted.
+    "hlfir-fold-element-aliases,"
+    # Drop private callee bodies once inlined — otherwise their
+    # declares leak into extract_vars as stray scalars.
+    "symbol-dce,"
     "hlfir-flatten-structs,"
     "hlfir-propagate-shapes,"
     "hlfir-default-intent,"
@@ -99,6 +108,7 @@ DEFAULT_PIPELINE = (
 # the bridge's constructor now does via ``mlir::func::
 # registerInlinerExtension`` + ``fir::addFIRInlinerExtension``.
 MULTI_FILE_PIPELINE = ("hlfir-inline-all,"
+                       "hlfir-fold-element-aliases,"
                        "symbol-dce,"
                        "hlfir-verify-no-unresolved-calls,"
                        "hlfir-flatten-structs,"
@@ -125,11 +135,21 @@ class SDFGBuilder:
 
     DTYPE = DTYPE
 
-    def __init__(self, hlfir_path: str, pipeline: str = DEFAULT_PIPELINE):
-        """Parse HLFIR, run the pass pipeline, and classify variables."""
+    def __init__(self, hlfir_path: str, pipeline: str = DEFAULT_PIPELINE, entry: str | None = None):
+        """Parse HLFIR, run the pass pipeline, and classify variables.
+
+        If ``entry`` is set, every other ``func.func`` in the module is
+        made private before the pipeline runs so ``symbol-dce`` drops
+        them after ``hlfir-inline-all`` has flattened their bodies in.
+        Needed when the source contains a module-scope callee that would
+        otherwise leak dummy-arg declares into ``extract_vars``.
+        """
         self.module = hb.HLFIRModule()
         if not self.module.parse_file(hlfir_path):
             raise RuntimeError(f"Cannot parse {hlfir_path}")
+
+        if entry is not None:
+            self.module.set_entry_symbol(entry)
 
         # Run bridge passes BEFORE extracting variables so assumed-shape
         # dummies pick up real names and the rest of the rewrites have
@@ -254,6 +274,7 @@ class SDFGBuilder:
         "libcall": emit_libcall,
         "break": emit_break,
         "return": emit_return,
+        "declare_transient": emit_declare_transient,
     }
 
     def _emit(self, ctx: '_Ctx', nodes: list, region):

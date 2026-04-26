@@ -830,6 +830,24 @@ class IfExpr(sympy.Function):
             return False
 
 
+class mod(sympy.Function):
+    """Floored modulus (Fortran ``MODULO`` / Python ``%`` on negatives).
+
+    Two-arg ``mod(a, b)`` — distinct from sympy's built-in ``Mod`` (which
+    prints as ``%`` and lowers to the C ``%`` operator that *truncates*
+    on signed integers).  Used by the HLFIR frontend's ``MODULO``
+    lowering so the C++ codegen routes through ``dace::math::mod``
+    (templated; floored for both int and float)."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x - y * sympy.floor(x / y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
 class bitwise_and(sympy.Function):
     pass
 

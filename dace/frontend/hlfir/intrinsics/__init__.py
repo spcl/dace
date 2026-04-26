@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.elementwise import ELEMENTWISE_INTRINSICS
 from dace.frontend.hlfir.intrinsics.reduction import REDUCTIONS
-from dace.frontend.hlfir.intrinsics.linalg import LINALG
+from dace.frontend.hlfir.intrinsics.linalg import LINALG, STANDARD
 from dace.frontend.hlfir.intrinsics.direct import DIRECT_INTRINSICS
 
 
@@ -35,7 +35,7 @@ def is_reduction(name: str) -> bool:
 
 
 def is_libnode(name: str) -> bool:
-    return name in LINALG
+    return name in LINALG or name in STANDARD
 
 
 def is_intrinsic(name: str) -> bool:
@@ -61,5 +61,10 @@ def reduction_spec(name: str):
 
 
 def libnode_spec(name: str):
-    """Return the ``LibNodeIntrinsic`` for ``name`` or ``None``."""
-    return LINALG.get(name)
+    """Return the ``LibNodeIntrinsic`` for ``name`` or ``None``.  Looks up
+    across both the linalg registry (matmul / transpose / dot_product) and
+    the generic standard-library registry (count / merge / ...)."""
+    spec = LINALG.get(name)
+    if spec is not None:
+        return spec
+    return STANDARD.get(name)

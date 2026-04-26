@@ -26,3 +26,11 @@ LINALG: dict[str, LibNodeIntrinsic] = {
     'transpose': LibNodeIntrinsic('transpose', module='standard', node_cls='Transpose'),
     'dot_product': LibNodeIntrinsic('dot_product', module='blas', node_cls='Dot'),
 }
+
+# Generic / non-linalg standard library nodes that the bridge emits via the
+# same ``kind="libcall"`` path.  Kept as a separate dict so the family
+# boundary stays readable; ``libnode_spec`` looks up across both.
+STANDARD: dict[str, LibNodeIntrinsic] = {
+    'count': LibNodeIntrinsic('count', module='standard', node_cls='CountLibraryNode'),
+    'merge': LibNodeIntrinsic('merge', module='standard', node_cls='MergeLibraryNode'),
+}

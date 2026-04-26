@@ -44,8 +44,23 @@ struct AccessInfo {
 ///   "memset"      — target (memset always writes zero today; the
 ///                   MemsetLibraryNode side is hard-coded for 0)
 ///   "libcall"     — target, callee ("matmul" / "transpose" /
-///                   "dot_product"), call_args (1 or 2 source array
-///                   names), target_is_array
+///                   "dot_product" / "count" / "merge"), call_args
+///                   (1-3 source array names), target_is_array.
+///                   ``reduce_axes`` carries the optional ``dim``
+///                   for reduction-shaped library nodes (count).
+///   "declare_transient"
+///                — Bridge-synthesised transient array used as a
+///                   scratch surface between an ``hlfir.elemental``
+///                   walker (per-element loop) and a downstream
+///                   reduction / select library node.  Payload:
+///                     target           — transient name (unique gid)
+///                     expr             — dtype string ("int32"…)
+///                     accesses[0].index_exprs — per-dim shape
+///                                       strings (literal int or
+///                                       symbol name)
+///                   The Python emitter calls
+///                   ``sdfg.add_array(name, shape, dtype, transient=True)``
+///                   and registers the array in ``builder.arrays``.
 ///   "break"       — Fortran EXIT (break out of the enclosing loop).
 ///                   No payload — hlfir_to_sdfg emits a ``BreakBlock``
 ///                   in the current region.

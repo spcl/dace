@@ -7,10 +7,13 @@ both on identical random inputs and asserts numerical agreement.
 Also asserts the structural invariants the frontend is supposed to give
 for an indirect access:
 
-  * Each distinct ``edge_idx(jc, k)`` load mints a fresh SDFG symbol.
-  * The load turns into an interstate-edge assignment (``_idx_N =
-    edge_idx[...]``), which forces a new state before the compute
-    tasklet.
+  * Each distinct ``edge_idx(jc, k)`` load mints a fresh SDFG symbol
+    named ``edge_idx_at<gid>`` (``<arr>_at<gid>`` — the prefix carries
+    the source array's Fortran name; the global ``gid`` disambiguates
+    same-expression-different-call-site).
+  * The load turns into an interstate-edge assignment
+    (``edge_idx_at0 = edge_idx[...]``), which forces a new state before
+    the compute tasklet.
 """
 from __future__ import annotations
 
@@ -70,7 +73,7 @@ def test_indirect_access_symbol_and_state(tmp_path):
     sdfg = b.build()
     sdfg.validate()
 
-    idx_syms = [s for s in sdfg.symbols if s.startswith("_idx_")]
+    idx_syms = [s for s in sdfg.symbols if s.startswith("edge_idx_at")]
     assert len(idx_syms) == 3, (f"expected three minted symbols (one per indirect load); got {idx_syms}")
 
     # Every minted symbol must be assigned on some interstate edge, and

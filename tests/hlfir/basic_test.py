@@ -1,10 +1,25 @@
 """Smoke tests for the HLFIR → SDFG frontend.
 
 Mirrors a narrow slice of ``tests/fortran/``'s style (inline Fortran source,
-build an SDFG, validate) but exercises the new flang-based pipeline."""
+build an SDFG, validate) but exercises the new flang-based pipeline.
+
+Per the project's E2E-numerical rule, every test that builds an SDFG also
+compares its output against a non-transformed reference — here a numpy
+equivalent, which is sufficient for these arithmetic-only kernels (no
+structs, no intrinsics).  The structural assertions are kept as a
+guard against silent-regressions in the SDFG shape on top of the
+numerical check."""
+import ctypes
+
+import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
+
+try:
+    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
+except OSError:
+    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 
@@ -29,12 +44,23 @@ end subroutine elementwise_add
     for nm in ("a", "b", "c"):
         assert nm in sdfg.arrays
 
+    rng = np.random.default_rng(0)
+    n = 16
+    a = np.ascontiguousarray(rng.standard_normal(n, dtype=np.float64))
+    b_arr = np.ascontiguousarray(rng.standard_normal(n, dtype=np.float64))
+    c = np.zeros(n, dtype=np.float64)
+    expected = a + b_arr
+    sdfg(a=a, b=b_arr, c=c, n=n)
+    np.testing.assert_allclose(c, expected, rtol=1e-12, atol=1e-12)
+
 
 def test_read_after_write_shares_access_node(tmp_path):
     """Two tasklets in the same loop body: the second consumes what the first
     writes.  With the single-access-node rule, exactly one AccessNode for
     ``tmp`` must appear in the innermost state — anything else would mean the
-    RAW dataflow edge was dropped."""
+    RAW dataflow edge was dropped.  Numerical check confirms the dataflow is
+    actually wired (a dropped edge would leave ``out`` reading uninitialised
+    transient and the result would diverge from the closed-form expectation)."""
     from dace.sdfg.state import LoopRegion
     from dace.sdfg import nodes as nd
 
@@ -67,3 +93,11 @@ end subroutine chained
     tmp_nodes = [n for n in body.nodes() if isinstance(n, nd.AccessNode) and n.data == "tmp"]
     assert len(tmp_nodes) == 1, (f"expected a single shared access node for tmp in the body state; "
                                  f"got {len(tmp_nodes)}")
+
+    rng = np.random.default_rng(1)
+    n = 8
+    a = np.ascontiguousarray(rng.standard_normal(n, dtype=np.float64))
+    out = np.zeros(n, dtype=np.float64)
+    expected = a * 2.0 + 1.0
+    sdfg(a=a, out=out, n=n)
+    np.testing.assert_allclose(out, expected, rtol=1e-12, atol=1e-12)

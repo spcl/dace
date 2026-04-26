@@ -234,15 +234,51 @@ def test_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
 
 def test_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
     """vn_ie(je,1,jb) = vn(je,1,jb); vn_ie(je,nlevp1,jb) = weighted sum
+    — literal integer indices (``vn(je, 1, jb)``) and nlev-1/nlev-2
+    arithmetic on a loop bound both resolve cleanly through
+    buildIndexExpr."""
+    bundle = _HERE / "loopnest_5.f90"
+    flat_src = _extract_flat_kernel(bundle)
+    ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_5")
+    sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_5")
 
-    Separate frontend gap from the ``**`` work just landed: literal
-    integer indices (``vn(je, 1, jb)``) fall through buildIndexExpr's
-    resolveIndex path and surface as ``?`` in the memlet subset, so
-    the SDFG picks up ``?`` as a free symbol.  Tracked alongside the
-    ``(vn**2 + vt**2)`` lowering which now works correctly."""
-    pytest.xfail("literal integer index (vn(je, 1, jb)) yields '?' in "
-                 "memlet subset; separate from math.fpowi handling "
-                 "which is now wired")
+    rng = np.random.default_rng(5)
+    nproma, nlev, nblks_e = 32, 16, 8
+    nlevp1 = nlev + 1
+    i_startblk, i_endblk = 1, nblks_e
+    i_startidx, i_endidx = 1, nproma
+
+    vn = np.asfortranarray(rng.random((nproma, nlev, nblks_e)))
+    vt = np.asfortranarray(rng.random((nproma, nlev, nblks_e)))
+    wgtfacqe = np.asfortranarray(rng.random((nproma, 3, nblks_e)))
+
+    vn_ie_ref = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    z_vt_ref = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    z_k_ref = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    # f2py derives nproma/nlev/nlevp1/nblks_e from array shapes; only
+    # the loop-range scalars stay in the positional list.
+    ref.kernel_flat(vn, vt, wgtfacqe, vn_ie_ref, z_vt_ref, z_k_ref, i_startblk, i_endblk, i_startidx, i_endidx)
+
+    vn_ie_sdfg = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    z_vt_sdfg = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    z_k_sdfg = np.zeros((nproma, nlevp1, nblks_e), order="F")
+    kw = dict(vn=vn,
+              vt=vt,
+              wgtfacq_e=wgtfacqe,
+              vn_ie=vn_ie_sdfg,
+              z_vt_ie=z_vt_sdfg,
+              z_kin_hor_e=z_k_sdfg,
+              nproma=nproma,
+              nlev=nlev,
+              nlevp1=nlevp1,
+              nblks_e=nblks_e)
+    kw.update(
+        _sdfg_call_args(sdfg, dict(i_startblk=i_startblk, i_endblk=i_endblk, i_startidx=i_startidx, i_endidx=i_endidx)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(vn_ie_sdfg, vn_ie_ref, atol=1e-12, rtol=0)
+    np.testing.assert_allclose(z_vt_sdfg, z_vt_ref, atol=1e-12, rtol=0)
+    np.testing.assert_allclose(z_k_sdfg, z_k_ref, atol=1e-12, rtol=0)
 
 
 # ---------------------------------------------------------------------------
@@ -283,13 +319,134 @@ def test_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
 
 def test_loopnest_1_sdfg_matches_f2py(tmp_path: Path):
     """z_v_grad_w indirect stencil (two-way cell + vertex indirection).
-    Skipped pending frontend support for 3D indirection tables where
-    the last dim is a plain integer (``icidx(je, jb, 1..2)``)."""
-    pytest.xfail("3D integer indirection arrays not yet lowered cleanly "
-                 "through emit_tasklet + memlet subset resolution")
+    Each indirection (``ci0 = icidx(je,jb,1)`` etc.) is scalar-staged in
+    Fortran; the bridge classifies the per-load scalar as a symbol and
+    ``emit_loop`` hoists each load onto the pre→body interstate edge so
+    the consuming ``w(ci0,jk,cb0)`` tasklet reads the live symbol value."""
+    bundle = _HERE / "loopnest_1.f90"
+    flat_src = _extract_flat_kernel(bundle)
+    ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_1")
+    sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_1")
+
+    rng = np.random.default_rng(1)
+    nproma, nlev, nblks_e, nblks_c, nblks_v = 32, 16, 8, 8, 8
+
+    def _f(shape):
+        return np.asfortranarray(rng.random(shape, dtype=np.float64))
+
+    vn_ie = _f((nproma, nlev, nblks_e))
+    inv_dual = _f((nproma, nblks_e))
+    inv_primal = _f((nproma, nblks_e))
+    tangent = _f((nproma, nblks_e))
+    w = _f((nproma, nlev, nblks_c))
+    z_vt_ie = _f((nproma, nlev, nblks_e))
+    z_w_v = _f((nproma, nlev, nblks_v))
+
+    def _idx(shape, hi):
+        return np.asfortranarray(rng.integers(1, hi + 1, size=shape, dtype=np.int32))
+
+    icidx = _idx((nproma, nblks_e, 2), nproma)
+    icblk = _idx((nproma, nblks_e, 2), nblks_c)
+    ividx = _idx((nproma, nblks_e, 2), nproma)
+    ivblk = _idx((nproma, nblks_e, 2), nblks_v)
+
+    z_ref = np.zeros((nproma, nlev, nblks_e), order="F")
+    z_sdfg = np.zeros_like(z_ref, order="F")
+
+    ref.kernel_flat(vn_ie, inv_dual, inv_primal, tangent, w, z_vt_ie, z_w_v, icidx, icblk, ividx, ivblk, z_ref, 1,
+                    nblks_e, 1, nproma)
+
+    kw = dict(vn_ie=vn_ie,
+              inv_dual=inv_dual,
+              inv_primal=inv_primal,
+              tangent=tangent,
+              w=w,
+              z_vt_ie=z_vt_ie,
+              z_w_v=z_w_v,
+              icidx=icidx,
+              icblk=icblk,
+              ividx=ividx,
+              ivblk=ivblk,
+              z_v_grad_w=z_sdfg,
+              nproma=nproma,
+              nlev=nlev,
+              nblks_e=nblks_e,
+              nblks_c=nblks_c,
+              nblks_v=nblks_v)
+    kw.update(_sdfg_call_args(sdfg, dict(i_startblk=1, i_endblk=nblks_e, i_startidx=1, i_endidx=nproma)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(z_sdfg, z_ref, atol=1e-12, rtol=0)
 
 
 def test_loopnest_4_sdfg_matches_f2py(tmp_path: Path):
-    """ddt_vn_apc_pc indirect stencil + (vn_ie(jk)-vn_ie(jk+1)) term."""
-    pytest.xfail("4D output array (ddt_vn_apc_pc(...,ntnd)) + 3D "
-                 "indirection not yet lowered cleanly")
+    """ddt_vn_apc_pc indirect stencil + (vn_ie(jk)-vn_ie(jk+1)) term.
+    Same scalar-staged 3D indirection as loopnest 1, plus a 4-D output
+    array indexed on its last dim by the ``ntnd`` time-level scalar."""
+    bundle = _HERE / "loopnest_4.f90"
+    flat_src = _extract_flat_kernel(bundle)
+    ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_4")
+    sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_4")
+
+    rng = np.random.default_rng(4)
+    nproma, nlev, nblks_e, nblks_c, nblks_v, nproma_tnd = 32, 16, 8, 8, 8, 3
+    ntnd = 2
+
+    def _f(shape):
+        return np.asfortranarray(rng.random(shape, dtype=np.float64))
+
+    def _idx(shape, hi):
+        return np.asfortranarray(rng.integers(1, hi + 1, size=shape, dtype=np.int32))
+
+    vt = _f((nproma, nlev, nblks_e))
+    vn_ie = _f((nproma, nlev + 1, nblks_e))
+    f_e = _f((nproma, nblks_e))
+    coeff_gradekin = _f((nproma, 2, nblks_e))
+    c_lin_e = _f((nproma, 2, nblks_e))
+    ddqz = _f((nproma, nlev, nblks_e))
+    z_kin_hor_e = _f((nproma, nlev, nblks_e))
+    z_ekinh = _f((nproma, nlev, nblks_c))
+    zeta = _f((nproma, nlev, nblks_v))
+    z_w_con_c_full = _f((nproma, nlev, nblks_c))
+    icidx = _idx((nproma, nblks_e, 2), nproma)
+    icblk = _idx((nproma, nblks_e, 2), nblks_c)
+    ividx = _idx((nproma, nblks_e, 2), nproma)
+    ivblk = _idx((nproma, nblks_e, 2), nblks_v)
+
+    ddt_ref = np.zeros((nproma, nlev, nblks_e, nproma_tnd), order="F")
+    ddt_sdfg = np.zeros_like(ddt_ref, order="F")
+
+    ref.kernel_flat(vt, vn_ie, f_e, coeff_gradekin, c_lin_e, ddqz, z_kin_hor_e, z_ekinh, zeta, z_w_con_c_full, icidx,
+                    icblk, ividx, ivblk, ddt_ref, ntnd, 1, nblks_e, 1, nproma)
+
+    kw = dict(
+        vt=vt,
+        vn_ie=vn_ie,
+        f_e=f_e,
+        coeff_gradekin=coeff_gradekin,
+        c_lin_e=c_lin_e,
+        ddqz=ddqz,
+        z_kin_hor_e=z_kin_hor_e,
+        z_ekinh=z_ekinh,
+        zeta=zeta,
+        z_w_con_c_full=z_w_con_c_full,
+        icidx=icidx,
+        icblk=icblk,
+        ividx=ividx,
+        ivblk=ivblk,
+        ddt_vn_apc_pc=ddt_sdfg,
+        nproma=nproma,
+        nlev=nlev,
+        nblks_e=nblks_e,
+        nblks_c=nblks_c,
+        nblks_v=nblks_v,
+        nproma_tnd=nproma_tnd,
+        # ``vn_ie(nproma, nlev+1, nblks_e)`` — the bridge can't yet
+        # resolve ``nlev+1`` to a closed-form symbolic extent, so
+        # ``add_descriptors`` synthesises ``vn_ie_d1`` for the dim
+        # and the caller passes the actual extent at run time.
+        vn_ie_d1=nlev + 1)
+    kw.update(_sdfg_call_args(sdfg, dict(ntnd=ntnd, i_startblk=1, i_endblk=nblks_e, i_startidx=1, i_endidx=nproma)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(ddt_sdfg, ddt_ref, atol=1e-12, rtol=0)

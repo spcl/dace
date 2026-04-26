@@ -1,0 +1,124 @@
+"""Verbatim port of f2dace/dev:tests/fortran/intrinsic_sum_test.py."""
+from __future__ import annotations
+
+import ctypes
+
+import numpy as np
+import pytest
+
+from _util import build_sdfg, have_flang
+
+try:
+    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
+except OSError:
+    pass
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
+
+
+def test_fortran_frontend_sum2loop_1d_without_offset(tmp_path):
+    src = """
+SUBROUTINE intrinsic_sum_function(d, res)
+double precision, dimension(7) :: d
+double precision, dimension(3) :: res
+
+res(1) = SUM(d(:))
+res(2) = SUM(d)
+res(3) = SUM(d(2:6))
+
+END SUBROUTINE intrinsic_sum_function
+"""
+    sdfg = build_sdfg(src, tmp_path, name='intrinsic_sum_function').build()
+
+    size = 7
+    d = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        d[i] = i + 1
+    res = np.full([3], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    assert res[0] == (1 + size) * size / 2
+    assert res[1] == (1 + size) * size / 2
+    assert res[2] == (2 + size - 1) * (size - 2) / 2
+
+
+def test_fortran_frontend_sum2loop_1d_offset(tmp_path):
+    src = """
+SUBROUTINE intrinsic_sum_offset_function(d, res)
+double precision, dimension(2:6) :: d
+double precision, dimension(3) :: res
+
+res(1) = SUM(d)
+res(2) = SUM(d(:))
+res(3) = SUM(d(3:5))
+
+END SUBROUTINE intrinsic_sum_offset_function
+"""
+    sdfg = build_sdfg(src, tmp_path, name='intrinsic_sum_offset_function').build()
+
+    size = 5
+    d = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        d[i] = i + 1
+    res = np.full([3], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    assert res[0] == (1 + size) * size / 2
+    assert res[1] == (1 + size) * size / 2
+    assert res[2] == (2 + size - 1) * (size - 2) / 2
+
+
+def test_fortran_frontend_arr2loop_2d(tmp_path):
+    src = """
+SUBROUTINE intrinsic_sum2d_function(d, res)
+double precision, dimension(5,3) :: d
+double precision, dimension(4) :: res
+
+res(1) = SUM(d)
+res(2) = SUM(d(:,:))
+res(3) = SUM(d(2:4, 2))
+res(4) = SUM(d(2:4, 2:3))
+
+END SUBROUTINE intrinsic_sum2d_function
+"""
+    sdfg = build_sdfg(src, tmp_path, name='intrinsic_sum2d_function').build()
+
+    sizes = [5, 3]
+    d = np.full(sizes, 42, order="F", dtype=np.float64)
+    cnt = 0
+    for i in range(sizes[0]):
+        for j in range(sizes[1]):
+            d[i, j] = cnt
+            cnt += 1
+    res = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    assert res[0] == 105
+    assert res[1] == 105
+    assert res[2] == 21
+    assert res[3] == 45
+
+
+def test_fortran_frontend_arr2loop_2d_offset(tmp_path):
+    src = """
+SUBROUTINE intrinsic_sum2d_offset_function(d, res)
+double precision, dimension(2:6,7:10) :: d
+double precision, dimension(3) :: res
+
+res(1) = SUM(d)
+res(2) = SUM(d(:,:))
+res(3) = SUM(d(3:5, 8:9))
+
+END SUBROUTINE intrinsic_sum2d_offset_function
+"""
+    sdfg = build_sdfg(src, tmp_path, name='intrinsic_sum2d_offset_function').build()
+
+    sizes = [5, 4]
+    d = np.full(sizes, 42, order="F", dtype=np.float64)
+    cnt = 0
+    for i in range(sizes[0]):
+        for j in range(sizes[1]):
+            d[i, j] = cnt
+            cnt += 1
+    res = np.full([3], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    assert res[0] == 190
+    assert res[1] == 190
+    assert res[2] == 57

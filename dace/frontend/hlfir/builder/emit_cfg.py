@@ -14,6 +14,7 @@ from dace import InterstateEdge
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 
 from dace.frontend.hlfir.builder.access import (
+    array_read_to_dace_expr,
     collect_indirect,
     indirect_to_dace,
 )
@@ -42,10 +43,21 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     # ``add_descriptors`` never saw them.  Register on first assign.
     auto_declare_synth(builder, n.target, ctx)
     if n.target in builder.symbols:
+        # Symbol-target reads of an array (``ci0 = icidx(je, jb, 1)`` —
+        # the scalar-staged indirection load) need the bridge's bare-name
+        # ``n.expr`` (just ``"icidx"``) reconstructed into a full DaCe
+        # subscript expression with Fortran→0-based offsets and
+        # iter_map remap; otherwise the interstate edge would assign the
+        # whole array to a scalar symbol.  Plain symbol writes
+        # (``i = i + 1``) keep ``n.expr`` verbatim.
+        if assign_reads_array(n, builder.arrays):
+            rhs = array_read_to_dace_expr(builder, n, ctx.iter_map)
+        else:
+            rhs = n.expr
         ctx.flush(builder)
         ctx.ensure(region)
         dst = region.add_state(f"post_{n.target}_{builder.nid()}")
-        region.add_edge(ctx.cur, dst, InterstateEdge(assignments={n.target: n.expr}))
+        region.add_edge(ctx.cur, dst, InterstateEdge(assignments={n.target: rhs}))
         ctx.cur = dst
         return
     if n.target_is_array or assign_reads_array(n, builder.arrays):
@@ -110,22 +122,86 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
                 emit_assign(builder, inner_ctx, c, loop)
         inner_ctx.flush(builder)
     elif child_assigns:
-        # Indirect accesses in the body turn into fresh SDFG symbols; the
-        # value is assigned on an interstate edge so a new state is forced
-        # before the compute tasklet runs.
+        # Inline indirect accesses (``z_kin(edge_idx(jc,k), jk)``) mint a
+        # fresh ``<arr>_at<gid>`` SDFG symbol per occurrence; the value is
+        # assigned on an interstate edge so a new state is forced before
+        # the compute tasklet runs.
         indirect_syms = collect_indirect(builder, child_assigns)
-        if indirect_syms:
+
+        # Scalar-staged indirection (``ci0 = icidx(je, jb, 1); w(ci0,...)``):
+        # the bridge classifies ``ci0`` as a symbol (it feeds an
+        # ``hlfir.designate`` index downstream), so the assign cannot land
+        # as a tasklet — DaCe has no array named ``ci0``.  Lift each such
+        # assign onto the same pre→body interstate edge that hosts the
+        # inline indirect symbols; the consuming tasklet then reads the
+        # symbol value uniformly.  The compute tasklets run on the
+        # remaining (array-target) child assigns.
+        symbol_assigns = [a for a in child_assigns if a.target in builder.symbols]
+        compute_assigns = [a for a in child_assigns if a.target not in builder.symbols]
+
+        # Serialise sibling assigns that share an array as RW — an inlined
+        # elemental body like ``f = g*g; g = g/(1+g)`` puts both tasklets
+        # in one state with no dataflow edge between them; because both
+        # access nodes back the same non-transient storage, the scheduler
+        # can reorder the write ahead of the read and clobber the value.
+        # Use one state per assign whenever such a hazard exists.
+        def _raw_hazard(assigns) -> bool:
+            write_names_so_far = set()
+            for a in assigns:
+                reads = {ac.array_name for ac in a.accesses if ac.is_read}
+                if reads & write_names_so_far:
+                    return True
+                for ac in a.accesses:
+                    if ac.is_write:
+                        write_names_so_far.add(ac.array_name)
+                    if ac.is_read and ac.array_name in {ac2.array_name for ac2 in a.accesses if ac2.is_write}:
+                        # self-update within one assign — fine (handled by
+                        # the write-sink logic in emit_tasklet), but any
+                        # later sibling that reads the same name must be
+                        # in a new state so it sees the updated value.
+                        write_names_so_far.add(ac.array_name)
+            # Also catch later-writer / earlier-reader patterns that would
+            # otherwise race within a single state.
+            later_writes = set()
+            for a in reversed(assigns):
+                reads = {ac.array_name for ac in a.accesses if ac.is_read}
+                if reads & later_writes:
+                    return True
+                for ac in a.accesses:
+                    if ac.is_write:
+                        later_writes.add(ac.array_name)
+            return False
+
+        serialise = _raw_hazard(compute_assigns)
+
+        edge_assigns = {}
+        for expr, sym in indirect_syms.items():
+            edge_assigns[sym] = indirect_to_dace(builder, expr, iter_map)
+            if sym not in ctx.sdfg.symbols:
+                ctx.sdfg.add_symbol(sym, dace.int64)
+        for a in symbol_assigns:
+            edge_assigns[a.target] = array_read_to_dace_expr(builder, a, iter_map)
+
+        if edge_assigns:
             pre = loop.add_state(f"pre_{builder.nid()}")
             body = loop.add_state('body')
-            assigns = {sym: indirect_to_dace(builder, expr, iter_map) for expr, sym in indirect_syms.items()}
-            for sym in indirect_syms.values():
-                if sym not in ctx.sdfg.symbols:
-                    ctx.sdfg.add_symbol(sym, dace.int64)
-            loop.add_edge(pre, body, InterstateEdge(assignments=assigns))
+            loop.add_edge(pre, body, InterstateEdge(assignments=edge_assigns))
         else:
             body = loop.add_state('body')
-        for idx, a in enumerate(child_assigns):
-            emit_tasklet(builder, body, a, idx, iter_map, indirect_syms)
+
+        if not serialise:
+            for idx, a in enumerate(compute_assigns):
+                emit_tasklet(builder, body, a, idx, iter_map, indirect_syms)
+        else:
+            prev = body
+            for idx, a in enumerate(compute_assigns):
+                if idx == 0:
+                    emit_tasklet(builder, prev, a, idx, iter_map, indirect_syms)
+                    continue
+                nxt = loop.add_state(f"body_{builder.nid()}")
+                loop.add_edge(prev, nxt, InterstateEdge())
+                emit_tasklet(builder, nxt, a, idx, iter_map, indirect_syms)
+                prev = nxt
 
 
 def emit_while(builder, ctx: '_Ctx', n, region):

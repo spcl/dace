@@ -1,0 +1,80 @@
+"""Verbatim port of f2dace/dev:tests/fortran/init_test.py."""
+from __future__ import annotations
+
+import ctypes
+
+import numpy as np
+import pytest
+
+from _util import build_sdfg, have_flang
+from ported._helpers import xfail
+
+try:
+    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
+except OSError:
+    pass
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
+
+
+@xfail("module-level PARAMETER + globals")
+def test_fortran_frontend_init(tmp_path):
+    src = """
+module lib1
+  implicit none
+  real :: outside_init = epsilon(1.0)
+end module lib1
+
+module lib2
+contains
+  subroutine init_test_function(d)
+    use lib1, only: outside_init
+    double precision d(4)
+    real:: bob = epsilon(1.0)
+    d(2) = 5.5 + bob + outside_init
+  end subroutine init_test_function
+end module lib2
+
+subroutine main(d)
+  use lib2, only: init_test_function
+  implicit none
+  double precision d(4)
+  call init_test_function(d)
+end subroutine main
+"""
+    sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0] == 42)
+    assert (a[1] == 5.5)
+    assert (a[2] == 42)
+
+
+@xfail("module-level PARAMETER + globals")
+def test_fortran_frontend_init2(tmp_path):
+    src = """
+module lib1
+  implicit none
+  real, parameter :: TORUS_MAX_LAT = 4.0/18.0*atan(1.0)
+end module lib1
+
+module lib2
+contains
+  subroutine init2_test_function(d)
+    use lib1, only: TORUS_MAX_LAT
+    double precision d(4)
+    d(2) = 5.5 + TORUS_MAX_LAT
+  end subroutine init2_test_function
+end module lib2
+
+subroutine main(d)
+  use lib2, only: init2_test_function
+  implicit none
+  double precision d(4)
+  call init2_test_function(d)
+end subroutine main
+"""
+    sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert np.allclose(a, [42, 5.674532920122147, 42, 42])

@@ -41,6 +41,9 @@ void registerAllBridgePasses() {
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createVerifyNoUnresolvedCallsPass();
     });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createFoldElementAliasesPass();
+    });
 }
 
 }  // namespace hlfir_bridge

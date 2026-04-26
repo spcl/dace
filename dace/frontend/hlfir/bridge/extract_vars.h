@@ -36,4 +36,12 @@ struct VarInfo {
 /// Walk the module and build one VarInfo per hlfir.declare.
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module);
 
+/// Per-site name for an allocatable ``ALLOCATE``.  Site 0 keeps the
+/// original Fortran name (``x``); site 1+ mints synthetic transient
+/// names (``x_alloc1``, ``x_alloc2``, …).  Shared between
+/// ``extractVariables`` (which registers the synthetic VarInfos) and
+/// ``extractAST`` (which keeps the trace-utils alias map in sync as
+/// it walks the IR).
+std::string allocAliasName(const std::string &fortran, unsigned site);
+
 }  // namespace hlfir_bridge

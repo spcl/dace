@@ -70,7 +70,30 @@ std::string extractName(const std::string &mangled);
 /// Trace an SSA value backwards to the hlfir.declare / fir.declare that
 /// introduced it.  Peels fir.convert → fir.load → arith.select transparently.
 /// Returns the Fortran name, or "" if the chain breaks before a declare.
+///
+/// For Fortran ``ALLOCATABLE`` variables that get re-allocated, every
+/// ALLOCATE site materialises a fresh SDFG transient.  The bridge keeps
+/// a thread-local "current alias" map (see ``allocAliasFor`` /
+/// ``setAllocAlias``) that maps the raw Fortran name (``x``) to the
+/// active alias (``x``, ``x_alloc1``, ``x_alloc2``, …) at the current
+/// IR position.  ``traceToDecl`` consults this map and returns the
+/// alias when set — every read / write site downstream then routes to
+/// the correct per-allocation transient without further wiring.
 std::string traceToDecl(mlir::Value val, int max = limits::kTraceToDeclMax);
+
+/// Look up the active alias for a raw allocatable name (the unaliased
+/// Fortran name returned by walking the declare chain).  Returns the
+/// raw name unchanged if no alias is set, the alias otherwise.
+std::string allocAliasFor(const std::string &raw);
+
+/// Bind ``raw`` (the Fortran allocatable's base name) to ``alias`` for
+/// subsequent ``traceToDecl`` calls.  ``alias == raw`` resets the alias.
+/// Per thread.
+void setAllocAlias(const std::string &raw, const std::string &alias);
+
+/// Drop every alloc-alias binding (used at module-walk start so each
+/// extractAST call sees a clean state).
+void clearAllocAliases();
 
 /// Trace an SSA value to a compile-time integer constant through
 /// any number of fir.convert wrappings.  nullopt if not constant-foldable.
