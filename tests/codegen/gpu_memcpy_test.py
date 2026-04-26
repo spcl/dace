@@ -15,15 +15,19 @@ rng = cp.random.default_rng(42)
 
 
 def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):
+    """Count top-level nodes of ``node_type``.
+
+    Skips access nodes whose name contains ``stream`` so the same assertion
+    works against both the legacy and the experimental CUDA pipelines (the
+    latter inserts a ``gpu_streams`` array at the top level).
+    """
     nb_nodes = 0
-    for rsdfg in sdfg.all_sdfgs_recursive():
-        for state in sdfg.states():
-            for node in state.nodes():
-                if (ignore_gpustream_nodes and isinstance(node, dace_nodes.AccessNode)
-                        and node.desc(state).dtype == dace.dtypes.gpuStream_t):
-                    continue
-                if isinstance(node, node_type):
-                    nb_nodes += 1
+    for state in sdfg.states():
+        for node in state.nodes():
+            if (ignore_gpustream_nodes and isinstance(node, dace_nodes.AccessNode) and 'stream' in node.data.lower()):
+                continue
+            if isinstance(node, node_type):
+                nb_nodes += 1
     return nb_nodes
 
 
@@ -74,7 +78,7 @@ def test_2d_gpu_copy(c_order: bool):
     # Now generate the code.
     csdfg = sdfg.compile()
 
-    # Ensure that the copy was not turned into a Map
+    # Ensure that the copy was not turned into a Map.
     assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
     assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
 
@@ -149,9 +153,10 @@ def test_1d_gpu_copy(
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
 
     # Now generate the code.
+    sdfg.generate_code()
     csdfg = sdfg.compile()
 
-    # Ensure that the copy was not turned into a Map
+    # Ensure that the copy was not turned into a Map.
     assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
     assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
 
@@ -223,7 +228,7 @@ def test_pseudo_1d_copy_test(c_order: bool):
     # Now generate the code.
     csdfg = sdfg.compile()
 
-    # Ensure that the copy was not turned into a Map
+    # Ensure that the copy was not turned into a Map.
     assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
     assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
 

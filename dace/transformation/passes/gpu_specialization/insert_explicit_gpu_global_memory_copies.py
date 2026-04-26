@@ -32,10 +32,10 @@ _CPU_STORAGES = {
 @transformation.explicit_cf_compatible
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     """
-    Insert ``CopyLibraryNode`` instances for CPU<->GPU data movement --
-    edges where one endpoint lives in GPU global memory and the other in
-    host-side storage (``Default``/``CPU_Heap``/``CPU_Pinned``/
-    ``CPU_ThreadLocal``).  GPU<->GPU and CPU<->CPU transfers are left
+    Insert ``CopyLibraryNode`` instances for any data movement that touches
+    GPU global memory: CPU<->GPU (one endpoint host-side
+    ``Default``/``CPU_Heap``/``CPU_Pinned``/``CPU_ThreadLocal``) and GPU<->GPU
+    (both endpoints in ``GPU_Global``).  CPU<->CPU transfers are left
     untouched; those are not serviced by the GPU stream pipeline.
     """
 
@@ -49,10 +49,19 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict:
+        # CPU<->GPU lowering is skipped inside device scopes: cudaMemcpyAsync
+        # cannot be issued from device code, and the cross-storage tags inside a
+        # kernel typically resolve to register/local, which the codegen handles
+        # through its implicit-copy path.
         # CPU -> GPU
-        InsertExplicitCopies(src_locations=_CPU_STORAGES,
-                             dst_locations=_GPU_STORAGES).apply_pass(sdfg, pipeline_results)
+        InsertExplicitCopies(src_locations=_CPU_STORAGES, dst_locations=_GPU_STORAGES,
+                             skip_inside_device_scope=True).apply_pass(sdfg, pipeline_results)
         # GPU -> CPU
-        InsertExplicitCopies(src_locations=_GPU_STORAGES,
-                             dst_locations=_CPU_STORAGES).apply_pass(sdfg, pipeline_results)
+        InsertExplicitCopies(src_locations=_GPU_STORAGES, dst_locations=_CPU_STORAGES,
+                             skip_inside_device_scope=True).apply_pass(sdfg, pipeline_results)
+        # GPU -> GPU. Host-level copies become host-issued cudaMemcpyAsync;
+        # in-device GPU->GPU copies are lowered to a Sequential
+        # ``DirectAssignment`` library node so they emit inline assignment code.
+        InsertExplicitCopies(src_locations=_GPU_STORAGES, dst_locations=_GPU_STORAGES,
+                             skip_inside_device_scope=True).apply_pass(sdfg, pipeline_results)
         return {}

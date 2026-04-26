@@ -10,6 +10,7 @@ from dace import dtypes, nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
+from dace.sdfg import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -37,13 +38,33 @@ class InsertExplicitCopies(ppl.Pass):
         desc="Only lift copies whose destination storage is in this set. "
         "Empty set means any destination storage is accepted.",
     )
+    skip_inside_device_scope = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="When True, copies whose endpoints sit inside a GPU device-level scope are left "
+        "alone (cudaMemcpyAsync cannot be issued from device code, and the codegen handles "
+        "intra-kernel copies through other paths).",
+    )
+    inside_device_impl = properties.Property(
+        dtype=str,
+        default="",
+        allow_none=True,
+        desc="When set, copies that land inside a GPU device-level scope are lowered with this "
+        "implementation (e.g. 'DirectAssignment' or 'pure') and a Sequential schedule, so they "
+        "expand to inline code instead of an unsupported cudaMemcpyAsync from device code. "
+        "Ignored when ``skip_inside_device_scope`` is True.",
+    )
 
     def __init__(self,
                  src_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 dst_locations: Optional[Iterable[dtypes.StorageType]] = None):
+                 dst_locations: Optional[Iterable[dtypes.StorageType]] = None,
+                 skip_inside_device_scope: bool = False,
+                 inside_device_impl: Optional[str] = None):
         super().__init__()
         self.src_locations = set(src_locations) if src_locations else set()
         self.dst_locations = set(dst_locations) if dst_locations else set()
+        self.skip_inside_device_scope = skip_inside_device_scope
+        self.inside_device_impl = inside_device_impl or ""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -92,6 +113,10 @@ class InsertExplicitCopies(ppl.Pass):
             if not self._storage_allowed(src_desc.storage, dst_desc.storage):
                 continue
 
+            in_device = (is_devicelevel_gpu(sdfg, state, src_node) or is_devicelevel_gpu(sdfg, state, dst_node))
+            if in_device and self.skip_inside_device_scope:
+                continue
+
             src_name = src_node.data
             dst_name = dst_node.data
             src_subset = memlet.src_subset or memlet.subset
@@ -104,6 +129,7 @@ class InsertExplicitCopies(ppl.Pass):
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)
+            self._configure_for_scope(libnode, in_device)
 
             state.remove_edge(edge)
             state.add_node(libnode)
@@ -112,6 +138,12 @@ class InsertExplicitCopies(ppl.Pass):
             count += 1
 
         return count
+
+    def _configure_for_scope(self, libnode: 'CopyLibraryNode', in_device_scope: bool) -> None:
+        """Pin schedule + implementation when the copy lands inside a GPU device scope."""
+        if in_device_scope and self.inside_device_impl:
+            libnode.implementation = self.inside_device_impl
+            libnode.schedule = dtypes.ScheduleType.Sequential
 
     def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """Replace map-boundary staging paths with ``CopyLibraryNode`` instances.
@@ -162,12 +194,17 @@ class InsertExplicitCopies(ppl.Pass):
             if not self._storage_allowed(src_storage, dst_storage):
                 continue
 
+            in_device = (is_devicelevel_gpu(sdfg, state, local_an) or is_devicelevel_gpu(sdfg, state, scope_node))
+            if in_device and self.skip_inside_device_scope:
+                continue
+
             outer_memlet = edge.data
             local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
             outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
             name = (f"copy_{outer_an.data}_to_{local_an.data}"
                     if direction == 'in' else f"copy_{local_an.data}_to_{outer_an.data}")
             libnode = CopyLibraryNode(name=name)
+            self._configure_for_scope(libnode, in_device)
 
             state.remove_edge(edge)
             state.add_node(libnode)

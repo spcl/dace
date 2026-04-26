@@ -103,11 +103,12 @@ def test_single_element_d2h_compiles_and_copies():
 
 @pytest.mark.gpu
 def test_memcpy_tasklet_connector_types_match_per_side_rule():
-    """Per the per-side rule in ``_make_cuda_memcpy_expansion``: the GPU side
-    is always a pointer-typed connector; a single-element CPU subset stays
-    value-typed so the codegen's natural ``T x = ref`` binding works, with
-    ``&_memcpy_<side>`` taking the address in the tasklet body. Multi-element
-    CPU subsets are pointer-typed (parameter is already a pointer)."""
+    """Per-side rule: GPU side pointer-typed; single-element CPU side stays
+    value-typed and is addressed via ``&_in``/``&_out`` in the tasklet body.
+
+    The CUDA expansions return a Tasklet directly (no nested SDFG wrapper),
+    so the connector names match the library-node connectors ``_in``/``_out``.
+    """
     pytest.importorskip('cupy')
 
     # d2h: in = GPU pointer, out = CPU value (single element).
@@ -116,18 +117,15 @@ def test_memcpy_tasklet_connector_types_match_per_side_rule():
     found = 0
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                for nstate in node.sdfg.states():
-                    for nnode in nstate.nodes():
-                        if isinstance(nnode, dace.nodes.Tasklet) and nnode.label == 'memcpy_tasklet':
-                            assert isinstance(nnode.in_connectors['_memcpy_in'], dtypes.pointer), \
-                                'GPU input must be pointer-typed'
-                            assert not isinstance(nnode.out_connectors['_memcpy_out'], dtypes.pointer), \
-                                'single-element CPU output must be value-typed'
-                            assert '&_memcpy_out' in nnode.code.as_string, \
-                                'CPU value-typed output must be addressed via & in the memcpy call'
-                            found += 1
-    assert found > 0, 'no memcpy_tasklet found in expanded d2h SDFG'
+            if isinstance(node, dace.nodes.Tasklet) and 'cudaMemcpyAsync' in node.code.as_string:
+                assert isinstance(node.in_connectors['_in'], dtypes.pointer), \
+                    'GPU input must be pointer-typed'
+                assert not isinstance(node.out_connectors['_out'], dtypes.pointer), \
+                    'single-element CPU output must be value-typed'
+                assert '&_out' in node.code.as_string, \
+                    'CPU value-typed output must be addressed via & in the memcpy call'
+                found += 1
+    assert found > 0, 'no memcpy tasklet found in expanded d2h SDFG'
 
 
 if __name__ == '__main__':

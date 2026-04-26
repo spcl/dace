@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
 import dace
@@ -9,6 +9,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 from dace.codegen import common
@@ -28,6 +29,7 @@ from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes 
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -149,6 +151,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
+        # Refuse to re-run the stream pipeline on an SDFG that already carries
+        # the lowered marker (the ``gpu_streams`` array at the root). Users
+        # who applied the pipeline manually before calling ``compile()`` would
+        # otherwise re-enter ``InsertGPUStreams`` and trip ``FileExistsError``
+        # at the root ``add_transient`` call.
+        already_lowered = get_gpu_stream_array_name() in sdfg.arrays
+
         stream_pipeline = Pipeline([
             InsertExplicitGPUGlobalMemoryCopies(),
             NaiveGPUStreamScheduler(),
@@ -158,7 +167,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         ])
 
         self._dispatcher._used_targets.add(self)
-        gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
+        if already_lowered:
+            # SDFG was lowered upstream -- we still need the stream-assignment
+            # dict for ``GPUStreamManager``; re-running just the scheduler is
+            # cheap and read-only (it returns assignments, doesn't mutate).
+            gpustream_assignments = NaiveGPUStreamScheduler().apply_pass(sdfg, {})
+        else:
+            gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
         # The pipeline inserts CopyLibraryNode instances; lower them and re-infer
         # connector types so codegen emits correctly-typed function signatures.
@@ -172,6 +187,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
 
+        # Annotate Tasklets with ``_cuda_stream`` so the CPU codegen emits the
+        # legacy ``__dace_current_stream`` local before the tasklet body.
+        # Library nodes already expanded with ``__dace_current_stream`` in
+        # their generated code (cuBLAS, cuFFT, cudaMemcpyAsync without an
+        # explicit stream connector, etc.) need this symbol in scope.
+        self._annotate_legacy_cuda_stream(sdfg, gpustream_assignments)
+
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
 
@@ -184,6 +206,24 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def _annotate_legacy_cuda_stream(self, sdfg: SDFG, assignments: Dict[Any, int]) -> None:
+        """Set ``_cuda_stream`` on tasklets that reference ``__dace_current_stream``.
+
+        The CPU codegen prelude at ``cpp.py:830`` emits ``__dace_current_stream``
+        only when the node has ``_cuda_stream``. We assign it from the stream
+        scheduler's mapping, falling back to stream 0 for tasklets the
+        scheduler did not visit.
+        """
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.nodes():
+                    if not isinstance(node, nodes.Tasklet):
+                        continue
+                    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
+                    if '__dace_current_stream' not in code:
+                        continue
+                    node._cuda_stream = assignments.get(node, 0)
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
@@ -610,7 +650,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
-        self._toplevel_schedule = node.schedule
+        nested_schedule = get_node_schedule(sdfg, dfg, node)
+        if nested_schedule != dtypes.ScheduleType.Default:
+            self._toplevel_schedule = nested_schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 

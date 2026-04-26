@@ -120,6 +120,11 @@ def _run_through_new_gpu_pipeline(kernel,
     gpu_sdfg = kernel.to_sdfg(simplify=True)
     gpu_sdfg.apply_gpu_transformations()
 
+    # The codegen refuses to re-run the stream pipeline on an already-lowered
+    # SDFG, so we must expand library nodes first -- otherwise kernels created
+    # by later expansion would never get stream wiring.
+    gpu_sdfg.expand_library_nodes()
+
     # New explicit-stream-management pipeline.
     _GPU_STREAM_PIPELINE.apply_pass(gpu_sdfg, {})
 

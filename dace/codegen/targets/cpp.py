@@ -908,7 +908,12 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
-            # Get GPU codegen
+            # Resolve the active CUDA codegen class based on configuration.
+            # ``synchronize_streams`` is a legacy-codegen helper, so it only
+            # runs when the legacy implementation is selected.
+            cuda_impl = Config.get('compiler', 'cuda', 'implementation')
+            if cuda_impl != 'legacy':
+                return
             from dace.codegen.targets import cuda  # Avoid import loop
             try:
                 gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
