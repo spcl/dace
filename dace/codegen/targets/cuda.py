@@ -610,19 +610,26 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         dataname = self.ptr(node.data, nodedesc, sdfg)
 
-        try:
-            self._dispatcher.defined_vars.get(dataname)
-            return
-        except KeyError:
-            pass  # The variable was not defined, we can continue
-
-        # Check if array is already declared
+        # Check if array is already declared by a prior declare_array
+        # (split declare/allocate flow for SDFG-lifetime symbolic-shape arrays).
         declared = False
         try:
             self._dispatcher.declared_arrays.get(dataname)
             declared = True  # Array was already declared in this or upper scopes
         except KeyError:  # Array not declared yet
             pass
+
+        # If defined_vars already has this name AND we're not in the split
+        # declare/allocate flow, this is a true re-entry — skip to avoid a
+        # double cudaMalloc. In the split flow, declare_array has already
+        # added to defined_vars but allocation is still pending; we must
+        # continue to emit cudaMalloc here.
+        if not declared:
+            try:
+                self._dispatcher.defined_vars.get(dataname)
+                return
+            except KeyError:
+                pass  # The variable was not defined, we can continue
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
