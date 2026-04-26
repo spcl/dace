@@ -113,6 +113,41 @@ class CoreDialectCompliant:
         return not cls.offenders_implicit_copies(sdfg)
 
     @staticmethod
+    def offenders_implicit_gpu_copies(sdfg: SDFG) -> List[str]:
+        """Implicit AccessNode→AccessNode copies where at least one endpoint
+        sits in GPU global memory and neither endpoint is inside a GPU
+        device-level scope. These are the copies the experimental GPU
+        codegen pipeline (``InsertExplicitGPUGlobalMemoryCopies``) is
+        responsible for lowering — anything left over after the pipeline
+        ran is a bug or an unsupported pattern."""
+        from dace.sdfg.scope import is_devicelevel_gpu
+        from dace import dtypes as _dtypes
+        out: List[str] = []
+        for sub_sdfg in sdfg.all_sdfgs_recursive():
+            for state in sub_sdfg.states():
+                for edge in state.edges():
+                    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+                        continue
+                    src_storage = sub_sdfg.arrays[edge.src.data].storage
+                    dst_storage = sub_sdfg.arrays[edge.dst.data].storage
+                    touches_gpu = (src_storage == _dtypes.StorageType.GPU_Global
+                                   or dst_storage == _dtypes.StorageType.GPU_Global)
+                    if not touches_gpu:
+                        continue
+                    if (is_devicelevel_gpu(sub_sdfg, state, edge.src) or is_devicelevel_gpu(sub_sdfg, state, edge.dst)):
+                        # cudaMemcpyAsync cannot be issued from device code; the
+                        # codegen handles intra-kernel cross-storage AccessNode
+                        # edges via its register/local copy paths.
+                        continue
+                    out.append(f'implicit GPU-memory copy {edge.src.data} ({src_storage.name}) -> '
+                               f'{edge.dst.data} ({dst_storage.name}) in state "{state.label}"')
+        return out
+
+    @classmethod
+    def check_no_implicit_gpu_copies(cls, sdfg: SDFG) -> bool:
+        return not cls.offenders_implicit_gpu_copies(sdfg)
+
+    @staticmethod
     def offenders_views(sdfg: SDFG) -> List[str]:
         out: List[str] = []
         for sub_sdfg in sdfg.all_sdfgs_recursive():

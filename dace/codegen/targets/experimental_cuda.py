@@ -175,6 +175,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
+        # Hard guarantee: after the explicit-copy pipeline runs, no implicit
+        # AccessNode→AccessNode copy that touches GPU memory may remain at the
+        # host level. The experimental codegen has no path to lower such an
+        # edge — every GPU-memory copy must be carried by an explicit
+        # ``CopyLibraryNode`` (which the pipeline above inserts).
+        from dace.sdfg.core_dialect import CoreDialectCompliant as _CoreDialect
+        leftover = _CoreDialect.offenders_implicit_gpu_copies(sdfg)
+        if leftover:
+            raise ValueError("ExperimentalCUDACodeGen: InsertExplicitGPUGlobalMemoryCopies left "
+                             f"{len(leftover)} implicit GPU-memory copy edge(s) un-lowered. "
+                             "The experimental GPU codegen requires every CPU↔GPU and GPU↔GPU "
+                             "AccessNode→AccessNode edge to be expressed via an explicit "
+                             "CopyLibraryNode. Offenders:\n  - " + "\n  - ".join(leftover))
+
         # The pipeline inserts CopyLibraryNode instances; lower them and re-infer
         # connector types so codegen emits correctly-typed function signatures.
         sdfg.expand_library_nodes(recursive=True)

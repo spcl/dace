@@ -264,7 +264,10 @@ def test_copy_cuda_4d_strided_host_to_device():
     sdfg.validate()
     exe = sdfg.compile()
 
-    A = np.arange(7 * 8 * 9 * 10, dtype=np.float64).reshape(7, 8, 9, 10)
+    # ``reshape`` returns a numpy view; DaCe rejects views by default
+    # (``compiler.allow_view_arguments``). Build directly as a fresh array.
+    A = np.empty((7, 8, 9, 10), dtype=np.float64)
+    A[:] = np.arange(7 * 8 * 9 * 10).reshape(7, 8, 9, 10)
     B = cp.zeros(dst_shape, dtype=cp.float64)
     exe(A_full=A, B_dst=B)
 

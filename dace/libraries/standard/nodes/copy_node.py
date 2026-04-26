@@ -341,9 +341,14 @@ def _make_thread_level_copy(node, parent_state, parent_sdfg):
     return sdfg
 
 
-def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides):
+def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg='_cpy_in', out_arg='_cpy_out'):
     """
     Builds a ``dace::CopyND`` or ``dace::CopyNDDynamic`` call string, using the most specific (static) variant possible.
+
+    ``in_arg`` / ``out_arg`` are the connector / variable names for the input
+    and output pointers in the generated tasklet body — callers pass their
+    actual connector names (e.g. ``_in`` / ``_out`` when the expansion
+    returns a Tasklet directly into the parent CopyLibraryNode's connectors).
 
     Selection logic (matches ``cpu.py`` codegen):
 
@@ -404,7 +409,7 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides):
         if dyndst:
             stride_args.append(dst_stride_strs[d])
 
-    all_args = ["_cpy_in", "_cpy_out"] + stride_args
+    all_args = [in_arg, out_arg] + stride_args
     return f"{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});"
 
 
@@ -476,7 +481,7 @@ class ExpandCopyND(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset, map_lengths, in_shape_collapsed,
+        (sdfg, state, inp_name, inp, in_subset, out_name, out, out_subset, _map_lengths, in_shape_collapsed,
          in_strides_collapsed, out_shape_collapsed, out_strides_collapsed,
          _stream_input) = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=True)
 
@@ -484,7 +489,12 @@ class ExpandCopyND(ExpandTransformation):
             raise ValueError("CopyND expansion cannot handle copies across the CPU/GPU "
                              f"boundary (got {inp.storage} -> {out.storage}).")
 
-        code = _build_copynd_call(inp.dtype.ctype, map_lengths, in_strides_collapsed, out_strides_collapsed)
+        # Operate on the *collapsed* rank consistently: the wrapper SDFG's
+        # arrays are sized by collapsed shape ([_make_expansion_sdfg] creates
+        # them with `in_shape_collapsed` / `out_shape_collapsed`). Mixing in
+        # full-rank `map_lengths` here triggers IndexError in
+        # `_build_copynd_call` and produces out-of-bounds memlet subsets.
+        code = _build_copynd_call(inp.dtype.ctype, in_shape_collapsed, in_strides_collapsed, out_strides_collapsed)
 
         in_access = state.add_access(inp_name)
         out_access = state.add_access(out_name)
@@ -497,10 +507,10 @@ class ExpandCopyND(ExpandTransformation):
 
         state.add_edge(
             in_access, None, tasklet, "_cpy_in",
-            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in in_shape_collapsed])))
         state.add_edge(
             tasklet, "_cpy_out", out_access, None,
-            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
 
         return sdfg
 
@@ -901,7 +911,12 @@ class ExpandSharedMemoryCopy(ExpandTransformation):
         # Use CopyND for the data movement; __syncthreads() afterwards so all threads see the update.
         # TODO: replace with a proper cooperative copy distributing work across threads, once DaCe's
         # GPU scheduling supports bare thread-block-level tasklets.
-        copynd_call = _build_copynd_call(inp.dtype.ctype, map_lengths, in_strides_collapsed, out_strides_collapsed)
+        # Note: pass `in_shape_collapsed` (collapsed rank), not `map_lengths`
+        # (full rank) — `_build_copynd_call`'s per-dim loop indexes
+        # `src_stride_strs[d]` / `dst_stride_strs[d]` which are sized by
+        # the collapsed strides; mismatched ranks would IndexError.
+        copynd_call = _build_copynd_call(inp.dtype.ctype, in_shape_collapsed, in_strides_collapsed,
+                                         out_strides_collapsed)
         code = copynd_call + "\n__syncthreads();"
 
         in_access = state.add_access(inp_name)

@@ -174,6 +174,34 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(outer_stream)
 
+    def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        # Bracket host-side cudaMemcpyAsync tasklets emitted by expanded
+        # CopyLibraryNode instances. These tasklets bypass the legacy
+        # _emit_copy() path that fires on_copy_begin, so without an explicit
+        # hook here the experimental codegen ends up with no `copy_*` ranges.
+        if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if not isinstance(node, nodes.Tasklet):
+            return
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            return
+        if not node.label.startswith('copy_'):
+            return
+        self.print_range_push(node.label, sdfg, outer_stream)
+
+    def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                    outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if not isinstance(node, nodes.Tasklet):
+            return
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            return
+        if not node.label.startswith('copy_'):
+            return
+        self.print_range_pop(outer_stream)
+
     def on_sdfg_init_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
