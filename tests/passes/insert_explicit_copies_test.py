@@ -250,6 +250,150 @@ def test_insert_validates_after_pass():
     sdfg.validate()
 
 
+def test_insert_view_dst_inserts_intermediate():
+    """``Array -> View``: pass should rewrite to ``Array -> Copy -> AN_inter -> View``
+    so the View aliases a fresh transient that's been populated by the copy.
+    Mirrors the doitgen post-``apply_gpu_transformations`` shape.
+    """
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_dst_intermediate")
+    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    v = st.add_access("A_view")
+    out = st.add_access("sink")
+    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    in_e = list(st.in_edges(v))
+    assert len(in_e) == 1
+    assert isinstance(in_e[0].src, nodes.AccessNode), (
+        f"View in-edge src must be an AccessNode (the intermediate buffer); got {type(in_e[0].src).__name__}")
+    inter_name = in_e[0].src.data
+    assert inter_name != "A", "intermediate must be a fresh transient, not the original source"
+    inter_desc = sdfg.arrays[inter_name]
+    assert inter_desc.transient and not isinstance(inter_desc, dace.data.View)
+    assert tuple(inter_desc.shape) == (5,
+                                       6), (f"intermediate shape should match the View; got {tuple(inter_desc.shape)}")
+
+    # The data movement A -> AN_inter must have been lifted into a CopyLibraryNode.
+    inter_node = in_e[0].src
+    inter_in = list(st.in_edges(inter_node))
+    assert len(inter_in) == 1 and isinstance(inter_in[0].src, CopyLibraryNode)
+
+
+def test_insert_view_src_inserts_intermediate():
+    """``View -> Array``: pass should rewrite to ``View -> AN_inter -> Copy -> Array``
+    so the View aliases the intermediate (which is then copied out).
+    """
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_src_intermediate")
+    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    v = st.add_access("A_view")
+    out = st.add_access("sink")
+    # Establish the View's underlying via the in-edge from `a`, then drive
+    # the rewrite-under-test on the *out* edge `v -> sink`.
+    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    out_e = list(st.out_edges(v))
+    assert len(out_e) == 1
+    assert isinstance(out_e[0].dst, nodes.AccessNode), (
+        f"View out-edge dst must be an AccessNode (the intermediate buffer); got {type(out_e[0].dst).__name__}")
+    inter_name = out_e[0].dst.data
+    assert inter_name != "sink"
+    inter_desc = sdfg.arrays[inter_name]
+    assert inter_desc.transient and not isinstance(inter_desc, dace.data.View)
+
+    # The data movement AN_inter -> sink must have been lifted into a CopyLibraryNode.
+    inter_node = out_e[0].dst
+    inter_out = list(st.out_edges(inter_node))
+    assert len(inter_out) == 1 and isinstance(inter_out[0].dst, CopyLibraryNode)
+
+
+def test_insert_view_round_trip_inserts_two_intermediates():
+    """``Array -> View -> Array``: both edges get rewritten -> two
+    intermediates and two CopyLibraryNodes. The View sits between them
+    and aliases one (per ``get_view_edge``'s in-edge precedence)."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_round_trip")
+    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    v = st.add_access("A_view")
+    out = st.add_access("sink")
+    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Two CopyLibraryNodes inserted: one for A -> AN_inter1, one for
+    # AN_inter2 -> sink.
+    assert _count_copy_nodes(sdfg) == 2
+
+    in_e = list(st.in_edges(v))
+    out_e = list(st.out_edges(v))
+    assert len(in_e) == 1 and len(out_e) == 1
+    assert isinstance(in_e[0].src, nodes.AccessNode)
+    assert isinstance(out_e[0].dst, nodes.AccessNode)
+    assert in_e[0].src.data != out_e[0].dst.data, ("the two intermediates must be distinct fresh transients")
+
+
+def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
+    """Repeated ``apply_pass`` invocations on the same SDFG must not
+    accumulate ``_view_buf_*`` transients. The GPU pipeline calls this pass
+    six times per ``preprocess`` (CPU->GPU, GPU->CPU, GPU->GPU × pre/post
+    library expansion); without idempotency each call would create another
+    intermediate per view edge, ballooning device allocation by 6×.
+    """
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("view_rewrite_idempotent")
+    sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
+    sdfg.add_view("A_view", [5, 6], dace.float64, storage=cpu)
+    sdfg.add_array("sink", [5, 6], dace.float64, storage=cpu)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    v = st.add_access("A_view")
+    out = st.add_access("sink")
+    st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
+    st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
+
+    p = InsertExplicitCopies()
+    p.apply_pass(sdfg, {})
+    n_after_first = sum(1 for arr in sdfg.arrays if arr.startswith("_view_buf_"))
+    assert n_after_first == 2, (
+        f"first run should create exactly 2 view buffers (one per direction); got {n_after_first}")
+
+    # Re-run 5 more times (matches the GPU wrapper × pre/post-expansion fan-out).
+    for _ in range(5):
+        p.apply_pass(sdfg, {})
+
+    n_after_repeat = sum(1 for arr in sdfg.arrays if arr.startswith("_view_buf_"))
+    assert n_after_repeat == n_after_first, (
+        f"repeated apply_pass calls must not accumulate view buffers; "
+        f"saw {n_after_first} after first call but {n_after_repeat} after 6 total calls")
+    sdfg.validate()
+
+
 def test_insert_map_staging_copies():
     """Map with transient staging buffers:
     AccessNode(A) -> MapEntry -> AccessNode(local_in) -> ... -> AccessNode(local_out) -> MapExit -> AccessNode(B)

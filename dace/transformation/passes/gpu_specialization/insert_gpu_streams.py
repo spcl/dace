@@ -40,10 +40,14 @@ class InsertGPUStreams(ppl.Pass):
         stream_assignments: Dict[Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
         num_assigned_streams = max(stream_assignments.values(), default=0) + 1
 
-        # Add the GPU stream array at the top level
-        sdfg.add_transient(stream_array_name, (num_assigned_streams, ),
-                           dtype=dace.dtypes.gpuStream_t,
-                           storage=dace.dtypes.StorageType.Register)
+        # Add the GPU stream array at the top level. The pass may run a second
+        # time after `expand_library_nodes` has surfaced new GPU library nodes
+        # in nested SDFGs; in that case the root array already exists and we
+        # only need to propagate it deeper.
+        if stream_array_name not in sdfg.arrays:
+            sdfg.add_transient(stream_array_name, (num_assigned_streams, ),
+                               dtype=dace.dtypes.gpuStream_t,
+                               storage=dace.dtypes.StorageType.Register)
 
         # Ensure GPU stream array is defined where required
         for child_sdfg in self.find_child_sdfgs_requiring_gpu_stream(sdfg):

@@ -168,10 +168,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._dispatcher._used_targets.add(self)
         if already_lowered:
-            # SDFG was lowered upstream -- we still need the stream-assignment
-            # dict for ``GPUStreamManager``; re-running just the scheduler is
-            # cheap and read-only (it returns assignments, doesn't mutate).
-            gpustream_assignments = NaiveGPUStreamScheduler().apply_pass(sdfg, {})
+            # The WCC structure changes once sync tasklets are inserted (one
+            # global sync joins disjoint components into a single component),
+            # so re-running NaiveGPUStreamScheduler at this point would
+            # produce an artificially low max stream id and the init code
+            # would create fewer streams than the existing wiring uses.
+            # Recover assignments from the wiring instead.
+            gpustream_assignments = self._extract_stream_assignments(sdfg)
         else:
             gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
@@ -192,6 +195,30 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # The pipeline inserts CopyLibraryNode instances; lower them and re-infer
         # connector types so codegen emits correctly-typed function signatures.
         sdfg.expand_library_nodes(recursive=True)
+
+        # Pick up implicit AN->AN copies and stream wiring that surfaced
+        # inside nested SDFGs spawned by library expansion.
+        post_expansion_pipeline = Pipeline([
+            InsertExplicitGPUGlobalMemoryCopies(),
+            NaiveGPUStreamScheduler(),
+            InsertGPUStreams(),
+            ConnectGPUStreamsToNodes(),
+        ])
+        post_results = post_expansion_pipeline.apply_pass(sdfg, {})
+        post_assignments = post_results.get('NaiveGPUStreamScheduler', {}) or {}
+        # Pre-expansion assignments are baked into the already-wired
+        # `__stream_N_in` connectors and the codegen's stream-array indices,
+        # so they must be preserved. Merge so the union covers both halves.
+        merged = dict(gpustream_assignments)
+        for node, sid in post_assignments.items():
+            if node not in merged:
+                merged[node] = sid
+        gpustream_assignments = merged
+
+        # InsertExplicitGPUGlobalMemoryCopies may have added new CopyLibraryNodes
+        # (one per implicit copy uncovered by expansion); lower those too.
+        sdfg.expand_library_nodes(recursive=True)
+
         from dace.sdfg import infer_types
         infer_types.infer_connector_types(sdfg)
 
@@ -220,6 +247,35 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def _extract_stream_assignments(self, sdfg: SDFG) -> Dict[Any, int]:
+        """Recover ``{node: stream_id}`` from the wiring laid down by a prior
+        ConnectGPUStreamsToNodes run. The id sits in the subset of every
+        memlet read from a ``gpu_streams`` AccessNode."""
+        stream_array = get_gpu_stream_array_name()
+        assignments: Dict[Any, int] = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.nodes():
+                    if not (isinstance(node, nodes.AccessNode) and node.data == stream_array):
+                        continue
+                    for edge in state.out_edges(node):
+                        subset = edge.data.subset
+                        if subset is None:
+                            continue
+                        try:
+                            sid = int(subset[0][0])
+                        except Exception:
+                            continue
+                        sink = edge.dst
+                        if isinstance(sink, nodes.MapEntry):
+                            assignments[sink] = sid
+                            mexit = state.exit_node(sink)
+                            if mexit is not None:
+                                assignments[mexit] = sid
+                        else:
+                            assignments[sink] = sid
+        return assignments
 
     def _annotate_legacy_cuda_stream(self, sdfg: SDFG, assignments: Dict[Any, int]) -> None:
         """Set ``_cuda_stream`` on tasklets that reference ``__dace_current_stream``.

@@ -80,6 +80,16 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
                 per_stream[stream_id].append(node)
             elif _is_gpu_copy_or_memset(node, state, state.sdfg):
                 per_stream[stream_id].append(node)
+            elif isinstance(node, nodes.LibraryNode):
+                # Generic GPU library nodes (MatMul, Gemm, Cholesky, Potrf,
+                # Transpose, ...) also need a `stream` in-connector when they
+                # land in a GPU-relevant component. Their expansions emit
+                # cuBLAS / cuSolverDn calls that consume a stream handle.
+                # ExpandTransformation.apply moves connectors-with-edges onto
+                # the replacement node, so the wiring threads through one
+                # level of `expand_library_nodes`. (Children spawned inside a
+                # nested SDFG are wired by the post-expansion follow-up pass.)
+                per_stream[stream_id].append(node)
 
         for stream_id, stream_users in per_stream.items():
             stream_users.sort(key=lambda n: topo_index[n])
@@ -95,13 +105,19 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
             entry, exit_ = self._entry_exit(state, node)
             in_conn = self._stream_in_connector_name(node, stream_id, stream_var_prefix)
 
-            # Skip idempotently if the connector is already wired (e.g. re-apply).
-            if in_conn in entry.in_connectors:
-                # Still advance the chain using the existing downstream AccessNode if we can find one,
-                # otherwise create a fresh one so the next node has a read-point.
-                next_access = state.add_access(stream_array_name)
-                state.add_edge(exit_, None, next_access, None, dace.Memlet(None))
-                prev_access = next_access
+            # If this node already carries any stream connector — placed by a
+            # prior pipeline run (e.g. before `expand_library_nodes`) — leave
+            # it alone. The match must be on any ``__stream_*`` / ``stream``
+            # connector, not just the one we'd add this run, because the
+            # post-expansion scheduler may pick a different stream id for the
+            # same node (different WCC layout) and naive idempotency would
+            # add a second connector with a different name. Two stream
+            # connectors on a single GPU MapEntry trips
+            # ``ExperimentalCUDACodeGen``'s "more than one GPU stream assigned
+            # to a kernel" guard.
+            already_wired = any(c == COPY_MEMSET_STREAM_CONNECTOR or c.startswith(stream_var_prefix)
+                                for c in entry.in_connectors)
+            if already_wired:
                 continue
 
             entry.add_in_connector(in_conn, dtypes.gpuStream_t)

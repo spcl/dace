@@ -128,8 +128,18 @@ class CoreDialectCompliant:
                 for edge in state.edges():
                     if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
                         continue
-                    src_storage = sub_sdfg.arrays[edge.src.data].storage
-                    dst_storage = sub_sdfg.arrays[edge.dst.data].storage
+                    src_desc = sub_sdfg.arrays[edge.src.data]
+                    dst_desc = sub_sdfg.arrays[edge.dst.data]
+                    # Views alias their underlying array; an Array<->View edge
+                    # is a reference link, not a memcpy. The codegen emits the
+                    # View as a pointer offset into the underlying buffer.
+                    # InsertExplicitCopies skips these for the same reason —
+                    # the strict check must agree, otherwise it flags every
+                    # `np.reshape(GPU_array)` slice in user code as un-lowered.
+                    if isinstance(src_desc, dt.View) or isinstance(dst_desc, dt.View):
+                        continue
+                    src_storage = src_desc.storage
+                    dst_storage = dst_desc.storage
                     touches_gpu = (src_storage == _dtypes.StorageType.GPU_Global
                                    or dst_storage == _dtypes.StorageType.GPU_Global)
                     if not touches_gpu:

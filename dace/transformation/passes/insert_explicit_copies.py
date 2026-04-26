@@ -142,9 +142,83 @@ class InsertExplicitCopies(ppl.Pass):
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
+                # Pre-pass: rewrite AN<->View edges as `AN -> AN_inter -> View`
+                # (or `View -> AN_inter -> AN`) so the View aliases a fresh
+                # transient and the real data movement becomes a copy on the
+                # AN side that the next step lifts normally.
+                self._rewrite_view_edges(nsdfg, state)
                 count += self._replace_direct_copies(nsdfg, state)
                 count += self._replace_map_staging_copies(nsdfg, state)
         return count if count > 0 else None
+
+    _VIEW_BUF_PREFIX = "_view_buf_"
+
+    def _rewrite_view_edges(self, sdfg: SDFG, state: SDFGState) -> None:
+        """Insert a packed transient between a direct AN<->View edge so the
+        data-movement side becomes an AN<->AN edge that ``_replace_direct_copies``
+        can lift to a ``CopyLibraryNode``. Idempotent across repeated calls
+        and a no-op for non-packed views (which the codegen handles as
+        pointer-offset aliases)."""
+        from dace import data as dt
+        from dace import subsets as _subsets
+
+        for edge in list(state.edges()):
+            if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+                continue
+            if edge.data.is_empty():
+                continue
+            src_desc = sdfg.arrays[edge.src.data]
+            dst_desc = sdfg.arrays[edge.dst.data]
+            src_is_view = isinstance(src_desc, dt.View)
+            dst_is_view = isinstance(dst_desc, dt.View)
+            if src_is_view == dst_is_view:
+                # Both Views or neither — nothing to do here. (Both-View
+                # is an unusual nested-view pattern we leave alone.)
+                continue
+
+            non_view_node = edge.src if dst_is_view else edge.dst
+            if non_view_node.data.startswith(self._VIEW_BUF_PREFIX):
+                continue
+
+            view_node = edge.dst if dst_is_view else edge.src
+            view_desc = dst_desc if dst_is_view else src_desc
+
+            if not view_desc.is_packed_c_strides():
+                continue
+
+            if dst_is_view:
+                if not self._storage_allowed(src_desc.storage, view_desc.storage):
+                    continue
+            else:
+                if not self._storage_allowed(view_desc.storage, dst_desc.storage):
+                    continue
+
+            inter_name, inter_desc = sdfg.add_array(
+                f"{self._VIEW_BUF_PREFIX}{view_node.data}",
+                shape=view_desc.shape,
+                dtype=view_desc.dtype,
+                storage=view_desc.storage,
+                transient=True,
+                find_new_name=True,
+            )
+            inter_node = state.add_access(inter_name)
+
+            # The new alias-side memlet (intermediate <-> View) carries
+            # the intermediate's full range; the original memlet stays on
+            # the data-movement side (AN_orig <-> intermediate).
+            inter_full_subset = _subsets.Range.from_array(inter_desc)
+            alias_memlet = Memlet(data=inter_name, subset=_copy.deepcopy(inter_full_subset))
+            alias_memlet.dynamic = edge.data.dynamic
+
+            state.remove_edge(edge)
+            if dst_is_view:
+                # AN_orig -> View  =>  AN_orig -> AN_inter -> View
+                state.add_edge(edge.src, edge.src_conn, inter_node, None, edge.data)
+                state.add_edge(inter_node, None, view_node, edge.dst_conn, alias_memlet)
+            else:
+                # View -> AN_orig  =>  View -> AN_inter -> AN_orig
+                state.add_edge(view_node, edge.src_conn, inter_node, None, alias_memlet)
+                state.add_edge(inter_node, None, edge.dst, edge.dst_conn, edge.data)
 
     def _replace_direct_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances."""
@@ -163,6 +237,17 @@ class InsertExplicitCopies(ppl.Pass):
 
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
+
+            # Views alias their underlying array; an Array<->View edge is an
+            # aliasing reference, not a copy. Lifting it into a CopyLibraryNode
+            # would (a) emit a memcpy between two pointers into the same buffer
+            # and (b) break `sdutil.get_view_edge`, which requires the View's
+            # neighbor on at least one side to be an AccessNode — it walks the
+            # adjacent edge to the underlying buffer. Same convention the
+            # legacy CUDA codegen already follows in `_compute_cudastreams`
+            # ("Skip views").
+            if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
+                continue
 
             if not self._storage_allowed(src_desc.storage, dst_desc.storage):
                 continue

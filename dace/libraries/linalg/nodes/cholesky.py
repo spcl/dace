@@ -3,6 +3,7 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import dtypes
 
 from dace import Memlet
 from dace.libraries.lapack import Potrf
@@ -22,8 +23,17 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
+    # cuSolverDn writes the LAPACK info code via a device pointer, so `_info`
+    # must stay on the GPU. We additionally allocate `_info_host` on the CPU
+    # and connect an implicit edge `_info -> _info_host` so the new GPU
+    # pipeline's InsertExplicitGPUGlobalMemoryCopies lowers it to an explicit
+    # D2H copy — the host then has a readable status code.
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
     if implementation == 'cuSolverDn':
+        info_host_arr = sdfg.add_array('_info_host', [1],
+                                       dtype=dace.int32,
+                                       transient=True,
+                                       storage=dtypes.StorageType.CPU_Heap)
         binout_arr = sdfg.add_array('_bt', inp_shape, dtype=dtype, transient=True, storage=storage)
     else:
         binout_arr = bout_arr
@@ -61,11 +71,15 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
 
-    info = state.add_write('_info')
+    info = state.add_access('_info')
 
     state.add_memlet_path(binout1, potrf_node, dst_conn="_xin", memlet=Memlet.from_array(*binout_arr))
     state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
     state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
+
+    if implementation == 'cuSolverDn':
+        info_host = state.add_write('_info_host')
+        state.add_nedge(info, info_host, Memlet.from_array(*info_host_arr))
 
     return sdfg
 
@@ -132,15 +146,36 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         }, **kwargs)
         self.lower = lower
 
+    def expand(self, state, sdfg=None, *args, **kwargs):
+        # Storage-aware auto-pick: cuSolverDn for GPU input, OpenBLAS otherwise.
+        # Without this, `apply_gpu_transformations + expand_library_nodes` lands
+        # on OpenBLAS for a GPU-resident matrix (alphabetical default), which
+        # then puts `_info` on GPU storage but writes it from a CPU library and
+        # fails validation.
+        actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
+        if self.implementation is None:
+            in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
+            if in_edges:
+                outer = state.memlet_path(in_edges[0])[0].src
+                if isinstance(outer, dace.sdfg.nodes.AccessNode):
+                    if actual_sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global:
+                        self.implementation = 'cuSolverDn'
+        if sdfg is not None:
+            return super().expand(state, sdfg, *args, **kwargs)
+        return super().expand(state, *args, **kwargs)
+
     def validate(self, sdfg, state):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        in_edges = state.in_edges(self)
+        # Filter on the data connector — the GPU stream pipeline may attach
+        # a separate `stream` in-edge to GPU library nodes which is not part
+        # of the data flow and must not be counted here.
+        in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = state.out_edges(self)
+        out_edges = [e for e in state.out_edges(self) if e.src_conn == "_b"]
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data

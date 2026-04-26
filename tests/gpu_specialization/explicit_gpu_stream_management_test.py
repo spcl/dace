@@ -420,3 +420,153 @@ def test_conditional_gpu_kernel_in_sequential_map():
                     assert sync.side_effects is True
                     assert state.out_degree(sync) == 0
     assert any_sync, "Expected at least one stream-sync tasklet across the SDFG hierarchy"
+
+
+def test_libnode_expansion_propagates_stream_to_child_libnode():
+    """
+    A library node whose expansion produces another library node (e.g.
+    ``MatMul`` -> ``Gemm`` via ``SpecializeMatMul``) must have its stream
+    binding propagated to the child. After the GPU stream pipeline +
+    one level of expansion, the resulting child library node must have
+    the same ``stream`` in-connector wiring as the original outer node.
+
+    Pre-fix this fails because:
+    - ``NaiveGPUStreamScheduler`` only assigns streams to ``CopyLibraryNode``
+      / ``MemsetLibraryNode`` / GPU ``MapEntry`` (see ``_is_gpu_copy_or_memset``).
+      ``MatMul`` is a generic GPU library node and is ignored.
+    - Even if the parent were wired, ``ExpandTransformation.apply`` would
+      have nothing to copy onto the child because the replacement
+      (``Gemm``) declares no ``stream`` in-connector.
+
+    The fix is twofold: extend the stream pass to cover all GPU library
+    nodes, and add a follow-up pass that, after each round of library
+    expansion, wires newly-introduced library nodes onto the parent's
+    stream.
+    """
+    from dace.libraries.blas.nodes.matmul import MatMul
+
+    M, K, N = 8, 8, 8
+    sdfg = dace.SDFG("matmul_to_gemm_stream_propagation")
+    sdfg.add_array("A", [M, K], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [K, N], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("C", [M, N], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("matmul_state")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+    matmul = MatMul("matmul")
+    state.add_node(matmul)
+    state.add_edge(a, None, matmul, "_a", dace.Memlet(f"A[0:{M}, 0:{K}]"))
+    state.add_edge(b, None, matmul, "_b", dace.Memlet(f"B[0:{K}, 0:{N}]"))
+    state.add_edge(matmul, "_c", c, None, dace.Memlet(f"C[0:{M}, 0:{N}]"))
+
+    # Run the GPU stream pipeline on the un-expanded SDFG.
+    Pipeline([
+        NaiveGPUStreamScheduler(),
+        InsertGPUStreams(),
+        ConnectGPUStreamsToNodes(),
+    ]).apply_pass(sdfg, {})
+
+    assert _STREAM_ARRAY in sdfg.arrays, ("Stream array must be present after the pipeline runs")
+    # The MatMul itself must have been wired with a `stream` in-connector
+    # from a `gpu_streams` AccessNode (currently fails: scheduler ignores
+    # generic GPU library nodes).
+    assert "stream" in matmul.in_connectors, ("MatMul (a GPU library node) should be wired with a `stream` connector "
+                                              "by the stream pipeline before it is expanded")
+    matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == "stream"]
+    assert len(matmul_stream_in) == 1
+    assert isinstance(matmul_stream_in[0].src, dace.nodes.AccessNode)
+    assert matmul_stream_in[0].src.data == _STREAM_ARRAY
+
+    # Expand exactly one level so MatMul -> Gemm (via SpecializeMatMul).
+    matmul.expand(state)
+
+    # Find the child library node that replaced MatMul.
+    children = [n for n in state.nodes() if isinstance(n, dace.nodes.LibraryNode)]
+    assert len(children) == 1, (f"Expected exactly one child library node after MatMul.specialize, got {len(children)}")
+    child = children[0]
+    assert type(child).__name__.endswith("Gemm"), (f"Expected Gemm-family child, got {type(child).__name__}")
+
+    # The child must have inherited the parent's stream wiring.
+    assert "stream" in child.in_connectors, (
+        f"Child library node {type(child).__name__} (produced by expanding MatMul) "
+        f"must have a `stream` in-connector inherited from the parent")
+    child_stream_in = [e for e in state.in_edges(child) if e.dst_conn == "stream"]
+    assert len(child_stream_in) == 1
+    assert isinstance(child_stream_in[0].src, dace.nodes.AccessNode)
+    assert child_stream_in[0].src.data == _STREAM_ARRAY
+
+
+def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
+    """
+    A library node whose expansion produces a *nested SDFG* containing more
+    library nodes (e.g. ``Cholesky`` (cuSolverDn) -> NestedSDFG{Potrf, Transpose, Transpose})
+    must have stream wiring propagated to those inner library nodes.
+
+    ``ExpandTransformation.apply`` only moves the parent's stream connector
+    onto the NestedSDFG node — it doesn't reach into the nested SDFG to wire
+    the inner library nodes. After expansion, a follow-up pipeline pass that
+    re-runs ``InsertGPUStreams`` + ``ConnectGPUStreamsToNodes`` must wire the
+    inner nodes against the nested SDFG's ``gpu_streams`` array.
+
+    Pre-fix: inner Potrf / Transpose nodes have no ``stream`` connector after
+    one level of expansion + a follow-up pipeline run.
+    """
+    from dace.libraries.linalg.nodes.cholesky import Cholesky
+
+    N = 8
+    sdfg = dace.SDFG("cholesky_stream_propagation")
+    sdfg.add_array("A", [N, N], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [N, N], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    chol = Cholesky("chol", lower=True)
+    state.add_node(chol)
+    state.add_edge(a, None, chol, "_a", dace.Memlet(f"A[0:{N}, 0:{N}]"))
+    state.add_edge(chol, "_b", b, None, dace.Memlet(f"B[0:{N}, 0:{N}]"))
+
+    Pipeline([
+        NaiveGPUStreamScheduler(),
+        InsertGPUStreams(),
+        ConnectGPUStreamsToNodes(),
+    ]).apply_pass(sdfg, {})
+
+    # (a)-fix sanity: the Cholesky itself was wired.
+    assert "stream" in chol.in_connectors
+
+    # Force the nested-SDFG-spawning expansion (cuSolverDn).
+    chol.implementation = "cuSolverDn"
+    chol.expand(state)
+
+    nested = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(nested) == 1, (f"Cholesky (cuSolverDn) should expand into a single NestedSDFG; got {len(nested)}")
+    nested_node = nested[0]
+    inner_sdfg = nested_node.sdfg
+    inner_state = list(inner_sdfg.states())[0]
+
+    inner_libnodes = [n for n in inner_state.nodes() if isinstance(n, dace.nodes.LibraryNode)]
+    assert inner_libnodes, "Cholesky's nested SDFG should contain inner library nodes (Potrf, Transpose...)"
+
+    # Follow-up: re-run the GPU stream pipeline so the new nested SDFG and
+    # its inner library nodes get wired.
+    Pipeline([
+        NaiveGPUStreamScheduler(),
+        InsertGPUStreams(),
+        ConnectGPUStreamsToNodes(),
+    ]).apply_pass(sdfg, {})
+
+    # The nested SDFG must now have the stream array declared.
+    assert _STREAM_ARRAY in inner_sdfg.arrays, (
+        "Nested SDFG produced by Cholesky.expand should have the gpu_streams array after the follow-up run")
+
+    # Every inner library node must have its `stream` in-connector wired.
+    for inner_libnode in inner_libnodes:
+        assert "stream" in inner_libnode.in_connectors, (
+            f"Inner library node {type(inner_libnode).__name__} "
+            f"({inner_libnode.label}) must have its `stream` in-connector wired "
+            f"by the follow-up pipeline run")
+        stream_in = [e for e in inner_state.in_edges(inner_libnode) if e.dst_conn == "stream"]
+        assert len(stream_in) == 1
+        assert isinstance(stream_in[0].src, dace.nodes.AccessNode)
+        assert stream_in[0].src.data == _STREAM_ARRAY
