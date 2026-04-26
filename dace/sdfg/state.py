@@ -944,8 +944,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     top_source_edge.src.data: top_source_edge.src.desc(sdfg)
                 } if top_source_edge.src.data not in descs else {})
 
-            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src,
-                                                                   (nd.AccessNode, nd.CodeNode, nd.ExitNode)):
+            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode, nd.ExitNode)):
                 # Same case as above, but for outgoing Memlets. ``ExitNode`` on
                 # the source side covers nested-map staging (e.g. an inner
                 # thread-block MapExit feeding the outer kernel MapExit after

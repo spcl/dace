@@ -104,8 +104,7 @@ class ExpandCUDA(ExpandTransformation):
     environments = [environments.CUDA]
 
     @staticmethod
-    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
-                  parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=True)
 
 
@@ -114,8 +113,7 @@ class ExpandCPU(ExpandTransformation):
     environments = [environments.CPU]
 
     @staticmethod
-    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
-                  parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=False)
 
 

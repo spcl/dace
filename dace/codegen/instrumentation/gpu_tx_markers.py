@@ -32,8 +32,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             os.path.join(rocm_path, 'include/roctracer/roctx.h')
         ]
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
-        self.enable_rocTX = (self.backend == 'hip'
-                             and any(os.path.isfile(path) for path in roctx_header_paths)
+        self.enable_rocTX = (self.backend == 'hip' and any(os.path.isfile(path) for path in roctx_header_paths)
                              and os.path.isfile(roctx_library_path))
         self.include_generated = False
         super().__init__()

@@ -236,10 +236,16 @@ def test_copy_cuda_4d_strided_host_to_device():
     dst_shape = (5, 6, 7, 8)
 
     sdfg = dace.SDFG("copy_cuda_4d_strided_h2d")
-    sdfg.add_array("A_full", shape=(7, 8, 9, 10), dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap, transient=False)
-    sdfg.add_array("B_dst", shape=dst_shape, dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.GPU_Global, transient=False)
+    sdfg.add_array("A_full",
+                   shape=(7, 8, 9, 10),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   transient=False)
+    sdfg.add_array("B_dst",
+                   shape=dst_shape,
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.GPU_Global,
+                   transient=False)
 
     state = sdfg.add_state("main")
     src_access = state.add_access("A_full")
@@ -250,10 +256,8 @@ def test_copy_cuda_4d_strided_host_to_device():
 
     # Source slice [1:6, 1:7, 1:8, 1:9] picks a 4D sub-cube with strided
     # outer dims relative to the full array's row-major strides.
-    state.add_edge(src_access, None, libnode, "_in",
-                   dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
-    state.add_edge(libnode, "_out", dst_access, None,
-                   dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
+    state.add_edge(src_access, None, libnode, "_in", dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
+    state.add_edge(libnode, "_out", dst_access, None, dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()

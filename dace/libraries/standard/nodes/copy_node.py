@@ -746,15 +746,14 @@ class ExpandCUDANDStrided(ExpandTransformation):
                 state.add_edge(stream_access, None, tasklet, _INNER_STREAM_CONN,
                                dace.memlet.Memlet.from_array(_STREAM_CONN, sdfg.arrays[_STREAM_CONN]))
         else:
-            inner_tasklet, map_entry, _map_exit = state.add_mapped_tasklet(
-                name=f"{node.label}_tasklet",
-                map_ranges=map_ranges,
-                inputs={"_cpy_in": in_memlet},
-                code=code,
-                outputs={"_cpy_out": out_memlet},
-                schedule=dace.dtypes.ScheduleType.Sequential,
-                language=dace.Language.CPP,
-                external_edges=True)
+            inner_tasklet, map_entry, _map_exit = state.add_mapped_tasklet(name=f"{node.label}_tasklet",
+                                                                           map_ranges=map_ranges,
+                                                                           inputs={"_cpy_in": in_memlet},
+                                                                           code=code,
+                                                                           outputs={"_cpy_out": out_memlet},
+                                                                           schedule=dace.dtypes.ScheduleType.Sequential,
+                                                                           language=dace.Language.CPP,
+                                                                           external_edges=True)
             # Force pointer connectors on the inner tasklet so the codegen
             # types `_cpy_in`/`_cpy_out` as `T*` (matching cudaMemcpyAsync's
             # signature) instead of dereferencing them as values.
