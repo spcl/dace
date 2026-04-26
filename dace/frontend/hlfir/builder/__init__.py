@@ -76,12 +76,20 @@ from dace.frontend.hlfir.builder.emit_cfg import (
     emit_assign,
     emit_cond,
     emit_loop,
+    emit_symbol_init,
     emit_while,
 )
 from dace.frontend.hlfir.builder.emit_tasklet import emit_scalar_assign, emit_tasklet
 
 # Default bridge pass pipeline.  Order matters — see ``README.md``.
 DEFAULT_PIPELINE = (
+    # Lower fir.select_case → arith.cmp + cf.cond_br BEFORE inline-all.
+    # The upstream ``mlir::inlineCall`` mishandles fir.select_case's
+    # block-operand remap and segfaults when a callee containing one is
+    # inlined.  Pre-lowering side-steps the inliner crash and produces
+    # a plain CFG that lift-cf-to-scf turns back into nested scf.if for
+    # the bridge to consume.
+    "lower-fir-select-case,"
     "hlfir-inline-all,"
     # Erase element-scoped alias declares left by inlining scalar-arg
     # procedures (elemental subroutines, most commonly) — runs before
@@ -198,9 +206,18 @@ class SDFGBuilder:
         self.arrays = {v.fortran_name: v for v in self.variables if v.role == "array"}
         self.symbols = {v.fortran_name: v for v in self.variables if v.role == "symbol"}
         self.scalars = {v.fortran_name: v for v in self.variables if v.role == "scalar"}
+        # Per-axis offset symbols: ``offset_<arr>_d<i>`` is the SDFG
+        # symbol every memlet of array ``<arr>`` subtracts on dim ``i``.
+        # Populated by ``add_descriptors`` from each VarInfo's
+        # ``lower_bounds``.  Values are int (constant-folded by
+        # ``sdfg.specialize``), str (substituted with another symbol
+        # name), or ``None`` (unknown — symbol stays free, caller
+        # passes it).
+        self.offset_values: dict[str, int | str | None] = {}
 
     def build(self) -> SDFG:
-        """Construct the SDFG and attach a frozen-signature snapshot.
+        """Construct the SDFG, run the unconditional offset-symbol
+        specialisation pass, and attach a frozen-signature snapshot.
 
         The snapshot is later verified by ``codegen.generate_code``
         before any C++ header gets emitted — any downstream
@@ -213,6 +230,29 @@ class SDFGBuilder:
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)
+        # Always-on post-emit substitution.  ``offset_values`` carries
+        # two flavours of mapping: int constants (``offset_d_d0 = 50``
+        # for ``dimension(50:54)``) and symbol aliases (``offset_d_d0 =
+        # "arrsize"`` for ``dimension(arrsize:arrsize+4)``).  They take
+        # different paths because ``sdfg.specialize`` only handles
+        # constants — feeding it a string would land on ``add_constant``
+        # and downstream casting tries ``int64("arrsize")`` and
+        # ValueError-s.
+        const_offsets, alias_offsets = {}, {}
+        for k, v in self.offset_values.items():
+            if v is None:
+                continue
+            (alias_offsets if isinstance(v, str) else const_offsets)[k] = v
+        if const_offsets:
+            sdfg.specialize(const_offsets)
+        # Symbol-to-symbol aliasing (``offset_d_d0 = arrsize``): rename
+        # every reference and drop the now-redundant offset symbol from
+        # the SDFG so its signature only carries ``arrsize`` as a free
+        # symbol.
+        for src, dst in alias_offsets.items():
+            sdfg.replace(src, dst)
+            if src in sdfg.symbols:
+                sdfg.symbols.pop(src)
         self._attach_frozen_signature(sdfg)
         return sdfg
 
@@ -275,6 +315,7 @@ class SDFGBuilder:
         "break": emit_break,
         "return": emit_return,
         "declare_transient": emit_declare_transient,
+        "symbol_init": emit_symbol_init,
     }
 
     def _emit(self, ctx: '_Ctx', nodes: list, region):

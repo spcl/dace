@@ -193,7 +193,6 @@ END SUBROUTINE intrinsic_bound_test_function3
     assert np.allclose(res, [42, 13, 45, 19])
 
 
-@xfail("module-level derived type + LBOUND/UBOUND on percent-member not lowered")
 def test_fortran_frontend_bound_structure(tmp_path):
     src = """
 MODULE test_types
@@ -239,7 +238,6 @@ END MODULE
     assert np.allclose(res, [2, 3, 5, 9])
 
 
-@xfail("module-level derived type + LBOUND/UBOUND on percent-member not lowered")
 def test_fortran_frontend_bound_structure_override(tmp_path):
     src = """
 MODULE test_types
@@ -287,7 +285,6 @@ END MODULE
     assert np.allclose(res, [2, 3, 5, 9])
 
 
-@xfail("nested derived types + LBOUND/UBOUND on multi-level percent-member not lowered")
 def test_fortran_frontend_bound_structure_recursive(tmp_path):
     src = """
 MODULE test_types

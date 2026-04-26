@@ -90,12 +90,16 @@ std::optional<int64_t> traceConstInt(mlir::Value v) {
 }
 
 hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
-    // Signature: no shape operand, memref produced by a fir.convert
-    // whose input (possibly behind more converts) is another
-    // hlfir.declare.  This is precisely what Flang emits for the
-    // callee's dummy_scope declare after hlfir-inline-all splices the
-    // callee's body into the caller.
-    if (decl.getShape()) return {};
+    // Signature: memref produced by another ``hlfir.declare`` (possibly
+    // behind ``fir.convert`` rebox ops).  This is precisely what Flang
+    // emits for the callee's dummy_scope declare after
+    // ``hlfir-inline-all`` splices the callee's body into the caller —
+    // the callee declare aliases the caller's outer declare for
+    // both assumed-shape (no shape operand on the inner declare) and
+    // fixed-shape (the inner declare carries its own copy of the
+    // callee-side shape) callees, the only difference being whether
+    // the inner declare reissues a shape.  Either way the storage is
+    // shared and downstream tracing should walk to the outer declare.
     auto mr = decl.getMemref();
     for (int i = 0; i < limits::kAliasMemrefWalkDepth && mr; ++i) {
         auto *d = mr.getDefiningOp();

@@ -55,7 +55,6 @@ END SUBROUTINE intrinsic_all_test_function
     sdfg = build_sdfg(src, tmp_path, name='intrinsic_all_test_function').build()
 
 
-@xfail('ALL(arr .eq. arr) — empty reduction source name')
 def test_fortran_frontend_all_array_comparison(tmp_path):
     src = """
 SUBROUTINE intrinsic_all_test_function(first, second, res)
@@ -160,7 +159,6 @@ END SUBROUTINE intrinsic_all_test_function
     assert res[0] == True
 
 
-@xfail('ALL on 2D comparison — empty reduction source')
 def test_fortran_frontend_all_array_comparison_2d(tmp_path):
     src = """
 SUBROUTINE intrinsic_all_test_function(first, second, res)
@@ -198,7 +196,6 @@ END SUBROUTINE intrinsic_all_test_function
         assert val == True
 
 
-@xfail('ALL on 2D subset comparison — empty reduction source')
 def test_fortran_frontend_all_array_comparison_2d_subset(tmp_path):
     src = """
 SUBROUTINE intrinsic_all_test_function(first, second, res)
@@ -231,7 +228,6 @@ END SUBROUTINE intrinsic_all_test_function
     assert list(res) == [0, 1]
 
 
-@xfail("dimension(20:24,4) offset declarations not yet honoured by FaCe")
 def test_fortran_frontend_all_array_comparison_2d_subset_offset(tmp_path):
     src = """
 SUBROUTINE intrinsic_all_test_function(first, second, res)

@@ -105,8 +105,14 @@ end subroutine main
     assert res[2, 0] == size2
 
 
-@xfail("internal subprograms (CONTAINS) + OPTIONAL + PRESENT not yet lowered")
 def test_fortran_frontend_present(tmp_path):
+    """``present(a)`` on an OPTIONAL dummy of an internal subprogram.
+    After ``hlfir-inline-all`` flattens ``tf2``'s body into ``main``,
+    each call site leaves a ``fir.is_present`` whose operand traces
+    through the inlined alias to either ``main``'s mandatory dummy
+    ``a`` (host bound storage → constant ``1``) or to ``fir.absent``
+    (caller passed nothing → constant ``0``).  The bridge folds these
+    statically at AST-extract time."""
     src = """
 subroutine main(res, res2, a)
   integer, dimension(4) :: res
@@ -129,7 +135,12 @@ end subroutine
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res, res2=res2, a=5)
+    # Scalar Fortran dummies surface as 1-element array containers on
+    # the SDFG signature; ``a`` is never dereferenced (only its address
+    # feeds ``is_present``) so the value is irrelevant, but the buffer
+    # has to be present.
+    a = np.full([1], 5, order="F", dtype=np.int32)
+    sdfg(res=res, res2=res2, a=a)
 
     assert res[0] == 1
     assert res2[0] == 0

@@ -33,6 +33,9 @@ void registerAllBridgePasses() {
         return createInlineAllPass();
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createLowerFirSelectCasePass();
+    });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createFlattenStructsPass();
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {

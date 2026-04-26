@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('res(:) = a(:) - b(:) — invalid expression')
 def test_fortran_frontend_multiple_ranges_all(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_function(input1, input2, res)
@@ -43,7 +42,6 @@ END SUBROUTINE multiple_ranges_function
         assert val == 1.0
 
 
-@xfail('res(:) = m(:,1) - m(:,2) — invalid expression')
 def test_fortran_frontend_multiple_ranges_selection(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_selection_function(input1, res)
@@ -68,7 +66,6 @@ END SUBROUTINE multiple_ranges_selection_function
         assert val == idx + 1.0
 
 
-@xfail('res(:) = m(:,pos1) - m(:,pos2) — invalid expression')
 def test_fortran_frontend_multiple_ranges_selection_var(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_selection_function(input1, res, pos1, pos2)
@@ -99,7 +96,6 @@ END SUBROUTINE multiple_ranges_selection_function
         assert -val == idx + 1.0
 
 
-@xfail('res(:) = a(1:3) - a(4:6) — invalid expression')
 def test_fortran_frontend_multiple_ranges_subset(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_subset_function(input1, res)
@@ -122,7 +118,6 @@ END SUBROUTINE multiple_ranges_subset_function
         assert val == -3.0
 
 
-@xfail('res(:) = a(pos(1):pos(2)) - a(pos(3):pos(4)) — invalid expression')
 def test_fortran_frontend_multiple_ranges_subset_var(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_subset_var_function(input1, res, pos)
@@ -357,7 +352,6 @@ END SUBROUTINE multiple_ranges_ecrad_bug_function
         iter_2 += 1
 
 
-@xfail('res(:) = a(2) * a(:) — invalid expression')
 def test_fortran_frontend_ranges_array_bug(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_ecrad_bug_function(input1, res)
@@ -447,7 +441,6 @@ END SUBROUTINE ranges_noarray_function
     assert np.all(res == inp)
 
 
-@xfail('res = 1.0 - input1 — input2 declared but unused yet still required')
 def test_fortran_frontend_ranges_scalar(tmp_path):
     src = """
 subroutine main(input1, input2, res)

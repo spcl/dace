@@ -9,6 +9,7 @@ should skip collection accordingly.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -58,15 +59,55 @@ def compile_to_hlfir(source: str, out_dir: Path, name: str = "src") -> Path:
     return hlfir
 
 
-class _DumpingBuilder:
-    """Thin proxy around ``SDFGBuilder`` that dumps the built SDFG when
-    ``__DACE_HLFIR_GEN_TEST_SDFGS`` is set.  Everything else flows through
-    to the wrapped builder unchanged (``.arrays`` / ``.scalars`` / … still
-    work the same way for tests that inspect them)."""
+def _per_test_suffix() -> str:
+    """Return a readable, test-relevant suffix derived from
+    ``PYTEST_CURRENT_TEST`` (e.g. ``_multi_target_reduction_mixed_reductions``).
+    Empty when not running under pytest, so notebook / ad-hoc callers
+    see unmodified SDFG names.
 
-    def __init__(self, inner, name: str, dump_dir: Path):
+    Used by ``build_sdfg`` to ensure each test produces a uniquely-named
+    SDFG.  Without this, multiple tests in the same file all produce an
+    SDFG named e.g. ``main`` — under pytest-xdist they share the same
+    ``.so`` filename within a worker, the OS dynamic loader returns a
+    cached handle bound to the previous test's compiled symbols, and
+    the second test silently runs stale code.
+
+    Form: ``_<file-stem-minus-_test>_<test-name-minus-test_>``.  Both
+    halves are sanitised so the resulting name is a valid C++ symbol
+    (e.g. parametrised ``test_foo[3]`` becomes ``foo_3_``).
+    """
+    raw = os.environ.get("PYTEST_CURRENT_TEST", "")
+    if not raw or "::" not in raw:
+        return ""
+    nodeid = raw.rsplit(" ", 1)[0]
+    file_part, _, test_part = nodeid.partition("::")
+    stem = Path(file_part).stem
+    if stem.endswith("_test"):
+        stem = stem[:-len("_test")]
+    if test_part.startswith("test_"):
+        test_part = test_part[len("test_"):]
+    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", f"{stem}_{test_part}").strip("_")
+    return f"_{sanitized}" if sanitized else ""
+
+
+class _TestBuilder:
+    """Thin proxy around ``SDFGBuilder`` for tests:
+
+      * Renames the produced SDFG with a per-test hash suffix so two
+        tests using ``name='main'`` end up with distinct ``.so`` files —
+        a hard requirement for ``pytest-xdist`` parallel runs.
+      * Optionally dumps the built SDFG to disk when
+        ``__DACE_HLFIR_GEN_TEST_SDFGS`` is set.
+
+    Everything else flows through to the wrapped builder unchanged
+    (``.arrays`` / ``.scalars`` / … still work the same way for tests
+    that inspect them).
+    """
+
+    def __init__(self, inner, name: str, suffix: str, dump_dir: Path | None):
         self._inner = inner
         self._name = name
+        self._suffix = suffix
         self._dump_dir = dump_dir
 
     def __getattr__(self, attr):
@@ -74,9 +115,12 @@ class _DumpingBuilder:
 
     def build(self):
         sdfg = self._inner.build()
-        self._dump_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self._dump_dir / f"{self._name}.sdfg"
-        sdfg.save(str(out_path))
+        if self._suffix:
+            sdfg.name = f"{sdfg.name}{self._suffix}"
+        if self._dump_dir is not None:
+            self._dump_dir.mkdir(parents=True, exist_ok=True)
+            out_path = self._dump_dir / f"{self._name}{self._suffix}.sdfg"
+            sdfg.save(str(out_path))
         return sdfg
 
 
@@ -98,9 +142,10 @@ def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None, ent
     from hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE
     hlfir = compile_to_hlfir(source, out_dir, name)
     builder = SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE), entry=entry)
+    suffix = _per_test_suffix()
     dump = _dump_dir()
-    if dump is not None:
-        return _DumpingBuilder(builder, name, dump)
+    if suffix or dump is not None:
+        return _TestBuilder(builder, name, suffix, dump)
     return builder
 
 

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -17,7 +16,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("module-level PARAMETER + globals")
 def test_fortran_frontend_init(tmp_path):
     src = """
 module lib1
@@ -50,7 +48,6 @@ end subroutine main
     assert (a[2] == 42)
 
 
-@xfail("module-level PARAMETER + globals")
 def test_fortran_frontend_init2(tmp_path):
     src = """
 module lib1

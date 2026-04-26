@@ -17,7 +17,7 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("OPTIONAL + INTERFACE block not yet lowered")
+@xfail("unguarded read of OPTIONAL dummy when caller passes nothing (UB Fortran)")
 def test_fortran_frontend_optional(tmp_path):
     src = """
 
@@ -64,7 +64,7 @@ def test_fortran_frontend_optional(tmp_path):
     assert res2[0] == 0
 
 
-@xfail("OPTIONAL + INTERFACE block (multi-arg) not yet lowered")
+@xfail("unguarded read of OPTIONAL dummies when caller passes nothing (UB Fortran)")
 def test_fortran_frontend_optional_complex(tmp_path):
     src = """
 

@@ -1,17 +1,33 @@
 #!/usr/bin/env python3
-"""Run every test relevant to the HLFIR frontend + supporting library /
-transformation work in this branch, and print a single summary at the end.
+"""Run the focused regression sweep for this branch, and print a single
+summary at the end.
 
-Each test group is invoked as its own ``pytest`` subprocess so a crash in
-one group doesn't poison the others, and so we can attribute pass / fail
-/ xfail counts back to a meaningful bucket.
+Scope is intentionally narrow — only the surfaces this branch touched:
+
+  * ``tests/hlfir/`` — the HLFIR frontend, including the verbatim
+    ``ported/`` subdirectory ported from f2dace.
+  * ``tests/library/count_node_test.py`` and
+    ``tests/library/merge_node_test.py`` — the two standard library
+    nodes this branch introduced.
+
+Anything else (transformations, GPU, codegen, …) is out of scope here
+because this branch doesn't change it; run those with their own
+``pytest`` invocations if needed.
+
+By default each pytest subprocess is parallelised with pytest-xdist
+(``-n 4``).  Override with ``--workers N`` — ``--workers 1`` forces a
+serial run.  The HLFIR group is forced serial regardless because
+many HLFIR tests reuse the SDFG name ``main`` and would race on the
+shared ``.dacecache/main/build`` directory under xdist.
 
 Usage:
-    python tests/run_relevant_tests.py           # full run, all groups
-    python tests/run_relevant_tests.py -k merge  # forward extra args to pytest
+    python tests/run_relevant_tests.py                       # default 4 workers
+    python tests/run_relevant_tests.py --workers 1           # serial
+    python tests/run_relevant_tests.py -- -k merge           # forward args to pytest
 """
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -20,16 +36,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Each entry: (label, [paths/args]).  Ignores cover collection-time errors
-# we know are unrelated (mpi4py / scipy.sparse missing on this machine).
+# Each entry: (label, [paths/args]).  Cache-dir races between parallel
+# workers are handled by ``tests/hlfir/conftest.py``, which gives each
+# pytest-xdist worker its own ``.dacecache_gw<N>`` directory.
 GROUPS: list[tuple[str, list[str]]] = [
     ("hlfir.frontend", ["tests/hlfir/"]),
     ("library.standard", ["tests/library/count_node_test.py", "tests/library/merge_node_test.py"]),
-    ("transformations.bufred", ["tests/transformations/buffered_reduce_to_inplace_test.py"]),
-    ("transformations.fusion", [
-        "tests/transformations/", "--ignore=tests/transformations/gpu_grid_stride_tiling_test.py",
-        "--ignore=tests/transformations/otf_map_fusion_test.py"
-    ]),
 ]
 
 # pytest's short-summary tail line: "= 220 passed, 2 skipped, 137 xfailed in 250.81s ="
@@ -62,9 +74,13 @@ def parse_summary(stdout: str) -> dict[str, int]:
     return counts
 
 
-def run_group(label: str, args: list[str], extra: list[str]) -> tuple[dict[str, int], float, int]:
-    cmd = [sys.executable, "-m", "pytest", "--tb=line", "-p", "no:cacheprovider", *args, *extra]
-    print(f"\n=== {label}: {' '.join(args)} ===", flush=True)
+def run_group(label: str, args: list[str], extra: list[str], workers: int) -> tuple[dict[str, int], float, int]:
+    """Run one pytest group; returns (summary counts, elapsed seconds, exit code)."""
+    parallel: list[str] = []
+    if workers > 1:
+        parallel = ["-n", str(workers)]
+    cmd = [sys.executable, "-m", "pytest", "--tb=line", "-p", "no:cacheprovider", *parallel, *args, *extra]
+    print(f"\n=== {label}: {' '.join(args)} (workers={workers}) ===", flush=True)
     t0 = time.monotonic()
     proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
     elapsed = time.monotonic() - t0
@@ -75,11 +91,17 @@ def run_group(label: str, args: list[str], extra: list[str]) -> tuple[dict[str, 
     return counts, elapsed, proc.returncode
 
 
-def main(extra: list[str]) -> int:
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workers", type=int, default=4, help="pytest-xdist worker count (default: 4). 1 = serial.")
+    parser.add_argument("pytest_args", nargs=argparse.REMAINDER, help="Forwarded to pytest after a literal '--'.")
+    ns = parser.parse_args(argv)
+    extra = [a for a in ns.pytest_args if a != "--"]
+
     totals = dict(passed=0, failed=0, errors=0, skipped=0, xfailed=0, xpassed=0)
     rows: list[tuple[str, dict[str, int], float, int]] = []
     for label, args in GROUPS:
-        counts, elapsed, rc = run_group(label, args, extra)
+        counts, elapsed, rc = run_group(label, args, extra, ns.workers)
         rows.append((label, counts, elapsed, rc))
         for k in totals:
             totals[k] += counts[k]

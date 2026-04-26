@@ -211,6 +211,38 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     std::vector<hlfir::DeclareOp> decls;
     module.walk([&](hlfir::DeclareOp op) {
         if (asAssumedShapeAlias(op)) return;
+        // Drop unused SCALAR dummy arguments.  A subroutine like
+        // ``subroutine main(arg1, arg2, res1) ; res1 = exp(arg1)``
+        // (verbatim-port test pattern) leaves ``arg2`` declared but
+        // never read or written; with ``hlfir-default-intent`` adding
+        // ``intent_inout`` to every dummy, the older "drop only if
+        // no explicit intent" guard kept ``arg2`` and the SDFG
+        // signature broke Python callers that (correctly) didn't
+        // pass it.
+        //
+        // Restrict the filter to *scalar* dummies (and to dummies
+        // whose declare result has rank 0).  Arrays are kept
+        // unconditionally even when ``size(a)``-style references
+        // get folded by ``hlfir-propagate-shapes``: the array dummy
+        // may be the sole carrier of shape symbols for other dummies
+        // (``a(n, m)`` where ``m`` is used as an SDFG symbol via
+        // ``a``'s extent), and dropping ``a`` breaks the symbol
+        // classification cascade.
+        auto resTy = op.getResult(0).getType();
+        bool isArrayLike = false;
+        for (int i = 0; i < limits::kTypeWrapperPeelDepth; ++i) {
+            if (auto bt = mlir::dyn_cast<fir::BoxType>(resTy)) { resTy = bt.getEleTy(); continue; }
+            if (auto rt = mlir::dyn_cast<fir::ReferenceType>(resTy)) { resTy = rt.getEleTy(); continue; }
+            if (auto ht = mlir::dyn_cast<fir::HeapType>(resTy)) { resTy = ht.getEleTy(); continue; }
+            if (auto pt = mlir::dyn_cast<fir::PointerType>(resTy)) { resTy = pt.getEleTy(); continue; }
+            break;
+        }
+        if (mlir::isa<fir::SequenceType>(resTy)) isArrayLike = true;
+        if (op.getDummyScope() && !isArrayLike
+            && op.getResult(0).use_empty()
+            && op.getResult(1).use_empty()) {
+            return;
+        }
         decls.push_back(op);
     });
 

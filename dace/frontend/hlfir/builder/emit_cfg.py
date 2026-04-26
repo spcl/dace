@@ -16,7 +16,9 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.frontend.hlfir.builder.access import (
     array_read_to_dace_expr,
     collect_indirect,
+    find_array_subscripts,
     indirect_to_dace,
+    rename_iters,
 )
 from dace.frontend.hlfir.builder.context import _Ctx
 from dace.frontend.hlfir.builder.descriptors import auto_declare_synth
@@ -68,20 +70,81 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     ctx.pending.append((n.target, n.expr))
 
 
+def emit_symbol_init(builder, ctx: '_Ctx', n, region):
+    """Stage a position-array → SDFG-symbol read at SDFG entry.
+
+    The bridge mints one of these for every ``arr(constant)`` it sees
+    used as an array index or section bound (e.g. ``a(pos(1):pos(2))``).
+    ``n.target`` is the symbol name (``__sym_pos_1``), ``n.expr`` the
+    source array name (``pos``), and ``n.loop_lower`` the 1-based
+    Fortran index.  We add the symbol to the SDFG and emit an
+    interstate edge ``__sym_pos_1 = pos[0]`` so every memlet whose
+    subset references the symbol resolves to a closed-form expression
+    rather than a data lookup DaCe can't represent in subset form.
+    """
+    sym, arr, one_based = n.target, n.expr, int(n.loop_lower)
+    if sym not in ctx.sdfg.symbols:
+        ctx.sdfg.add_symbol(sym, dace.int64)
+    ctx.flush(builder)
+    ctx.ensure(region)
+    dst = region.add_state(f"sym_init_{sym}_{builder.nid()}")
+    region.add_edge(ctx.cur, dst, InterstateEdge(assignments={sym: f"{arr}[{one_based - 1}]"}))
+    ctx.cur = dst
+
+
+def _fortran_subs_to_dace(expr, builder):
+    """Rewrite every ``<arr>[<idx>, …]`` substring in ``expr`` to
+    DaCe 0-based form ``<arr>[(<idx>) - offset_<arr>_d<i>, …]`` for
+    each known array.  Used by ``emit_loop`` to convert Fortran-form
+    bound expressions (e.g. ``row_ptr[(i_0+1)]``) into valid DaCe
+    subscripts before they land in a LoopRegion's init / cond.
+    Non-array names (or untracked synthesised arrays) are left
+    unchanged.  Walks brackets balanced via ``find_array_subscripts``
+    so nested subscripts are handled correctly."""
+    if not isinstance(expr, str) or '[' not in expr:
+        return expr
+    matches = list(find_array_subscripts(expr, builder.arrays))
+    if not matches:
+        return expr
+    out = []
+    cursor = 0
+    for start, end, arr, parts in matches:
+        out.append(expr[cursor:start])
+        new_inner = ", ".join(f"({p}) - offset_{arr}_d{d}" for d, p in enumerate(parts))
+        out.append(f"{arr}[{new_inner}]")
+        cursor = end
+    out.append(expr[cursor:])
+    return "".join(out)
+
+
 def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     """Fortran DO loop → LoopRegion with exact Fortran bounds."""
-    ctx.flush(builder)
+    # Flush any pending scalar assigns from earlier siblings INTO the
+    # parent region.  Without ``region`` here, ``ctx.flush`` would land
+    # them in ``ctx.sdfg`` (the top-level SDFG) — disconnected from the
+    # nested loop and orphaned: e.g. ``acc = 0.0d0`` ahead of an inner
+    # ``do j = ...`` would surface as a duplicate top-level ``s_*``
+    # state with no incoming edge, making the parent CFG's start block
+    # ambiguous.
+    ctx.flush(builder, region)
     if iter_map is None:
         iter_map = {}
 
     uid = f"{n.loop_iter}_{builder.nid()}"
-    iter_map = {**iter_map, n.loop_iter: uid}
 
-    bound = n.loop_bound
-    # Prefer the string form when non-empty (section-assign / symbolic
-    # lowers); fall back to the int form for fir.do_loop bounds that
-    # Flang resolved to a constant.
-    lower = n.loop_lower_expr if n.loop_lower_expr else (n.loop_lower if n.loop_lower >= 0 else 1)
+    # Apply the OUTER iter_map to bound expressions BEFORE adding our
+    # own rename: the outer loop's iter (e.g. ``i`` → ``i_0``) may
+    # appear inside our bound (``do j = row_ptr(i), row_ptr(i+1)-1``),
+    # but our own iter ``j`` cannot legally appear in our bounds.
+    # Any embedded ``arr[idx]`` (Fortran 1-based) is then converted to
+    # DaCe 0-based form so the LoopRegion's init / cond hit the correct
+    # element.
+    bound = _fortran_subs_to_dace(rename_iters(n.loop_bound, iter_map), builder)
+    lower_expr = (_fortran_subs_to_dace(rename_iters(n.loop_lower_expr, iter_map), builder)
+                  if n.loop_lower_expr else '')
+    lower = lower_expr if lower_expr else (n.loop_lower if n.loop_lower >= 0 else 1)
+
+    iter_map = {**iter_map, n.loop_iter: uid}
 
     loop = LoopRegion(
         label=f"loop_{uid}",

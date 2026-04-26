@@ -106,6 +106,28 @@ def add_descriptors(builder, sdfg: SDFG):
     def _is_flang_internal(nm: str) -> bool:
         return nm.startswith(".")
 
+    # Per-axis offset symbols for every array.  ``offset_<arr>_d<i>`` is
+    # the value subtracted from the Fortran 1-based index in every
+    # memlet (see ``access.py::build_memlet_index``).  Default value for
+    # a Fortran array is ``1`` (the standard lb); ``dimension(20:24)``
+    # picks up ``20`` from the declare's shape_shift; ``dimension(lo:hi)``
+    # with caller-supplied ``lo`` falls through to ``None`` and the
+    # symbol stays free on the SDFG signature.  Populated here so
+    # ``builder.offset_values`` is fully filled before any AST emission
+    # references the symbols in memlet subsets.
+    def _offset_value(s: str):
+        s = s.strip()
+        if s == "?" or not s:
+            return None
+        if s.lstrip('-').isdigit():
+            return int(s)
+        # Symbolic lb (e.g. caller-supplied ``arrsize``).  If the symbol
+        # is already declared on the SDFG (a known dummy / Fortran sym),
+        # pass the name through; sdfg.specialize will alias one symbol
+        # to the other.  Otherwise leave unknown so the offset stays
+        # free.
+        return s if s in sdfg.symbols else None
+
     for v in builder.arrays.values():
         if _is_flang_internal(v.fortran_name):
             continue
@@ -117,6 +139,16 @@ def add_descriptors(builder, sdfg: SDFG):
             transient=(v.intent == ''),
             strides=_fortran_strides(dims) if len(dims) > 1 else None,
         )
+        # Declare an offset symbol per dim, sized from the SDFG array's
+        # rank (not ``v.lower_bounds`` which may be shorter for some
+        # synth shapes).  Unknown lower bounds default to ``1``.
+        rank = len(dims)
+        for d in range(rank):
+            sym_name = f"offset_{v.fortran_name}_d{d}"
+            if sym_name not in sdfg.symbols:
+                sdfg.add_symbol(sym_name, dace.int64)
+            lb = v.lower_bounds[d] if d < len(v.lower_bounds) else "1"
+            builder.offset_values[sym_name] = _offset_value(lb)
 
     for v in builder.scalars.values():
         if _is_flang_internal(v.fortran_name):
@@ -152,7 +184,19 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
             if s_str not in ctx.sdfg.symbols:
                 ctx.sdfg.add_symbol(s_str, dace.int64)
             dims.append(dace.symbol(s_str))
-    ctx.sdfg.add_array(name, shape=dims, dtype=dt(dtype), transient=True)
+    # Fortran-style transient: rank > 1 → column-major strides so the
+    # matmul / transpose / dot_product library nodes (which inherit
+    # layout from the source operands' strides) write the result in the
+    # same layout the bridge-declared dummy arrays use.  Single-rank
+    # transients (or scalars) take DaCe's default contiguous stride.
+    strides = None
+    if len(dims) > 1:
+        acc = 1
+        strides = []
+        for d in dims:
+            strides.append(acc)
+            acc = acc * d
+    ctx.sdfg.add_array(name, shape=dims, dtype=dt(dtype), transient=True, strides=strides)
     # Mirror the entry into ``builder.arrays`` so subsequent emit_assign
     # / emit_libcall calls find it via the existing arrays-dict lookups.
     from types import SimpleNamespace
@@ -166,6 +210,13 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
         shape_symbols=[str(s) for s in shape],
         lower_bounds=['1'] * len(shape),
     )
+    # Per-axis offset symbols + values (always 1 for bridge-synthesised
+    # transients — they're allocated fresh with Fortran's default lb).
+    for d in range(len(shape)):
+        sym_name = f"offset_{name}_d{d}"
+        if sym_name not in ctx.sdfg.symbols:
+            ctx.sdfg.add_symbol(sym_name, dace.int64)
+        builder.offset_values[sym_name] = 1
 
 
 def emit_declare_transient(builder, ctx, n, region):

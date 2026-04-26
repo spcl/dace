@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('exp(arr) — arg2 sym required but not generated')
 def test_fortran_frontend_elemental_exp(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -42,7 +41,6 @@ end subroutine main
         assert abs(f_res - p_res) < 10**-9
 
 
-@xfail('exp(arr(:)) — arg2 sym required but not generated')
 def test_fortran_frontend_elemental_exp_pardecl(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -67,7 +65,6 @@ end subroutine main
         assert abs(f_res - p_res) < 10**-9
 
 
-@xfail('exp(arr(2:4)) — invalid expression')
 def test_fortran_frontend_elemental_exp_subset(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -143,7 +140,6 @@ END MODULE
         assert abs(f_res - p_res) < 10**-9
 
 
-@xfail('1.0 - exp(arr(2:4)) — invalid expression')
 def test_fortran_frontend_elemental_exp_subset_hoist(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -170,7 +166,6 @@ end subroutine main
         assert abs(f_res - p_res) < 10**-9
 
 
-@xfail('arr(2:4) - exp(arr(2:4)) — invalid expression')
 def test_fortran_frontend_elemental_exp_complex(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)

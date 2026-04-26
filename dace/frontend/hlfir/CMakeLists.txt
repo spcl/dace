@@ -180,6 +180,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/Passes.cpp
     passes/PropagateShapes.cpp
     passes/InlineAll.cpp
+    passes/LowerFirSelectCase.cpp
     passes/FlattenStructs.cpp
     passes/DefaultIntent.cpp
     passes/VerifyNoUnresolvedCalls.cpp

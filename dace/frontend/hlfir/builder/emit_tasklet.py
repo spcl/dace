@@ -21,7 +21,7 @@ import re
 
 from dace import Memlet
 
-from dace.frontend.hlfir.builder.access import acc, build_memlet_index, get_access, indirect_host
+from dace.frontend.hlfir.builder.access import acc, build_memlet_index, get_access, indirect_host, rename_iters
 
 
 def assign_reads_array(assign_node, arrays: dict) -> bool:
@@ -92,7 +92,17 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
             in_c.add(f"_in_{nm}_{i}")
     out_c = {f"_out_{target}"}
 
-    code = f"_out_{target} = {rewrite(assign_node.expr)}"
+    # Apply iter_map rename to bare symbol references in the RHS BEFORE
+    # the array/scalar connector rewrite.  An assign like
+    # ``d(i) = i*2.0`` inside a ``do i = 50, 54`` loop produces RHS
+    # ``i * 2.0`` in the AST; the LoopRegion's iter is ``i_0`` (after
+    # uniquification), but the SDFG-level symbol ``i`` may also exist
+    # (a separate dummy with the same Fortran name, or just the
+    # extract_vars symbol slot).  Without this rename, the tasklet
+    # binds ``i`` to whatever the SDFG-level ``i`` symbol holds —
+    # typically zero — instead of the per-iteration value ``i_0``.
+    expr = rename_iters(assign_node.expr, iter_map)
+    code = f"_out_{target} = {rewrite(expr)}"
     t = state.add_tasklet(f"t_{idx}", in_c, out_c, code)
 
     for nm in sorted(reads_by_name):

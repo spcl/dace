@@ -42,7 +42,6 @@ END SUBROUTINE intrinsic_count_test_function
     assert res[0] == 0
 
 
-@xfail("COUNT(d, dim) — DIM= argument not yet lowered")
 def test_fortran_frontend_count_array_dim(tmp_path):
     src = """
 SUBROUTINE intrinsic_count_test_function(d, res)
@@ -142,7 +141,6 @@ END SUBROUTINE intrinsic_count_test_function
     assert list(res) == [1, 1, 0, 0, 1, 1, 4, 2, size - 2]
 
 
-@xfail('COUNT 2D — invalid expression')
 def test_fortran_frontend_count_array_2d(tmp_path):
     src = """
 SUBROUTINE intrinsic_count_test_function(d, res)

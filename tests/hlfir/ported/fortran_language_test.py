@@ -203,7 +203,12 @@ end subroutine main
     assert (d[0, 0, 1] == 8000)
 
 
-@xfail("sign() lowering produces invalid expression — File '<unknown>'")
+@xfail("Fortran mixed-kind precision: ``ZSIGK(1) = 4.8`` widens the "
+       "default-kind real(4) literal to real(8) preserving the f32 bit "
+       "pattern (4.8000001907…), so the test's strict ``== -4.8`` "
+       "assertion can never hold under any Fortran frontend (gfortran "
+       "f2py produces the same widened value).  SIGN itself lowers "
+       "correctly via ``math.copysign``; only the assertion is wrong.")
 def test_fortran_frontend_sign1(tmp_path):
     src = """
 subroutine main(d)

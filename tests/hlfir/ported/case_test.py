@@ -16,10 +16,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@pytest.mark.skip(
-    reason=
-    "module-contained subroutine with select case + parameter constant — bridge segfaults at SDFGBuilder.__init__ (skip rather than xfail since segfaults aren't catchable in-process)"
-)
 def test_fortran_frontend_case_const(tmp_path):
     """Tests that the cases statement can use parameters."""
     src = """
@@ -51,8 +47,6 @@ end subroutine main
     assert (a[0, 1] == 5)
 
 
-@pytest.mark.skip(
-    reason="range statements in case selectors (case(b:c)) not yet lowered; bridge segfaults so xfail isn't catchable")
 def test_fortran_frontend_case_const_range(tmp_path):
     """Tests that the cases statement can use parameters."""
     src = """

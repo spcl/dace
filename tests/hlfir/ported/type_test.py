@@ -511,7 +511,6 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("module-contained function returning real ** 2.0 not yet lowered")
 def test_fortran_frontend_func_type_prefix(tmp_path):
     src = """
 module lib
@@ -542,7 +541,6 @@ end subroutine main
     assert (a[0, 0] == 625)
 
 
-@xfail("module-contained function with declared body return type not yet lowered")
 def test_fortran_frontend_func_type_body(tmp_path):
     src = """
 module lib

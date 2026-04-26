@@ -68,7 +68,6 @@ end subroutine main
     assert res1[0] == np.dot(arg1, arg2)
 
 
-@xfail('transpose — arg2 sym arg required but not generated')
 def test_fortran_frontend_transpose(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -93,7 +92,6 @@ end subroutine main
     assert np.all(np.transpose(res1) == arg1)
 
 
-@xfail('1.0 - transpose() — invalid expression in tasklet')
 def test_fortran_frontend_transpose_hoist_out(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -193,7 +191,6 @@ end subroutine main
     assert np.all(np.matmul(arg1, arg2) == res1)
 
 
-@xfail('2.0 - matmul() — invalid expression in tasklet')
 def test_fortran_frontend_matmul_hoist_out(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)

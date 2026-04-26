@@ -17,7 +17,7 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("CONTAINS internal subprograms + OPTIONAL + PRESENT not yet lowered")
+@xfail("unguarded read of OPTIONAL ``a`` plus inlined-call constants not folded into inner dummies")
 def test_fortran_frontend_optional_adv(tmp_path):
     src = """
 subroutine main(res, res2, a)

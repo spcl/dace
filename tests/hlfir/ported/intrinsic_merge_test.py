@@ -62,7 +62,6 @@ END SUBROUTINE merge_test_function
             assert res[i] == 42
 
 
-@xfail('MERGE with scalar comparison mask — invalid expression')
 def test_fortran_frontend_merge_comparison_scalar(tmp_path):
     src = """
 SUBROUTINE merge_test_function(input1, input2, res)
@@ -105,7 +104,6 @@ END SUBROUTINE merge_test_function
             assert res[i] == 42
 
 
-@xfail('MERGE with array comparison mask — invalid expression')
 def test_fortran_frontend_merge_comparison_arrays(tmp_path):
     src = """
 SUBROUTINE merge_test_function(input1, input2, res)
@@ -148,7 +146,6 @@ END SUBROUTINE merge_test_function
             assert res[i] == 13
 
 
-@xfail('MERGE with sliced mask — invalid expression')
 def test_fortran_frontend_merge_comparison_arrays_offset(tmp_path):
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask1, mask2, res)
@@ -178,7 +175,6 @@ END SUBROUTINE merge_test_function
         assert val == 13
 
 
-@xfail('MERGE with shifted array — invalid expression')
 def test_fortran_frontend_merge_array_shift(tmp_path):
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask1, mask2, res)

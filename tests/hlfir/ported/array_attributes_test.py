@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('wrong numerical result — assignment side-effect not visible')
 def test_fortran_frontend_array_attribute_no_offset(tmp_path):
     src = """
 subroutine main(d)
@@ -36,7 +35,6 @@ end subroutine main
         assert a[i - 1] == i * 2
 
 
-@xfail('wrong numerical result — symbolic-array assignment not visible')
 def test_fortran_frontend_array_attribute_no_offset_symbol(tmp_path):
     src = """
 subroutine main(d, arrsize)
@@ -57,7 +55,6 @@ end subroutine main
         assert a[i - 1] == i * 2
 
 
-@xfail("array offset declarations (dimension(50:54)) not yet honoured by FaCe")
 def test_fortran_frontend_array_attribute_offset(tmp_path):
     src = """
 subroutine main(d)
@@ -76,7 +73,6 @@ end subroutine main
         assert a[i - 1] == (i - 1 + 50) * 2
 
 
-@xfail("symbolic offset bounds (arrsize:arrsize+4) not yet lowered")
 def test_fortran_frontend_array_attribute_offset_symbol(tmp_path):
     src = """
 subroutine main(d, arrsize)
@@ -97,7 +93,6 @@ end subroutine main
         assert a[i - 1] == (i - 1 + 50) * 2
 
 
-@xfail("symbolic offset bounds (arrsize:arrsize2) not yet lowered")
 def test_fortran_frontend_array_attribute_offset_symbol2(tmp_path):
     src = """
 subroutine main(d, arrsize, arrsize2)
@@ -119,7 +114,6 @@ end subroutine main
         assert a[i - 1] == (i - 1 + 50) * 2
 
 
-@xfail("array offset declarations (d(50:54)) not yet honoured by FaCe")
 def test_fortran_frontend_array_offset(tmp_path):
     src = """
 subroutine main(d)
@@ -138,7 +132,6 @@ end subroutine main
         assert a[i - 1] == (50 + i - 1) * 2
 
 
-@xfail("symbolic offset bounds d(arrsize:arrsize2) not yet lowered")
 def test_fortran_frontend_array_offset_symbol(tmp_path):
     src = """
 subroutine main(d, arrsize, arrsize2)
