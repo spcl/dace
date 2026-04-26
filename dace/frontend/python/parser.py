@@ -331,6 +331,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
 
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
+                self._run_parallel_schedule_tree_lowering_checks(args, kwargs, entry.sdfg)
                 return entry.sdfg
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
@@ -964,7 +965,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                                 kwargs: Dict[str, Any],
                                 *,
                                 lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
-                                callable_bindings: Optional[Dict[str, Any]] = None) -> 'tn.ScheduleTreeRoot':
+                                callable_bindings: Optional[Dict[str, Any]] = None,
+                                update_program_state: bool = True) -> 'tn.ScheduleTreeRoot':
         """Generates a schedule tree directly from the preprocessed frontend AST."""
         dace_func = self.f
 
@@ -1025,10 +1027,11 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             preserve_call_expansions=True)
         parsed_ast.resolved_arg_annotations = self._resolved_schedule_tree_arg_annotations()
 
-        self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
-        self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
-        self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
-        self.resolver = closure
+        if update_program_state:
+            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
+            self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
+            self.resolver = closure
 
         constants: Dict[str, Tuple[Data, Any]] = {}
         for name, value in closure.closure_constants.items():
@@ -1087,6 +1090,66 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                 stree.symbols.setdefault(free_symbol.name, free_symbol)
 
         return stree
+
+    def _run_parallel_schedule_tree_lowering_checks(self, args: Tuple[Any], kwargs: Dict[str, Any], sdfg: SDFG) -> None:
+        stree = self._generate_schedule_tree(args, kwargs, update_program_state=False)
+        self._check_schedule_tree_parallel_lowering(stree, sdfg)
+
+    def _check_schedule_tree_parallel_lowering(self, stree: 'tn.ScheduleTreeRoot', sdfg: SDFG) -> None:
+        from dace.data.pydata import PythonClass
+        from dace.sdfg.analysis.schedule_tree import treenodes as tn
+
+        statement_nodes: List[tn.StatementNode] = []
+        refset_nodes: List[tn.RefSetNode] = []
+        pythonclass_names: List[str] = []
+
+        for node in stree.preorder_traversal():
+            if isinstance(node, tn.StatementNode):
+                statement_nodes.append(node)
+            elif isinstance(node, tn.RefSetNode):
+                refset_nodes.append(node)
+
+            if isinstance(node, tn.ScheduleTreeScope):
+                for name, descriptor in node.containers.items():
+                    if isinstance(descriptor, PythonClass):
+                        pythonclass_names.append(name)
+
+        if statement_nodes:
+            examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])
+            raise RuntimeError(f'Schedule-tree parallel lowering failed for {self.name}: '
+                               f'generated {len(statement_nodes)} StatementNode(s); examples: {examples}')
+
+        if refset_nodes:
+            if not self._sdfg_contains_reference_descriptors(sdfg):
+                targets = ', '.join(sorted({node.target for node in refset_nodes})[:5])
+                warnings.warn(
+                    'Schedule-tree parallel lowering failed for '
+                    f'{self.name}: generated RefSetNode(s) for {targets}, '
+                    'but the SDFG contains no reference descriptors',
+                    UserWarning,
+                    stacklevel=4)
+
+            for node in refset_nodes:
+                source_text = node.source_expr
+                if source_text is None and node.memlet is not None:
+                    source_text = str(node.memlet)
+                if source_text is None:
+                    source_text = type(node.src_desc).__name__
+                warnings.warn(
+                    'Schedule-tree parallel lowering warning for '
+                    f'{self.name}: RefSetNode target "{node.target}" from {source_text}',
+                    UserWarning,
+                    stacklevel=4)
+
+        for name in pythonclass_names:
+            warnings.warn(f'Schedule-tree parallel lowering warning for {self.name}: PythonClass container "{name}"',
+                          UserWarning,
+                          stacklevel=4)
+
+    def _sdfg_contains_reference_descriptors(self, sdfg: SDFG) -> bool:
+        return any(
+            isinstance(descriptor, data.Reference)
+            for _, _, descriptor in sdfg.arrays_recursive(include_nested_data=True))
 
     def _bind_schedule_tree_arguments(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Return a parameter-to-value map for direct schedule-tree specialization."""
@@ -1220,5 +1283,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             # Set regenerate and recompile flags
             sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
+
+        self._run_parallel_schedule_tree_lowering_checks(args, kwargs, sdfg)
 
         return sdfg, cached
