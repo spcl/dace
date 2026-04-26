@@ -944,11 +944,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     top_source_edge.src.data: top_source_edge.src.desc(sdfg)
                 } if top_source_edge.src.data not in descs else {})
 
-            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src,
+                                                                   (nd.AccessNode, nd.CodeNode, nd.ExitNode)):
+                # Same case as above, but for outgoing Memlets. ``ExitNode`` on
+                # the source side covers nested-map staging (e.g. an inner
+                # thread-block MapExit feeding the outer kernel MapExit after
+                # AddThreadBlockMap), where the inner edge data is the local
+                # transient and the outer ``OUT_*`` connector resolves to the
+                # surrounding array.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):

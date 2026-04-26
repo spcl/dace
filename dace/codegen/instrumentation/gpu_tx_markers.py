@@ -22,15 +22,19 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
-        # Check if ROCm TX libraries and headers are available
+        # Check if ROCm TX libraries and headers are available. Only meaningful
+        # when the backend is HIP — on a CUDA host that happens to also have
+        # ROCm installed we must not flip into rocTX mode (would suppress
+        # NVTX init markers via the `enable_rocTX` short-circuits below).
         rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
         roctx_header_paths = [
             os.path.join(rocm_path, 'roctracer/include/roctx.h'),
             os.path.join(rocm_path, 'include/roctracer/roctx.h')
         ]
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
-        self.enable_rocTX = any(os.path.isfile(path)
-                                for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
+        self.enable_rocTX = (self.backend == 'hip'
+                             and any(os.path.isfile(path) for path in roctx_header_paths)
+                             and os.path.isfile(roctx_library_path))
         self.include_generated = False
         super().__init__()
 

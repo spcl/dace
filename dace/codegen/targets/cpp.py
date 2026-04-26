@@ -850,8 +850,10 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
-                                                              and connected_to_gpu_memory(node, state_dfg, sdfg)):
+        cuda_impl = Config.get("compiler", "cuda", "implementation")
+        host_node_on_gpu_memory = (not is_devicelevel_gpu(sdfg, state_dfg, node)
+                                   and connected_to_gpu_memory(node, state_dfg, sdfg))
+        if host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
@@ -867,6 +869,21 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                     state_id,
                     node,
                 )
+        elif host_node_on_gpu_memory and cuda_impl == 'legacy':
+            # Legacy with max_concurrent_streams<0 short-circuits
+            # _compute_cudastreams (cuda.py:819-821) so no `_cuda_stream`
+            # is set, yet library code (e.g. the cuBLAS env's
+            # `cublasSetStream(_, __dace_current_stream)`) still references
+            # the variable. Emit a nullptr fallback so that compiles.
+            # Experimental codegen never reaches this branch: it explicitly
+            # sets `_cuda_stream` on every tasklet that references
+            # `__dace_current_stream` via `_annotate_legacy_cuda_stream`.
+            callsite_stream.write(
+                '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
+                cfg,
+                state_id,
+                node,
+            )
 
         if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
             raise ValueError("Only Python, C++ or MLIR code supported in CPU codegen, got: {}".format(node.language))

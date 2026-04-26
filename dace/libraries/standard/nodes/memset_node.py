@@ -23,7 +23,7 @@ def _make_memset_skeleton(
     node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
 ) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any],
            Optional[dace.data.Data]]:
-    """Shared SDFG skeleton for every memset expansion."""
+    """Shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion."""
     out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
     keep = [(e + 1 - b) // s != 1 for (b, e, s) in out_subset]
     out_shape_collapsed = [(e + 1 - b) // s for (b, e, s), k in zip(out_subset, keep) if k]
@@ -40,31 +40,35 @@ def _make_memset_skeleton(
     return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed, stream_input
 
 
-def _make_memset_memcpy_tasklet(sdfg: dace.SDFG, state: dace.SDFGState, out_name: str, out: dace.data.Data,
-                                out_shape_collapsed: List[Any], cp_size: Any, stream_input: Optional[dace.data.Data],
-                                cuda: bool):
-    """Emit a ``memset`` / ``cudaMemsetAsync`` tasklet writing zeros to ``out``."""
-    tasklet_inputs = set()
+def _make_single_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG,
+                                cuda: bool) -> nodes.Tasklet:
+    """Return a single Tasklet emitting ``memset`` / ``cudaMemsetAsync`` -- replaces the library node in place."""
+    out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+    if dynamic_inputs:
+        raise NotImplementedError(
+            f"{type(node).__name__} direct-tasklet expansion does not yet support dynamic input scalars; "
+            f"use the 'pure' implementation for this case.")
+
+    cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
+
+    has_stream = stream_input is not None
     if cuda:
-        stream_expr = _STREAM_CONN if stream_input is not None else "__dace_current_stream"
-        if stream_input is not None:
-            tasklet_inputs.add(_STREAM_CONN)
-        code = (f"cudaMemsetAsync(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), "
+        stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
+        code = (f"cudaMemsetAsync(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), "
                 f"{stream_expr});")
     else:
-        code = f"memset(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
+        code = f"memset(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
 
-    out_access = state.add_access(out_name)
-    tasklet = state.add_tasklet(name="memset_tasklet",
-                                inputs=tasklet_inputs,
-                                outputs={"_memset_out"},
-                                code=code,
-                                language=dace.Language.CPP)
-    state.add_edge(
-        tasklet, "_memset_out", out_access, None,
-        dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
-    if cuda:
-        _wire_stream_to(sdfg, state, tasklet, _STREAM_CONN, stream_input)
+    in_conns = {}
+    if has_stream:
+        in_conns[_STREAM_CONN] = dace.dtypes.gpuStream_t
+
+    tasklet = nodes.Tasklet(node.name,
+                            inputs=in_conns,
+                            outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                            code=code,
+                            language=dace.Language.CPP)
+    return tasklet
 
 
 @library.expansion
@@ -100,12 +104,9 @@ class ExpandCUDA(ExpandTransformation):
     environments = [environments.CUDA]
 
     @staticmethod
-    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        sdfg, state, out_name, out, _out_subset, map_lengths, out_shape_collapsed, stream_input = (
-            _make_memset_skeleton(node, parent_state, parent_sdfg))
-        cp_size = reduce(operator.mul, map_lengths, 1)
-        _make_memset_memcpy_tasklet(sdfg, state, out_name, out, out_shape_collapsed, cp_size, stream_input, cuda=True)
-        return sdfg
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                  parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=True)
 
 
 @library.expansion
@@ -113,12 +114,9 @@ class ExpandCPU(ExpandTransformation):
     environments = [environments.CPU]
 
     @staticmethod
-    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        sdfg, state, out_name, out, _out_subset, map_lengths, out_shape_collapsed, stream_input = (
-            _make_memset_skeleton(node, parent_state, parent_sdfg))
-        cp_size = reduce(operator.mul, map_lengths, 1)
-        _make_memset_memcpy_tasklet(sdfg, state, out_name, out, out_shape_collapsed, cp_size, stream_input, cuda=False)
-        return sdfg
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                  parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=False)
 
 
 @library.node

@@ -194,17 +194,34 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         """
         if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
             stream = getattr(node, '_cuda_stream', -1)
+            return stream
 
-        else:
-            stream = -1
-            for in_edge in state.in_edges(node):
+        def _stream_from_in_edges(target: nodes.Node) -> int:
+            for in_edge in state.in_edges(target):
                 src = in_edge.src
-                if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t):
-                    stream = int(in_edge.data.subset)
+                if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t
+                        and not in_edge.data.is_empty()):
+                    return int(in_edge.data.subset)
+            return -1
 
+        stream = _stream_from_in_edges(node)
+
+        # MapExit's out-edge to gpu_streams carries an empty dependency memlet
+        # (see ConnectGPUStreamsToNodes._build_chain). Resolve via the matching
+        # MapEntry, which has the real `gpu_streams[i]` in-edge.
+        if stream == -1 and isinstance(node, nodes.MapExit):
+            entry = state.entry_node(node)
+            if entry is not None:
+                stream = _stream_from_in_edges(entry)
+
+        # Defensive out-edge fallback for non-Exit nodes only (Exit nodes' stream
+        # out-edges are always empty by construction).
+        if stream == -1 and not isinstance(node, nodes.ExitNode):
             for out_edge in state.out_edges(node):
                 dst = out_edge.dst
-                if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t):
+                if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t
+                        and not out_edge.data.is_empty()):
                     stream = int(out_edge.data.subset)
+                    break
 
         return stream

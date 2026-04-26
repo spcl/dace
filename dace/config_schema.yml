@@ -488,6 +488,11 @@ required:
                         enum: [legacy, experimental]
                         default: legacy
 
+                    allow_implicit_memlet_to_map:
+                        type: bool
+                        title: Allow the implicit conversion of Memlets to Maps during code generation.
+                        default: true
+
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
