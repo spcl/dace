@@ -37,6 +37,7 @@ def _sync_tasklets(state):
 
 
 @pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
 def test_basic():
     """
     Single-component GPU program: exactly one stream, one end-of-state sync tasklet.
@@ -76,6 +77,7 @@ def test_basic():
 
 
 @pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
 def test_extended():
     """
     Two independent connected components -> two streams -> one sync tasklet
@@ -120,6 +122,7 @@ def test_extended():
 
 
 @pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness():
     """
     Simple element-wise computation, CPU vs. GPU parity.
@@ -152,6 +155,7 @@ def test_numerical_correctness():
 
 
 @pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness_complex():
     """
     Two dependent maps, CPU vs. GPU parity including the intermediate array.

@@ -13,6 +13,8 @@ from typing import Callable, Dict
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.new_gpu_codegen_only
+
 _NPBENCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'npbench', 'polybench'))
 if _NPBENCH_DIR not in sys.path:
     sys.path.insert(0, _NPBENCH_DIR)

@@ -21,6 +21,8 @@ from typing import Callable, Dict
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.new_gpu_codegen_only
+
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (

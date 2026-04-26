@@ -15,6 +15,8 @@ and run far faster.
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.new_gpu_codegen_only
+
 import dace
 from dace import dtypes
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode

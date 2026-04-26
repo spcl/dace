@@ -5,6 +5,10 @@ import numpy as np
 import pytest
 import scipy
 
+# All tests in this file rely on the GPU_ThreadBlock_Dynamic schedule, which is
+# only supported by the legacy CUDA codegen.
+pytestmark = pytest.mark.old_gpu_codegen_only
+
 W = dace.symbol('W')
 H = dace.symbol('H')
 nnz = dace.symbol('nnz')
