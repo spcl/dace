@@ -2613,7 +2613,16 @@ def clean_trivial_views(sdfg: dace.SDFG):
                     # Reroute all edges of type B -> C to be A -> C
                     # Update edges
 
-                    repl_dict[edge.dst.data] = edge.src.data
+                    # Only register a rename when the two AccessNodes alias
+                    # different data names; if they already share a name
+                    # (e.g. earlier in the pass an upstream collapse renamed
+                    # one of them to the other's name), the structural
+                    # cleanup below still applies but the global
+                    # ``replace_dict`` / ``remove_data`` step at the end of
+                    # this function would otherwise self-rename and delete
+                    # the only remaining descriptor.
+                    if edge.dst.data != edge.src.data:
+                        repl_dict[edge.dst.data] = edge.src.data
 
                     # Rm view node
                     for oe in state.out_edges(edge.dst):
@@ -2639,7 +2648,11 @@ def clean_trivial_views(sdfg: dace.SDFG):
                 )
                 if subset == shape_as_subset:
 
-                    repl_dict[edge.src.data] = edge.dst.data
+                    # Same self-rename guard as the struct-to-view branch
+                    # above: collapse the view structurally but do not
+                    # register a (X, X) entry in repl_dict.
+                    if edge.src.data != edge.dst.data:
+                        repl_dict[edge.src.data] = edge.dst.data
 
                     # Rm view node
                     for ie in state.in_edges(edge.src):
