@@ -160,7 +160,7 @@ def test_write_struct_array():
     i_after.add_edge(indptr, 'views', vcsr, None, dace.Memlet(data='vcsr.indptr', subset='0:M+1'))
     i_after.add_edge(vcsr, 'views', B, None, dace.Memlet(data='B', subset='k'))
 
-    k_before, k_guard, k_after = sdfg.add_loop(None, i_before, None, 'k', '0', 'k < L', 'k + 1', loop_end_state=i_after)
+    sdfg.add_loop(None, i_before, None, 'k', '0', 'k < L', 'k + 1', loop_end_block=i_after)
 
     func = sdfg.compile()
 
