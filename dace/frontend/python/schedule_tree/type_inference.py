@@ -1218,7 +1218,7 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             if obj_desc is UNRESOLVED:
                 return None
         method_name = node.func.attr
-        infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(obj_desc), method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(obj_desc, method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')

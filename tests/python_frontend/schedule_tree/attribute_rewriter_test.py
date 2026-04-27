@@ -5,6 +5,7 @@ import pytest
 
 import dace
 import numpy as np
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree import AttributeRewriter
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -154,6 +155,49 @@ def test_schedule_tree_infers_plain_object_registered_method_results():
     assert isinstance(request_desc, dace.data.Array)
     assert tuple(request_desc.shape) == (1, )
     assert isinstance(request_desc.dtype, dace.dtypes.opaque)
+    assert not any(isinstance(node, tn.StatementNode) for node in stree.preorder_traversal())
+
+
+def test_schedule_tree_lowers_inferred_process_grid_methods():
+    MPI = pytest.importorskip('mpi4py.MPI')
+
+    size = MPI.COMM_WORLD.Get_size()
+
+    @dace.program
+    def process_grid_bcast(A: dace.int32[10]):
+        pgrid = MPI.COMM_WORLD.Create_cart([1, size])
+        if pgrid != MPI.COMM_NULL:
+            pgrid.Bcast(A)
+
+    stree = process_grid_bcast.to_schedule_tree(np.zeros((10, ), dtype=np.int32))
+    library_calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.LibraryCall)]
+
+    assert len(library_calls) == 1
+    assert library_calls[0].node.name == 'Bcast'
+    assert library_calls[0].node.properties['receiver_class'] == 'ProcessGrid'
+    assert stree.containers['pgrid'].location[oprepo.REPLACEMENT_CLASS_LOCATION_KEY] == 'ProcessGrid'
+    assert not any(isinstance(node, tn.StatementNode) for node in stree.preorder_traversal())
+
+
+def test_schedule_tree_lowers_inferred_sub_grid_methods():
+    MPI = pytest.importorskip('mpi4py.MPI')
+
+    size = MPI.COMM_WORLD.Get_size()
+
+    @dace.program
+    def sub_grid_bcast(A: dace.int32[10]):
+        pgrid = MPI.COMM_WORLD.Create_cart([1, size])
+        if pgrid != MPI.COMM_NULL:
+            sgrid = pgrid.Sub([False, True])
+            sgrid.Bcast(A)
+
+    stree = sub_grid_bcast.to_schedule_tree(np.zeros((10, ), dtype=np.int32))
+    library_calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.LibraryCall)]
+
+    assert [node.node.name for node in library_calls] == ['Sub', 'Bcast']
+    assert all(node.node.properties['receiver_class'] == 'ProcessGrid' for node in library_calls)
+    assert stree.containers['pgrid'].location[oprepo.REPLACEMENT_CLASS_LOCATION_KEY] == 'ProcessGrid'
+    assert stree.containers['sgrid'].location[oprepo.REPLACEMENT_CLASS_LOCATION_KEY] == 'ProcessGrid'
     assert not any(isinstance(node, tn.StatementNode) for node in stree.preorder_traversal())
 
 

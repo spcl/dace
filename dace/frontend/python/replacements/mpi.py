@@ -1390,8 +1390,11 @@ from dace.frontend.common.op_repository import infers_descriptor, infers_method_
 from dace.frontend.python.replacements.type_inference import _get_desc
 
 
-def _pyobject_scalar_descriptor():
-    return data.Scalar(dtypes.pyobject(), transient=True)
+def _pyobject_scalar_descriptor(replacement_class: str = None):
+    result = data.Scalar(dtypes.pyobject(), transient=True)
+    if replacement_class is not None:
+        result.location[oprepo.REPLACEMENT_CLASS_LOCATION_KEY] = replacement_class
+    return result
 
 
 def _request_descriptor():
@@ -1409,22 +1412,22 @@ def _zero_output(*_args, **_kwargs):
 @infers_descriptor('mpi4py.MPI.COMM_WORLD.Create_cart')
 @infers_descriptor('dace.comm.Cart_create')
 def _infer_cart_create(input_descs, dims, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _pyobject_scalar_descriptor('ProcessGrid')
 
 
 @infers_method_descriptor('Intracomm', 'Create_cart')
 def _infer_intracomm_create(self_desc, dims, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _pyobject_scalar_descriptor('ProcessGrid')
 
 
 @infers_descriptor('dace.comm.Cart_sub')
 def _infer_cart_sub(input_descs, parent_grid, color, exact_grid=None, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _pyobject_scalar_descriptor('ProcessGrid')
 
 
 @infers_method_descriptor('ProcessGrid', 'Sub')
 def _infer_pgrid_sub(self_desc, color, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _pyobject_scalar_descriptor('ProcessGrid')
 
 
 for _name in ('mpi4py.MPI.COMM_WORLD.Bcast', 'dace.comm.Bcast', 'mpi4py.MPI.COMM_WORLD.Reduce', 'dace.comm.Reduce',
