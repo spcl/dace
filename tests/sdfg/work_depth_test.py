@@ -248,6 +248,36 @@ def test_work_depth(test_name):
     assert res[0].expand() == correct[0].expand()
     assert res[1].expand() == correct[1].expand()
 
+@pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
+def test_work_depth_inlined(test_name):
+    if test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']:
+        pytest.skip('Different state naming when ControlFLowRegios are inlined')
+    
+    test, correct = work_depth_test_cases[test_name]
+    w_d_map: Dict[str, sp.Expr] = {}
+    sdfg = test.to_sdfg()
+    if 'nested_sdfg' in test.name:
+        sdfg.apply_transformations(NestSDFG)
+    if 'nested_maps' in test.name:
+        sdfg.apply_transformations(MapExpansion)
+
+    # test 
+    inline_control_flow_regions(sdfg)
+    sdfg.save(test_name+".sdfg")
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.using_explicit_control_flow = False
+
+
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
+    res = w_d_map[get_uuid(sdfg)]
+    # substitue each symbol without assumptions.
+    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+    res = (standardize(res[0]), standardize(res[1]))
+    correct = (standardize(sp.sympify(correct[0])), standardize(sp.sympify(correct[1])))
+    # check result
+    assert res[0].expand() == correct[0].expand()
+    assert res[1].expand() == correct[1].expand()
+
 #(sdfg, expected_avg_par)
 tests_cases_avg_par = {
     'single_map': (single_map, N),
@@ -286,6 +316,35 @@ def test_avg_par(test_name: str):
     # This is now not necessary anymore. Work-depth analysis still works for inlined SDFGs, but this imposes other names which fails test cases 'unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop'
     #for sd in sdfg.all_sdfgs_recursive():
     #    sd.using_explicit_control_flow = False
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
+    res = w_d_map[get_uuid(sdfg)]
+    # substitue each symbol without assumptions.
+    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+    reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
+    res = res.subs(reps)
+    reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
+    correct = sp.sympify(correct).subs(reps)
+    # check result
+    assert res.expand() == correct.expand()
+
+
+@pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
+def test_avg_par_inlined(test_name: str):
+    if test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']:
+        pytest.skip('Different state naming when ControlFLowRegios are inlined')
+
+    test, correct = tests_cases_avg_par[test_name]
+    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
+    sdfg = test.to_sdfg()
+    if 'nested_sdfg' in test_name:
+        sdfg.apply_transformations(NestSDFG)
+    if 'nested_maps' in test_name:
+        sdfg.apply_transformations(MapExpansion)
+
+    inline_control_flow_regions(sdfg)
+
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.using_explicit_control_flow = False
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)]
     # substitue each symbol without assumptions.
