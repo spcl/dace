@@ -963,6 +963,180 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
         sdfg.remove_node(temp_exit_state)
 
 
+def _make_border_memlets(connectors, as_lists: bool = False):
+    border_memlets = {
+        'in': {},
+        'out': {},
+    }
+    for direction in border_memlets:
+        for connector in connectors[direction]:
+            border_memlets[direction][connector] = [] if as_lists else None
+    return border_memlets
+
+
+def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) -> None:
+    for node in state.data_nodes():
+        for direction in border_memlets:
+            if node.label not in border_memlets[direction]:
+                continue
+
+            edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
+            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+
+
+def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
+    for direction in border_memlets:
+        for connector in border_memlets[direction]:
+            memlet = propagated_memlets[direction][connector]
+            if memlet is not None:
+                border_memlets[direction][connector].append(memlet)
+
+
+def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    if incoming is None:
+        return existing
+    if existing is None:
+        return copy.deepcopy(incoming)
+
+    result = copy.deepcopy(existing)
+
+    if incoming.wcr is not None:
+        if result.wcr is not None and result.wcr != incoming.wcr:
+            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+        result.wcr = incoming.wcr
+
+    if result.dynamic and result.volume == 0:
+        pass
+    elif incoming.dynamic and incoming.volume == 0:
+        result.dynamic = True
+        result.volume = 0
+    else:
+        result.volume = simplify(result.volume + incoming.volume)
+        result.dynamic = (result.dynamic or incoming.dynamic)
+
+    if incoming.subset is not None:
+        if result.subset is not None:
+            if result.subset.dims() != incoming.subset.dims():
+                raise ValueError('Cannot merge subset ranges of unequal dimension!')
+            result.subset = subsets.union(result.subset, incoming.subset)
+            if result.subset is None:
+                result.subset = subsets.Range.from_array(array)
+        else:
+            result.subset = copy.deepcopy(incoming.subset)
+
+    return result
+
+
+def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    if incoming is None:
+        return existing
+    if existing is None:
+        return copy.deepcopy(incoming)
+
+    result = copy.deepcopy(existing)
+
+    if incoming.wcr is not None:
+        if result.wcr is not None and result.wcr != incoming.wcr:
+            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+        result.wcr = incoming.wcr
+
+    if result.dynamic and result.volume == 0:
+        pass
+    elif incoming.dynamic and incoming.volume == 0:
+        result.dynamic = True
+        result.volume = 0
+    else:
+        result.volume = simplify(sympy.Max(result.volume, incoming.volume))
+        result.dynamic = (result.dynamic or incoming.dynamic)
+
+    if incoming.subset is not None:
+        if result.subset is not None:
+            if result.subset.dims() != incoming.subset.dims():
+                raise ValueError('Cannot merge subset ranges of unequal dimension!')
+            result.subset = subsets.union(result.subset, incoming.subset)
+            if result.subset is None:
+                result.subset = subsets.Range.from_array(array)
+        else:
+            result.subset = copy.deepcopy(incoming.subset)
+
+    return result
+
+
+def _propagate_border_memlet_candidates(candidates,
+                                        arrays,
+                                        direction: str,
+                                        connector: str,
+                                        params=None,
+                                        rng=None,
+                                        scale_by_range: bool = False) -> Memlet:
+    memlets = candidates[direction][connector]
+    if len(memlets) == 0:
+        return None
+
+    if params is None or rng is None:
+        params = ['__dace_dummy']
+        rng = subsets.Range([(0, 0, 1)])
+
+    array_name = next((memlet.data for memlet in memlets if memlet.data is not None), connector)
+    array = arrays[array_name]
+    propagated = propagate_subset(memlets, array, params, rng, use_dst=(direction == 'out'))
+
+    if any(memlet.dynamic and memlet.volume == 0 for memlet in memlets):
+        propagated.dynamic = True
+        propagated.volume = 0
+    elif not scale_by_range:
+        propagated.volume = simplify(sum(memlet.volume for memlet in memlets))
+        propagated.dynamic = any(memlet.dynamic for memlet in memlets)
+
+    propagated.other_subset = None
+    return propagated
+
+
+def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) -> None:
+    candidates = _make_border_memlets(border_memlets, as_lists=True)
+    _collect_state_border_memlet_candidates(state, candidates)
+
+    params = []
+    ranges = []
+    for symbol in state.ranges:
+        params.append(symbol)
+        ranges.append(state.ranges[symbol][0])
+
+    if len(params) == 0 or len(ranges) == 0:
+        params = None
+        rng = None
+    else:
+        rng = subsets.Range(ranges)
+
+    for direction in border_memlets:
+        for connector in border_memlets[direction]:
+            propagated = _propagate_border_memlet_candidates(
+                candidates,
+                arrays,
+                direction,
+                connector,
+                params=params,
+                rng=rng,
+                scale_by_range=False,
+            )
+            if propagated is None:
+                continue
+
+            if propagated.dynamic and propagated.volume == 0:
+                pass
+            elif state.dynamic_executions and state.executions == 0:
+                propagated.dynamic = True
+                propagated.volume = 0
+            else:
+                propagated.volume = simplify(
+                    sum(memlet.volume for memlet in candidates[direction][connector]) * state.executions)
+                propagated.dynamic = propagated.dynamic or state.dynamic_executions
+
+            array_name = propagated.data if propagated.data is not None else connector
+            border_memlets[direction][connector] = _merge_border_memlet(border_memlets[direction][connector],
+                                                                        propagated, arrays[array_name])
+
+
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
     """
     Propagate memlets out of a nested sdfg.
@@ -978,14 +1152,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
     # get propagated in the SDFG.
-    border_memlets = {
-        'in': {},
-        'out': {},
-    }
-    for connector in nsdfg_node.in_connectors:
-        border_memlets['in'][connector] = None
-    for connector in nsdfg_node.out_connectors:
-        border_memlets['out'][connector] = None
+    border_memlets = _make_border_memlets({
+        'in': nsdfg_node.in_connectors,
+        'out': nsdfg_node.out_connectors,
+    })
 
     sdfg = nsdfg_node.sdfg
     outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
@@ -995,88 +1165,13 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     # the corresponding memlets and use them to calculate the memlet volume and
     # subset corresponding to the outside memlet attached to that connector.
     # This is passed out via `border_memlets` and propagated along from there.
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            for direction in border_memlets:
-                if (node.label not in border_memlets[direction]):
-                    continue
+    from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
-                memlet = border_memlets[direction][node.label]
-
-                # Collect the edges to/from this access node, depending on the
-                # direction the connector leads in.
-                edges = []
-                if direction == 'in':
-                    edges = state.out_edges(node)
-                elif direction == 'out':
-                    edges = state.in_edges(node)
-
-                # Collect all memlets belonging to this access node, and
-                # accumulate the total volume between them.
-                memlets = []
-                for edge in edges:
-                    inside_memlet = edge.data
-                    memlets.append(inside_memlet)
-
-                    if memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        memlet = Memlet(data=inside_memlet.data, volume=0)
-                        memlet._is_data_src = True
-                        border_memlets[direction][node.label] = memlet
-
-                    if inside_memlet.wcr is not None:
-                        if (memlet.wcr is not None and memlet.wcr != inside_memlet.wcr):
-                            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
-                        memlet.wcr = inside_memlet.wcr
-
-                    if memlet.dynamic and memlet.volume == 0:
-                        # Dynamic unbounded - this won't change.
-                        continue
-                    elif ((inside_memlet.dynamic and inside_memlet.volume == 0)
-                          or (state.dynamic_executions and state.executions == 0)):
-                        # At least one dynamic unbounded memlet means the sum
-                        # must be dynamic unbounded.
-                        memlet.dynamic = True
-                        memlet.volume = 0
-                    else:
-                        memlet.volume += (inside_memlet.volume * state.executions)
-                        memlet.dynamic = (memlet.dynamic or inside_memlet.dynamic or state.dynamic_executions)
-
-                # Given all of this access nodes' memlets, propagate the subset
-                # according to the state's variable ranges.
-                if len(memlets) > 0:
-                    params = []
-                    ranges = []
-                    for symbol in state.ranges:
-                        params.append(symbol)
-                        ranges.append(state.ranges[symbol][0])
-
-                    if len(params) == 0 or len(ranges) == 0:
-                        params = ['__dace_dummy']
-                        ranges = [(0, 0, 1)]
-
-                    # Propagate the subset based on the direction this memlet is
-                    # pointing. If we're accessing from an incoming connector,
-                    # propagate the source subset, if we're going to an outgoing
-                    # connector, propagate the destination subset.
-                    use_dst = False
-                    if direction == 'out':
-                        use_dst = True
-                    array = sdfg.arrays[node.label]
-                    subset = propagate_subset(memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
-
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if memlet.subset is not None:
-                        if memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                        else:
-                            memlet.subset = subsets.union(memlet.subset, subset)
-                            if memlet.subset is None:
-                                memlet.subset = subsets.Range.from_array(array)
-                    else:
-                        memlet.subset = subset
+    for block in sdfg.nodes():
+        if isinstance(block, SDFGState):
+            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
+        elif isinstance(block, AbstractControlFlowRegion):
+            block.propagate_memlets(border_memlets)
 
     # Make sure any potential NSDFG symbol mapping is correctly reversed
     # when propagating out.
