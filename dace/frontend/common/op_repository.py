@@ -10,15 +10,6 @@ from dace.dtypes import paramdec
 
 MethodType = Callable[..., Tuple[str]]
 _INFERENCE_MISSING = object()
-REPLACEMENT_CLASS_LOCATION_KEY = '__dace_replacement_class'
-
-
-def replacement_class_name(value: Any) -> Optional[str]:
-    location = getattr(value, 'location', None)
-    if not isinstance(location, dict):
-        return None
-    result = location.get(REPLACEMENT_CLASS_LOCATION_KEY)
-    return result if isinstance(result, str) and result else None
 
 
 def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
@@ -32,12 +23,6 @@ def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
     """
     if isinstance(class_or_name, str):
         return [class_or_name]
-    replacement_class = replacement_class_name(class_or_name)
-    if replacement_class is not None:
-        class_type = class_or_name if isinstance(class_or_name, type) else type(class_or_name)
-        return [replacement_class] + [base.__name__ for base in class_type.__mro__]
-    if not isinstance(class_or_name, type):
-        class_or_name = type(class_or_name)
     return [base.__name__ for base in class_or_name.__mro__]
 
 

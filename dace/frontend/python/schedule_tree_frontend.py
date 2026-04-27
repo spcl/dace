@@ -1853,7 +1853,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             if obj_desc is UNRESOLVED:
                 return None
         method_name = node.func.attr
-        infer_fn = oprepo.Replacements.get_method_descriptor_inference(obj_desc, method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(obj_desc), method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')
@@ -1878,7 +1878,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
         _, _, obj_desc, _ = obj_access
 
-        infer_fn = oprepo.Replacements.get_method_self_descriptor_inference(obj_desc, node.func.attr)
+        infer_fn = oprepo.Replacements.get_method_self_descriptor_inference(type(obj_desc).__name__, node.func.attr)
         if infer_fn is None:
             return
 
@@ -2429,24 +2429,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             obj_access = self._resolve_data_access(node.func.value)
             if obj_access is not None:
                 _, _, obj_desc, _ = obj_access
-                classname = oprepo.replacement_class_name(obj_desc) or type(obj_desc).__name__
-                has_registered_method = (oprepo.Replacements.get_method(obj_desc, node.func.attr) is not None
-                                         or oprepo.Replacements.get_method_descriptor_inference(
-                                             obj_desc, node.func.attr) is not None)
-                if has_registered_method:
+                classname = type(obj_desc).__name__
+                if (oprepo.Replacements.get_method(classname, node.func.attr) is not None
+                        or oprepo.Replacements.get_method_descriptor_inference(classname, node.func.attr) is not None):
                     properties = self._library_properties(node)
                     properties['receiver_class'] = classname
                     properties['access_kind'] = 'method'
                     return (node.func.attr, properties)
             receiver_value = try_resolve_static_value(node.func.value, self._evaluation_context())
             if receiver_value is not UNRESOLVED:
-                receiver_class = oprepo.replacement_class_name(receiver_value) or type(receiver_value).__name__
-                has_registered_method = (oprepo.Replacements.get_method(receiver_value, node.func.attr) is not None
-                                         or oprepo.Replacements.get_method_descriptor_inference(
-                                             receiver_value, node.func.attr) is not None)
-                if has_registered_method:
+                receiver_class = type(receiver_value)
+                if (oprepo.Replacements.get_method(receiver_class, node.func.attr) is not None
+                        or oprepo.Replacements.get_method_descriptor_inference(receiver_class,
+                                                                               node.func.attr) is not None):
                     properties = self._library_properties(node)
-                    properties['receiver_class'] = receiver_class
+                    properties['receiver_class'] = receiver_class.__name__
                     properties['access_kind'] = 'method'
                     properties['receiver'] = astutils.rname(node.func.value)
                     return (node.func.attr, properties)
