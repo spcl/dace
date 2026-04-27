@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
+import ast
 import copy
 import itertools
 import warnings
@@ -1729,18 +1730,35 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
     """
     Helper function that generates an iterable of all edges potentially encountered between two control flow blocks.
     """
+
+    def _parent_chain(block: ControlFlowBlock) -> List[ControlFlowRegion]:
+        result = [block.parent_graph]
+        while not isinstance(result[-1], SDFG):
+            result.append(result[-1].parent_graph)
+        return result
+
+    def _edge_key(edge: Edge[InterstateEdge]) -> Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]]:
+        condition = edge.data.condition.as_string if edge.data.condition else None
+        assignments = tuple(sorted((str(k), str(v)) for k, v in edge.data.assignments.items()))
+        return (id(edge.src), id(edge.dst), condition, assignments)
+
+    def _add_edge(edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]],
+                  edge: Edge[InterstateEdge]) -> None:
+        edges[_edge_key(edge)] = edge
+
     if src.sdfg is not dst.sdfg:
         raise RuntimeError('Blocks reside in different SDFGs')
 
     if src.parent_graph is dst.parent_graph:
         # Simple case where both blocks reside in the same graph:
-        edges = set()
+        edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]] = {}
         for p in src.parent_graph.all_simple_paths(src, dst, as_edges=True):
             for e in p:
-                edges.add(e)
+                _add_edge(edges, e)
                 if isinstance(e.dst, ControlFlowRegion):
-                    edges.update(e.dst.all_interstate_edges())
-        return edges
+                    for nested_edge in e.dst.all_interstate_edges():
+                        _add_edge(edges, nested_edge)
+        return list(edges.values())
     else:
         # In the case where the two blocks are not in the same graph, we follow this procedure:
         # 1. Collect the list of control flow regions on the direct path between the source and destination:
@@ -1755,40 +1773,26 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
         #    the source and destination.
         # Note that for each edge, if the destination is a control flow region, any edges inside of it may also
         # be on the path and consequently also need to be added.
-        edges = set()
+        edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]] = {}
 
         # Step 1.a): Find the lowest common parent region.
-        common_regions = set()
-        pivot_graph = src.parent_graph
-        all_parent_regions_src = [pivot_graph]
-        while not isinstance(pivot_graph, SDFG):
-            pivot_graph = pivot_graph.parent_graph
-            all_parent_regions_src.append(pivot_graph)
-        pivot_graph = dst.parent_graph
-        all_parent_regions_dst = [pivot_graph]
-        while not isinstance(pivot_graph, SDFG):
-            pivot_graph = pivot_graph.parent_graph
-            all_parent_regions_dst.append(pivot_graph)
-            if pivot_graph in all_parent_regions_src:
-                common_regions.add(pivot_graph)
+        all_parent_regions_src = _parent_chain(src)
+        all_parent_regions_dst = _parent_chain(dst)
+        common_parent = next((region for region in all_parent_regions_src if region in all_parent_regions_dst), None)
+        if common_parent is None:
+            raise RuntimeError('No common parent found')
 
         # Step 1.b) and 1.c): Determine the list of parents involved in the path for the source and destination.
         involved_src: List[ControlFlowRegion] = []
         involved_dst: List[ControlFlowRegion] = []
-        common_parent: ControlFlowRegion = None
         for r in all_parent_regions_src:
-            if r not in common_regions:
-                involved_src.append(r)
-            else:
-                common_parent = r
+            if r is common_parent:
                 break
+            involved_src.append(r)
         for r in all_parent_regions_dst:
-            if r not in common_regions:
-                involved_dst.append(r)
-            else:
-                if r is not common_parent:
-                    raise RuntimeError('No common parent found')
+            if r is common_parent:
                 break
+            involved_dst.append(r)
 
         # Step 2
         src_pivot = src
@@ -1799,9 +1803,10 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
             for sink in r.sink_nodes():
                 for p in r.all_simple_paths(src_pivot, sink, as_edges=True):
                     for e in p:
-                        edges.add(e)
+                        _add_edge(edges, e)
                         if isinstance(e.dst, ControlFlowRegion):
-                            edges.update(e.dst.all_interstate_edges())
+                            for nested_edge in e.dst.all_interstate_edges():
+                                _add_edge(edges, nested_edge)
             src_pivot = r
         # Step 3
         dst_pivot = dst
@@ -1811,19 +1816,79 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
                 continue
             for p in r.all_simple_paths(r.start_block, dst_pivot, as_edges=True):
                 for e in p:
-                    edges.add(e)
+                    _add_edge(edges, e)
                     if isinstance(e.dst, ControlFlowRegion):
-                        edges.update(e.dst.all_interstate_edges())
+                        for nested_edge in e.dst.all_interstate_edges():
+                            _add_edge(edges, nested_edge)
             dst_pivot = r
 
         # Step 4
-        for p in common_parent.all_simple_paths(src_pivot, dst_pivot, as_edges=True):
+        paths = common_parent.all_simple_paths(src_pivot, dst_pivot, as_edges=True)
+        for p in paths:
             for e in p:
-                edges.add(e)
-                if isinstance(e.dst, ControlFlowRegion) and not e.dst is dst_pivot:
-                    edges.update(e.dst.all_interstate_edges())
+                _add_edge(edges, e)
+                if isinstance(e.src, ControlFlowRegion) and e.src is not src_pivot:
+                    for nested_edge in e.src.all_interstate_edges():
+                        _add_edge(edges, nested_edge)
+                if isinstance(e.dst, ControlFlowRegion) and e.dst is not dst_pivot:
+                    for nested_edge in e.dst.all_interstate_edges():
+                        _add_edge(edges, nested_edge)
 
-        return edges
+        return list(edges.values())
+
+
+def _assigned_names_in_ast(node: ast.AST) -> Set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        result = set()
+        for elt in node.elts:
+            result.update(_assigned_names_in_ast(elt))
+        return result
+    return set()
+
+
+def _symbols_assigned_in_codeblock(codeblock: Optional[CodeBlock]) -> Set[str]:
+    if codeblock is None or not isinstance(codeblock.code, list):
+        return set()
+
+    result = set()
+    for stmt in codeblock.code:
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                result.update(_assigned_names_in_ast(target))
+        elif isinstance(stmt, ast.AnnAssign):
+            result.update(_assigned_names_in_ast(stmt.target))
+        elif isinstance(stmt, ast.AugAssign):
+            result.update(_assigned_names_in_ast(stmt.target))
+    return result
+
+
+def _modified_symbols_in_region(region: ControlFlowRegion) -> Set[str]:
+    result = set()
+    if isinstance(region, LoopRegion):
+        if region.loop_variable:
+            result.add(region.loop_variable)
+        result.update(_symbols_assigned_in_codeblock(region.init_statement))
+        result.update(_symbols_assigned_in_codeblock(region.update_statement))
+    return result
+
+
+def modified_symbols_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Set[str]:
+    """
+    Conservatively returns all symbols that may be modified on any path between two control-flow blocks.
+
+    In addition to assignments on interstate edges, this includes loop-region metadata that also mutates symbols,
+    such as loop initializers, update statements, and loop variables.
+    """
+    result = set()
+    for edge in all_isedges_between(src, dst):
+        result.update(edge.data.assignments.keys())
+        if isinstance(edge.src, ControlFlowRegion):
+            result.update(_modified_symbols_in_region(edge.src))
+        if isinstance(edge.dst, ControlFlowRegion):
+            result.update(_modified_symbols_in_region(edge.dst))
+    return result
 
 
 def replace_sdfg_dtypes(
