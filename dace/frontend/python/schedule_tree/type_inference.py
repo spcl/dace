@@ -1211,12 +1211,14 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return None
         # Resolve the object (e.g. ``a`` in ``a.sum()``)
         obj_binding = self._resolve_binding(node.func.value)
-        if obj_binding is None or obj_binding.descriptor is None:
-            return None
-        obj_desc = obj_binding.descriptor
-        classname = type(obj_desc).__name__  # 'Array', 'View', 'Scalar'
+        if obj_binding is not None and obj_binding.descriptor is not None:
+            obj_desc = obj_binding.descriptor
+        else:
+            obj_desc = try_resolve_static_value(node.func.value, self._evaluation_context())
+            if obj_desc is UNRESOLVED:
+                return None
         method_name = node.func.attr
-        infer_fn = oprepo.Replacements.get_method_descriptor_inference(classname, method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(obj_desc), method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')

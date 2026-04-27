@@ -112,7 +112,8 @@ class AttributeRewriter:
         except AttributeError:
             static_attr = None
 
-        if static_attr is not None and self._is_descriptor(static_attr) and hasattr(static_attr, '__get__'):
+        if (static_attr is not None and self._is_descriptor(static_attr)
+                and not self._is_plain_method_descriptor(static_attr) and hasattr(static_attr, '__get__')):
             descriptor_expr = self._descriptor_expr(astutils.copy_tree(node.value), node.attr)
             return ast.Call(func=ast.Attribute(value=descriptor_expr, attr='__get__', ctx=ast.Load()),
                             args=[obj_expr, astutils.copy_tree(owner_expr)],
@@ -146,6 +147,11 @@ class AttributeRewriter:
     @staticmethod
     def _is_descriptor(value: Any) -> bool:
         return any(hasattr(value, attr) for attr in ('__get__', '__set__', '__delete__'))
+
+    @staticmethod
+    def _is_plain_method_descriptor(value: Any) -> bool:
+        return (inspect.isfunction(value) or inspect.ismethod(value) or inspect.ismethoddescriptor(value)
+                or inspect.isbuiltin(value) or isinstance(value, (staticmethod, classmethod)))
 
     @staticmethod
     def _is_builtin_like_base(value: Any) -> bool:

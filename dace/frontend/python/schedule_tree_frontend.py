@@ -1351,16 +1351,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                     scope=scope_kind))
 
     def _handle_expression(self, value: ast.AST) -> bool:
-        if not isinstance(value, ast.Call) or not self._should_lower_as_library_call(value):
+        if not isinstance(value, ast.Call):
+            return False
+
+        library_info = self._library_info_for_call(value)
+        if library_info is None:
             return False
 
         in_memlets = self._collect_input_memlets(value)
         if not in_memlets:
             return False
 
+        library_name, library_properties = library_info
+
         self._append_node(
-            tn.LibraryCall(node=tn.FrontendLibrary(name=astutils.rname(value.func),
-                                                   properties=self._library_properties(value)),
+            tn.LibraryCall(node=tn.FrontendLibrary(name=library_name, properties=library_properties),
                            in_memlets=in_memlets,
                            out_memlets=set()))
         return True
@@ -1841,12 +1846,14 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return None
         # Resolve the object (e.g. ``a`` in ``a.sum()``)
         obj_access = self._resolve_data_access(node.func.value)
-        if obj_access is None:
-            return None
-        _, _, obj_desc, _ = obj_access
-        classname = type(obj_desc).__name__  # 'Array', 'View', 'Scalar'
+        if obj_access is not None:
+            _, _, obj_desc, _ = obj_access
+        else:
+            obj_desc = try_resolve_static_value(node.func.value, self._evaluation_context())
+            if obj_desc is UNRESOLVED:
+                return None
         method_name = node.func.attr
-        infer_fn = oprepo.Replacements.get_method_descriptor_inference(classname, method_name)
+        infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(obj_desc), method_name)
         if infer_fn is None:
             return None
         # Resolve the remaining arguments (skip 'self')
@@ -2428,6 +2435,17 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                     properties = self._library_properties(node)
                     properties['receiver_class'] = classname
                     properties['access_kind'] = 'method'
+                    return (node.func.attr, properties)
+            receiver_value = try_resolve_static_value(node.func.value, self._evaluation_context())
+            if receiver_value is not UNRESOLVED:
+                receiver_class = type(receiver_value)
+                if (oprepo.Replacements.get_method(receiver_class, node.func.attr) is not None
+                        or oprepo.Replacements.get_method_descriptor_inference(receiver_class,
+                                                                               node.func.attr) is not None):
+                    properties = self._library_properties(node)
+                    properties['receiver_class'] = receiver_class.__name__
+                    properties['access_kind'] = 'method'
+                    properties['receiver'] = astutils.rname(node.func.value)
                     return (node.func.attr, properties)
 
         if oprepo.Replacements.get(call_name) is None and oprepo.Replacements.get_descriptor_inference(
