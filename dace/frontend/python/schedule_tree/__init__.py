@@ -9,6 +9,7 @@ from .dynamic_scope_copy import promote_dynamic_scope_copies
 from .expression_support import ExpressionPlanningContext, GenericExpressionSupportLibrary
 from .function_inlining import resolve_function_calls
 from .numpy_support import NumpyLoweringContext, NumpySupportLibrary
+from .tuple_assignment import is_container_initialization, is_tuple_element_assignment
 from .type_inference import ScheduleTreeTypeInference, _Binding
 
 __all__ = [
@@ -27,4 +28,6 @@ __all__ = [
     'NumpyLoweringContext',
     'NumpySupportLibrary',
     'resolve_function_calls',
+    'is_container_initialization',
+    'is_tuple_element_assignment',
 ]

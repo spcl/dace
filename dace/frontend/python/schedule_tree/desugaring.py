@@ -16,6 +16,7 @@ from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.dunder_support import (rewrite_augassign, rewrite_subscript_assignment,
                                                                rewrite_subscript_delete, rewrite_sugared_expression)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
+from dace.frontend.python.schedule_tree.tuple_assignment import lower_tuple_assignments
 
 _CALLBACK_REASON_ATTR = '_schedule_tree_callback_reason'
 
@@ -1330,7 +1331,9 @@ def desugar_schedule_tree_expansions(parsed_ast: ast.AST,
                                                     known_descriptors=known_descriptors,
                                                     seed_bindings=seed_bindings,
                                                     callable_bindings=callable_bindings).visit(expanded)
-    outlined = ScheduleTreeSubscriptIndexDesugarer(global_vars, callable_bindings=callable_bindings).visit(canonical)
+    tuple_lowered = lower_tuple_assignments(canonical)
+    outlined = ScheduleTreeSubscriptIndexDesugarer(global_vars,
+                                                   callable_bindings=callable_bindings).visit(tuple_lowered)
     return ast.fix_missing_locations(outlined)
 
 

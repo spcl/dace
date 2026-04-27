@@ -1154,8 +1154,12 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
 
     def _try_descriptor_inference(self, node: ast.Call) -> Optional[_Binding]:
         """Query the descriptor-inference registry for a call node."""
-        call_name = astutils.rname(node.func)
+        call_name = self._resolved_callable_name(node.func)
         infer_fn = oprepo.Replacements.get_descriptor_inference(call_name)
+        if infer_fn is None:
+            textual_name = astutils.rname(node.func)
+            if textual_name != call_name:
+                infer_fn = oprepo.Replacements.get_descriptor_inference(textual_name)
         if infer_fn is None:
             return None
         input_descs, args, kwargs = self._resolve_call_inputs_for_inference(node)
@@ -1164,6 +1168,24 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         except Exception:
             return None
         return _binding_from_inference_result(result)
+
+    def _resolved_callable_name(self, node: ast.AST) -> str:
+        textual_name = astutils.rname(node)
+        resolved = try_resolve_static_value(node, self._evaluation_context())
+        if resolved is not UNRESOLVED:
+            module_name = getattr(resolved, '__module__', None)
+            callable_name = getattr(resolved, '__name__', None)
+            if module_name and callable_name and module_name != 'builtins':
+                return f'{module_name}.{callable_name}'
+
+        if '.' in textual_name:
+            root_name, suffix = textual_name.split('.', 1)
+            root_value = try_resolve_static_value(ast.Name(id=root_name, ctx=ast.Load()), self._evaluation_context())
+            module_name = getattr(root_value, '__name__', None) if root_value is not UNRESOLVED else None
+            if module_name is not None:
+                return f'{module_name}.{suffix}'
+
+        return textual_name
 
     def _try_ufunc_descriptor_inference(self, node: ast.Call) -> Optional[_Binding]:
         """Query the descriptor-inference registry for a NumPy ufunc call or ufunc method."""

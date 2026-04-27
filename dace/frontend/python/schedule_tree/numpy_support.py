@@ -264,6 +264,9 @@ class _ElementwiseAssignmentPass:
 
     def lower_assignment(self, context: NumpyLoweringContext, target: ast.AST, value: ast.AST,
                          annotated_descriptor: Optional[data.Data]) -> Optional[tn.ScheduleTreeNode]:
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return self._lower_multi_output_ufunc_assignment(context, target, value)
+
         boolean_target = _resolve_boolean_target(context, target, value)
         if boolean_target is not None:
             return self._lower_boolean_target_assignment(context, boolean_target, target, value)
@@ -358,6 +361,73 @@ class _ElementwiseAssignmentPass:
                                      code=CodeBlock(f'out = {_unparse(tasklet_value)}'))
         tasklet_node = tn.TaskletNode(node=tasklet, in_memlets=input_memlets, out_memlets={'out': output_memlet})
 
+        map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
+                                                    ranges=list(iteration_plan.ranges)),
+                                children=[])
+        for param in iteration_plan.params:
+            map_scope.symbols[param] = symbolic.symbol(param, dtypes.int64)
+        tasklet_node.parent = map_scope
+        map_scope.children.append(tasklet_node)
+        return map_scope
+
+    def _lower_multi_output_ufunc_assignment(self, context: NumpyLoweringContext, target: ast.AST,
+                                             value: ast.AST) -> Optional[tn.ScheduleTreeNode]:
+        if not isinstance(value, ast.Call):
+            return None
+
+        ufunc = _resolve_plain_multi_output_ufunc(value, context)
+        if ufunc is None or len(target.elts) != ufunc.nout:
+            return None
+
+        analysis = _ElementwiseExpressionAnalyzer(context).analyze(value)
+        if analysis is None:
+            return None
+
+        outputs: List[Tuple[str, Memlet, data.Data]] = []
+        for element in target.elts:
+            output = context.resolve_output_target(element, value, None)
+            if output is None:
+                return None
+            if analysis.result_shape and not isinstance(output[1].subset, subsets.Range):
+                return None
+            if analysis.result_shape and not _is_shape_compatible(output[1].subset, analysis.result_shape):
+                return None
+            outputs.append(output)
+
+        output_connectors = [f'out{index}' for index in range(len(outputs))]
+        tasklet = tn.FrontendTasklet(
+            name=context.tasklet_name(target),
+            code=CodeBlock(f'{", ".join(output_connectors)} = {_unparse(analysis.tasklet_value)}'))
+
+        if not analysis.result_shape:
+            input_memlets: Dict[str, Memlet] = {}
+            for access in analysis.accesses:
+                access_memlet = _build_scalar_input_memlet(access)
+                if access_memlet is None:
+                    return None
+                input_memlets.update(access_memlet)
+            out_memlets = {
+                connector: copy.deepcopy(output_memlet)
+                for connector, (_, output_memlet, _) in zip(output_connectors, outputs)
+            }
+            return tn.TaskletNode(node=tasklet, in_memlets=input_memlets, out_memlets=out_memlets)
+
+        iteration_plan = _build_iteration_plan(outputs[0][1].subset)
+        if iteration_plan is None:
+            return None
+
+        input_memlets: Dict[str, Memlet] = {}
+        for access in analysis.accesses:
+            access_memlets = _build_input_memlets(access, iteration_plan)
+            if access_memlets is None:
+                return None
+            input_memlets.update(access_memlets)
+
+        out_memlets = {
+            connector: _build_output_memlet_for_subset(output_name, output_memlet.subset, iteration_plan)
+            for connector, (output_name, output_memlet, _) in zip(output_connectors, outputs)
+        }
+        tasklet_node = tn.TaskletNode(node=tasklet, in_memlets=input_memlets, out_memlets=out_memlets)
         map_scope = tn.MapScope(node=tn.FrontendMap(params=list(iteration_plan.params),
                                                     ranges=list(iteration_plan.ranges)),
                                 children=[])
@@ -720,6 +790,18 @@ def _build_output_memlet(target_name: str, iteration_plan: _IterationPlan) -> Me
     param_iter = iter(iteration_plan.params)
     indices: List[Any] = []
     for dim, (start, _, _) in enumerate(iteration_plan.original_subset.ranges):
+        if dim in iteration_plan.non_singleton_dims:
+            indices.append(symbolic.symbol(next(param_iter), dtypes.int64))
+        else:
+            indices.append(start)
+    return Memlet(data=target_name, subset=subsets.Range.from_indices(indices))
+
+
+def _build_output_memlet_for_subset(target_name: str, target_subset: subsets.Range,
+                                    iteration_plan: _IterationPlan) -> Memlet:
+    param_iter = iter(iteration_plan.params)
+    indices: List[Any] = []
+    for dim, (start, _, _) in enumerate(target_subset.ranges):
         if dim in iteration_plan.non_singleton_dims:
             indices.append(symbolic.symbol(next(param_iter), dtypes.int64))
         else:
@@ -1296,6 +1378,17 @@ def _is_supported_call(node: ast.Call, context: NumpyLoweringContext) -> bool:
     if value is UNRESOLVED:
         return False
     return isinstance(value, np.ufunc)
+
+
+def _resolve_plain_multi_output_ufunc(node: ast.Call, context: NumpyLoweringContext) -> Optional[np.ufunc]:
+    if node.keywords:
+        return None
+    value = try_resolve_static_value(node.func, context.evaluation_context())
+    if value is UNRESOLVED or not isinstance(value, np.ufunc):
+        return None
+    if value.nout <= 1 or len(node.args) != value.nin:
+        return None
+    return value
 
 
 def _is_scalar_leaf(node: ast.AST, context: NumpyLoweringContext) -> bool:

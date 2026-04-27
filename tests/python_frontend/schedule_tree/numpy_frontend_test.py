@@ -482,6 +482,23 @@ def test_python_frontend_schedule_tree_numpy_ufunc_map():
     assert tasklet.node.code.as_string == 'out = numpy.sqrt(in0)'
 
 
+def test_python_frontend_schedule_tree_numpy_multi_output_ufunc_map():
+
+    @dace.program
+    def called(A: dace.int32[8], B: dace.int32[8]):
+        Q, R = np.divmod(A, B)
+        return Q, R
+
+    stree = called.to_schedule_tree()
+
+    assert not any(isinstance(node, tn.StatementNode) for node in stree.preorder_traversal())
+    assert isinstance(stree.children[0], tn.MapScope)
+    tasklet = stree.children[0].children[0]
+    assert isinstance(tasklet, tn.TaskletNode)
+    assert tasklet.node.code.as_string == '(out0, out1) = numpy.divmod(in0, in1)'
+    assert set(tasklet.out_memlets) == {'out0', 'out1'}
+
+
 def test_python_frontend_schedule_tree_numpy_batched_matmul_library_call():
 
     @dace.program

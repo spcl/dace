@@ -8,22 +8,36 @@ from dace.frontend.python.schedule_tree import callback_reason, desugar_schedule
 
 
 def _desugar_statements(source: str, *, global_vars=None, known_descriptors=None):
-    module = ast.parse(source)
-    desugared = desugar_schedule_tree_expansions(module,
-                                                 filename='<test>',
-                                                 global_vars=dict(global_vars or {}),
-                                                 known_descriptors=known_descriptors)
+    desugared = _desugar_module(source, global_vars=global_vars, known_descriptors=known_descriptors)
     return [astutils.unparse(statement) for statement in desugared.body]
+
+
+def _desugar_module(source: str, *, global_vars=None, known_descriptors=None):
+    module = ast.parse(source)
+    return desugar_schedule_tree_expansions(module,
+                                            filename='<test>',
+                                            global_vars=dict(global_vars or {}),
+                                            known_descriptors=known_descriptors)
 
 
 def test_schedule_tree_desugaring_materializes_analyzable_tuple_assignment_rhs():
     statements = _desugar_statements('A, B = B, A')
-    assert statements == ['__stree_tuple_tmp = (B, A)', '(A, B) = __stree_tuple_tmp']
+    assert statements == [
+        '__stree_tuple_tmp = (B, A)', '__stree_tuple_tmp_0 = B', '__stree_tuple_tmp_1 = A', 'A = __stree_tuple_tmp_0',
+        'B = __stree_tuple_tmp_1'
+    ]
 
 
-def test_schedule_tree_desugaring_leaves_non_analyzable_destructuring_rhs_direct():
+def test_schedule_tree_desugaring_leaves_function_return_destructuring():
     statements = _desugar_statements('A, B = make_pair()')
     assert statements == ['(A, B) = make_pair()']
+
+
+def test_schedule_tree_desugaring_normalizes_parenthesized_function_return_destructuring():
+    desugared = _desugar_module('(A, B) = make_pair()')
+    expected = ast.parse('A, B = make_pair()')
+
+    assert ast.dump(desugared, include_attributes=False) == ast.dump(expected, include_attributes=False)
 
 
 def test_schedule_tree_desugaring_preserves_short_circuit_nested_index_guard():
@@ -68,4 +82,4 @@ def test_schedule_tree_desugaring_canonicalizes_symbolic_negative_array_index():
 def test_schedule_tree_desugaring_canonicalizes_negative_tuple_index_from_known_length():
     statements = _desugar_statements('t = (a, b, c)\ntmp = t[-1]')
 
-    assert statements == ['t = (a, b, c)', 'tmp = t[(3 - 1)]']
+    assert statements == ['t = (a, b, c)', 't_0 = a', 't_1 = b', 't_2 = c', 'tmp = t_2']

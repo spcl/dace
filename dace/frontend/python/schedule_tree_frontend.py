@@ -24,12 +24,11 @@ from dace.frontend.python.schedule_tree.structure_support import (
     python_class_requirement_for_member_assignment, resolve_member_access)
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
-from dace.frontend.python.schedule_tree import (AttributeRewriter, ExpressionPlanningContext, CallbackHandler,
-                                                CallableArgumentSpecializer, CallableResolver,
-                                                GenericExpressionSupportLibrary, NumpyLoweringContext,
-                                                NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
-                                                callback_reason, desugar_schedule_tree_expansions,
-                                                promote_dynamic_scope_copies, resolve_function_calls)
+from dace.frontend.python.schedule_tree import (
+    AttributeRewriter, ExpressionPlanningContext, CallbackHandler, CallableArgumentSpecializer, CallableResolver,
+    GenericExpressionSupportLibrary, NumpyLoweringContext, NumpySupportLibrary, ScheduleTreeTypeInference, _Binding,
+    callback_reason, desugar_schedule_tree_expansions, is_container_initialization, is_tuple_element_assignment,
+    promote_dynamic_scope_copies, resolve_function_calls)
 from dace.frontend.python.schedule_tree.type_inference import _binding_from_inference_result, \
     _infer_static_subscript_descriptor, _resolve_ufunc_inference_target
 from dace.memlet import Memlet
@@ -59,6 +58,13 @@ def _clone_descriptor(descriptor: data.Data) -> data.Data:
 def _clone_binding(binding: _Binding) -> _Binding:
     descriptor = _clone_descriptor(binding.descriptor) if binding.descriptor is not None else None
     return _Binding(descriptor=descriptor, kind=binding.kind, structure=copy.deepcopy(binding.structure))
+
+
+def _copy_target_descriptor(descriptor: data.Data) -> data.Data:
+    result = descriptor.as_array() if isinstance(descriptor,
+                                                 (data.Reference, data.View)) else _clone_descriptor(descriptor)
+    result.transient = True
+    return result
 
 
 def _unparse(node: ast.AST) -> str:
@@ -479,6 +485,16 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         reason = callback_reason(node)
         if reason is not None:
             self.callback_handler.wrap_node(node, reason)
+            return
+        if is_tuple_element_assignment(node) and len(node.targets) == 1:
+            self._handle_tuple_element_assignment(node.targets[0], node.value)
+            return
+        if is_container_initialization(node):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._handle_container_initialization(target.id, node.value)
+                else:
+                    self._handle_assignment(target, node.value)
             return
         for target in node.targets:
             self._handle_assignment(target, node.value)
@@ -1049,6 +1065,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
         if isinstance(target, (ast.Tuple, ast.List)):
             self._seed_inferred_target_bindings(target)
+            if self._emit_computed_assignment(target, value, annotated_descriptor):
+                return
             self._append_node(tn.StatementNode(code=CodeBlock(self._format_assignment_statement(target, value))))
             return
 
@@ -1379,6 +1397,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._append_node(lowered)
             return True
 
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, ast.Call):
+            if self._emit_structured_library_call_assignment(target, value):
+                return True
+
         if output is not None and isinstance(value, ast.Call):
             library_info = self._library_info_for_call(value)
             if library_info is not None:
@@ -1435,6 +1457,33 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             target, ast.Attribute) else f'{_unparse(target)} = {_unparse(value)}'
         tasklet = tn.FrontendTasklet(name=self._tasklet_name(target), code=CodeBlock(tasklet_code))
         self._append_node(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets={'out': out_memlet}))
+        return True
+
+    def _emit_structured_library_call_assignment(self, target: ast.AST, value: ast.Call) -> bool:
+        library_info = self._library_info_for_call(value)
+        if library_info is None or not isinstance(target, (ast.Tuple, ast.List)):
+            return False
+
+        target_structure, _ = self._structure_from_ast(target)
+        if not isinstance(target_structure, (tuple, list)) or len(target_structure) != len(target.elts):
+            return False
+
+        out_memlets: Dict[str, Memlet] = {}
+        for index, (element, element_structure) in enumerate(zip(target.elts, target_structure)):
+            descriptor = descriptor_from_structure(element_structure)
+            if descriptor is None:
+                return False
+            output = self._resolve_output_target(element, value, descriptor)
+            if output is None:
+                return False
+            _, output_memlet, _ = output
+            out_memlets[f'out{index}'] = output_memlet
+
+        library_name, library_properties = library_info
+        self._append_node(
+            tn.LibraryCall(node=tn.FrontendLibrary(name=library_name, properties=library_properties),
+                           in_memlets=self._collect_input_memlets(value),
+                           out_memlets=out_memlets))
         return True
 
     def _ensure_pythonclass_member_target(
@@ -2142,6 +2191,71 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
         if scalar_descriptor is not None:
             self._store_binding(name, scalar_descriptor, kind='iterator-index', structure=scalar_descriptor)
+
+    def _handle_container_initialization(self, name: str, value: ast.AST) -> None:
+        inferred_binding = self.inferred_bindings.get(name)
+        if inferred_binding is not None:
+            self._store_binding(name,
+                                inferred_binding.descriptor,
+                                kind=inferred_binding.kind,
+                                structure=inferred_binding.structure)
+            return
+
+        descriptor = self._infer_descriptor(value, name)
+        if descriptor is None:
+            return
+        kind = 'reference' if isinstance(descriptor, data.Reference) else 'container'
+        structure, _ = self._structure_from_ast(value)
+        self._store_binding(name, descriptor, kind=kind, structure=structure)
+
+    def _handle_tuple_element_assignment(self, target: ast.AST, value: ast.AST) -> None:
+        if not isinstance(target, ast.Name):
+            self._handle_assignment(target, value)
+            return
+
+        self.callback_handler.reject_mutated_global_uses(value)
+        value = self.lambda_resolver.inline_known_lambda_calls(value)
+        existing = self.bindings.get(target.id)
+        if existing is not None and isinstance(existing.descriptor, data.Reference):
+            self._handle_assignment(target, value)
+            return
+
+        source_access = self._resolve_data_access(value)
+        if source_access is not None:
+            _, memlet, source_desc, view_desc = source_access
+            inferred_binding = self.inferred_bindings.get(target.id)
+            if inferred_binding is not None and inferred_binding.descriptor is not None and not isinstance(
+                    inferred_binding.descriptor, data.Scalar):
+                self._store_binding(target.id,
+                                    _copy_target_descriptor(inferred_binding.descriptor),
+                                    kind='container',
+                                    structure=inferred_binding.structure)
+                self._append_node(tn.CopyNode(target=target.id, memlet=copy.deepcopy(memlet)))
+                return
+
+            if _is_singleton_scalar_memlet(memlet):
+                inferred_binding = self.inferred_bindings.get(target.id)
+                if inferred_binding is not None and isinstance(inferred_binding.descriptor, data.Scalar):
+                    self._store_binding(target.id,
+                                        inferred_binding.descriptor,
+                                        kind='scalar',
+                                        structure=inferred_binding.structure)
+                    self._append_node(
+                        tn.AssignNode(name=target.id, value=CodeBlock(self._format_runtime_expression(value))))
+                    return
+                if existing is None:
+                    self._register_binding(target.id, data.Scalar(source_desc.dtype, transient=True), kind='scalar')
+                self._append_node(tn.AssignNode(name=target.id,
+                                                value=CodeBlock(self._format_runtime_expression(value))))
+                return
+
+            descriptor = _copy_target_descriptor(view_desc or source_desc)
+            if existing is None:
+                self._register_binding(target.id, descriptor, kind='container')
+            self._append_node(tn.CopyNode(target=target.id, memlet=copy.deepcopy(memlet)))
+            return
+
+        self._handle_assignment(target, value)
 
     def _seed_inferred_target_bindings(self, target: ast.AST) -> None:
         for child in ast.walk(target):

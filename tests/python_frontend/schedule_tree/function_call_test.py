@@ -716,6 +716,14 @@ def test_descriptor_inference_linspace_retstep_structured_result():
 
     stree = prog.to_schedule_tree()
 
+    assert not any(isinstance(node, tn.StatementNode) for node in stree.preorder_traversal())
+    lib_calls = [node for node in stree.preorder_traversal() if isinstance(node, tn.LibraryCall)]
+    assert len(lib_calls) == 1
+    assert lib_calls[0].node.name == 'numpy.linspace'
+    assert set(lib_calls[0].out_memlets) == {'out0', 'out1'}
+    assert lib_calls[0].out_memlets['out0'].data == 'space'
+    assert lib_calls[0].out_memlets['out1'].data == 'step'
+
     assert 'space' in stree.containers
     space_desc = stree.containers['space']
     assert isinstance(space_desc, dace.data.Array)
