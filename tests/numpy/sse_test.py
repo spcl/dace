@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 
 # Declaration of symbolic variables
 Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb = (dace.symbol(name)

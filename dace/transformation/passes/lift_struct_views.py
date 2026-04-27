@@ -14,7 +14,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace import data as dt
 from dace import dtypes
 
-import sys
 from typing import Literal
 
 dirtype = Literal['in', 'out']
