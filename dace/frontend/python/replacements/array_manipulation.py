@@ -3,7 +3,7 @@
 Contains replacements for N-dimensional array transformations.
 """
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import DaceSyntaxError, StringLiteral
+from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic

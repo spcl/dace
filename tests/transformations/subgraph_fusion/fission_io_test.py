@@ -1,16 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 import dace
-from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
-from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
-import unittest
 
-from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
-import dace.transformation.subgraph.helpers as helpers
 from util import fusion
 
 

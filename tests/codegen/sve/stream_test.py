@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from tests.codegen.sve.common import get_code
-import pytest
 
 N = dace.symbol('N')
 
