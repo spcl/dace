@@ -386,6 +386,101 @@ def test_insert_self_copy_subset_is_dst_side():
     assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
 
 
+def _check_reshape_copy(sdfg, dst_name, dst_shape):
+    """Shared assertions for the consecutive-reshape derivation tests:
+    after the pass runs the SDFG validates and the lifted CopyLibraryNode's
+    output edge carries a memlet whose subset spans the full ``dst_shape``."""
+    sdfg.validate()
+    copies = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
+    cn = copies[0]
+    parent = next(p for n, p in sdfg.all_nodes_recursive() if n is cn)
+    out_e = [e for e in parent.out_edges(cn) if e.src_conn == "_out"][0]
+    assert out_e.data.data == dst_name
+    assert str(out_e.data.subset) == ', '.join(
+        f"0:{s}" for s in dst_shape), (f"dst memlet subset should span full {dst_shape}, got {out_e.data.subset}")
+
+
+@pytest.mark.parametrize(
+    "src_shape,dst_shape",
+    [
+        ([8, 12, 5, 3], [96, 5, 3]),  # collapse leading two: einsum_blas test_4x4 pattern
+        ([8, 10, 12], [80, 12]),  # collapse leading two: einsum_blas test_3x2 pattern
+        ([8, 12, 5, 3], [8, 60, 3]),  # collapse middle two
+        ([2, 3, 4, 5], [6, 20]),  # double collapse: dims 0-1 and dims 2-3
+        ([8, 12, 5, 3], [1440]),  # full flatten
+    ])
+def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
+    """When the destination array's shape is reachable from the source's by
+    collapsing contiguous runs of dimensions (e.g. einsum cuBLAS reshapes
+    ``[8, 12, 5, 3] -> [96, 5, 3]``), the pass must derive a destination
+    subset that spans the full destination — falling back to ``src_subset``
+    leaves a rank-mismatched memlet that fails validation."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG(f"reshape_collapse_{len(src_shape)}_to_{len(dst_shape)}")
+    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
+    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    # Memlet on the source side (no other_subset) — forces the pass through
+    # ``_derive_matching_dst_subset`` to pick a destination range.
+    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _check_reshape_copy(sdfg, "B", dst_shape)
+
+
+@pytest.mark.parametrize(
+    "src_shape,dst_shape",
+    [
+        ([80, 12], [8, 10, 12]),  # split leading dim
+        ([96, 5, 3], [8, 12, 5, 3]),  # split leading dim
+        ([1440], [8, 12, 5, 3]),  # full unflatten
+        ([6, 20], [2, 3, 4, 5]),  # double split
+    ])
+def test_insert_consecutive_split_reshape(src_shape, dst_shape):
+    """The inverse of the collapse case: destination has a higher rank
+    reached by splitting source dims into contiguous runs.
+    ``_is_consecutive_reshape`` is symmetric, so the same code path serves
+    both directions."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG(f"reshape_split_{len(src_shape)}_to_{len(dst_shape)}")
+    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
+    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _check_reshape_copy(sdfg, "B", dst_shape)
+
+
+@pytest.mark.parametrize(
+    "src_shape,dst_shape",
+    [
+        ([8, 1, 12], [8, 12]),  # squeeze a length-1 dim
+        ([8, 12, 1, 5], [96, 5]),  # squeeze + collapse
+        ([1, 96, 5, 3], [8, 12, 5, 3]),  # leading 1 + split
+    ])
+def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
+    """Unit-length dimensions on either side must be ignored when checking
+    for a consecutive-collapse / split match. Both sides squeeze to 1s
+    before the two-pointer walk."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG(f"reshape_squeeze_{len(src_shape)}_to_{len(dst_shape)}")
+    sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
+    sdfg.add_array("B", dst_shape, dace.float64, storage=cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    _check_reshape_copy(sdfg, "B", dst_shape)
+
+
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
     """Repeated ``apply_pass`` invocations on the same SDFG must not
     accumulate ``_view_buf_*`` transients. The GPU pipeline calls this pass

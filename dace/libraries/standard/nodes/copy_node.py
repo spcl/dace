@@ -133,13 +133,20 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
         return 'CUDA2D'
 
     # Same-side strided ND (e.g. GPU<->GPU) that cannot be collapsed to 1D/2D.
-    # CopyND is the efficient route but assumes both endpoints are C-packed
-    # (row-major contiguous, no padding in any dim) — its template stride
-    # args are derived per-dim under that assumption. For Fortran-packed or
-    # padded arrays fall back to the `pure` mapped tasklet, which addresses
-    # each element through the array's own stride-aware indexing and so
-    # handles arbitrary same-side stride patterns.
+    # CopyND is the efficient route on the CPU side because its
+    # ``dace::CopyND<>`` template generates an unrolled host loop, but the
+    # template runs as host code and would dereference device pointers from
+    # the host on a GPU<->GPU copy (segfault). For GPU same-side, the
+    # ``pure`` mapped-tasklet expansion lands the loop inside a
+    # ``GPU_Device`` kernel, which is the only safe place for device-side
+    # pointer arithmetic. Same fallback for Fortran-packed / padded arrays
+    # on either side, since CopyND's template stride args assume C-packed
+    # endpoints.
     if not _is_cross_cpu_gpu(inp.storage, out.storage):
+        gpu_side = (inp.storage == dtypes.StorageType.GPU_Global or out.storage == dtypes.StorageType.GPU_Global
+                    or inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared)
+        if gpu_side:
+            return 'pure'
         if inp.is_packed_c_strides() and out.is_packed_c_strides():
             return 'CopyND'
         return 'pure'

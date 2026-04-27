@@ -29,7 +29,8 @@ from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes 
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
+                                                                               get_gpu_stream_array_name)
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -549,12 +550,28 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             state_id, scope_entry)
 
         # Wrap the invocation in a block so dynamic map input definitions don't leak.
+        # The CopyLibraryNode "pure" expansion threads its launch-stream
+        # through a non-``IN_*`` connector named ``stream`` (see
+        # ``COPY_MEMSET_STREAM_CONNECTOR``). ``dynamic_map_inputs`` therefore
+        # surfaces it as a "dynamic input" alongside real dynamic-range
+        # scalars. Re-defining it here would shadow the outer-scope binding
+        # (the same name was registered as ``Scalar(const gpuStream_t)`` by
+        # ``emit_memlet_reference`` for the parent nested-SDFG arg, so adding
+        # ``Pointer(gpuStream_t*)`` here trips ``defined_vars``' shadow guard).
+        # The kernel-map per-stream connectors (``__stream_<id>``) added by
+        # ``ConnectGPUStreamsToNodes`` are *not* skipped — their local
+        # ``gpuStream_t __stream_N = gpu_streams[N];`` declaration is the
+        # only place those names get bound in the wrapper.
         state = cfg.state(state_id)
-        has_dyn_inputs = dace.sdfg.has_dynamic_map_inputs(state, scope_entry)
+
+        dyn_inputs = [
+            e for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if e.dst_conn != COPY_MEMSET_STREAM_CONNECTOR
+        ]
+        has_dyn_inputs = len(dyn_inputs) > 0
         if has_dyn_inputs:
             callsite_stream.write('{', cfg, state_id, scope_entry)
 
-        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+        for e in dyn_inputs:
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)

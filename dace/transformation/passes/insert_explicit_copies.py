@@ -66,7 +66,62 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     if len(src_size_squeezed) == len(dst_shape):
         return _subsets.Range.from_array(dst_desc)
 
+    # Consecutive-rank reshape: a contiguous run of source dims may collapse
+    # into a single destination dim (or vice versa, splitting a source dim
+    # into a run of destination dims). Walk both shapes left-to-right with
+    # two pointers, accumulating the running product on whichever side has
+    # the smaller current value, and advance both when products meet.
+    # Example: ``[8, 12, 5, 3] -> [96, 5, 3]`` collapses dims 0-1; ``[80, 12]
+    # -> [8, 10, 12]`` splits dim 0. Squeeze 1s on both sides first so a
+    # ``[8, 1, 12]`` source matches a ``[8, 12]`` destination through this
+    # path even though squeezing the source alone would have caught it
+    # earlier.
+    dst_shape_squeezed = [s for s in dst_shape if not _eq(s, 1)]
+    if _is_consecutive_reshape(src_size_squeezed, dst_shape_squeezed):
+        return _subsets.Range.from_array(dst_desc)
+
     return src_subset
+
+
+def _is_consecutive_reshape(src_size, dst_shape):
+    """True iff ``dst_shape`` is reachable from ``src_size`` by collapsing
+    contiguous runs of dimensions (or splitting one dim into a contiguous
+    run). Both inputs are expected to be 1-squeezed."""
+    i = j = 0
+    src_acc = 1
+    dst_acc = 1
+    while i < len(src_size) and j < len(dst_shape):
+        if src_acc == dst_acc:
+            src_acc *= src_size[i]
+            dst_acc *= dst_shape[j]
+            i += 1
+            j += 1
+        elif _expr_lt(src_acc, dst_acc):
+            src_acc *= src_size[i]
+            i += 1
+        else:
+            dst_acc *= dst_shape[j]
+            j += 1
+    while i < len(src_size):
+        src_acc *= src_size[i]
+        i += 1
+    while j < len(dst_shape):
+        dst_acc *= dst_shape[j]
+        j += 1
+    try:
+        return bool((src_acc - dst_acc) == 0)
+    except Exception:
+        return str(src_acc) == str(dst_acc)
+
+
+def _expr_lt(a, b):
+    """``a < b`` for sympy/numeric mixes, falling back to ``False`` on
+    indeterminate symbolic comparisons (which sends both pointers forward
+    in lockstep — safe under the equal-product guard)."""
+    try:
+        return bool((a - b) < 0)
+    except Exception:
+        return False
 
 
 @properties.make_properties
