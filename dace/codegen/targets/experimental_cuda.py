@@ -95,7 +95,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager] = None
-        self._kernel_dimensions_map: Set[nodes.MapEntry] = set()
+        self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
+        self._tb_inserted_kernels: Set[nodes.MapEntry] = set()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
     def preprocess(self, sdfg: SDFG) -> None:
@@ -140,14 +141,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     except ValueError:
                         continue
 
-        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
-        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
-        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
-        kernels_with_added_tb_maps = {
-            n
-            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
-        }
-        self._kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, kernels_with_added_tb_maps)
+        self._infer_kernel_dimensions(sdfg)
 
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
@@ -218,6 +212,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # InsertExplicitGPUGlobalMemoryCopies may have added new CopyLibraryNodes
         # (one per implicit copy uncovered by expansion); lower those too.
         sdfg.expand_library_nodes(recursive=True)
+        # Library-node expansion (CopyLibraryNode "pure" implementations etc.)
+        # can produce fresh GPU_Device maps that weren't present when
+        # ``_kernel_dimensions_map`` was first built. Re-run after all
+        # expansions and stream wiring are settled.
+        self._infer_kernel_dimensions(sdfg)
 
         from dace.sdfg import infer_types
         infer_types.infer_connector_types(sdfg)
@@ -247,6 +246,28 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def _infer_kernel_dimensions(self, sdfg: SDFG):
+        """Run ``AddThreadBlockMap`` over any GPU_Device maps that don't yet
+        carry a ThreadBlock map and refresh ``_kernel_dimensions_map`` for
+        every GPU_Device map currently in the SDFG. Idempotent — safe to call
+        repeatedly between library-expansion rounds, since
+        ``InferGPUGridAndBlockSize`` re-walks the SDFG and re-emits the full
+        mapping. ``_tb_inserted_kernels`` accumulates across calls so that a
+        kernel auto-tiled in an earlier round still uses
+        ``_get_inserted_gpu_block_size`` (and not ``_infer_gpu_block_size``,
+        which would flag the user's explicit ``gpu_block_size`` against the
+        tile-derived inner map size as a conflict)."""
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        for n in new_nodes:
+            if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device:
+                self._tb_inserted_kernels.add(n)
+        # Pre-existing entries are preserved by re-running the inference pass:
+        # it walks every GPU_Device map in the SDFG, so an unmodified kernel
+        # gets an identical (grid, block) tuple back.
+        self._kernel_dimensions_map.update(InferGPUGridAndBlockSize().apply_pass(sdfg, self._tb_inserted_kernels))
 
     def _extract_stream_assignments(self, sdfg: SDFG) -> Dict[Any, int]:
         """Recover ``{node: stream_id}`` from the wiring laid down by a prior

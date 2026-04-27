@@ -99,7 +99,12 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
                      stream_var_prefix: str) -> None:
         """Build ``src -> n0 -> mid -> n1 -> ... -> n_{k-1} -> sink`` for one stream."""
         accessed_slot = f"{stream_array_name}[{stream_id}]"
-        prev_access = state.add_access(stream_array_name)
+        # Defer the source AccessNode until we actually wire a user. When every
+        # node in this chain was already stream-wired by a prior pass (e.g. the
+        # ``_wire_stream_to`` baked into a CopyLibraryNode "pure" expansion),
+        # adding it eagerly leaves an isolated ``gpu_streams`` node that
+        # ``sdfg.validate()`` rejects.
+        prev_access = None
 
         for node in stream_users:
             entry, exit_ = self._entry_exit(state, node)
@@ -119,6 +124,9 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
                                 for c in entry.in_connectors)
             if already_wired:
                 continue
+
+            if prev_access is None:
+                prev_access = state.add_access(stream_array_name)
 
             entry.add_in_connector(in_conn, dtypes.gpuStream_t)
             state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))

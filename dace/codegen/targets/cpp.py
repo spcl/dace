@@ -321,12 +321,24 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             # Cast potential consts
             typedef = defined_ctype
 
-        if is_scalar:
+        # Scalars that live in GPU global memory are backed by a device
+        # pointer, not a host-side value. Lowering them to
+        # ``const T &name = ptr[0]`` would dereference device memory from
+        # host code (UB), and any tasklet that consumes the connector as a
+        # ``T*`` would see the wrong type. Pass them through as pointers.
+        gpu_scalar = (isinstance(desc, data.Scalar) and desc.storage == dtypes.StorageType.GPU_Global)
+
+        if is_scalar and not gpu_scalar:
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
             ref = '&'
         else:
+            if is_scalar and gpu_scalar:
+                # Promote the value-typed connector to a pointer so the call site
+                # passes the device pointer (not a host-side dereference).
+                typedef = defined_ctype
+                offset_expr = ''
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
                 ref = '*'
