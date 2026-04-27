@@ -154,9 +154,22 @@ def add_descriptors(builder, sdfg: SDFG):
         if _is_flang_internal(v.fortran_name):
             continue
         if v.intent == '':
+            # Local transient scalar.
             sdfg.add_scalar(v.fortran_name, dtype=dt(v.dtype), transient=True)
-        else:
+        elif v.intent in ('out', 'inout'):
+            # Scalar OUTPUT must remain a length-1 array on the SDFG
+            # signature -- the runtime needs a writable buffer the
+            # caller hands in (Python ``float`` would be pass-by-value
+            # so updates wouldn't surface on the caller side).
             sdfg.add_array(v.fortran_name, shape=(1, ), dtype=dt(v.dtype), transient=False)
+        else:
+            # Scalar INPUT (``intent(in)`` or ``REAL(8), VALUE :: x``).
+            # Register as a true Scalar -- DaCe accepts plain Python
+            # ``int`` / ``float`` for these and the C++ codegen reads
+            # ``x`` directly instead of ``x[0]``.  Matches Fortran's
+            # pass-by-value semantics (the kernel gets its own copy
+            # of the constant).
+            sdfg.add_scalar(v.fortran_name, dtype=dt(v.dtype), transient=False)
 
 
 def declare_synth_array(builder, name: str, shape, dtype: str, ctx):

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -403,7 +402,6 @@ END SUBROUTINE intrinsic_math_test_exponent_function
     assert res[3] == 9
 
 
-@xfail('INT/AINT/NINT/ANINT — bridge surfaces ? for some lowering; needs investigation')
 def test_fortran_frontend_int(tmp_path):
     src = """
 SUBROUTINE intrinsic_math_test_int_function(d, d2, res, res2, res3, res4)
@@ -582,7 +580,6 @@ END SUBROUTINE intrinsic_math_test_trig_function
     assert np.allclose(res, [0.0, 0.999999702, 1.59254798E-03, 1.0, 7.96274282E-04, -0.999998748])
 
 
-@xfail('SINH/COSH/TANH on array — bridge surfaces ? for some lowering pattern')
 def test_fortran_frontend_hyperbolic(tmp_path):
     src = """
 SUBROUTINE intrinsic_math_test_hyperbolic_function(d, res)

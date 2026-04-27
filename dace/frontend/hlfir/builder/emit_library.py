@@ -112,11 +112,33 @@ def emit_libcall(builder, ctx, n, region):
         node = cls(f"{spec.name}_{n.target}_{builder.nid()}")
     state.add_node(node)
 
-    for conn, src in zip(in_conns, n.call_args):
+    # ``call_arg_subsets`` is parallel to ``call_args``; an empty entry =
+    # whole-array source, a non-empty entry = a DaCe-0-based subset like
+    # ``"0:3"`` for ``dot_product(arg1(1:3), arg2(1:3))``.  Older bridge
+    # builds may not populate the field; default to empty for each arg.
+    arg_subsets = list(getattr(n, 'call_arg_subsets', None) or [])
+    arg_subsets += [''] * (len(n.call_args) - len(arg_subsets))
+    for conn, src, sub in zip(in_conns, n.call_args, arg_subsets):
         src_desc = ctx.sdfg.arrays[src]
-        state.add_edge(acc(builder, state, src), None, node, conn, Memlet.from_array(src, src_desc))
+        if sub:
+            in_memlet = Memlet(f"{src}[{sub}]")
+        else:
+            in_memlet = Memlet.from_array(src, src_desc)
+        state.add_edge(acc(builder, state, src), None, node, conn, in_memlet)
 
-    state.add_edge(node, out_conn, acc(builder, state, n.target), None, Memlet.from_array(n.target, tgt_desc))
+    # Element-designate destination (``res1(1) = dot_product(...)``):
+    # the bridge populates ``n.accesses[0]`` with the per-dim write
+    # index so the output memlet covers a single element instead of
+    # the whole array (which would fail validation for scalar-output
+    # libcalls like dot_product, count, …).
+    write_acc = next((ac for ac in n.accesses if ac.is_write), None)
+    if write_acc is not None:
+        from dace.frontend.hlfir.builder.access import build_memlet_index
+        ix = build_memlet_index(builder, n.target, write_acc, ctx.iter_map)
+        out_memlet = Memlet(f"{n.target}[{ix}]")
+    else:
+        out_memlet = Memlet.from_array(n.target, tgt_desc)
+    state.add_edge(node, out_conn, acc(builder, state, n.target), None, out_memlet)
 
 
 def emit_reduce(builder, ctx, n, region):

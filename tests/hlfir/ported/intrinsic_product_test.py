@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -42,18 +41,31 @@ END SUBROUTINE intrinsic_product_array_function
     assert res[2] == np.prod(d[1:5])
 
 
-@xfail("PRODUCT(d, dim) — DIM= argument not yet lowered")
 def test_fortran_frontend_product_array_dim(tmp_path):
+    """``PRODUCT(d, dim)`` with the explicit DIM= argument.
+
+    The original f2dace port used ``logical, dimension(5)`` for ``d``,
+    but Fortran 2018 restricts ``PRODUCT`` to numeric types
+    (``INTEGER`` / ``REAL`` / ``COMPLEX``); ``flang-new-21`` correctly
+    rejects ``PRODUCT(LOGICAL_array, 1)`` with "bad type LOGICAL(4)".
+    Switching ``d`` to ``integer`` keeps the spirit of the test (the
+    ``dim`` argument is what we want to exercise) while satisfying
+    the standard."""
     src = """
 SUBROUTINE intrinsic_product_array_dim_function(d, res)
-logical, dimension(5) :: d
-logical, dimension(2) :: res
+integer, dimension(5) :: d
+integer, dimension(2) :: res
 
 res(1) = PRODUCT(d, 1)
 
 END SUBROUTINE intrinsic_product_array_dim_function
 """
     sdfg = build_sdfg(src, tmp_path, name='intrinsic_product_array_dim_function').build()
+
+    d = np.array([1, 2, 3, 4, 5], dtype=np.int32, order='F')
+    res = np.zeros(2, dtype=np.int32, order='F')
+    sdfg(d=d, res=res)
+    assert int(res[0]) == 120
 
 
 def test_fortran_frontend_product_2d(tmp_path):

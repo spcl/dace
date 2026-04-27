@@ -146,13 +146,34 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
 
     iter_map = {**iter_map, n.loop_iter: uid}
 
-    loop = LoopRegion(
-        label=f"loop_{uid}",
-        condition_expr=f"{uid} < {bound} + 1",
-        loop_var=uid,
-        initialize_expr=f"{uid} = {lower}",
-        update_expr=f"{uid} = {uid} + 1",
-    )
+    # ``DO i = a, b, step`` semantics.  Flang's ``fir.do_loop``
+    # carries (lower, upper, step) literally — for forward step the
+    # iter walks lower→upper inclusive; for negative step the
+    # MLIR-level lower is actually the START (e.g. NCLV-1 for ``DO
+    # JN = NCLV-1, 1, -1``) and upper is the END (1).  The bridge
+    # passes them through as ``loop_lower`` and ``loop_bound`` without
+    # reordering, so emit_loop is responsible for picking the right
+    # one as init.
+    step = getattr(n, 'loop_step', 1)
+    if step >= 0:
+        loop = LoopRegion(
+            label=f"loop_{uid}",
+            condition_expr=f"{uid} < {bound} + 1",
+            loop_var=uid,
+            initialize_expr=f"{uid} = {lower}",
+            update_expr=(f"{uid} = {uid} + 1" if step == 1 else f"{uid} = {uid} + {step}"),
+        )
+    else:
+        # Reverse: ``loop_lower`` is the START (the larger value),
+        # ``loop_bound`` is the END (the smaller value).  Iter walks
+        # from lower DOWN to bound, inclusive.
+        loop = LoopRegion(
+            label=f"loop_{uid}",
+            condition_expr=f"{uid} >= {bound}",
+            loop_var=uid,
+            initialize_expr=f"{uid} = {lower}",
+            update_expr=(f"{uid} = {uid} - 1" if step == -1 else f"{uid} = {uid} + {step}"),
+        )
     region.add_node(loop)
     if ctx.cur is not None:
         region.add_edge(ctx.cur, loop, InterstateEdge())

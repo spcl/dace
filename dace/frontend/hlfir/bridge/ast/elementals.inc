@@ -29,34 +29,7 @@ static ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
     ASTNode n;
     n.kind = "reduce";
 
-    // Target (LHS).  ``dest`` may be either a bare ``hlfir.declare`` (whole
-    // result variable, e.g. ``out = SUM(a)``) or a ``hlfir.designate``
-    // selecting one element of an output array (``res(2) = MINVAL(d)``).
-    // For the designate case we capture the index expressions in an
-    // AccessInfo so emit_reduce can wire the output memlet to the specific
-    // element — without this every reduction in the same routine writes
-    // through the whole destination array and the last one wins.
-    auto dest = assign.getOperand(1);
-    if (auto dd = dest.getDefiningOp()) {
-        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd)) {
-            n.target = allocAliasFor(extractName(decl.getUniqName().str()));
-        } else if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
-            n.target = traceToDecl(dg.getMemref());
-            n.target_is_array = true;
-            AccessInfo wa;
-            wa.array_name = n.target;
-            wa.is_write = true;
-            unsigned di = 0;
-            for (auto idx : dg.getIndices()) {
-                auto resolved = resolveIndex(idx);
-                wa.index_vars.push_back(resolved.empty() ? "?" : resolved);
-                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
-                ++di;
-            }
-            n.accesses.push_back(std::move(wa));
-        }
-    }
-    if (n.target.empty()) n.target = traceToDecl(dest);
+    captureElementDesignateWrite(assign.getOperand(1), n);
 
     // Source array — operand 0 of the reduction op.
     if (redOp->getNumOperands() > 0)
@@ -624,11 +597,9 @@ buildElementalCountLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     lib.kind = "libcall";
     lib.callee = "count";
     auto dest = assign.getOperand(1);
-    if (auto dd = dest.getDefiningOp())
-        if (auto declOp = mlir::dyn_cast<hlfir::DeclareOp>(dd))
-            lib.target = extractName(declOp.getUniqName().str());
-    if (lib.target.empty()) lib.target = traceToDecl(dest);
-    lib.target_is_array = isArrayRef(dest.getType());
+    captureElementDesignateWrite(dest, lib);
+    if (!lib.target_is_array)
+        lib.target_is_array = isArrayRef(dest.getType());
     lib.call_args.push_back(trName);
 
     nodes.push_back(std::move(lib));
@@ -648,27 +619,7 @@ buildElementalAnyAllReduce(hlfir::AssignOp assign, hlfir::ElementalOp elem,
 
     ASTNode red;
     red.kind = "reduce";
-    auto dest = assign.getOperand(1);
-    if (auto dd = dest.getDefiningOp()) {
-        if (auto decl2 = mlir::dyn_cast<hlfir::DeclareOp>(dd)) {
-            red.target = allocAliasFor(extractName(decl2.getUniqName().str()));
-        } else if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
-            red.target = traceToDecl(dg.getMemref());
-            red.target_is_array = true;
-            AccessInfo wa2;
-            wa2.array_name = red.target;
-            wa2.is_write = true;
-            unsigned di = 0;
-            for (auto idx : dg.getIndices()) {
-                auto resolved = resolveIndex(idx);
-                wa2.index_vars.push_back(resolved.empty() ? "?" : resolved);
-                wa2.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
-                ++di;
-            }
-            red.accesses.push_back(std::move(wa2));
-        }
-    }
-    if (red.target.empty()) red.target = traceToDecl(dest);
+    captureElementDesignateWrite(assign.getOperand(1), red);
     red.reduce_src = trName;
     red.reduce_wcr = wcr;
     red.reduce_identity = identity;

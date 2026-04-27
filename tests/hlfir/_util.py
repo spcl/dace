@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HLFIR_DIR = _REPO_ROOT / "dace" / "frontend" / "hlfir"
 
@@ -47,6 +49,40 @@ def _ensure_on_path():
     p = str(_HLFIR_DIR)
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+def f2py_compile(src, out_dir: Path, mod_name: str):
+    """Build the given Fortran source via gfortran/f2py and return the
+    compiled module.  ``src`` may be a file path or an inline string —
+    inline sources are written to ``<out_dir>/<mod_name>.f90`` first.
+
+    Skips the calling test (via pytest.skip) when gfortran or meson is
+    missing, so test files can call this unconditionally.
+
+    Used by the e2e numerical tests to compare an SDFG's output against
+    the same code compiled with gfortran (the reference implementation).
+    Saved policy: HLFIR-frontend tests must compare against this kind of
+    non-transformed reference — hand-tuned literal expectations are not
+    a substitute.
+    """
+    if shutil.which("gfortran") is None:
+        pytest.skip("gfortran not available")
+    if shutil.which("meson") is None:
+        pytest.skip("meson not available (f2py backend on Python>=3.12)")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    src_text = src if not isinstance(src, Path) else None
+    if src_text is not None:
+        src_file = out_dir / f"{mod_name}.f90"
+        src_file.write_text(src_text)
+    else:
+        src_file = src
+    subprocess.check_call([sys.executable, "-m", "numpy.f2py", "-c",
+                           str(src_file), "-m", mod_name, "--quiet"],
+                          cwd=out_dir)
+    if str(out_dir) not in sys.path:
+        sys.path.insert(0, str(out_dir))
+    __import__(mod_name)
+    return sys.modules[mod_name]
 
 
 def compile_to_hlfir(source: str, out_dir: Path, name: str = "src") -> Path:

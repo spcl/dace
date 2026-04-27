@@ -79,6 +79,10 @@ struct ASTNode {
     // the emitter prefers the string whenever it is non-empty.
     int64_t loop_lower = -1;
     std::string loop_lower_expr;
+    // Step (Fortran ``DO i = a, b, c``'s ``c``).  Default 1; -1 for
+    // reverse-direction ``DO i = N, 1, -1`` (LU back-substitution
+    // pattern).  Other steps are not yet supported.
+    int64_t loop_step = 1;
 
     // assign
     std::string target, expr;
@@ -91,6 +95,11 @@ struct ASTNode {
     // call
     std::string callee;
     std::vector<std::string> call_args;
+    // Per-call-arg slice subset, parallel to ``call_args``.  Empty entry =
+    // whole array; non-empty entry = a Fortran 1-based slice expression
+    // like ``"1:3"`` so emit_libcall can build a sliced memlet
+    // (``dot_product(arg1(1:3), arg2(1:3))`` etc.).
+    std::vector<std::string> call_arg_subsets;
 
     // reduce
     std::string reduce_src;       // input array name

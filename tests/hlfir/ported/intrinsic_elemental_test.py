@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -91,7 +90,6 @@ end subroutine main
         assert abs(f_res - p_res) < 10**-9
 
 
-@xfail("module-level derived type with array member percent-access not yet lowered")
 def test_fortran_frontend_elemental_exp_struct(tmp_path):
     src = """
 

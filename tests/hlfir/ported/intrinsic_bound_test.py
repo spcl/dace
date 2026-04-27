@@ -61,7 +61,6 @@ END SUBROUTINE intrinsic_bound_test_function
     assert np.allclose(res, [3, 9, 8, 12])
 
 
-@xfail("INTERFACE block + assumed-shape arg not yet lowered")
 def test_fortran_frontend_bound_assumed(tmp_path):
     src = """
 MODULE intrinsic_bound_interfaces
@@ -99,12 +98,15 @@ END SUBROUTINE intrinsic_bound_test_function2
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res)
+    # ``input`` is declared 4x7 in the outer subroutine and passed to
+    # an interface that takes ``dimension(:,:)`` — the bridge surfaces
+    # the assumed-shape extents on the SDFG signature so the caller
+    # binds them to the actual dims.
+    sdfg(res=res, input_d0=4, input_d1=7)
 
     assert np.allclose(res, [1, 1, 4, 7])
 
 
-@xfail("INTERFACE block + assumed-shape with offsets not lowered")
 def test_fortran_frontend_bound_assumed_offsets(tmp_path):
     src = """
 MODULE intrinsic_bound_interfaces
@@ -142,7 +144,12 @@ END SUBROUTINE intrinsic_bound_test_function2
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res)
+    # Outer ``input`` is declared ``dimension(42:45, 13:19)`` (4 elements
+    # in dim0, 7 in dim1, with non-default lower bounds 42 / 13).  When
+    # passed to an INTERFACE that takes ``dimension(:,:)`` the assumed-
+    # shape callee re-bases everything to lb=1 — Fortran spec — so the
+    # callee's ``LBOUND`` returns 1 and ``UBOUND`` returns the extent.
+    sdfg(res=res, input_d0=4, input_d1=7)
 
     assert np.allclose(res, [1, 1, 4, 7])
 

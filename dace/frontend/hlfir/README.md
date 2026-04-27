@@ -67,6 +67,20 @@ its predecessors having reshaped the IR:
 `sdfg.arglist()` + free symbols into a `FrozenSignature` and pins
 it on the SDFG.
 
+**(4b) Post-generation cleanup.** A scalar-promotion pass runs over
+the freshly-built SDFG to fold every length-1 array into a true
+scalar.  ``REAL(8), VALUE :: x`` lands as a 1-element array on the
+SDFG signature (the ABI Fortran uses for pass-by-value scalar dummies);
+without this cleanup the caller has to wrap each constant in a numpy
+``array([v])`` to satisfy DaCe's array-arg runtime check, and the
+generated C++ touches ``x[0]`` instead of just ``x``.  The cleanup
+walks every non-transient ``Array`` whose shape is ``(1,)``, rewrites
+its descriptor to a ``Scalar``, and rewrites every memlet subset that
+references it.  Lifted from the ``yakup/dev`` ``Specialize scalar
+utility function`` work.  Runs after ``SDFGBuilder.build()`` returns
+and before the ``FrozenSignature`` snapshot is taken so the bindings
+emitter sees the post-cleanup signature.
+
 **(5) Regen binding.** `bindings/emit_bindings` reads three artefacts
 — `FortranInterface` (outer caller surface), `FrozenSignature`
 (inner SDFG surface), and the `FlattenPlan` from stage 3 — and writes

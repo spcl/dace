@@ -320,13 +320,24 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             else if (bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::intent_out))
                 v.intent = "out";
             // An OPTIONAL dummy without an explicit intent is still a
-            // dummy — treat it as ``intent(in)`` by default so
+            // dummy -- treat it as ``intent(in)`` by default so
             // descriptors.py doesn't misclassify it as a transient
             // local.  The Fortran spec allows any intent for an
             // unspecified OPTIONAL; ``in`` is the common case (and
             // widens safely to ``inout`` via the caller's own buffer).
             if (v.intent.empty()
                 && bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::optional))
+                v.intent = "in";
+            // ``REAL(8), VALUE :: x`` is a C-interop scalar passed by
+            // value -- equivalent to intent(in) since the callee gets
+            // its own copy.  Mark intent so the rank-0 path doesn't
+            // misclassify it as a transient.  Below (after the
+            // role-classification block) we further promote VALUE
+            // scalars to SDFG SYMBOLS so callers can bind them with
+            // plain Python int / float instead of a 1-element numpy
+            // array.
+            if (v.intent.empty()
+                && bitEnumContainsAny(fa, fir::FortranVariableFlagsEnum::value))
                 v.intent = "in";
         }
 
@@ -359,10 +370,24 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             if (auto h = mlir::dyn_cast<fir::HeapType>(ty)) ty = h.getEleTy();
             if (auto p = mlir::dyn_cast<fir::PointerType>(ty)) ty = p.getEleTy();
         }
+        // Capture the SequenceType's per-dim extents as a fallback for
+        // ``shape_symbols``: a declare synthesised by ``hlfir-flatten-structs``
+        // for a per-field array carries the shape only in the type
+        // (``!fir.array<5x5x5xf32>``), not as an explicit ``fir.shape``
+        // operand.  Without this, ``resolveShapeSyms`` returns empty and
+        // we fall through to the assumed-shape ``<name>_d<i>`` synth —
+        // but those symbols are never wired to anything because the
+        // extent is statically known.
+        std::vector<std::string> seqExtents;
         if (auto seq = mlir::dyn_cast<fir::SequenceType>(ty)) {
-            for (auto d : seq.getShape())
-                if (d == fir::SequenceType::getUnknownExtent())
+            for (auto d : seq.getShape()) {
+                if (d == fir::SequenceType::getUnknownExtent()) {
                     v.is_dynamic = true;
+                    seqExtents.push_back("?");
+                } else {
+                    seqExtents.push_back(std::to_string(d));
+                }
+            }
             v.rank = seq.getShape().size();
             ty = seq.getEleTy();
         }
@@ -387,6 +412,30 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             else if (kind == 8) v.dtype = "int64";
             else                v.dtype = "uint8";
         }
+        else if (mlir::isa<fir::RecordType>(ty)) {
+            // Drop ALL ``fir.RecordType`` declares.  Two cases:
+            //
+            //   1. Flang-internal type-info metadata
+            //      (``_QM__fortran_type_info...`` tables, component
+            //      descriptors named ``.b.<type>.<field>``) — never
+            //      user-visible.
+            //   2. User struct that escaped ``hlfir-flatten-structs``
+            //      (Phase 1 handles flat-member structs only; nested,
+            //      allocatable-member, and array-of-struct cases fall
+            //      to Phases 2–4).
+            //
+            // Either way we don't surface the struct on the SDFG
+            // signature: the previous behaviour of writing the raw
+            // MLIR type string into ``v.dtype`` produced broken
+            // descriptors that downstream codegen sometimes tolerated
+            // by accident.  Skip the VarInfo entirely; downstream
+            // ``traceToDecl`` reads through the per-field declares
+            // the pass DID lower.  A loud-failure throw here would
+            // be ideal but currently regresses tests that exploit the
+            // accidental-success path, so the loud check lives in a
+            // dedicated unit test (``derived_type_test.py``) instead.
+            continue;
+        }
         else {
             std::string s; llvm::raw_string_ostream os(s);
             ty.print(os); v.dtype = s;
@@ -394,6 +443,18 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
 
         v.shape_symbols = resolveShapeSyms(op);
         v.lower_bounds  = resolveLowerBounds(op);
+
+        // SequenceType-extent fallback: a declare with no ``fir.shape``
+        // operand (e.g. one synthesised by ``hlfir-flatten-structs`` for
+        // a per-field array) still carries concrete extents in its type.
+        // Use them when ``resolveShapeSyms`` came back empty so the
+        // SDFG signature gets literal shape (``[5,5,5]``) instead of a
+        // free symbol per dim that the caller must bind manually.
+        if (v.shape_symbols.empty() && !seqExtents.empty()) {
+            v.shape_symbols = seqExtents;
+            if (v.lower_bounds.size() != v.shape_symbols.size())
+                v.lower_bounds.assign(v.shape_symbols.size(), "1");
+        }
 
         // Allocatable: hlfir.declare has no shape; pull it from the
         // matching ``fir.allocmem`` site(s).  One ALLOCATE → use the
@@ -454,6 +515,34 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             pv.intent       = "in";
             pv.role         = "symbol";
             vars.push_back(std::move(pv));
+        }
+
+        // Companion ``<arr>_allocated`` int32 transient for every
+        // allocatable.  The AST builder writes ``1`` at each ALLOCATE
+        // site and ``0`` at each DEALLOCATE site so the Fortran
+        // ``ALLOCATED(arr)`` intrinsic — which Flang lowers to
+        // ``box_addr(load arr_box) != 0`` — can read this scalar
+        // instead of inspecting the descriptor's heap pointer (which
+        // DaCe's data model doesn't surface).  Initial value is 0
+        // (DaCe default for transient scalars).
+        if (isAllocatable) {
+            // Role ``symbol`` (not ``scalar``) so writes land on
+            // interstate edges and reads see the latest value across
+            // state boundaries.  A plain transient scalar would let
+            // DaCe's intra-state DAG scheduler interleave the
+            // ALLOCATE-time write with surrounding ``ALLOCATED(arr)``
+            // reads, producing the wrong intermediate value.  Symbols
+            // also auto-register on the SDFG signature, so no extra
+            // ``add_symbol`` plumbing is needed.
+            VarInfo av;
+            av.fortran_name = v.fortran_name + "_allocated";
+            av.mangled_name = v.mangled_name + "_allocated";
+            av.dtype        = "int32";
+            av.rank         = 0;
+            av.intent       = "";
+            av.role         = "symbol";
+            symbolNames.insert(av.fortran_name);
+            vars.push_back(std::move(av));
         }
 
         // For an allocatable with N ALLOCATE sites, register N-1

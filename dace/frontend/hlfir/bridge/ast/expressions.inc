@@ -224,6 +224,43 @@ inline std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
     return "(" + raw + " - " + std::to_string(-adjust) + ")";
 }
 
+/// Capture the LHS of an ``hlfir.assign`` whose destination is either a
+/// bare ``hlfir.declare`` (whole-result variable, e.g. ``out = SUM(a)``)
+/// or an ``hlfir.designate`` selecting one element of an array
+/// (``res(2) = MINVAL(d)``).  Writes the resolved name into
+/// ``node.target`` and, for the designate case, appends a per-dim
+/// ``AccessInfo`` so the downstream emitter wires the output memlet to
+/// that specific element.  Without this, every libcall / reduction in
+/// the routine writes through the whole destination array and the last
+/// one wins (or pytest fails with "memlet subset does not match node
+/// dimension" when the destination has more dims than the libcall's
+/// scalar output).
+///
+/// Shared by ``buildReduceNode``, ``buildElementalCountLibcall``,
+/// ``buildElementalAnyAllReduce`` and ``buildLibCallNode``.
+static void captureElementDesignateWrite(mlir::Value dest, ASTNode &node) {
+    if (auto dd = dest.getDefiningOp()) {
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd)) {
+            node.target = allocAliasFor(extractName(decl.getUniqName().str()));
+        } else if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
+            node.target = traceToDecl(dg.getMemref());
+            node.target_is_array = true;
+            AccessInfo wa;
+            wa.array_name = node.target;
+            wa.is_write = true;
+            unsigned di = 0;
+            for (auto idx : dg.getIndices()) {
+                auto resolved = resolveIndex(idx);
+                wa.index_vars.push_back(resolved.empty() ? "?" : resolved);
+                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
+                ++di;
+            }
+            node.accesses.push_back(std::move(wa));
+        }
+    }
+    if (node.target.empty()) node.target = traceToDecl(dest);
+}
+
 // ---------------------------------------------------------------------------
 // Bridge-synthesised name conventions
 // ---------------------------------------------------------------------------
@@ -343,6 +380,151 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
 
     auto nm = def->getName().getStringRef();
 
+    // ``ALLOCATED(arr)`` — Flang lowers as
+    //   %addr = fir.box_addr (fir.load arr_box) -> heap<...>
+    //   %i64  = fir.convert %addr : heap<...> -> i64
+    //   %r    = arith.cmpi ne, %i64, %c0_i64
+    // Recognise that exact shape (cmpi-ne against constant-zero of a
+    // box_addr→convert chain) and read the per-allocatable companion
+    // ``<arr>_allocated`` scalar that ``extract_vars`` registers and
+    // the AST builder maintains at ALLOCATE / DEALLOCATE sites.
+    if (nm == "arith.cmpi" && def->getNumOperands() == 2) {
+        auto pred = def->getAttrOfType<mlir::IntegerAttr>("predicate");
+        constexpr int64_t kPredNe = 1;   // mlir::arith::CmpIPredicate::ne
+        if (pred && pred.getInt() == kPredNe) {
+            // Operand 1 must be a constant int 0 (the null pointer
+            // sentinel after the heap-addr→i64 cast).
+            bool rhsZero = false;
+            if (auto c = traceConstInt(def->getOperand(1)))
+                rhsZero = (*c == 0);
+            if (rhsZero) {
+                // Operand 0: peel fir.convert back to find a fir.box_addr.
+                mlir::Value cur = def->getOperand(0);
+                for (int i = 0; i < limits::kConvertChainDepth && cur; ++i) {
+                    auto *cd = cur.getDefiningOp();
+                    if (!cd) break;
+                    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(cd))
+                        { cur = cv.getValue(); continue; }
+                    break;
+                }
+                if (cur) {
+                    if (auto *cd = cur.getDefiningOp()) {
+                        if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(cd)) {
+                            // box_addr's operand is fir.load of a box
+                            // ref; trace through that to the declare.
+                            auto src = ba.getVal();
+                            if (auto *sd = src.getDefiningOp())
+                                if (auto ld = mlir::dyn_cast<fir::LoadOp>(sd))
+                                    src = ld.getMemref();
+                            auto arrName = traceToDecl(src);
+                            if (!arrName.empty())
+                                return arrName + "_allocated";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ``fir.box_dims %arr_decl, %dim`` — Flang's lowering for SIZE /
+    // LBOUND / UBOUND / SHAPE on assumed-shape (and other boxed)
+    // arrays.  Produces a 3-tuple ``(lower_bound, extent, stride)``;
+    // each result is read out via an OpResult index, so we map per
+    // result number to the corresponding bridge-synthesised symbol.
+    //
+    // For the underlying array's K-th dim:
+    //   * ``#0`` (lower bound) → declared lb if present (``fir.shape_shift``),
+    //                            otherwise Fortran-default ``1``.
+    //   * ``#1`` (extent)      → ``<arr>_d<K>`` symbol the bridge mints
+    //                            for assumed-shape arrays in extract_vars
+    //                            (line 426-429).  For explicit-shape arrays
+    //                            (``dimension(N)``), the declare's ``fir.shape``
+    //                            already carries the constant / symbol; we
+    //                            recover it via ``buildIndexExpr`` on the
+    //                            extent operand.
+    //   * ``#2`` (stride)      → ``1`` (assume contiguous; section
+    //                            designates with non-1 stride don't reach
+    //                            this path).
+    if (nm == "fir.box_dims" && def->getNumOperands() >= 2) {
+        auto resIdx = mlir::cast<mlir::OpResult>(val).getResultNumber();
+        auto dimOp = def->getOperand(1);
+        auto dimC = traceConstInt(dimOp);
+        // Walk operand 0 back to the underlying ``hlfir.declare`` so we
+        // can read its shape (for explicit-shape) or fall back to the
+        // assumed-shape symbol form.
+        mlir::Value arrayVal = def->getOperand(0);
+        for (int hop = 0; hop < limits::kTraceToDeclMax && arrayVal; ++hop) {
+            auto *adef = arrayVal.getDefiningOp();
+            if (!adef) break;
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(adef))
+                { arrayVal = cv.getValue(); continue; }
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(adef))
+                { arrayVal = ld.getMemref(); continue; }
+            break;
+        }
+        std::string arrName = traceToDecl(arrayVal);
+        if (!dimC || arrName.empty()) return "?";
+        unsigned dim = static_cast<unsigned>(*dimC);
+
+        // Try to get the extent / lb from the declare's shape operand.
+        // For inlined assumed-shape callee aliases (no shape on the
+        // inner declare), walk to the outer declare via
+        // ``asAssumedShapeAlias`` — it shares storage with the caller
+        // and carries the actual shape/lb info.
+        mlir::Value shapeVal;
+        if (auto *adef = arrayVal.getDefiningOp()) {
+            if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(adef)) {
+                shapeVal = decl.getShape();
+                if (!shapeVal) {
+                    if (auto outer = asAssumedShapeAlias(decl))
+                        shapeVal = outer.getShape();
+                }
+            }
+        }
+
+        // Lower bound (#0):
+        if (resIdx == 0) {
+            if (shapeVal) {
+                if (auto ss = mlir::dyn_cast<fir::ShapeShiftOp>(
+                        shapeVal.getDefiningOp())) {
+                    auto ops = ss->getOperands();
+                    unsigned lbIdx = 2 * dim;
+                    if (lbIdx < ops.size()) {
+                        auto s = buildIndexExpr(ops[lbIdx], d + 1);
+                        if (!s.empty() && s != "?") return s;
+                    }
+                }
+            }
+            return "1";
+        }
+        // Extent (#1):
+        if (resIdx == 1) {
+            if (shapeVal) {
+                if (auto sh = mlir::dyn_cast<fir::ShapeOp>(
+                        shapeVal.getDefiningOp())) {
+                    if (dim < sh.getExtents().size()) {
+                        auto s = buildIndexExpr(sh.getExtents()[dim], d + 1);
+                        if (!s.empty() && s != "?") return s;
+                    }
+                }
+                if (auto ss = mlir::dyn_cast<fir::ShapeShiftOp>(
+                        shapeVal.getDefiningOp())) {
+                    auto ops = ss->getOperands();
+                    unsigned extIdx = 2 * dim + 1;
+                    if (extIdx < ops.size()) {
+                        auto s = buildIndexExpr(ops[extIdx], d + 1);
+                        if (!s.empty() && s != "?") return s;
+                    }
+                }
+            }
+            // Assumed-shape (no declare shape) — the bridge synthesised
+            // ``<arr>_d<dim>`` in extract_vars.  Same string convention.
+            return arrName + "_d" + std::to_string(dim);
+        }
+        // Stride (#2): contiguous default.
+        if (resIdx == 2) return "1";
+    }
+
     // Binary arithmetic.
     static const std::map<llvm::StringRef, std::string> bin_ops = {
         {"arith.mulf", " * "}, {"arith.addf", " + "},
@@ -393,6 +575,21 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
         {"math.absf",  "abs"},   {"math.absi",  "abs"},
         {"math.floor", "floor"}, {"math.ceil",  "ceil"},
         {"math.erf",   "erf"},   {"math.erfc",  "erfc"},
+        // ``llvm.intr.<op>`` — LLVM-dialect intrinsic ops Flang uses
+        // for some unary math (ANINT → ``llvm.intr.round``, AINT
+        // → ``llvm.intr.trunc`` on some kinds, etc.).  These are
+        // OPS, not function calls; the ``fir::CallOp`` table below
+        // handles the ``fir.call @llvm.<op>.f{32,64}`` shape.
+        {"llvm.intr.round", "round"},
+        {"llvm.intr.trunc", "trunc"},
+        {"llvm.intr.floor", "floor"},
+        {"llvm.intr.ceil",  "ceil"},
+        {"llvm.intr.fabs",  "abs"},
+        {"llvm.intr.sqrt",  "sqrt"},
+        {"llvm.intr.exp",   "exp"},
+        {"llvm.intr.log",   "log"},
+        {"llvm.intr.sin",   "sin"},
+        {"llvm.intr.cos",   "cos"},
     };
     if (auto it = unary_math.find(nm); it != unary_math.end()
             && def->getNumOperands() == 1) {
@@ -469,6 +666,17 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
                 {"sin", "sin"}, {"cos", "cos"}, {"tan", "tan"},
                 {"exp", "exp"}, {"log", "log"}, {"log10", "log10"},
                 {"sqrt", "sqrt"}, {"fabs", "abs"},
+                // ``f``-suffixed f32 runtime variants Flang emits for
+                // single-precision args: ``sinhf``, ``coshf``, etc.
+                // Without these, ``real(4)`` SINH/COSH/TANH lowerings
+                // hit the ``?`` fallback and the tasklet body fails to
+                // parse.
+                {"sinhf", "sinh"}, {"coshf", "cosh"}, {"tanhf", "tanh"},
+                {"asinhf", "asinh"}, {"acoshf", "acosh"}, {"atanhf", "atanh"},
+                {"asinf", "asin"}, {"acosf", "acos"}, {"atanf", "atan"},
+                {"sinf", "sin"}, {"cosf", "cos"}, {"tanf", "tan"},
+                {"expf", "exp"}, {"logf", "log"}, {"log10f", "log10"},
+                {"sqrtf", "sqrt"}, {"fabsf", "abs"},
                 // AINT / ANINT — same-kind real return, value-only round/trunc.
                 {"llvm.trunc.f64", "trunc"}, {"llvm.trunc.f32", "trunc"},
                 {"llvm.floor.f64", "floor"}, {"llvm.floor.f32", "floor"},

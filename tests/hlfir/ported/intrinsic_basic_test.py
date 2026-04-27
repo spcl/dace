@@ -82,7 +82,6 @@ end subroutine main
     assert res[6] == size + size2 + size2 * 5 + size3 + size * size2
 
 
-@xfail("assumed-shape arrays (res(:,:)) need allocatable descriptor lowering")
 def test_fortran_frontend_size_arbitrary(tmp_path):
     src = """
 subroutine main(res)
@@ -98,7 +97,7 @@ end subroutine main
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(res=res)
+    sdfg(res=res, res_d0=size, res_d1=size2)
 
     assert res[0, 0] == size * size2
     assert res[1, 0] == size
@@ -216,7 +215,6 @@ def test_fortran_frontend_bitwise_ops2(tmp_path):
     assert np.allclose(res, [0, 16, 1, 0, 30, 78])
 
 
-@xfail("ALLOCATED + ALLOCATE/DEALLOCATE not lowered")
 def test_fortran_frontend_allocated(tmp_path):
     src = """
     SUBROUTINE allocated_test(res)
@@ -246,7 +244,6 @@ def test_fortran_frontend_allocated(tmp_path):
     assert np.allclose(res, [0, 1, 0])
 
 
-@xfail("ALLOCATED via INTERFACE call across subroutines not lowered")
 def test_fortran_frontend_allocated_nested(tmp_path):
     src = """
     MODULE allocated_test_interface

@@ -16,7 +16,9 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("module globals + pointer arrays")
+@xfail("module-level derived type with pointer array member — Phase 1 doesn't "
+       "lower POINTER members; extract_vars drops the un-flattened struct and "
+       "downstream raises KeyError on the dropped VarInfo name. Targets Phase 3.")
 def test_fortran_frontend_global(tmp_path):
     src = """
 module global_test_module

@@ -148,14 +148,28 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         ++pushed;
     }
 
-    // Inner write access: target[ei0, ei1, …].  When the destination
-    // is a section designate ``a(lo:hi)`` we need to add ``(lo - 1)``
-    // to each iter so the write lands on the right element of the
-    // root array (mirrors the same logic in ``buildDesignateIndexExpr``
-    // for reads through nested section designates).  Iters are
-    // 1-based at the loop level, which is what Fortran indexing
-    // expects, so the offset is purely from the section's lower bound.
-    std::vector<int64_t> dstSectionAdj(rank, 0);
+    // Inner write access: target[<per-array-dim index>].  When the
+    // destination is a section designate ``a(lo:hi)`` we need to add
+    // ``(lo - 1)`` to each triplet-iter so the write lands on the right
+    // element of the root array (mirrors the same logic in
+    // ``buildDesignateIndexExpr`` for reads through nested section
+    // designates).  When the designate mixes triplet + scalar dims
+    // (e.g. ``res(:, pos(1)+2) = input1 + input2``) the per-array-dim
+    // index list is one-per-dim of the underlying array — triplet dims
+    // contribute their ``ei_<tDim>`` iter, scalar dims contribute the
+    // scalar's Fortran 1-based index expression.  The elemental's rank
+    // matches the triplet count, NOT the underlying array's rank.
+    //
+    // ``LowerAdj`` keeps the constant-fold and symbolic-fallback paths
+    // in one place: ``expr`` non-empty → ``(iter + expr - 1)`` form;
+    // ``value != 0`` → integer offset; both empty / zero → bare iter.
+    struct LowerAdj {
+        int64_t value = 0;
+        std::string expr;
+    };
+    AccessInfo wa;
+    wa.array_name = inner.target;
+    wa.is_write = true;
     if (auto dd = dest.getDefiningOp()) {
         if (auto dstDg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
             auto triplets = dstDg.getIsTriplet();
@@ -163,26 +177,55 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
             unsigned cursor = 0;
             unsigned tDim = 0;
             for (bool isT : triplets) {
-                if (isT && tDim < rank && cursor < idxOps.size()) {
-                    if (auto lo = traceConstInt(idxOps[cursor]))
-                        dstSectionAdj[tDim] = *lo - 1;
+                if (isT && tDim < rank && cursor + 3 <= idxOps.size()) {
+                    LowerAdj adj;
+                    if (auto lo = traceConstInt(idxOps[cursor])) {
+                        adj.value = *lo - 1;
+                    } else {
+                        auto loExpr = buildIndexExpr(idxOps[cursor]);
+                        if (!loExpr.empty() && loExpr != "?")
+                            adj.expr = std::move(loExpr);
+                    }
+                    std::string ix = iter_names[tDim];
+                    if (!adj.expr.empty())
+                        ix = "(" + ix + " + " + adj.expr + " - 1)";
+                    else if (adj.value > 0)
+                        ix = "(" + ix + " + " + std::to_string(adj.value) + ")";
+                    else if (adj.value < 0)
+                        ix = "(" + ix + " - " + std::to_string(-adj.value) + ")";
+                    wa.index_vars.push_back(iter_names[tDim]);
+                    wa.index_exprs.push_back(std::move(ix));
+                    cursor += 3;
+                    tDim++;
+                } else if (!isT && cursor < idxOps.size()) {
+                    // Scalar dim — thread its (Fortran 1-based) index
+                    // expression directly into the write memlet so the
+                    // memlet rank matches the underlying array.
+                    auto sc = buildIndexExpr(idxOps[cursor]);
+                    if (sc.empty() || sc == "?") sc = "?";
+                    wa.index_vars.push_back(sc);
+                    wa.index_exprs.push_back(std::move(sc));
+                    cursor += 1;
+                } else {
+                    // Defensive: skip bad cursor advance to avoid an
+                    // infinite loop on malformed input.
+                    cursor += isT ? 3 : 1;
+                    if (isT) tDim++;
                 }
-                cursor += isT ? 3 : 1;
-                if (isT) tDim++;
+            }
+        } else {
+            // Bare ``hlfir.declare`` — write across the elemental's full
+            // rank (every dim is a triplet covering the array's extent).
+            for (unsigned i = 0; i < rank; ++i) {
+                wa.index_vars.push_back(iter_names[i]);
+                wa.index_exprs.push_back(iter_names[i]);
             }
         }
-    }
-    AccessInfo wa;
-    wa.array_name = inner.target;
-    wa.is_write = true;
-    for (unsigned i = 0; i < rank; ++i) {
-        wa.index_vars.push_back(iter_names[i]);
-        std::string ix = iter_names[i];
-        if (dstSectionAdj[i] > 0)
-            ix = "(" + ix + " + " + std::to_string(dstSectionAdj[i]) + ")";
-        else if (dstSectionAdj[i] < 0)
-            ix = "(" + ix + " - " + std::to_string(-dstSectionAdj[i]) + ")";
-        wa.index_exprs.push_back(ix);
+    } else {
+        for (unsigned i = 0; i < rank; ++i) {
+            wa.index_vars.push_back(iter_names[i]);
+            wa.index_exprs.push_back(iter_names[i]);
+        }
     }
     inner.accesses.push_back(std::move(wa));
 

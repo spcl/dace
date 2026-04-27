@@ -164,36 +164,83 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
     // keyed by raw declare name so two separate allocatables in the
     // same scope don't share counters.
     std::map<std::string, unsigned> allocSiteCount;
-    auto bindAllocSite = [&](mlir::Operation *op) {
+    // Returns the allocatable's raw Fortran name on a successful match
+    // (so the caller can emit a state-change ``<name>_allocated = 1``
+    // ASTNode), empty string otherwise.
+    auto bindAllocSite = [&](mlir::Operation *op) -> std::string {
         auto store = mlir::dyn_cast<fir::StoreOp>(op);
-        if (!store) return false;
+        if (!store) return {};
         auto valDef = store.getValue().getDefiningOp();
-        if (!valDef) return false;
+        if (!valDef) return {};
         auto embox = mlir::dyn_cast<fir::EmboxOp>(valDef);
-        if (!embox) return false;
+        if (!embox) return {};
         auto allocmem = mlir::dyn_cast_or_null<fir::AllocMemOp>(
             embox.getMemref().getDefiningOp());
-        if (!allocmem) return false;
+        if (!allocmem) return {};
         // Only the user-visible allocs we model — skip embox-of-zero_bits
         // (the empty-init store the bridge already filters out elsewhere).
         auto un = allocmem.getUniqName();
-        if (!un || !un->ends_with(".alloc")) return false;
+        if (!un || !un->ends_with(".alloc")) return {};
         auto memDef = store.getMemref().getDefiningOp();
-        if (!memDef) return false;
+        if (!memDef) return {};
         auto decl = mlir::dyn_cast<hlfir::DeclareOp>(memDef);
-        if (!decl) return false;
+        if (!decl) return {};
         std::string raw = extractName(decl.getUniqName().str());
-        if (raw.empty()) return false;
+        if (raw.empty()) return {};
         unsigned site = allocSiteCount[raw]++;
         setAllocAlias(raw, allocAliasName(raw, site));
-        return true;
+        return raw;
+    };
+    auto emitAllocStateChange = [&](const std::string &name, int value) {
+        ASTNode n;
+        n.kind = "assign";
+        n.target = name + "_allocated";
+        n.target_is_array = false;
+        n.expr = std::to_string(value);
+        nodes.push_back(std::move(n));
     };
     for (auto &op : block) {
         // Bind / advance the alloc-alias for this allocatable, then
-        // skip the op — the SDFG model treats the storage as live for
-        // the whole scope, so we emit no AST node for the alloc-bound
-        // store itself.
-        if (bindAllocSite(&op)) continue;
+        // emit a state-change ``<name>_allocated = 1`` so downstream
+        // ``ALLOCATED(arr)`` reads see the right value.  The ALLOCATE
+        // store itself produces no other observable side effect in the
+        // SDFG model — we treat allocatables as live for the whole
+        // scope.
+        if (auto allocName = bindAllocSite(&op); !allocName.empty()) {
+            emitAllocStateChange(allocName, 1);
+            continue;
+        }
+
+        // Standalone ``fir.freemem`` — Flang's DEALLOCATE expansion at
+        // top level (the trailing ``fir.if (alloc_status != 0) { … }``
+        // is the implicit end-of-scope cleanup, handled separately as
+        // ``isAllocCleanup``).  Trace through ``fir.box_addr`` and
+        // ``fir.load`` to find the underlying ``hlfir.declare`` and
+        // emit ``<rawname>_allocated = 0`` against the declare's RAW
+        // Fortran name (NOT the current alloc-alias) so multi-site
+        // allocatables ``x → x_alloc1 → x_alloc2`` still funnel state
+        // updates through the original ``x_allocated`` symbol.
+        if (auto fm = mlir::dyn_cast<fir::FreeMemOp>(&op)) {
+            mlir::Value cur = fm.getHeapref();
+            for (int i = 0; i < limits::kConvertChainDepth && cur; ++i) {
+                auto *cd = cur.getDefiningOp();
+                if (!cd) break;
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(cd))
+                    { cur = cv.getValue(); continue; }
+                if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(cd))
+                    { cur = ba.getVal(); continue; }
+                if (auto ld = mlir::dyn_cast<fir::LoadOp>(cd))
+                    { cur = ld.getMemref(); continue; }
+                break;
+            }
+            std::string name;
+            if (cur)
+                if (auto *cd = cur.getDefiningOp())
+                    if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(cd))
+                        name = extractName(decl.getUniqName().str());
+            if (!name.empty()) emitAllocStateChange(name, 0);
+            continue;
+        }
 
         if (auto doLoop = mlir::dyn_cast<fir::DoLoopOp>(op)) {
             ASTNode n;
@@ -238,6 +285,25 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                 if (n.loop_lower_expr.empty())
                     n.loop_lower_expr = buildIndexExpr(doLoop.getLowerBound());
             }
+            // Step.  Reverse-direction ``DO i = N, 1, -1`` (LU
+            // back-substitution) carries step -1; the bridge needs
+            // this to flip init/cond/update in emit_loop.  Constant
+            // steps only — symbolic-step loops would silently default
+            // to step=1 and produce a wrong-direction iteration if
+            // the symbol is actually negative, so throw loudly when
+            // the step is non-constant AND non-trivial (i.e. not the
+            // default ``%c1``).
+            if (auto stepC = traceConstInt(doLoop.getStep())) {
+                n.loop_step = *stepC;
+            } else {
+                throw std::runtime_error(
+                    "fir.do_loop with non-constant step — bridge "
+                    "currently lowers only constant-step loops. The "
+                    "step's sign decides forward-vs-reverse codegen; "
+                    "with a symbolic step we'd silently default to +1 "
+                    "and produce wrong-direction iteration when the "
+                    "symbol is negative.");
+            }
             // Elemental-inlined bodies use the fir.do_loop block arg
             // directly as the hlfir.designate index — no fir.store →
             // alloca → fir.load indirection.  traceLoopIter returns ""
@@ -281,6 +347,22 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                     src_is_hlfir_expr = true;
             }
 
+            // Section-to-section assign — both sides are non-trivial
+            // ``hlfir.designate``s with at least one triplet dim.  Walk
+            // the structure explicitly because ``buildCopyNode`` would
+            // otherwise treat it as a whole-array copy and silently
+            // ignore scalar dims and slice offsets (e.g.
+            // ``res(nval, pos(1):pos(2)) = a(nval, pos(3):pos(4))``).
+            if (dst_is_array && src_is_array && !src_is_hlfir_expr) {
+                if (auto dstSec = asSectionDesignate(dst)) {
+                    auto built = buildSectionToSectionAssign(assign, dstSec);
+                    if (!built.empty()) {
+                        for (auto &n : built)
+                            nodes.push_back(std::move(n));
+                        continue;
+                    }
+                }
+            }
             // Whole-array copy: both sides are array boxes / refs (and
             // not an ``hlfir.expr``-producer that we want to walk into).
             if (dst_is_array && src_is_array && !src_is_hlfir_expr) {
@@ -301,6 +383,17 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             if (!src_is_array) {
                 if (auto sec = asSectionDesignate(dst)) {
                     auto built = buildSectionScalarAssign(assign, sec);
+                    if (!built.empty()) {
+                        for (auto &built_n : built)
+                            nodes.push_back(std::move(built_n));
+                        continue;
+                    }
+                }
+                // ``res = <non-zero scalar>`` — broadcast across the whole
+                // array.  Memset already handled zero above; synthesise a
+                // nested loop here for any other constant / scalar RHS.
+                if (dst_is_array) {
+                    auto built = buildWholeArrayScalarBroadcast(assign);
                     if (!built.empty()) {
                         for (auto &built_n : built)
                             nodes.push_back(std::move(built_n));
@@ -628,6 +721,41 @@ std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
     // ``<symbol> = <array>[<one_based_idx> - 1]`` ahead of the body.
     // Stable order (sorted by symbol name) keeps the emitted SDFG
     // deterministic across runs.
+    // Prepend one ``<arr>_allocated = 0`` init per allocatable so that
+    // a ``res = ALLOCATED(arr)`` read BEFORE the first ALLOCATE returns
+    // the correct ``0`` instead of whatever DaCe leaves in the
+    // uninitialised transient scalar.  Walks the module's declares and
+    // collects every one with the ``allocatable`` Fortran attribute;
+    // sorted so the order is deterministic across runs.
+    {
+        std::vector<std::string> allocNames;
+        module.walk([&](hlfir::DeclareOp op) {
+            auto attrs = op.getFortranAttrs();
+            if (!attrs) return;
+            if (!bitEnumContainsAny(*attrs, fir::FortranVariableFlagsEnum::allocatable))
+                return;
+            std::string raw = extractName(op.getUniqName().str());
+            if (!raw.empty()) allocNames.push_back(std::move(raw));
+        });
+        std::sort(allocNames.begin(), allocNames.end());
+        allocNames.erase(std::unique(allocNames.begin(), allocNames.end()),
+                         allocNames.end());
+        if (!allocNames.empty()) {
+            std::vector<ASTNode> initNodes;
+            initNodes.reserve(allocNames.size());
+            for (const auto &n : allocNames) {
+                ASTNode init;
+                init.kind = "assign";
+                init.target = n + "_allocated";
+                init.target_is_array = false;
+                init.expr = "0";
+                initNodes.push_back(std::move(init));
+            }
+            initNodes.insert(initNodes.end(), result.begin(), result.end());
+            result = std::move(initNodes);
+        }
+    }
+
     if (!kPosSymbolRegistry.empty()) {
         std::vector<std::tuple<std::string, std::string, int64_t>> entries;
         for (auto &kv : kPosSymbolRegistry) {

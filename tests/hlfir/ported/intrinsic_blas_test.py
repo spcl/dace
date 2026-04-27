@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -17,7 +16,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('dot_product — output validation fails (Node validation)')
 def test_fortran_frontend_dot(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -43,7 +41,6 @@ end subroutine main
     assert res1[0] == np.dot(arg1, arg2)
 
 
-@xfail('dot_product on slice — output validation fails')
 def test_fortran_frontend_dot_range(tmp_path):
     src = """
 subroutine main(arg1, arg2, res1)
@@ -65,7 +62,7 @@ end subroutine main
         arg2[i] = i + 5
 
     sdfg(arg1=arg1, arg2=arg2, res1=res1)
-    assert res1[0] == np.dot(arg1, arg2)
+    assert res1[0] == np.dot(arg1[:3], arg2[:3])
 
 
 def test_fortran_frontend_transpose(tmp_path):
@@ -116,7 +113,6 @@ end subroutine main
     assert np.all((1.0 - np.transpose(res1)) == arg1)
 
 
-@xfail("module-level derived type with array member percent-access not yet lowered")
 def test_fortran_frontend_transpose_struct(tmp_path):
     src = """
 

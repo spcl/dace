@@ -362,7 +362,6 @@ END SUBROUTINE merge_test_function
     assert res[0] == 13
 
 
-@xfail('MERGE with literal first arg — invalid expression')
 def test_fortran_frontend_merge_literal(tmp_path):
     src = """
 SUBROUTINE merge_test_function(input1, input2, res)
@@ -378,13 +377,13 @@ END SUBROUTINE merge_test_function
 
     res = np.full([1], 40, order="F", dtype=np.float64)
 
-    sdfg(input1=13.0, input2=42.0, res=res)
+    sdfg(input1=np.array([13.0], dtype=np.float64), input2=np.array([42.0], dtype=np.float64), res=res)
     assert res[0] == 42
 
-    sdfg(input1=13.0, input2=10.0, res=res)
+    sdfg(input1=np.array([13.0], dtype=np.float64), input2=np.array([10.0], dtype=np.float64), res=res)
     assert res[0] == 10
 
-    sdfg(input1=13.0, input2=2.0, res=res)
+    sdfg(input1=np.array([13.0], dtype=np.float64), input2=np.array([2.0], dtype=np.float64), res=res)
     assert res[0] == 1
 
 

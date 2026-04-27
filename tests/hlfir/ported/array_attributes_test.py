@@ -153,7 +153,6 @@ end subroutine main
         assert a[i - 1] == (i + 50 - 1) * 2
 
 
-@xfail("assumed-shape arrays (d(:,:)) need allocatable descriptor lowering")
 def test_fortran_frontend_array_arbitrary(tmp_path):
     src = """
 subroutine main(d, arrsize, arrsize2)
@@ -170,12 +169,11 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2, i=0)
+    sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2, i=0, d_d0=arrsize, d_d1=arrsize2)
     for i in range(arrsize):
         assert a[i, 0] == (i + 1) * 2
 
 
-@xfail("assumed-shape arrays (dimension(:,:)) need allocatable descriptor lowering")
 def test_fortran_frontend_array_arbitrary_attribute(tmp_path):
     src = """
 subroutine main(d, arrsize, arrsize2)
@@ -192,7 +190,7 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2, i=0)
+    sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2, i=0, d_d0=arrsize, d_d1=arrsize2)
     for i in range(arrsize):
         assert a[i, 0] == (i + 1) * 2
 

@@ -6,7 +6,7 @@ import ctypes
 import numpy as np
 import pytest
 
-from _util import build_sdfg, have_flang
+from _util import build_sdfg, f2py_compile, have_flang
 from ported._helpers import xfail
 
 try:
@@ -153,9 +153,6 @@ end subroutine main
     assert np.allclose(d, [2])
 
 
-@xfail(
-    "Fortran mixed-kind precision: real(4) literals (e.g. 4.8) widened to real(8) preserve f32 imprecision; test expected exact 400 (which f2dace gave by quietly truncating constant precision in tasklets)"
-)
 def test_fortran_frontend_pow1(tmp_path):
     src = """
 subroutine main(d)
@@ -172,15 +169,18 @@ subroutine main(d)
   d(1, 1, 2) = ZHRC(1)
 end subroutine main
 """
-    sdfg = build_sdfg(src, tmp_path, name='main').build()
+    mod = f2py_compile(src, tmp_path / "ref", "pow1_ref")
+    d_ref = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    mod.main(d_ref)
+
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name='main').build()
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == 400)
+    np.testing.assert_allclose(d, d_ref, rtol=1e-12, atol=1e-12)
 
 
-@xfail(
-    "Fortran mixed-kind precision: real(4) literals widened to real(8) preserve f32 imprecision; test expected exact 8000"
-)
 def test_fortran_frontend_pow2(tmp_path):
     src = """
 subroutine main(d)
@@ -197,18 +197,18 @@ subroutine main(d)
   d(1, 1, 2) = ZHRC(1)
 end subroutine main
 """
-    sdfg = build_sdfg(src, tmp_path, name='main').build()
+    mod = f2py_compile(src, tmp_path / "ref", "pow2_ref")
+    d_ref = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    mod.main(d_ref)
+
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name='main').build()
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == 8000)
+    np.testing.assert_allclose(d, d_ref, rtol=1e-12, atol=1e-12)
 
 
-@xfail("Fortran mixed-kind precision: ``ZSIGK(1) = 4.8`` widens the "
-       "default-kind real(4) literal to real(8) preserving the f32 bit "
-       "pattern (4.8000001907…), so the test's strict ``== -4.8`` "
-       "assertion can never hold under any Fortran frontend (gfortran "
-       "f2py produces the same widened value).  SIGN itself lowers "
-       "correctly via ``math.copysign``; only the assertion is wrong.")
 def test_fortran_frontend_sign1(tmp_path):
     src = """
 subroutine main(d)
@@ -222,7 +222,13 @@ subroutine main(d)
   d(1, 1, 2) = sign(ZSIGK(1), ZHRC(1))
 end subroutine main
 """
-    sdfg = build_sdfg(src, tmp_path, name='main').build()
+    mod = f2py_compile(src, tmp_path / "ref", "sign1_ref")
+    d_ref = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    mod.main(d_ref)
+
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name='main').build()
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == -4.8)
+    np.testing.assert_allclose(d, d_ref, rtol=1e-12, atol=1e-12)

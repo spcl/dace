@@ -37,7 +37,6 @@ end subroutine main
     assert np.allclose(a, [42, 5.5, 42, 42])
 
 
-@xfail("section reduction `sum(e(:, 1, :))` over a dynamic 2-D slice — bridge surfaces ? in tasklet expr")
 def test_fortran_frontend_array_ranges(tmp_path):
     """Tests that the Fortran frontend can parse multidimenstional arrays with vectorized ranges."""
     src = """

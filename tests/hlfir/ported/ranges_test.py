@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -180,7 +179,6 @@ END SUBROUTINE multiple_ranges_ecrad_function
             assert res[i - 1, j - 1] == input1[i - 1, j - 1]
 
 
-@xfail('res(:, pos(1):pos(2)) = a(:, pos(3):pos(4)) + a(:, pos(5):pos(6)) — invalid expression')
 def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_ecrad_function(input1, res, pos)
@@ -221,7 +219,6 @@ END SUBROUTINE multiple_ranges_ecrad_function
             assert res[i - 1, iter_1 + j - 1] == input1[i - 1, iter_2 + j - 1] + input1[i - 1, iter_3 + j - 1]
 
 
-@xfail("dimension(7,21:27) offset declarations not yet honoured by FaCe")
 def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_ecrad_offset_function(input1, res, pos)
@@ -262,7 +259,6 @@ END SUBROUTINE multiple_ranges_ecrad_offset_function
             assert res[i - 1, iter_1 + j - 1] == input1[i - 1, iter_2 + j - 1] + input1[i - 1, iter_3 + j - 1]
 
 
-@xfail('res(:, pos(1)+k) = … broadcast assignments — Memlet subset mismatch')
 def test_fortran_frontend_array_assignment(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_ecrad_function(input1, input2, res, pos)
@@ -309,7 +305,6 @@ END SUBROUTINE multiple_ranges_ecrad_function
         assert res[i, 4] == input1[i] + input2[i]
 
 
-@xfail('res(nval, pos(1):pos(2)) = a(nval, pos(3):pos(4)) — wrong result')
 def test_fortran_frontend_multiple_ranges_ecrad_bug(tmp_path):
     src = """
 SUBROUTINE multiple_ranges_ecrad_bug_function(input1, res, pos)
@@ -375,7 +370,6 @@ END SUBROUTINE multiple_ranges_ecrad_bug_function
     assert np.all(res == input1 * input1[1])
 
 
-@xfail('res = literal — Memlet subset mismatch')
 def test_fortran_frontend_ranges_noarray(tmp_path):
     src = """
 SUBROUTINE ranges_noarray_function(res)
@@ -461,7 +455,6 @@ end subroutine main
     assert np.allclose(res, [1.0 - x for x in input1])
 
 
-@xfail("module-level derived type with array member percent-access not yet lowered")
 def test_fortran_frontend_ranges_struct(tmp_path):
     src = """
 
@@ -508,7 +501,6 @@ END MODULE
     assert np.all(res1 == (arg1 + 1))
 
 
-@xfail("module-level derived type with array member percent-access not yet lowered")
 def test_fortran_frontend_ranges_struct_implicit(tmp_path):
     src = """
 
