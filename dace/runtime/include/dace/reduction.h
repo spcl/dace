@@ -18,6 +18,11 @@
     #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
+// CUDA 13 dropped ``cub::CountingInputIterator`` / ``cub::TransformInputIterator``
+// from the public API. ``thrust`` ships drop-in equivalents that CUB
+// itself uses internally.
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #endif
 
 #ifdef __HIPCC__
@@ -599,9 +604,15 @@ namespace dace {
     };
 
     inline auto stridedIterator(size_t stride) {
-        cub::CountingInputIterator<int> counting_iterator(0);
+        // ``thrust::counting_iterator`` / ``thrust::transform_iterator``
+        // replace the cub counterparts that were dropped in CUDA 13.
+        // ``thrust::transform_iterator`` deduces its first template arg
+        // (the operator type) from the constructor; no need to declare
+        // it up front like the cub version did.
+        thrust::counting_iterator<int> counting_iterator(0);
         StridedIteratorHelper conversion_op(stride);
-        cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        thrust::transform_iterator<decltype(conversion_op), decltype(counting_iterator)>
+            itr(counting_iterator, conversion_op);
         return itr;
     }
 #endif
