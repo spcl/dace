@@ -5511,11 +5511,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     pass  # Passthrough to exception
 
             raise DaceSyntaxError(
-                self, node.value,
-                f'Subscript {[t[1] for t in node_parsed]} unsupported. '
+                self, node.value, f'Subscript {[t[1] for t in node_parsed]} unsupported. '
                 'DaCe supports sequence of dace.data or an attribute of a dace.data. '
-                'Try `dace.unroll` for more complex types.'
-            )
+                'Try `dace.unroll` for more complex types.')
         array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node, 'Type "%s" cannot be sliced' % arrtype)
