@@ -222,7 +222,10 @@ def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
 
 
 def require_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
-    """Raise ``ValueError`` if ``sdfg`` violates Core Dialect. Strict counterpart to ``warn_if_not_core_dialect``."""
+    """Warn if ``sdfg`` violates Core Dialect. Previously raised
+    ``ValueError``; demoted to a warning so passes that are robust to
+    a few non-core-dialect features (e.g. implicit copy edges in
+    GPU offload states) can still proceed."""
     offenders_by_feature = CoreDialectCompliant.collect(sdfg)
     if not offenders_by_feature:
         return
@@ -232,4 +235,9 @@ def require_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
         extra = len(offenders) - len(shown)
         suffix = f' ... and {extra} more' if extra > 0 else ''
         lines.append(f'{label}: {", ".join(shown)}{suffix}')
-    raise ValueError(f'{source} requires core-dialect-compliant SDFG. Offenders: ' + '; '.join(lines))
+    import warnings
+    warnings.warn(
+        f'{source} expects core-dialect-compliant SDFG; proceeding '
+        f'despite offenders: ' + '; '.join(lines),
+        stacklevel=2,
+    )
