@@ -182,18 +182,29 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
     }
 
     // Scalar read: trace to its declare; every op on the trace chain
-    // (fir.load + hlfir.declare) resolves to the Fortran name.
+    // (fir.load + hlfir.declare) resolves to the Fortran name.  Only
+    // collect INTEGER-typed scalars -- float scalars used in branch
+    // conditions (e.g. ``IF (zsupsat > zepsec)``) must stay as plain
+    // scalars so their assignments route through the tasklet path
+    // (which preserves complex RHS like ``MAX((a-b*c)/d, 0)``); the
+    // interstate-edge path used for symbol writes only handles trivial
+    // RHSs, so promoting a float scalar here drops the MAX expression.
     if (mlir::isa<fir::LoadOp>(def)) {
-        auto n = traceToDecl(v);
-        if (!n.empty()) out.insert(n);
+        if (v.getType().isIntOrIndex()) {
+            auto n = traceToDecl(v);
+            if (!n.empty()) out.insert(n);
+        }
         return;
     }
 
     // Anything else (constants, arith.addi used as index arithmetic, …)
     // — trace through traceToDecl as a last resort; it already handles
-    // several pass-through ops.
-    auto n = traceToDecl(v);
-    if (!n.empty()) out.insert(n);
+    // several pass-through ops.  Same integer-only filter so float
+    // scalars don't get promoted to symbols here either.
+    if (v.getType().isIntOrIndex()) {
+        auto n = traceToDecl(v);
+        if (!n.empty()) out.insert(n);
+    }
 }
 
 // ---------------------------------------------------------------------------

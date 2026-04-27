@@ -56,7 +56,7 @@ def test_fortran_frontend_optional(tmp_path):
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res, res2=res2, a=np.array([5], dtype=np.int32), a_present=1)
+    sdfg(res=res, res2=res2, a=5, a_present=1)
 
     # Safe path only — second internal call reads OPTIONAL ``a`` without
     # checking PRESENT and is UB per Fortran (we accept the read may
@@ -112,14 +112,7 @@ def test_fortran_frontend_optional_complex(tmp_path):
     size = 5
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res,
-         res2=res2,
-         a=np.array([5], dtype=np.int32),
-         a_present=1,
-         b=np.array([7.0], dtype=np.float64),
-         b_present=1,
-         c=np.array([1], dtype=np.int32),
-         c_present=0)
+    sdfg(res=res, res2=res2, a=5, a_present=1, b=7.0, b_present=1, c=1, c_present=0)
 
     # Safe path only — caller passed ``a`` and ``b`` to the first
     # internal call; ``c`` was not passed and is UB if read.  The

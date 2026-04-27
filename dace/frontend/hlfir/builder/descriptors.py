@@ -40,9 +40,12 @@ def add_descriptors(builder, sdfg: SDFG):
     """Add symbols, arrays, and scalars to ``sdfg`` from ``builder``'s
     classified variable dicts.
 
-    Scalar rule: locals (``intent=''``) → ``dace.data.Scalar``.  Dummy-arg
-    scalars (``intent in/out/inout``) land as length-1 ``dace.data.Array``
-    because DaCe doesn't put non-transient Scalars on the SDFG signature.
+    Scalar rule: locals (``intent=''``) -> ``dace.data.Scalar`` transient.
+    Scalar OUTPUTS (``intent in/out/inout`` other than pure ``in``) land as
+    length-1 ``dace.data.Array`` because the caller needs a writable buffer.
+    Scalar INPUTS (``intent(in)`` or ``REAL(8), VALUE :: x``) register as
+    non-transient ``dace.data.Scalar`` so callers pass plain ``int`` /
+    ``float`` and the C++ codegen reads ``x`` directly.
     """
     # Named Fortran symbols (nproma, nlev, …).
     for v in builder.symbols.values():

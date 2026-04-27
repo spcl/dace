@@ -326,11 +326,13 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
     # names (``i_0`` etc.) picked by the enclosing ``emit_loop``.
     for fname, uname in ctx.iter_map.items():
         cond = re.sub(rf'\b{re.escape(fname)}\b', uname, cond)
-    # Scalars with intent land as size-1 Arrays on the SDFG signature,
-    # so referring to a bare name in a branch condition would pick up
-    # the array pointer.  Subscript each one to read element 0.
+    # Scalar OUTPUTS land as size-1 Arrays on the SDFG signature, so
+    # referring to a bare name in a branch condition would pick up the
+    # array pointer.  Subscript each one to read element 0.  Scalar
+    # INPUTS (``intent(in)`` / ``VALUE``) are true Scalars and need no
+    # subscript -- they're addressable as the bare name in C++.
     for nm, v in builder.scalars.items():
-        if v.intent:
+        if v.intent in ('out', 'inout'):
             cond = re.sub(rf'\b{re.escape(nm)}\b', f"{nm}[0]", cond)
 
     uid = builder.nid()

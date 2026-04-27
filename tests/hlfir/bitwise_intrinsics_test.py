@@ -52,10 +52,8 @@ end subroutine
 """
     sdfg = build_sdfg(src, tmp_path, name='probe').build()
     x_in, y_in = 0b1010, 0b1100
-    x = np.array([x_in], dtype=np.int32)
-    y = np.array([y_in], dtype=np.int32)
     out = np.zeros(6, dtype=np.int32)
-    sdfg(x=x, y=y, out=out)
+    sdfg(x=x_in, y=y_in, out=out)
     assert int(out[0]) == x_in | (1 << 2)  # ibset
     assert int(out[1]) == x_in & ~(1 << 2)  # ibclr
     assert int(out[2]) == x_in ^ y_in  # ieor
@@ -80,9 +78,8 @@ end subroutine
 """
     sdfg = build_sdfg(src, tmp_path, name='probe').build()
     x_in = 0b101110
-    x = np.array([x_in], dtype=np.int32)
     out_ibits = np.zeros(1, dtype=np.int32)
     out_btest = np.zeros(1, dtype=np.int32)
-    sdfg(x=x, out_ibits=out_ibits, out_btest=out_btest)
+    sdfg(x=x_in, out_ibits=out_ibits, out_btest=out_btest)
     assert int(out_ibits[0]) == (x_in >> 2) & ((1 << 3) - 1)
     assert int(out_btest[0]) == 1 if (x_in & (1 << 1)) else 0

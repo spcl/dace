@@ -222,9 +222,7 @@ end subroutine apply_softmax_step
     x = np.asfortranarray(rng.standard_normal(n, dtype=np.float64))
     s_val = float(np.sum(np.exp(x)))
     x_ref = np.exp(x) / s_val
-    # Scalar intent(in) arg lands as a size-1 Array on the SDFG signature.
-    s = np.array([s_val], dtype=np.float64)
 
-    sdfg(x=x, s=s, n=n)
+    sdfg(x=x, s=s_val, n=n)
 
     np.testing.assert_allclose(x, x_ref, atol=1e-12, rtol=0)

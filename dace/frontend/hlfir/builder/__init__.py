@@ -260,19 +260,30 @@ class SDFGBuilder:
         """Snapshot ``sdfg.arglist()`` + free symbols into a
         ``FrozenSignature`` and pin it on the SDFG.
 
-        Populated from the builder's per-variable ``VarInfo`` cache
-        (intent, dtype, rank, shape).  Kind is ``'array'`` when the
-        variable lives in ``self.arrays``, ``'symbol'`` when in
-        ``self.symbols``, ``'scalar'`` otherwise.
+        ``kind`` is read off the live SDFG descriptor, not the builder's
+        role split: a scalar OUTPUT (``intent(out)`` / ``intent(inout)``)
+        registers in ``self.scalars`` but lives on the SDFG as a length-1
+        ``Array`` -- the bindings emitter must see ``kind='array'`` so it
+        emits ``type(c_ptr), value`` (pointer) instead of a pass-by-value
+        scalar binding.  A scalar INPUT (``intent(in)`` / ``VALUE``) lives
+        as a true ``Scalar`` and gets ``kind='scalar'``.
         """
-        # Local import keeps the binding machinery optional — plain
+        # Local import keeps the binding machinery optional -- plain
         # ``import dace.frontend.hlfir`` doesn't drag it in.
+        from dace.data import Array as _Array, Scalar as _Scalar
         from dace.frontend.hlfir.bindings.frozen_signature import FrozenArg, FrozenSignature
 
         args_list = []
         for sdfg_name_, desc in sdfg.arglist().items():
             v = (self.arrays.get(sdfg_name_) or self.symbols.get(sdfg_name_) or self.scalars.get(sdfg_name_))
-            kind = ('array' if sdfg_name_ in self.arrays else 'symbol' if sdfg_name_ in self.symbols else 'scalar')
+            if sdfg_name_ in self.symbols:
+                kind = 'symbol'
+            elif isinstance(desc, _Scalar):
+                kind = 'scalar'
+            elif isinstance(desc, _Array):
+                kind = 'array'
+            else:
+                kind = 'scalar'
             dtype_obj = getattr(desc, 'dtype', None)
             dtype_str = (getattr(dtype_obj, 'to_string', lambda: str(dtype_obj))() if dtype_obj is not None else '?')
             shape = tuple(str(s) for s in getattr(desc, 'shape', ()))

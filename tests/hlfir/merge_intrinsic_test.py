@@ -37,11 +37,8 @@ end subroutine
 """
     sdfg = build_sdfg(src, tmp_path, name='probe').build()
     for mask_val in (True, False):
-        a = np.array([1.5], dtype=np.float64)
-        b = np.array([2.5], dtype=np.float64)
-        mk = np.array([1 if mask_val else 0], dtype=np.int32)
         out = np.zeros(1, dtype=np.float64)
-        sdfg(a=a, b=b, mask=mk, out=out)
+        sdfg(a=1.5, b=2.5, mask=(1 if mask_val else 0), out=out)
         expected = 1.5 if mask_val else 2.5
         assert float(out[0]) == expected, f"mask={mask_val}: got {out[0]}, want {expected}"
 
@@ -57,10 +54,8 @@ end subroutine
 """
     sdfg = build_sdfg(src, tmp_path, name='probe').build()
     for a_in, b_in, expected in [(3.0, 2.0, 3.0), (1.0, 5.0, 5.0), (4.0, 4.0, 4.0)]:
-        a = np.array([a_in], dtype=np.float64)
-        b = np.array([b_in], dtype=np.float64)
         out = np.zeros(1, dtype=np.float64)
-        sdfg(a=a, b=b, out=out)
+        sdfg(a=a_in, b=b_in, out=out)
         assert float(out[0]) == expected
 
 

@@ -134,12 +134,11 @@ end subroutine
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
-    # Scalar Fortran dummies surface as 1-element array containers on
-    # the SDFG signature; ``a`` is never dereferenced (only its address
-    # feeds ``is_present``) so the value is irrelevant, but the buffer
-    # has to be present.
-    a = np.full([1], 5, order="F", dtype=np.int32)
-    sdfg(res=res, res2=res2, a=a)
+    # ``a`` is intent(in) on the SDFG signature (the OPTIONAL dummy in
+    # the inlined ``tf2`` body); ``is_present`` is folded statically so
+    # the value never reaches a tasklet, but the SDFG signature still
+    # demands a scalar binding.
+    sdfg(res=res, res2=res2, a=5)
 
     assert res[0] == 1
     assert res2[0] == 0

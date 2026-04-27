@@ -167,12 +167,6 @@ def test_icon_loopnest_5_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="loopnest_5: SDFG builds + runs but the bridge mis-handles "
-                   "the per-level-1 boundary writes mixed with a per-nlevp1 "
-                   "write inside the same DO loop -- the second statement's "
-                   "level index doesn't propagate. Tracks the gap; the SDFG "
-                   "and reference differ on the nlevp1 slice.")
 def test_icon_loopnest_5_numerical(tmp_path: Path):
     src = _kernel_source("loopnest_5")
     rng = np.random.default_rng(103)

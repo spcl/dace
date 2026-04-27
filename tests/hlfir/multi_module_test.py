@@ -54,8 +54,7 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
     v = np.array([10.0], dtype=np.float64)
-    dt = np.array([0.1], dtype=np.float64)
-    sdfg(v=v, dt=dt)
+    sdfg(v=v, dt=0.1)
     np.testing.assert_allclose(v[0], 10.0 - 9.81 * 0.1, rtol=1e-12)
 
 
@@ -89,9 +88,8 @@ subroutine main(x, y)
 end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
-    x = np.array([4.0], dtype=np.float64)
     y = np.zeros(1, dtype=np.float64)
-    sdfg(x=x, y=y)
+    sdfg(x=4.0, y=y)
     np.testing.assert_allclose(y[0], 4.0 * 2.5, rtol=1e-12)
 
 

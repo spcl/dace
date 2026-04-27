@@ -96,14 +96,6 @@ def test_cloudsc_autoconversion_snow_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="autoconversion_snow: SDFG runs but the temperature/"
-                   "ice-content IF gating doesn't fire — writes inside the "
-                   "nested IFs never propagate to ZSNOWAUT, leaving it at the "
-                   "init value.  Same all-zeros symptom regardless of whether "
-                   "LAERICEAUTO is integer (this _ast variant) or LOGICAL "
-                   "(the BIND(C) variant), so the gap isn't logical-handling — "
-                   "it's the bridge's nested-IF lowering inside an arrayed loop.")
 def test_cloudsc_autoconversion_snow_numerical(tmp_path: Path):
     src = _kernel_source("autoconversion_snow")
     rng = np.random.default_rng(42)
@@ -111,7 +103,12 @@ def test_cloudsc_autoconversion_snow_numerical(tmp_path: Path):
     ZTP1 = np.asfortranarray(rng.uniform(220.0, 300.0, KLON))
     ZICECLD = np.asfortranarray(rng.uniform(0.0, 1e-3, KLON))
     PNICE = np.asfortranarray(rng.uniform(1e3, 1e5, KLON))
-    ZSOLQB = np.asfortranarray(np.zeros((KLON, NCLV, NCLV)))
+    # Shape ZSOLQB as ``(KLON, NCLDQS, NCLDQI)`` so f2py auto-infers
+    # ``ncldqs = NCLDQS`` and ``ncldqi = NCLDQI`` from ``shape(zsolqb)``
+    # -- otherwise f2py uses ``shape(zsolqb, 2)`` which is the second
+    # array bound, not the runtime ``ncldqi`` index, and the reference
+    # writes to the wrong species slot.
+    ZSOLQB = np.asfortranarray(np.zeros((KLON, NCLDQS, NCLDQI)))
 
     consts = dict(rtt=273.16,
                   rlcritsnow=1.0e-4,
@@ -160,10 +157,6 @@ def test_cloudsc_ice_supersaturation_adjustment_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="ice_supersaturation_adjustment: SDFG builds; numerical "
-                   "comparison pending — same nested-IF lowering gap as "
-                   "autoconversion_snow plus 3-D ZSOLQA writes.")
 def test_cloudsc_ice_supersaturation_adjustment_numerical(tmp_path: Path):
     src = _kernel_source("ice_supersaturation_adjustment")
     rng = np.random.default_rng(43)
@@ -230,11 +223,6 @@ def test_cloudsc_lu_solver_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="lu_solver_microphysics: SDFG builds; numerical comparison "
-                   "pending — diagonally-dominant random matrices exercise the "
-                   "triangular loops, but the bridge may mis-order the JM/JN "
-                   "phases.")
 def test_cloudsc_lu_solver_numerical(tmp_path: Path):
     src = _kernel_source("lu_solver")
     rng = np.random.default_rng(44)
@@ -371,10 +359,6 @@ def test_cloudsc_saturation_calculation_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="compute_saturation_values: SDFG builds; numerical "
-                   "comparison pending — 2-D (KLON × KLEV) with EXP intrinsics "
-                   "and a temperature-branched saturation curve.")
 def test_cloudsc_saturation_calculation_numerical(tmp_path: Path):
     src = _kernel_source("saturation_calculation")
     rng = np.random.default_rng(46)

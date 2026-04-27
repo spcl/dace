@@ -168,10 +168,6 @@ end subroutine main
     rng = np.random.default_rng(5)
     n, lo_val, hi_val = 20, 3, 8
     a = np.ascontiguousarray(rng.integers(0, 12, size=n, dtype=np.int32))
-    # ``integer, intent(in) :: lo, hi`` lowers to length-1 array dummies
-    # on the SDFG signature -- box them on the Python side.
-    lo = np.array([lo_val], dtype=np.int32)
-    hi = np.array([hi_val], dtype=np.int32)
     res = np.zeros(1, dtype=np.int32)
-    sdfg(a=a, n=n, lo=lo, hi=hi, res=res)
+    sdfg(a=a, n=n, lo=lo_val, hi=hi_val, res=res)
     assert int(res[0]) == int(((a > lo_val) & (a < hi_val)).sum())

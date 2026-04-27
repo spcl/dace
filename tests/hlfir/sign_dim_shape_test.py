@@ -44,11 +44,9 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     for a_in, b_in, expected in [(3.0, 5.0, 3.0), (3.0, -5.0, -3.0), (-3.0, 5.0, 3.0), (-3.0, -5.0, -3.0)]:
-        a = np.array([a_in], dtype=np.float64)
-        b = np.array([b_in], dtype=np.float64)
         out = np.zeros(1, dtype=np.float64)
-        sdfg(a=a, b=b, out=out)
-        assert float(out[0]) == expected, f"SIGN({a_in}, {b_in}) → {out[0]}, want {expected}"
+        sdfg(a=a_in, b=b_in, out=out)
+        assert float(out[0]) == expected, f"SIGN({a_in}, {b_in}) -> {out[0]}, want {expected}"
 
 
 def test_sign_integer(tmp_path: Path):
@@ -62,11 +60,9 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     for a_in, b_in, expected in [(7, 3, 7), (7, -3, -7), (-7, 3, 7), (-7, -3, -7)]:
-        a = np.array([a_in], dtype=np.int32)
-        b = np.array([b_in], dtype=np.int32)
         out = np.zeros(1, dtype=np.int32)
-        sdfg(a=a, b=b, out=out)
-        assert int(out[0]) == expected, f"SIGN({a_in}, {b_in}) → {out[0]}, want {expected}"
+        sdfg(a=a_in, b=b_in, out=out)
+        assert int(out[0]) == expected, f"SIGN({a_in}, {b_in}) -> {out[0]}, want {expected}"
 
 
 # ---------------------------------------------------------------------------
@@ -85,11 +81,9 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     for a_in, b_in, expected in [(5.0, 3.0, 2.0), (3.0, 5.0, 0.0), (-1.0, -3.0, 2.0), (4.0, 4.0, 0.0)]:
-        a = np.array([a_in], dtype=np.float64)
-        b = np.array([b_in], dtype=np.float64)
         out = np.zeros(1, dtype=np.float64)
-        sdfg(a=a, b=b, out=out)
-        assert float(out[0]) == expected, f"DIM({a_in}, {b_in}) → {out[0]}, want {expected}"
+        sdfg(a=a_in, b=b_in, out=out)
+        assert float(out[0]) == expected, f"DIM({a_in}, {b_in}) -> {out[0]}, want {expected}"
 
 
 def test_dim_integer(tmp_path: Path):
@@ -103,11 +97,9 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     for a_in, b_in, expected in [(8, 3, 5), (3, 8, 0), (-2, -7, 5), (4, 4, 0)]:
-        a = np.array([a_in], dtype=np.int32)
-        b = np.array([b_in], dtype=np.int32)
         out = np.zeros(1, dtype=np.int32)
-        sdfg(a=a, b=b, out=out)
-        assert int(out[0]) == expected, f"DIM({a_in}, {b_in}) → {out[0]}, want {expected}"
+        sdfg(a=a_in, b=b_in, out=out)
+        assert int(out[0]) == expected, f"DIM({a_in}, {b_in}) -> {out[0]}, want {expected}"
 
 
 # ---------------------------------------------------------------------------

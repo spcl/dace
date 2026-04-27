@@ -66,10 +66,8 @@ end subroutine
     assert "**" in body, f"expected ** in tasklet, got: {body!r}"
     assert "?" not in body, f"bridge left a ? fallback, got: {body!r}"
 
-    # Scalar real(8) intent(in) lands as a length-1 Array on the SDFG signature.
-    x = np.array([2.5], dtype=np.float64)
     r = np.zeros(1, dtype=np.float64)
-    sdfg(x=x, r=r)
+    sdfg(x=2.5, r=r)
     np.testing.assert_allclose(r[0], 2.5**2, rtol=1e-12, atol=1e-12)
 
 
@@ -89,10 +87,8 @@ end subroutine
     assert "**" in body
     assert "?" not in body
 
-    x = np.array([3.0], dtype=np.float64)
-    y = np.array([1.7], dtype=np.float64)
     r = np.zeros(1, dtype=np.float64)
-    sdfg(x=x, y=y, r=r)
+    sdfg(x=3.0, y=1.7, r=r)
     np.testing.assert_allclose(r[0], 3.0**1.7, rtol=1e-12, atol=1e-12)
 
 
@@ -115,8 +111,6 @@ end subroutine
     assert body.count("**") == 2, f"expected two **, got: {body!r}"
     assert "?" not in body
 
-    x = np.array([3.0], dtype=np.float64)
-    y = np.array([4.0], dtype=np.float64)
     r = np.zeros(1, dtype=np.float64)
-    sdfg(x=x, y=y, r=r)
+    sdfg(x=3.0, y=4.0, r=r)
     np.testing.assert_allclose(r[0], 0.5 * (3.0**2 + 4.0**2), rtol=1e-12, atol=1e-12)

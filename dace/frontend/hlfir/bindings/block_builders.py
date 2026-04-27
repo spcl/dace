@@ -73,14 +73,40 @@ def build_c_interface(frozen: FrozenSignature, iface: OriginalInterface) -> str:
     for a in frozen.args:
         header_lines.append(f"      {a.sdfg_name}")
         if a.rank > 0:
+            # Real array, or length-1 wrapper for a scalar OUTPUT
+            # (``intent(out)`` / ``intent(inout)``).  Either way DaCe
+            # passes a pointer.
             body_lines.append(f"      type(c_ptr), value :: {a.sdfg_name}")
         elif a.kind == 'symbol':
+            # Free symbol -- pass-by-value integer.
             body_lines.append(f"      integer(c_int), value :: {a.sdfg_name}")
+        elif a.kind == 'scalar':
+            # Scalar INPUT (``intent(in)`` or ``REAL(8), VALUE``) lives
+            # as a non-transient ``Scalar`` on the SDFG -- DaCe codegen
+            # emits a pass-by-value parameter, so the Fortran interface
+            # must also bind by value (not via ``c_ptr``).
+            body_lines.append(f"      {_fortran_c_value_type(a.dtype)}, value :: {a.sdfg_name}")
         else:
             body_lines.append(f"      type(c_ptr), value :: {a.sdfg_name}")
     return tpl.format(entry=iface.entry,
                       c_arg_decls=",  &\n".join(header_lines),
                       c_arg_decls_body="\n".join(body_lines))
+
+
+def _fortran_c_value_type(dtype: str) -> str:
+    """Map a frozen-arg ``dtype`` string to its ``iso_c_binding`` form
+    for a pass-by-value Fortran dummy."""
+    table = {
+        'int32': 'integer(c_int)',
+        'int64': 'integer(c_long_long)',
+        'float32': 'real(c_float)',
+        'float64': 'real(c_double)',
+        'bool': 'logical(c_bool)',
+    }
+    if dtype not in table:
+        raise ValueError(f"_fortran_c_value_type: unsupported scalar dtype {dtype!r} -- "
+                         "extend the dtype map for new pass-by-value scalar shapes.")
+    return table[dtype]
 
 
 # ---------------------------------------------------------------------------

@@ -77,8 +77,6 @@ def test_select_case_all_shapes(tmp_path, x, expected):
     mod.sel_all(np.int32(x), out_ref)
     assert out_ref[0] == expected, f"reference mismatch: x={x} -> {out_ref[0]}"
 
-    # Scalar intent(in) arg lands as a size-1 Array on the SDFG signature.
-    x_sdfg = np.array([x], dtype=np.int32)
     out_sdfg = np.zeros(1, dtype=np.int32)
-    sdfg(x=x_sdfg, out=out_sdfg)
+    sdfg(x=int(x), out=out_sdfg)
     assert out_sdfg[0] == expected, f"SDFG mismatch: x={x} -> {out_sdfg[0]}"
