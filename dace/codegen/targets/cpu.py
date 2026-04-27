@@ -884,19 +884,33 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.wcr is not None:
                 nc = not cpp.is_write_conflicted(dfg, edge, sdfg_schedule=self._toplevel_schedule)
             if nc:
-                stream.write(
-                    """
-                    dace::CopyND{copy_tmpl}::{shape_tmpl}::{copy_func}(
-                        {copy_args});""".format(
-                        copy_tmpl=copy_tmpl,
-                        shape_tmpl=shape_tmpl,
-                        copy_func="Copy" if memlet.wcr is None else "Accumulate",
-                        copy_args=", ".join(copy_args),
-                    ),
-                    cfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
+                # Fast path: trivial 1-element pure copy (no WCR). The
+                # CopyND<...>::Copy(...) template call would just be a
+                # single load/store anyway, but the wrapper isn't always
+                # inlined and adds template overhead per call site, which
+                # accumulates inside hot kernels with many slice-into-
+                # scalar loads. Emit direct dereference instead.
+                if memlet.wcr is None and len(copy_shape) == 1 and copy_shape[0] == 1:
+                    stream.write(
+                        f"*({dst_expr}) = *({src_expr});",
+                        cfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
+                else:
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::{copy_func}(
+                            {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_func="Copy" if memlet.wcr is None else "Accumulate",
+                            copy_args=", ".join(copy_args),
+                        ),
+                        cfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
             else:  # Conflicted WCR
                 if dynshape == 1:
                     warnings.warn('Performance warning: Emitting dynamically-'
