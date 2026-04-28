@@ -527,3 +527,5 @@ if __name__ == '__main__':
 
     for assumptions in tests_for_exception:
         test_assumption_system_contradictions(assumptions)
+
+    test_depth_counter_vs_work_counter()
