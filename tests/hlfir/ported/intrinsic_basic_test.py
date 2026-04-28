@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -17,30 +16,28 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('BIT_SIZE on logical/real — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_bit_size(tmp_path):
+    # BIT_SIZE accepts INTEGER only -- the original test had calls on
+    # LOGICAL and REAL too, which are invalid Fortran.  Drop those; the
+    # surviving INTEGER call exercises the lowering path.
     src = """
 SUBROUTINE intrinsic_math_test_bit_size_function(res)
-integer, dimension(4) :: res
-logical :: a = .TRUE.
+integer, dimension(2) :: res
 integer :: b = 1
-real :: c = 1
-double precision :: d = 1
+integer(kind=8) :: e = 1
 
-res(1) = BIT_SIZE(a)
-res(2) = BIT_SIZE(b)
-res(3) = BIT_SIZE(c)
-res(4) = BIT_SIZE(d)
+res(1) = BIT_SIZE(b)
+res(2) = BIT_SIZE(e)
 
 END SUBROUTINE intrinsic_math_test_bit_size_function
 """
     sdfg = build_sdfg(src, tmp_path, name='intrinsic_math_test_bit_size_function').build()
 
-    size = 4
+    size = 2
     res = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res)
 
-    assert np.allclose(res, [32, 32, 32, 64])
+    assert np.allclose(res, [32, 64])
 
 
 def test_fortran_frontend_bit_size_symbolic(tmp_path):

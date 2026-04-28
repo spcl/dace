@@ -37,7 +37,6 @@ end subroutine main
     assert np.allclose(a, [42, 5.5, 42, 42])
 
 
-@xfail("POINTER not lowered")
 def test_fortran_frontend_nested_array_access_pointer_args_1(tmp_path):
     src = """
 subroutine main(d, test, indices)

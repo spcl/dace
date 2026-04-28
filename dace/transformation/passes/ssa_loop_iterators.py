@@ -3,9 +3,7 @@ import dace
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import utils as sdutil
 from typing import Optional
-import copy
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
@@ -25,6 +23,7 @@ def replace_symbol_by_name(expr: sp.Basic, old_name: str, new: Union[str, sp.Bas
     if not repl:
         return expr
     return expr.subs(repl)
+
 
 @dace.properties.make_properties
 @explicit_cf_compatible
@@ -53,31 +52,49 @@ class SSALoopIterators(ppl.Pass):
                     if to_repl:
                         v = node.symbol_mapping.pop(str(loop_var))
                         v_symexpr = dace.symbolic.SymExpr(v)
-                        node.symbol_mapping[str(next_ssa_loop_var)] = replace_symbol_by_name(v_symexpr, loop_var, next_ssa_loop_var)
-                    
+                        node.symbol_mapping[str(next_ssa_loop_var)] = replace_symbol_by_name(
+                            v_symexpr, loop_var, next_ssa_loop_var)
+
                     # Now we can replace what is inside
                     to_repl |= str(loop_var) in inner_sdfg.symbols
                     if to_repl:
                         self._repl_recursive(inner_sdfg, loop_var, next_ssa_loop_var)
 
-
     def _apply_recursive(self, sdfg: dace.SDFG):
+        # Names DaCe knows are arrays -- ``symstr`` uses this set to
+        # render array subscripts as ``arr[idx]`` (Python syntax for
+        # interstate-edge assignments) rather than ``arr(idx)`` (sympy's
+        # default function-call form, which the C++ codegen later
+        # rejects since ``arr`` is a pointer, not callable).
+        array_names = frozenset(sdfg.arrays.keys())
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, LoopRegion):
                 loop_var = cfg.loop_variable
-                loop_end = f"({loop_analysis.get_loop_end(cfg)})" # Inclusive
+                if not loop_var:
+                    # ``while``/``do-while`` loops with no explicit
+                    # induction variable have nothing to SSA-rename.
+                    continue
+                loop_end_raw = loop_analysis.get_loop_end(cfg)
                 next_ssa_loop_var = f"{SSALoopIterators.FOR_IT_NAME}_{SSALoopIterators.loop_var_counter}"
                 # Replace loop variable with next_ssa_loop_var in the loop body,
                 # and assign loop_var = loop_end at the end of the loop
                 self._repl_recursive(cfg, loop_var, next_ssa_loop_var)
 
-                # Assign to the variable after the loop end
-                parent_graph = cfg.parent_graph
-                parent_graph.add_state_after(cfg, f"SSA_loop_var_reconstruction_{SSALoopIterators.loop_var_counter}",
-                                            assignments={loop_var: loop_end})
+                # Assign to the variable after the loop end so any reads
+                # AFTER the loop see the canonical post-loop value.  Skip
+                # only when ``get_loop_end`` couldn't solve a closed form
+                # (counted-loop heuristics fail on ``do while`` /
+                # ``do-EXIT`` shapes -- those have no induction variable
+                # in the LoopRegion to reconstruct).
+                if loop_end_raw is not None:
+                    loop_end_str = dace.symbolic.symstr(loop_end_raw, arrayexprs=array_names).strip()
+                    if loop_end_str:
+                        parent_graph = cfg.parent_graph
+                        parent_graph.add_state_after(cfg,
+                                                     f"SSA_loop_var_reconstruction_{SSALoopIterators.loop_var_counter}",
+                                                     assignments={loop_var: f"({loop_end_str})"})
 
                 SSALoopIterators.loop_var_counter += 1
-
 
         for state in sdfg.all_states():
             for node in state.nodes():

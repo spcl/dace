@@ -20,9 +20,16 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 @xfail("POINTER aliasing not lowered")
 def test_fortran_frontend_ptr_assignment_removal(tmp_path):
     src = """
+MODULE lib
+    TYPE simple_type
+        INTEGER :: a
+    END TYPE simple_type
+END MODULE lib
+
 SUBROUTINE type_in_call_test_function(d)
+    USE lib
     REAL d(5,5)
-    TYPE(simple_type) :: s
+    TYPE(simple_type), TARGET :: s
     INTEGER,POINTER :: tmp
     tmp=>s%a
 
@@ -38,12 +45,18 @@ END SUBROUTINE type_in_call_test_function
     assert (a[2, 0] == 42)
 
 
-@xfail("POINTER aliasing not lowered")
 def test_fortran_frontend_ptr_assignment_removal_array(tmp_path):
     src = """
+MODULE lib
+    TYPE simple_type
+        REAL :: w(5,5,5)
+    END TYPE simple_type
+END MODULE lib
+
 SUBROUTINE type_in_call_test_function(d)
+    USE lib
     REAL d(5,5)
-    TYPE(simple_type) :: s
+    TYPE(simple_type), TARGET :: s
     REAL,POINTER :: tmp(:,:,:)
     tmp=>s%w
 
@@ -59,12 +72,23 @@ END SUBROUTINE type_in_call_test_function
     assert (a[2, 0] == 42)
 
 
-@xfail("POINTER aliasing not lowered")
 def test_fortran_frontend_ptr_assignment_removal_array_assumed(tmp_path):
     src = """
+MODULE lib
+    TYPE simple_type
+        REAL :: w(5,5,5)
+    END TYPE simple_type
+CONTAINS
+    SUBROUTINE type_in_call_test_function2(tmp)
+        REAL,POINTER :: tmp(:,:,:)
+        tmp(2,1,1) = 1410
+    END SUBROUTINE type_in_call_test_function2
+END MODULE lib
+
 SUBROUTINE type_in_call_test_function(d)
+    USE lib
     REAL d(5,5)
-    TYPE(simple_type) :: s
+    TYPE(simple_type), TARGET :: s
     REAL,POINTER :: tmp(:,:,:)
     tmp=>s%w
 
@@ -75,12 +99,6 @@ SUBROUTINE type_in_call_test_function(d)
     d(3,1) = max(1.0, tmp(2,1,1))
 
 END SUBROUTINE type_in_call_test_function
-
-SUBROUTINE type_in_call_test_function2(tmp)
-    REAL,POINTER :: tmp(:,:,:)
-
-    tmp(2,1,1) = 1410
-END SUBROUTINE type_in_call_test_function2
 """
     sdfg = build_sdfg(src, tmp_path, name='type_in_call_test_function', entry='_QPtype_in_call_test_function').build()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
@@ -90,12 +108,21 @@ END SUBROUTINE type_in_call_test_function2
     assert (a[2, 0] == 1410)
 
 
-@xfail("POINTER aliasing not lowered")
 def test_fortran_frontend_ptr_assignment_removal_array_nested(tmp_path):
     src = """
+MODULE lib
+    TYPE inner_type
+        REAL :: w(5,5,5)
+    END TYPE inner_type
+    TYPE simple_type
+        TYPE(inner_type) :: val1
+    END TYPE simple_type
+END MODULE lib
+
 SUBROUTINE type_in_call_test_function(d)
+    USE lib
     REAL d(5,5)
-    TYPE(simple_type) :: s
+    TYPE(simple_type), TARGET :: s
     REAL,POINTER :: tmp(:,:,:)
     !tmp=>s%val1%val%w
     tmp=>s%val1%w

@@ -23,6 +23,9 @@ std::unique_ptr<mlir::Pass> createFlattenStructsPass();
 std::unique_ptr<mlir::Pass> createDefaultIntentPass();
 std::unique_ptr<mlir::Pass> createVerifyNoUnresolvedCallsPass();
 std::unique_ptr<mlir::Pass> createFoldElementAliasesPass();
+std::unique_ptr<mlir::Pass> createMaterialiseAssociatesPass();
+std::unique_ptr<mlir::Pass> createExpandRegionAssignPass();
+std::unique_ptr<mlir::Pass> createRejectPolymorphismPass();
 
 // --- Registry ---
 

@@ -9,8 +9,10 @@
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <set>
@@ -183,12 +185,15 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 
     // Scalar read: trace to its declare; every op on the trace chain
     // (fir.load + hlfir.declare) resolves to the Fortran name.  Only
-    // collect INTEGER-typed scalars -- float scalars used in branch
-    // conditions (e.g. ``IF (zsupsat > zepsec)``) must stay as plain
-    // scalars so their assignments route through the tasklet path
-    // (which preserves complex RHS like ``MAX((a-b*c)/d, 0)``); the
+    // collect INTEGER-typed scalars -- float and LOGICAL scalars used
+    // in branch conditions (e.g. ``IF (zsupsat > zepsec)``,
+    // ``IF (llo1)`` where ``llo1 = (a>b) .AND. (c>d) .AND. ...``) must
+    // stay as plain scalars so their assignments route through the
+    // tasklet path (which preserves complex RHS like
+    // ``MAX((a-b*c)/d, 0)`` or a multi-AND boolean expression); the
     // interstate-edge path used for symbol writes only handles trivial
-    // RHSs, so promoting a float scalar here drops the MAX expression.
+    // single-array-read RHSs, so promoting a non-integer scalar here
+    // drops everything past the first array read in the expression.
     if (mlir::isa<fir::LoadOp>(def)) {
         if (v.getType().isIntOrIndex()) {
             auto n = traceToDecl(v);
@@ -199,7 +204,7 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 
     // Anything else (constants, arith.addi used as index arithmetic, …)
     // — trace through traceToDecl as a last resort; it already handles
-    // several pass-through ops.  Same integer-only filter so float
+    // several pass-through ops.  Same integer-only filter so non-integer
     // scalars don't get promoted to symbols here either.
     if (v.getType().isIntOrIndex()) {
         auto n = traceToDecl(v);
@@ -214,6 +219,93 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     std::vector<VarInfo> vars;
 
+    // Pass 0: disambiguate inlined-callee locals.  Two callees with the
+    // same local name (Fortran's auto-generated ``a`` for ``result(a)``,
+    // for example) get inlined into a common parent and surface as two
+    // ``hlfir.declare`` ops with different full uniq_names but the same
+    // ``extractName`` short name.  Downstream code keys SDFG arrays /
+    // scalars by the short name; without disambiguation the two
+    // declares race on a single access node.  Walk all declares in
+    // public functions, group by short name, and rewrite the uniq_name
+    // of every duplicate to encode its source-callee scope.
+    {
+        llvm::StringMap<llvm::SmallVector<hlfir::DeclareOp, 2>> byShort;
+        module.walk([&](hlfir::DeclareOp op) {
+            auto *fn = op->getParentOfType<mlir::func::FuncOp>().getOperation();
+            if (auto f = mlir::dyn_cast_or_null<mlir::func::FuncOp>(fn))
+                if (f.isPrivate()) return;
+            // Only disambiguate declares backed by a fresh
+            // ``fir.alloca`` — those are real own-storage locals
+            // (the inlined function-result variable shape we care
+            // about).  Aliases (declare-of-declare, embox/convert
+            // chain, ``fir.absent``-backed optional dummies, and
+            // dummy-arg block-arguments) point at storage that is
+            // already named elsewhere; renaming them mints a
+            // phantom flat scalar that downstream extract_vars
+            // would surface as a top-level program kwarg.
+            auto *def = op.getMemref().getDefiningOp();
+            if (!def || !mlir::isa<fir::AllocaOp>(def)) return;
+            byShort[extractName(op.getUniqName().str())].push_back(op);
+        });
+        auto getFScope = [](llvm::StringRef un) -> std::string {
+            auto eP = un.rfind('E');
+            if (eP == llvm::StringRef::npos) return {};
+            auto fP = un.rfind('F', eP);
+            if (fP == llvm::StringRef::npos || fP + 1 >= eP) return {};
+            return un.substr(fP + 1, eP - fP - 1).str();
+        };
+        for (auto &kv : byShort) {
+            auto &group = kv.second;
+            if (group.size() < 2) continue;
+            // Only rename if duplicates span DIFFERENT F-scopes — that's
+            // the inlined-callee collision shape.  Two declares with
+            // matching short name AND matching F-scope (one func
+            // making two declares for one variable, e.g. shape-hint
+            // copies) are legitimate; leave them alone so extract_vars
+            // dedup downstream handles them.
+            std::string firstScope = getFScope(group.front().getUniqName().str());
+            bool sameScope = true;
+            for (auto op : group) {
+                if (getFScope(op.getUniqName().str()) != firstScope) {
+                    sameScope = false;
+                    break;
+                }
+            }
+            if (sameScope) continue;
+            // Rename each declare whose F-scope differs from the entry
+            // function's scope.  The entry's declare keeps its original
+            // short name; inlined-callee siblings get
+            // ``<callee_scope>_<short>``.  Entry = the single public
+            // ``func.func`` left in the module (set_entry_symbol made
+            // every other function private).  Match its symbol name
+            // tail against the F-scope segment of each declare.
+            std::string entryScope;
+            for (auto fn : module.getOps<mlir::func::FuncOp>()) {
+                if (fn.isPrivate()) continue;
+                auto sn = fn.getSymName().str();
+                // Symbol like ``_QPmain`` or ``_QMmodPname``: the
+                // function-name segment lives between the last ``P``
+                // and end-of-string.  Match against ``getFScope``,
+                // which pulls the F-segment from a declare uniq_name.
+                auto pPos = sn.rfind('P');
+                if (pPos == std::string::npos) continue;
+                entryScope = sn.substr(pPos + 1);
+                break;
+            }
+            for (auto op : group) {
+                auto un = op.getUniqName().str();
+                std::string scope = getFScope(un);
+                if (scope == entryScope) continue;  // keep entry's name
+                auto eP = un.rfind('E');
+                std::string shortNm = un.substr(eP + 1);
+                std::string newShort = scope + "_" + shortNm;
+                std::string newUniq = un.substr(0, eP + 1) + newShort;
+                op->setAttr("uniq_name",
+                            mlir::StringAttr::get(op.getContext(), newUniq));
+            }
+        }
+    }
+
     // Pass 1: collect every hlfir.declare.  Skip assumed-shape alias
     // declares inserted by ``hlfir-inline-all`` — they share storage
     // with the caller's outer declare, and downstream SDFG emission
@@ -221,15 +313,50 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     // both would give DaCe two non-transient arrays over one buffer.
     std::vector<hlfir::DeclareOp> decls;
     module.walk([&](hlfir::DeclareOp op) {
+        // Skip declares inside private functions.  The bridge only
+        // builds an SDFG for the single public entry; callees that
+        // were already inlined into it leave behind their original
+        // bodies as private siblings (kept alive only by a
+        // dispatch_table after ``fir-polymorphic-op`` resolved the
+        // callsites).  Their dummy declares — typed e.g.
+        // ``fir.class<T>`` — would otherwise surface as phantom
+        // top-level program args at SDFG-build time.
+        auto *parentOp = op->getParentOfType<mlir::func::FuncOp>().getOperation();
+        if (auto fn = mlir::dyn_cast_or_null<mlir::func::FuncOp>(parentOp))
+            if (fn.isPrivate()) return;
         if (asAssumedShapeAlias(op)) return;
+        // Skip Flang-synthesised array-constructor temporaries
+        // (``.tmp.arrayctor`` etc.) -- those are heap-allocated buffers
+        // that ``dispatch.cpp`` recognises and lowers via per-element
+        // assigns to the user's destination.  Registering them here
+        // would surface ``.tmp.arrayctor`` on the SDFG and downstream
+        // memlet parsing rejects the dotted name.
+        if (op.getUniqName().str().find(".tmp.") != std::string::npos) return;
+        // Skip Flang-internal type-info metadata declares — these are
+        // string descriptors emitted for every derived type and its
+        // components (``.n.<typename>``, ``.n.<field>``, ``.b.<type>``,
+        // ``.di.<type>``).  They never represent user variables and
+        // their dotted names break DaCe's ``NestedDict`` (which
+        // interprets dots as nested-key separators).  Filter once
+        // here so the rest of the pipeline never sees them.
+        {
+            auto un = op.getUniqName().str();
+            auto p = un.rfind('E');
+            llvm::StringRef tail = (p != std::string::npos)
+                                       ? llvm::StringRef(un).drop_front(p + 1)
+                                       : llvm::StringRef(un);
+            if (tail.starts_with(".n.") || tail.starts_with(".b.")
+                    || tail.starts_with(".di.") || tail.starts_with(".dt."))
+                return;
+        }
         // Drop unused SCALAR dummy arguments.  A subroutine like
         // ``subroutine main(arg1, arg2, res1) ; res1 = exp(arg1)``
         // (verbatim-port test pattern) leaves ``arg2`` declared but
-        // never read or written; with ``hlfir-default-intent`` adding
-        // ``intent_inout`` to every dummy, the older "drop only if
-        // no explicit intent" guard kept ``arg2`` and the SDFG
-        // signature broke Python callers that (correctly) didn't
-        // pass it.
+        // never read or written; ``hlfir-default-intent`` adds
+        // ``intent_inout`` to every dummy, so a "drop only if no
+        // explicit intent" guard would keep ``arg2`` and the SDFG
+        // signature would break Python callers that (correctly)
+        // didn't pass it.
         //
         // Restrict the filter to *scalar* dummies (and to dummies
         // whose declare result has rank 0).  Arrays are kept
@@ -355,13 +482,11 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Unwrap FIR type wrappers to find element type + rank.
         //
         // Plain dummy / local arrays surface a single layer (Box, Ref,
-        // Heap, or Ptr) over the SequenceType, so the original
-        // sequential ``if``s suffice — preserving every non-allocatable
-        // declare's existing classification.  Allocatable declares add
-        // two extra layers (``ref<box<heap<array<…>>>>``); only loop
-        // through the wrappers when we know the declare is allocatable
-        // so POINTER and other box-typed dummies keep their previous
-        // (rank = 0 → scalar passthrough) classification.
+        // Heap, or Ptr) over the SequenceType, so a single sequential
+        // unwrap suffices.  Allocatable declares add two extra layers
+        // (``ref<box<heap<array<…>>>>``); loop through the wrappers
+        // only when the declare is allocatable so POINTER and other
+        // box-typed dummies stay rank-0 (scalar passthrough).
         auto ty = op.getResult(0).getType();
         bool isAllocatableAttr = false;
         if (auto a = op.getFortranAttrs())
@@ -385,10 +510,10 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // ``shape_symbols``: a declare synthesised by ``hlfir-flatten-structs``
         // for a per-field array carries the shape only in the type
         // (``!fir.array<5x5x5xf32>``), not as an explicit ``fir.shape``
-        // operand.  Without this, ``resolveShapeSyms`` returns empty and
-        // we fall through to the assumed-shape ``<name>_d<i>`` synth —
-        // but those symbols are never wired to anything because the
-        // extent is statically known.
+        // operand.  Without this, ``resolveShapeSyms`` returns empty
+        // and the fallback assumed-shape ``<name>_d<i>`` synth fires —
+        // but those synth symbols would be unwired because the extent
+        // is statically known.
         std::vector<std::string> seqExtents;
         if (auto seq = mlir::dyn_cast<fir::SequenceType>(ty)) {
             for (auto d : seq.getShape()) {
@@ -408,6 +533,16 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         else if (ty.isF32())       v.dtype = "float32";
         else if (ty.isInteger(32)) v.dtype = "int32";
         else if (ty.isInteger(64)) v.dtype = "int64";
+        // Fortran ``COMPLEX(kind)`` lowers to ``mlir::ComplexType`` over
+        // an ``f32`` / ``f64`` element.  DaCe has native ``complex64`` /
+        // ``complex128`` dtypes that match numpy's ABI.
+        else if (auto ct = mlir::dyn_cast<mlir::ComplexType>(ty)) {
+            auto et = ct.getElementType();
+            if (et.isF32())      v.dtype = "complex64";
+            else if (et.isF64()) v.dtype = "complex128";
+            else { std::string s; llvm::raw_string_ostream os(s);
+                   ty.print(os); v.dtype = s; }
+        }
         // 1-bit int is the MLIR ``i1`` bool.  Surface as ``uint8`` rather
         // than ``bool`` so numpy / DaCe / f2py all agree on a 1-byte
         // storage layout — saves the caller-side dtype coercion.
@@ -431,20 +566,19 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             //      descriptors named ``.b.<type>.<field>``) — never
             //      user-visible.
             //   2. User struct that escaped ``hlfir-flatten-structs``
-            //      (Phase 1 handles flat-member structs only; nested,
-            //      allocatable-member, and array-of-struct cases fall
-            //      to Phases 2–4).
+            //      (the pass handles flat-member structs and nested
+            //      records; allocatable-member structs and other
+            //      shapes are out of scope).
             //
-            // Either way we don't surface the struct on the SDFG
-            // signature: the previous behaviour of writing the raw
-            // MLIR type string into ``v.dtype`` produced broken
-            // descriptors that downstream codegen sometimes tolerated
-            // by accident.  Skip the VarInfo entirely; downstream
-            // ``traceToDecl`` reads through the per-field declares
-            // the pass DID lower.  A loud-failure throw here would
-            // be ideal but currently regresses tests that exploit the
-            // accidental-success path, so the loud check lives in a
-            // dedicated unit test (``derived_type_test.py``) instead.
+            // Either way the struct does not belong on the SDFG
+            // signature: writing the raw MLIR type string into
+            // ``v.dtype`` would produce broken descriptors that
+            // downstream codegen would only sometimes tolerate.  Skip
+            // the VarInfo entirely; downstream ``traceToDecl`` reads
+            // through the per-field declares the pass did lower.  A
+            // loud-failure throw here would be ideal but regresses
+            // tests that exploit the accidental-success path, so the
+            // loud check lives in a dedicated unit test instead.
             continue;
         }
         else {

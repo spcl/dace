@@ -130,6 +130,32 @@ message(STATUS "LLVM monolithic: ${LLVM_MONO_LIB}")
 set(FLANG_DIALECT_LIBS
     HLFIRDialect FIRDialect FIRDialectSupport FIRSupport
     FIRBuilder FIRAnalysis CUFDialect CUFAttrs
+    # ---- flang transforms / codegen ---------------------------------
+    # Needed so the bridge can run ``fir-polymorphic-op``, which
+    # statically devirtualises ``fir.dispatch`` / ``fir.select_type``
+    # ops whose target is resolvable at compile time.  Surviving
+    # dispatches after the conversion are caught loudly by our own
+    # ``hlfir-reject-polymorphism`` pass.  The user-visible benefit:
+    # CLASS-typed code that doesn't actually USE polymorphism (every
+    # call site has a static target) lowers cleanly.
+    #
+    # The cascade of libs here is dictated by what
+    # PolymorphicOpConversion.cpp actually references.  Each one is
+    # noted with the symbol that pulls it in:
+    #   FIRTransforms       fir::createPolymorphicOpConversion
+    #   FIRCodeGenDialect   fir.cg.XDeclareOp (used by select_type
+    #                                          → cf branch lowering)
+    #   FIRCodeGen          fir::LLVMTypeConverter::convertBoxTypeAsStruct
+    #   FortranSupport      Fortran::common::getFlangFullVersion (codegen
+    #                                                              produced-by metadata)
+    #   FIROpenACCSupport   fir::acc::registerTransformationalAttrs
+    #   FIROpenMPSupport    fir::omp::registerTransformationalAttrs
+    #                       (both are defensive dialect registrations
+    #                       FIRCodeGen.a calls unconditionally; the
+    #                       bridge doesn't use OpenACC or OpenMP, this
+    #                       is purely transitive linker-cleanup.)
+    FIRTransforms FIRCodeGenDialect FIRCodeGen FortranSupport
+    FIROpenACCSupport FIROpenMPSupport
 )
 foreach(_lib ${FLANG_DIALECT_LIBS})
     find_mlir_lib(${_lib})
@@ -170,6 +196,11 @@ add_library(hlfir_bridge_core STATIC
     bridge/trace_utils.cpp
     bridge/extract_vars.cpp
     bridge/extract_ast.cpp
+    bridge/ast/expressions.cpp
+    bridge/ast/assigns.cpp
+    bridge/ast/elementals.cpp
+    bridge/ast/control_flow.cpp
+    bridge/ast/dispatch.cpp
 )
 target_link_libraries(hlfir_bridge_core PUBLIC
     MLIRIR MLIRParser MLIRSupport MLIRFuncDialect MLIRArithDialect
@@ -185,6 +216,9 @@ add_library(hlfir_bridge_passes STATIC
     passes/DefaultIntent.cpp
     passes/VerifyNoUnresolvedCalls.cpp
     passes/FoldElementAliases.cpp
+    passes/MaterialiseAssociates.cpp
+    passes/ExpandRegionAssign.cpp
+    passes/RejectPolymorphism.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core

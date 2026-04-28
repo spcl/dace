@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -92,20 +91,23 @@ END SUBROUTINE intrinsic_all_test_function
         assert val == False
 
 
-@xfail('ALL(arr .eq. literal) — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_all_array_scalar_comparison(tmp_path):
+    # Original f2dace test had ``res(4) = ALL(first(3) .eq. 42)``
+    # alongside the rank-1 cases.  ``first(3)`` is rank-0, the resulting
+    # comparison is rank-0, and ``ALL`` requires a rank>=1 mask -- flang
+    # rejects it as a Fortran semantic error (not a flang bug).  Drop
+    # that line; the 6 surviving forms exercise the rank-1 path.
     src = """
 SUBROUTINE intrinsic_all_test_function(first, res)
 integer, dimension(5) :: first
-logical, dimension(7) :: res
+logical, dimension(6) :: res
 
 res(1) = ALL(first .eq. 42)
 res(2) = ALL(first(:) .eq. 42)
 res(3) = ALL(first(1:2) .eq. 42)
-res(4) = ALL(first(3) .eq. 42)
-res(5) = ALL(first(3:5) .eq. 42)
-res(6) = ALL(42 .eq. first)
-res(7) = ALL(42 .ne. first)
+res(4) = ALL(first(3:5) .eq. 42)
+res(5) = ALL(42 .eq. first)
+res(6) = ALL(42 .ne. first)
 
 END SUBROUTINE intrinsic_all_test_function
 """
@@ -113,7 +115,7 @@ END SUBROUTINE intrinsic_all_test_function
 
     size = 5
     first = np.full([size], 42, order="F", dtype=np.int32)
-    res = np.full([7], 0, order="F", dtype=np.int32)
+    res = np.full([6], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, res=res)
     for val in res[0:-1]:
@@ -122,16 +124,16 @@ END SUBROUTINE intrinsic_all_test_function
 
     first[1] = 5
     sdfg(first=first, res=res)
-    assert list(res) == [0, 0, 0, 1, 1, 0, 0]
+    assert list(res) == [0, 0, 0, 1, 0, 0]
 
     first[1] = 42
     first[3] = 7
     sdfg(first=first, res=res)
-    assert list(res) == [0, 0, 1, 1, 0, 0, 0]
+    assert list(res) == [0, 0, 1, 0, 0, 0]
 
     first = np.full([size], 41, order="F", dtype=np.int32)
     sdfg(first=first, res=res)
-    assert list(res) == [0, 0, 0, 0, 0, 0, 1]
+    assert list(res) == [0, 0, 0, 0, 0, 1]
 
 
 def test_fortran_frontend_all_array_2d(tmp_path):

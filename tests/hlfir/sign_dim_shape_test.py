@@ -107,12 +107,6 @@ end subroutine main
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=("SHAPE: Flang lowers as a heap-allocated array constructor "
-                           "(``fir.allocmem .tmp.arrayctor`` + per-element designate-store + "
-                           "``hlfir.as_expr`` value abstraction). Bridge needs to recognise "
-                           "the ``fir.allocmem`` + ``hlfir.as_expr`` pair as a transient "
-                           "value before the existing assign machinery can wire it up."))
 def test_shape_2d(tmp_path: Path):
     """``SHAPE(arr)`` returns a rank-1 integer array of dim extents."""
     src = """
@@ -132,9 +126,6 @@ end subroutine main
     np.testing.assert_array_equal(out, [n, m])
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=("SHAPE: same heap-allocated array constructor pattern as the 2D "
-                           "case; needs bridge support for ``fir.allocmem`` + ``hlfir.as_expr``."))
 def test_shape_3d(tmp_path: Path):
     """``SHAPE(arr)`` on rank-3 array — output is rank-1 length 3."""
     src = """

@@ -1,6 +1,26 @@
-// ============================================================================
-// ast/control_flow.inc — included from extract_ast.cpp; NOT a separate TU.
-// ============================================================================
+// Translation-unit headers.  ``ast_helpers.h`` carries the cross-TU
+// API + thread-local state shared with the other ``ast/*.cpp`` files.
+#include "flang/Optimizer/Dialect/FIROps.h"
+#include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
+#include <variant>
+#include <vector>
+#include <iomanip>
+#include <sstream>
+
+#include "bridge/ast/ast_helpers.h"
+#include "bridge/ast/ast_internal.h"
+
+namespace hlfir_bridge {
+
 //
 // MERGE-libcall + buildElementalAssign + comparison primitives + scf.if
 // helpers.  Owns:
@@ -22,22 +42,7 @@
 // added to the build's compile list — CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
-// ============================================================================
-
-
-
-/// ``b = MERGE(t, f, mask)`` on arrays — Flang lowers as
-/// ``hlfir.elemental { hlfir.designate; arith.select; yield_element }``.
-/// Detect that exact shape (three loaded designate sources fed into a
-/// single ``arith.select``) and emit a ``kind="libcall"`` to
-/// ``MergeLibraryNode`` directly.  The library node owns the per-target
-/// expansion, so the bridge stays out of the per-element select details.
-///
-/// Returns an empty vector if the elemental body doesn't match the
-/// simple three-designate-load shape; the caller falls back to the
-/// generic ``buildElementalAssign`` (which inlines the select into a
-/// per-element tasklet via the existing arith.select fallback).
-static std::vector<ASTNode>
+std::vector<ASTNode>
 buildMergeLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     auto &region = elem.getRegion();
     if (region.empty()) return {};
@@ -116,7 +121,7 @@ buildMergeLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 /// ``buildExpr`` consults ``indexStack()`` to resolve an elemental block
 /// arg to its synthetic name, so the inner ``buildAssignNode``-style walk
 /// sees ``a[ei0]`` etc. as a normal array read with a normal iter var.
-static std::vector<ASTNode>
+std::vector<ASTNode>
 buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // Target array (LHS of the assign).
     ASTNode inner;
@@ -182,7 +187,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                     if (auto lo = traceConstInt(idxOps[cursor])) {
                         adj.value = *lo - 1;
                     } else {
-                        auto loExpr = buildIndexExpr(idxOps[cursor]);
+                        auto loExpr = buildIndexExpr(idxOps[cursor], 0);
                         if (!loExpr.empty() && loExpr != "?")
                             adj.expr = std::move(loExpr);
                     }
@@ -201,7 +206,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                     // Scalar dim — thread its (Fortran 1-based) index
                     // expression directly into the write memlet so the
                     // memlet rank matches the underlying array.
-                    auto sc = buildIndexExpr(idxOps[cursor]);
+                    auto sc = buildIndexExpr(idxOps[cursor], 0);
                     if (sc.empty() || sc == "?") sc = "?";
                     wa.index_vars.push_back(sc);
                     wa.index_exprs.push_back(std::move(sc));
@@ -311,7 +316,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // forms in one tasklet body, which leaks ``ei0`` as a free symbol.
     {
         NoSubscriptGuard g;
-        inner.expr = yielded ? buildExpr(yielded) : "?";
+        inner.expr = yielded ? buildExpr(yielded, 0) : "?";
     }
 
     // Read accesses.  Unlike plain assigns we must follow hlfir.apply into
@@ -323,7 +328,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         // emit_tasklet counts array-name regex occurrences in the RHS
         // string; shared SSA values (``x * x``) must yield matching
         // AccessInfo count or downstream wiring strands a connector.
-        collectReadAccesses(yielded, inner.accesses);
+        collectReadAccesses(yielded, inner.accesses, 0);
     }
 
     // Pop the stack frames we pushed.
@@ -355,7 +360,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
 /// Render an arith::cmpi predicate as a Python comparison operator.  Returns
 /// an empty string for signed/unsigned variants we haven't wired up yet.
-static std::string cmpiPredStr(mlir::arith::CmpIPredicate p) {
+ std::string cmpiPredStr(mlir::arith::CmpIPredicate p) {
     using P = mlir::arith::CmpIPredicate;
     switch (p) {
     case P::slt: case P::ult: return "<";
@@ -372,7 +377,7 @@ static std::string cmpiPredStr(mlir::arith::CmpIPredicate p) {
 /// and unordered predicates both collapse to the same Python operator; NaN
 /// handling is beyond what a Python condition string can express, so we
 /// accept the lossy mapping.
-static std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
+ std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
     using P = mlir::arith::CmpFPredicate;
     switch (p) {
     case P::OLT: case P::ULT: return "<";
@@ -390,7 +395,7 @@ static std::string cmpfPredStr(mlir::arith::CmpFPredicate p) {
 /// ``buildBoolExpr`` so interstate-edge conditions can reference array
 /// elements directly — they're evaluated in the caller's frame, not by a
 /// tasklet, so they can't rely on memlet-wired connectors.
-inline std::string buildExprWithSubscripts(mlir::Value val, int d) {
+ std::string buildExprWithSubscripts(mlir::Value val, int d) {
     if (d > limits::kBuildExprDepth || !val) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
@@ -444,7 +449,7 @@ inline std::string buildExprWithSubscripts(mlir::Value val, int d) {
 /// ``xori %x, true``), and constant booleans.  Opaque inputs fall back to
 /// ``buildExpr`` (which may still produce a usable Python expression for the
 /// condition, or ``"?"`` when the shape isn't understood).
-inline std::string buildBoolExpr(mlir::Value val, int d) {
+ std::string buildBoolExpr(mlir::Value val, int d) {
     if (d > limits::kBuildExprDepth) return "?";
     auto *def = val.getDefiningOp();
     if (!def) return "?";
@@ -480,27 +485,33 @@ inline std::string buildBoolExpr(mlir::Value val, int d) {
             return buildBoolExpr(def->getOperand(0), d + 1);
     }
 
+    // Pick the operand-renderer once for every leaf in this bool tree:
+    // tasklet-body context (``kBoolExprNoSubscripts`` set via
+    // ``NoSubscriptGuard`` by elemental walks, MERGE-of-scalars, or
+    // the i1 ``andi`` / ``ori`` chain handler) wants bare identifiers
+    // because emit_tasklet's regex rewrite later turns them into
+    // ``_in_a_0`` connectors and wires subscripts through memlets.
+    // Interstate-edge / IF-condition contexts (the default) want the
+    // explicit ``arr[idx]`` form because the consumer is an expression
+    // parser, not a tasklet rewrite.  ``leafExpr`` is reused by the
+    // cmp branches AND the last-resort fall-through so every leaf
+    // threads through the same rendering decision.
+    bool bareNames = kBoolExprNoSubscripts;
+    auto leafExpr = [bareNames](mlir::Value v, int d) -> std::string {
+        return bareNames ? buildExpr(v, d) : buildExprWithSubscripts(v, d);
+    };
+
     if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
         auto pred = cmpfPredStr(cmp.getPredicate());
         if (pred.empty()) return "?";
-        // Tasklet-body context (set by buildElementalCountLibcall etc.):
-        // strip subscripts so emit_tasklet's identifier-rewrite turns
-        // bare ``a`` / ``b`` into connectors ``_in_a_0`` / ``_in_b_0``.
-        // Default context (interstate-edge condition) keeps subscripts.
-        if (kBoolExprNoSubscripts)
-            return "(" + buildExpr(cmp.getLhs(), d + 1) + " " + pred + " "
-                 + buildExpr(cmp.getRhs(), d + 1) + ")";
-        return "(" + buildExprWithSubscripts(cmp.getLhs(), d + 1) + " " + pred + " "
-             + buildExprWithSubscripts(cmp.getRhs(), d + 1) + ")";
+        return "(" + leafExpr(cmp.getLhs(), d + 1) + " " + pred + " "
+             + leafExpr(cmp.getRhs(), d + 1) + ")";
     }
     if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def)) {
         auto pred = cmpiPredStr(cmp.getPredicate());
         if (pred.empty()) return "?";
-        if (kBoolExprNoSubscripts)
-            return "(" + buildExpr(cmp.getLhs(), d + 1) + " " + pred + " "
-                 + buildExpr(cmp.getRhs(), d + 1) + ")";
-        return "(" + buildExprWithSubscripts(cmp.getLhs(), d + 1) + " " + pred + " "
-             + buildExprWithSubscripts(cmp.getRhs(), d + 1) + ")";
+        return "(" + leafExpr(cmp.getLhs(), d + 1) + " " + pred + " "
+             + leafExpr(cmp.getRhs(), d + 1) + ")";
     }
     auto nm = def->getName().getStringRef();
     if (nm == "arith.andi" && def->getNumOperands() == 2)
@@ -524,8 +535,11 @@ inline std::string buildBoolExpr(mlir::Value val, int d) {
         if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
             return ia.getInt() ? "True" : "False";
 
-    // Last resort: maybe the condition is a scalar bool read or plain expr.
-    return buildExpr(val, d + 1);
+    // Bool-tree leaf: any non-bool op reached at the bottom of the
+    // recursion (typically a ``fir.load`` of an i1 / fir.logical) goes
+    // through ``leafExpr`` so the operand-renderer choice (subscripted
+    // vs bare) stays consistent across every leaf in this tree.
+    return leafExpr(val, d + 1);
 }
 
 /// Faithful ``scf.while`` translator.
@@ -554,7 +568,7 @@ inline std::string buildBoolExpr(mlir::Value val, int d) {
 /// Synthetic scalar name for one scf.if result value.  Allocated on first
 /// reference; subsequent references return the same name.  DaCe's side
 /// auto-declares names starting with ``__sc_``.
-static std::string scfSynthName(mlir::Value v) {
+std::string scfSynthName(mlir::Value v) {
     auto it = kScfValueMap.find(v);
     if (it != kScfValueMap.end()) return it->second;
     std::string s = "__sc_" + std::to_string(kScfValueCounter++);
@@ -567,13 +581,15 @@ static bool isScfIfResult(mlir::Value v) {
     return def && mlir::isa<mlir::scf::IfOp>(def);
 }
 
-static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block);
+std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block);
 
 /// Helper: convert a yielded value to a string for writing into a synthetic
 /// scalar.  scf.yield of an i32 constant / boolean / computed expression —
 /// just reuse buildExpr, which traces through arith ops and cast chains.
-static std::string yieldedExpr(mlir::Value v) {
-    auto s = buildExpr(v);
-    if (s == "?") s = buildBoolExpr(v);
+std::string yieldedExpr(mlir::Value v) {
+    auto s = buildExpr(v, 0);
+    if (s == "?") s = buildBoolExpr(v, 0);
     return s;
 }
+
+}  // namespace hlfir_bridge

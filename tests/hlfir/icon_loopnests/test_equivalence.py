@@ -21,7 +21,7 @@ import pytest
 
 _HERE = Path(__file__).resolve().parent
 _GFORTRAN = shutil.which("gfortran")
-_KERNELS = sorted(_HERE.glob("loopnest_*.f90"))
+_KERNELS = sorted(_HERE.glob("icon_loopnest_*.f90"))
 
 pytestmark = pytest.mark.skipif(_GFORTRAN is None, reason="gfortran not on PATH")
 

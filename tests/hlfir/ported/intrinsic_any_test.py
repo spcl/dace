@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -94,20 +93,21 @@ END SUBROUTINE intrinsic_any_test_function
         assert val == False
 
 
-@xfail('ANY(arr .eq. literal) — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_any_array_scalar_comparison(tmp_path):
+    # Original f2dace test had a rank-0 ``first(3) .eq. 42`` mask --
+    # invalid Fortran (ANY needs rank>=1).  Drop that line; the rank-1
+    # path is exercised by the surviving 6 forms.
     src = """
 SUBROUTINE intrinsic_any_test_function(first, res)
 integer, dimension(5) :: first
-logical, dimension(7) :: res
+logical, dimension(6) :: res
 
 res(1) = ANY(first .eq. 42)
 res(2) = ANY(first(:) .eq. 42)
 res(3) = ANY(first(1:2) .eq. 42)
-res(4) = ANY(first(3) .eq. 42)
-res(5) = ANY(first(3:5) .eq. 42)
-res(6) = ANY(42 .eq. first)
-res(7) = ANY(42 .ne. first)
+res(4) = ANY(first(3:5) .eq. 42)
+res(5) = ANY(42 .eq. first)
+res(6) = ANY(42 .ne. first)
 
 END SUBROUTINE intrinsic_any_test_function
 """
@@ -115,7 +115,7 @@ END SUBROUTINE intrinsic_any_test_function
 
     size = 5
     first = np.full([size], 1, order="F", dtype=np.int32)
-    res = np.full([7], 0, order="F", dtype=np.int32)
+    res = np.full([6], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, res=res)
     for val in res[0:-1]:
@@ -124,17 +124,17 @@ END SUBROUTINE intrinsic_any_test_function
 
     first[1] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 1, 0, 0, 1, 1]
+    assert list(res) == [1, 1, 1, 0, 1, 1]
 
     first[1] = 5
     first[3] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 0, 1, 1, 1]
+    assert list(res) == [1, 1, 0, 1, 1, 1]
 
     first[3] = 7
     first[2] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 1, 1, 1, 1]
+    assert list(res) == [1, 1, 0, 1, 1, 1]
 
 
 def test_fortran_frontend_any_array_2d(tmp_path):

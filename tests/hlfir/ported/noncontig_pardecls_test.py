@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("noncontiguous slice via index array passed across subroutines not lowered")
 def test_fortran_frontend_noncontiguous_slices(tmp_path):
     src = """
 subroutine main(d, d2)
@@ -55,7 +54,6 @@ end subroutine fun
     assert np.all(d2 == [2, 6, 10])
 
 
-@xfail("2D noncontiguous slice via index array not lowered")
 def test_fortran_frontend_noncontiguous_slices_2d(tmp_path):
     src = """
 subroutine main(d, d2)
@@ -281,7 +279,6 @@ end subroutine fun
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("nested noncontiguous indexing (cols(cols2)) not lowered")
 def test_fortran_frontend_noncontiguous_nested(tmp_path):
     src = """
 

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -97,22 +96,22 @@ END SUBROUTINE intrinsic_count_test_function
     assert list(res) == [5, 5, 5, 5, 5, 3, 2]
 
 
-@xfail('COUNT scalar comparison — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_count_array_scalar_comparison(tmp_path):
+    # Original f2dace test had ``COUNT(first(3) .eq. 42)`` -- rank-0
+    # mask is invalid Fortran (COUNT needs rank>=1).  Dropped.
     src = """
 SUBROUTINE intrinsic_count_test_function(first, res)
 integer, dimension(5) :: first
-logical, dimension(9) :: res
+logical, dimension(8) :: res
 
 res(1) = COUNT(first .eq. 42)
 res(2) = COUNT(first(:) .eq. 42)
 res(3) = COUNT(first(1:2) .eq. 42)
-res(4) = COUNT(first(3) .eq. 42)
-res(5) = COUNT(first(3:5) .eq. 42)
-res(6) = COUNT(42 .eq. first)
-res(7) = COUNT(42 .ne. first)
-res(8) = COUNT(6 .lt. first)
-res(9) = COUNT(6 .gt. first)
+res(4) = COUNT(first(3:5) .eq. 42)
+res(5) = COUNT(42 .eq. first)
+res(6) = COUNT(42 .ne. first)
+res(7) = COUNT(6 .lt. first)
+res(8) = COUNT(6 .gt. first)
 
 END SUBROUTINE intrinsic_count_test_function
 """
@@ -120,24 +119,24 @@ END SUBROUTINE intrinsic_count_test_function
 
     size = 5
     first = np.full([size], 1, order="F", dtype=np.int32)
-    res = np.full([9], 0, order="F", dtype=np.int32)
+    res = np.full([8], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, res=res)
-    assert list(res) == [0, 0, 0, 0, 0, 0, 5, 0, size]
+    assert list(res) == [0, 0, 0, 0, 0, 5, 0, size]
 
     first[1] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 1, 0, 0, 1, 4, 1, size - 1]
+    assert list(res) == [1, 1, 1, 0, 1, 4, 1, size - 1]
 
     first[1] = 5
     first[2] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 1, 1, 1, 4, 1, size - 1]
+    assert list(res) == [1, 1, 0, 1, 1, 4, 1, size - 1]
 
     first[2] = 7
     first[3] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 0, 1, 1, 4, 2, size - 2]
+    assert list(res) == [1, 1, 0, 1, 1, 4, 2, size - 2]
 
 
 def test_fortran_frontend_count_array_2d(tmp_path):

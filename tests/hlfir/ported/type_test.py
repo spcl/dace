@@ -86,7 +86,6 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("derived type with array dim from struct field (real bob(st%a)) not lowered")
 def test_fortran_frontend_type_symbol(tmp_path):
     src = """
 module lib
@@ -482,12 +481,6 @@ end subroutine main
     sdfg(d=a)
 
 
-@xfail("flatten-structs rewrites ``st%z`` to ``st_z`` and the callee's "
-       "``sta(:, :)`` to an assumed-shape alias, but the inlined "
-       "``sta(1, 1)`` read doesn't resolve back to ``st_z`` — the "
-       "alias chain breaks at the assumed-shape callee boundary.  "
-       "Same root cause as the ``type_array_slice`` test in "
-       "type_array_test.py.")
 def test_fortran_frontend_type_view(tmp_path):
     src = """
 module lib

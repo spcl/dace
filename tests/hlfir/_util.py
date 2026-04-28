@@ -85,11 +85,23 @@ def f2py_compile(src, out_dir: Path, mod_name: str):
     return sys.modules[mod_name]
 
 
-def compile_to_hlfir(source: str, out_dir: Path, name: str = "src") -> Path:
-    """Write `source` as <out_dir>/<name>.f90, compile it to HLFIR, return the path."""
+def compile_to_hlfir(source: str, out_dir: Path, name: str = "src", *, preprocess: bool = False) -> Path:
+    """Write `source` as <out_dir>/<name>.f90, compile it to HLFIR, return the path.
+
+    When ``preprocess`` is true, run the optional Fortran source
+    rewriter (``dace.frontend.hlfir.preprocess.preprocess_fortran``)
+    before flang sees the source -- needed for legacy code that uses
+    INTEGER flags as IF conditions (``IF (laericeauto)``), which
+    flang-new-21 rejects.  Off by default so we don't paper over real
+    issues in clean source; opt in per call site.
+    """
     assert _FLANG is not None, "flang-new-21 not available"
     src = out_dir / f"{name}.f90"
-    src.write_text(source)
+    if preprocess:
+        from dace.frontend.hlfir.preprocess import preprocess_fortran
+        src.write_text(preprocess_fortran(source))
+    else:
+        src.write_text(source)
     hlfir = out_dir / f"{name}.hlfir"
     subprocess.check_call([_FLANG, "-fc1", "-emit-hlfir", str(src), "-o", str(hlfir)])
     return hlfir

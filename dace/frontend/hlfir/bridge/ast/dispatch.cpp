@@ -1,6 +1,26 @@
-// ============================================================================
-// ast/dispatch.inc — included from extract_ast.cpp; NOT a separate TU.
-// ============================================================================
+// Translation-unit headers.  ``ast_helpers.h`` carries the cross-TU
+// API + thread-local state shared with the other ``ast/*.cpp`` files.
+#include "flang/Optimizer/Dialect/FIROps.h"
+#include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
+#include <variant>
+#include <vector>
+#include <iomanip>
+#include <sstream>
+
+#include "bridge/ast/ast_helpers.h"
+#include "bridge/ast/ast_internal.h"
+
+namespace hlfir_bridge {
+
 //
 // Per-op dispatcher.  Owns:
 //   * buildScfIfAsConditional — scf.if → ASTNode kind=conditional.
@@ -20,14 +40,10 @@
 // added to the build's compile list — CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
-// ============================================================================
-
-
-
 static ASTNode buildScfIfAsConditional(mlir::scf::IfOp ifOp) {
     ASTNode c;
     c.kind = "conditional";
-    c.condition = buildBoolExpr(ifOp.getCondition());
+    c.condition = buildBoolExpr(ifOp.getCondition(), 0);
 
     auto walkArm = [&](mlir::Region &region) -> std::vector<ASTNode> {
         if (region.empty()) return {};
@@ -60,7 +76,7 @@ static ASTNode buildScfIfAsConditional(mlir::scf::IfOp ifOp) {
     return c;
 }
 
-static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
+std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
     std::vector<ASTNode> out;
     for (auto &op : block) {
         if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
@@ -71,7 +87,7 @@ static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
             // ``scf.condition(%c)``: break when %c is false.
             ASTNode guard;
             guard.kind = "conditional";
-            auto b = buildBoolExpr(condOp.getCondition());
+            auto b = buildBoolExpr(condOp.getCondition(), 0);
             guard.condition = "not (" + b + ")";
             ASTNode brk;
             brk.kind = "break";
@@ -107,7 +123,7 @@ static std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
                     if (mlir::isa<fir::AllocaOp>(md))
                         target = allocaSynthName(memref);
             if (target.empty()) continue;
-            auto expr = buildExpr(st.getValue());
+            auto expr = buildExpr(st.getValue(), 0);
             // Drop stores whose RHS we couldn't resolve.  These are almost
             // always Flang's implicit IV writeback at the end of a
             // ``fir.do_loop`` body: the stored value is a block arg of the
@@ -151,7 +167,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
 // Block walker
 // ---------------------------------------------------------------------------
 
-static std::vector<ASTNode> buildAST(mlir::Block &block) {
+ std::vector<ASTNode> buildAST(mlir::Block &block) {
     std::vector<ASTNode> nodes;
 
     // Per-block site counter for ``ALLOCATE``-bound stores into an
@@ -271,7 +287,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                 n.loop_bound = traceToDecl(doLoop.getUpperBound());
             }
             if (n.loop_bound.empty())
-                n.loop_bound = buildIndexExpr(doLoop.getUpperBound());
+                n.loop_bound = buildIndexExpr(doLoop.getUpperBound(), 0);
             n.loop_lower = traceLB(doLoop.getLowerBound());
             if (n.loop_lower < 0) {
                 // Non-constant lower bound (``DO jk = nflatlev, nlev`` /
@@ -283,7 +299,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                     if (!sym.empty()) n.loop_lower_expr = sym;
                 }
                 if (n.loop_lower_expr.empty())
-                    n.loop_lower_expr = buildIndexExpr(doLoop.getLowerBound());
+                    n.loop_lower_expr = buildIndexExpr(doLoop.getLowerBound(), 0);
             }
             // Step.  Reverse-direction ``DO i = N, 1, -1`` (LU
             // back-substitution) carries step -1; the bridge needs
@@ -326,6 +342,25 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
         if (auto assign = mlir::dyn_cast<hlfir::AssignOp>(op)) {
             auto src = assign.getOperand(0);
             auto dst = assign.getOperand(1);
+
+            // Suppress per-element stores into a Flang-synthesised
+            // ``.tmp.arrayctor`` heap buffer.  The final
+            // ``hlfir.assign %as_expr_of_arrayctor to %dst`` site below
+            // walks the parent block and emits per-element assigns
+            // retargeted to ``%dst``; if we let the per-element stores
+            // through here they'd surface as orphan assigns into
+            // ``.tmp.arrayctor`` and break downstream memlet parsing.
+            if (auto *dd = dst.getDefiningOp()) {
+                if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
+                    if (auto *md = dg.getMemref().getDefiningOp()) {
+                        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(md)) {
+                            if (decl.getUniqName().str().find(".tmp.") != std::string::npos) {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             bool dst_is_array = isArrayRef(dst.getType());
             bool src_is_array = isArrayRef(src.getType());
 
@@ -339,8 +374,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             // handlers below instead.  This is what makes
             // ``res(:) = a(:) - b(:)`` (Flang-generated elemental) and
             // ``res = COUNT(mask, dim=1)`` (libcall returning expr)
-            // work when the bridge previously fell through to a
-            // degenerate copy.
+            // work without falling through to a degenerate copy.
             bool src_is_hlfir_expr = false;
             if (auto srcOp = src.getDefiningOp()) {
                 if (mlir::isa<hlfir::ExprType>(peelWrappers(srcOp->getResult(0).getType())))
@@ -430,6 +464,94 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                 }
                 break;
             }
+            // Fortran ``out = SHAPE(arr)`` (and similar array-constructor
+            // shapes Flang lowers via a heap-allocated ``.tmp.arrayctor``):
+            //
+            //     %tmp   = fir.allocmem !fir.array<NxiK> {bindc_name = ".tmp.arrayctor"}
+            //     %tmpD  = hlfir.declare %tmp(...)
+            //     hlfir.assign <extent_0> to %tmpD[c1]
+            //     hlfir.assign <extent_1> to %tmpD[c2]
+            //     ...
+            //     %expr = hlfir.as_expr %tmpD move %true
+            //     hlfir.assign %expr to %dst
+            //
+            // The bridge can't model the ``.tmp.arrayctor`` buffer
+            // (heap alloc + per-element store + as_expr), but it
+            // doesn't need to: each per-element value is whatever the
+            // intrinsic resolved to (e.g. SHAPE returns the source
+            // array's per-dim extents, which the bridge already tracks
+            // as VarInfo shape symbols).  Walk the parent block, find
+            // each ``hlfir.assign <val> to %tmpD[<const>]``, and emit
+            // one scalar assign per element directly into ``%dst``.
+            if (auto asExpr = mlir::dyn_cast_or_null<hlfir::AsExprOp>(srcPeeled.getDefiningOp())) {
+                hlfir::DeclareOp tmpDecl;
+                if (auto *vd = asExpr.getVar().getDefiningOp())
+                    tmpDecl = mlir::dyn_cast<hlfir::DeclareOp>(vd);
+                bool is_arrayctor = false;
+                if (tmpDecl) {
+                    auto un = tmpDecl.getUniqName().str();
+                    is_arrayctor = (un.find(".tmp.arrayctor") != std::string::npos);
+                }
+                if (is_arrayctor) {
+                    // Resolve the destination's Fortran name once.
+                    std::string dst_name;
+                    if (auto *dd = dst.getDefiningOp())
+                        if (auto declOp = mlir::dyn_cast<hlfir::DeclareOp>(dd))
+                            dst_name = extractName(declOp.getUniqName().str());
+                    if (dst_name.empty()) dst_name = traceToDecl(dst);
+                    if (!dst_name.empty()) {
+                        std::vector<ASTNode> elem_assigns;
+                        bool every_idx_const = true;
+                        for (auto &op2 : *assign->getBlock()) {
+                            auto inner = mlir::dyn_cast<hlfir::AssignOp>(&op2);
+                            if (!inner) continue;
+                            if (inner == assign) break;  // stop at the final assign
+                            auto inner_dst = inner.getOperand(1);
+                            auto *iddef = inner_dst.getDefiningOp();
+                            if (!iddef) continue;
+                            auto inner_dg = mlir::dyn_cast<hlfir::DesignateOp>(iddef);
+                            if (!inner_dg) continue;
+                            // Designate's memref must trace back to the temp arrayctor.
+                            if (traceToDecl(inner_dg.getMemref())
+                                != extractName(tmpDecl.getUniqName().str())) continue;
+                            auto idxOps = inner_dg.getIndices();
+                            if (idxOps.size() != 1) {
+                                every_idx_const = false;
+                                continue;
+                            }
+                            auto cidx = traceConstInt(idxOps[0]);
+                            if (!cidx) {
+                                every_idx_const = false;
+                                continue;
+                            }
+                            // Build the per-element assign: dst(<cidx>) = buildExpr(<val>).
+                            std::string val_expr = buildExpr(inner.getOperand(0), 0);
+                            if (val_expr.empty() || val_expr == "?") {
+                                every_idx_const = false;
+                                continue;
+                            }
+                            ASTNode a;
+                            a.kind = "assign";
+                            a.target = dst_name;
+                            a.target_is_array = true;
+                            a.expr = val_expr;
+                            AccessInfo wa;
+                            wa.array_name = dst_name;
+                            wa.is_write = true;
+                            wa.index_exprs.push_back(std::to_string(*cidx));
+                            wa.index_vars.push_back("?");
+                            a.accesses.push_back(std::move(wa));
+                            elem_assigns.push_back(std::move(a));
+                        }
+                        if (every_idx_const && !elem_assigns.empty()) {
+                            for (auto &n : elem_assigns)
+                                nodes.push_back(std::move(n));
+                            continue;
+                        }
+                    }
+                }
+            }
+
             if (auto *sd = srcPeeled.getDefiningOp()) {
                 if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(sd)) {
                     auto merge_built = buildMergeLibcall(assign, elem);
@@ -617,7 +739,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
             }
             ASTNode n;
             n.kind = "conditional";
-            n.condition = buildBoolExpr(ifOp.getCondition());
+            n.condition = buildBoolExpr(ifOp.getCondition(), 0);
             if (!ifOp.getThenRegion().empty())
                 n.children = buildAST(ifOp.getThenRegion().front());
             if (!ifOp.getElseRegion().empty())
@@ -628,7 +750,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
         if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
             ASTNode n;
             n.kind = "conditional";
-            n.condition = buildBoolExpr(ifOp.getCondition());
+            n.condition = buildBoolExpr(ifOp.getCondition(), 0);
             if (!ifOp.getThenRegion().empty())
                 n.children = buildAST(ifOp.getThenRegion().front());
             if (!ifOp.getElseRegion().empty())
@@ -669,7 +791,7 @@ static std::vector<ASTNode> buildAST(mlir::Block &block) {
                     if (mlir::isa<fir::AllocaOp>(md))
                         target = allocaSynthName(memref);
             if (target.empty()) continue;
-            auto expr = buildExpr(st.getValue());
+            auto expr = buildExpr(st.getValue(), 0);
             // Drop stores with unresolvable RHS — see note in
             // ``walkSCFBeforeRegion``'s fir.store handler.
             if (expr == "?") continue;
@@ -710,7 +832,14 @@ std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
 
     std::vector<ASTNode> result;
     module.walk([&](mlir::func::FuncOp func) {
-        if (!result.empty()) return;  // first func only
+        if (!result.empty()) return;  // first PUBLIC func only
+        // Skip private siblings.  Set-entry mangles every other
+        // function private; after ``fir-polymorphic-op`` resolves a
+        // dispatch, the dispatched callee survives as private (kept
+        // alive by the type_info dispatch_table).  Walking its body
+        // would shadow the real entry's AST whenever its definition
+        // appears before the entry's in module order.
+        if (func.isPrivate()) return;
         if (!func.getBody().empty())
             result = buildAST(func.getBody().front());
     });
@@ -781,3 +910,5 @@ std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
     }
     return result;
 }
+
+}  // namespace hlfir_bridge

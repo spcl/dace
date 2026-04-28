@@ -1,13 +1,33 @@
-// ============================================================================
-// ast/expressions.inc — included from extract_ast.cpp; NOT a separate TU.
-// ============================================================================
+// Translation-unit headers.  ``ast_helpers.h`` carries the cross-TU
+// API + thread-local state shared with the other ``ast/*.cpp`` files.
+#include "flang/Optimizer/Dialect/FIROps.h"
+#include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
+#include <variant>
+#include <vector>
+#include <iomanip>
+#include <sstream>
+
+#include "bridge/ast/ast_helpers.h"
+#include "bridge/ast/ast_internal.h"
+
+namespace hlfir_bridge {
+
 //
 // Expression-builder primitives.  Owns:
 //   * buildExpr (recursive Python-syntax expression rewrite for arith,
 //     math.*, fir.load, hlfir.designate, hlfir.apply, …) + its forward
 //     declarations.
 //   * buildIndexExpr and buildDesignateIndexExpr (Fortran 1-based
-//     index renderer with section-parent + assumed-shape rebase).
+//     index renderer with section-parent + assumed-shape rebase, 0).
 //   * resolveIndex and indexStack() (elemental-iter substitution).
 //   * allocaSynthName (synthetic names for bare fir.alloca scratch).
 //   * Thread-local state used by buildExpr itself: kScfValueMap,
@@ -19,23 +39,6 @@
 // added to the build's compile list — CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
-// ============================================================================
-
-
-
-// ---------------------------------------------------------------------------
-// Elemental index substitution stack
-// ---------------------------------------------------------------------------
-//
-// Flang-lowered ``hlfir.elemental`` bodies use the elemental's block
-// argument as the index operand of inner ``hlfir.designate`` ops — that
-// index has no ``hlfir.declare`` to trace back to, so traceToDecl returns
-// the empty string.  Before we walk an elemental body we push (blockArg,
-// syntheticName) pairs onto this stack so our index lookups can resolve
-// the block arg to the synthetic loop iter name the emitter will use.
-// Supports nesting (elementals composed via hlfir.apply) via LIFO search.
-
-namespace {
 std::vector<std::pair<mlir::Value, std::string>> &indexStack() {
     static thread_local std::vector<std::pair<mlir::Value, std::string>> s;
     return s;
@@ -108,7 +111,6 @@ std::string lowerIsPresent(mlir::Value operand) {
     }
     return "";
 }
-}  // namespace
 
 // ---------------------------------------------------------------------------
 // Expression reconstruction
@@ -129,16 +131,10 @@ std::string lowerIsPresent(mlir::Value operand) {
 ///   * arith.constant integer / float literals
 ///   * fir.convert pass-through (numeric kind casts)
 ///   * hlfir.apply / hlfir.elemental composition (inlined at index)
-// Forward declarations for cross-chunk helpers.  These have ``inline``
-// linkage rather than ``static`` because the unity-include shape of
-// the AST chunks (expressions.inc → assigns.inc → elementals.inc →
-// control_flow.inc → dispatch.inc) requires earlier chunks to call
-// helpers defined in later ones; ``inline`` makes the cross-TU intent
-// explicit, while two ``static`` declarations of the same name in one
-// TU can confuse the compiler's overload resolution.
-inline std::string buildIndexExpr(mlir::Value v, int d = 0);
-inline std::string buildExprWithSubscripts(mlir::Value val, int d = 0);
-inline std::string buildBoolExpr(mlir::Value val, int d = 0);
+// Cross-chunk helpers (signatures + docstrings live in
+// ``bridge/ast/ast_helpers.h``).  Bodies appear later in this file
+// or in ``assigns.inc`` / ``control_flow.inc``.
+
 
 /// Build the index expression string for the ``dim``-th operand of a
 /// ``hlfir.designate``, applying the assumed-shape rebase when the
@@ -169,10 +165,10 @@ inline std::string buildBoolExpr(mlir::Value val, int d = 0);
 ///      ``i`` needs ``(lb_outer - 1)`` added so the final memlet
 ///      ``(i + lb_outer - 1) - offset_outer_d0`` collapses to
 ///      ``i - 1`` after specialise (correct for the callee's view).
-inline std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
+ std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
                                            unsigned dim,
                                            mlir::Value idx,
-                                           int depth = 0) {
+                                           int depth) {
     std::string raw = buildIndexExpr(idx, depth);
     auto memref = dg.getMemref();
     auto *defOp = memref.getDefiningOp();
@@ -238,7 +234,7 @@ inline std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
 ///
 /// Shared by ``buildReduceNode``, ``buildElementalCountLibcall``,
 /// ``buildElementalAnyAllReduce`` and ``buildLibCallNode``.
-static void captureElementDesignateWrite(mlir::Value dest, ASTNode &node) {
+ void captureElementDesignateWrite(mlir::Value dest, ASTNode &node) {
     if (auto dd = dest.getDefiningOp()) {
         if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(dd)) {
             node.target = allocAliasFor(extractName(decl.getUniqName().str()));
@@ -252,7 +248,7 @@ static void captureElementDesignateWrite(mlir::Value dest, ASTNode &node) {
             for (auto idx : dg.getIndices()) {
                 auto resolved = resolveIndex(idx);
                 wa.index_vars.push_back(resolved.empty() ? "?" : resolved);
-                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx));
+                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx, 0));
                 ++di;
             }
             node.accesses.push_back(std::move(wa));
@@ -309,20 +305,9 @@ static void captureElementDesignateWrite(mlir::Value dest, ASTNode &node) {
 // or update both sides.
 // ---------------------------------------------------------------------------
 
-// Thread-local state for the faithful ``scf.while`` walker.  See the
-// block of helpers further down for what these are used for.
-static thread_local int kScfValueCounter = 0;
-static thread_local llvm::DenseMap<mlir::Value, std::string> kScfValueMap;
 
-// Bare ``fir.alloca`` (no ``hlfir.declare``) → synthetic scalar name.
-// Flang uses un-named i32 allocas as scratch counters for the lifted
-// ``scf.while`` shape.  Tracking them as synthetic scalars lets
-// buildExpr resolve the counter's value inside loop conditions and
-// assignments instead of returning ``?``.
-static thread_local int kAllocaCounter = 0;
-static thread_local llvm::DenseMap<mlir::Operation *, std::string> kAllocaMap;
 
-static std::string allocaSynthName(mlir::Value memref) {
+ std::string allocaSynthName(mlir::Value memref) {
     auto *def = memref.getDefiningOp();
     if (!def) return "";
     auto it = kAllocaMap.find(def);
@@ -332,30 +317,13 @@ static std::string allocaSynthName(mlir::Value memref) {
     return s;
 }
 
-// Forward declaration: ``buildExpr`` consults this map when handling
-// ``hlfir.apply`` to detect libcall results that ``buildElementalAssign``
-// has materialised into a synthetic transient earlier in the AST node
-// list.  Defined further below alongside its companion helpers.
-static thread_local std::map<mlir::Operation *, std::string> kHlfirExprToTransient;
 
-// Position-array → SDFG symbol registry.  When ``buildIndexExpr`` sees
-// ``fir.load %designate %arr (%const)`` (a load of a constant-indexed
-// element of a host array used as a section bound or array index),
-// it interns the (array-name, 1-based-idx) pair and returns a fresh
-// SDFG symbol name like ``__sym_pos_1``.  ``extractAST`` then prepends
-// one ``kind="symbol_init"`` AST node per registered pair so the
-// emitter can stage an interstate edge ``__sym_pos_1 = pos[0]`` at
-// SDFG entry, before any memlet referring to the symbol.  The (array,
-// idx) tuple is the natural key — two ``pos(1)`` reads at different
-// IR sites should resolve to the same symbol so they reuse the load.
-static thread_local std::map<std::pair<std::string, int64_t>, std::string>
-    kPosSymbolRegistry;
 
 /// Look up or mint the SDFG symbol name that stands in for
 /// ``<array>(<one_based_idx>)`` (both arguments are Fortran-side
 /// names / values).  Same key always yields the same symbol — callers
 /// can safely use this anywhere the load result was needed before.
-static std::string internPosSymbol(const std::string &array,
+ std::string internPosSymbol(const std::string &array,
                                    int64_t one_based_idx) {
     auto k = std::make_pair(array, one_based_idx);
     auto it = kPosSymbolRegistry.find(k);
@@ -365,7 +333,7 @@ static std::string internPosSymbol(const std::string &array,
     return s;
 }
 
-inline std::string buildExpr(mlir::Value val, int d = 0) {
+ std::string buildExpr(mlir::Value val, int d) {
     if (d > limits::kBuildExprDepth) return "?";
     // Synthetic scalars minted for scf.if results: every downstream read of
     // the result Value resolves to the scalar's name, not to walking into
@@ -531,6 +499,10 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
         {"arith.subf", " - "}, {"arith.divf", " / "},
         {"arith.muli", " * "}, {"arith.addi", " + "},
         {"arith.subi", " - "}, {"arith.divsi", " // "}, {"arith.divui", " // "},
+        // Fortran COMPLEX arithmetic — flang emits dedicated ops on
+        // ``complex<f32>`` / ``complex<f64>`` operands.
+        {"fir.addc", " + "}, {"fir.subc", " - "},
+        {"fir.mulc", " * "}, {"fir.divc", " / "},
     };
     if (auto it = bin_ops.find(nm); it != bin_ops.end()
             && def->getNumOperands() == 2) {
@@ -541,6 +513,84 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
 
     if (nm == "arith.negf" && def->getNumOperands() == 1)
         return "(-" + buildExpr(def->getOperand(0), d + 1) + ")";
+
+    // Fortran ``conjg(z)`` lowers to:
+    //     %im  = fir.extract_value %z, [1] : complex<T> -> T
+    //     %neg = arith.negf %im
+    //     %r   = fir.insert_value %z, %neg, [1]
+    // Recognise the full idiom and emit ``<z>.conjugate()`` so the
+    // tasklet renders the Python complex method.  DaCe's tasklet
+    // codegen lowers ``.conjugate()`` to ``std::conj`` on
+    // ``std::complex<T>``.
+    if (auto ins = mlir::dyn_cast<fir::InsertValueOp>(def)) {
+        auto coords = ins.getCoor();
+        // Fortran ``cmplx(re, im, kind=K)`` lowers to:
+        //   %base = fir.undefined complex<T>
+        //   %r0   = fir.insert_value %base, %re, [0]
+        //   %r1   = fir.insert_value %r0, %im, [1]
+        // Recognise the outermost insert at coord [1] whose adt is an
+        // insert at coord [0] of an ``fir.undefined`` and emit
+        // ``complex(<re>, <im>)``.
+        if (coords.size() == 1) {
+            if (auto coordAttr = mlir::dyn_cast<mlir::IntegerAttr>(coords[0]))
+                if (coordAttr.getInt() == 1) {
+                    if (auto inner = mlir::dyn_cast_or_null<fir::InsertValueOp>(
+                                         ins.getAdt().getDefiningOp())) {
+                        auto innerCoords = inner.getCoor();
+                        if (innerCoords.size() == 1)
+                            if (auto a0 = mlir::dyn_cast<mlir::IntegerAttr>(innerCoords[0]))
+                                if (a0.getInt() == 0)
+                                    if (mlir::isa_and_nonnull<fir::UndefOp>(
+                                            inner.getAdt().getDefiningOp())) {
+                                        // Use the ``re + 1j*im`` form
+                                        // rather than ``complex(re, im)``:
+                                        // DaCe's tasklet C++ codegen
+                                        // doesn't lower a free
+                                        // ``complex(...)`` call to the
+                                        // ``std::complex`` constructor,
+                                        // but it does handle the
+                                        // ``1j`` literal arithmetic via
+                                        // its complex-arithmetic
+                                        // rewrites.
+                                        return "(("
+                                             + buildExpr(inner.getVal(), d + 1)
+                                             + ") + 1j * ("
+                                             + buildExpr(ins.getVal(), d + 1)
+                                             + "))";
+                                    }
+                    }
+                }
+        }
+        if (coords.size() == 1) {
+            // Coord must be the literal index 1 (the imaginary slot).
+            if (auto coordAttr = mlir::dyn_cast<mlir::IntegerAttr>(coords[0]))
+                if (coordAttr.getInt() == 1) {
+                    auto val = ins.getVal();
+                    auto adt = ins.getAdt();
+                    if (auto neg = mlir::dyn_cast_or_null<mlir::arith::NegFOp>(
+                                       val.getDefiningOp())) {
+                        if (auto ext = mlir::dyn_cast_or_null<fir::ExtractValueOp>(
+                                           neg.getOperand().getDefiningOp())) {
+                            auto extCoords = ext.getCoor();
+                            bool extIsImag = false;
+                            if (extCoords.size() == 1)
+                                if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(extCoords[0]))
+                                    extIsImag = (a.getInt() == 1);
+                            if (extIsImag && ext.getAdt() == adt) {
+                                // Emit ``conj(<expr>)`` — DaCe's tasklet
+                                // codegen routes the bare name through
+                                // ``dace::math::conj`` (defined in
+                                // ``runtime/include/dace/math.h``) which
+                                // forwards to ``std::conj`` for both
+                                // ``std::complex<float>`` and
+                                // ``std::complex<double>``.
+                                return "conj(" + buildExpr(adt, d + 1) + ")";
+                            }
+                        }
+                    }
+                }
+        }
+    }
 
     // Elementwise min / max — arith.minimumf / maximumf produce IEEE-min/max
     // (NaN-propagating); arith.minnumf / maxnumf are the numeric variants.
@@ -677,6 +727,21 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
                 {"sinf", "sin"}, {"cosf", "cos"}, {"tanf", "tan"},
                 {"expf", "exp"}, {"logf", "log"}, {"log10f", "log10"},
                 {"sqrtf", "sqrt"}, {"fabsf", "abs"},
+                // C99 complex math runtime — flang lowers Fortran
+                // SIN/COS/EXP/LOG/SQRT/ABS on COMPLEX(8) to ``c<func>``
+                // and on COMPLEX(4) to ``c<func>f``.  DaCe's tasklet
+                // codegen has Python ``cmath``-equivalent dispatch via
+                // the same bare names.
+                {"csin", "sin"}, {"ccos", "cos"}, {"ctan", "tan"},
+                {"csinh", "sinh"}, {"ccosh", "cosh"}, {"ctanh", "tanh"},
+                {"casin", "asin"}, {"cacos", "acos"}, {"catan", "atan"},
+                {"cexp", "exp"}, {"clog", "log"},
+                {"csqrt", "sqrt"}, {"cabs", "abs"},
+                {"csinf", "sin"}, {"ccosf", "cos"}, {"ctanf", "tan"},
+                {"csinhf", "sinh"}, {"ccoshf", "cosh"}, {"ctanhf", "tanh"},
+                {"casinf", "asin"}, {"cacosf", "acos"}, {"catanf", "atan"},
+                {"cexpf", "exp"}, {"clogf", "log"},
+                {"csqrtf", "sqrt"}, {"cabsf", "abs"},
                 // AINT / ANINT — same-kind real return, value-only round/trunc.
                 {"llvm.trunc.f64", "trunc"}, {"llvm.trunc.f32", "trunc"},
                 {"llvm.floor.f64", "floor"}, {"llvm.floor.f32", "floor"},
@@ -707,6 +772,29 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
                     && call.getNumOperands() >= 1) {
                 return it->second + "(round("
                      + buildExpr(call.getOperand(0), d + 1) + "))";
+            }
+            // Complex division — flang lowers ``a / b`` on COMPLEX(8) to
+            // ``__divdc3(re_a, im_a, re_b, im_b)`` (and ``__divsc3`` for
+            // COMPLEX(4)) for overflow-safe Smith's algorithm.  The 4
+            // reals come from ``fir.extract_value`` ops on the loaded
+            // complex operands; reconstruct the original complex
+            // operand identities and emit ``(complex_a / complex_b)``
+            // at the tasklet level.
+            if ((cname == "__divdc3" || cname == "__divsc3")
+                    && call.getNumOperands() == 4) {
+                auto extractSource = [](mlir::Value re, mlir::Value im) -> mlir::Value {
+                    auto reOp = mlir::dyn_cast_or_null<fir::ExtractValueOp>(re.getDefiningOp());
+                    auto imOp = mlir::dyn_cast_or_null<fir::ExtractValueOp>(im.getDefiningOp());
+                    if (!reOp || !imOp) return {};
+                    if (reOp.getAdt() != imOp.getAdt()) return {};
+                    return reOp.getAdt();
+                };
+                auto srcA = extractSource(call.getOperand(0), call.getOperand(1));
+                auto srcB = extractSource(call.getOperand(2), call.getOperand(3));
+                if (srcA && srcB) {
+                    return "(" + buildExpr(srcA, d + 1) + " / "
+                               + buildExpr(srcB, d + 1) + ")";
+                }
             }
             // Two-arg ATAN2 runtime fallback.
             if (cname == "atan2" && call.getNumOperands() >= 2) {
@@ -845,13 +933,31 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
 
     // Bitwise AND / OR — for non-i1 operands these are ``iand`` / ``ior``
     // (and the building blocks of ``ibclr`` / ``ibset`` / ``ibits`` /
-    // ``btest``).  i1 versions feed buildBoolExpr which lifts them to
-    // logical ``and`` / ``or``; here we handle the non-bool cases.
-    if ((nm == "arith.andi" || nm == "arith.ori") && def->getNumOperands() == 2
-            && !def->getOperand(0).getType().isInteger(1)) {
-        const char *op = (nm == "arith.andi") ? " & " : " | ";
-        return "(" + buildExpr(def->getOperand(0), d + 1) + op
-                   + buildExpr(def->getOperand(1), d + 1) + ")";
+    // ``btest``).  i1 versions are Fortran ``.AND.`` / ``.OR.`` chains;
+    // route through ``buildBoolExpr`` so they render as Python
+    // ``... and ...`` / ``... or ...`` -- the typical shape is a
+    // ``LOGICAL :: llo1`` cached as ``llo1 = (a>b) .AND. (c>d) .AND.
+    // ...``, where the surrounding ``fir.convert`` to ``!fir.logical<K>``
+    // pulls us through ``buildExpr`` rather than ``buildBoolExpr``.
+    // ``NoSubscriptGuard`` keeps array reads as bare identifiers -- we
+    // are inside a ``buildExpr`` call destined for a tasklet body, so
+    // the cmpf / cmpi operands must NOT carry ``arr[idx]`` subscripts
+    // (emit_tasklet rewrites bare names into ``_in_arr_N`` connectors
+    // and wires subscripts via memlets).
+    if ((nm == "arith.andi" || nm == "arith.ori") && def->getNumOperands() == 2) {
+        if (def->getOperand(0).getType().isInteger(1)) {
+            // Bare-name mode for the cmp-leaf array reads (we're inside
+            // ``buildExpr``, the tasklet renderer; emit_tasklet wires
+            // ``a[i]`` subscripts through memlets and rewrites the
+            // bare ``a`` to a ``_in_a_N`` connector).
+            NoSubscriptGuard _g;
+            auto b = buildBoolExpr(val, d + 1);
+            if (b != "?") return b;
+        } else {
+            const char *op = (nm == "arith.andi") ? " & " : " | ";
+            return "(" + buildExpr(def->getOperand(0), d + 1) + op
+                       + buildExpr(def->getOperand(1), d + 1) + ")";
+        }
     }
 
     // Bit shifts — Fortran ``ishft`` (and the building blocks of
@@ -963,7 +1069,18 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
         // cmpi whose operand order doesn't match the min/max idiom).
         // Render as Python ``(t if cond else f)``; the C++ codegen
         // accepts the conditional expression.
-        std::string condExpr = buildBoolExpr(sel.getCondition(), d + 1);
+        //
+        // ``buildExpr`` itself is the tasklet renderer (bare names),
+        // so the cond's leaves must also be bare -- ``emit_tasklet``
+        // will rewrite the connectors and wire subscripts via memlets.
+        // Set ``NoSubscriptGuard`` for the ``buildBoolExpr`` call so
+        // every leaf threads through bare-names mode, matching the
+        // outer ``buildExpr`` calls for the select's true / false sides.
+        std::string condExpr;
+        {
+            NoSubscriptGuard _g;
+            condExpr = buildBoolExpr(sel.getCondition(), d + 1);
+        }
         if (condExpr == "?")
             condExpr = buildExpr(sel.getCondition(), d + 1);
         return "(" + buildExpr(sel.getTrueValue(), d + 1)
@@ -1050,3 +1167,5 @@ inline std::string buildExpr(mlir::Value val, int d = 0) {
 
     return "?";
 }
+
+}  // namespace hlfir_bridge

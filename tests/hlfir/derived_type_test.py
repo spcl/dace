@@ -34,10 +34,10 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-def _build(src: str, tmp: Path, name: str = "main"):
+def _build(src: str, tmp: Path, name: str = "main", entry: str | None = None):
     sdfg_dir = tmp / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
-    return build_sdfg(src, sdfg_dir, name=name).build()
+    return build_sdfg(src, sdfg_dir, name=name, entry=entry).build()
 
 
 def test_local_struct_element_write_and_read(tmp_path: Path):
@@ -140,6 +140,522 @@ end subroutine main
     assert out[0] == 2.0 + 4.0 + 6.0 + 8.0 + 10.0
 
 
+def test_icon_style_state_struct(tmp_path: Path):
+    """ICON dycore-flavoured state struct: many parallel 3-D arrays
+    (``(nproma, nlev, nblks)``) bundled into one derived type.  The
+    real code looks like ``p_diag%vn``, ``p_diag%w``, ``p_diag%theta_v``
+    indexed elementwise inside a kernel.  Verifies Phase 1's standard
+    path on a wider, more realistic schema."""
+    src = """
+module lib
+  implicit none
+  integer, parameter :: nproma = 4, nlev = 3, nblks = 2
+  type state_t
+    real :: vn(nproma, nlev, nblks)
+    real :: w(nproma, nlev, nblks)
+    real :: theta_v(nproma, nlev, nblks)
+  end type state_t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real, intent(out) :: out(nproma, nlev, nblks)
+  type(state_t) :: s
+  integer :: i, k, b
+  do b = 1, nblks
+    do k = 1, nlev
+      do i = 1, nproma
+        s%vn(i, k, b)      = real(i + k * 10 + b * 100)
+        s%w(i, k, b)       = real(i)
+        s%theta_v(i, k, b) = real(b)
+        out(i, k, b) = s%vn(i, k, b) + s%w(i, k, b) * s%theta_v(i, k, b)
+      end do
+    end do
+  end do
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "icon_state_ref")
+    out_ref = mod.main()
+
+    sdfg = _build(src, tmp_path)
+    out = np.zeros((4, 3, 2), order='F', dtype=np.float32)
+    sdfg(out=out)
+    np.testing.assert_array_equal(out, out_ref)
+
+
+def test_qe_style_pdf_sampler_struct(tmp_path: Path):
+    """QE-flavoured ``pdf_sampler_type`` (from npbench's ``usxx.py``):
+    scalar struct with several flat members of different types
+    (integers, real(8), and a fixed-shape real(8) lookup table).
+    Drops the original's ``ALLOCATABLE val(:,:)`` member — that's
+    Phase 3 territory — but keeps the rest of the schema."""
+    src = """
+module lib
+  implicit none
+  integer, parameter :: ncdf = 4, nfsd = 3
+  type pdf_sampler_type
+    integer :: ncdf_n, nfsd_n
+    real(8) :: fsd1, inv_fsd_interval
+    real(8) :: val(ncdf, nfsd)
+  end type pdf_sampler_type
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real(8), intent(out) :: out
+  type(pdf_sampler_type) :: s
+  integer :: i, j
+  s%ncdf_n = ncdf
+  s%nfsd_n = nfsd
+  s%fsd1 = 1.5d0
+  s%inv_fsd_interval = 2.5d0
+  do j = 1, nfsd
+    do i = 1, ncdf
+      s%val(i, j) = real(i * j, 8)
+    end do
+  end do
+  out = s%val(2, 2) * s%fsd1 + s%inv_fsd_interval &
+        + real(s%ncdf_n + s%nfsd_n, 8)
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "qe_pdf_sampler_ref")
+    out_ref = float(mod.main())
+
+    sdfg = _build(src, tmp_path)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(out=out)
+    np.testing.assert_allclose(float(out[0]), out_ref, rtol=1e-12)
+
+
+def test_batched_csr_fixed_capacity(tmp_path: Path):
+    """Batched CSR — array of CSR-shaped structs, each member sized to a
+    common compile-time capacity.  This is the AoS-with-array-members
+    pattern Phase 1.5 lifted: ``A(N)`` of struct with array members
+    flattens to a per-member SoA where the outer dim is ``N`` and the
+    inner is the member's declared extent.
+
+    Layout:
+      ``A_rowptr(N, ROW_CAP)``
+      ``A_colidx(N, NNZ_CAP)``
+      ``A_val   (N, NNZ_CAP)``
+
+    Real Fortran code that needs runtime-jagged CSR (each instance
+    with its own ``allocatable`` of a different real size) is Phase 3
+    territory — see ``test_batched_csr_allocatable_xfail`` below.
+    """
+    src = """
+module lib
+  implicit none
+  integer, parameter :: ROWS    = 3
+  integer, parameter :: ROW_CAP = ROWS + 1
+  integer, parameter :: NNZ_CAP = 4
+  type csr_t
+    integer :: rowptr(ROW_CAP)
+    integer :: colidx(NNZ_CAP)
+    real(8) :: val(NNZ_CAP)
+  end type csr_t
+end module lib
+
+subroutine main(out)
+  ! Run a tiny SpMV on each batched CSR matrix, accumulating into ``out``.
+  ! Per-element init avoids whole-array component access ``A(1)%rowptr =
+  ! (/ ... /)``, which the bridge rewriter doesn't yet collapse to a
+  ! flat slice ``A_rowptr(1, :)`` (Phase 2.1 follow-up).
+  use lib
+  implicit none
+  integer, parameter :: BATCH = 2
+  real(8), intent(out) :: out(BATCH, ROWS)
+  type(csr_t) :: A(BATCH)
+  real(8) :: x(ROWS)
+  integer :: b, r, k
+
+  ! ---- Init batch 1: identity (3x3) ----
+  A(1)%rowptr(1) = 1
+  A(1)%rowptr(2) = 2
+  A(1)%rowptr(3) = 3
+  A(1)%rowptr(4) = 4
+  A(1)%colidx(1) = 1
+  A(1)%colidx(2) = 2
+  A(1)%colidx(3) = 3
+  A(1)%colidx(4) = 0
+  A(1)%val(1) = 1.0d0
+  A(1)%val(2) = 1.0d0
+  A(1)%val(3) = 1.0d0
+  A(1)%val(4) = 0.0d0
+
+  ! ---- Init batch 2: tridiagonal-flavoured ----
+  A(2)%rowptr(1) = 1
+  A(2)%rowptr(2) = 3
+  A(2)%rowptr(3) = 4
+  A(2)%rowptr(4) = 5
+  A(2)%colidx(1) = 1
+  A(2)%colidx(2) = 2
+  A(2)%colidx(3) = 1
+  A(2)%colidx(4) = 3
+  A(2)%val(1) = 2.0d0
+  A(2)%val(2) = -1.0d0
+  A(2)%val(3) = 1.0d0
+  A(2)%val(4) = 1.0d0
+
+  x(1) = 10.0d0
+  x(2) = 20.0d0
+  x(3) = 30.0d0
+
+  ! ---- SpMV per batch ----
+  do b = 1, BATCH
+    do r = 1, ROWS
+      out(b, r) = 0.0d0
+      do k = A(b)%rowptr(r), A(b)%rowptr(r + 1) - 1
+        out(b, r) = out(b, r) + A(b)%val(k) * x(A(b)%colidx(k))
+      end do
+    end do
+  end do
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "batched_csr_ref")
+    out_ref = mod.main()
+
+    sdfg = _build(src, tmp_path)
+    out = np.zeros((2, 3), order='F', dtype=np.float64)
+    sdfg(out=out)
+    np.testing.assert_allclose(out, out_ref, rtol=1e-12)
+
+
+def test_batched_csr_fixed_capacity_cross_boundary(tmp_path: Path):
+    """Same fixed-capacity CSR as the local test, but the SpMV runs in
+    a CALLEE.  Caller hands the batched CSR struct array across the
+    subroutine boundary.
+
+    The bindings layer's pack/unpack is what's needed here: caller-side
+    allocates ``A_rowptr(BATCH, ROW_CAP)`` etc., copies each
+    ``A(i)%<m>(:)`` into the flat slot, calls the SDFG, and unpacks
+    on return.  The flat representation matches what the AoS-with-
+    array-members local rewrite already produces; only the bindings
+    emitter side is missing.
+    """
+    src = """
+module lib
+  implicit none
+  integer, parameter :: ROWS    = 3
+  integer, parameter :: ROW_CAP = ROWS + 1
+  integer, parameter :: NNZ_CAP = 4
+  type csr_t
+    integer :: rowptr(ROW_CAP)
+    integer :: colidx(NNZ_CAP)
+    real(8) :: val(NNZ_CAP)
+  end type csr_t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  integer, parameter :: BATCH = 2
+  real(8), intent(out) :: out(BATCH, ROWS)
+  type(csr_t) :: A(BATCH)
+  real(8) :: x(ROWS)
+  integer :: i
+
+  ! Init batches and x (per-element so the pass is exercised on the
+  ! local-allocation path; the test then passes A across the boundary).
+  A(1)%rowptr(1) = 1
+  A(1)%rowptr(2) = 2
+  A(1)%rowptr(3) = 3
+  A(1)%rowptr(4) = 4
+  do i = 1, NNZ_CAP
+    A(1)%colidx(i) = i
+    A(1)%val(i) = 1.0d0
+  end do
+
+  A(2)%rowptr(1) = 1
+  A(2)%rowptr(2) = 3
+  A(2)%rowptr(3) = 4
+  A(2)%rowptr(4) = 5
+  A(2)%colidx(1) = 1
+  A(2)%colidx(2) = 2
+  A(2)%colidx(3) = 1
+  A(2)%colidx(4) = 3
+  A(2)%val(1) = 2.0d0
+  A(2)%val(2) = -1.0d0
+  A(2)%val(3) = 1.0d0
+  A(2)%val(4) = 1.0d0
+
+  x(1) = 10.0d0
+  x(2) = 20.0d0
+  x(3) = 30.0d0
+
+  call spmv_batched(A, x, out)
+end subroutine main
+
+subroutine spmv_batched(A, x, out)
+  use lib
+  implicit none
+  integer, parameter :: BATCH = 2
+  type(csr_t), intent(in) :: A(BATCH)
+  real(8), intent(in)     :: x(ROWS)
+  real(8), intent(out)    :: out(BATCH, ROWS)
+  integer :: b, r, k
+
+  do b = 1, BATCH
+    do r = 1, ROWS
+      out(b, r) = 0.0d0
+      do k = A(b)%rowptr(r), A(b)%rowptr(r + 1) - 1
+        out(b, r) = out(b, r) + A(b)%val(k) * x(A(b)%colidx(k))
+      end do
+    end do
+  end do
+end subroutine spmv_batched
+"""
+    sdfg = _build(src, tmp_path, name='main', entry='_QPmain')
+    out = np.zeros((2, 3), order='F', dtype=np.float64)
+    sdfg(out=out)
+
+
+@pytest.mark.xfail(reason="Phase 3 — per-instance allocatable members. The "
+                   "per-member SoA mapping is "
+                   "``A_<member>(N, max_i(size(A(i)%<member>)))`` with "
+                   "padding-to-max; needs an upstream pass to compute "
+                   "the per-instance sizes and a runtime-extent declare "
+                   "for each flattened member.  Sketch only — kept "
+                   "xfailed as a gap-tracking contract.")
+def test_batched_csr_allocatable_xfail(tmp_path: Path):
+    """Genuinely jagged batched CSR — each instance's CSR arrays are
+    runtime-allocated to different sizes.  The intended Phase 3
+    lowering: ``A_rowptr(N, max_rowptr)``, ``A_colidx(N, max_nnz)``,
+    ``A_val(N, max_nnz)`` with per-instance sizes tracked separately
+    and padding beyond the live region.
+    """
+    src = """
+module lib
+  implicit none
+  type csr_t
+    integer, allocatable :: rowptr(:)
+    integer, allocatable :: colidx(:)
+    real(8), allocatable :: val(:)
+  end type csr_t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  integer, parameter :: BATCH = 2, ROWS = 3
+  real(8), intent(out) :: out(BATCH, ROWS)
+  type(csr_t) :: A(BATCH)
+  real(8) :: x(ROWS)
+  integer :: b, r, k
+
+  allocate(A(1)%rowptr(ROWS + 1), A(1)%colidx(3), A(1)%val(3))
+  A(1)%rowptr = (/ 1, 2, 3, 4 /)
+  A(1)%colidx = (/ 1, 2, 3 /)
+  A(1)%val    = (/ 1.0d0, 1.0d0, 1.0d0 /)
+
+  allocate(A(2)%rowptr(ROWS + 1), A(2)%colidx(4), A(2)%val(4))
+  A(2)%rowptr = (/ 1, 3, 4, 5 /)
+  A(2)%colidx = (/ 1, 2, 1, 3 /)
+  A(2)%val    = (/ 2.0d0, -1.0d0, 1.0d0, 1.0d0 /)
+
+  x = (/ 10.0d0, 20.0d0, 30.0d0 /)
+
+  do b = 1, BATCH
+    do r = 1, ROWS
+      out(b, r) = 0.0d0
+      do k = A(b)%rowptr(r), A(b)%rowptr(r + 1) - 1
+        out(b, r) = out(b, r) + A(b)%val(k) * x(A(b)%colidx(k))
+      end do
+    end do
+  end do
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path)
+    out = np.zeros((2, 3), order='F', dtype=np.float64)
+    sdfg(out=out)
+
+
+def test_static_polymorphism_devirtualised(tmp_path: Path):
+    """Polymorphic CLASS dispatch that flang's ``fir-polymorphic-op``
+    pass devirtualises statically.  Two flavours:
+
+      1. Type-bound procedure call ``c%area()`` where ``c`` is a
+         concrete ``type(circle_t)`` — flang resolves the dispatch
+         to ``circle_area(c)`` directly because the receiver type
+         is statically known.
+      2. Same shape with a different extension type ``rect_t`` —
+         the type-bound procedure resolves to ``rect_area``.
+
+    Member functions ``circle_area`` / ``rect_area`` themselves take
+    concrete-class dummies (``class(circle_t)``, ``class(rect_t)``)
+    not the abstract base; their bodies are non-polymorphic.  After
+    inlining and devirtualisation the SDFG sees plain flat scalars.
+
+    Verifies the bridge handles these cleanly: SDFG builds, output
+    bit-exact against gfortran/f2py.  Pairs with the bail-out test
+    in ``noncontig_unsupported_test.py`` which proves the reject
+    pass fires when polymorphic-op can't resolve everything.
+    """
+    src = """
+module shapes
+  implicit none
+  type :: circle_t
+    real(8) :: r
+  contains
+    procedure :: area => circle_area
+  end type circle_t
+
+  type :: rect_t
+    real(8) :: w, h
+  contains
+    procedure :: area => rect_area
+  end type rect_t
+
+contains
+  function circle_area(self) result(a)
+    class(circle_t), intent(in) :: self
+    real(8) :: a
+    a = 3.141592653589793d0 * self%r * self%r
+  end function
+  function rect_area(self) result(a)
+    class(rect_t), intent(in) :: self
+    real(8) :: a
+    a = self%w * self%h
+  end function
+end module shapes
+
+subroutine main(r, w, h, out)
+  use shapes
+  implicit none
+  real(8), intent(in)  :: r, w, h
+  real(8), intent(out) :: out(2)
+  type(circle_t) :: c
+  type(rect_t)   :: rect
+  c%r = r
+  rect%w = w
+  rect%h = h
+  ! Type-bound procedure call - flang devirtualises to the concrete
+  ! ``circle_area`` / ``rect_area`` at compile time because the
+  ! receiver's type is statically known.
+  out(1) = c%area()
+  out(2) = rect%area()
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "static_poly_ref")
+    out_ref = mod.main(2.0, 3.0, 4.0)
+
+    sdfg = _build(src, tmp_path, name='main', entry='_QPmain')
+    out = np.zeros(2, dtype=np.float64)
+    sdfg(r=2.0, w=3.0, h=4.0, out=out)
+    np.testing.assert_allclose(out, out_ref, rtol=1e-12)
+
+
+@pytest.mark.parametrize("call_arg,kwarg_for_sdfg", [("x", True), ("0.5d0", False)],
+                         ids=["runtime_arg", "literal_constant"])
+def test_class_as_monomorphic_box(tmp_path: Path, call_arg, kwarg_for_sdfg):
+    """``CLASS(t) :: this`` used as a non-polymorphic box.  Common in
+    ECRAD / ICON code where a derived type is declared with
+    ``class(...)`` for future polymorphism but every call site uses
+    a concrete subtype.  No virtual dispatch, no allocatable
+    members.
+
+    Verifies the FlattenStructs box-peeling walk treats
+    ``fir.class<T>`` like ``fir.box<T>`` (both inherit
+    ``fir::BaseBoxType``).  The bridge never sees the struct —
+    flat per-field arrays only.
+
+    Parametrised over the scalar argument shape:
+      * ``runtime_arg`` — caller supplies ``x`` as an SDFG argument.
+      * ``literal_constant`` — flang creates an
+        ``hlfir.associate %cst {adapt.valuebyref}`` so the inlined
+        callee's by-ref dummy can take a value-converted constant.
+        ``hlfir-materialise-associates`` rewrites that scalar
+        associate to a local alloca + store so the bridge sees a
+        proper transient instead of a nameless associate result.
+    """
+    src = f"""
+module lib
+  implicit none
+  type :: pdf_sampler_t
+    integer :: ncdf, nfsd
+    real(8) :: fsd1, inv_fsd_interval
+  end type pdf_sampler_t
+contains
+  subroutine evaluate(this, x, out)
+    class(pdf_sampler_t), intent(in) :: this
+    real(8),              intent(in)  :: x
+    real(8),              intent(out) :: out
+    out = x * this%fsd1 + this%inv_fsd_interval &
+        + real(this%ncdf + this%nfsd, 8)
+  end subroutine evaluate
+end module lib
+
+subroutine main(x, out)
+  use lib
+  implicit none
+  real(8), intent(in)  :: x
+  real(8), intent(out) :: out
+  type(pdf_sampler_t) :: s
+  s%ncdf = 3
+  s%nfsd = 5
+  s%fsd1 = 1.5d0
+  s%inv_fsd_interval = 2.5d0
+  call evaluate(s, {call_arg}, out)
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "class_box_ref")
+    out_ref = float(mod.main(0.5))
+
+    sdfg = _build(src, tmp_path, name='main', entry='_QPmain')
+    out = np.zeros(1, dtype=np.float64)
+    if kwarg_for_sdfg:
+        sdfg(x=0.5, out=out)
+    else:
+        # Literal constant case: ``x`` is unused (flang folds the
+        # constant inline) but the SDFG signature still binds it as
+        # an unused scalar input — pass any placeholder.
+        sdfg(x=0.0, out=out)
+    np.testing.assert_allclose(float(out[0]), out_ref, rtol=1e-12)
+
+
+def test_three_level_nested_struct(tmp_path: Path):
+    """LLVM-IR-flavoured deep nesting (Function → BasicBlock →
+    Instruction shape).  Three levels of pure-record nesting with a
+    single flat leaf at the bottom.  Exercises the Phase 2 path
+    walker at depth 3 and verifies the path-flattened name
+    ``f_bb_inst_pc`` resolves correctly."""
+    src = """
+module lib
+  implicit none
+  type instr_t
+    integer :: pc(8)
+  end type instr_t
+  type bb_t
+    type(instr_t) :: inst
+  end type bb_t
+  type func_t
+    type(bb_t) :: bb
+  end type func_t
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  integer, intent(out) :: d(8)
+  type(func_t) :: f
+  integer :: i
+  do i = 1, 8
+    f%bb%inst%pc(i) = i * 7
+  end do
+  d(:) = f%bb%inst%pc(:)
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "three_level_ref")
+    d_ref = mod.main()
+
+    sdfg = _build(src, tmp_path)
+    d = np.zeros(8, dtype=np.int32)
+    sdfg(d=d)
+    np.testing.assert_array_equal(d, d_ref)
+
+
 def test_local_struct_used_as_2d_assignment_target(tmp_path: Path):
     """``s%w(:, k) = arr(:)`` — slice assignment into a struct's 2-D
     array member.  Exercises the section-to-section path landing on
@@ -176,17 +692,12 @@ end subroutine main
     np.testing.assert_array_equal(out, [10.0, 20.0, 30.0])
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Phase 1 doesn't handle nested structs (Phase 2 work). "
-                   "extract_vars currently drops the un-flattened RecordType "
-                   "silently, producing a broken SDFG that fails downstream "
-                   "with KeyError or wrong values; once Phase 2 lands or the "
-                   "loud-failure throw is re-enabled, this test will start "
-                   "raising a clean RuntimeError and can be unxfailed.")
-def test_nested_struct_currently_unsupported(tmp_path: Path):
-    """Contract test: nested structs (``type(outer_t)`` whose member is a
-    ``type(inner_t)``) are NOT covered by Phase 1.  Tracks the gap so
-    Phase 2 work can use this test as the canonical fixture."""
+def test_nested_struct_lowered_via_phase2(tmp_path: Path):
+    """Phase 2: nested struct ``type(outer_t)`` whose member is itself
+    a ``type(inner_t)``.  ``hlfir-flatten-structs`` walks the path-leaf
+    tree and synthesises one ``hlfir.declare`` per leaf with name
+    ``<base>_<m1>_<m2>_..._<leaf>`` (here: ``o_inner_x``).  Designate
+    chains ``o%inner%x(i)`` rewrite to ``o_inner_x(i)``."""
     src = """
 module lib
   implicit none

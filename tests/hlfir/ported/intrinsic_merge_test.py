@@ -17,13 +17,16 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("MERGE 1D — flang-new-21 emit-hlfir failure")
 def test_fortran_frontend_merge_1d(tmp_path):
+    # Original f2dace test had ``mask`` declared INTEGER -- invalid
+    # Fortran (MERGE's mask must be LOGICAL).  Declare it LOGICAL; the
+    # caller still binds an int32 numpy buffer (LOGICAL(4) shares ABI
+    # with INTEGER(4)).
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask, res)
 double precision, dimension(7) :: input1
 double precision, dimension(7) :: input2
-integer, dimension(7) :: mask
+logical, dimension(7) :: mask
 double precision, dimension(7) :: res
 
 res = MERGE(input1, input2, mask)
@@ -233,15 +236,16 @@ END SUBROUTINE merge_test_function
     assert res[0] == 5
 
 
-@xfail('nested MERGE — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_merge_recursive(tmp_path):
+    # Original f2dace test had ``mask1`` / ``mask2`` declared INTEGER --
+    # invalid (MERGE's mask must be LOGICAL).  Declare LOGICAL.
     src = """
 SUBROUTINE merge_test_function(input1, input2, input3, mask1, mask2, res)
 double precision, dimension(7) :: input1
 double precision, dimension(7) :: input2
 double precision, dimension(7) :: input3
-integer, dimension(7) :: mask1
-integer, dimension(7) :: mask2
+logical, dimension(7) :: mask1
+logical, dimension(7) :: mask2
 double precision, dimension(7) :: res
 
 res = MERGE(MERGE(input1, input2, mask1), input3, mask2)
@@ -268,13 +272,13 @@ END SUBROUTINE merge_test_function
     assert np.allclose(res, [13, 13, 13, 42, 42, 42, 43])
 
 
-@xfail('MERGE on scalar elements — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_merge_scalar(tmp_path):
+    # Original f2dace had ``mask`` INTEGER -- invalid; LOGICAL required.
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask, res)
 double precision, dimension(7) :: input1
 double precision, dimension(7) :: input2
-integer, dimension(7) :: mask
+logical, dimension(7) :: mask
 double precision, dimension(7) :: res
 
 res(1) = MERGE(input1(1), input2(1), mask(1))
@@ -302,16 +306,19 @@ END SUBROUTINE merge_test_function
         assert val == 40
 
 
-@xfail('MERGE with literal — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_merge_scalar2(tmp_path):
+    # Original f2dace had ``mask`` INTEGER (must be LOGICAL) and the
+    # false-source literal ``0.0`` defaulted to REAL(4) while the
+    # true-source ``input1`` is REAL(8) -- MERGE requires both sources
+    # to share kind.  Use ``0.0D0`` for the false source.
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask, res)
 double precision, dimension(7) :: input1
 double precision, dimension(7) :: input2
-integer, dimension(7) :: mask
+logical, dimension(7) :: mask
 double precision, dimension(7) :: res
 
-res(1) = MERGE(input1(1), 0.0, mask(1))
+res(1) = MERGE(input1(1), 0.0D0, mask(1))
 
 END SUBROUTINE merge_test_function
 """
@@ -331,8 +338,12 @@ END SUBROUTINE merge_test_function
     assert res[0] == 13
 
 
-@xfail('MERGE with compound mask — flang-new-21 emit-hlfir failure')
 def test_fortran_frontend_merge_scalar3(tmp_path):
+    # The original f2dace test had ``mask`` / ``mask2`` INTEGER and the
+    # false-source literal ``0.0`` was REAL(4) while the true source is
+    # REAL(8) -- both invalid Fortran.  ``mask`` / ``mask2`` are kept
+    # INTEGER because the comparison ``mask(1) > mask2(1)`` is the
+    # actual mask (LOGICAL); the literal is now ``0.0D0``.
     src = """
 SUBROUTINE merge_test_function(input1, input2, mask, mask2, res)
 double precision, dimension(7) :: input1
@@ -341,7 +352,7 @@ integer, dimension(7) :: mask
 integer, dimension(7) :: mask2
 double precision, dimension(7) :: res
 
-res(1) = MERGE(input1(1), 0.0, mask(1) > mask2(1) .AND. mask2(2) == 0)
+res(1) = MERGE(input1(1), 0.0D0, mask(1) > mask2(1) .AND. mask2(2) == 0)
 
 END SUBROUTINE merge_test_function
 """

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -185,7 +184,6 @@ END SUBROUTINE minval_test_function
     assert res[3] == np.iinfo(np.int32).min
 
 
-@xfail("module-level derived type with array member + nested call not yet lowered")
 def test_fortran_frontend_minval_struct(tmp_path):
     src = """
 MODULE test_types

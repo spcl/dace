@@ -159,21 +159,44 @@ def indirect_host(expr):
 
 def collect_indirect(builder, assigns: list) -> dict:
     """Walk every access in ``assigns`` and mint a fresh SDFG symbol for
-    each distinct *inline* indirect index expression.  Returns a map from
-    the Fortran-style expression (``edge_idx[jc,1]``) to the symbol name.
+    each distinct *inline* indirect index expression -- recursively, so
+    nested forms like ``idx1[idx2[idx3[i]]]`` mint one symbol per
+    indirection level.  Returns a map from the Fortran-style expression
+    (``edge_idx[jc,1]``) to the symbol name.
 
-    Naming: ``<arr>_at<gid>`` — the prefix carries the source array's
+    Iteration order in the returned dict matters: ``dict`` preserves
+    insertion order, and we insert innermost-first so the caller can
+    materialise interstate-edge assignments in the same order without
+    forward references.
+
+    Naming: ``<arr>_at<gid>`` -- the prefix carries the source array's
     Fortran name so the SDFG dump shows which load the symbol holds; the
     process-level monotonic ``gid`` disambiguates same-expression-different-
     call-site without us having to normalise the inner expression.
     """
-    out = {}
+    out: dict[str, str] = {}
+
+    def _intern_recursive(expr: str):
+        """Visit ``expr`` and intern any ``<arr>[...]`` substring with
+        ``<arr>`` in ``builder.arrays``, innermost-first.  An expression
+        like ``idx1[idx2[i]]`` produces two entries: first ``idx2[i]``
+        (the inner load), then ``idx1[idx2[i]]`` (the outer load).
+        """
+        if not isinstance(expr, str) or '[' not in expr:
+            return
+        for start, end, arr, parts in find_array_subscripts(expr, builder.arrays):
+            # Recurse into each part FIRST so inner indirections are
+            # interned ahead of the enclosing one.
+            for part in parts:
+                _intern_recursive(part)
+            sub = expr[start:end]
+            if sub not in out:
+                out[sub] = f"{arr}_at{_next_indirection_gid()}"
+
     for a in assigns:
         for ac in a.accesses:
             for expr in getattr(ac, 'index_exprs', None) or []:
-                if '[' in expr and expr not in out:
-                    arr = indirect_host(expr) or "idx"
-                    out[expr] = f"{arr}_at{_next_indirection_gid()}"
+                _intern_recursive(expr)
     return out
 
 
@@ -198,17 +221,82 @@ def array_read_to_dace_expr(builder, assign_node, iter_map: dict) -> str:
     return _format_offset_subset(ac.array_name, parts)
 
 
-def indirect_to_dace(builder, expr: str, iter_map: dict) -> str:
+def _rewrite_inner_indirects(part: str, indirect_syms: dict) -> str:
+    """In-place substitute every ``<arr>[...]`` substring of ``part`` with
+    its minted symbol from ``indirect_syms``.  Recurses through the part
+    walker so a part like ``idx2[idx3[i]]`` collapses to whichever
+    minted symbol covers it (innermost first, then the outer).
+    Returns ``part`` unchanged if no nested indirect appears.
+    """
+    if not isinstance(part, str) or '[' not in part:
+        return part
+    # Walk inside-out: keep replacing the first match whose substring is
+    # in ``indirect_syms`` until no more replacements are possible.  We
+    # don't reuse ``find_array_subscripts`` since we need indexes into
+    # ``part`` (not into a parent expression) for slicing.
+    arr_names = set(indirect_syms.keys())
+    # Sort longest-first so a ``a[b[i]]`` form picks the outer first only
+    # after the inner ``b[i]`` has been substituted.  But since we scan
+    # innermost-first via the bracket walker each pass, longest doesn't
+    # actually matter -- still, keep deterministic ordering.
+    changed = True
+    out = part
+    while changed:
+        changed = False
+        # Iterate through every <arr>[...] substring in out, replace the
+        # first whose exact substring is interned.
+        for st in range(len(out)):
+            if out[st] not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_':
+                continue
+            # Try to match an array name starting at st.
+            j = st
+            while j < len(out) and (out[j].isalnum() or out[j] == '_'):
+                j += 1
+            if j >= len(out) or out[j] != '[':
+                continue
+            # Walk balanced brackets to find end.
+            depth = 1
+            k = j + 1
+            while k < len(out) and depth > 0:
+                if out[k] == '[':
+                    depth += 1
+                elif out[k] == ']':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                k += 1
+            if depth != 0:
+                break
+            sub = out[st:k + 1]
+            if sub in indirect_syms:
+                out = out[:st] + indirect_syms[sub] + out[k + 1:]
+                changed = True
+                break  # restart the scan from the beginning
+    return out
+
+
+def indirect_to_dace(builder, expr: str, iter_map: dict, indirect_syms: dict | None = None) -> str:
     """Convert ``arr[i,j]`` (Fortran 1-based) into the uniform offset-
     symbol DaCe subscript form.  Robust to nested brackets via the
-    bracket-balanced walker."""
+    bracket-balanced walker.
+
+    When ``indirect_syms`` is supplied, every nested ``<inner>[...]``
+    substring inside an index part is first replaced by its minted
+    symbol -- so ``idx1[idx2[i]]`` becomes ``idx1[(idx2_at2) - offset_idx1_d0]``
+    rather than dragging the raw inner ``idx2[i]`` text into the SDFG
+    symbolic expression (where DaCe's sympy parser misreads ``[]`` and
+    falls back to a function-call shape that the C++ codegen can't
+    compile).
+    """
     if not isinstance(expr, str) or '[' not in expr:
         return expr
     matches = list(find_array_subscripts(expr, builder.arrays))
-    # Single full-string match — the typical inline-indirection shape.
+    # Single full-string match -- the typical inline-indirection shape.
     if len(matches) == 1:
         start, end, arr, parts = matches[0]
         if start == 0 and end == len(expr):
+            if indirect_syms:
+                parts = [_rewrite_inner_indirects(p, indirect_syms) for p in parts]
             return _format_offset_subset(arr, [_remap_token(p, iter_map) for p in parts])
     return expr
 

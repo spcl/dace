@@ -3,6 +3,7 @@
 // ============================================================================
 
 #include "passes/Passes.h"
+#include "flang/Optimizer/Transforms/Passes.h"
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
@@ -46,6 +47,24 @@ void registerAllBridgePasses() {
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createFoldElementAliasesPass();
+    });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createMaterialiseAssociatesPass();
+    });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createExpandRegionAssignPass();
+    });
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return createRejectPolymorphismPass();
+    });
+    // Flang's polymorphic-op conversion: statically devirtualises
+    // ``fir.dispatch`` / ``fir.select_type`` ops whose target is
+    // resolvable at compile time.  Run BEFORE
+    // ``hlfir-reject-polymorphism`` so legitimately-monomorphic
+    // dispatches succeed; surviving ops after the conversion are
+    // truly runtime-polymorphic and get rejected.
+    mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+        return fir::createPolymorphicOpConversion();
     });
 }
 

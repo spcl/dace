@@ -96,9 +96,25 @@ DEFAULT_PIPELINE = (
     # flatten-structs so the rewrite's designate chains are already
     # single-declare rooted.
     "hlfir-fold-element-aliases,"
+    # Replace ``hlfir.associate`` of an ``hlfir.elemental`` (Flang's
+    # copy-in temp for noncontiguous slice arguments) with an explicit
+    # ``fir.alloca`` + gather DO loop.  After inline-all so the
+    # surrounding callee dummy declare aliasing the temp resolves
+    # through the materialised hlfir.declare.
+    "hlfir-materialise-associates,"
+    # Scatter sibling: rewrites ``hlfir.region_assign`` whose lhs region
+    # carries an ``hlfir.elemental_addr`` (Fortran ``d(cols) = source``)
+    # into an explicit DO loop of per-element scalar assigns.
+    "hlfir-expand-region-assign,"
     # Drop private callee bodies once inlined — otherwise their
     # declares leak into extract_vars as stray scalars.
     "symbol-dce,"
+    # Statically devirtualise resolvable ``fir.dispatch`` /
+    # ``fir.select_type`` ops.  The bridge supports CLASS-as-
+    # monomorphic-box only — surviving polymorphic ops are caught
+    # by ``hlfir-reject-polymorphism`` immediately after.
+    "fir-polymorphic-op,"
+    "hlfir-reject-polymorphism,"
     "hlfir-flatten-structs,"
     "hlfir-propagate-shapes,"
     "hlfir-default-intent,"
@@ -253,8 +269,42 @@ class SDFGBuilder:
             sdfg.replace(src, dst)
             if src in sdfg.symbols:
                 sdfg.symbols.pop(src)
+        # Post-gen cleanups (Stage 4b in dace/frontend/hlfir/README.md).
+        # Run BEFORE the FrozenSignature snapshot so the snapshot
+        # captures the post-cleanup signature (matters for the
+        # downstream codegen drift check).
+        self._run_post_gen_passes(sdfg)
         self._attach_frozen_signature(sdfg)
         return sdfg
+
+    def _run_post_gen_passes(self, sdfg: SDFG) -> None:
+        """Run the post-generation cleanup passes that take a freshly-
+        emitted bridge SDFG to its canonical shape.  See Stage 4b in
+        ``dace/frontend/hlfir/README.md`` for the pipeline.
+
+        Currently:
+            * ``SSALoopIterators`` -- rewrites every ``LoopRegion``'s
+              loop variable to a globally-unique ``_it_<N>`` symbol and
+              propagates the rename through the body.
+            * ``replace_length_one_arrays_with_scalars`` -- folds
+              every length-1 ``Array`` on the SDFG signature down to a
+              true ``Scalar``.  The bridge already emits scalar inputs
+              directly as ``Scalar``; this pass cleans up leftover
+              length-1 OUTPUTS and any local 1-element transients so
+              callers can bind plain ``int`` / ``float`` instead of
+              wrapping in a numpy 1-array.
+        """
+        from dace.sdfg.construction_utils import replace_length_one_arrays_with_scalars
+        from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
+        SSALoopIterators().apply_pass(sdfg, {})
+        # ``transient_only=True``: only fold LOCAL 1-element transients
+        # (e.g. accumulators left as length-1 arrays by the bridge).  The
+        # signature convention is preserved: ``intent(out)`` / ``inout``
+        # scalars stay as length-1 ``Array`` so callers can pass a numpy
+        # 1-element buffer to receive the value.  ``intent(in)`` /
+        # ``VALUE`` scalars are already emitted as ``Scalar`` directly by
+        # ``descriptors.py`` and don't need this pass.
+        replace_length_one_arrays_with_scalars(sdfg, recursive=True, transient_only=True)
 
     def _attach_frozen_signature(self, sdfg: SDFG) -> None:
         """Snapshot ``sdfg.arglist()`` + free symbols into a

@@ -1,39 +1,10 @@
-// ============================================================================
-// extract_ast.cpp — Build a recursive statement tree from HLFIR.
-// ============================================================================
-// Statement-level ops become nodes; everything else is expression-level
-// infrastructure and gets folded into the expression strings or access lists.
+// extract_ast.cpp — public entry point ``extractAST(ModuleOp)``.
 //
-// This file used to be a single 2800-line monolith.  It's now split into
-// five logical chunks under ``ast/``, each included verbatim below:
-//
-//   * ``ast/expressions.inc``   — buildExpr + index/designate helpers
-//                                 + indexStack + alloca synth names.
-//   * ``ast/assigns.inc``       — buildAssignNode / buildCopyNode /
-//                                 buildLibCallNode / section builders
-//                                 + small type helpers (peelWrappers,
-//                                 isArrayRef, …).
-//   * ``ast/elementals.inc``    — buildReduceNode +
-//                                 buildElementalCountLibcall +
-//                                 buildSelectCaseChain + libcall-in-
-//                                 elemental materialisation.
-//   * ``ast/control_flow.inc``  — buildMergeLibcall +
-//                                 buildElementalAssign + cmp predicates
-//                                 + buildBoolExpr / buildExprWithSubscripts.
-//   * ``ast/dispatch.inc``      — scf.if / scf.while walkers,
-//                                 buildAST(Block&) per-op dispatcher,
-//                                 and the public extractAST(ModuleOp).
-//
-// Each chunk is included once in the order shown.  They share this
-// translation unit's namespace, includes, and file-static state — so
-// existing ``static`` / ``thread_local`` declarations keep their
-// original linkage and there's no forward-declaration churn at the
-// chunk boundaries.  The ``.inc`` extension is the standard signal
-// that these files are NOT translation units (cf. LLVM's ``.inc``
-// files, clang's TableGen output) — clangd / IDEs / glob-based
-// linters won't try to compile them standalone.  CMakeLists.txt
-// deliberately compiles only this file.
-// ============================================================================
+// AST extraction is split across five sibling translation units under
+// ``ast/`` — expressions, assigns, elementals, control_flow, dispatch.
+// They share state through ``ast/ast_helpers.h`` (cross-file function
+// declarations + thread-locals).  This file holds only the includes
+// that pull the dialect headers in once for the whole bundle.
 
 #include "bridge/extract_ast.h"
 #include "bridge/extract_vars.h"
@@ -52,12 +23,13 @@
 #include <iomanip>
 #include <sstream>
 
-namespace hlfir_bridge {
+// The AST extraction is split across five sibling translation units
+// (``ast/expressions.cpp``, ``ast/assigns.cpp``, ``ast/elementals.cpp``,
+// ``ast/control_flow.cpp``, ``ast/dispatch.cpp``).  ``ast_helpers.h``
+// declares every cross-file function and shares the thread-local state
+// they all read from.
+#include "bridge/ast/ast_helpers.h"
 
-#include "bridge/ast/expressions.inc"
-#include "bridge/ast/assigns.inc"
-#include "bridge/ast/elementals.inc"
-#include "bridge/ast/control_flow.inc"
-#include "bridge/ast/dispatch.inc"
+namespace hlfir_bridge {
 
 }  // namespace hlfir_bridge

@@ -18,7 +18,6 @@ from dace.frontend.hlfir.builder.access import (
     collect_indirect,
     find_array_subscripts,
     indirect_to_dace,
-    rename_iters,
 )
 from dace.frontend.hlfir.builder.context import _Ctx
 from dace.frontend.hlfir.builder.descriptors import auto_declare_synth
@@ -65,7 +64,23 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     if n.target_is_array or assign_reads_array(n, builder.arrays):
         ctx.flush(builder, region)
         ctx.ensure(region)
-        emit_tasklet(builder, ctx.cur, n, builder.nid(), ctx.iter_map)
+        # Inline indirect accesses: ``vn(iqidx(je,jb,1), jk, iqblk(je,jb,1))``
+        # inside an IF body skips ``emit_loop``'s batch path, so the
+        # indirect symbols would otherwise never get minted and the
+        # memlet subset would carry the bare array name (which DaCe
+        # codegen renders as a pointer-vs-int multiply).  Mint them
+        # here, chained one-symbol-per-state so inner indirects are
+        # available to outer ones.
+        indirect_syms = collect_indirect(builder, [n])
+        if indirect_syms:
+            for expr, sym in indirect_syms.items():
+                rhs = indirect_to_dace(builder, expr, ctx.iter_map, indirect_syms)
+                if sym not in ctx.sdfg.symbols:
+                    ctx.sdfg.add_symbol(sym, dace.int64)
+                nxt = region.add_state(f"sym_{sym}_{builder.nid()}")
+                region.add_edge(ctx.cur, nxt, InterstateEdge(assignments={sym: rhs}))
+                ctx.cur = nxt
+        emit_tasklet(builder, ctx.cur, n, builder.nid(), ctx.iter_map, indirect_syms or None)
         return
     ctx.pending.append((n.target, n.expr))
 
@@ -117,6 +132,23 @@ def _fortran_subs_to_dace(expr, builder):
     return "".join(out)
 
 
+def _is_trivial_bound(expr: str) -> bool:
+    """A bound / condition expression is trivial when it's a bare
+    identifier or a single integer literal -- hoisting it to a symbol
+    would be pure ceremony.  Anything with operators, brackets, or
+    whitespace is non-trivial and gets hoisted."""
+    s = expr.strip()
+    if not s:
+        return True
+    # Bare integer literal (incl. signed).
+    if s.lstrip('-+').isdigit():
+        return True
+    # Bare identifier (single name, no operators, no brackets).
+    if all(ch.isalnum() or ch == '_' for ch in s) and not s[0].isdigit():
+        return True
+    return False
+
+
 def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     """Fortran DO loop → LoopRegion with exact Fortran bounds."""
     # Flush any pending scalar assigns from earlier siblings INTO the
@@ -127,22 +159,51 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     # state with no incoming edge, making the parent CFG's start block
     # ambiguous.
     ctx.flush(builder, region)
+    # The bridge no longer uniquifies loop iter names -- the
+    # ``SSALoopIterators`` post-pass (run from ``SDFGBuilder.build()``
+    # via ``_run_post_gen_passes``) renames every ``LoopRegion.loop_var``
+    # to a globally-unique ``_it_<N>`` symbol and propagates the rename
+    # through the body.  ``emit_loop`` therefore uses the source-Fortran
+    # iter name verbatim, and ``iter_map`` is the identity map kept here
+    # only so the few callers that still pipe expressions through
+    # ``rename_iters`` see a no-op rather than a missing dict.
     if iter_map is None:
-        iter_map = {}
+        iter_map = dict(ctx.iter_map) if ctx.iter_map else {}
 
-    uid = f"{n.loop_iter}_{builder.nid()}"
+    uid = n.loop_iter
 
-    # Apply the OUTER iter_map to bound expressions BEFORE adding our
-    # own rename: the outer loop's iter (e.g. ``i`` → ``i_0``) may
-    # appear inside our bound (``do j = row_ptr(i), row_ptr(i+1)-1``),
-    # but our own iter ``j`` cannot legally appear in our bounds.
-    # Any embedded ``arr[idx]`` (Fortran 1-based) is then converted to
-    # DaCe 0-based form so the LoopRegion's init / cond hit the correct
-    # element.
-    bound = _fortran_subs_to_dace(rename_iters(n.loop_bound, iter_map), builder)
-    lower_expr = (_fortran_subs_to_dace(rename_iters(n.loop_lower_expr, iter_map), builder)
-                  if n.loop_lower_expr else '')
+    # ``arr[idx]`` (Fortran 1-based) → DaCe 0-based form so the
+    # LoopRegion's init / cond hit the correct element.
+    bound = _fortran_subs_to_dace(n.loop_bound, builder)
+    lower_expr = (_fortran_subs_to_dace(n.loop_lower_expr, builder) if n.loop_lower_expr else '')
     lower = lower_expr if lower_expr else (n.loop_lower if n.loop_lower >= 0 else 1)
+
+    # Hoist non-trivial bounds onto pre-LoopRegion symbols so the
+    # LoopRegion's init / cond carry only symbol names -- the bridge
+    # then doesn't need to embed expression-rewrite logic in bound
+    # rendering (the hoisted assignment goes through the same
+    # interstate-edge symbol-staging path indirect-array reads use).
+    # Bare-symbol bounds are skipped; the staging would be pure noise.
+    bound_expr_str = str(bound)
+    lower_expr_str = str(lower)
+    if not _is_trivial_bound(bound_expr_str):
+        sym = f"loopend_{builder.nid()}"
+        if sym not in ctx.sdfg.symbols:
+            ctx.sdfg.add_symbol(sym, dace.int64)
+        ctx.ensure(region)
+        nxt = region.add_state(f"pre_{sym}")
+        region.add_edge(ctx.cur, nxt, InterstateEdge(assignments={sym: bound_expr_str}))
+        ctx.cur = nxt
+        bound = sym
+    if not _is_trivial_bound(lower_expr_str):
+        sym = f"loopbegin_{builder.nid()}"
+        if sym not in ctx.sdfg.symbols:
+            ctx.sdfg.add_symbol(sym, dace.int64)
+        ctx.ensure(region)
+        nxt = region.add_state(f"pre_{sym}")
+        region.add_edge(ctx.cur, nxt, InterstateEdge(assignments={sym: lower_expr_str}))
+        ctx.cur = nxt
+        lower = sym
 
     iter_map = {**iter_map, n.loop_iter: uid}
 
@@ -157,7 +218,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     step = getattr(n, 'loop_step', 1)
     if step >= 0:
         loop = LoopRegion(
-            label=f"loop_{uid}",
+            label=f"loop_{uid}_{builder.nid()}",
             condition_expr=f"{uid} < {bound} + 1",
             loop_var=uid,
             initialize_expr=f"{uid} = {lower}",
@@ -168,7 +229,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
         # ``loop_bound`` is the END (the smaller value).  Iter walks
         # from lower DOWN to bound, inclusive.
         loop = LoopRegion(
-            label=f"loop_{uid}",
+            label=f"loop_{uid}_{builder.nid()}",
             condition_expr=f"{uid} >= {bound}",
             loop_var=uid,
             initialize_expr=f"{uid} = {lower}",
@@ -258,18 +319,43 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
 
         serialise = _raw_hazard(compute_assigns)
 
-        edge_assigns = {}
+        # For each indirect symbol, emit an ``InterstateEdge`` carrying
+        # its assignment.  Nested indirection (``idx1[idx2[idx3[i]]]``)
+        # mints one symbol per level, innermost-first; placing each one
+        # on its OWN interstate edge in that order lets the outer levels
+        # read the inner symbol's value through DaCe's normal symbol
+        # propagation -- a single edge with all assignments triggers the
+        # race-condition validator because edge-side assignments are
+        # treated as parallel.  Empty intermediate states are fine; DaCe
+        # collapses the chain at codegen time.
+        per_sym_assigns: list[tuple[str, str]] = []
         for expr, sym in indirect_syms.items():
-            edge_assigns[sym] = indirect_to_dace(builder, expr, iter_map)
+            rhs = indirect_to_dace(builder, expr, iter_map, indirect_syms)
+            per_sym_assigns.append((sym, rhs))
             if sym not in ctx.sdfg.symbols:
                 ctx.sdfg.add_symbol(sym, dace.int64)
+        symbol_assign_pairs: list[tuple[str, str]] = []
         for a in symbol_assigns:
-            edge_assigns[a.target] = array_read_to_dace_expr(builder, a, iter_map)
+            symbol_assign_pairs.append((a.target, array_read_to_dace_expr(builder, a, iter_map)))
 
-        if edge_assigns:
+        if per_sym_assigns or symbol_assign_pairs:
             pre = loop.add_state(f"pre_{builder.nid()}")
+            cur = pre
+            # Indirect symbols first (innermost -> outermost).  Each
+            # gets a fresh state so its assignment can reference the
+            # symbol set on the previous edge.
+            for sym, rhs in per_sym_assigns:
+                nxt = loop.add_state(f"sym_{sym}_{builder.nid()}")
+                loop.add_edge(cur, nxt, InterstateEdge(assignments={sym: rhs}))
+                cur = nxt
+            # Stage-staged scalar->symbol writes (``ci0 = icidx(je, jb, 1)``)
+            # don't have ordering constraints among themselves, so they
+            # can share one final edge.
             body = loop.add_state('body')
-            loop.add_edge(pre, body, InterstateEdge(assignments=edge_assigns))
+            edge = InterstateEdge()
+            for tgt, rhs in symbol_assign_pairs:
+                edge.assignments[tgt] = rhs
+            loop.add_edge(cur, body, edge)
         else:
             body = loop.add_state('body')
 
@@ -322,10 +408,6 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
     pre = ctx.cur
 
     cond = n.condition if n.condition and n.condition != "?" else "True"
-    # Substitute Fortran iterator names with their unique DaCe loop-var
-    # names (``i_0`` etc.) picked by the enclosing ``emit_loop``.
-    for fname, uname in ctx.iter_map.items():
-        cond = re.sub(rf'\b{re.escape(fname)}\b', uname, cond)
     # Scalar OUTPUTS land as size-1 Arrays on the SDFG signature, so
     # referring to a bare name in a branch condition would pick up the
     # array pointer.  Subscript each one to read element 0.  Scalar
@@ -334,6 +416,21 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
     for nm, v in builder.scalars.items():
         if v.intent in ('out', 'inout'):
             cond = re.sub(rf'\b{re.escape(nm)}\b', f"{nm}[0]", cond)
+
+    # Hoist non-trivial conditions to a pre-state symbol so the
+    # ConditionalBlock branch carries only a symbol name -- one path
+    # for every IF lowering, no per-branch expression-rewrite logic.
+    # Trivial cases (a bare name or ``True`` / ``False``) skip the
+    # staging.
+    if not _is_trivial_bound(cond):
+        sym = f"if_cond_{builder.nid()}"
+        if sym not in ctx.sdfg.symbols:
+            ctx.sdfg.add_symbol(sym, dace.int64)
+        nxt = region.add_state(f"pre_{sym}")
+        region.add_edge(pre, nxt, InterstateEdge(assignments={sym: cond}))
+        pre = nxt
+        ctx.cur = nxt
+        cond = sym
 
     uid = builder.nid()
     cond_block = ConditionalBlock(f"if_{uid}")

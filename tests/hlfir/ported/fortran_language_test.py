@@ -119,7 +119,6 @@ end subroutine main
     assert (d[0, 0, 1] == 5.1)
 
 
-@xfail("internal subprograms (CONTAINS within subroutine) not yet lowered")
 def test_internal_subprograms(tmp_path):
     src = """
 module lib

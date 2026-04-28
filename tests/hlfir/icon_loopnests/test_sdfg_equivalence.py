@@ -11,7 +11,7 @@ Per the project's E2E-verification rule every frontend test that emits
 an SDFG must compare against a non-transformed reference — structural
 assertions on their own don't catch numerical bugs.
 
-The flat kernel sources are extracted from ``loopnest_N.f90`` so the
+The flat kernel sources are extracted from ``icon_loopnest_N.f90`` so the
 bundle (struct + flat + gfortran driver) stays the single source of
 truth; the Python test just slices out the flat subroutine for f2py
 and HLFIR.
@@ -105,9 +105,9 @@ _preload_gomp()
 # ---------------------------------------------------------------------------
 
 
-def test_loopnest_2_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_2_sdfg_matches_f2py(tmp_path: Path):
     """z_w_concorr_me = vn*ddxn + vt*ddxt  (jk = nflatlev..nlev)"""
-    bundle = _HERE / "loopnest_2.f90"
+    bundle = _HERE / "icon_loopnest_2.f90"
     flat_src = _extract_flat_kernel(bundle)
 
     # f2py reference — built once, called repeatedly would be cheaper but
@@ -186,9 +186,9 @@ def _sdfg_call_args(sdfg, int_values: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
     """z_v_grad_w = z_v_grad_w*gradh(jk) + vn_ie*(...) + z_vt_ie*(...)"""
-    bundle = _HERE / "loopnest_3.f90"
+    bundle = _HERE / "icon_loopnest_3.f90"
     flat_src = _extract_flat_kernel(bundle)
     ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_3")
     sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_3")
@@ -232,12 +232,12 @@ def test_loopnest_3_sdfg_matches_f2py(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
     """vn_ie(je,1,jb) = vn(je,1,jb); vn_ie(je,nlevp1,jb) = weighted sum
     — literal integer indices (``vn(je, 1, jb)``) and nlev-1/nlev-2
     arithmetic on a loop bound both resolve cleanly through
     buildIndexExpr."""
-    bundle = _HERE / "loopnest_5.f90"
+    bundle = _HERE / "icon_loopnest_5.f90"
     flat_src = _extract_flat_kernel(bundle)
     ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_5")
     sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_5")
@@ -286,9 +286,9 @@ def test_loopnest_5_sdfg_matches_f2py(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
     """levelmask(jk) = ANY(levmask(i_startblk:i_endblk, jk))"""
-    bundle = _HERE / "loopnest_6.f90"
+    bundle = _HERE / "icon_loopnest_6.f90"
     flat_src = _extract_flat_kernel(bundle)
     ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_6")
     sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_6")
@@ -317,13 +317,13 @@ def test_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_loopnest_1_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_1_sdfg_matches_f2py(tmp_path: Path):
     """z_v_grad_w indirect stencil (two-way cell + vertex indirection).
     Each indirection (``ci0 = icidx(je,jb,1)`` etc.) is scalar-staged in
     Fortran; the bridge classifies the per-load scalar as a symbol and
     ``emit_loop`` hoists each load onto the pre→body interstate edge so
     the consuming ``w(ci0,jk,cb0)`` tasklet reads the live symbol value."""
-    bundle = _HERE / "loopnest_1.f90"
+    bundle = _HERE / "icon_loopnest_1.f90"
     flat_src = _extract_flat_kernel(bundle)
     ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_1")
     sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_1")
@@ -379,11 +379,11 @@ def test_loopnest_1_sdfg_matches_f2py(tmp_path: Path):
     np.testing.assert_allclose(z_sdfg, z_ref, atol=1e-12, rtol=0)
 
 
-def test_loopnest_4_sdfg_matches_f2py(tmp_path: Path):
+def test_icon_loopnest_4_sdfg_matches_f2py(tmp_path: Path):
     """ddt_vn_apc_pc indirect stencil + (vn_ie(jk)-vn_ie(jk+1)) term.
     Same scalar-staged 3D indirection as loopnest 1, plus a 4-D output
     array indexed on its last dim by the ``ntnd`` time-level scalar."""
-    bundle = _HERE / "loopnest_4.f90"
+    bundle = _HERE / "icon_loopnest_4.f90"
     flat_src = _extract_flat_kernel(bundle)
     ref = _f2py_build(flat_src, tmp_path / "ref", "kernel_flat_4")
     sdfg = _sdfg_from_flat(flat_src, tmp_path / "sdfg", name="kernel_flat_4")

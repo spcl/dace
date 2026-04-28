@@ -18,7 +18,7 @@ Each kernel ships two checks:
   used for indirect access (``NCLDQ*``) stay within their declared
   bounds.
 
-Sources read from the ``_ast.f90`` siblings in the artifacts dir —
+Sources read from the ``cloudsc_*.f90`` siblings in the artifacts dir —
 those are the canonical clean variants (no ``BIND(C)``, no
 ``ISO_C_BINDING``, no leftover ``SYSTEM_CLOCK`` calls), which both
 the bridge and ``f2py`` can consume directly without preprocessing.
@@ -46,18 +46,18 @@ _LOOPNESTS_DIR = Path(__file__).parent / "cloudsc_loopnests"
 
 
 def _kernel_source(name: str) -> str:
-    """Read one of the patched ``_ast.f90`` kernel sources committed
-    in-tree alongside this test.  ``name`` is the file's basename
-    without the ``_ast.f90`` suffix (e.g. ``autoconversion_snow``).
+    """Read one of the CloudSC kernel sources committed in-tree
+    alongside this test.  ``name`` is the file's basename without
+    the ``cloudsc_`` prefix (e.g. ``autoconversion_snow``).
 
-    The files were copied verbatim from the Vectra paper artifacts
+    The files were copied from the Vectra paper artifacts
     (``data_must_flow_artifacts/cloudsc_loopnests/``) and patched
     in place to:
       * normalise ``IF (laericeauto)`` (the source declares
         ``laericeauto`` as ``INTEGER(KIND=4)``, so flang rejects the
         bare-LOGICAL guard) → ``IF (laericeauto /= 0)``.
     """
-    src = _LOOPNESTS_DIR / f"{name}_ast.f90"
+    src = _LOOPNESTS_DIR / f"cloudsc_{name}.f90"
     if not src.is_file():
         pytest.skip(f"missing kernel source: {src}")
     return src.read_text()
@@ -264,10 +264,6 @@ def test_cloudsc_rain_evaporation_builds(tmp_path: Path):
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="rain_evaporation_abel_boutle: SDFG builds; numerical "
-                   "comparison pending — heavy use of MAX / MIN intrinsics + "
-                   "nested IF gating against the 3-D ZSOLQA buffer.")
 def test_cloudsc_rain_evaporation_numerical(tmp_path: Path):
     src = _kernel_source("rain_evaporation_abel_boutle")
     rng = np.random.default_rng(45)

@@ -1,7 +1,7 @@
 """Shared helpers for verbatim ports from ``f2dace/dev:tests/fortran/``.
 
 These mirror the helpers used in the FaCe-native ports
-(``ported_from_f2dace_windmill_test.py``) so a single canonical
+(``baseline_*_test.py``) so a single canonical
 implementation is reused across every ported file:
 
 - ``_f2py(src, out_dir, mod_name)``   — gfortran-backed reference build.
@@ -46,7 +46,7 @@ def sdfg_call_args(sdfg, int_values: dict) -> dict:
     """Route each integer arg in ``int_values`` to either a plain int or
     a length-1 numpy int32 array, depending on whether the SDFG
     descriptor classifies it as a Scalar/symbol or a length-1 Array.
-    Mirrors the helper in ``velocity_loopnests/test_sdfg_equivalence.py``.
+    Mirrors the helper in ``icon_loopnests/test_sdfg_equivalence.py``.
     """
     from dace.data import Scalar
     arglist = sdfg.arglist()

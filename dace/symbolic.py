@@ -1404,6 +1404,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
+        # (defined in ``runtime/include/dace/math.h`` for both
+        # ``std::complex<float>`` and ``std::complex<double>``, plus a
+        # generic real-passthrough overload).  Without this explicit
+        # mapping the default ``_print_Function`` emits the bare name
+        # which works only when ``using dace::math::conj`` is in scope
+        # — fragile across translation units.
+        if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
+            return 'dace::math::conj(%s)' % self._print(expr.args[0])
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':

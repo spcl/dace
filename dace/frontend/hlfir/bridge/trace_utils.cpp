@@ -82,8 +82,23 @@ std::optional<int64_t> traceConstInt(mlir::Value v) {
             { v = cv.getValue(); continue; }
         // Flang wraps each static extent in a `select extent>0, extent, 0`
         // clamp; follow the true branch to reach the original value.
-        if (auto s = mlir::dyn_cast<mlir::arith::SelectOp>(d))
-            { v = s.getTrueValue(); continue; }
+        // Restrict to that exact shape -- the false value must be the
+        // constant 0 -- so we don't accidentally follow Fortran ``MAX``
+        // / ``MIN`` (also lowered as ``arith.select`` over a cmp) and
+        // collapse a non-constant bound to its first operand.
+        if (auto s = mlir::dyn_cast<mlir::arith::SelectOp>(d)) {
+            auto *fdef = s.getFalseValue().getDefiningOp();
+            bool false_is_zero = false;
+            if (fdef) {
+                if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(fdef))
+                    if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+                        false_is_zero = (ia.getInt() == 0);
+            }
+            if (false_is_zero) {
+                v = s.getTrueValue();
+                continue;
+            }
+        }
         break;
     }
     return std::nullopt;
@@ -108,6 +123,13 @@ hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
             return outer;
         if (auto conv = mlir::dyn_cast<fir::ConvertOp>(d)) {
             mr = conv.getValue();
+            continue;
+        }
+        // Internal-subprogram inlining wraps the outer fixed-shape array
+        // in a ``fir.embox`` so the inlined assumed-shape callee sees a
+        // ``fir.box``.  Peel through to the underlying declare.
+        if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d)) {
+            mr = eb.getMemref();
             continue;
         }
         break;
