@@ -98,18 +98,45 @@ class InsertGPUStreams(ppl.Pass):
         return {}
 
     def find_child_sdfgs_requiring_gpu_stream(self, sdfg: SDFG) -> Set[SDFG]:
-        """Identify all child SDFGs that need a GPU stream array in their array descriptor store.
+        """Identify all child SDFGs that need a GPU stream array in their
+        array descriptor store.
 
-        A child SDFG requires a GPU stream if it launches GPU kernels, contains a
-        ``CopyLibraryNode`` / ``MemsetLibraryNode`` targeting GPU storage (these lower to
-        stream-bound memcpy/kernel launches), or accesses GPU global memory outside a
-        device-level scope.
+        A child SDFG requires a GPU stream when it (host-) launches GPU
+        kernels or issues GPU stream-bound calls. Concretely, that means:
+
+        * it contains a ``GPU_Device`` ``MapEntry`` / ``MapExit`` (kernel
+          launch) — or
+        * it contains a ``CopyLibraryNode`` / ``MemsetLibraryNode`` targeting
+          GPU storage (those expand to ``cudaMemcpyAsync`` /
+          ``cudaMemsetAsync``, both host-issued).
+
+        Design rule (host- vs. device-level):
+
+        * If the NestedSDFG sits inside a ``Sequential`` / CPU map *and* its
+          body has GPU work (kernels, copy/memset libnodes), it runs on the
+          host — give it the stream array.
+        * If the NestedSDFG sits inside a ``GPU_Device`` map, **everything
+          below it executes as device code** (``__device__`` /
+          ``DACE_DFI``). Device code cannot issue ``cudaMemcpyAsync`` /
+          ``cudaLaunchKernel`` etc., so threading streams into those
+          NestedSDFGs would bind a host-only resource into a function that
+          can never use it (and produces ill-formed CUDA referencing
+          ``gpu_streams`` from inside ``__device__`` code). We skip them.
+
+        The ``_inside_gpu_device_kernel`` walk uses ``parent_nsdfg_node`` /
+        ``parent_sdfg`` directly — ``scope_dict`` caches can be stale after
+        upstream pipeline passes (stream insertion, sync tasklet emission)
+        modify state topology.
         """
         requiring_gpu_stream = set()
         for child_sdfg in sdfg.all_sdfgs_recursive():
 
             # Skip the root SDFG itself
             if child_sdfg is sdfg:
+                continue
+
+            # See class docstring above for the design rule.
+            if self._inside_gpu_device_kernel(child_sdfg):
                 continue
 
             for state in child_sdfg.states():
@@ -135,3 +162,28 @@ class InsertGPUStreams(ppl.Pass):
                     break
 
         return requiring_gpu_stream
+
+    @staticmethod
+    def _inside_gpu_device_kernel(child_sdfg: SDFG) -> bool:
+        """Return True iff ``child_sdfg`` is (transitively) the body of a
+        ``GPU_Device`` map. Uses **scope membership** — walks
+        ``scope_dict``'s chain from the NestedSDFG node up — not data-flow
+        predecessors (a downstream consumer of a kernel is not "inside" it).
+
+        Invalidates the per-state ``scope_dict`` cache before each lookup
+        because upstream pipeline passes can leave it stale.
+        """
+        from dace.sdfg.nodes import MapEntry
+        cur = child_sdfg
+        while cur.parent_nsdfg_node is not None:
+            parent_state = cur.parent
+            nsdfg_node = cur.parent_nsdfg_node
+            parent_state._clear_scopedict_cache()
+            sdict = parent_state.scope_dict()
+            scope = sdict.get(nsdfg_node)
+            while scope is not None:
+                if (isinstance(scope, MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device):
+                    return True
+                scope = sdict.get(scope)
+            cur = cur.parent_sdfg
+        return False

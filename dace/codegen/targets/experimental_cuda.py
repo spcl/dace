@@ -28,6 +28,7 @@ from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes 
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -146,6 +147,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         sdfg.expand_library_nodes(recursive=True)
         ReconnectWithinExpandedSDFGs().apply_pass(sdfg, {})
+
+        # Lift GPU_Shared transients out of nested SDFGs so the framecode
+        # walker pins their __shared__ allocation to the kernel scope.
+        LiftSharedOutOfNestedSDFG().apply_pass(sdfg, {})
 
         # Library-node expansion (CopyLibraryNode "pure" implementations etc.)
         # can produce fresh GPU_Device maps that weren't present when

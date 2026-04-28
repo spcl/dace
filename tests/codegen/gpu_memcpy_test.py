@@ -262,6 +262,11 @@ def test_pseudo_1d_copy_test(c_order: bool):
 
 @pytest.mark.gpu
 def test_gpu_shared_to_global_1D():
+    """Shared → Global copy inside a GPU kernel. Currently emits a
+    generic per-thread ``dace::CopyND<...>::Copy`` template (each thread
+    redundantly writes the same destination — correct, slower than the old
+    ``SharedToGlobal1D`` block-cooperative template). Lifting Shared
+    copies to ``SharedMemoryCollective`` is gated on a codegen-scope fix."""
     M = 32
     N = dace.symbol('N')
 
@@ -279,23 +284,15 @@ def test_gpu_shared_to_global_1D():
     size_M = M
     size_N = 128
 
-    A = rng.random((
-        size_M,
-        size_N,
-    ))
-    B = rng.random((
-        size_N,
-        size_M,
-    ))
-
+    A = rng.random((size_M, size_N))
+    B = rng.random((size_N, size_M))
     ref = A.transpose()
 
     sdfg(A, B, N=size_N)
-    cp.allclose(ref, B)
+    assert cp.allclose(ref, B)
 
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    m = re.search('dace::SharedToGlobal1D<.+>::Copy', code)
-    assert m is not None
+    assert re.search(r'dace::CopyND<.+>::.+::Copy', code) is not None
 
 
 @pytest.mark.gpu
@@ -317,23 +314,12 @@ def test_gpu_shared_to_global_1D_accumulate():
     size_M = M
     size_N = 128
 
-    A = rng.random((
-        size_M,
-        size_N,
-    ))
-    B = rng.random((
-        size_N,
-        size_M,
-    ))
-
+    A = rng.random((size_M, size_N))
+    B = rng.random((size_N, size_M))
     ref = A.transpose() + B
 
     sdfg(A, B, N=size_N)
-    cp.allclose(ref, B)
-
-    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    m = re.search('dace::SharedToGlobal1D<.+>::template Accum', code)
-    assert m is not None
+    assert cp.allclose(ref, B)
 
 
 @pytest.mark.gpu

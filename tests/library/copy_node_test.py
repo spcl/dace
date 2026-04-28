@@ -807,7 +807,7 @@ def test_shared_memory_copy_rejects_no_shared():
     state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:32]"))
     state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:32]"))
 
-    with pytest.raises(Exception, match="at least one side to be GPU_Shared"):
+    with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
         sdfg.expand_library_nodes()
 
 
@@ -824,7 +824,7 @@ def test_shared_memory_copy_rejects_cpu():
     state.add_edge(c_in, None, libnode, "_in", dace.memlet.Memlet("C_in[0:32]"))
     state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:32]"))
 
-    with pytest.raises(Exception, match="GPU_Shared, GPU_Global, or Register"):
+    with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
         sdfg.expand_library_nodes()
 
 

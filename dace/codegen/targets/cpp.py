@@ -264,8 +264,12 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
     elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-          and framecode.where_allocated[(sdfg, name)] is not sdfg):
-        # Array allocated for another SDFG, use unambiguous name
+          and framecode.where_allocated[(sdfg, name)] is not sdfg
+          and desc.storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)):
+        # Array allocated for another SDFG, use unambiguous name. Skipped for
+        # GPU_Shared (kernel-scoped) and Register (thread-scoped) — those can't
+        # collide across NSDFG boundaries because their scope is the kernel /
+        # thread, not the translation unit.
         return f'__{sdfg.cfg_id}_{name}'
 
     return name

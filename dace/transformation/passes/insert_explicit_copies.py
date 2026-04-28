@@ -279,6 +279,13 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.is_empty():
                 continue
 
+            # WCR edges aren't copies — they're reductions. Lifting them
+            # into a ``CopyLibraryNode`` would lose the conflict-resolution
+            # semantics (write-without-merge). They're left in place so a
+            # later pass can lower them to a proper reduction node.
+            if memlet.wcr is not None:
+                continue
+
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
 
@@ -356,6 +363,10 @@ class InsertExplicitCopies(ppl.Pass):
 
         for e in state.edges():
             if e.data.is_empty():
+                continue
+            # WCR edges are reductions, not copies — leave for the
+            # reduction-lowering pass.
+            if e.data.wcr is not None:
                 continue
             if isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode):
                 direction = 'in'

@@ -69,10 +69,38 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
         stream_assignments: Dict[nodes.Node, int] = pipeline_results['NaiveGPUStreamScheduler']
 
         for sub_sdfg in sdfg.all_sdfgs_recursive():
+            # NestedSDFGs inside a GPU_Device map execute as device code and
+            # cannot host-issue stream-bound calls — skip them. Sibling pass
+            # ``InsertGPUStreams`` enforces the same rule when deciding which
+            # SDFGs receive the ``gpu_streams`` array; this skip keeps the
+            # ``gpu_streams`` AccessNode wiring consistent with where the
+            # array actually exists.
+            if self._inside_gpu_device_kernel(sub_sdfg):
+                continue
             for state in sub_sdfg.states():
                 self._connect_streams_in_state(state, stream_assignments, stream_array_name, stream_var_prefix)
 
         return {}
+
+    @staticmethod
+    def _inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
+        """True iff ``sub_sdfg`` is (transitively) the body of a
+        ``GPU_Device`` map. Uses scope membership via ``scope_dict``
+        (invalidated each call to dodge stale caches), not data-flow
+        predecessors — a downstream consumer of a kernel is not inside it."""
+        cur = sub_sdfg
+        while cur.parent_nsdfg_node is not None:
+            parent_state = cur.parent
+            nsdfg_node = cur.parent_nsdfg_node
+            parent_state._clear_scopedict_cache()
+            sdict = parent_state.scope_dict()
+            scope = sdict.get(nsdfg_node)
+            while scope is not None:
+                if (isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device):
+                    return True
+                scope = sdict.get(scope)
+            cur = cur.parent_sdfg
+        return False
 
     def _connect_streams_in_state(self, state: SDFGState, stream_assignments: Dict[nodes.Node, int],
                                   stream_array_name: str, stream_var_prefix: str) -> None:
