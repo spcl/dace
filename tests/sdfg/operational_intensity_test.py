@@ -49,14 +49,14 @@ def if_else(x: dc.int64[100], sum: dc.int64[1]):
     if x[0] > 3:
         for i in range(100):
             sum += x[i]
-    # no else --> simply analyze the ifs. if cache big enough, everything is reused
+    # no else --> simply analyze the ifs. if cache big enough, everything is reused;
 
 
 @dc.program
 def unaligned_for_loop(x: dc.float32[100], sum: dc.int64[1]):
     for i in range(17, 53):
         sum += x[i]
-
+    # 36 = 144byte array elemets accessed 1 = 4byte scalar accessed 36 ops -> 64byte line size=> 3 lines + 1 line scalar => op in = 9/64 
 
 @dc.program
 def sequential_maps(x: dc.float64[N], y: dc.float64[N], z: dc.float64[N]):
@@ -109,6 +109,16 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.S
     'single_map16_even': (single_map16, 64 * 64, 64, {
         'N': 512
     }, 1 / 6),
+    'single_for_loop': (single_for_loop, 64 * 64, 64, {
+        'N': 512
+    }, 1/16),
+    'if_else': (if_else, 64 * 64, 64, {
+        'N': 512
+    }, 200/(14*64))
+    # 14 cache misses, because DaCe introduces intermediate variable
+    ,
+    'unaligned_for_loop': (unaligned_for_loop, 64 * 64, 64, {
+    }, 9/64),
     # now num_elements_on_single_cache_line does not divie N anymore
     # -->513 work, 520 elements loaded --> 513 / (520*8*3)
     'single_map64_uneven': (single_map64, 64 * 64, 64, {

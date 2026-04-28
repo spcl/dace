@@ -24,6 +24,7 @@ from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_taskle
 
 from dace.transformation.passes.analysis import loop_analysis
 
+import traceback
 class SymbolRange():
     """ Used to describe an SDFG symbol associated with a range (start, stop, step) of values. """
 
@@ -127,10 +128,8 @@ def symeval(val, symbols):
 
 def evaluate_symbols(base, new):
     result = {}
-    print("Evaluate symbols called with base:", base, "new:", new)
     for k, v in new.items():
         result[k] = symeval(v, base)
-    print("Result:", result)
     return result
 
 
@@ -140,6 +139,53 @@ def update_mapping(mapping, e):
         if '[' not in k and '[' not in v:
             update[k] = pystr_to_symbolic(v).subs(mapping)
     mapping.update(update)
+
+def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
+    # regex pattern to detect buffer name and index if applicable
+    pattern = re.compile(r"""
+    ^\s*
+    (?P<name>[a-zA-Z_]\w*)      # variable name
+    (?:\[
+        (?P<index>[^\[\]]+)     # anything inside brackets (no nested [])
+    \])?
+    \s*$
+""", re.VERBOSE)
+    
+    misses = 0
+    for lhs, rhs in edge.data.assignments.items():
+        m_lhs = pattern.match(lhs)
+        m_rhs = pattern.match(rhs)
+        try:
+            lhs_name = m_lhs.group("name")
+            lhs_index = m_lhs.group("index")
+            if lhs_index and not lhs_index.isdigit():
+                lhs_index = sp.Symbol(m_lhs.group("index"))
+            elif lhs_index and lhs_index.isdigit():
+                lhs_index = sp.Expr(int(lhs_index))
+
+            rhs_name = m_rhs.group("name")
+            rhs_index = m_rhs.group("index")
+            if rhs_index and not rhs_index.isdigit():
+                rhs_index = sp.Symbol(m_rhs.group("index"))
+            elif rhs_index and rhs_index.isdigit():
+                lhs_index = sp.Expr(int(rhs_index)) 
+
+            if lhs_name in clt.array_info or (lhs_name in array_names and array_names[lhs_name] in clt.array_info):
+                line_id = clt.cache_line_id(lhs_name if lhs_name not in array_names else array_names[lhs_name],
+                    ([lhs_index.subs(mapping)] if isinstance(lhs_index, sp.Expr) else []), mapping)
+                line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
+                dist = stack.touch(line_id)
+                misses += 1 if dist >= C or dist == -1 else 0
+
+            if rhs_name in clt.array_info or (rhs_name in array_names and array_names[rhs_name] in clt.array_info):
+                line_id = clt.cache_line_id(rhs_name if rhs_name not in array_names else array_names[rhs_name],
+                    ([rhs_index.subs(mapping)] if isinstance(rhs_index, sp.Expr) else []), mapping)
+                line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
+                dist = stack.touch(line_id)
+                misses += 1 if dist >= C or dist == -1 else 0
+        except Exception as e:
+            traceback.print_exc() # full stack trace
+    return misses
 
 
 def update_map_iterators(map, mapping, symbols):
@@ -230,7 +276,29 @@ def scope_misses(state: SDFGState,
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
             # analyze the memory accesses of this tasklet and whether they hit in cache or not
-            for e in state.in_edges(node) + state.out_edges(node):
+            for e in state.in_edges(node):
+                # Check if source node is just a transient node to map to correct cache line
+                data_node = e.src
+                data_node_in_edges = state.in_edges(data_node)
+                if len(data_node_in_edges) == 1 and isinstance(data_node_in_edges[0].src, nd.AccessNode):
+                    e = data_node_in_edges[0]
+
+                if e.data.data in clt.array_info or (e.data.data in array_names
+                                                     and array_names[e.data.data] in clt.array_info):
+                    line_id = clt.cache_line_id(
+                        e.data.data if e.data.data not in array_names else array_names[e.data.data],
+                        [x[0].subs(mapping) for x in e.data.subset.ranges], mapping)
+                    line_id = int(line_id.subs(symbols).subs(mapping))
+                    dist = stack.touch(line_id)
+                    tasklet_misses += 1 if dist >= C or dist == -1 else 0
+
+            for e in state.out_edges(node):
+                # Check if destination node is just a transient node to map to correct cache line
+                data_node = e.dst
+                data_node_out_edges = state.out_edges(data_node)
+                if len(data_node_out_edges) == 1 and isinstance(data_node_out_edges[0].src, nd.AccessNode):
+                    e = data_node_out_edges[0]
+
                 if e.data.data in clt.array_info or (e.data.data in array_names
                                                      and array_names[e.data.data] in clt.array_info):
                     line_id = clt.cache_line_id(
@@ -307,12 +375,10 @@ def cfr_misses(cfr:ControlFlowRegion,
         step = sp.sympify(loop_analysis.get_loop_stride(cfr))
         mapping[loop_var] = start.subs(mapping)
         region_misses = 0
-        
         while (loop_condition.subs(mapping) == True):
             iter_misses = cfg_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user, start=cfr.start_block,end=None)
             mapping[loop_var] = mapping[loop_var] + step
             region_misses += iter_misses
-        
     elif isinstance(cfr, ConditionalBlock):
         true_branches = []
         possible_branches = []
@@ -449,6 +515,7 @@ def cfg_misses(cfg: ControlFlowRegion,
                     # save e's assignments in mapping and update curr_state
                     # replace values first with mapping, then update mapping
                     try:
+                        total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                         update_mapping(mapping, e)
                     except:
                         print('\nWARNING: Uncommon assignment detected on InterstateEdge (e.g. bitwise operators).'
@@ -469,7 +536,7 @@ def cfg_misses(cfg: ControlFlowRegion,
                 if curr_state in decided_branches:
                     # if the user already decided this branch in a previous iteration, take the same branch again.
                     e = decided_branches[curr_state]
-
+                    total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                     update_mapping(mapping, e)
                     curr_state = e.dst
                 else:
@@ -484,6 +551,7 @@ def cfg_misses(cfg: ControlFlowRegion,
 
                     if len(next_edge_candidates) == 1:
                         e = next_edge_candidates[0]
+                        total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                         update_mapping(mapping, e)
                         decided_branches[curr_state] = e
                         curr_state = e.dst
@@ -497,16 +565,19 @@ def cfg_misses(cfg: ControlFlowRegion,
                             print('merge state is named ', merge_state)
                             chosen = int(input('Choose an option from above: '))
                             e = edges[chosen]
+                            total_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                             update_mapping(mapping, e)
                             decided_branches[curr_state] = e
                             curr_state = e.dst
                             print(2 * '\n')
                         else:
                             final_e = next_edge_candidates.pop()
+                            final_misses = 0
                             for e in next_edge_candidates:
 
                                 # copy the state of the analysis
                                 curr_mapping = dict(mapping)
+                                curr_misses += assignment_misses(e, mapping, stack, clt, C, symbols, array_names)
                                 update_mapping(curr_mapping, e)
                                 curr_stack = stack.copy()
                                 curr_clt = clt.copy()

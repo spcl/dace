@@ -696,7 +696,6 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 loop_work = sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi)).doit()
                 loop_depth = sp.Sum(loop_depth, (loop_var, shifted_lo, shifted_hi)).doit()
 
-                print("Loop work uneval: ",  sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi)))
                 # Do equality subs
                 loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
                 loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
