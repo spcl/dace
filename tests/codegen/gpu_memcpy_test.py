@@ -292,7 +292,10 @@ def test_gpu_shared_to_global_1D():
     assert cp.allclose(ref, B)
 
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert re.search(r'dace::CopyND<.+>::.+::Copy', code) is not None
+    # Experimental codegen emits ``dace::CopyND<...>::Copy`` (per-thread template).
+    # Legacy codegen still hits the older ``dace::SharedToGlobal1D<...>::Copy``
+    # block-cooperative template. Either form is a valid Shared->Global copy.
+    assert re.search(r'dace::(CopyND<.+>::.+|SharedToGlobal1D<.+>)::Copy', code) is not None
 
 
 @pytest.mark.gpu

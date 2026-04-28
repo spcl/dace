@@ -11,7 +11,7 @@ D4: ``is_inside_gpu_device_kernel`` returns the right value for the three
     kernel.
 """
 import dace
-from dace import SDFG, dtypes, nodes
+from dace import SDFG, dtypes
 from dace.memlet import Memlet
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUSpecializationPipeline
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
@@ -19,7 +19,6 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     is_gpu_lowering_applied,
     is_inside_gpu_device_kernel,
 )
-
 
 # ---------------------------------------------------------------------------
 # D2 — pipeline idempotency

@@ -11,7 +11,6 @@ These tests build minimal SDFGs (no codegen invocation) and assert the
 resulting topology directly, locking the contract independently of the
 broader pipeline.
 """
-import copy
 
 import dace
 from dace import SDFG, dtypes, nodes
