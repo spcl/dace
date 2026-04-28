@@ -16,6 +16,8 @@ from dace import SDFG
 DTYPE = {
     'float64': dace.float64,
     'float32': dace.float32,
+    'int8': dace.int8,
+    'int16': dace.int16,
     'int32': dace.int32,
     'int64': dace.int64,
     'bool': dace.bool_,

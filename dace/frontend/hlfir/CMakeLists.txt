@@ -219,6 +219,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/MaterialiseAssociates.cpp
     passes/ExpandRegionAssign.cpp
     passes/RejectPolymorphism.cpp
+    passes/RewritePointerAssigns.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core

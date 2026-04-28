@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("module-level derived type passed across subroutines not lowered")
 def test_fortran_struct(tmp_path):
     src = """
 module lib
@@ -32,8 +31,8 @@ subroutine main(res, startidx, endidx)
   use lib
   implicit none
   integer, dimension(6) :: res
-  integer :: startidx
-  integer :: endidx
+  integer, intent(in) :: startidx
+  integer, intent(in) :: endidx
   type(test_type) :: indices
   indices%start = startidx
   indices%end = endidx
@@ -53,7 +52,11 @@ end subroutine fun
     size = 6
     res = np.full([size], 42, order="F", dtype=np.int32)
     res[:] = 0
+    # Per the Scalar I/O convention, ``intent(in)`` scalar dummies
+    # surface as plain Scalars on the SDFG signature.
     sdfg(res=res, startidx=2, endidx=5)
+    assert (res[1] == 42 and res[4] == 42)
+    assert (res[0] == 0 and res[5] == 0)
 
 
 @xfail("nested derived types passed across subroutines not lowered")

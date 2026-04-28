@@ -725,3 +725,70 @@ end subroutine main
     d = np.zeros(1, dtype=np.float32)
     sdfg(d=d)
     np.testing.assert_array_equal(d, d_ref)
+
+
+def test_aos_member_to_member_array_copy(tmp_path: Path):
+    """AoS pattern ``a(i)%b = a(j)%c`` where ``b`` and ``c`` are array
+    members — the assignment is a whole-array copy of one inner row.
+
+    After flatten-structs, the array-of-struct ``a`` becomes a pair of
+    flat per-member arrays ``a_b`` and ``a_c``, each shaped (outer-N,
+    inner-extents...).  The Fortran row-copy:
+
+        a(i)%b = a(j)%c
+
+    flattens to:
+
+        a_b(i, :) = a_c(j, :)
+
+    i.e. a whole-array section copy from row ``j`` of ``a_c`` into row
+    ``i`` of ``a_b``.  Exercises both AoS index-merging
+    (``rewriteDesignate`` concat case) AND the whole-member triplet
+    section path (no inner indices on the designate).
+    """
+    src = """
+module lib
+  implicit none
+  type pair
+    integer :: b(4)
+    integer :: c(4)
+  end type pair
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  integer, intent(out) :: out(4, 2)
+  type(pair) :: a(3)
+  integer :: i, k
+
+  ! Initialise: a(j)%c(k) = j*10 + k
+  do i = 1, 3
+    do k = 1, 4
+      a(i)%c(k) = i * 10 + k
+      a(i)%b(k) = 0
+    end do
+  end do
+
+  ! Whole-row copy: a(1)%b <- a(3)%c  (copy row 3 of c into row 1 of b)
+  a(1)%b = a(3)%c
+
+  ! Read back
+  do k = 1, 4
+    out(k, 1) = a(1)%b(k)
+    out(k, 2) = a(3)%c(k)
+  end do
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "aos_row_copy_ref")
+    # ``intent(out)`` dummy: f2py returns it.
+    out_ref = np.asarray(mod.main(), dtype=np.int32)
+
+    sdfg = _build(src, tmp_path)
+    out = np.zeros((4, 2), order="F", dtype=np.int32)
+    sdfg(out=out)
+    np.testing.assert_array_equal(out, out_ref)
+    # Both columns should hold the row [31, 32, 33, 34] (a(3)%c, copied
+    # into a(1)%b).
+    np.testing.assert_array_equal(out[:, 0], [31, 32, 33, 34])
+    np.testing.assert_array_equal(out[:, 1], [31, 32, 33, 34])

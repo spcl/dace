@@ -55,6 +55,24 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
             rhs = array_read_to_dace_expr(builder, n, ctx.iter_map)
         else:
             rhs = n.expr
+            # Scalar I/O convention: ``intent(inout)`` / ``intent(out)``
+            # scalar dummies register in the SDFG as length-1 ``Array``
+            # descriptors (so the caller's binding has a writable slot);
+            # ``intent(in)`` scalars register as ``Scalar``.  The C ABI
+            # binds an Array as ``T*`` and a Scalar as ``T`` (after
+            # DaCe's auto-deref), so a bare ``<name>`` reference on the
+            # RHS of a symbol-target interstate-edge assignment renders
+            # correctly as ``indices_end = endidx`` only when ``endidx``
+            # is a Scalar.  For length-1 Arrays we need an explicit
+            # ``<name>[0]`` so the codegen sees a scalar value, not the
+            # bare pointer.
+            rhs_name = rhs.strip() if isinstance(rhs, str) else None
+            if rhs_name and rhs_name in ctx.sdfg.arrays:
+                desc = ctx.sdfg.arrays[rhs_name]
+                if type(desc).__name__ == 'Array':
+                    shape = getattr(desc, 'shape', None)
+                    if shape is not None and tuple(shape) == (1, ):
+                        rhs = f"{rhs_name}[0]"
         ctx.flush(builder)
         ctx.ensure(region)
         dst = region.add_state(f"post_{n.target}_{builder.nid()}")

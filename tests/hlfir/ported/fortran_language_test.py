@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, f2py_compile, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -65,7 +64,6 @@ end subroutine main
     assert (d[0, 0, 0] == 2)
 
 
-@xfail('logical array LLFALL(:) assignment from comparison not lowered correctly')
 def test_fortran_frontend_loop1(tmp_path):
     src = """
 subroutine main(d)
@@ -76,10 +74,10 @@ subroutine main(d)
   double precision :: RLMIN, ZVQX(NCLV)
   logical :: LLCOOLJ, LLFALL(NCLV)
   LLFALL(:) = .false.
-  ZVQX(:) = 0.0
-  ZVQX(2) = 1.0
+  ZVQX(:) = 0.d0
+  ZVQX(2) = 1.d0
   do JM = 1, NCLV
-    if (ZVQX(JM) > 0.0) LLFALL(JM) = .true. ! falling species
+    if (ZVQX(JM) > 0.d0) LLFALL(JM) = .true. ! falling species
   end do
 
   d(1, 1, 1) = LLFALL(1)
@@ -89,24 +87,30 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     d = np.full([3, 4, 5], 1, order="F", dtype=np.int32)
     sdfg(d=d, a=0, jk=0, jl=0, jm=0)
-    assert (d[0, 0, 0] == 0)
-    assert (d[0, 0, 1] == 1)
+    # Fortran ``LOGICAL(KIND=4)`` encodes ``.true.`` as -1 (all bits set
+    # in the int32 image), not 1.  The bridge follows that convention.
+    assert d[0, 0, 0] == 0
+    assert bool(d[0, 0, 1])
 
 
-@xfail("statement functions (FOEDELTA(PTARE) = ...) not yet lowered")
 def test_fortran_frontend_function_statement(tmp_path):
+    # All literals carry the ``d0`` suffix so the source is fp64 end-to-end.
+    # A bare ``5.1`` is fp32 default-real; widening to fp64 yields
+    # ``5.099999904632568``, which would break the exact-equality
+    # assertion against Python's fp64 ``5.1`` below.  The bridge promotes
+    # constants to fp64 by design.
     src = """
 subroutine main(d)
   double precision d(3, 4, 5)
   double precision :: PTARE, RTT(2), FOEDELTA, FOELDCP
   double precision :: RALVDCP(2), RALSDCP(2), RES
 
-  FOEDELTA(PTARE) = max(0.0, sign(1.d0, PTARE - RTT(1)))
-  FOELDCP(PTARE) = FOEDELTA(PTARE)*RALVDCP(1) + (1.0 - FOEDELTA(PTARE))*RALSDCP(1)
+  FOEDELTA(PTARE) = max(0.d0, sign(1.d0, PTARE - RTT(1)))
+  FOELDCP(PTARE) = FOEDELTA(PTARE)*RALVDCP(1) + (1.d0 - FOEDELTA(PTARE))*RALSDCP(1)
 
-  RTT(1) = 4.5
-  RALVDCP(1) = 4.9
-  RALSDCP(1) = 5.1
+  RTT(1) = 4.5d0
+  RALVDCP(1) = 4.9d0
+  RALSDCP(1) = 5.1d0
   d(1, 1, 1) = FOELDCP(3.d0)
   RES = FOELDCP(3.d0)
   d(1, 1, 2) = RES

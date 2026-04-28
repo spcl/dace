@@ -58,7 +58,10 @@ def emit_copy(builder, ctx, n, region):
 
 def emit_memset(builder, ctx, n, region):
     """Scalar-zero → array fill → ``MemsetLibraryNode`` with a single
-    ``_out`` memlet covering the destination."""
+    ``_out`` memlet covering the destination.  The memset transitions
+    to a fresh successor state so any later element write to the same
+    array lands in a new state (and on a new access node) instead of
+    racing with the array-wide write inside one state's DAG."""
     from dace.libraries.standard.nodes import MemsetLibraryNode
     ctx.flush(builder)
     ctx.ensure(region)
@@ -73,6 +76,11 @@ def emit_memset(builder, ctx, n, region):
 
     tgt_access = acc(builder, state, tgt_name)
     state.add_edge(ms, "_out", tgt_access, None, Memlet.from_array(tgt_name, tgt_desc))
+
+    # Force a state break so a subsequent element write doesn't share
+    # the memset's access node.  Two incoming memlets on one access
+    # node race in DaCe's dataflow DAG.
+    ctx.new_state(builder, region)
 
 
 def emit_libcall(builder, ctx, n, region):

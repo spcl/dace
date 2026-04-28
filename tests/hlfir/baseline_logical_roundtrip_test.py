@@ -1,0 +1,76 @@
+"""Pinned coverage for the bridge's LOGICAL type mapping.
+
+Contract: Fortran ``LOGICAL(KIND=N)`` (any kind) surfaces on the SDFG
+signature as ``np.bool_`` (= C++ ``bool``, 1 byte).  Callers hand a
+NumPy bool array; element-wise boolean ops in tasklets render as
+``bool`` operations directly — no ``(x != 0)`` truthiness coercion
+needed.  The caller-side bindings wrapper translates between the
+original Fortran ``LOGICAL(KIND=N)`` image (e.g. 4-byte ``int32``
+with ``-1``/``0`` encoding) and the SDFG's bool layout at the
+Fortran boundary.
+"""
+from __future__ import annotations
+
+import ctypes
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from _util import build_sdfg, have_flang
+
+try:
+    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
+except OSError:
+    pass
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
+
+
+def test_logical_array_copy_in_copy_out_roundtrip(tmp_path: Path):
+    """``b = a`` over LOGICAL arrays.  Input handed as ``np.bool_``;
+    output read back as ``np.bool_``; bit-exact equality required."""
+    src = """
+subroutine roundtrip(a, b, n)
+  implicit none
+  integer, intent(in)  :: n
+  logical, intent(in)  :: a(n)
+  logical, intent(out) :: b(n)
+  integer :: i
+  do i = 1, n
+    b(i) = a(i)
+  end do
+end subroutine roundtrip
+"""
+    sdfg = build_sdfg(src, tmp_path, name='roundtrip', entry='_QProundtrip').build()
+
+    n = 5
+    a = np.array([True, False, True, True, False], dtype=np.bool_)
+    b = np.zeros(n, dtype=np.bool_)
+    sdfg(a=a, b=b, n=n)
+    np.testing.assert_array_equal(b, a)
+
+
+def test_logical_invert_per_element(tmp_path: Path):
+    """``b(i) = .not. a(i)`` — per-element logical NOT over a LOGICAL
+    array.  Verifies the bridge lowers boolean unary ops through the
+    bool-typed SDFG path."""
+    src = """
+subroutine not_kernel(a, b, n)
+  implicit none
+  integer, intent(in)  :: n
+  logical, intent(in)  :: a(n)
+  logical, intent(out) :: b(n)
+  integer :: i
+  do i = 1, n
+    b(i) = .not. a(i)
+  end do
+end subroutine not_kernel
+"""
+    sdfg = build_sdfg(src, tmp_path, name='not_kernel', entry='_QPnot_kernel').build()
+
+    n = 5
+    a = np.array([True, False, True, True, False], dtype=np.bool_)
+    b = np.zeros(n, dtype=np.bool_)
+    sdfg(a=a, b=b, n=n)
+    np.testing.assert_array_equal(b, np.logical_not(a))

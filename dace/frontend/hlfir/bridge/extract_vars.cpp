@@ -531,6 +531,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Element type string.
         if (ty.isF64())            v.dtype = "float64";
         else if (ty.isF32())       v.dtype = "float32";
+        else if (ty.isInteger(8))  v.dtype = "int8";   // Fortran INTEGER(1)
+        else if (ty.isInteger(16)) v.dtype = "int16";  // Fortran INTEGER(2)
         else if (ty.isInteger(32)) v.dtype = "int32";
         else if (ty.isInteger(64)) v.dtype = "int64";
         // Fortran ``COMPLEX(kind)`` lowers to ``mlir::ComplexType`` over
@@ -543,20 +545,16 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             else { std::string s; llvm::raw_string_ostream os(s);
                    ty.print(os); v.dtype = s; }
         }
-        // 1-bit int is the MLIR ``i1`` bool.  Surface as ``uint8`` rather
-        // than ``bool`` so numpy / DaCe / f2py all agree on a 1-byte
-        // storage layout — saves the caller-side dtype coercion.
-        else if (ty.isInteger(1))  v.dtype = "uint8";
-        // Fortran ``LOGICAL(kind)`` → ``kind``-byte storage.  Default
-        // LOGICAL is 4 bytes (LOGICAL(4)) which matches f2py's ABI
-        // convention; surface sized-logicals as the equivalent signed
-        // integer so mask arrays round-trip without dtype gymnastics.
-        else if (auto lt = mlir::dyn_cast<fir::LogicalType>(ty)) {
-            auto kind = lt.getFKind();
-            if (kind == 1)      v.dtype = "uint8";
-            else if (kind == 4) v.dtype = "int32";
-            else if (kind == 8) v.dtype = "int64";
-            else                v.dtype = "uint8";
+        // MLIR ``i1`` and Fortran ``LOGICAL(KIND=N)`` (any kind) both
+        // surface as ``bool`` on the SDFG signature (= ``np.bool_`` =
+        // C++ ``bool``, 1 byte).  Element-wise boolean ops in tasklets
+        // render as ``bool`` operations directly — no ``(x != 0)``
+        // truthiness coercion needed.  The caller-side bindings
+        // wrapper translates between the original ``LOGICAL(KIND=N)``
+        // image and the SDFG's bool layout at the Fortran boundary.
+        else if (ty.isInteger(1))  v.dtype = "bool";
+        else if (mlir::isa<fir::LogicalType>(ty)) {
+            v.dtype = "bool";
         }
         else if (mlir::isa<fir::RecordType>(ty)) {
             // Drop ALL ``fir.RecordType`` declares.  Two cases:

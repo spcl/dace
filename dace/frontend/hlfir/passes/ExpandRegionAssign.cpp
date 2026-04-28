@@ -51,6 +51,7 @@
 
 #include "passes/Passes.h"
 
+#include "flang/Optimizer/Dialect/CUF/Attributes/CUFAttr.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
@@ -213,16 +214,57 @@ struct ExpandRegionAssignPass
         //     the source is already a contiguous ref, no temp is
         //     needed (no aliasing risk: caller hands us a buffer).
         mlir::Value srcRefBase;
-        // The hlfir.expr path needs a constant extent to build a
-        // static-shape scatter-source temp.  The fir.ref path runs
-        // with any extent.  Bail loudly only when we'd need a temp.
-        if (false && srcIsExpr && !cstExt) {
-            return op.emitError(
-                "hlfir-expand-region-assign: scatter from gather "
-                "expression with symbolic extent requires a "
-                "dynamic-extent scatter-source temp (unsupported).");
+        // Aliasing analysis: the scatter-source temp is only needed
+        // when the LHS and RHS root declares are the SAME variable
+        // (Fortran 2003 evaluation-order semantics — overlapping
+        // ``a(write_idx) = a(read_idx)``).  Distinct declares (the
+        // strict-no-aliasing assumption applies to distinct names)
+        // can use the fused single-loop scatter directly, with any
+        // extent.  Walk both region bodies to find the root declare
+        // each side references.
+        auto traceRoot = [](mlir::Value v) -> hlfir::DeclareOp {
+            for (int i = 0; i < 16 && v; ++i) {
+                auto *d = v.getDefiningOp();
+                if (!d) return {};
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))     { v = cv.getValue(); continue; }
+                if (auto ld = mlir::dyn_cast<fir::LoadOp>(d))        { v = ld.getMemref(); continue; }
+                if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d)) { v = dg.getMemref(); continue; }
+                if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d))   return dc;
+                return {};
+            }
+            return {};
+        };
+        // LHS root: the elemental_addr body yields a designate of the
+        // destination — chase through to its declare.
+        hlfir::DeclareOp lhsRoot;
+        for (auto &inner : eaddr.getBody().front())
+            if (auto y = mlir::dyn_cast<hlfir::YieldOp>(inner)) {
+                lhsRoot = traceRoot(y.getEntity());
+                break;
+            }
+        // RHS root: any ``hlfir.designate`` reachable from the source
+        // value's defining op.  For a gather elemental, the body
+        // contains the data-array designate; recurse into the
+        // elemental's region to find it.
+        hlfir::DeclareOp rhsRoot;
+        if (auto *def = srcVal.getDefiningOp()) {
+            if (auto elem = mlir::dyn_cast<hlfir::ElementalOp>(def)) {
+                elem.walk([&](hlfir::DesignateOp dg) {
+                    if (rhsRoot) return;
+                    if (auto r = traceRoot(dg.getMemref())) rhsRoot = r;
+                });
+            } else {
+                rhsRoot = traceRoot(srcVal);
+            }
         }
-        if (false && srcIsExpr) {  // disabled: scatter-source temp draft segfaults
+        bool aliases = lhsRoot && rhsRoot && lhsRoot == rhsRoot;
+        // Materialise a scatter-source temp only when the source is a
+        // gather expression AND the roots alias.  Constant extent uses
+        // a static-shape temp; symbolic extent uses a dynamic-shape
+        // alloca with the runtime extent threaded through the shape
+        // operand (the gather/scatter loops already use ``mappedExtent``
+        // as their bound, so the temp size matches by construction).
+        if (srcIsExpr && aliases) {
             // Derive a "<dest>_scatter_<id>" uniq_name.  The scatter
             // temp belongs to the caller's local scope so the bridge's
             // extract_vars treats it like any other local transient.
@@ -266,12 +308,49 @@ struct ExpandRegionAssignPass
                     break;
                 }
             }
-            int64_t extConst = mlir::cast<mlir::IntegerAttr>(cstExt.getValue()).getInt();
-            auto seqTy = fir::SequenceType::get({extConst}, eleTy);
-            auto alloca = b.create<fir::AllocaOp>(loc, seqTy);
+            // Static vs dynamic extent.  The fresh shape is built from
+            // the cloned ``mappedExtent`` regardless — only the alloca
+            // and declare differ.  ``shapeOper`` from the original
+            // ``elemental_addr`` still lives in the about-to-be-erased
+            // lhs region; using it would dangle the new declare.
+            std::optional<int64_t> staticExt;
+            if (cstExt)
+                if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(cstExt.getValue()))
+                    staticExt = a.getInt();
+            int64_t typeExt = staticExt.value_or(fir::SequenceType::getUnknownExtent());
+            auto seqTy = fir::SequenceType::get({typeExt}, eleTy);
+            fir::AllocaOp alloca;
+            if (staticExt.has_value()) {
+                alloca = b.create<fir::AllocaOp>(loc, seqTy);
+            } else {
+                alloca = b.create<fir::AllocaOp>(
+                    loc, seqTy, /*uniqName=*/llvm::StringRef{},
+                    /*bindcName=*/llvm::StringRef{},
+                    /*typeparams=*/mlir::ValueRange{},
+                    /*shape=*/mlir::ValueRange{mappedExtent});
+            }
             std::string uniqName = "_QF" + enclName + "E" + dstName + "_scatter_" + std::to_string(kScatterCounter++);
-            auto declOp = b.create<hlfir::DeclareOp>(
-                loc, alloca.getResult(), uniqName, shapeOper);
+            auto newShape = b.create<fir::ShapeOp>(loc, mlir::ValueRange{mappedExtent});
+            hlfir::DeclareOp declOp;
+            if (staticExt.has_value()) {
+                declOp = b.create<hlfir::DeclareOp>(
+                    loc, alloca.getResult(), uniqName, newShape.getResult());
+            } else {
+                // Dynamic-extent declare: result#0 is a ``fir.box`` so
+                // downstream designate carries the runtime shape; the
+                // explicit-types builder pins both result types.
+                auto refTy = fir::ReferenceType::get(seqTy);
+                auto boxTy = fir::BoxType::get(seqTy);
+                declOp = b.create<hlfir::DeclareOp>(
+                    loc, /*resultType0=*/boxTy, /*resultType1=*/refTy,
+                    /*memref=*/alloca.getResult(),
+                    /*shape=*/newShape.getResult(),
+                    /*typeparams=*/mlir::ValueRange{},
+                    /*dummy_scope=*/mlir::Value{},
+                    /*uniq_name=*/b.getStringAttr(uniqName),
+                    /*fortran_attrs=*/fir::FortranVariableFlagsAttr{},
+                    /*data_attr=*/cuf::DataAttributeAttr{});
+            }
             srcRefBase = declOp.getResult(0);
 
             // Gather loop: ``tmp[i] = apply(elem, i)``.
@@ -293,8 +372,14 @@ struct ExpandRegionAssignPass
                                           dst.getResult());
             }
         } else {
-            // Source already a contiguous ref OR (disabled) expr
-            // fused path — no separate gather temp.
+            // Either the source is already a contiguous ref (no
+            // aliasing risk by ABI) or the gather expression and the
+            // scatter destination are distinct variables — under the
+            // strict-no-aliasing assumption the fused single-loop
+            // scatter is correct.  ``srcRefBase`` stays the original
+            // source value; the scatter loop below reads it
+            // per-iteration via ``hlfir.apply`` (expr) or
+            // ``designate + load`` (ref).
             srcRefBase = srcVal;
         }
 
@@ -305,9 +390,17 @@ struct ExpandRegionAssignPass
         b.setInsertionPointToStart(sloop.getBody());
         mlir::Value iv = sloop.getInductionVar();
 
-        // Source: ref → designate+load; expr (fused fallback) → apply.
+        // Source read.  Three shapes converge here:
+        //   * scatter-source temp materialised above (aliased gather
+        //     case) — ``srcRefBase`` is a fresh ``fir.ref<array<NxT>>``
+        //     declare; read by designate + load.
+        //   * non-aliased gather expression — ``srcRefBase`` is the
+        //     original ``hlfir.expr`` value; read by ``hlfir.apply``.
+        //   * contiguous source ref — ``srcRefBase`` is the original
+        //     ``fir.ref<array<...>>``; read by designate + load.
+        bool readByApply = srcIsExpr && !aliases;
         mlir::Value srcLoadVal;
-        if (srcIsExpr) {
+        if (readByApply) {
             mlir::Value mappedSrc = map.lookupOrDefault(srcVal);
             auto applied = b.create<hlfir::ApplyOp>(
                 loc, eleTy, mappedSrc, mlir::ValueRange{iv},

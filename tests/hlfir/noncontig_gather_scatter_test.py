@@ -298,13 +298,6 @@ end subroutine main
     np.testing.assert_allclose(a, expected, rtol=1e-12)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Aliased gather/scatter on the SAME array requires the RHS to be "
-                   "materialised to a transient first (Fortran 2003 semantics).  The "
-                   "current ``hlfir-expand-region-assign`` uses a fused single-loop "
-                   "lowering — fast and correct only when the arrays are disjoint. "
-                   "Phase 1.5: emit a separate gather loop into ``<dst>_scatter_<n>`` "
-                   "before the scatter loop when the source is an ``hlfir.expr``.")
 def test_gather_scatter_aliasing_same_array(tmp_path: Path):
     """``a(write_idx) = a(read_idx)`` — same array on both sides.
 
@@ -349,3 +342,29 @@ end subroutine main
                                "RHS to a temp first; check that hlfir-expand-region-assign "
                                "emits a separate gather loop into a transient before the "
                                "scatter loop.")
+
+
+def test_gather_scatter_aliasing_same_array_symbolic(tmp_path: Path):
+    """Same aliased pattern as ``test_gather_scatter_aliasing_same_array``
+    but with a symbolic gather/scatter extent.  Drives the dynamic-extent
+    scatter-source temp path: ``fir.alloca array<?xT> ...`` shaped by
+    the runtime extent the gather expression produces."""
+    src = """
+subroutine main(n, a, read_idx, write_idx)
+  integer,          intent(in)    :: n
+  double precision, intent(inout) :: a(2 * n)
+  integer,          intent(in)    :: read_idx(n)
+  integer,          intent(in)    :: write_idx(n)
+  a(write_idx) = a(read_idx)
+end subroutine main
+"""
+    sdfg = build_sdfg(src, tmp_path, name='main').build()
+    n = 4
+    a = np.array([10., 20., 30., 40., 50., 60., 70., 80.], dtype=np.float64)
+    a_orig = a.copy()
+    read_idx = np.array([1, 2, 3, 4], dtype=np.int32)
+    write_idx = np.array([3, 4, 5, 6], dtype=np.int32)
+    sdfg(n=n, a=a, read_idx=read_idx, write_idx=write_idx)
+    expected = a_orig.copy()
+    expected[write_idx - 1] = a_orig[read_idx - 1]
+    np.testing.assert_allclose(a, expected, rtol=1e-12)

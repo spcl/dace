@@ -818,6 +818,14 @@ struct FlattenStructsPass
         // args at extract time.
         if (func.isPrivate()) return;
 
+        // Step 0: decompose struct-valued ``hlfir.assign`` ops into
+        // per-leaf assigns BEFORE the per-member declare rewrite runs.
+        // ``val%var = indices`` (where both sides are entire struct
+        // values) becomes one ``hlfir.assign`` per leaf of the struct
+        // type; the existing designate-rewrite path then folds each
+        // leaf assign into a flat ``val_var_<leaf> = indices_<leaf>``.
+        decomposeStructAssigns(func);
+
         // Step 1: collect struct-typed dummy arguments, rewrite them in
         // one pass over the original index list so mutations (insertArgument /
         // eraseArgument) don't invalidate later iterations.
@@ -839,6 +847,114 @@ struct FlattenStructsPass
             if (isLocallyFlattenable(d)) work.push_back(d);
         });
         for (auto d : work) splitLocal(d);
+    }
+
+    /// Decompose every struct-valued ``hlfir.assign`` in ``func`` into
+    /// per-leaf assigns.  Source pattern (e.g. Fortran ``val%var =
+    /// indices`` where both sides are whole struct values):
+    ///
+    ///   hlfir.assign %indices_struct to %val_var_struct : type<T>
+    ///
+    /// This pass walks the leaf set of ``T`` (via ``collectFlatLeaves``)
+    /// and emits one ``hlfir.designate``-and-``hlfir.assign`` chain per
+    /// leaf, copying the matching path from src to dst:
+    ///
+    ///   %src_leaf = hlfir.designate %indices_struct {"path0"}{"path1"}
+    ///   %dst_leaf = hlfir.designate %val_var_struct  {"path0"}{"path1"}
+    ///   hlfir.assign %src_leaf to %dst_leaf : <leaf_ty>
+    ///
+    /// The downstream per-member designate rewrite (``rewriteDesignate``
+    /// / ``rewriteDesignateChain``) then folds each leaf chain into the
+    /// flat-name form ``val_var_<path0>_<path1> = indices_<path0>_<path1>``.
+    /// Array leaves stay whole-array assigns; scalar leaves stay scalar
+    /// assigns.
+    ///
+    /// Out of scope: array-of-struct copies (whole-AoS-to-AoS).  Those
+    /// would need to wrap each per-leaf assign in an outer-dim DO loop
+    /// — separate work.
+    void decomposeStructAssigns(mlir::func::FuncOp func) {
+        llvm::SmallVector<hlfir::AssignOp, 16> targets;
+        func.walk([&](hlfir::AssignOp op) {
+            auto src = op.getRhs();
+            auto dst = op.getLhs();
+            bool srcIsRec = mlir::isa<fir::RecordType>(unwrapAll(src.getType()));
+            bool dstIsRec = mlir::isa<fir::RecordType>(unwrapAll(dst.getType()));
+            if (srcIsRec || dstIsRec) targets.push_back(op);
+        });
+        for (auto op : targets) decomposeStructAssign(op);
+    }
+
+    void decomposeStructAssign(hlfir::AssignOp op) {
+        auto src = op.getRhs();
+        auto dst = op.getLhs();
+
+        bool outerIsArray = false;
+        llvm::SmallVector<int64_t, 4> outerShape;
+        auto rec = peelToRecord(dst.getType(), outerIsArray, outerShape);
+        if (!rec) {
+            // Try src side instead.
+            rec = peelToRecord(src.getType(), outerIsArray, outerShape);
+            if (!rec) return;
+        }
+        // AoS → AoS struct copy is out of scope (would need an outer
+        // index loop wrapping each leaf assign).  Leave the assign
+        // alone; downstream gates flag it.
+        if (outerIsArray) return;
+
+        llvm::SmallVector<std::string, 4> prefix;
+        llvm::SmallVector<FlatLeaf, 8> leaves;
+        if (!collectFlatLeaves(rec, prefix, leaves)) return;
+
+        mlir::OpBuilder b(op);
+        auto loc = op.getLoc();
+
+        // Build a designate chain over ``base`` following the path
+        // components in ``leaf.path``.  Resolves the per-step result
+        // type by looking up each component in the running record
+        // type's member list.
+        auto buildLeafDesignate = [&](mlir::Value base,
+                                      const FlatLeaf &leaf) -> mlir::Value {
+            mlir::Value cur = base;
+            for (auto &component : leaf.path) {
+                auto curRec = mlir::dyn_cast<fir::RecordType>(unwrapAll(cur.getType()));
+                if (!curRec) return {};
+                mlir::Type fieldTy;
+                for (auto &p : curRec.getTypeList()) {
+                    if (p.first == component) { fieldTy = p.second; break; }
+                }
+                if (!fieldTy) return {};
+                auto refFieldTy = fir::ReferenceType::get(fieldTy);
+                auto componentAttr = mlir::StringAttr::get(b.getContext(), component);
+                auto newOp = b.create<hlfir::DesignateOp>(
+                    loc,
+                    /*resultType0=*/refFieldTy,
+                    /*memref=*/cur,
+                    /*component=*/componentAttr,
+                    /*component_shape=*/mlir::Value{},
+                    /*indices=*/mlir::ValueRange{},
+                    /*is_triplet=*/mlir::DenseBoolArrayAttr{},
+                    /*substring=*/mlir::ValueRange{},
+                    /*complex_part=*/mlir::BoolAttr{},
+                    /*shape=*/mlir::Value{},
+                    /*typeparams=*/mlir::ValueRange{},
+                    /*fortran_attrs=*/fir::FortranVariableFlagsAttr{});
+                cur = newOp.getResult();
+            }
+            return cur;
+        };
+
+        for (auto &leaf : leaves) {
+            mlir::Value lhsLeaf = buildLeafDesignate(dst, leaf);
+            mlir::Value rhsLeaf = buildLeafDesignate(src, leaf);
+            if (!lhsLeaf || !rhsLeaf) {
+                // One of the chains failed to resolve a component;
+                // bail out for this assign — leave it intact and let
+                // downstream gates flag it loudly.
+                return;
+            }
+            b.create<hlfir::AssignOp>(loc, rhsLeaf, lhsLeaf);
+        }
+        op.erase();
     }
 
     /// Returns true if any struct-typed dummy argument was rewritten.

@@ -116,6 +116,16 @@ DEFAULT_PIPELINE = (
     "fir-polymorphic-op,"
     "hlfir-reject-polymorphism,"
     "hlfir-flatten-structs,"
+    # Collapse Fortran ``ptr => target`` rebinds under the strict-no-
+    # aliasing assumption: every read or write of the pointer becomes
+    # an access to the rebind target's storage.  Runs AFTER
+    # flatten-structs so a target like ``s%a`` has already been
+    # rewritten to a flat ``s_a`` declare; we trace the rebind through
+    # the resulting box+embox chain to that flat declare and rewrite
+    # all pointer reads accordingly.  Emits a warning per rewrite to
+    # surface the no-alias assumption (Fortran allows aliased pointer
+    # access; relying on alias semantics is unsafe under this pass).
+    "hlfir-rewrite-pointer-assigns,"
     "hlfir-propagate-shapes,"
     "hlfir-default-intent,"
     # Lift cf.br / cf.cond_br loops into scf.while so extract_ast can walk them.

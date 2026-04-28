@@ -26,6 +26,7 @@ std::unique_ptr<mlir::Pass> createFoldElementAliasesPass();
 std::unique_ptr<mlir::Pass> createMaterialiseAssociatesPass();
 std::unique_ptr<mlir::Pass> createExpandRegionAssignPass();
 std::unique_ptr<mlir::Pass> createRejectPolymorphismPass();
+std::unique_ptr<mlir::Pass> createRewritePointerAssignsPass();
 
 // --- Registry ---
 
