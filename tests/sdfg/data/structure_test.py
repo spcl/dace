@@ -623,12 +623,12 @@ def test_read_struct_member_interstate_edge():
 
 
 if __name__ == "__main__":
-    # test_read_structure()
-    # test_write_structure()
-    # test_local_structure()
-    # test_read_nested_structure()
-    # test_write_nested_structure()
-    # test_direct_read_structure()
-    # test_direct_read_nested_structure()
+    test_read_structure()
+    test_write_structure()
+    test_local_structure()
+    test_read_nested_structure()
+    test_write_nested_structure()
+    test_direct_read_structure()
+    test_direct_read_nested_structure()
     test_direct_read_structure_loops()
-    # test_read_struct_member_interstate_edge()
+    test_read_struct_member_interstate_edge()
