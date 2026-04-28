@@ -14,7 +14,7 @@ from copy import deepcopy
 from dace.symbolic import pystr_to_symbolic, SymExpr
 import re
 
-from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, subs_till_fixed_point
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
@@ -23,109 +23,6 @@ from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, Acc
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
 
 from dace.transformation.passes.analysis import loop_analysis
-
-def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
-    """
-    Takes a sympy expression and a symbol mapping and applies the mapping to the expression until a fixed point is reached
-    Needs the guarantee that the symbol mapping does not have cyclic dependencies.
-
-    :param expr: Description
-    :param symbol_map: Description
-    :return: Description
-    """
-    if not isinstance(expr, sp.Expr):
-        return expr
-    prev = None
-    curr = expr
-    while prev != curr:
-        prev = curr
-        curr = curr.subs(symbol_map)
-    return curr
-
-def get_static_symbols(sdfg: SDFG):
-    """
-    Returns a mapping of symbols that are assigned exactly at one point in the sdfg.
-    
-    :param sdfg: The sdfg for which we want to find the static symbols and their corresponding assignment
-    :return: The mapping of the symbols to higher levels (iterated to a fixed point)
-    """
-
-    
-    patterns = [
-        "dace.complex128",
-        "dace.float64",
-        "dace.float32",
-        "dace.int64",
-        "dace.int32",
-        "dace.int16",
-        "dace.uint32",
-        "dace.uint16",
-        "dace.uint8",
-        "float",
-        "int"
-    ]
-
-    type_regex = re.compile("|".join(map(re.escape, patterns)))
-    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
-    non_static_symbols = set() 
-    for node, containing_state in sdfg.all_nodes_recursive():
-        if isinstance(node, nd.AccessNode):
-            
-            if containing_state.in_degree(node) == 1:
-                edge = containing_state.in_edges(node)[0]
-                source = edge.src
-                
-                if edge.data.volume == 1:
-                    if isinstance(source, nd.Tasklet):
-                        tasklet = source
-                        in_map = {}
-                        out_map = {}
-                        # Incoming edges: symbols feeding the tasklet
-                        for e in containing_state.in_edges(tasklet):
-                            if not isinstance(e.src, nd.AccessNode):
-                                continue
-                            sym = str(e.src.data)
-                            in_map[e.dst_conn] = sym
-                        # Outgoing edges: symbols written by the tasklet
-                        # Out edges should only be one, but for safety we iterate
-                        for e in containing_state.out_edges(tasklet):
-                            if not isinstance(e.dst, nd.AccessNode):
-                                continue
-                            sym = sp.Symbol(e.dst.data)
-                            out_map[e.src_conn] = sym
-                        code = tasklet.code.as_string.strip()
-                        # Expect a single assignment
-                        lines = [l.strip() for l in code.splitlines() if l.strip()]
-                        lhs, rhs = lines[0].split('=',1)
-                        lhs = lhs.strip()
-                        rhs = rhs.strip()
-                        rhs = type_regex.sub("", rhs)
-                        # Parse RHS using SymPy, with tasklet inputs substituted
-                        lhs_sympy = pystr_to_symbolic(lhs)
-                        lhs_sympy = lhs_sympy.subs(out_map)
-
-                        if not lhs_sympy in static_symbol_mapping.keys():
-                            try:
-                                rhs_sympy = pystr_to_symbolic(rhs)
-                                rhs_sympy = rhs_sympy.subs(in_map)
-                                static_symbol_mapping[lhs_sympy] = rhs_sympy
-                            except:
-                                non_static_symbols.add(lhs_sympy)
-                        else:
-                            non_static_symbols.add(lhs_sympy)
-
-                    elif isinstance(source, nd.AccessNode):
-                        data_sym = sp.Symbol(source.data)
-                        nd_sym = sp.Symbol(node.data)
-                        if not data_sym in static_symbol_mapping.keys():
-                            static_symbol_mapping[data_sym] = nd_sym
-                        else:
-                            non_static_symbols.add(data_sym)
-
-    static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
-    static_symbol_mapping = {str(k): subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
-    return static_symbol_mapping
-
 
 class SymbolRange():
     """ Used to describe an SDFG symbol associated with a range (start, stop, step) of values. """
