@@ -7,6 +7,8 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_relevant_node
+from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
+    InsertExplicitGPUGlobalMemoryCopies)
 
 
 class GPUStreamSchedulingStrategy(ppl.Pass):
@@ -26,8 +28,6 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         # nodes the scheduler attaches stream ids to. Without the lift, GPU
         # transfers are invisible to the scheduler and downstream wiring
         # silently misses them.
-        from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-            InsertExplicitGPUGlobalMemoryCopies)
         return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:

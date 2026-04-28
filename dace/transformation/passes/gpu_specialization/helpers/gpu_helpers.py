@@ -31,10 +31,17 @@ def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
 
 
-# Names reserved by the gpu_specialization pipeline. ``SDFG.add_datadesc``
-# rejects user-driven additions with these names; only the pipeline itself
-# (via ``add_datadesc(..., _internal_pipeline_use=True)``) may add them.
-RESERVED_GPU_PIPELINE_NAMES = frozenset({"gpu_streams"})
+def dependency_edge():
+    """Return a fresh empty ``Memlet`` used as a control-dependency edge.
+
+    Multiple call sites across the gpu_specialization package use a bare
+    ``dace.Memlet()`` to mean "this edge carries no data, only an
+    ordering dependency". Centralising the construction gives us a
+    single place to migrate to a typed dependency-edge primitive when
+    the framework adds one.
+    """
+    from dace.memlet import Memlet
+    return Memlet()
 
 
 def is_gpu_lowering_applied(sdfg: SDFG) -> bool:
@@ -50,13 +57,9 @@ def is_gpu_lowering_applied(sdfg: SDFG) -> bool:
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
     """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that
-    enclose ``node`` in ``state``. Empty when none.
-
-    Invalidates the per-state ``scope_dict`` cache first — earlier pipeline
-    passes can leave it stale, and callers walking data-flow predecessors
-    instead would misclassify downstream consumers as "inside" their
-    upstream scopes.
-    """
+    enclose ``node`` in ``state``. Empty when none. Invalidates the
+    state's ``scope_dict`` cache first because earlier pipeline passes
+    can mutate topology in ways that leave the cache stale."""
     state._clear_scopedict_cache()
     sdict = state.scope_dict()
     chain: List[nodes.MapEntry] = []
@@ -103,6 +106,15 @@ def get_default_gpu_stream_name() -> str:
     return "__default_stream"
 
 
+# Storages that mark a copy/memset library node as "GPU-relevant" — i.e.
+# its expansion wires the ``stream`` connector to a cudaMemcpy /
+# cudaMemset runtime call. Hoisted to module scope because
+# :func:`is_gpu_copy_or_memset_libnode` is called per node visited and
+# rebuilding the set on every call shows up in profiles.
+_GPU_COPY_STORAGES = frozenset(
+    {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned})
+
+
 def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU
     memory. These are the library nodes whose expansion wires the
@@ -110,13 +122,12 @@ def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
     from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
-    gpu_side = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned}
-
     if isinstance(node, CopyLibraryNode):
-        return node.src_storage(state, sdfg) in gpu_side or node.dst_storage(state, sdfg) in gpu_side
+        return (node.src_storage(state, sdfg) in _GPU_COPY_STORAGES
+                or node.dst_storage(state, sdfg) in _GPU_COPY_STORAGES)
     if isinstance(node, MemsetLibraryNode):
         for e in state.out_edges(node):
-            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in gpu_side:
+            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
                 return True
     return False
 

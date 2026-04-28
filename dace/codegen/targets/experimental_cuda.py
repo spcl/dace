@@ -22,13 +22,9 @@ from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import (GPUPostExpansionPipeline,
+                                                                                       GPUStreamPipeline)
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-    InsertExplicitGPUGlobalMemoryCopies)
-from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -123,34 +119,30 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # ----------------------------------------------------------------
-        # Pipeline 2 — GPU specialization. Phase 1 (assign + connect) on
-        # the freshly-lifted SDFG; then ``expand_library_nodes`` (recursive)
-        # exhaustively lowers every LibraryNode; Phase 2
-        # (``ReconnectWithinExpandedSDFGs``) routes internal GPU consumers
-        # of expansion-spawned NestedSDFGs to reuse the one ``stream``
-        # connector each inherited from its source LibraryNode — no fresh
-        # ``gpu_streams`` array threading inside expanded bodies.
+        # Pipeline 2 — GPU specialization. Two-phase around
+        # ``expand_library_nodes(recursive=True)``:
+        # * ``GPUStreamPipeline`` (pre-expansion) lifts implicit copies,
+        #   schedules streams, threads ``gpu_streams`` everywhere needed,
+        #   wires per-kernel ``__stream_<i>`` connectors, emits sync
+        #   tasklets. Idempotent via the ``is_gpu_lowering_applied`` signal.
+        # * ``GPUPostExpansionPipeline`` (post-expansion) reconnects internal
+        #   GPU consumers of expansion-spawned NestedSDFGs and lifts
+        #   ``GPU_Shared`` transients out of inner NestedSDFGs so the
+        #   framecode walker pins their ``__shared__`` allocation to the
+        #   kernel scope.
         # ----------------------------------------------------------------
-        from dace.transformation.passes.gpu_specialization.reconnect_within_expanded_sdfgs import (
-            ReconnectWithinExpandedSDFGs)
-
-        gpu_specialization_pipeline = Pipeline([
-            InsertExplicitGPUGlobalMemoryCopies(),
-            NaiveGPUStreamScheduler(),
-            InsertGPUStreams(),
-            ConnectGPUStreamsToNodes(),
-            InsertGPUStreamSyncTasklets(),
-        ])
-
         self._dispatcher._used_targets.add(self)
-        gpustream_assignments = gpu_specialization_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
+        stream_pipeline_result = GPUStreamPipeline().apply_pass(sdfg, {})
+        if stream_pipeline_result and 'NaiveGPUStreamScheduler' in stream_pipeline_result:
+            gpustream_assignments = stream_pipeline_result['NaiveGPUStreamScheduler']
+        else:
+            # Pipeline gated as already-applied (test fixtures pre-run it,
+            # or a caller pre-lowered the SDFG). Re-derive the assignments
+            # without mutating: ``NaiveGPUStreamScheduler`` is read-only.
+            gpustream_assignments = NaiveGPUStreamScheduler().assign(sdfg)
 
         sdfg.expand_library_nodes(recursive=True)
-        ReconnectWithinExpandedSDFGs().apply_pass(sdfg, {})
-
-        # Lift GPU_Shared transients out of nested SDFGs so the framecode
-        # walker pins their __shared__ allocation to the kernel scope.
-        LiftSharedOutOfNestedSDFG().apply_pass(sdfg, {})
+        GPUPostExpansionPipeline().apply_pass(sdfg, {})
 
         # Library-node expansion (CopyLibraryNode "pure" implementations etc.)
         # can produce fresh GPU_Device maps that weren't present when

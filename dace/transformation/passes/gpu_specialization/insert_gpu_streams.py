@@ -9,7 +9,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (add_gpu_stream_connector,
                                                                                get_gpu_stream_array_name,
-                                                                               is_gpu_relevant_node)
+                                                                               is_gpu_relevant_node,
+                                                                               is_inside_gpu_device_kernel)
 
 
 @properties.make_properties
@@ -36,7 +37,6 @@ class InsertGPUStreams(ppl.Pass):
         All relevant SDFGs end up sharing a consistent reference to the same stream array, so
         subsequent pipeline passes can rely on its presence without redefining it.
         """
-
         # Extract stream array name and number of streams to allocate
         stream_array_name = get_gpu_stream_array_name()
         stream_assignments: Dict[Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
@@ -59,13 +59,14 @@ class InsertGPUStreams(ppl.Pass):
     def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool) -> None:
         """Add the reserved ``gpu_streams`` descriptor to ``target_sdfg``.
 
-        Uses ``add_datadesc(..., _internal_pipeline_use=True)`` to bypass the
-        ``SDFG.add_datadesc`` reservation guard — this pass owns the name."""
+        Passes ``_internal_use=True`` so the reservation guard in
+        ``SDFG.add_datadesc`` lets this pass through (the pipeline owns
+        the name)."""
         desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t,
                                shape=(num_streams, ),
                                transient=transient,
                                storage=dace.dtypes.StorageType.Register)
-        target_sdfg.add_datadesc(stream_name, desc, _internal_pipeline_use=True)
+        target_sdfg.add_datadesc(stream_name, desc, _internal_use=True)
 
     @classmethod
     def _propagate_stream_array_up(cls, child_sdfg: SDFG, stream_name: str, num_streams: int) -> None:
@@ -73,28 +74,23 @@ class InsertGPUStreams(ppl.Pass):
         (and including) the first ancestor that already has it, wiring the
         NestedSDFG-node stream connector at each level so the array flows
         from outer to inner via the standard connector pattern."""
-
-        def wire_into_parent(level: SDFG, memlet: dace.Memlet) -> None:
-            """Wire ``stream_name`` from ``level.parent_sdfg`` into ``level``'s
-            NestedSDFG node: stream connector + AccessNode + edge."""
-            nsdfg_node = level.parent_nsdfg_node
-            parent_state = level.parent
-            add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
-            src = parent_state.add_access(stream_name)
-            parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
-
         cls._add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
+
+        # Every chain edge carries the explicit ``[0:num_streams]`` slice so
+        # downstream codegen can index by stream id without inferring the
+        # bound from the descriptor — the implicit-subset form would force
+        # the codegen to look up the array shape on every consumer.
+        slice_str = f"{stream_name}[0:{num_streams}]"
 
         # Climb until a parent already has the array; add+wire at every step.
         cur = child_sdfg
         while stream_name not in cur.parent_sdfg.arrays:
             cls._add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
-            wire_into_parent(cur, dace.Memlet(stream_name))
+            _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
             cur = cur.parent_sdfg
 
-        # Final wire from the first parent that already had it; carries the
-        # full slice so codegen can index by stream id.
-        wire_into_parent(cur, dace.Memlet(f"{stream_name}[0:{num_streams}]"))
+        # Final wire from the first parent that already had it.
+        _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
 
     def find_child_sdfgs_requiring_gpu_stream(self, sdfg: SDFG) -> Set[SDFG]:
         """Identify all child SDFGs that need the GPU stream array.
@@ -113,8 +109,6 @@ class InsertGPUStreams(ppl.Pass):
         into it would bind a host-only resource into device code and
         produce ill-formed CUDA. We skip those.
         """
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_inside_gpu_device_kernel
-
         requiring_gpu_stream = set()
         for child_sdfg in sdfg.all_sdfgs_recursive():
 
@@ -148,3 +142,18 @@ class InsertGPUStreams(ppl.Pass):
                     break
 
         return requiring_gpu_stream
+
+
+def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet) -> None:
+    """Wire ``stream_name`` from ``level.parent_sdfg`` into ``level``'s
+    NestedSDFG node: stream connector + AccessNode + edge.
+
+    Module-level helper called twice in the propagation loop above and
+    once after — same call signature, no closure capture, easier to read
+    in isolation.
+    """
+    nsdfg_node = level.parent_nsdfg_node
+    parent_state = level.parent
+    add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
+    src = parent_state.add_access(stream_name)
+    parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)

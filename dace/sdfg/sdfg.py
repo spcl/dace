@@ -2157,39 +2157,33 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    # Names reserved by the gpu_specialization pipeline. User SDFG code must
-    # not add a descriptor with these names; only the pipeline itself may
-    # (via ``add_datadesc(..., _internal_pipeline_use=True)``). The canonical
-    # list lives in ``dace.transformation.passes.gpu_specialization.helpers.gpu_helpers``;
-    # duplicated here as a literal to avoid a circular import.
-    _RESERVED_PIPELINE_NAMES = frozenset({"gpu_streams"})
+    # Names reserved by framework pipelines (currently just ``gpu_streams``
+    # for the gpu_specialization pipeline). User SDFG code can't add these;
+    # only the owning pipeline can, via ``_internal_use=True`` below.
+    RESERVED_NAMES = frozenset({"gpu_streams"})
 
     def add_datadesc(self,
                      name: str,
                      datadesc: dt.Data,
                      find_new_name: bool = False,
-                     _internal_pipeline_use: bool = False) -> str:
+                     _internal_use: bool = False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
             :param find_new_name: If True and data descriptor with this name
                                   exists, finds a new name to add.
-            :param _internal_pipeline_use: Bypass for the gpu_specialization
-                                  pipeline to add its reserved transients
-                                  (e.g. ``gpu_streams``). Not for user code.
+            :param _internal_use: Bypass for framework pipelines that own
+                                  reserved descriptor names (see
+                                  :attr:`RESERVED_NAMES`). Not for user code.
             :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
 
-        # Reservation: refuse user-driven additions of pipeline-owned names so
-        # downstream signals (``is_gpu_lowering_applied`` keys on the
-        # presence of ``gpu_streams``) stay reliable.
-        if name in self._RESERVED_PIPELINE_NAMES and not _internal_pipeline_use:
-            raise NameError(f'Data descriptor name "{name}" is reserved by the gpu_specialization '
-                            f'pipeline. Pick a different name; the pipeline owns this descriptor '
-                            f'and uses its presence as the "lowering already applied" signal.')
+        if name in self.RESERVED_NAMES and not _internal_use:
+            raise NameError(f'Data descriptor name "{name}" is reserved for framework pipeline use. '
+                            f'Pick a different name.')
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members

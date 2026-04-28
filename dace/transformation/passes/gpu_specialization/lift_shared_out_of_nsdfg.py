@@ -18,13 +18,16 @@ scope so the framecode allocates it there. A symmetric edge to
 ``MapExit`` keeps it live through kernel exit.
 """
 import copy as _copy
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, SDFGState, dtypes, properties, nodes
 from dace.memlet import Memlet
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import innermost_enclosing_map
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (dependency_edge, innermost_enclosing_map)
+from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
+    InsertExplicitGPUGlobalMemoryCopies)
+from dace.transformation.passes.gpu_specialization.reconnect_within_expanded_sdfgs import ReconnectWithinExpandedSDFGs
 
 
 @properties.make_properties
@@ -37,7 +40,16 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
     pins allocation to the kernel scope."""
 
     def depends_on(self):
-        return set()
+        # Real dependencies for ordering when chained through a Pipeline:
+        # * ``InsertExplicitGPUGlobalMemoryCopies`` lifts AccessNode→AccessNode
+        #   Shared edges into ``CopyLibraryNode`` instances; without it,
+        #   inner Shared transients used only on the copy edge wouldn't
+        #   surface as descriptors with ``transient=True``.
+        # * ``ReconnectWithinExpandedSDFGs`` is the post-expansion pass
+        #   that wires inherited stream connectors through expanded
+        #   NestedSDFG bodies; it must run before this lift so the
+        #   inner-NSDFG topology is final.
+        return {InsertExplicitGPUGlobalMemoryCopies, ReconnectWithinExpandedSDFGs}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -46,12 +58,6 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict:
-        # Refresh scope_dict caches: the framecode walker that runs after
-        # this pass keys allocation routing on scope membership.
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            for state in nsdfg.states():
-                state._clear_scopedict_cache()
-
         lifted = 0
         worklist: List[Tuple[SDFG, SDFGState, nodes.NestedSDFG, nodes.MapEntry]] = []
         for nsdfg in sdfg.all_sdfgs_recursive():
@@ -71,13 +77,13 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
                 if desc.transient and desc.storage == dtypes.StorageType.GPU_Shared
             ]
             for name in shared_names:
-                self._lift_one(name, inner_sdfg, nsdfg_node, outer_sdfg, outer_state, kernel_entry)
-                lifted += 1
+                if self._lift_one(name, inner_sdfg, nsdfg_node, outer_sdfg, outer_state, kernel_entry):
+                    lifted += 1
 
         return {'lifted': lifted} if lifted > 0 else None
 
     def _lift_one(self, name: str, inner_sdfg: SDFG, nsdfg_node: nodes.NestedSDFG, outer_sdfg: SDFG,
-                  outer_state: SDFGState, kernel_entry: nodes.MapEntry):
+                  outer_state: SDFGState, kernel_entry: nodes.MapEntry) -> bool:
         """Promote ``name`` and wire it through ``nsdfg_node``::
 
             MapEntry --(empty, dep)--> AN_read --(in:name)--> NSDFG
@@ -88,7 +94,18 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         array — DaCe rejects a single-AN read+write cycle around an NSDFG.
         ``force=True`` on the connector adds is required because the same
         name appears in both ``in_connectors`` and ``out_connectors`` (the
-        standard DaCe pattern for inout arrays)."""
+        standard DaCe pattern for inout arrays).
+
+        Returns ``True`` if the descriptor was lifted, ``False`` if the inner
+        Shared transient is unused (no read/write) and was left in place — a
+        bare lift would leave the SDFG inconsistent (descriptor moved, no
+        connectors / edges to wire it through)."""
+        is_read, is_written = _classify_inner_usage(inner_sdfg, name)
+        if not is_read and not is_written:
+            # Unused inner Shared transient — moving the descriptor without
+            # adding any edges/connectors corrupts the SDFG. Skip the lift.
+            return False
+
         inner_desc = inner_sdfg.arrays[name]
 
         outer_name = self._pick_outer_name(name, outer_sdfg)
@@ -98,14 +115,13 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         del inner_sdfg.arrays[name]
         inner_sdfg.add_datadesc(name, inner_param_desc)
 
-        is_read, is_written = _classify_inner_usage(inner_sdfg, name)
         full_subset = Range.from_array(inner_desc)
         kernel_exit = outer_state.exit_node(kernel_entry)
-        an_write = None
+        an_write: Optional[nodes.AccessNode] = None
 
         if is_read:
             an_read = outer_state.add_access(outer_name)
-            outer_state.add_edge(kernel_entry, None, an_read, None, Memlet())
+            outer_state.add_edge(kernel_entry, None, an_read, None, dependency_edge())
             nsdfg_node.add_in_connector(name, force=True)
             outer_state.add_edge(an_read, None, nsdfg_node, name,
                                  Memlet(data=outer_name, subset=_copy.deepcopy(full_subset)))
@@ -115,14 +131,18 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
             nsdfg_node.add_out_connector(name, force=True)
             outer_state.add_edge(nsdfg_node, name, an_write, None,
                                  Memlet(data=outer_name, subset=_copy.deepcopy(full_subset)))
-            outer_state.add_edge(an_write, None, kernel_exit, None, Memlet())
+            outer_state.add_edge(an_write, None, kernel_exit, None, dependency_edge())
 
         # Write-only case still needs allocation anchoring — without a read
         # side the AN_write has no incoming dep from MapEntry, so add one.
         if is_written and not is_read:
-            outer_state.add_edge(kernel_entry, None, an_write, None, Memlet())
+            outer_state.add_edge(kernel_entry, None, an_write, None, dependency_edge())
 
+        # Local re-invalidation: this lift mutated topology in ``outer_state``
+        # and a subsequent ``_lift_one`` on a sibling NSDFG in the same state
+        # would otherwise hit the stale cache from before this mutation.
         outer_state._clear_scopedict_cache()
+        return True
 
     @staticmethod
     def _pick_outer_name(name: str, outer_sdfg: SDFG) -> str:

@@ -86,12 +86,21 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 3. Coarse pick by storage pair: any copy touching GPU memory goes
+    # 3. Single-element copies route by side: same-side → direct ``_out = _in``
+    # tasklet (``Tasklet`` impl), cross CPU/GPU → ``cudaMemcpyAsync``
+    # (``MemcpyCUDA1D``). Skipping the ``MappedTasklet`` path here also avoids
+    # its 0-D map crash when every dimension collapses.
+    in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
+    out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
+    if in_volume == 1 and out_volume == 1:
+        return 'MemcpyCUDA1D' if _is_cross_cpu_gpu(inp.storage, out.storage) else 'Tasklet'
+
+    # 4. Coarse pick by storage pair: any copy touching GPU memory goes
     # through the cudaMemcpy family; everything else falls through to
     # MappedTasklet at the end.
     impl = _coarse_pick_for_storage_pair(inp.storage, out.storage)
 
-    # 4. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
+    # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
     # same-side mapped tasklet or CopyNDTemplate).
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg)
@@ -239,8 +248,12 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
 def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=False):
     """Element-wise mapped tasklet expansion. Schedule comes from the
     storages: ``Sequential`` for Register/Register or Register<->GPU_Shared
-    (thread-level), ``GPU_Device`` if any side is GPU storage, else
-    ``Default``. Raises across the CPU/GPU boundary."""
+    (thread-level) and for any in-kernel copy (a new ``GPU_Device`` map
+    inside an existing kernel would create an invalid kernel-in-kernel
+    nesting), ``GPU_Device`` if any side is GPU storage and we're at host
+    level, else ``Default`` (CPU↔CPU — inferred post-expansion). Raises
+    across the CPU/GPU boundary."""
+    from dace.sdfg.scope import is_devicelevel_gpu
     ctx = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
 
@@ -248,12 +261,13 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
         raise ValueError("MappedTasklet expansion cannot cross the CPU/GPU boundary "
                          f"(got {inp.storage} -> {out.storage}). Use a MemcpyCUDA1D variant.")
 
-    # Schedule from storages.
+    # Schedule from storages and surrounding scope.
     is_register = lambda s: s == dtypes.StorageType.Register
     is_thread_local = (is_register(inp.storage) and is_register(out.storage)) or (
         (is_register(inp.storage) and out.storage == dtypes.StorageType.GPU_Shared) or
         (is_register(out.storage) and inp.storage == dtypes.StorageType.GPU_Shared))
-    if is_thread_local:
+    in_kernel = is_devicelevel_gpu(parent_sdfg, parent_state, node)
+    if is_thread_local or in_kernel:
         schedule = dtypes.ScheduleType.Sequential
     elif inp.storage in _GPU_STORAGES or out.storage in _GPU_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
@@ -758,16 +772,22 @@ class ExpandTasklet(ExpandTransformation):
     """Single-element same-storage scalar copy: a Python tasklet doing
     ``_out = _in`` directly. No map, no SDFG wrapper, no pointer cast.
 
-    Both subsets must be volume 1 and storages must match (no CPU/GPU
-    boundary). For multi-element copies use ``MappedTasklet`` (mapped
-    element-wise) or ``CopyNDTemplate`` (strided)."""
+    Both subsets must be volume 1. Storages must match — except that all
+    CPU storages (``CPU_Heap``, ``CPU_Pinned``, ``CPU_ThreadLocal``) are
+    treated as one side: a one-element copy between them is a plain
+    address-space-equivalent assignment. For multi-element copies use
+    ``MappedTasklet`` (mapped element-wise) or ``CopyNDTemplate`` (strided)."""
     environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         inp_name, inp, in_subset, out_name, out, out_subset, _dyn, _stream = node.validate(parent_sdfg,
                                                                                            parent_state,
-                                                                                           allow_cross_storage=False)
+                                                                                           allow_cross_storage=True)
+        same_side_cpu = inp.storage in _CPU_STORAGES and out.storage in _CPU_STORAGES
+        if inp.storage != out.storage and not same_side_cpu:
+            raise ValueError(f"Tasklet expansion: storage types must match (or both be CPU); "
+                             f"got {inp.storage} -> {out.storage}.")
 
         in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
         out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)

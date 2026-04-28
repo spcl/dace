@@ -7,7 +7,7 @@ Incoming edges carry the real ``gpu_streams[i]`` memlet (the node's codegen pick
 outgoing edges are empty-memlet dependencies that thread stream state to the next user.
 """
 from collections import defaultdict
-from typing import Any, Dict, List, Set, Type, Union
+from typing import Any, Dict, List, Optional, Set, Type, Union
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
@@ -16,15 +16,10 @@ from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
-                                                                               get_gpu_stream_array_name,
-                                                                               get_gpu_stream_connector_name,
-                                                                               has_stream_connector,
-                                                                               is_gpu_stream_consumer)
-
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    COPY_MEMSET_STREAM_CONNECTOR, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
+    get_gpu_stream_connector_name, has_stream_connector, is_gpu_stream_consumer, is_inside_gpu_device_kernel)
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (enclosing_map_chain,
-                                                                               is_inside_gpu_device_kernel)
 
 
 @properties.make_properties
@@ -89,6 +84,15 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
             stream_id = stream_assignments.get(node)
             if stream_id is None:
                 continue
+            # Skip nodes that sit inside a GPU_Device map's scope: they're
+            # already running on the kernel's stream and shouldn't be linked
+            # into the outer per-stream chain. Wiring them in would close a
+            # cycle through the kernel ``MapExit``'s stream-chain
+            # dependency edge (kernel exit feeds the outer ``gpu_streams``
+            # AccessNode that the in-kernel libnode tries to read from).
+            from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import innermost_enclosing_map
+            if innermost_enclosing_map(state, node, dtypes.ScheduleType.GPU_Device) is not None:
+                continue
             if is_gpu_stream_consumer(node, state.sdfg, state):
                 per_stream[stream_id].append(node)
             elif isinstance(node, nodes.LibraryNode):
@@ -108,18 +112,20 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
 
     def _build_chain(self, state: SDFGState, stream_id: int, stream_users: List[nodes.Node], stream_array_name: str,
                      stream_var_prefix: str) -> None:
-        """Build ``src -> n0 -> mid -> n1 -> ... -> n_{k-1} -> sink`` for one stream.
+        """Dispatcher: for each user, either link it into the per-stream
+        chain (top-level consumers) or route the stream through enclosing
+        Sequential maps to the user (scope-nested consumers).
 
-        Top-level consumers are linked into the per-stream chain; consumers
-        sitting inside Sequential map scopes get their stream input threaded
-        through the maps (``IN_stream`` / ``OUT_stream`` pass-through) but
-        are NOT linked into the chain — the natural intra-scope sequencing
-        already orders them, and the chain dependency edges would otherwise
-        cross scope boundaries."""
+        Top-level consumers form the chain ``src -> n0 -> mid -> n1 -> ...
+        -> sink`` of ``gpu_streams[i]`` AccessNodes. Scope-nested consumers
+        get the stream threaded via ``IN_stream`` / ``OUT_stream`` pass-
+        through connectors and are NOT linked into the chain — the natural
+        intra-scope sequencing already orders them, and the chain
+        dependency edges would otherwise cross scope boundaries."""
         accessed_slot = f"{stream_array_name}[{stream_id}]"
-        # Defer the source AccessNode until we actually wire a user — see
-        # comment below about the validate() rejection of isolated nodes.
-        prev_access = None
+        # Defer the source AccessNode until we actually wire a user — the
+        # validate() pass rejects isolated AccessNodes.
+        prev_access: Optional[nodes.AccessNode] = None
 
         for node in stream_users:
             entry, exit_ = self._entry_exit(state, node)
@@ -137,43 +143,51 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
 
             scope_chain = enclosing_map_chain(state, entry, dtypes.ScheduleType.Sequential)
             if scope_chain:
-                # Consumer inside Sequential map(s) — route the stream
-                # through ``IN_stream`` / ``OUT_stream`` pass-through and
-                # don't link into the per-stream chain (the chain edges
-                # would cross scope boundaries).
-                src_access = state.add_access(stream_array_name)
-                self._wire_through_chain(state, src_access, scope_chain, entry, in_conn, accessed_slot,
-                                         stream_array_name)
+                self._route_through_seq_scope(state, scope_chain, entry, in_conn, accessed_slot, stream_array_name)
                 continue
 
-            if prev_access is None:
-                prev_access = state.add_access(stream_array_name)
-
-            state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
-
-            # Dependency (empty memlet) out of the exit into the shared AccessNode
-            # that also feeds the next node in the chain.
-            next_access = state.add_access(stream_array_name)
-            state.add_edge(exit_, None, next_access, None, dace.Memlet(None))
-            prev_access = next_access
+            prev_access = self._link_top_level_consumer(state, entry, exit_, in_conn, accessed_slot, stream_array_name,
+                                                        prev_access)
 
     @staticmethod
-    def _wire_through_chain(state: SDFGState, src_access: nodes.AccessNode, chain: List[nodes.MapEntry],
-                            target: nodes.Node, target_conn: str, accessed_slot: str, stream_array_name: str) -> None:
-        """Thread ``src_access`` through every map in ``chain`` (outermost
-        first) into ``target.target_conn`` via ``IN_stream`` / ``OUT_stream``
-        pass-through connectors."""
+    def _link_top_level_consumer(state: SDFGState, entry: nodes.Node, exit_: nodes.Node, in_conn: str,
+                                 accessed_slot: str, stream_array_name: str,
+                                 prev_access: 'Optional[nodes.AccessNode]') -> nodes.AccessNode:
+        """Link a top-level consumer into the per-stream chain. Reuses
+        ``prev_access`` as the source if non-None; otherwise creates a fresh
+        chain head. Returns the new chain tail (caller threads it back as
+        ``prev_access`` for the next consumer).
+        """
+        if prev_access is None:
+            prev_access = state.add_access(stream_array_name)
+
+        state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
+
+        # Dependency (empty memlet) out of the exit into the shared AccessNode
+        # that also feeds the next node in the chain.
+        next_access = state.add_access(stream_array_name)
+        state.add_edge(exit_, None, next_access, None, dependency_edge())
+        return next_access
+
+    @staticmethod
+    def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: nodes.Node,
+                                 target_conn: str, accessed_slot: str, stream_array_name: str) -> None:
+        """Route ``gpu_streams[id]`` through ``scope_chain`` (outermost
+        Sequential map first) into ``target.target_conn`` via ``IN_stream``
+        / ``OUT_stream`` pass-through connectors. The consumer stays out of
+        the per-stream chain — see ``_build_chain``'s docstring for why."""
         in_conn = f"IN_{COPY_MEMSET_STREAM_CONNECTOR}"
         out_conn = f"OUT_{COPY_MEMSET_STREAM_CONNECTOR}"
-        outermost = chain[0]
+        src_access = state.add_access(stream_array_name)
+        outermost = scope_chain[0]
         outermost.add_in_connector(in_conn)
         outermost.add_out_connector(out_conn)
         state.add_edge(src_access, None, outermost, in_conn, Memlet(accessed_slot))
-        for outer, inner in zip(chain, chain[1:]):
+        for outer, inner in zip(scope_chain, scope_chain[1:]):
             inner.add_in_connector(in_conn)
             inner.add_out_connector(out_conn)
             state.add_edge(outer, out_conn, inner, in_conn, Memlet(accessed_slot))
-        state.add_edge(chain[-1], out_conn, target, target_conn, Memlet(accessed_slot))
+        state.add_edge(scope_chain[-1], out_conn, target, target_conn, Memlet(accessed_slot))
 
     @staticmethod
     def _entry_exit(state: SDFGState, node: nodes.Node):

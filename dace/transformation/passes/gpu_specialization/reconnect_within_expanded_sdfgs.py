@@ -14,13 +14,9 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
-                                                                               add_gpu_stream_connector,
-                                                                               has_stream_connector,
-                                                                               is_expanded_libnode_nsdfg,
-                                                                               is_gpu_stream_consumer)
-
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    COPY_MEMSET_STREAM_CONNECTOR, add_gpu_stream_connector, enclosing_map_chain, has_stream_connector,
+    is_expanded_libnode_nsdfg, is_gpu_stream_consumer)
 
 
 @properties.make_properties
