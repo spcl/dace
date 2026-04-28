@@ -17,48 +17,89 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (get_cuda_d
 #----------------------------------------------------------------------------------
 
 
+def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
+                                state_id: int, anchor_node, dispatcher: TargetDispatcher):
+    """Emit ``{ctype} {var_name} = {expr};`` per map dim using the symbolic-
+    coordinate substitution. ``axis`` is ``'blockIdx'`` (kernel scope) or
+    ``'threadIdx'`` (thread-block scope). First three dims map directly to
+    ``axis.{x|y|z}``; further dims delinearize off ``axis.z``. Returns
+    ``(map_range, sym_indices, sym_coords)`` for callers that need the
+    symbolic forms downstream (e.g. for guard conditions)."""
+    map_range = subsets.Range(scope_map.range[::-1])  # reversed for memory coalescing
+    dimensions = len(map_range)
+    dim_sizes = map_range.size()
+    sym_indices = [symbolic.symbol(f'__SYM_IDX{i}', nonnegative=True, integer=True) for i in range(dimensions)]
+    sym_coords = map_range.coord_at(sym_indices)
+
+    for dim in range(dimensions):
+        var_name = scope_map.params[-dim - 1]  # reversed
+        if dim < 3:
+            expr = f"{axis}.{get_cuda_dim(dim)}"
+            if dim == 2 and dimensions > 3:
+                tail = product(dim_sizes[3:])
+                expr = f"({expr} / ({sym2cpp(tail)}))"
+        else:
+            tail = product(dim_sizes[dim + 1:])
+            expr = f"(({axis}.z / ({sym2cpp(tail)})) % ({sym2cpp(dim_sizes[dim])}))"
+        var_def = sym2cpp(sym_coords[dim]).replace(f'__SYM_IDX{dim}', expr)
+        callsite_stream.write(f'{ctype} {var_name} = {var_def};', cfg, state_id, anchor_node)
+        dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
+
+    return map_range, sym_indices, sym_coords
+
+
 class ScopeGenerationStrategy(ABC):
-    """Base strategy for generating GPU scope code"""
+    """Base strategy for generating GPU scope code.
+
+    Subclasses set ``SCHEDULE`` to the schedule type they handle and
+    ``SCOPE_COMMENT`` to the human-readable label used by ``ScopeManager``.
+    The base ``applicable()`` matches ``SCHEDULE`` against the source
+    MapEntry's schedule; subclasses implement ``generate()`` and reuse the
+    ``_dispatch_and_deallocate`` tail.
+    """
+
+    SCHEDULE: dtypes.ScheduleType = None
+    SCOPE_COMMENT: str = ""
 
     def __init__(self, codegen: ExperimentalCUDACodeGen):
         self.codegen: ExperimentalCUDACodeGen = codegen
         self._dispatcher: TargetDispatcher = codegen._dispatcher
         self._current_kernel_spec: KernelSpec = codegen._current_kernel_spec
 
-    @abstractmethod
     def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-        raise NotImplementedError('Abstract class')
+        return dfg_scope.source_nodes()[0].map.schedule == self.SCHEDULE
 
     @abstractmethod
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         raise NotImplementedError('Abstract class')
 
+    def _dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                 entry_node: nodes.MapEntry, function_stream: CodeIOStream,
+                                 callsite_stream: CodeIOStream):
+        """Common tail of every ``generate``: dispatch the inner subgraph,
+        then deallocate scope-local arrays."""
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           cfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)
+        self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
+
 
 class KernelScopeGenerator(ScopeGenerationStrategy):
 
-    def __init__(self, codegen: ExperimentalCUDACodeGen):
-        super().__init__(codegen)
-
-    def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-
-        node = dfg_scope.source_nodes()[0]
-        schedule_type = node.map.schedule
-
-        # This strategy starts kernel code generation and is only valid if
-        # the outermost (first) GPU schedule is of type GPU_Device.
-        applicable = schedule_type == dtypes.ScheduleType.GPU_Device
-        return applicable
+    SCHEDULE = dtypes.ScheduleType.GPU_Device
+    SCOPE_COMMENT = "Kernel scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        # Generate kernel function signature
         self._generate_kernel_signature(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
-        # Generate kernel body
         with ScopeManager(frame_codegen=self.codegen._frame,
                           sdfg=sdfg,
                           cfg=cfg,
@@ -66,70 +107,22 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           state_id=state_id,
                           function_stream=function_stream,
                           callsite_stream=callsite_stream,
-                          comment="Kernel scope") as scope_manager:
+                          comment=self.SCOPE_COMMENT) as scope_manager:
 
             # ----------------- Retrieve kernel configuration -----------------------
 
             kernel_spec = self._current_kernel_spec
-            kernel_entry_node = kernel_spec._kernel_map_entry  # == dfg_scope.source_nodes()[0]
-            kernel_map = kernel_spec.kernel_map
+            kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
-            # ----------------- Kernel/Map Range Preprocessing -----------------------
-
-            reversed_kernel_range = kernel_map.range[::-1]  # also reverse it
-            kernel_range = subsets.Range(reversed_kernel_range)
-            kernel_dimensions = len(kernel_range)
-            kernel_dim_sizes = kernel_range.size()
-
-            # ----------------- Set up symbolic index expressions -----------------------
-
-            symbolic_indices = [
-                symbolic.symbol(f'__SYM_IDX{dim}', nonnegative=True, integer=True) for dim in range(kernel_dimensions)
-            ]
-            symbolic_coordinates = kernel_range.coord_at(symbolic_indices)
-
-            # ----------------- Generate Thread or Block index Definitions -----------------------
-
-            thread_id_ctype = kernel_spec.gpu_index_ctype  # Data type of CUDA thread/block indices
-
-            # In case there is no ThreadBlock map used in a submap, the map variables will
-            # be mapped to thread IDs instead of block IDs
-            for dim in range(kernel_dimensions):
-
-                var_name = kernel_map.params[-dim - 1]  # also reverse it here!
-
-                # Compute index expressions for up to 3 dimensions (x, y, z)
-                if dim < 3:
-                    index_expr = f'blockIdx.{get_cuda_dim(dim)}'
-                    # Delinearize third dimension if more than 3D (used in 3D+ mapping)
-                    if dim == 2 and kernel_dimensions > 3:
-                        tail_prod = product(kernel_dim_sizes[3:])
-                        index_expr = f"({index_expr} / ({sym2cpp(tail_prod)}))"
-
-                else:  # Handle dimensions beyond the third (delinearize and modulo)
-                    index_expr = f'blockIdx.z'
-                    tail_prod = product(kernel_dim_sizes[dim + 1:])
-                    index_expr = (f"(({index_expr} / ({sym2cpp(tail_prod)})) % ({sym2cpp(kernel_dim_sizes[dim])}))")
-
-                # Define thread/Block index
-                var_def = sym2cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', index_expr)
-                callsite_stream.write(f'{thread_id_ctype} {var_name} = {var_def};', cfg, state_id, kernel_entry_node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, thread_id_ctype)
+            # Without an inner ThreadBlock map the kernel-map variables bind
+            # to thread indices instead — same blockIdx-based formulas.
+            _emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype,
+                                        callsite_stream, cfg, state_id, kernel_entry_node, self._dispatcher)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
 
-            # ----------------- Dispatch Subgraph code generation -----------------------
-
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               cfg,
-                                               dfg_scope,
-                                               state_id,
-                                               function_stream,
-                                               callsite_stream,
-                                               skip_entry_node=True)
-
-            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream,
-                                                           callsite_stream)
+            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
+                                          callsite_stream)
 
     def _generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -155,21 +148,12 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
-    def __init__(self, codegen: ExperimentalCUDACodeGen):
-        super().__init__(codegen)
-
-    def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-
-        node = dfg_scope.source_nodes()[0]
-        applicable = node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-
-        return applicable
+    SCHEDULE = dtypes.ScheduleType.GPU_ThreadBlock
+    SCOPE_COMMENT = "ThreadBlock Scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        # NOTE: not my code, but my insights. Approval for commenting this needed
         with ScopeManager(frame_codegen=self.codegen._frame,
                           sdfg=sdfg,
                           cfg=cfg,
@@ -177,55 +161,20 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                           state_id=state_id,
                           function_stream=function_stream,
                           callsite_stream=callsite_stream,
-                          comment="ThreadBlock Scope") as scope_manager:
+                          comment=self.SCOPE_COMMENT) as scope_manager:
 
             node = dfg_scope.source_nodes()[0]
             scope_map = node.map
-
-            # ----------------- Map Range Preprocessing -----------------------
-
-            # Reverse range for better performance (e.g. memory coalescing)
-            reversed_scope_range = scope_map.range[::-1]
-            map_range = subsets.Range(reversed_scope_range)
-            map_dimensions = len(map_range)
-            map_dim_sizes = map_range.size()
-
             kernel_block_dims = self._current_kernel_spec.block_dims
 
-            # ----------------- Symbolic Index Expressions -----------------------
+            map_range, symbolic_indices, _sym_coords = _emit_dim_index_definitions(
+                scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
+                self._dispatcher)
 
-            symbolic_indices = [
-                symbolic.symbol(f'__SYM_IDX{dim}', nonnegative=True, integer=True) for dim in range(map_dimensions)
-            ]
             symbolic_index_bounds = [
                 idx + (block_dim * rng[2]) - 1
                 for idx, block_dim, rng in zip(symbolic_indices, kernel_block_dims, map_range)
             ]
-            symbolic_coordinates = map_range.coord_at(symbolic_indices)
-
-            # ----------------- Generate Index Variable Definitions -----------------------
-
-            # Get the block's index dace data type
-            block_id_ctype = self._current_kernel_spec.gpu_index_ctype
-
-            for dim in range(map_dimensions):
-                var_name = scope_map.params[-dim - 1]  # also reverse it here!
-
-                if dim < 3:
-                    # First three dimensions: direct mapping or partial delinearization
-                    if dim == 2 and map_dimensions > 3:
-                        tail_prod = product(map_dim_sizes[3:])
-                        base_expr = f"(threadIdx.z / ({sym2cpp(tail_prod)}))"
-                    else:
-                        base_expr = f"threadIdx.{get_cuda_dim(dim)}"
-                else:
-                    # Dimensions beyond the third: full delinearization
-                    tail_prod = product(map_dim_sizes[dim + 1:])
-                    base_expr = (f"((threadIdx.z / ({sym2cpp(tail_prod)})) % ({sym2cpp(map_dim_sizes[dim])}))")
-
-                var_def = sym2cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
-                callsite_stream.write(f'{block_id_ctype} {var_name} = {var_def};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, block_id_ctype)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
@@ -262,31 +211,13 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 if len(condition) > 0:
                     scope_manager.open(condition=condition)
 
-            # ----------------- Dispatch Subgraph code generation -----------------------
-
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               cfg,
-                                               dfg_scope,
-                                               state_id,
-                                               function_stream,
-                                               callsite_stream,
-                                               skip_entry_node=True)
-
-            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
+            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
 
-    def __init__(self, codegen: ExperimentalCUDACodeGen):
-        super().__init__(codegen)
-
-    def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-
-        node = dfg_scope.source_nodes()[0]
-        applicable = node.map.schedule == dtypes.ScheduleType.GPU_Warp
-
-        return applicable
+    SCHEDULE = dtypes.ScheduleType.GPU_Warp
+    SCOPE_COMMENT = "WarpLevel Scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -298,7 +229,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                           state_id=state_id,
                           function_stream=function_stream,
                           callsite_stream=callsite_stream,
-                          comment="WarpLevel Scope") as scope_manager:
+                          comment=self.SCOPE_COMMENT) as scope_manager:
 
             # Get kernel specifications
             kernel_spec = self._current_kernel_spec
@@ -390,17 +321,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                     condition = " && ".join(condition_terms)
                     scope_manager.open(condition)
 
-            # ----------------- Dispatch Subgraph code generation -----------------------
-
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               cfg,
-                                               dfg_scope,
-                                               state_id,
-                                               function_stream,
-                                               callsite_stream,
-                                               skip_entry_node=True)
-
-            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
+            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
     def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
                                       warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,

@@ -154,26 +154,15 @@ class InsertExplicitCopies(ppl.Pass):
         "alone (cudaMemcpyAsync cannot be issued from device code, and the codegen handles "
         "intra-kernel copies through other paths).",
     )
-    inside_device_impl = properties.Property(
-        dtype=str,
-        default="",
-        allow_none=True,
-        desc="When set, copies that land inside a GPU device-level scope are lowered with this "
-        "implementation (e.g. 'DirectAssignment' or 'pure') and a Sequential schedule, so they "
-        "expand to inline code instead of an unsupported cudaMemcpyAsync from device code. "
-        "Ignored when ``skip_inside_device_scope`` is True.",
-    )
 
     def __init__(self,
                  src_locations: Optional[Iterable[dtypes.StorageType]] = None,
                  dst_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 skip_inside_device_scope: bool = False,
-                 inside_device_impl: Optional[str] = None):
+                 skip_inside_device_scope: bool = False):
         super().__init__()
         self.src_locations = set(src_locations) if src_locations else set()
         self.dst_locations = set(dst_locations) if dst_locations else set()
         self.skip_inside_device_scope = skip_inside_device_scope
-        self.inside_device_impl = inside_device_impl or ""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -344,7 +333,6 @@ class InsertExplicitCopies(ppl.Pass):
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)
-            self._configure_for_scope(libnode, in_device)
 
             state.remove_edge(edge)
             state.add_node(libnode)
@@ -353,12 +341,6 @@ class InsertExplicitCopies(ppl.Pass):
             count += 1
 
         return count
-
-    def _configure_for_scope(self, libnode: 'CopyLibraryNode', in_device_scope: bool) -> None:
-        """Pin schedule + implementation when the copy lands inside a GPU device scope."""
-        if in_device_scope and self.inside_device_impl:
-            libnode.implementation = self.inside_device_impl
-            libnode.schedule = dtypes.ScheduleType.Sequential
 
     def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """Replace map-boundary staging paths with ``CopyLibraryNode`` instances.
@@ -419,7 +401,6 @@ class InsertExplicitCopies(ppl.Pass):
             name = (f"copy_{outer_an.data}_to_{local_an.data}"
                     if direction == 'in' else f"copy_{local_an.data}_to_{outer_an.data}")
             libnode = CopyLibraryNode(name=name)
-            self._configure_for_scope(libnode, in_device)
 
             state.remove_edge(edge)
             state.add_node(libnode)

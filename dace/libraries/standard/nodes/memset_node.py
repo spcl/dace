@@ -14,9 +14,9 @@ from dace.codegen.common import sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dynamic_inputs,
-                                            extract_stream_and_dynamic_inputs)
-from dace.libraries.standard.nodes.copy_node import _add_stream_descriptor, _wire_stream_to
+from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dynamic_inputs, add_stream_descriptor as
+                                            _add_stream_descriptor, extract_stream_and_dynamic_inputs, wire_stream_to as
+                                            _wire_stream_to)
 
 
 def _make_memset_skeleton(
@@ -40,35 +40,88 @@ def _make_memset_skeleton(
     return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed, stream_input
 
 
-def _make_single_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG,
-                                cuda: bool) -> nodes.Tasklet:
-    """Return a single Tasklet emitting ``memset`` / ``cudaMemsetAsync`` -- replaces the library node in place."""
-    out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+def _validate_no_dynamic_inputs(node: "MemsetLibraryNode", dynamic_inputs):
+    """Direct-tasklet memset paths can't bind dynamic scalar inputs (no map
+    around them); use the 'pure' implementation if you need that."""
     if dynamic_inputs:
         raise NotImplementedError(
-            f"{type(node).__name__} direct-tasklet expansion does not yet support dynamic input scalars; "
+            f"{type(node).__name__} direct-tasklet expansion does not support dynamic input scalars; "
             f"use the 'pure' implementation for this case.")
 
+
+def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                              parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    """Tasklet emitting ``cudaMemsetAsync(_out, 0, n)``."""
+    out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+    _validate_no_dynamic_inputs(node, dynamic_inputs)
+
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
-
     has_stream = stream_input is not None
-    if cuda:
-        stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
-        code = (f"cudaMemsetAsync(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), "
-                f"{stream_expr});")
-    else:
-        code = f"memset(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
+    stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
+    code = f"cudaMemsetAsync(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});"
 
-    in_conns = {}
-    if has_stream:
-        in_conns[_STREAM_CONN] = dace.dtypes.gpuStream_t
+    in_conns = {_STREAM_CONN: dace.dtypes.gpuStream_t} if has_stream else {}
+    return nodes.Tasklet(node.name,
+                         inputs=in_conns,
+                         outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                         code=code,
+                         language=dace.Language.CPP)
 
-    tasklet = nodes.Tasklet(node.name,
-                            inputs=in_conns,
-                            outputs={"_out": dace.dtypes.pointer(out.dtype)},
-                            code=code,
-                            language=dace.Language.CPP)
-    return tasklet
+
+def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                             parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    """Tasklet emitting ``memset(_out, 0, n)``."""
+    out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
+    _validate_no_dynamic_inputs(node, dynamic_inputs)
+
+    cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
+    code = f"memset(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
+
+    return nodes.Tasklet(node.name,
+                         inputs={},
+                         outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                         code=code,
+                         language=dace.Language.CPP)
+
+
+def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
+    """Single source of truth for resolving ``MemsetLibraryNode.implementation``
+    when set to ``'Auto'``. Returns one of ``'pure'`` / ``'CUDA'`` / ``'CPU'``.
+
+    - In-device scope: ``'pure'`` (a Sequential map of element-zero, the only
+      thing safe inside device code — ``cudaMemsetAsync`` cannot be issued
+      from a kernel).
+    - GPU storage on the destination, host-issued: ``'CUDA'``
+      (``cudaMemsetAsync``).
+    - Else: ``'CPU'`` (``std::memset``).
+
+    Falls back to ``'pure'`` whenever dynamic scalar inputs are present —
+    only the mapped expansion supports those."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
+
+    if is_devicelevel_gpu(parent_sdfg, parent_state, node) or dynamic_inputs:
+        return 'pure'
+
+    if out.storage == dace.dtypes.StorageType.GPU_Global:
+        return 'CUDA'
+    return 'CPU'
+
+
+@library.expansion
+class ExpandAuto(ExpandTransformation):
+    """Default expansion: dispatches to the implementation chosen by
+    :func:`select_memset_implementation` based on the destination storage,
+    dynamic inputs, and the surrounding scope."""
+    environments = []
+
+    @staticmethod
+    def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        impl_name = select_memset_implementation(node, parent_state, parent_sdfg)
+        assert impl_name != 'Auto', "select_memset_implementation must not return 'Auto'."
+        node.implementation = impl_name
+        return MemsetLibraryNode.implementations[impl_name].expansion(node, parent_state, parent_sdfg)
 
 
 @library.expansion
@@ -105,7 +158,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=True)
+        return _make_cuda_memset_tasklet(node, parent_state, parent_sdfg)
 
 
 @library.expansion
@@ -114,13 +167,13 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _make_single_memset_tasklet(node, parent_state, parent_sdfg, cuda=False)
+        return _make_cpu_memset_tasklet(node, parent_state, parent_sdfg)
 
 
 @library.node
 class MemsetLibraryNode(nodes.LibraryNode):
-    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
-    default_implementation = 'pure'
+    implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
+    default_implementation = 'Auto'
 
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, **kwargs)

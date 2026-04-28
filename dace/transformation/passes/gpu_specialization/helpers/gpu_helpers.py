@@ -104,6 +104,12 @@ def is_stream_connector(conn_name: str) -> bool:
     return conn_name == COPY_MEMSET_STREAM_CONNECTOR or conn_name.startswith(get_gpu_stream_connector_name())
 
 
+def has_stream_connector(node) -> bool:
+    """Return True if ``node`` already carries any GPU-stream input connector
+    (``stream`` or ``__stream_<id>``). Use to skip nodes a prior pass wired."""
+    return any(is_stream_connector(c) for c in node.in_connectors)
+
+
 def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
     """Add a GPU-stream input connector with the right dtype.
 

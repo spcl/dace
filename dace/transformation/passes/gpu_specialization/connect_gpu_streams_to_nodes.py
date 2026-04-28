@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Set, Type, Union
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -18,7 +19,23 @@ from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import 
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name,
                                                                                get_gpu_stream_connector_name,
+                                                                               has_stream_connector,
                                                                                is_gpu_stream_consumer)
+
+
+def _enclosing_sequential_map_chain(state: SDFGState, node: nodes.Node) -> List[nodes.MapEntry]:
+    """Outermost → innermost Sequential MapEntries enclosing ``node``.
+    Empty when ``node`` is at state top level."""
+    chain = []
+    scope = state.entry_node(node)
+    while scope is not None:
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.Sequential:
+            chain.append(scope)
+        scope = state.entry_node(scope)
+    chain.reverse()
+    return chain
+
+
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 
 
@@ -95,38 +112,47 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
 
     def _build_chain(self, state: SDFGState, stream_id: int, stream_users: List[nodes.Node], stream_array_name: str,
                      stream_var_prefix: str) -> None:
-        """Build ``src -> n0 -> mid -> n1 -> ... -> n_{k-1} -> sink`` for one stream."""
+        """Build ``src -> n0 -> mid -> n1 -> ... -> n_{k-1} -> sink`` for one stream.
+
+        Top-level consumers are linked into the per-stream chain; consumers
+        sitting inside Sequential map scopes get their stream input threaded
+        through the maps (``IN_stream`` / ``OUT_stream`` pass-through) but
+        are NOT linked into the chain — the natural intra-scope sequencing
+        already orders them, and the chain dependency edges would otherwise
+        cross scope boundaries."""
         accessed_slot = f"{stream_array_name}[{stream_id}]"
-        # Defer the source AccessNode until we actually wire a user. When every
-        # node in this chain was already stream-wired by a prior pass (e.g. the
-        # ``_wire_stream_to`` baked into a CopyLibraryNode "pure" expansion),
-        # adding it eagerly leaves an isolated ``gpu_streams`` node that
-        # ``sdfg.validate()`` rejects.
+        # Defer the source AccessNode until we actually wire a user — see
+        # comment below about the validate() rejection of isolated nodes.
         prev_access = None
 
         for node in stream_users:
             entry, exit_ = self._entry_exit(state, node)
             in_conn = self._stream_in_connector_name(node, stream_id, stream_var_prefix)
 
-            # If this node already carries any stream connector — placed by a
-            # prior pipeline run (e.g. before `expand_library_nodes`) — leave
-            # it alone. The match must be on any ``__stream_*`` / ``stream``
-            # connector, not just the one we'd add this run, because the
-            # post-expansion scheduler may pick a different stream id for the
-            # same node (different WCC layout) and naive idempotency would
-            # add a second connector with a different name. Two stream
-            # connectors on a single GPU MapEntry trips
+            # Skip nodes a prior run already wired. The match has to be on
+            # any stream connector — the post-expansion scheduler may pick a
+            # different stream id and a second connector would trip
             # ``ExperimentalCUDACodeGen``'s "more than one GPU stream assigned
             # to a kernel" guard.
-            already_wired = any(c == COPY_MEMSET_STREAM_CONNECTOR or c.startswith(stream_var_prefix)
-                                for c in entry.in_connectors)
-            if already_wired:
+            if has_stream_connector(entry):
+                continue
+
+            entry.add_in_connector(in_conn, dtypes.gpuStream_t)
+
+            scope_chain = _enclosing_sequential_map_chain(state, entry)
+            if scope_chain:
+                # Consumer inside Sequential map(s) — route the stream
+                # through ``IN_stream`` / ``OUT_stream`` pass-through and
+                # don't link into the per-stream chain (the chain edges
+                # would cross scope boundaries).
+                src_access = state.add_access(stream_array_name)
+                self._wire_through_chain(state, src_access, scope_chain, entry, in_conn, accessed_slot,
+                                         stream_array_name)
                 continue
 
             if prev_access is None:
                 prev_access = state.add_access(stream_array_name)
 
-            entry.add_in_connector(in_conn, dtypes.gpuStream_t)
             state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
 
             # Dependency (empty memlet) out of the exit into the shared AccessNode
@@ -134,6 +160,24 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
             next_access = state.add_access(stream_array_name)
             state.add_edge(exit_, None, next_access, None, dace.Memlet(None))
             prev_access = next_access
+
+    @staticmethod
+    def _wire_through_chain(state: SDFGState, src_access: nodes.AccessNode, chain: List[nodes.MapEntry],
+                            target: nodes.Node, target_conn: str, accessed_slot: str, stream_array_name: str) -> None:
+        """Thread ``src_access`` through every map in ``chain`` (outermost
+        first) into ``target.target_conn`` via ``IN_stream`` / ``OUT_stream``
+        pass-through connectors."""
+        in_conn = f"IN_{COPY_MEMSET_STREAM_CONNECTOR}"
+        out_conn = f"OUT_{COPY_MEMSET_STREAM_CONNECTOR}"
+        outermost = chain[0]
+        outermost.add_in_connector(in_conn)
+        outermost.add_out_connector(out_conn)
+        state.add_edge(src_access, None, outermost, in_conn, Memlet(accessed_slot))
+        for outer, inner in zip(chain, chain[1:]):
+            inner.add_in_connector(in_conn)
+            inner.add_out_connector(out_conn)
+            state.add_edge(outer, out_conn, inner, in_conn, Memlet(accessed_slot))
+        state.add_edge(chain[-1], out_conn, target, target_conn, Memlet(accessed_slot))
 
     @staticmethod
     def _entry_exit(state: SDFGState, node: nodes.Node):

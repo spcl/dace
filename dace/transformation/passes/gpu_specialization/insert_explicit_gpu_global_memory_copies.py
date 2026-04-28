@@ -61,7 +61,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                              skip_inside_device_scope=True).apply_pass(sdfg, pipeline_results)
         # GPU -> GPU. Host-level copies become host-issued cudaMemcpyAsync;
         # in-device GPU->GPU copies are lowered to a Sequential
-        # ``DirectAssignment`` library node so they emit inline assignment code.
+        # ``Tasklet`` library node so they emit inline assignment code.
         InsertExplicitCopies(src_locations=_GPU_STORAGES, dst_locations=_GPU_STORAGES,
                              skip_inside_device_scope=True).apply_pass(sdfg, pipeline_results)
         return {}

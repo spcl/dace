@@ -193,9 +193,21 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
+# MemsetLibraryNode kept the legacy ``pure`` / ``CPU`` / ``CUDA`` impl names;
+# CopyLibraryNode renamed to ``MappedTasklet`` / ``MemcpyCPU`` / ``MemcpyCUDA1D``.
+# Tests still parametrize on the legacy label and translate per type here.
+_COPY_IMPL_FROM_EXPANSION_TYPE = {
+    "pure": "MappedTasklet",
+    "CPU": "MemcpyCPU",
+    "CUDA": "MemcpyCUDA1D",
+}
+
+
 def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
     for n, g in sdfg.all_nodes_recursive():
-        if isinstance(n, (CopyLibraryNode, MemsetLibraryNode)):
+        if isinstance(n, CopyLibraryNode):
+            n.implementation = _COPY_IMPL_FROM_EXPANSION_TYPE.get(expansion_type, expansion_type)
+        elif isinstance(n, MemsetLibraryNode):
             n.implementation = expansion_type
 
 

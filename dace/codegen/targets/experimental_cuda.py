@@ -803,18 +803,22 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             raise NotImplementedError(f'CUDA: Unimplemented storage type {nodedesc.storage}')
 
-    def _prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+    def _declare_pointer_if_needed(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, node: nodes.AccessNode,
+                                   nodedesc: dt.Data, declaration_stream: CodeIOStream) -> str:
+        """Emit ``T* {name};`` once and register it in defined_vars; return the
+        resolved data name. No-op if a prior pass already declared it."""
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
-
         if not self._dispatcher.declared_arrays.has(dataname):
             array_ctype = f'{nodedesc.dtype.ctype} *'
             declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
+        return dataname
 
-        arrsize = nodedesc.total_size
-        arrsize_malloc = f'{sym2cpp(arrsize)} * sizeof({nodedesc.dtype.ctype})'
+    def _prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+        dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+        arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
         if nodedesc.pool:
             gpu_stream = self._gpu_stream_manager.get_stream_node(node)
@@ -829,28 +833,19 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if node.setzero:
             allocation_stream.write(f'DACE_GPU_CHECK({self.backend}Memset({dataname}, 0, {arrsize_malloc}));\n', cfg,
                                     state_id, node)
-
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             allocation_stream.write(f'{dataname} += {sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
 
     def _prepare_CPU_Pinned_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                                   node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                                   declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-        dataname = ptr(node.data, nodedesc, sdfg, self._frame)
-
-        if not self._dispatcher.declared_arrays.has(dataname):
-            array_ctype = f'{nodedesc.dtype.ctype} *'
-            declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
-
-        arrsize = nodedesc.total_size
-        arrsize_malloc = f'{sym2cpp(arrsize)} * sizeof({nodedesc.dtype.ctype})'
+        dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+        arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
         allocation_stream.write(f'DACE_GPU_CHECK({self.backend}MallocHost(&{dataname}, {arrsize_malloc}));\n', cfg,
                                 state_id, node)
         if node.setzero:
             allocation_stream.write(f'memset({dataname}, 0, {arrsize_malloc});\n', cfg, state_id, node)
-
         if nodedesc.start_offset != 0:
             allocation_stream.write(f'{dataname} += {sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
 
@@ -1108,7 +1103,20 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
 
 class KernelSpec:
-    """Kernel metadata (name, grid/block dims, arguments) used by ``ExperimentalCUDACodeGen``."""
+    """Kernel metadata (name, grid/block dims, arguments) used by ``ExperimentalCUDACodeGen``.
+
+    Public attributes:
+      - ``kernel_map_entry``: the ``GPU_Device`` MapEntry that is the kernel's root scope.
+      - ``kernel_map``: shorthand for ``kernel_map_entry.map``.
+      - ``kernel_name``: function name of the generated ``__global__``.
+      - ``kernel_constants``: data + symbols that take a ``const`` qualifier in the kernel signature.
+      - ``arglist``: ``{name: descriptor}`` for every kernel argument.
+      - ``args_as_input`` / ``args_typed``: kernel-side argument forms (call site / declaration).
+      - ``kernel_wrapper_args_as_input`` / ``kernel_wrapper_args_typed``: host-wrapper forms.
+      - ``grid_dims`` / ``block_dims``: launch geometry.
+      - ``warpSize``: backend warp size from config.
+      - ``gpu_index_ctype``: C type for thread/block/warp indices (``compiler.cuda.gpu_index_type``).
+    """
 
     def __init__(self, cudaCodeGen: ExperimentalCUDACodeGen, sdfg: SDFG, cfg: ControlFlowRegion,
                  dfg_scope: ScopeSubgraphView, state_id: int):
@@ -1116,35 +1124,33 @@ class KernelSpec:
         kernel_map_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
         kernel_parent_state: SDFGState = cfg.state(state_id)
 
-        self._kernel_map_entry: nodes.MapEntry = kernel_map_entry
-        self._kernels_state: SDFGState = kernel_parent_state
-        self._kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
+        self.kernel_map_entry: nodes.MapEntry = kernel_map_entry
+        self.kernel_map: nodes.Map = kernel_map_entry.map
+        self.kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
 
-        # Constants get a ``const`` qualifier in the generated kernel signature.
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        self._kernel_constants: Set[str] = kernel_const_data | kernel_const_symbols
-        kernel_constants = self._kernel_constants
+        self.kernel_constants: Set[str] = kernel_const_data | kernel_const_symbols
 
-        arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
-        self._arglist = arglist
+        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
 
         restore_in_device_code = cudaCodeGen._in_device_code
 
         # ptr() resolves a different name on the device side (persistent arrays live in __state);
         # toggle the flag so we capture the device-side pointer name here.
         cudaCodeGen._in_device_code = True
-        self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
+        self.args_as_input: List[str] = [
+            ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in self.arglist.items()
+        ]
 
         args_typed = []
-        for name, data in arglist.items():
+        for name, data in self.arglist.items():
             if data.lifetime == dtypes.AllocationLifetime.Persistent:
                 arg_name = ptr(name, data, sdfg, cudaCodeGen._frame)
             else:
                 arg_name = name
-            args_typed.append(('const ' if name in kernel_constants else '') + data.as_arg(name=arg_name))
-
-        self._args_typed = args_typed
+            args_typed.append(('const ' if name in self.kernel_constants else '') + data.as_arg(name=arg_name))
+        self.args_typed: List[str] = args_typed
 
         cudaCodeGen._in_device_code = False
 
@@ -1160,32 +1166,30 @@ class KernelSpec:
                 f"There can not be more than one GPU stream assigned to a kernel, but {len(gpustream_input)} were assigned."
             )
 
-        self._kernel_wrapper_args_as_input = (
+        self.kernel_wrapper_args_as_input: List[str] = (
             ['__state'] + [ptr(name, data, sdfg, cudaCodeGen._frame)
-                           for name, data in arglist.items()] + [str(gpustream_input[0].dst_conn)])
+                           for name, data in self.arglist.items()] + [str(gpustream_input[0].dst_conn)])
 
-        self._kernel_wrapper_args_typed = ([f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] +
-                                           args_typed + [f"gpuStream_t {gpustream_var_name}"])
+        self.kernel_wrapper_args_typed: List[str] = (
+            [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + args_typed +
+            [f"gpuStream_t {gpustream_var_name}"])
 
         cudaCodeGen._in_device_code = restore_in_device_code
 
-        self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
-        self._gpu_index_ctype: str = self.get_gpu_index_ctype()
+        self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
+        self.gpu_index_ctype: str = self.get_gpu_index_ctype()
 
         if cudaCodeGen.backend not in ['cuda', 'hip']:
             raise ValueError(f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
                              "Only 'cuda' and 'hip' are supported.")
 
         warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
-        self._warpSize = Config.get('compiler', 'cuda', warp_size_key)
+        self.warpSize: int = Config.get('compiler', 'cuda', warp_size_key)
 
     def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
-        """Return the C type string for GPU thread/block/warp indices.
-
-        :param config_key: configuration key under ``compiler.cuda`` that names the DaCe dtype.
-        :return: the C type string for the configured DaCe dtype.
-        :raises ValueError: if the configured type name is not a DaCe dtype.
-        """
+        """Return the C type string for the configured DaCe dtype under
+        ``compiler.cuda.<config_key>``. Raises if the name does not resolve
+        to a DaCe ``typeclass``."""
         type_name = Config.get('compiler', 'cuda', config_key)
         dtype = getattr(dtypes, type_name, None)
         if not isinstance(dtype, dtypes.typeclass):
@@ -1194,68 +1198,3 @@ class KernelSpec:
                 'no matching DaCe data type found.\n'
                 'Please use a valid type from dace.dtypes (e.g., "int32", "uint64").')
         return dtype.ctype
-
-    @property
-    def kernel_constants(self) -> Set[str]:
-        """Constant data / symbols in this kernel."""
-        return self._kernel_constants
-
-    @property
-    def kernel_name(self) -> list[str]:
-        """Kernel function name."""
-        return self._kernel_name
-
-    @property
-    def kernel_map_entry(self) -> nodes.MapEntry:
-        """The ``GPU_Device`` ``MapEntry`` that is the kernel's root scope."""
-        return self._kernel_map_entry
-
-    @property
-    def kernel_map(self) -> nodes.Map:
-        """Shorthand for ``kernel_map_entry.map``."""
-        return self._kernel_map_entry.map
-
-    @property
-    def arglist(self) -> Dict[str, dt.Data]:
-        """Kernel arguments as a ``{name: descriptor}`` mapping."""
-        return self._arglist
-
-    @property
-    def args_as_input(self) -> list[str]:
-        """Kernel arguments in the form used at the kernel launch site."""
-        return self._args_as_input
-
-    @property
-    def args_typed(self) -> list[str]:
-        """Typed kernel arguments used to declare the kernel function."""
-        return self._args_typed
-
-    @property
-    def kernel_wrapper_args_as_input(self) -> list[str]:
-        """Arguments passed to the host-side kernel wrapper at its call site."""
-        return self._kernel_wrapper_args_as_input
-
-    @property
-    def kernel_wrapper_args_typed(self) -> list[str]:
-        """Typed arguments used to declare the host-side kernel wrapper."""
-        return self._kernel_wrapper_args_typed
-
-    @property
-    def grid_dims(self) -> list:
-        """Grid dimensions."""
-        return self._grid_dims
-
-    @property
-    def block_dims(self) -> list:
-        """Block dimensions."""
-        return self._block_dims
-
-    @property
-    def warpSize(self) -> int:
-        """Backend warp size (``compiler.cuda.{cuda,hip}_warp_size``)."""
-        return self._warpSize
-
-    @property
-    def gpu_index_ctype(self) -> str:
-        """C type used for GPU thread/block/warp indices (``compiler.cuda.gpu_index_type``)."""
-        return self._gpu_index_ctype
