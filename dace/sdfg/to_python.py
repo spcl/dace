@@ -7,9 +7,10 @@ module raises ``NotImplementedError`` naming the offending object.
 
 from __future__ import annotations
 
+import collections
 import inspect
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
 
@@ -71,6 +72,8 @@ class PythonEmitter:
     def emit(self) -> str:
         body = self._emit_factory("build_sdfg", self.root)
         lines: List[str] = []
+        lines.append(self._module_docstring())
+        lines.append("")
         lines.extend(self.HEADER_IMPORTS)
         for extra in self._extra_imports:
             lines.append(extra)
@@ -94,6 +97,22 @@ class PythonEmitter:
         lines.append("")
         return "\n".join(lines)
 
+    def _module_docstring(self) -> str:
+        sdfg = self.root
+        n_arrays = len(sdfg.arrays)
+        n_symbols = len(sdfg.symbols)
+        n_states = sum(1 for _ in sdfg.all_states())
+        return (
+            f'"""Reconstructed SDFG ``{sdfg.name}`` (auto-generated).\n\n'
+            f"This file was emitted by ``dace.sdfg.to_python.sdfg_to_python``.\n"
+            f"Calling :func:`build_sdfg` constructs an SDFG equivalent to the\n"
+            f"original via DaCe's imperative public API. No JSON deserialisation\n"
+            f"is involved.\n\n"
+            f"Stats: {n_symbols} symbols, {n_arrays} data descriptors, "
+            f"{n_states} states.\n"
+            f'"""'
+        )
+
     def _emit_factory(self, fn_name: str, sdfg: SDFG) -> List[str]:
         lines: List[str] = [f"def {fn_name}() -> SDFG:"]
         body = _IndentedBuffer(indent=1)
@@ -108,35 +127,61 @@ class PythonEmitter:
     # ------------------------------------------------------------------
 
     def _emit_sdfg(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
+        buf.line(f"# Top-level SDFG: {sdfg.name!r}")
         buf.line(f"{var} = SDFG({_pyrepr(sdfg.name)})")
 
         if getattr(sdfg, "using_explicit_control_flow", False):
             buf.line(f"{var}.using_explicit_control_flow = True")
 
-        self._emit_symbol_block(sdfg, var, buf)
-        self._emit_constant_block(sdfg, var, buf)
-        self._emit_descriptor_block(sdfg, var, buf)
+        if sdfg.symbols:
+            buf.line("")
+            buf.line(
+                f"# --- Symbols ({len(sdfg.symbols)}) ---"
+            )
+            self._emit_symbol_block(sdfg, var, buf)
 
-        for lang, code in sdfg.global_code.items():
-            if code.as_string:
+        if sdfg.constants_prop:
+            buf.line("")
+            buf.line(
+                f"# --- Constants ({len(sdfg.constants_prop)}) ---"
+            )
+            self._emit_constant_block(sdfg, var, buf)
+
+        if sdfg.arrays:
+            buf.line("")
+            buf.line(
+                f"# --- Data descriptors ({len(sdfg.arrays)}) ---"
+            )
+            self._emit_descriptor_block(sdfg, var, buf)
+
+        # Init/global/exit code blocks — only emit a section when at least
+        # one block has non-empty source.
+        code_pairs = [
+            (lang, code, "append_global_code")
+            for lang, code in sdfg.global_code.items() if code.as_string
+        ] + [
+            (lang, code, "append_init_code")
+            for lang, code in sdfg.init_code.items() if code.as_string
+        ] + [
+            (lang, code, "append_exit_code")
+            for lang, code in sdfg.exit_code.items() if code.as_string
+        ]
+        if code_pairs:
+            buf.line("")
+            buf.line("# --- Init/Global/Exit code blocks ---")
+            for lang, code, method in code_pairs:
                 buf.line(
-                    f"{var}.append_global_code({_pyrepr(code.as_string)}, "
-                    f"location={_emit_language(lang)})"
-                )
-        for lang, code in sdfg.init_code.items():
-            if code.as_string:
-                buf.line(
-                    f"{var}.append_init_code({_pyrepr(code.as_string)}, "
-                    f"location={_emit_language(lang)})"
-                )
-        for lang, code in sdfg.exit_code.items():
-            if code.as_string:
-                buf.line(
-                    f"{var}.append_exit_code({_pyrepr(code.as_string)}, "
+                    f"{var}.{method}({_pyrepr(code.as_string)}, "
                     f"location={_emit_language(lang)})"
                 )
 
-        self._emit_cfg_body(sdfg, var, buf)
+        # Hoist the SDFG's CFG body (states, regions, interstate edges)
+        # into a populator function so this factory stays a thin orchestrator.
+        populator = self._emit_cfg_populator(sdfg, kind="sdfg")
+        if populator is not None:
+            buf.line("")
+            buf.line("# --- Control flow body ---")
+            buf.line(f"{populator}({var}, {var})")
 
     # ------------------------------------------------------------------
     # Bulk emission for symbols / constants / descriptors
@@ -158,12 +203,21 @@ class PythonEmitter:
                 f"{var}.add_symbol({_pyrepr(name)}, {_emit_dtype(dtype)})"
             )
             return
-        buf.line("# symbols")
-        buf.line("for _name, _stype in [")
+        # Group by dtype: an SDFG with 250 bool symbols collapses into a
+        # single name list + one-line loop body, not 250 ``add_symbol`` lines.
+        by_dtype: Dict[str, List[str]] = collections.OrderedDict()
         for name, dtype in items:
-            buf.line(f"    ({_pyrepr(name)}, {_emit_dtype(dtype)}),")
-        buf.line("]:")
-        buf.line(f"    {var}.add_symbol(_name, _stype)")
+            by_dtype.setdefault(_emit_dtype(dtype), []).append(name)
+
+        for dtype_str, names in by_dtype.items():
+            if len(names) == 1:
+                buf.line(f"{var}.add_symbol({_pyrepr(names[0])}, {dtype_str})")
+                continue
+            buf.line("for _name in [")
+            for name in names:
+                buf.line(f"    {_pyrepr(name)},")
+            buf.line("]:")
+            buf.line(f"    {var}.add_symbol(_name, {dtype_str})")
 
     def _emit_constant_block(self, sdfg: SDFG, var: str,
                              buf: "_IndentedBuffer"):
@@ -178,7 +232,6 @@ class PythonEmitter:
                 f"{_emit_constant_value(cval)}, {dtype_arg})"
             )
             return
-        buf.line("# constants")
         buf.line("for _name, _value, _dtype in [")
         for name, (cdtype, cval) in items:
             dtype_arg = _emit_dtype(cdtype) if cdtype is not None else "None"
@@ -225,7 +278,13 @@ class PythonEmitter:
 
     def _emit_array_loop(self, items: List, var: str, method: str,
                          buf: "_IndentedBuffer", kwargs_fn):
-        """Emit a loop that calls ``var.add_X(name, shape, dtype, **kwargs)``."""
+        """Emit grouped loops for ``var.add_X(name, shape, dtype, **kwargs)``.
+
+        Arrays sharing the same (shape, dtype, kwargs) signature collapse into
+        one name list + a one-line loop body. CloudSC has hundreds of
+        ``('klev', 'klon')`` float64 arrays — that whole block becomes a single
+        for-over-names list instead of hundreds of repeated ``add_array`` lines.
+        """
         if not items:
             return
         if len(items) == 1:
@@ -235,22 +294,31 @@ class PythonEmitter:
                            [_pyrepr(name), _emit_shape(desc.shape),
                             _emit_dtype(desc.dtype)], kw))
             return
-        buf.line(f"# {method}s")
-        buf.line(f"for _name, _shape, _dtype, _kw in [")
-        for name, desc in items:
-            kw = kwargs_fn(desc)
-            kw_str = _emit_kwargs_dict(kw)
-            buf.line(
-                f"    ({_pyrepr(name)}, {_emit_shape(desc.shape)}, "
-                f"{_emit_dtype(desc.dtype)}, {kw_str}),"
-            )
-        buf.line("]:")
-        buf.line(f"    {var}.{method}(_name, _shape, _dtype, **_kw)")
+
+        groups = self._group_descriptors(items, kwargs_fn)
+        # Group by (shape, dtype, kwargs) so arrays sharing a signature
+        # collapse into one name list.
+        buf.line(
+            f"# {method}: {sum(len(n) for n in groups.values())} arrays, "
+            f"{len(groups)} signature group(s)"
+        )
+        for (shape_str, dtype_str, kw_tuple), names in groups.items():
+            kw = dict(kw_tuple)
+            if len(names) == 1:
+                buf.line(_call(f"{var}.{method}",
+                               [_pyrepr(names[0]), shape_str, dtype_str], kw))
+                continue
+            buf.line("for _name in [")
+            for name in names:
+                buf.line(f"    {_pyrepr(name)},")
+            buf.line("]:")
+            kw_args = "".join(f", {k}={v}" for k, v in kw.items())
+            buf.line(f"    {var}.{method}(_name, {shape_str}, {dtype_str}{kw_args})")
 
     def _emit_descriptor_loop(self, items: List, var: str, method: str,
                               buf: "_IndentedBuffer", kwargs_fn,
                               takes_shape: bool):
-        """Emit a loop that calls ``var.add_X(name, dtype, **kwargs)`` (no shape)."""
+        """Emit grouped loops for ``var.add_X(name, dtype, **kwargs)`` (no shape)."""
         if not items:
             return
         if len(items) == 1:
@@ -259,41 +327,134 @@ class PythonEmitter:
             buf.line(_call(f"{var}.{method}",
                            [_pyrepr(name), _emit_dtype(desc.dtype)], kw))
             return
-        buf.line(f"# {method}s")
-        buf.line(f"for _name, _dtype, _kw in [")
+
+        groups: Dict[Tuple[str, Tuple], List[str]] = collections.OrderedDict()
         for name, desc in items:
             kw = kwargs_fn(desc)
-            kw_str = _emit_kwargs_dict(kw)
-            buf.line(
-                f"    ({_pyrepr(name)}, {_emit_dtype(desc.dtype)}, {kw_str}),"
-            )
-        buf.line("]:")
-        buf.line(f"    {var}.{method}(_name, _dtype, **_kw)")
+            key = (_emit_dtype(desc.dtype), tuple(sorted(kw.items())))
+            groups.setdefault(key, []).append(name)
+
+        buf.line(
+            f"# {method}: {sum(len(n) for n in groups.values())} entries, "
+            f"{len(groups)} dtype group(s)"
+        )
+        for (dtype_str, kw_tuple), names in groups.items():
+            kw = dict(kw_tuple)
+            if len(names) == 1:
+                buf.line(_call(f"{var}.{method}",
+                               [_pyrepr(names[0]), dtype_str], kw))
+                continue
+            buf.line("for _name in [")
+            for name in names:
+                buf.line(f"    {_pyrepr(name)},")
+            buf.line("]:")
+            kw_args = "".join(f", {k}={v}" for k, v in kw.items())
+            buf.line(f"    {var}.{method}(_name, {dtype_str}{kw_args})")
+
+    @staticmethod
+    def _group_descriptors(items: List, kwargs_fn):
+        """Group descriptors by their (shape, dtype, kwargs) signature."""
+        groups: Dict[Tuple[str, str, Tuple], List[str]] = collections.OrderedDict()
+        for name, desc in items:
+            kw = kwargs_fn(desc)
+            key = (_emit_shape(desc.shape), _emit_dtype(desc.dtype),
+                   tuple(sorted(kw.items())))
+            groups.setdefault(key, []).append(name)
+        return groups
 
     # ------------------------------------------------------------------
     # Control flow region body
     # ------------------------------------------------------------------
 
-    def _emit_cfg_body(self, cfg: AbstractControlFlowRegion, parent_var: str,
-                       buf: "_IndentedBuffer"):
-        if cfg.number_of_nodes() == 0:
-            return
+    def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion,
+                            kind: str = "cfg") -> Optional[str]:
+        """Emit a top-level ``_populate_<kind>_<N>(cfg, sdfg)`` function for
+        this CFG region's body, and return the function name. Returns ``None``
+        for empty regions so the caller can skip emitting a noop call.
 
+        The CFG-region populator is the parallel of the per-state populator:
+        instead of inlining nested LoopRegion/ConditionalBlock bodies into
+        ``build_sdfg()``, each region's body lives in its own helper. The
+        result is that a 200-state SDFG factory degenerates to:
+        ``add_state(...)``, ``_populate_state_N(...)``, plus a flat list of
+        inter-state edges — readable at a glance.
+        """
+        if cfg.number_of_nodes() == 0:
+            return None
+
+        idx = self._populator_counter
+        self._populator_counter += 1
+        fn_name = f"_populate_{kind}_{idx}"
+        # Reserve our slot before recursing so any nested CFG populator
+        # we encounter while emitting our body claims a later index.
+        self._state_populators.append([])
+
+        outer_var_for = self._var_for
+        outer_counter = self._name_counter
+        outer_taken = self._taken_names
+        self._var_for = {}
+        self._name_counter = {}
+        self._taken_names = set()
+        self._taken_names.update({"cfg", "sdfg"})  # protect parameter names
+
+        body = _IndentedBuffer(indent=1)
         try:
             start_block = cfg.start_block
         except ValueError:
             start_block = None
 
         for block in cfg.nodes():
-            self._emit_cfg_block(block, parent_var, buf, is_start=block is start_block)
+            self._emit_cfg_block(block, "cfg", body,
+                                 is_start=block is start_block)
 
+        self._emit_interstate_edges(cfg, "cfg", body)
+
+        self._var_for = outer_var_for
+        self._name_counter = outer_counter
+        self._taken_names = outer_taken
+
+        lines = [f"def {fn_name}(cfg, sdfg):"]
+        descr = _describe_region(cfg)
+        lines.append(f'    """Populate the body of {descr}."""')
+        if not body.lines:
+            lines.append("    pass")
+        else:
+            lines.extend(body.lines)
+        self._state_populators[idx] = lines
+        return fn_name
+
+    def _emit_interstate_edges(self, cfg: AbstractControlFlowRegion,
+                               cfg_var: str, buf: "_IndentedBuffer"):
+        """Batch trivial ``InterstateEdge()`` edges into a single for-loop;
+        emit conditioned/assigning edges imperatively (one line each)."""
+        trivial: List = []
+        rich: List = []
         for edge in cfg.edges():
             src_var = self._var_for[id(edge.src)]
             dst_var = self._var_for[id(edge.dst)]
-            buf.line(
-                f"{parent_var}.add_edge({src_var}, {dst_var}, "
-                f"{_emit_interstate_edge(edge.data)})"
+            data = edge.data
+            cond_str = data.condition.as_string if data.condition is not None else ""
+            is_trivial = (
+                cond_str.strip() in {"", "1", "True", "true"}
+                and not data.assignments
             )
+            if is_trivial:
+                trivial.append((src_var, dst_var))
+            else:
+                rich.append((src_var, dst_var, _emit_interstate_edge(data)))
+
+        if len(trivial) == 1:
+            src_var, dst_var = trivial[0]
+            buf.line(f"{cfg_var}.add_edge({src_var}, {dst_var}, InterstateEdge())")
+        elif trivial:
+            buf.line("for _src, _dst in [")
+            for src_var, dst_var in trivial:
+                buf.line(f"    ({src_var}, {dst_var}),")
+            buf.line("]:")
+            buf.line(f"    {cfg_var}.add_edge(_src, _dst, InterstateEdge())")
+
+        for src_var, dst_var, edge_str in rich:
+            buf.line(f"{cfg_var}.add_edge({src_var}, {dst_var}, {edge_str})")
 
     def _emit_cfg_block(self, block, parent_var: str, buf: "_IndentedBuffer",
                         is_start: bool):
@@ -311,7 +472,6 @@ class PythonEmitter:
 
         if isinstance(block, LoopRegion):
             var = self._fresh(f"loop_{_sanitize(block.label)}")
-            args = [_pyrepr(block.label)]
             kwargs: Dict[str, str] = {}
             if block.loop_condition is not None and block.loop_condition.as_string:
                 kwargs["condition_expr"] = _pyrepr(block.loop_condition.as_string)
@@ -329,10 +489,19 @@ class PythonEmitter:
                 kwargs["unroll"] = "True"
             if block.unroll_factor:
                 kwargs["unroll_factor"] = repr(int(block.unroll_factor))
-            buf.line(f"{var} = {_call('LoopRegion', args, kwargs)}")
+            # Multi-line LoopRegion call for readability — its parameter
+            # list is long enough that a single line would exceed any
+            # reasonable wrap.
+            buf.line(f"{var} = LoopRegion(")
+            buf.line(f"    label={_pyrepr(block.label)},")
+            for k, v in kwargs.items():
+                buf.line(f"    {k}={v},")
+            buf.line(f")")
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
-            self._emit_cfg_body(block, var, buf)
+            populator = self._emit_cfg_populator(block, kind="loop")
+            if populator is not None:
+                buf.line(f"{populator}({var}, sdfg)")
             return
 
         if isinstance(block, ConditionalBlock):
@@ -344,10 +513,12 @@ class PythonEmitter:
                 region_var = self._fresh(f"branch_{_sanitize(region.label)}")
                 buf.line(
                     f"{region_var} = ControlFlowRegion("
-                    f"{_pyrepr(region.label)}, sdfg={_root_sdfg_var(self, parent_var)})"
+                    f"{_pyrepr(region.label)}, sdfg=sdfg)"
                 )
                 self._var_for[id(region)] = region_var
-                self._emit_cfg_body(region, region_var, buf)
+                populator = self._emit_cfg_populator(region, kind="branch")
+                if populator is not None:
+                    buf.line(f"{populator}({region_var}, sdfg)")
                 cond_arg = (
                     f"CodeBlock({_pyrepr(cond.as_string)})" if cond is not None else "None"
                 )
@@ -365,7 +536,9 @@ class PythonEmitter:
             )
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
-            self._emit_cfg_body(block, var, buf)
+            populator = self._emit_cfg_populator(block, kind="call")
+            if populator is not None:
+                buf.line(f"{populator}({var}, sdfg)")
             return
 
         if isinstance(block, NamedRegion):
@@ -373,7 +546,9 @@ class PythonEmitter:
             buf.line(f"{var} = NamedRegion({_pyrepr(block.label)})")
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
-            self._emit_cfg_body(block, var, buf)
+            populator = self._emit_cfg_populator(block, kind="named")
+            if populator is not None:
+                buf.line(f"{populator}({var}, sdfg)")
             return
 
         if isinstance(block, ControlFlowRegion):
@@ -381,7 +556,9 @@ class PythonEmitter:
             buf.line(f"{var} = ControlFlowRegion({_pyrepr(block.label)})")
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
-            self._emit_cfg_body(block, var, buf)
+            populator = self._emit_cfg_populator(block, kind="cfr")
+            if populator is not None:
+                buf.line(f"{populator}({var}, sdfg)")
             return
 
         if isinstance(block, BreakBlock):
@@ -472,6 +649,9 @@ class PythonEmitter:
         self._taken_names = outer_taken
 
         lines = [f"def {fn_name}(state):"]
+        lines.append(
+            f'    """Populate state {state.label!r} with its data-flow body."""'
+        )
         if not body.lines:
             lines.append("    pass")
         else:
@@ -793,12 +973,24 @@ def _emit_kwargs_dict(kwargs: Dict[str, str]) -> str:
     return "{" + items + "}"
 
 
-def _root_sdfg_var(emitter: PythonEmitter, parent_var: str) -> str:
-    # ConditionalBlock.add_branch wires region.sdfg = self.sdfg, but the
-    # ControlFlowRegion ctor still wants an sdfg= reference for symbol scope.
-    # Inside build_sdfg() the root SDFG variable is named after the first
-    # _fresh('sdfg') call, which is always 'sdfg' for the top-level factory.
-    return "sdfg"
+def _describe_region(cfg) -> str:
+    """Human-readable label for a CFG region, used in populator docstrings."""
+    if isinstance(cfg, SDFG):
+        return f"SDFG {cfg.name!r}"
+    if isinstance(cfg, LoopRegion):
+        cond = cfg.loop_condition.as_string if cfg.loop_condition else ""
+        if cond:
+            return f"LoopRegion {cfg.label!r} (while {cond})"
+        return f"LoopRegion {cfg.label!r}"
+    if isinstance(cfg, ConditionalBlock):
+        return f"ConditionalBlock {cfg.label!r}"
+    if isinstance(cfg, FunctionCallRegion):
+        return f"FunctionCallRegion {cfg.label!r}"
+    if isinstance(cfg, NamedRegion):
+        return f"NamedRegion {cfg.label!r}"
+    if isinstance(cfg, ControlFlowRegion):
+        return f"ControlFlowRegion {cfg.label!r}"
+    return f"{type(cfg).__name__} {getattr(cfg, 'label', '?')!r}"
 
 
 def _emit_dtype(dtype) -> str:
