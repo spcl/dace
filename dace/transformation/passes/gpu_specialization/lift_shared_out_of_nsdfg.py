@@ -10,7 +10,7 @@ A symmetric dependency edge to ``MapExit`` ensures it stays live through
 the kernel.
 """
 import copy as _copy
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Tuple
 
 from dace import SDFG, SDFGState, dtypes, properties, nodes
 from dace.memlet import Memlet
@@ -78,8 +78,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         sdict = state.scope_dict()
         scope = sdict.get(node)
         while scope is not None:
-            if (isinstance(scope, nodes.MapEntry)
-                    and scope.map.schedule == dtypes.ScheduleType.GPU_Device):
+            if (isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device):
                 return scope
             scope = sdict.get(scope)
         return None
