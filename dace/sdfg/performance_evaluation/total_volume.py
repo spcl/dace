@@ -325,7 +325,6 @@ def analyze_sdfg(sdfg:SDFG):
 
     infer_types.set_default_schedule_and_storage_types(sdfg)
     tvm = {}
-    rvm = {}
     static_symbol_mapping = get_static_symbols(sdfg)
 
     read, write = cfr_volume(sdfg, tvm, [], False)
