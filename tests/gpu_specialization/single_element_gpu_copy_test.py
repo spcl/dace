@@ -1,12 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-element copies between GPU and CPU through ``CopyLibraryNode``.
 
-These cover the corner case where the copy descriptor / memlet has only one
-element. Without proper pointer typing on the memcpy tasklet's connectors,
-``infer_*_connector_type`` types ``_memcpy_in`` as ``T`` (a value) instead of
-``T *`` (a buffer), and the emitted ``cudaMemcpyAsync(_memcpy_out,
-_memcpy_in, ...)`` fails to compile because ``_memcpy_in`` is a dereferenced
-local rather than a pointer.
+Cover the corner case where the copy memlet has only one element. Without
+proper pointer typing on the memcpy tasklet's connectors,
+``infer_connector_types`` would type ``_in`` as ``T`` (a value) instead of
+``T *`` (a buffer), and the emitted ``cudaMemcpyAsync(_out, _in, ...)``
+would fail to compile.
 
 The kernel matrix in ``npbench_new_gpu_pipeline_test.py`` exercises this
 incidentally (e.g. syr2k's ``B_index``); these tests reproduce it directly

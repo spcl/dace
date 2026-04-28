@@ -1,36 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict, List, Optional, Set, Type, Union
 
-import dace
 from dace import SDFG, SDFGState, properties
 from dace.config import Config
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.transformation import pass_pipeline as ppl, transformation
-
-# Storages whose copies are serviced by the GPU stream pipeline.
-_GPU_SIDE_STORAGES = frozenset({
-    dace.dtypes.StorageType.GPU_Global,
-    dace.dtypes.StorageType.GPU_Shared,
-    dace.dtypes.StorageType.CPU_Pinned,
-})
-
-
-def _is_gpu_copy_or_memset(node, state: SDFGState, sdfg: SDFG) -> bool:
-    """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU
-    global or pinned host memory -- i.e. the nodes the GPU stream pipeline
-    needs to wire a stream handle to.
-    """
-    if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state, sdfg) in _GPU_SIDE_STORAGES
-                or node.dst_storage(state, sdfg) in _GPU_SIDE_STORAGES)
-    if isinstance(node, MemsetLibraryNode):
-        # Memset has a single output; inspect its descriptor via the parent
-        # state at detection time (see ``_requires_gpu_stream``).
-        return True
-    return False
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_relevant_node
 
 
 class GPUStreamSchedulingStrategy(ppl.Pass):
@@ -45,7 +21,14 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {}
+        # Stream scheduling assumes implicit AccessNode->AccessNode GPU copies
+        # have already been lifted to ``CopyLibraryNode``s — those are the
+        # nodes the scheduler attaches stream ids to. Without the lift, GPU
+        # transfers are invisible to the scheduler and downstream wiring
+        # silently misses them.
+        from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
+            InsertExplicitGPUGlobalMemoryCopies)
+        return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -198,33 +181,16 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     def _requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
         """Return True when ``component`` needs a GPU stream.
 
-        A component requires a stream if it contains any of:
-
-        - an ``AccessNode`` with ``GPU_Global`` storage,
-        - a ``MapEntry`` scheduled on ``GPU_Device``,
-        - a ``CopyLibraryNode`` / ``MemsetLibraryNode`` touching GPU storage
-          (these lower to stream-bound memcpy / kernel launches).
+        A component requires a stream if it contains any GPU-relevant node
+        (see ``is_gpu_relevant_node``) at any nesting depth — that helper is
+        the single source of truth for "this node needs a stream wired to
+        it" across the GPU specialization pipeline.
         """
-
-        def gpu_relevant(node, parent) -> bool:
-            if (isinstance(node, nodes.AccessNode) and node.desc(parent).storage == dace.dtypes.StorageType.GPU_Global):
-                return True
-
-            elif (isinstance(node, nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
-                return True
-
-            elif _is_gpu_copy_or_memset(node, parent, parent.sdfg):
-                return True
-
-            return False
-
+        sdfg = state.parent
         for node in component:
             if isinstance(node, nodes.NestedSDFG):
-                if any(gpu_relevant(node, parent) for node, parent in node.sdfg.all_nodes_recursive()):
+                if any(is_gpu_relevant_node(n, parent.sdfg, parent) for n, parent in node.sdfg.all_nodes_recursive()):
                     return True
-
-            else:
-                if gpu_relevant(node, state):
-                    return True
-
+            elif is_gpu_relevant_node(node, sdfg, state):
+                return True
         return False

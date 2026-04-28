@@ -77,8 +77,12 @@ def test_profile():
     assert len(prof.times) == 2
     assert len(prof.times[0][1]) == 10
     assert len(prof.times[1][1]) == 10
-    assert prof.times[0][0].name.endswith('test2')
-    assert prof.times[1][0].name.endswith('test1')
+    # ``startswith`` rather than ``endswith`` so the per-test SDFG-name
+    # suffix added by the autouse fixture in ``tests/conftest.py`` doesn't
+    # break this assertion. Author's intent (which ``@dace.program``
+    # produced this SDFG) is preserved either way.
+    assert prof.times[0][0].name.startswith('test2')
+    assert prof.times[1][0].name.startswith('test1')
 
 
 if __name__ == '__main__':

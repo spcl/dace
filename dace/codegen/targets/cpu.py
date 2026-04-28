@@ -59,12 +59,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
-                if arg_type.storage is dtypes.StorageType.GPU_Global:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-                    continue
-
+                # ``PromoteGPUScalarsToArrays`` runs before codegen and
+                # rewrites every GPU-storage Scalar into a length-1 Array,
+                # so by the time we get here a Scalar is necessarily a
+                # value-typed CPU-side scalar — register it as such.
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
@@ -510,7 +508,12 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.dtype == dtypes.gpuStream_t:
                 ctype = dtypes.gpuStream_t.ctype
                 allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
-                define_var(name, DefinedType.Pointer, ctype)
+                # Local is ``gpuStream_t* {name}`` — register the matching
+                # pointer ctype so consumers (``emit_memlet_reference``) emit
+                # ``gpuStream_t* gpu_streams`` in nested-SDFG signatures
+                # instead of ``gpuStream_t gpu_streams`` (1 vs. 2 pointer
+                # levels).
+                define_var(name, DefinedType.Pointer, dtypes.pointer(dtypes.gpuStream_t).ctype)
                 return
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype

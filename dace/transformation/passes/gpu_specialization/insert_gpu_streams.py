@@ -4,10 +4,12 @@ from typing import Any, Dict, Set, Type, Union
 import dace
 from dace import SDFG, dtypes, properties
 from dace.sdfg import is_devicelevel_gpu
-from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node
+from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler, _is_gpu_copy_or_memset
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (add_gpu_stream_connector,
+                                                                               get_gpu_stream_array_name,
+                                                                               is_gpu_relevant_node)
 
 
 @properties.make_properties
@@ -74,7 +76,7 @@ class InsertGPUStreams(ppl.Pass):
                 # Connect parent SDFG array to nested SDFG node
                 inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
                 inner_parent_state = inner_sdfg.parent
-                inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
+                add_gpu_stream_connector(inner_nsdfg_node, stream_array_name, single_stream=False)
                 inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
                 inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
                                             dace.Memlet(stream_array_name))
@@ -86,7 +88,7 @@ class InsertGPUStreams(ppl.Pass):
             # Ensure final connection from the first parent that had the array down to this SDFG
             inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
             inner_parent_state = inner_sdfg.parent
-            inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
+            add_gpu_stream_connector(inner_nsdfg_node, stream_array_name, single_stream=False)
             inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
             inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
                                         dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
@@ -112,22 +114,19 @@ class InsertGPUStreams(ppl.Pass):
 
             for state in child_sdfg.states():
                 for node in state.nodes():
-
-                    # Case 1: Kernel launch nodes
-                    if isinstance(node, (MapEntry, MapExit)) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                    # MapExit also counts (it's the symmetric end of the
+                    # kernel launch); ``is_gpu_relevant_node`` only matches
+                    # MapEntry, so check it here.
+                    if isinstance(node, MapExit) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                         requiring_gpu_stream.add(child_sdfg)
                         break
-
-                    # Case 2: Copy / memset library nodes targeting GPU storage.
-                    # Their expansions take an explicit `stream` in-connector,
-                    # so the enclosing SDFG must have the stream array.
-                    if _is_gpu_copy_or_memset(node, state, child_sdfg):
-                        requiring_gpu_stream.add(child_sdfg)
-                        break
-
-                    # Case 3: Accessing GPU global memory outside device-level scopes
+                    # Skip GPU AccessNodes that are inside a device scope
+                    # (codegen handles them through register/local paths,
+                    # no host-side stream needed).
                     if (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Global
-                            and not is_devicelevel_gpu(state.sdfg, state, node)):
+                            and is_devicelevel_gpu(state.sdfg, state, node)):
+                        continue
+                    if is_gpu_relevant_node(node, child_sdfg, state):
                         requiring_gpu_stream.add(child_sdfg)
                         break
 

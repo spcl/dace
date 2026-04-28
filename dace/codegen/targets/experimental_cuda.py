@@ -17,8 +17,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.cpp import (codeblock_to_cpp, memlet_copy_to_absolute_strides, mangle_dace_state_struct_name,
-                                      ptr, sym2cpp)
+from dace.codegen.targets.cpp import (codeblock_to_cpp, mangle_dace_state_struct_name, ptr, sym2cpp)
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 from dace.transformation.passes import analysis as ap
@@ -29,15 +28,13 @@ from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes 
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
-                                                                               get_gpu_stream_array_name)
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
-from dace.sdfg.core_dialect import warn_if_not_core_dialect
+from dace.sdfg.core_dialect import (CoreDialectCompliant, warn_if_not_core_dialect)
 
 from dace.codegen.targets import cpp
 
@@ -102,58 +99,41 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def preprocess(self, sdfg: SDFG) -> None:
         """Prepare the SDFG for GPU code generation."""
-        warn_if_not_core_dialect(sdfg, source='ExperimentalCUDACodeGen')
 
-        # Strided GPU<->GPU AccessNode-to-AccessNode edges that do not collapse to a single
-        # cudaMemcpy / cudaMemcpy2D pattern are lowered to explicit maps.
-        from dace.transformation.dataflow import CopyToMap
-        for e, state in list(sdfg.all_edges_recursive()):
-            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
-                nsdfg = state.parent
-                if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
-                        and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
-                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
-                        None, nsdfg, state, e, e.src, e.dst)
-                    dims = len(copy_shape)
-
-                    if dims == 1:
-                        continue
-                    elif dims == 2:
-                        if src_strides[-1] != 1 or dst_strides[-1] != 1:
-                            # Contiguous copy with one axis squeezed out, e.g.
-                            # dcol[0:I, 0:J, k] -> datacol[0:I, 0:J] with shape [I, J]
-                            # and strides [J*K, K], [J, 1].
-                            try:
-                                is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
-                                is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
-                            except (TypeError, ValueError):
-                                is_src_cont = False
-                                is_dst_cont = False
-                            if is_src_cont and is_dst_cont:
-                                continue
-                        else:
-                            continue
-                    elif dims > 2:
-                        if not (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                            continue
-
-                    try:
-                        CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
-                    except ValueError:
-                        continue
+        # ----------------------------------------------------------------
+        # Pipeline 1 — codegen preparation. Establishes invariants the
+        # transformation pipeline below relies on: every descriptor has
+        # decided storage / schedule, and every Scalar that cannot live on
+        # the GPU as a Scalar (rule 1) or that the kernel writes to (rule 2)
+        # has been promoted to a length-1 Array. After this pipeline, the
+        # SDFG is "well-formed for GPU codegen" — no further inference or
+        # descriptor rewrites should be needed.
+        # ----------------------------------------------------------------
+        from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
+                                                                              PromoteGPUScalarsToArrays)
+        codegen_preparation_pipeline = Pipeline([
+            InferDefaultSchedulesAndStorages(),
+            PromoteGPUScalarsToArrays(),
+        ])
+        codegen_preparation_pipeline.apply_pass(sdfg, {})
 
         self._infer_kernel_dimensions(sdfg)
 
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
-        # Refuse to re-run the stream pipeline on an SDFG that already carries
-        # the lowered marker (the ``gpu_streams`` array at the root). Users
-        # who applied the pipeline manually before calling ``compile()`` would
-        # otherwise re-enter ``InsertGPUStreams`` and trip ``FileExistsError``
-        # at the root ``add_transient`` call.
-        already_lowered = get_gpu_stream_array_name() in sdfg.arrays
+        # ----------------------------------------------------------------
+        # Pipeline 2 — GPU specialization. Phase 1 (assign + connect) on
+        # the freshly-lifted SDFG; then ``expand_library_nodes`` (recursive)
+        # exhaustively lowers every LibraryNode; Phase 2
+        # (``ReconnectWithinExpandedSDFGs``) routes internal GPU consumers
+        # of expansion-spawned NestedSDFGs to reuse the one ``stream``
+        # connector each inherited from its source LibraryNode — no fresh
+        # ``gpu_streams`` array threading inside expanded bodies.
+        # ----------------------------------------------------------------
+        from dace.transformation.passes.gpu_specialization.reconnect_within_expanded_sdfgs import (
+            ReconnectWithinExpandedSDFGs)
 
-        stream_pipeline = Pipeline([
+        gpu_specialization_pipeline = Pipeline([
             InsertExplicitGPUGlobalMemoryCopies(),
             NaiveGPUStreamScheduler(),
             InsertGPUStreams(),
@@ -162,65 +142,40 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         ])
 
         self._dispatcher._used_targets.add(self)
-        if already_lowered:
-            # The WCC structure changes once sync tasklets are inserted (one
-            # global sync joins disjoint components into a single component),
-            # so re-running NaiveGPUStreamScheduler at this point would
-            # produce an artificially low max stream id and the init code
-            # would create fewer streams than the existing wiring uses.
-            # Recover assignments from the wiring instead.
-            gpustream_assignments = self._extract_stream_assignments(sdfg)
-        else:
-            gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
+        gpustream_assignments = gpu_specialization_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
-        # Hard guarantee: after the explicit-copy pipeline runs, no implicit
-        # AccessNode→AccessNode copy that touches GPU memory may remain at the
-        # host level. The experimental codegen has no path to lower such an
-        # edge — every GPU-memory copy must be carried by an explicit
-        # ``CopyLibraryNode`` (which the pipeline above inserts).
-        from dace.sdfg.core_dialect import CoreDialectCompliant as _CoreDialect
-        leftover = _CoreDialect.offenders_implicit_gpu_copies(sdfg)
-        if leftover:
-            raise ValueError("ExperimentalCUDACodeGen: InsertExplicitGPUGlobalMemoryCopies left "
-                             f"{len(leftover)} implicit GPU-memory copy edge(s) un-lowered. "
-                             "The experimental GPU codegen requires every CPU↔GPU and GPU↔GPU "
-                             "AccessNode→AccessNode edge to be expressed via an explicit "
-                             "CopyLibraryNode. Offenders:\n  - " + "\n  - ".join(leftover))
-
-        # The pipeline inserts CopyLibraryNode instances; lower them and re-infer
-        # connector types so codegen emits correctly-typed function signatures.
         sdfg.expand_library_nodes(recursive=True)
+        ReconnectWithinExpandedSDFGs().apply_pass(sdfg, {})
 
-        # Pick up implicit AN->AN copies and stream wiring that surfaced
-        # inside nested SDFGs spawned by library expansion.
-        post_expansion_pipeline = Pipeline([
-            InsertExplicitGPUGlobalMemoryCopies(),
-            NaiveGPUStreamScheduler(),
-            InsertGPUStreams(),
-            ConnectGPUStreamsToNodes(),
-        ])
-        post_results = post_expansion_pipeline.apply_pass(sdfg, {})
-        post_assignments = post_results.get('NaiveGPUStreamScheduler', {}) or {}
-        # Pre-expansion assignments are baked into the already-wired
-        # `__stream_N_in` connectors and the codegen's stream-array indices,
-        # so they must be preserved. Merge so the union covers both halves.
-        merged = dict(gpustream_assignments)
-        for node, sid in post_assignments.items():
-            if node not in merged:
-                merged[node] = sid
-        gpustream_assignments = merged
-
-        # InsertExplicitGPUGlobalMemoryCopies may have added new CopyLibraryNodes
-        # (one per implicit copy uncovered by expansion); lower those too.
-        sdfg.expand_library_nodes(recursive=True)
         # Library-node expansion (CopyLibraryNode "pure" implementations etc.)
         # can produce fresh GPU_Device maps that weren't present when
-        # ``_kernel_dimensions_map`` was first built. Re-run after all
-        # expansions and stream wiring are settled.
+        # ``_kernel_dimensions_map`` was first built.
         self._infer_kernel_dimensions(sdfg)
 
+        # Core-dialect compliance is a property of the *post-pipeline* SDFG —
+        # probing earlier would warn about every implicit copy the pipeline
+        # subsequently lifts to a ``CopyLibraryNode``, drowning real bugs in
+        # noise. The strict guard against leftover implicit GPU-memory copies
+        # also runs here, after both ``expand_library_nodes`` rounds, so an
+        # offender introduced by library expansion is caught instead of slipping
+        # through into ill-formed generated code.
+        warn_if_not_core_dialect(sdfg, source='ExperimentalCUDACodeGen')
+        leftover = CoreDialectCompliant.offenders_implicit_gpu_copies(sdfg)
+        if leftover:
+            raise ValueError("ExperimentalCUDACodeGen: " + str(len(leftover)) +
+                             " implicit GPU-memory copy edge(s) survived InsertExplicitGPUGlobalMemoryCopies + "
+                             "expand_library_nodes. Every CPU↔GPU and GPU↔GPU AccessNode→AccessNode edge must be "
+                             "expressed via an explicit CopyLibraryNode. Offenders:\n  - " + "\n  - ".join(leftover))
+
         from dace.sdfg import infer_types
-        infer_types.infer_connector_types(sdfg)
+        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        # Reset stale Array-vs-scalar connector types on NestedSDFGs (some
+        # are spawned by library expansion with construction-time typing
+        # that no longer matches the inner descriptor) and re-infer per
+        # sub-SDFG — ``infer_connector_types`` only walks top-level states.
+        invalidate_array_connectors(sdfg)
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            infer_types.infer_connector_types(nsdfg)
 
         # Library-node expansion can add new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
@@ -269,35 +224,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # it walks every GPU_Device map in the SDFG, so an unmodified kernel
         # gets an identical (grid, block) tuple back.
         self._kernel_dimensions_map.update(InferGPUGridAndBlockSize().apply_pass(sdfg, self._tb_inserted_kernels))
-
-    def _extract_stream_assignments(self, sdfg: SDFG) -> Dict[Any, int]:
-        """Recover ``{node: stream_id}`` from the wiring laid down by a prior
-        ConnectGPUStreamsToNodes run. The id sits in the subset of every
-        memlet read from a ``gpu_streams`` AccessNode."""
-        stream_array = get_gpu_stream_array_name()
-        assignments: Dict[Any, int] = {}
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            for state in nsdfg.states():
-                for node in state.nodes():
-                    if not (isinstance(node, nodes.AccessNode) and node.data == stream_array):
-                        continue
-                    for edge in state.out_edges(node):
-                        subset = edge.data.subset
-                        if subset is None:
-                            continue
-                        try:
-                            sid = int(subset[0][0])
-                        except Exception:
-                            continue
-                        sink = edge.dst
-                        if isinstance(sink, nodes.MapEntry):
-                            assignments[sink] = sid
-                            mexit = state.exit_node(sink)
-                            if mexit is not None:
-                                assignments[mexit] = sid
-                        else:
-                            assignments[sink] = sid
-        return assignments
 
     def _annotate_legacy_cuda_stream(self, sdfg: SDFG, assignments: Dict[Any, int]) -> None:
         """Set ``_cuda_stream`` on tasklets that reference ``__dace_current_stream``.
@@ -549,24 +475,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_typed)), cfg,
             state_id, scope_entry)
 
-        # Wrap the invocation in a block so dynamic map input definitions don't leak.
-        # The CopyLibraryNode "pure" expansion threads its launch-stream
-        # through a non-``IN_*`` connector named ``stream`` (see
-        # ``COPY_MEMSET_STREAM_CONNECTOR``). ``dynamic_map_inputs`` therefore
-        # surfaces it as a "dynamic input" alongside real dynamic-range
-        # scalars. Re-defining it here would shadow the outer-scope binding
-        # (the same name was registered as ``Scalar(const gpuStream_t)`` by
-        # ``emit_memlet_reference`` for the parent nested-SDFG arg, so adding
-        # ``Pointer(gpuStream_t*)`` here trips ``defined_vars``' shadow guard).
-        # The kernel-map per-stream connectors (``__stream_<id>``) added by
-        # ``ConnectGPUStreamsToNodes`` are *not* skipped — their local
-        # ``gpuStream_t __stream_N = gpu_streams[N];`` declaration is the
-        # only place those names get bound in the wrapper.
+        # Wrap the invocation in a block so dynamic-input local declarations don't leak.
         state = cfg.state(state_id)
-
-        dyn_inputs = [
-            e for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if e.dst_conn != COPY_MEMSET_STREAM_CONNECTOR
-        ]
+        dyn_inputs = list(dace.sdfg.dynamic_map_inputs(state, scope_entry))
         has_dyn_inputs = len(dyn_inputs) > 0
         if has_dyn_inputs:
             callsite_stream.write('{', cfg, state_id, scope_entry)
@@ -645,23 +556,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     edge: Tuple[nodes.Node, str, nodes.Node, str,
                                 Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-
-        from dace.codegen.targets.experimental_cuda_helpers.copy_strategies import (CopyContext,
-                                                                                    OutOfKernelCopyStrategy,
-                                                                                    SyncCollaboritveGPUCopyStrategy)
-
-        context = CopyContext(sdfg, cfg.state(state_id), src_node, dst_node, edge,
-                              self._gpu_stream_manager.gpustream_assignments)
-
-        if OutOfKernelCopyStrategy().applicable(context):
-            # Already lowered to a CopyLibraryNode during preprocess().
-            return
-
-        elif SyncCollaboritveGPUCopyStrategy().applicable(context):
-            code = SyncCollaboritveGPUCopyStrategy().generate_copy(context, self._kernel_dimensions_map)
-            callsite_stream.write(code, cfg, state_id, [src_node, dst_node])
-        else:
-            self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+        # All CPU↔GPU and GPU↔GPU AccessNode→AccessNode edges (host-issued
+        # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
+        # ``InsertExplicitGPUGlobalMemoryCopies`` during ``preprocess()`` and
+        # lowered through their expansions. Anything reaching this dispatch
+        # is a register / scope-local CPU copy — delegate to CPU codegen.
+        self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def state_dispatch_predicate(self, sdfg, state):
         """Return True iff this codegen should drive code emission for ``state``.
@@ -977,26 +877,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             allocation_stream.write(
                 f'dace::ResetShared<{nodedesc.dtype.ctype}, {", ".join(sym2cpp(self._current_kernel_spec.block_dims))}, {sym2cpp(arrsize)}, '
                 f'1, false>::Reset({dataname});\n', cfg, state_id, node)
-
-    def _prepare_Register_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                                declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-
-        dataname = ptr(node.data, nodedesc, sdfg, self._frame)
-
-        if symbolic.issymbolic(arrsize, sdfg.constants):
-            raise ValueError('Dynamic allocation of registers not allowed')
-        if nodedesc.start_offset != 0:
-            raise NotImplementedError('Start offset unsupported for registers')
-
-        arrsize = nodedesc.total_size
-        array_ctype = '{nodedesc.dtype.ctype} *'
-        init_clause = ' = {0}' if node.setzero else ''
-
-        declaration_stream.write(f'{nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}]{init_clause};\n', cfg,
-                                 state_id, node)
-
-        self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,

@@ -709,8 +709,8 @@ def test_direct_assignment_register_to_register():
     found_tasklet = False
     found_map = False
     for n, _ in sdfg.all_nodes_recursive():
-        if (isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP and "_da_out" in n.code.as_string
-                and "_da_in" in n.code.as_string):
+        if (isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP
+                and "_cpy_out" in n.code.as_string and "_cpy_in" in n.code.as_string):
             found_tasklet = True
         if isinstance(n, dace.sdfg.nodes.MapEntry):
             found_map = True

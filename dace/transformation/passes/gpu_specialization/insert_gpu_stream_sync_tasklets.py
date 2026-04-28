@@ -7,11 +7,11 @@ from dace.codegen import common
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (NaiveGPUStreamScheduler,
-                                                                                 _is_gpu_copy_or_memset)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name,
-                                                                               get_gpu_stream_connector_name)
+                                                                               get_gpu_stream_connector_name,
+                                                                               is_gpu_copy_or_memset_libnode)
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
 
@@ -32,7 +32,14 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler, InsertGPUStreams, ConnectGPUStreamsToNodes}
+        # Sync tasklets are emitted around CopyLibraryNode / MemsetLibraryNode
+        # boundaries; they require those nodes to exist (i.e. implicit copies
+        # already lifted) before sync points can be located.
+        from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
+            InsertExplicitGPUGlobalMemoryCopies)
+        return {
+            InsertExplicitGPUGlobalMemoryCopies, NaiveGPUStreamScheduler, InsertGPUStreams, ConnectGPUStreamsToNodes
+        }
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.Memlets
@@ -78,7 +85,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             return src_in_kernel and dst_in_kernel
 
         def is_stream_bound_copy_or_memset(src, state):
-            return (_is_gpu_copy_or_memset(src, state, state.sdfg)
+            return (is_gpu_copy_or_memset_libnode(src, state.sdfg, state)
                     and COPY_MEMSET_STREAM_CONNECTOR in src.in_connectors)
 
         sync_state: Dict[SDFGState, Set[int]] = {}

@@ -14,11 +14,11 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (NaiveGPUStreamScheduler,
-                                                                                 _is_gpu_copy_or_memset)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name,
-                                                                               get_gpu_stream_connector_name)
+                                                                               get_gpu_stream_connector_name,
+                                                                               is_gpu_stream_consumer)
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 
 
@@ -76,9 +76,7 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
             stream_id = stream_assignments.get(node)
             if stream_id is None:
                 continue
-            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
-                per_stream[stream_id].append(node)
-            elif _is_gpu_copy_or_memset(node, state, state.sdfg):
+            if is_gpu_stream_consumer(node, state.sdfg, state):
                 per_stream[stream_id].append(node)
             elif isinstance(node, nodes.LibraryNode):
                 # Generic GPU library nodes (MatMul, Gemm, Cholesky, Potrf,
