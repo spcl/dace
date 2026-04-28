@@ -8,7 +8,6 @@ from dace.sdfg import nodes
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
-from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse

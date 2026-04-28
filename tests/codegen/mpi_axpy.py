@@ -3,7 +3,6 @@
 import argparse
 import dace
 import numpy as np
-import scipy as sp
 from mpi4py import MPI
 from dace.transformation.dataflow import MPITransformMap
 

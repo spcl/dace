@@ -11,20 +11,18 @@ from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import sym2cpp
 from dace import dtypes, memlet as mm
-from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
+from dace.sdfg import graph, state
 from dace.sdfg.scope import is_in_scope
-import itertools
 from dace.codegen.targets.sve import util as util
-from typing import List, Optional
+from typing import Optional
 import copy
 from io import StringIO
 import dace.codegen.targets.sve.unparse
-from dace import registry, symbolic, dtypes
+from dace import dtypes
 from dace.codegen.targets import cpp as cpp
 from dace.frontend.operations import detect_reduction_type
 import dace.symbolic
 from dace.codegen.targets.cpp import sym2cpp
-from dace.sdfg import utils as sdutil
 from dace.codegen.dispatcher import DefinedType
 import copy
 import numpy as np

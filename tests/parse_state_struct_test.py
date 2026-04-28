@@ -40,7 +40,7 @@ def _cuda_helper():
     compiler.generate_program_folder(None, [program, dummy_cuda_target], BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
 
-    checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"), "cuda_helper")
+    checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"))
 
     class CudaHelper:
 

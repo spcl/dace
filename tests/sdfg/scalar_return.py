@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 import pytest
-from typing import Tuple
 
 from dace.sdfg.validation import InvalidSDFGError
 

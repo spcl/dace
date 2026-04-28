@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+from importlib.util import find_spec
 
 
 @pytest.mark.tensorflow
@@ -26,8 +27,5 @@ def test_simple():
 
 
 if __name__ == '__main__':
-    try:
-        import tensorflow
+    if find_spec("tensorflow"):
         test_simple()
-    except ImportError:
-        pass
