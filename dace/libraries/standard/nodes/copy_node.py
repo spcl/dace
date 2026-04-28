@@ -86,14 +86,18 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 3. Single-element copies route by side: same-side → direct ``_out = _in``
-    # tasklet (``Tasklet`` impl), cross CPU/GPU → ``cudaMemcpyAsync``
-    # (``MemcpyCUDA1D``). Skipping the ``MappedTasklet`` path here also avoids
-    # its 0-D map crash when every dimension collapses.
+    # 3. Single-element copies short-circuit the MappedTasklet path (which
+    # would otherwise build a 0-D map and crash propagation). Routing by
+    # side: CPU↔CPU → ``Tasklet`` (a host ``_out = _in`` Python tasklet);
+    # any GPU memory involvement (same-side GPU↔GPU or cross CPU/GPU) →
+    # ``MemcpyCUDA1D`` (``cudaMemcpyAsync`` infers the direction from
+    # endpoint storages).
     in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
     out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
     if in_volume == 1 and out_volume == 1:
-        return 'MemcpyCUDA1D' if _is_cross_cpu_gpu(inp.storage, out.storage) else 'Tasklet'
+        if inp.storage in _CPU_STORAGES and out.storage in _CPU_STORAGES:
+            return 'Tasklet'
+        return 'MemcpyCUDA1D'
 
     # 4. Coarse pick by storage pair: any copy touching GPU memory goes
     # through the cudaMemcpy family; everything else falls through to

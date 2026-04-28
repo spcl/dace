@@ -18,7 +18,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     COPY_MEMSET_STREAM_CONNECTOR, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
-    get_gpu_stream_connector_name, has_stream_connector, is_gpu_stream_consumer, is_inside_gpu_device_kernel)
+    get_gpu_stream_connector_name, has_stream_connector, innermost_enclosing_map, is_gpu_stream_consumer,
+    is_inside_gpu_device_kernel)
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 
 
@@ -90,7 +91,6 @@ class ConnectGPUStreamsToNodes(ppl.Pass):
             # cycle through the kernel ``MapExit``'s stream-chain
             # dependency edge (kernel exit feeds the outer ``gpu_streams``
             # AccessNode that the in-kernel libnode tries to read from).
-            from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import innermost_enclosing_map
             if innermost_enclosing_map(state, node, dtypes.ScheduleType.GPU_Device) is not None:
                 continue
             if is_gpu_stream_consumer(node, state.sdfg, state):

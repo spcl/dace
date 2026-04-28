@@ -98,14 +98,6 @@ def get_gpu_stream_connector_name() -> str:
     return "__stream_"
 
 
-def get_dace_runtime_gpu_stream_name() -> str:
-    return "__dace_current_stream"
-
-
-def get_default_gpu_stream_name() -> str:
-    return "__default_stream"
-
-
 # Storages that mark a copy/memset library node as "GPU-relevant" — i.e.
 # its expansion wires the ``stream`` connector to a cudaMemcpy /
 # cudaMemset runtime call. Hoisted to module scope because
