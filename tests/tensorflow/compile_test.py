@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+from importlib.util import find_spec
 
 
 @pytest.mark.tensorflow
 def test_compile():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
 
     print('DaCe Tensorflow frontend compile API test')
 
@@ -29,8 +30,5 @@ def test_compile():
 
 
 if __name__ == '__main__':
-    try:
-        import tensorflow
+    if find_spec("tensorflow"):
         test_compile()
-    except ImportError:
-        pass

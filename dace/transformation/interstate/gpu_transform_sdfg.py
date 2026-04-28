@@ -4,8 +4,7 @@
 from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
-from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
@@ -364,7 +363,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                         if node.guid:
-                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            if isinstance(node, nodes.LibraryNode):
+                                node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
                         if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
@@ -426,9 +426,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             csdfg = state.parent
                             # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
                             # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
-                            if (not scalar_output
-                                    or (csdfg.parent is not None
-                                        and csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
+                            if not scalar_output or (csdfg.parent is not None and not scope.is_devicelevel_gpu_kernel(
+                                    csdfg.parent_sdfg, csdfg.parent, csdfg.parent_nsdfg_node)):
                                 global_code_nodes[state].append(node)
                                 gpu_scalars.update({k: None for k in scalars})
                                 changed = True

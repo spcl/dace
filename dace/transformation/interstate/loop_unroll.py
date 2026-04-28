@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
 import ast
@@ -79,6 +79,8 @@ class LoopUnroll(xf.MultiStateTransformation):
             is_symbolic |= symbolic.issymbolic(current_index)
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                str(i) if is_symbolic else None)
+            iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: str(current_index)})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -103,9 +105,9 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         # If we remove start block we need to update the new start-block
         was_start_block = graph.start_block == self.loop
+        oes = graph.out_edges(self.loop)
         graph.remove_node(self.loop)
         if was_start_block:
-            oes = graph.out_edges(self.loop)
             if len(oes) > 0:
                 oe = oes[0]
                 oes2 = graph.out_edges(oe.dst)
@@ -142,7 +144,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
             assert block not in block_map
             block_map[block] = new_block
-            new_block.replace(loop.loop_variable, value)
+            new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
         for edge in loop.edges():

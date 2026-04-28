@@ -3,7 +3,6 @@ import dace
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
-import pytest
 import dace.sdfg.utils as sdutil
 
 
@@ -128,7 +127,6 @@ def test_interstate_assignment():
     sdutil.specialize_scalar(sdfg=sdfg, scalar_name="nlev", scalar_val="90")
     for e in sdfg.all_interstate_edges():
         assert e.data.assignments == {"nlev_sym": "90"}
-    return sdfg
 
 
 def test_interstate_read():

@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 try:
     import polybench
@@ -64,8 +63,9 @@ def init_array(A, B, C, D, alpha, beta, ni, nj, nk, nl):
             D[i, j] = datatype(i * (j + 2) % nk) / nk
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NL], datatype[NI, NL], datatype[1], datatype[1])
-def k2mm(A, B, C, D, alpha, beta):
+@dace.program
+def k2mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NL], D: datatype[NI, NL], alpha: datatype[1],
+         beta: datatype[1]):
     tmp = dace.define_local([NI, NJ], dtype=datatype)
 
     @dace.map

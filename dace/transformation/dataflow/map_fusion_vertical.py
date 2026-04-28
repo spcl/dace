@@ -4,9 +4,10 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import itertools
 import dace
-from dace import data, properties, subsets, symbolic, transformation
+from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.sdfg.type_inference import infer_expr_type
 
 
 @properties.make_properties
@@ -69,7 +70,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     :param assume_always_shared: Handle all intermediate nodes as if they were classified as
         "shared", see `partition_first_outputs()` for more.
     :param require_exclusive_intermediates: If `True` then the transformation will only apply
-        if all intermediates are "eclusive", i.e., can be removed, see `partition_first_outputs()`.
+        if all intermediates are "exclusive", i.e., can be removed, see `partition_first_outputs()`.
     :param require_all_intermediates: If `True` then the transformation will only apply if
         all outputs of the first Map are intermediate, i.e., are consumed by the second Map.
     :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
@@ -377,6 +378,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         for node_to_remove in [first_map_exit, second_map_entry]:
             assert graph.degree(node_to_remove) == 0
             graph.remove_node(node_to_remove)
+
+        # This will ensure that regardless in which order a set of fusable Maps are
+        #  processed the label of the final Map will always be the same.
+        first_map_label = first_map_exit.map.label
+        second_map_label = second_map_entry.map.label
+        if second_map_label < first_map_label:
+            first_map_exit.map.label = second_map_label
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
@@ -749,8 +757,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
             #  output within one Map iteration.
-            #  NOTE: The insertion process might generate a new name.
-            new_inter_name: str = f"__s{self.state_id}_n{state.node_id(out_edge.src)}{out_edge.src_conn}_n{state.node_id(out_edge.dst)}{out_edge.dst_conn}"
+            # NOTE: For exclusive intermediate data there is no name collision, but
+            #   for shared intermediate there _might_ be a name collision if the
+            #   intermediate could be used in another MapFusionVertical operation.
+            new_inter_name: str = f"__map_fusion_{inter_name}"
 
             # Now generate the intermediate data container.
             if len(new_inter_shape) == 0:
@@ -1541,11 +1551,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
 
-        # Dataflow graph is acyclic, so we do not need to keep a list of
-        #  what we have visited.
+        # Track visited nodes to avoid exponential blowup from visiting
+        # the same node multiple times via different paths in the DAG.
         to_visit: List[nodes.Node] = list(next_nodes(begin))
+        visited: Set[nodes.Node] = set()
         while len(to_visit) > 0:
             node = to_visit.pop()
+            if node in visited:
+                continue
+            visited.add(node)
             if isinstance(node, nodes.AccessNode) and node.data == data:
                 return True
             to_visit.extend(next_nodes(node))
@@ -1835,7 +1849,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     else:
                         # NOTE: This code is copied from `SDFGState.add_nested_sdfg()`, according
                         #   to the description this is not a very good implementation.
-                        from dace.codegen.tools.type_inference import infer_expr_type
                         new_inner_value_type = infer_expr_type(outer_value, outer_sdfg.symbols) or dtypes.typeclass(int)
                     inner_sdfg.add_symbol(new_inner_value_sym, new_inner_value_type)
             return new_inner_values

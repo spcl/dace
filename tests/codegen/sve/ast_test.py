@@ -4,7 +4,6 @@ import dace
 import dace.dtypes
 from tests.codegen.sve.common import get_code
 import pytest
-from dace.codegen.targets.sve.type_compatibility import IncompatibleTypeError
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -12,8 +11,8 @@ M = dace.symbol('M')
 
 def test_assign_scalar():
 
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -29,8 +28,8 @@ def test_assign_scalar():
 
 def test_assign_pointer():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[:]
@@ -44,8 +43,8 @@ def test_assign_pointer():
 
 def test_compare_scalar_vector():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -59,8 +58,8 @@ def test_compare_scalar_vector():
 
 def test_if_block():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -78,8 +77,8 @@ def test_if_block():
 
 def test_assign_new_variable():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -99,8 +98,8 @@ def test_assign_new_variable():
 
 def test_math_functions():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -123,8 +122,8 @@ def test_math_functions():
 
 def test_fused_operations():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]

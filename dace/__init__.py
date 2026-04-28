@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import sys
 from .version import __version__
+from . import attr_enum
 from .dtypes import *
+from . import serialize
 
 # Import built-in hooks
 from .builtin_hooks import *
@@ -33,6 +35,17 @@ raw_path = Config.get("external_transformations_path")
 if raw_path is not None:
     __external_transformations_path__ = os.path.expanduser(os.path.expandvars(raw_path))
     sys.path.insert(0, __external_transformations_path__)
+
+
+# Lazy loading for ml module to avoid eager TensorFlow/PyTorch imports
+def __getattr__(name):
+    if name == 'ml':
+        import importlib
+        ml_module = importlib.import_module('.ml', package='dace')
+        # Cache the module to avoid re-importing
+        globals()['ml'] = ml_module
+        return ml_module
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 # Hack that enables using @dace as a decorator

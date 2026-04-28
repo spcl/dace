@@ -8,7 +8,8 @@ from networkx.algorithms.flow import edmondskarp
 import sympy as sp
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union, Optional, Any
+from typing import Any, Deque, Dict, List, Set, Tuple, Union, Optional
+from numbers import Number
 from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
@@ -18,6 +19,11 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
                                                 SingleStateTransformation)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
+
+try:
+    from numpy.typing import ArrayLike
+except ImportError:
+    ArrayLike = Any  # type: ignore
 
 
 class SDFGCutout(SDFG):
@@ -52,12 +58,12 @@ class SDFGCutout(SDFG):
         self._instrument_base_sdfg()
         self._base_sdfg(*args, **kwargs)
 
-    def find_inputs(self, *args, **kwargs) -> Dict[str, Union[data.ArrayLike, data.Number]]:
+    def find_inputs(self, *args, **kwargs) -> Dict[str, Union[ArrayLike, Number]]:
         self._dry_run_base_sdfg(*args, **kwargs)
 
         drep = self._base_sdfg.get_instrumented_data()
         if drep:
-            vals: Dict[str, Union[data.ArrayLike, data.Number]] = dict()
+            vals: Dict[str, Union[ArrayLike, Number]] = dict()
             for ip in self.input_config.union(set(self.symbols)):
                 val = drep.get_first_version(ip)
                 vals[ip] = val
@@ -103,8 +109,8 @@ class SDFGCutout(SDFG):
                     pass
             transformation.subgraph = new_subgraph
 
-    def to_json(self, hash=False):
-        cutout_json = super().to_json(hash)
+    def to_json(self, hash=False, include_transformation_history=False):
+        cutout_json = super().to_json(hash, include_transformation_history)
         cutout_json['type'] = SDFG.__name__
         return cutout_json
 
@@ -238,10 +244,10 @@ class SDFGCutout(SDFG):
                 continue
             dataname = memlet.data
             if '.' in dataname:
-                # This is an access to a struct memeber, which typically happens for the memlets between an access node
+                # This is an access to a struct member, which typically happens for the memlets between an access node
                 # pointing to a struct (or view thereof), and a view pointing to the member. Assert that this is indeed
                 # the case (i.e., only one '.' is found in the name of the data being accessed), and if so, clone the
-                # struct (or struct view) data descriptor instad.
+                # struct (or struct view) data descriptor instead.
                 parts = dataname.split('.')
                 if len(parts) == 2:
                     dataname = parts[0]
@@ -251,7 +257,7 @@ class SDFGCutout(SDFG):
             cutout.add_datadesc(dataname, new_desc)
 
         # Add a single state with the extended subgraph
-        new_state = cutout.add_state(state.label, is_start_state=True)
+        new_state = cutout.add_state(state.label, is_start_block=True)
         if preserve_guids:
             new_state.guid = state.guid
         in_translation = dict()
@@ -469,13 +475,13 @@ class SDFGCutout(SDFG):
                 new_el: SDFGState = create_element(is_edge.src)
                 in_translation[is_edge.src] = new_el
                 out_translation[new_el] = is_edge.src
-                cutout.add_node(new_el, is_start_state=(is_edge.src == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.src == start_state))
                 new_el.parent = cutout
             if is_edge.dst not in in_translation:
                 new_el: SDFGState = create_element(is_edge.dst)
                 in_translation[is_edge.dst] = new_el
                 out_translation[new_el] = is_edge.dst
-                cutout.add_node(new_el, is_start_state=(is_edge.dst == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.dst == start_state))
                 new_el.parent = cutout
             new_isedge: InterstateEdge = create_element(is_edge.data)
             in_translation[is_edge.data] = new_isedge
@@ -488,7 +494,7 @@ class SDFGCutout(SDFG):
                 new_el = create_element(state)
                 in_translation[state] = new_el
                 out_translation[new_el] = state
-                cutout.add_node(new_el, is_start_state=(state == start_state))
+                cutout.add_node(new_el, is_start_block=(state == start_state))
                 new_el.parent = cutout
 
         in_translation[sdfg.cfg_id] = cutout.cfg_id
@@ -697,7 +703,7 @@ def _reduce_in_configuration(state: SDFGState,
 
     # If there is no unique outer entry node, we use a proxy node as the source.
     scope_nodes: Set[nd.Node] = set()
-    if source == None:
+    if source is None:
         source = nd.Node()
         scope_nodes = set(scope_children[None])
     else:

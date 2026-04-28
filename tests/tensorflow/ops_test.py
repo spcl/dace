@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+from importlib.util import find_spec
 
 
 @pytest.mark.tensorflow
 def test_shapen():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     myshape = [69, 96, 666]
     num_inputs = 5
 
@@ -28,7 +29,7 @@ def test_shapen():
 @pytest.mark.tensorflow
 def test_mean():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     shape = [10, 11, 12, 13]
 
     inp = tf.placeholder(tf.float64, shape)
@@ -58,7 +59,7 @@ def test_mean():
 @pytest.mark.tensorflow
 def test_addn():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     shape = [10, 11, 12, 13]
     inputs = [np.random.rand(*shape) for _ in range(10)]
     addn_test_0 = tf.add_n(inputs)
@@ -81,7 +82,7 @@ def test_addn():
 @pytest.mark.tensorflow
 def test_slice():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     t = tf.placeholder(tf.int32, [3, 2, 3])
     b = tf.placeholder(tf.int32, [3])
     s = tf.placeholder(tf.int32, [3])
@@ -104,11 +105,8 @@ def test_slice():
 
 
 if __name__ == '__main__':
-    try:
-        import tensorflow
+    if find_spec("tensorflow"):
         test_shapen()
         test_mean()
         test_addn()
         test_slice()
-    except ImportError:
-        pass

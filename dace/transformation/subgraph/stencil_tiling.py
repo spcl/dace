@@ -14,7 +14,6 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.strip_mining import StripMining
-from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.subgraph import SubgraphFusion
 
 from copy import deepcopy as dcpy
@@ -256,6 +255,11 @@ class StencilTiling(transformation.SubgraphTransformation):
                     if data_name in coverages[child_entry][0]:
                         children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
 
+                    # TODO: Is there a better fix for this?
+                    if children_coverage is None:
+                        # no coverage for this data_name in children
+                        # this is not supported
+                        return False
                     # extend mapping map_parameter -> coverage
                     # by the previous mapping
 

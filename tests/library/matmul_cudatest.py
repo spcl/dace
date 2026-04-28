@@ -3,11 +3,9 @@ import dace
 from dace.config import set_temporary
 from dace.library import change_default
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import itertools
 import numpy as np
-import sys
 import pytest
 
 ###############################################################################

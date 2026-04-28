@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -46,8 +45,8 @@ def init_array(A, C4, nr, nq, np):
             C4[i, j] = datatype((i * j) % np) / np
 
 
-@dace.program(datatype[NR, NQ, NP], datatype[NP, NP])
-def doitgen(A, C4):
+@dace.program
+def doitgen(A: datatype[NR, NQ, NP], C4: datatype[NP, NP]):
 
     @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):
@@ -58,8 +57,8 @@ def doitgen(A, C4):
         def compute_sum(p: _[0:NP], s: _[0:NP]):
             inA << A[r, q, s]
             inC4 << C4[s, p]
-            s >> sum(1, lambda a, b: a + b, 0)[p]
-            s = inA * inC4
+            outs >> sum(1, lambda a, b: a + b, 0)[p]
+            outs = inA * inC4
 
         @dace.map
         def compute_A(p: _[0:NP]):

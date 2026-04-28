@@ -3,13 +3,12 @@
 
 import collections
 import copy
-import os
 import warnings
 import networkx as nx
 import time
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -1099,6 +1098,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     """
 
     in_edges = state.in_edges(view)
+    # We should ignore empty synchronization edges
+    in_edges = [e for e in in_edges if not e.data.is_empty()]
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
@@ -1660,29 +1661,27 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str):
-    """
-    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfg" and a subfolder called
-    "build" with the shared object.
+def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
 
-    :param folder: Path to SDFG output folder.
-    :return: A callable CompiledSDFG object.
-    """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
-    suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(sdfg,
-                              csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+    warnings.warn(
+        'Used deprecated ``dace.sdfg.utils.load_precompiled_sdfg()`` function, use the one from ``dace.codegen.compiler`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+
+    return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
@@ -1699,7 +1698,7 @@ def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.Compil
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = load_precompiled_sdfg(folder)
+        func = sdfg_compiler.load_precompiled_sdfg(folder)
 
     comm.Barrier()
 
@@ -1879,31 +1878,6 @@ def traverse_sdfg_with_defined_symbols(
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
-
-
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    at_least_one_fpga_array = False
-    for n in data_nodes:
-        desc = n.desc(sdfg)
-        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            at_least_one_fpga_array = True
-        if isinstance(desc, dt.Scalar):
-            continue
-        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-
-    return at_least_one_fpga_array
 
 
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
@@ -2689,3 +2663,87 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     assert isinstance(scalar_name, str)
     assert isinstance(scalar_val, (float, int, str))
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to input connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the input connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.in_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to output connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the output connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.out_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to input connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the input connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[in_edge_with_name(node, state, name).data.data]
+
+
+def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to output connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the output connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[out_edge_with_name(node, state, name).data.data]
+
+
+def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
+    """
+    Recursively expand library nodes in the SDFG using a given predicate.
+
+    :param sdfg: the sdfg to expand nodes on.
+    :param predicate: a predicate that will be called to check if a node should be expanded.
+    """
+    if sdfg is None:
+        return
+    states = list(sdfg.states())
+    while len(states) > 0:
+        state = states.pop()
+        expanded_something = False
+        for node in list(state.nodes()):
+            if isinstance(node, nd.NestedSDFG):
+                expand_nodes(node.sdfg, predicate=predicate)
+            elif isinstance(node, nd.LibraryNode):
+                if predicate(node):
+                    impl_name = node.expand(state)
+                    if config.Config.get_bool('debugprint'):
+                        print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
+                            str(node), impl_name))
+                    expanded_something = True
+
+        if expanded_something:
+            states.append(state)

@@ -3,10 +3,8 @@
 import dace
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes import scalar_to_symbol
-from dace.transformation import transformation as xf, interstate as isxf
-from dace.transformation.interstate import loop_detection as ld
+from dace.transformation import interstate as isxf
 
-import collections
 from sympy import core as sympy_core
 import numpy as np
 import pytest
@@ -406,10 +404,11 @@ def test_promote_indirection_impossible():
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
         with dace.tasklet:
+            ii << i
             s << scal
             a << A(1)[:, :]
             out >> A(1)[:, :]
-            out[i, s] = a[s, i]
+            out[ii, s] = a[s, ii]
 
     sdfg: dace.SDFG = testprog13.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}

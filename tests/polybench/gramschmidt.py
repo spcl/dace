@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
-import numpy as np
 import dace
 import polybench
 
@@ -26,8 +25,8 @@ def init_array(A, R, Q, m, n):
             R[i, j] = datatype(0)
 
 
-@dace.program(datatype[M, N], datatype[N, N], datatype[M, N])
-def gramschmidt(A, R, Q):
+@dace.program
+def gramschmidt(A: datatype[M, N], R: datatype[N, N], Q: datatype[M, N]):
 
     nrm = dace.define_local([1], datatype)
 

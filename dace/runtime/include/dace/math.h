@@ -528,7 +528,6 @@ namespace dace
             return std::pow(a, b);
         }
 
-#ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
         {
             if (b < 0) return 0;
@@ -546,7 +545,6 @@ namespace dace
                 result *= a;
             return result;
         }
-#endif
 
         template<typename T>
         DACE_HDFI T ipow(const T& a, const unsigned int& b) {

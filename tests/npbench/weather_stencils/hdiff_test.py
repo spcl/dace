@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 
@@ -36,6 +34,32 @@ def hdiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I,
 
     out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] +
                                                                            fly_field[:, 1:, :] - fly_field[:, :-1, :])
+
+
+def hdiff_jax_kernel(jnp, in_field, out_field, coeff):
+    I, J, K = out_field.shape[0], out_field.shape[1], out_field.shape[2]
+    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
+                                                       in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
+
+    res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
+    flx_field = jnp.where(
+        (res * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :])) > 0,
+        0,
+        res,
+    )
+
+    res = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :-1, :]
+    fly_field = jnp.where(
+        (res * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :])) > 0,
+        0,
+        res,
+    )
+
+    out_field = out_field.at[:, :, :].set(
+        in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] *
+        (flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]))
+
+    return jnp.sum(out_field)
 
 
 def initialize(I, J, K):
@@ -89,20 +113,52 @@ def run_hdiff(device_type: dace.dtypes.DeviceType):
         sdfg = hdiff_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(in_field, out_field, coeff, I=I, J=J, K=K)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = hdiff_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(I=I, J=J, K=K))
-        sdfg(in_field, out_field, coeff)
 
     # Compute ground truth and validate
     ground_truth(in_field, out_field_ref, coeff)
     assert np.allclose(out_field, out_field_ref)
     return sdfg
+
+
+def run_hdiff_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (npbench small size)
+    I, J, K = 64, 64, 60
+    in_field, out_field, coeff = initialize(I, J, K)
+
+    # Initialize gradient computation data
+    gradient_in_field = np.zeros_like(in_field)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I, J, K], coeff: dc.float64[I, J,
+                                                                                                                 K]):
+        hdiff_kernel(in_field, out_field, coeff)
+        return np.sum(out_field)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["in_field"], outputs=["__return"])
+    sdfg(in_field,
+         out_field,
+         coeff,
+         I=I,
+         J=J,
+         K=K,
+         gradient_in_field=gradient_in_field,
+         gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda in_field, out_field, coeff: hdiff_jax_kernel(jnp, in_field, out_field, coeff)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_in_field = jax_grad(in_field, out_field, coeff)
+    np.testing.assert_allclose(gradient_in_field, jax_grad_in_field)
 
 
 def test_cpu():
@@ -114,22 +170,22 @@ def test_gpu():
     run_hdiff(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_hdiff(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_hdiff_autodiff()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_hdiff(dace.dtypes.DeviceType.CPU)
+        run_hdiff_autodiff()
     elif target == "gpu":
         run_hdiff(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_hdiff(dace.dtypes.DeviceType.FPGA)

@@ -1,7 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
-import pytest
 from typing import Tuple, Union
 
 from dace import nodes as dace_nodes

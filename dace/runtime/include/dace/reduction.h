@@ -11,6 +11,8 @@
 #ifdef __CUDACC__
 #if __has_include(<cub/cub.cuh>)
     #include <cub/cub.cuh>
+    #include <thrust/iterator/counting_iterator.h>
+    #include <thrust/iterator/transform_iterator.h>
 #else
     #include "../../../external/cub/cub/device/device_segmented_reduce.cuh"
     #include "../../../external/cub/cub/device/device_reduce.cuh"
@@ -599,9 +601,19 @@ namespace dace {
     };
 
     inline auto stridedIterator(size_t stride) {
-        cub::CountingInputIterator<int> counting_iterator(0);
+        #if __CUDACC_VER_MAJOR__ >= 13
+        thrust::counting_iterator
+        #else
+        cub::CountingInputIterator
+        #endif
+        <int> counting_iterator(0);
         StridedIteratorHelper conversion_op(stride);
+        #if __CUDACC_VER_MAJOR__ >= 13
+        thrust::transform_iterator<decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        #else
         cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        #endif
+
         return itr;
     }
 #endif

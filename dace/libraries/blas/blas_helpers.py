@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 from dace import dtypes, data
-from dace.data import Array
 from typing import Any, Dict, Tuple
 
 
@@ -181,7 +180,7 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         },
     }
 
-    if sAM == 1:
+    if sAM == 1 and sAK != 1:
         optA = 'm'
     elif sAK == 1:
         optA = 'k'

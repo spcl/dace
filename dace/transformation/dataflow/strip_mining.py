@@ -4,7 +4,7 @@
 
 import dace
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes
@@ -86,8 +86,6 @@ def calc_set_image(map_idx, map_set, array_set):
 
 
 def calc_set_union(set_a, set_b):
-    if isinstance(set_a, subsets.Indices) or isinstance(set_b, subsets.Indices):
-        raise NotImplementedError('Set union with indices is not implemented.')
     if not (isinstance(set_a, subsets.Range) and isinstance(set_b, subsets.Range)):
         raise TypeError('Can only compute the union of ranges.')
     if len(set_a) != len(set_b):

@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple, Sequence
+from typing import Dict, List, Tuple, Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -12,7 +12,6 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
@@ -72,14 +71,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
@@ -103,14 +102,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
@@ -255,24 +254,15 @@ def pop_dims(subset, dims):
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
-    if isinstance(first, subsets.Indices):
-        subset = first.new_offset(second, negative=False)
-    else:
-        subset = first.compose(second)
+    subset = first.compose(second)
     if dims and popped and len(dims) == len(popped):
-        if isinstance(first, subsets.Indices):
-            indices = subset.Indices
-            for d, p in zip(reversed(dims), reversed(popped)):
-                indices.insert(d, p)
-            subset = subsets.Indices(indices)
-        else:
-            ranges = subset.ranges
-            tsizes = subset.tile_sizes
-            for d, (r, t) in zip(reversed(dims), reversed(popped)):
-                ranges.insert(d, r)
-                tsizes.insert(d, t)
-            subset = subsets.Range(ranges)
-            subset.tile_sizes = tsizes
+        ranges = subset.ranges
+        tsizes = subset.tile_sizes
+        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+            ranges.insert(d, r)
+            tsizes.insert(d, t)
+        subset = subsets.Range(ranges)
+        subset.tile_sizes = tsizes
     return subset
 
 

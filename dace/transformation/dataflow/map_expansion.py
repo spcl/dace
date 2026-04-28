@@ -2,14 +2,13 @@
 """ Contains classes that implement the map-expansion transformation. """
 
 from dace.sdfg.utils import consolidate_edges
-from typing import Dict, List
+from typing import List
 import copy
 import dace
 from dace import dtypes, subsets, symbolic
 from dace.properties import EnumProperty, make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 from dace.sdfg.propagation import propagate_memlets_scope
 
@@ -34,7 +33,7 @@ class MapExpansion(pm.SingleStateTransformation):
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Sequential,
                                   allow_none=True)
-    expansion_limit = Property(desc="How many unidimensional maps will be creaed, known as k. "
+    expansion_limit = Property(desc="How many unidimensional maps will be created, known as k. "
                                "If None, the default no limit is in place.",
                                dtype=int,
                                allow_none=True,

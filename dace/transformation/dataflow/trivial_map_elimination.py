@@ -33,7 +33,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         map_entry = self.map_entry
 
-        if map_entry.map.schedule in (dace.dtypes.GPU_SCHEDULES + [dace.ScheduleType.GPU_Default]):
+        if map_entry.map.schedule in dace.dtypes.GPU_SCHEDULES:
             return False
         if not any(r[0] == r[1] for r in map_entry.map.range):
             return False

@@ -2,10 +2,14 @@
 from dataclasses import dataclass
 import struct
 from typing import Any, Dict, List, Set, Tuple, Union
+from numbers import Number
 import os
 
 from dace import dtypes, SDFG
-from dace.data import ArrayLike, Number  # Type hint
+try:
+    from numpy.typing import ArrayLike
+except ImportError:
+    ArrayLike = Any  # type: ignore
 
 import numpy as np
 

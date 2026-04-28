@@ -99,8 +99,8 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
 
     def __init__(self, src, src_conn: str, dst, dst_conn: str, data: T, key):
         super(MultiConnectorEdge, self).__init__(src, dst, data, key)
-        self._src_conn = src_conn
-        self._dst_conn = dst_conn
+        self._src_conn: str = src_conn
+        self._dst_conn: str = dst_conn
 
     def to_json(self, parent_graph):
         ret = super().to_json(parent_graph)

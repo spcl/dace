@@ -1,6 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Union
+from typing import Optional, Union
 import dace
 import itertools
 import numpy as np
@@ -12,13 +12,13 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation.dataflow.streaming_memory import _collect_map_ranges
 
-from dace import registry, data, dtypes, config, symbolic
+from dace import registry, data, dtypes, config, symbolic, subsets
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.dispatcher import DefinedType
@@ -43,8 +43,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         self.frame = frame_codegen
         # Can be used to dispatch other code generators for allocation/nodes
         self.dispatcher = frame_codegen.dispatcher
-        # ???
-        self.packed_types = False
         # Mapping of ssr to ssr_config
         self.ssrs = MAX_SSR_STREAMERS * [None]
 
@@ -75,6 +73,14 @@ class SnitchCodeGen(TargetCodeGenerator):
         # initialization, and deinitialization (allocate_array)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_TCDM, self)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_SSR, self)
+
+    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
+        """
+        Returns the frame-code generator associated with this target.
+
+        :return: The frame-code generator.
+        """
+        return self.frame
 
     def state_dispatch_predicate(self, sdfg, state):
         for node in state.nodes():
@@ -107,7 +113,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                 continue
             dbg(f'emitting ssr config for ssr {ssr}')
             node = ssr["data"]
-            alloc_name = cpp.ptr(node.data, node.desc(sdfg))
+            alloc_name = self.ptr(node.data, node.desc(sdfg), sdfg)
             # emit bound/stride setup
             stride_off = '0'
             for dim_num, dim in enumerate(ssr["dims"]):
@@ -294,7 +300,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
             defined_type, _ = self.dispatcher.defined_vars.get(edge.data.data)
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
@@ -319,19 +325,14 @@ class SnitchCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
-        ptr = cpp.ptr(memlet.data, desc)
+        ptr = self.ptr(memlet.data, desc, sdfg)
 
         var_type, ctypedef = self.dispatcher.defined_vars.get(memlet.data)
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
+                if var_type in [DefinedType.Pointer, DefinedType.StreamArray] else ptr)
 
-        # Special case: ArrayInterface, append _in or _out
         _ptr = ptr
-        if var_type == DefinedType.ArrayInterface:
-            # Views have already been renamed
-            if not isinstance(desc, data.View):
-                ptr = cpp.array_interface_variable(ptr, output, self.dispatcher)
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
@@ -339,11 +340,9 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         defined = None
 
-        if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
             if output:
-                if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
-                elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
+                if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
@@ -397,7 +396,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         arrsize_bytes = arrsize * nodedesc.dtype.bytes
-        alloc_name = cpp.ptr(name, nodedesc)
+        alloc_name = self.ptr(name, nodedesc, sdfg)
         dbg('  arrsize "{}" arrsize_bytes "{}" alloc_name "{}" nodedesc "{}"'.format(
             arrsize, arrsize_bytes, alloc_name, nodedesc))
 
@@ -466,7 +465,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
-        alloc_name = cpp.ptr(node.data, nodedesc)
+        alloc_name = self.ptr(node.data, nodedesc, sdfg)
         dbg(f'-- deallocate_array storate="{nodedesc.storage}" arrsize="{arrsize}" alloc_name="{alloc_name}"')
 
         if isinstance(nodedesc, data.Scalar):
@@ -613,8 +612,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
-                    self.packed_types)
+                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
             dbg(f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
                 )
 
@@ -1052,9 +1050,9 @@ class SnitchCodeGen(TargetCodeGenerator):
         defined_type, _ = self.dispatcher.defined_vars.get(memlet.data)
 
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
         # If there is a type mismatch, cast pointer
@@ -1148,3 +1146,23 @@ class SnitchCodeGen(TargetCodeGenerator):
             ccode = ccode.replace(i, o)
 
         return (ccode, hdrs)
+
+    def ptr(self,
+            name: str,
+            desc: data.Data,
+            sdfg: SDFG = None,
+            subset: Optional[subsets.Subset] = None,
+            is_write: Optional[bool] = None,
+            ancestor: int = 0) -> str:
+        """
+        Returns a string that points to the data based on its name and descriptor.
+
+        :param name: Data name.
+        :param desc: Data descriptor.
+        :param sdfg: SDFG in which the data resides.
+        :param subset: Optional subset associated with the data.
+        :param is_write: Whether the access is a write access.
+        :param ancestor: Scope ancestor level.
+        :return: C-compatible name that can be used to access the data.
+        """
+        return cpp.ptr(name, desc, sdfg, self.frame)

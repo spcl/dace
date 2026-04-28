@@ -2,13 +2,8 @@
 """
     Inference: This module patches certain dispatchers in the `type_inference.py`, to better suit SVE.
 """
-import dace.codegen.targets.sve.util
-import numpy as np
-import ast
 from dace import dtypes
-from dace.codegen import cppunparse
-from dace.symbolic import SymExpr
-import sympy
+from dace.sdfg import type_inference
 import sys
 
 
@@ -33,7 +28,7 @@ def _dispatch(tree, symbols, inferred_symbols):
         if hasattr(patch, name):
             meth = getattr(patch, name)
         else:
-            meth = getattr(dace.codegen.tools.type_inference, name)
+            meth = getattr(type_inference, name)
 
         return meth(tree, symbols, inferred_symbols)
 
