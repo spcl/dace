@@ -42,92 +42,79 @@ class InsertGPUStreams(ppl.Pass):
         stream_assignments: Dict[Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
         num_assigned_streams = max(stream_assignments.values(), default=0) + 1
 
-        # Add the GPU stream array at the top level. The pass may run a second
-        # time after `expand_library_nodes` has surfaced new GPU library nodes
-        # in nested SDFGs; in that case the root array already exists and we
-        # only need to propagate it deeper.
+        # Add the GPU stream array at the top level. If a re-run of the pass
+        # finds the root array already in place, just propagate it deeper.
         if stream_array_name not in sdfg.arrays:
-            sdfg.add_transient(stream_array_name, (num_assigned_streams, ),
-                               dtype=dace.dtypes.gpuStream_t,
-                               storage=dace.dtypes.StorageType.Register)
+            self._add_stream_array(sdfg, stream_array_name, num_assigned_streams, transient=True)
 
-        # Ensure GPU stream array is defined where required
         for child_sdfg in self.find_child_sdfgs_requiring_gpu_stream(sdfg):
-
-            # Skip if this child already has the array (inserted higher up in the hierarchy)
+            # Skip if a higher-level call already inserted the array.
             if stream_array_name in child_sdfg.arrays:
                 continue
-
-            # Add the array to the child SDFG
-            inner_sdfg = child_sdfg
-            inner_sdfg.add_array(stream_array_name, (num_assigned_streams, ),
-                                 dtype=dace.dtypes.gpuStream_t,
-                                 storage=dace.dtypes.StorageType.Register)
-
-            # Walk up the hierarchy until the array is found, inserting it into each parent
-            outer_sdfg = inner_sdfg.parent_sdfg
-            while stream_array_name not in outer_sdfg.arrays:
-
-                # Insert array in parent SDFG
-                outer_sdfg.add_array(stream_array_name, (num_assigned_streams, ),
-                                     dtype=dace.dtypes.gpuStream_t,
-                                     storage=dace.dtypes.StorageType.Register)
-
-                # Connect parent SDFG array to nested SDFG node
-                inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
-                inner_parent_state = inner_sdfg.parent
-                add_gpu_stream_connector(inner_nsdfg_node, stream_array_name, single_stream=False)
-                inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
-                inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
-                                            dace.Memlet(stream_array_name))
-
-                # Continue climbing up the hierarchy
-                inner_sdfg = outer_sdfg
-                outer_sdfg = outer_sdfg.parent_sdfg
-
-            # Ensure final connection from the first parent that had the array down to this SDFG
-            inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
-            inner_parent_state = inner_sdfg.parent
-            add_gpu_stream_connector(inner_nsdfg_node, stream_array_name, single_stream=False)
-            inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
-            inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
-                                        dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
-
-            outer_sdfg = inner_sdfg.parent_sdfg
+            self._propagate_stream_array_up(child_sdfg, stream_array_name, num_assigned_streams)
 
         return {}
 
+    @staticmethod
+    def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool) -> None:
+        """Add the reserved ``gpu_streams`` descriptor to ``target_sdfg``.
+
+        Uses ``add_datadesc(..., _internal_pipeline_use=True)`` to bypass the
+        ``SDFG.add_datadesc`` reservation guard — this pass owns the name."""
+        desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t,
+                               shape=(num_streams, ),
+                               transient=transient,
+                               storage=dace.dtypes.StorageType.Register)
+        target_sdfg.add_datadesc(stream_name, desc, _internal_pipeline_use=True)
+
+    @classmethod
+    def _propagate_stream_array_up(cls, child_sdfg: SDFG, stream_name: str, num_streams: int) -> None:
+        """Add ``stream_name`` to ``child_sdfg`` and every parent SDFG up to
+        (and including) the first ancestor that already has it, wiring the
+        NestedSDFG-node stream connector at each level so the array flows
+        from outer to inner via the standard connector pattern."""
+
+        def wire_into_parent(level: SDFG, memlet: dace.Memlet) -> None:
+            """Wire ``stream_name`` from ``level.parent_sdfg`` into ``level``'s
+            NestedSDFG node: stream connector + AccessNode + edge."""
+            nsdfg_node = level.parent_nsdfg_node
+            parent_state = level.parent
+            add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
+            src = parent_state.add_access(stream_name)
+            parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
+
+        cls._add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
+
+        # Climb until a parent already has the array; add+wire at every step.
+        cur = child_sdfg
+        while stream_name not in cur.parent_sdfg.arrays:
+            cls._add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
+            wire_into_parent(cur, dace.Memlet(stream_name))
+            cur = cur.parent_sdfg
+
+        # Final wire from the first parent that already had it; carries the
+        # full slice so codegen can index by stream id.
+        wire_into_parent(cur, dace.Memlet(f"{stream_name}[0:{num_streams}]"))
+
     def find_child_sdfgs_requiring_gpu_stream(self, sdfg: SDFG) -> Set[SDFG]:
-        """Identify all child SDFGs that need a GPU stream array in their
-        array descriptor store.
+        """Identify all child SDFGs that need the GPU stream array.
 
-        A child SDFG requires a GPU stream when it (host-) launches GPU
-        kernels or issues GPU stream-bound calls. Concretely, that means:
+        A child SDFG needs the array when it (host-)launches GPU kernels or
+        issues stream-bound runtime calls — either through a ``GPU_Device``
+        ``MapEntry`` / ``MapExit`` (kernel launch) or through a
+        ``CopyLibraryNode`` / ``MemsetLibraryNode`` whose expansion emits
+        ``cudaMemcpyAsync`` / ``cudaMemsetAsync``.
 
-        * it contains a ``GPU_Device`` ``MapEntry`` / ``MapExit`` (kernel
-          launch) — or
-        * it contains a ``CopyLibraryNode`` / ``MemsetLibraryNode`` targeting
-          GPU storage (those expand to ``cudaMemcpyAsync`` /
-          ``cudaMemsetAsync``, both host-issued).
-
-        Design rule (host- vs. device-level):
-
-        * If the NestedSDFG sits inside a ``Sequential`` / CPU map *and* its
-          body has GPU work (kernels, copy/memset libnodes), it runs on the
-          host — give it the stream array.
-        * If the NestedSDFG sits inside a ``GPU_Device`` map, **everything
-          below it executes as device code** (``__device__`` /
-          ``DACE_DFI``). Device code cannot issue ``cudaMemcpyAsync`` /
-          ``cudaLaunchKernel`` etc., so threading streams into those
-          NestedSDFGs would bind a host-only resource into a function that
-          can never use it (and produces ill-formed CUDA referencing
-          ``gpu_streams`` from inside ``__device__`` code). We skip them.
-
-        The ``_inside_gpu_device_kernel`` walk uses ``parent_nsdfg_node`` /
-        ``parent_sdfg`` directly — ``scope_dict`` caches can be stale after
-        upstream pipeline passes (stream insertion, sync tasklet emission)
-        modify state topology.
+        Host- vs. device-level rule: a NestedSDFG inside a ``Sequential`` /
+        CPU map with GPU work inside still runs on the host and gets the
+        array threaded in. A NestedSDFG inside a ``GPU_Device`` map executes
+        as device code (``__device__`` / ``DACE_DFI``); it cannot issue
+        ``cudaMemcpyAsync`` / ``cudaLaunchKernel``, so threading streams
+        into it would bind a host-only resource into device code and
+        produce ill-formed CUDA. We skip those.
         """
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_inside_gpu_device_kernel
+
         requiring_gpu_stream = set()
         for child_sdfg in sdfg.all_sdfgs_recursive():
 
@@ -135,8 +122,7 @@ class InsertGPUStreams(ppl.Pass):
             if child_sdfg is sdfg:
                 continue
 
-            # See class docstring above for the design rule.
-            if self._inside_gpu_device_kernel(child_sdfg):
+            if is_inside_gpu_device_kernel(child_sdfg):
                 continue
 
             for state in child_sdfg.states():
@@ -162,28 +148,3 @@ class InsertGPUStreams(ppl.Pass):
                     break
 
         return requiring_gpu_stream
-
-    @staticmethod
-    def _inside_gpu_device_kernel(child_sdfg: SDFG) -> bool:
-        """Return True iff ``child_sdfg`` is (transitively) the body of a
-        ``GPU_Device`` map. Uses **scope membership** — walks
-        ``scope_dict``'s chain from the NestedSDFG node up — not data-flow
-        predecessors (a downstream consumer of a kernel is not "inside" it).
-
-        Invalidates the per-state ``scope_dict`` cache before each lookup
-        because upstream pipeline passes can leave it stale.
-        """
-        from dace.sdfg.nodes import MapEntry
-        cur = child_sdfg
-        while cur.parent_nsdfg_node is not None:
-            parent_state = cur.parent
-            nsdfg_node = cur.parent_nsdfg_node
-            parent_state._clear_scopedict_cache()
-            sdict = parent_state.scope_dict()
-            scope = sdict.get(nsdfg_node)
-            while scope is not None:
-                if (isinstance(scope, MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device):
-                    return True
-                scope = sdict.get(scope)
-            cur = cur.parent_sdfg
-        return False

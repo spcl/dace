@@ -8,7 +8,7 @@ GPU stream consumer to reuse that one stream. No fresh ``gpu_streams``
 array is threaded into the body — all kernels and sub-libnodes inside
 share the inherited stream.
 """
-from typing import Any, Dict, List, Optional, Set, Type, Union
+from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.memlet import Memlet
@@ -20,19 +20,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (C
                                                                                is_expanded_libnode_nsdfg,
                                                                                is_gpu_stream_consumer)
 
-
-def _enclosing_sequential_map_chain(state: SDFGState, node: nodes.Node) -> List[nodes.MapEntry]:
-    """Return the chain of Sequential MapEntries enclosing ``node`` in
-    ``state``, ordered outermost → innermost. Empty when ``node`` is at
-    state top level."""
-    chain = []
-    scope = state.entry_node(node)
-    while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.Sequential:
-            chain.append(scope)
-        scope = state.entry_node(scope)
-    chain.reverse()  # outermost first
-    return chain
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
 
 
 @properties.make_properties
@@ -124,7 +112,7 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
             # prior expansion; add only if missing.
             add_gpu_stream_connector(consumer, COPY_MEMSET_STREAM_CONNECTOR, single_stream=True)
 
-        chain = _enclosing_sequential_map_chain(state, consumer)
+        chain = enclosing_map_chain(state, consumer, dtypes.ScheduleType.Sequential)
         if not chain:
             # Consumer at state top level — single direct edge.
             state.add_edge(stream_an, None, consumer, COPY_MEMSET_STREAM_CONNECTOR,

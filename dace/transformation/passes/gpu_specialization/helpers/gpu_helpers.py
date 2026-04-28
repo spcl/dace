@@ -1,28 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Shared naming / code-snippet helpers for the GPU-specialization passes.
+"""Shared utilities for the GPU-specialization passes.
 
-Provides the canonical names used when threading per-kernel GPU stream
-handles through an SDFG -- the stream array, the per-node connector
-prefix, the legacy runtime placeholder symbol (``__dace_current_stream``)
-recognized by the DaCe codegen, and the connector name added to
-``CopyLibraryNode`` / ``MemsetLibraryNode`` by the stream-connection
-pass.
+Three groups of helpers:
 
-Also exports a single source of truth for the predicates "this node needs
-a GPU stream wired to it" and "this connector name is a stream
-connector". Both were independently reimplemented in four passes before
-this module centralized them.
+* **Names**: the canonical strings the pipeline uses when threading GPU
+  streams through an SDFG — the array name, the per-kernel connector
+  prefix, the legacy runtime placeholder symbol, and the connector name
+  added to ``CopyLibraryNode`` / ``MemsetLibraryNode`` by stream wiring.
+
+* **Predicates**: "this node needs a stream wired to it",
+  "this connector name is a stream connector", "this NestedSDFG executes
+  as device code". Single source of truth so passes don't reimplement
+  scope walks.
+
+* **State signal**: ``is_gpu_lowering_applied`` for pipeline idempotency.
 """
+from typing import List, Optional
+
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
-
-# Storages whose copies are serviced by the GPU stream pipeline.
-_GPU_SIDE_STORAGES = frozenset({
-    dtypes.StorageType.GPU_Global,
-    dtypes.StorageType.GPU_Shared,
-    dtypes.StorageType.CPU_Pinned,
-})
 
 # Name of the `stream` in-connector on CopyLibraryNode / MemsetLibraryNode.
 # Kept in sync with the ``_STREAM_CONN`` constant in the library-node
@@ -33,6 +29,66 @@ COPY_MEMSET_STREAM_CONNECTOR = "stream"
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
+
+
+# Names reserved by the gpu_specialization pipeline. ``SDFG.add_datadesc``
+# rejects user-driven additions with these names; only the pipeline itself
+# (via ``add_datadesc(..., _internal_pipeline_use=True)``) may add them.
+RESERVED_GPU_PIPELINE_NAMES = frozenset({"gpu_streams"})
+
+
+def is_gpu_lowering_applied(sdfg: SDFG) -> bool:
+    """True iff the gpu_specialization lowering has already run on ``sdfg``.
+
+    The signal is the presence of the ``gpu_streams`` transient on the top
+    SDFG — created by ``InsertGPUStreams``, the only pipeline pass that
+    introduces it, and stable across the rest of the pipeline. Used by
+    ``GPUSpecializationPipeline`` to short-circuit a re-application.
+    """
+    return get_gpu_stream_array_name() in sdfg.arrays
+
+
+def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
+    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that
+    enclose ``node`` in ``state``. Empty when none.
+
+    Invalidates the per-state ``scope_dict`` cache first — earlier pipeline
+    passes can leave it stale, and callers walking data-flow predecessors
+    instead would misclassify downstream consumers as "inside" their
+    upstream scopes.
+    """
+    state._clear_scopedict_cache()
+    sdict = state.scope_dict()
+    chain: List[nodes.MapEntry] = []
+    scope = sdict.get(node)
+    while scope is not None:
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == schedule:
+            chain.append(scope)
+        scope = sdict.get(scope)
+    chain.reverse()
+    return chain
+
+
+def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
+                            schedule: dtypes.ScheduleType) -> Optional[nodes.MapEntry]:
+    """Innermost ``MapEntry`` with ``schedule`` enclosing ``node``, or None."""
+    chain = enclosing_map_chain(state, node, schedule)
+    return chain[-1] if chain else None
+
+
+def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
+    """True iff ``sub_sdfg`` is (transitively) the body of a GPU_Device map.
+
+    Walks ``parent_nsdfg_node`` / ``parent_sdfg`` directly via
+    :func:`innermost_enclosing_map`, so the result is robust against stale
+    ``scope_dict`` caches.
+    """
+    cur = sub_sdfg
+    while cur.parent_nsdfg_node is not None:
+        if innermost_enclosing_map(cur.parent, cur.parent_nsdfg_node, dtypes.ScheduleType.GPU_Device) is not None:
+            return True
+        cur = cur.parent_sdfg
+    return False
 
 
 def get_gpu_stream_connector_name() -> str:
@@ -54,12 +110,13 @@ def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
     from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
+    gpu_side = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned}
+
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state, sdfg) in _GPU_SIDE_STORAGES
-                or node.dst_storage(state, sdfg) in _GPU_SIDE_STORAGES)
+        return node.src_storage(state, sdfg) in gpu_side or node.dst_storage(state, sdfg) in gpu_side
     if isinstance(node, MemsetLibraryNode):
         for e in state.out_edges(node):
-            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_SIDE_STORAGES:
+            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in gpu_side:
                 return True
     return False
 
