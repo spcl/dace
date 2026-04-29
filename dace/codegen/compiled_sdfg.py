@@ -590,7 +590,8 @@ with open(r"{temp_path}", "wb") as f:
         if self._initialized is True:
             self.finalize()
             self._initialized = False
-            self._libhandle = ctypes.c_void_p(0)
+            if self._libhandle is not None and ctypes is not None:
+                self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
     def construct_arguments(self, *args: Any, **kwargs: Any) -> Tuple[Tuple[Any], Tuple[Any]]:
