@@ -224,13 +224,13 @@ def _is_array_constructor_call(node: ast.Call, evaluation_context: EvaluationCon
     else:
         call_name = astutils.rname(node.func)
 
-    if call_name == 'numpy.array':
+    if call_name in {'numpy.array', 'numpy.asarray'}:
         return True
 
     resolved = try_resolve_static_value(node.func, evaluation_context())
     module_name = getattr(resolved, '__module__', None) if resolved is not UNRESOLVED else None
     callable_name = getattr(resolved, '__name__', None) if resolved is not UNRESOLVED else None
-    return callable_name == 'array' and module_name == 'numpy'
+    return callable_name in {'array', 'asarray'} and module_name == 'numpy'
 
 
 def _rewrite_with_connectors(node: ast.AST,

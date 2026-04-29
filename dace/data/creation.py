@@ -92,6 +92,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      shape=interface['shape'],
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
+    elif not isinstance(obj, type) and hasattr(obj, '__array__'):
+        try:
+            return create_datadescriptor(np.asarray(obj), no_custom_desc=True)
+        except Exception:
+            pass
     elif isinstance(obj, dict):
         from dace.data.pydata import infer_python_dict_descriptor_from_value
         return infer_python_dict_descriptor_from_value(

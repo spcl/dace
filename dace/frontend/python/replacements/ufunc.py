@@ -1901,6 +1901,13 @@ def _resolve_inference_output(input_descs: Dict[str, data.Data], output):
 def _resolve_inference_operand(input_descs: Dict[str, data.Data], arg):
     if isinstance(arg, str) and arg in input_descs:
         return input_descs[arg]
+    if isinstance(arg, (list, tuple, np.ndarray)) or dtypes.is_array(arg) or hasattr(arg, '__array__'):
+        try:
+            descriptor = data.create_datadescriptor(arg)
+        except Exception:
+            descriptor = None
+        if descriptor is not None:
+            return descriptor
     return arg
 
 

@@ -40,6 +40,23 @@ def infer_array_creation_descriptor(obj: Any,
         except TypeError:
             return None
 
+    if isinstance(obj, data.Data):
+        descriptor = dcpy(obj)
+        if dtype is not None:
+            descriptor.dtype = dtype
+
+        shape = list(getattr(descriptor, 'shape', ()))
+        if isinstance(descriptor, data.Scalar):
+            if ndmin <= 0:
+                descriptor.transient = True
+                return descriptor
+            return data.Array(descriptor.dtype, [1] * ndmin, transient=True)
+
+        if len(shape) < ndmin and hasattr(descriptor, 'set_shape'):
+            descriptor.set_shape([1] * (ndmin - len(shape)) + shape)
+        descriptor.transient = True
+        return descriptor
+
     try:
         if dtype is None:
             arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
@@ -273,6 +290,7 @@ def _infer_streamarray_descriptor(input_descs, shape: Shape, dtype: dtypes.typec
     return data.Stream(out_dtype, buffer_size, shape=out_shape, transient=True)
 
 
+@oprepo.infers_descriptor('numpy.asarray')
 @oprepo.infers_descriptor('numpy.array')
 @oprepo.infers_descriptor('dace.array')
 def _infer_literal_array_descriptor(input_descs,
@@ -382,6 +400,7 @@ def _define_streamarray(pv: ProgramVisitor,
     return name
 
 
+@oprepo.replaces('numpy.asarray')
 @oprepo.replaces('numpy.array')
 @oprepo.replaces('dace.array')
 def _define_literal_ex(pv: ProgramVisitor,

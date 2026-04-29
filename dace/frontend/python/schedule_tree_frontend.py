@@ -469,7 +469,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._initialize_root_scope()
         self._initialize_seed_bindings()
         self._initialize_direct_class_annotations()
-        self.inferred_bindings = ScheduleTreeTypeInference(self.globals, self.argtypes).infer(self._program_node())
+        type_inference_globals = copy.copy(self.external_globals)
+        type_inference_globals.update(self.globals)
+        self.inferred_bindings = ScheduleTreeTypeInference(type_inference_globals,
+                                                           self.argtypes,
+                                                           seed_bindings=self.seed_bindings).infer(self._program_node())
         for name, binding in self.inferred_bindings.items():
             if binding.descriptor is not None:
                 self.root.containers.setdefault(name, _clone_descriptor(binding.descriptor))
@@ -1544,11 +1548,24 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return f'{_unparse(target)} = {self._format_runtime_expression(value)}'
 
     def _resolve_data_access(self, node: ast.AST) -> Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]]:
-        if isinstance(node, ast.Name) and node.id in self.bindings and self.bindings[node.id].descriptor is not None:
-            descriptor = _clone_descriptor(self.bindings[node.id].descriptor)
-            if isinstance(descriptor, PythonDict):
-                return None
-            return (node.id, Memlet.from_array(node.id, descriptor), descriptor, _clone_descriptor(descriptor))
+        if isinstance(node, ast.Name):
+            if node.id not in self.bindings:
+                external_value = self._resolve_external_scope_value(node.id)
+                if external_value is not UNRESOLVED:
+                    if symbolic.issymbolic(external_value):
+                        return None
+                    try:
+                        descriptor = _binding_to_descriptor(external_value)
+                    except Exception:
+                        descriptor = None
+                    if descriptor is not None:
+                        self._store_binding(node.id, descriptor, kind=_binding_kind_for_descriptor(descriptor))
+
+            if node.id in self.bindings and self.bindings[node.id].descriptor is not None:
+                descriptor = _clone_descriptor(self.bindings[node.id].descriptor)
+                if isinstance(descriptor, PythonDict):
+                    return None
+                return (node.id, Memlet.from_array(node.id, descriptor), descriptor, _clone_descriptor(descriptor))
 
         if isinstance(node, ast.Attribute):
             owner_access = self._resolve_data_access(node.value)
@@ -1812,7 +1829,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         value = try_resolve_static_value(node, self._evaluation_context())
         if value is not UNRESOLVED:
             try:
-                descriptor = _clone_descriptor(data.create_datadescriptor(value))
+                descriptor = data.create_datadescriptor(value)
                 descriptor.transient = True
                 return descriptor
             except Exception:
@@ -2511,7 +2528,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return type(existing) is type(source)
 
     def _evaluation_context(self) -> Dict[str, Any]:
-        context = copy.copy(self.globals)
+        context = copy.copy(self.external_globals)
+        context.update(self.globals)
         context.update({
             name: binding.descriptor
             for name, binding in self.bindings.items() if binding.descriptor is not None

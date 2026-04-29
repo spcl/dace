@@ -373,13 +373,18 @@ def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) 
 class ScheduleTreeTypeInference(ast.NodeVisitor):
     """Conservative binding inference for the direct schedule-tree frontend."""
 
-    def __init__(self, globals_env: Dict[str, Any], argtypes: Dict[str, data.Data]) -> None:
+    def __init__(self,
+                 globals_env: Dict[str, Any],
+                 argtypes: Dict[str, data.Data],
+                 seed_bindings: Optional[Dict[str, _Binding]] = None) -> None:
         self.globals = copy.copy(globals_env)
         self.dict_support = DictSupportLibrary()
         self.bindings: Dict[str, _Binding] = {
             name: _Binding(descriptor=_clone_descriptor(descriptor), kind='container')
             for name, descriptor in argtypes.items()
         }
+        for name, binding in (seed_bindings or {}).items():
+            self.bindings[name] = _clone_binding(binding)
         self.results: Dict[str, _Binding] = {}
         self.annotated_class_types: Dict[str, type[Any]] = {}
 
@@ -598,8 +603,25 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         return None
 
     def _resolve_binding(self, value: ast.AST) -> Optional[_Binding]:
-        if isinstance(value, ast.Name) and value.id in self.bindings:
-            return _clone_binding(self.bindings[value.id])
+        if isinstance(value, ast.Name):
+            if value.id in self.bindings:
+                return _clone_binding(self.bindings[value.id])
+
+            external_value = self.globals.get(value.id, UNRESOLVED)
+            if external_value is not UNRESOLVED:
+                if symbolic.issymbolic(external_value):
+                    return None
+                try:
+                    descriptor = _clone_descriptor(data.create_datadescriptor(external_value))
+                except Exception:
+                    descriptor = None
+                if descriptor is not None:
+                    descriptor.transient = False
+                    kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
+                    structure = descriptor if isinstance(descriptor, data.Scalar) else None
+                    binding = _Binding(descriptor=descriptor, kind=kind, structure=structure)
+                    self.bindings[value.id] = _clone_binding(binding)
+                    return binding
 
         if isinstance(value, ast.Attribute):
             base_binding = self._resolve_binding(value.value)
@@ -1041,8 +1063,11 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             return self.dict_support.infer_literal_descriptor(self._dict_support_context(), node)
 
         if isinstance(node, ast.Call):
-            inferred = infer_array_literal_descriptor(node, self._infer_descriptor, self._infer_scalar_descriptor,
-                                                      self._evaluation_context)
+            inferred = infer_array_literal_descriptor(node,
+                                                      self._infer_descriptor,
+                                                      self._infer_scalar_descriptor,
+                                                      self._evaluation_context,
+                                                      callable_name_resolver=self._resolved_callable_name)
             if inferred is not None:
                 return inferred
 

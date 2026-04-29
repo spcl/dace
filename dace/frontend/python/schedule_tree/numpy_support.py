@@ -677,14 +677,14 @@ class _ElementwiseExpressionAnalyzer:
 
     def _resolve_array_access(self, node: ast.AST) -> Optional[_ResolvedAccess]:
         if isinstance(node, ast.Name):
-            binding = self.context.bindings.get(node.id)
+            binding = _ensure_binding_for_name(node.id, self.context)
             if binding is None or binding.descriptor is None or not _is_numpy_arraylike(binding.descriptor):
                 return None
             subset = subsets.Range.from_array(binding.descriptor)
             return self._register_basic_access(node, node.id, binding.descriptor, subset)
 
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            binding = self.context.bindings.get(node.value.id)
+            binding = _ensure_binding_for_name(node.value.id, self.context)
             if binding is None or binding.descriptor is None or not _is_numpy_arraylike(binding.descriptor):
                 return None
             try:
@@ -1393,7 +1393,7 @@ def _resolve_plain_multi_output_ufunc(node: ast.Call, context: NumpyLoweringCont
 
 def _is_scalar_leaf(node: ast.AST, context: NumpyLoweringContext) -> bool:
     if isinstance(node, ast.Name):
-        binding = context.bindings.get(node.id)
+        binding = _ensure_binding_for_name(node.id, context)
         if binding is not None and binding.descriptor is not None:
             return isinstance(binding.descriptor, data.Scalar)
     value = try_resolve_static_value(node, context.evaluation_context())
@@ -1503,13 +1503,32 @@ def _is_boolean_index(index_name: Any, context: NumpyLoweringContext) -> bool:
 
 
 def _index_descriptor(index_name: str, context: NumpyLoweringContext) -> Optional[data.Data]:
-    binding = context.bindings.get(index_name)
+    binding = _ensure_binding_for_name(index_name, context)
     if binding is not None and binding.descriptor is not None:
         return binding.descriptor
     value = context.evaluation_context().get(index_name)
     if isinstance(value, data.Data):
         return value
     return None
+
+
+def _ensure_binding_for_name(name: str, context: NumpyLoweringContext) -> Optional[_Binding]:
+    binding = context.bindings.get(name)
+    if binding is not None and binding.descriptor is not None:
+        return binding
+
+    value = context.evaluation_context().get(name, UNRESOLVED)
+    if value is UNRESOLVED or symbolic.issymbolic(value):
+        return None
+
+    try:
+        descriptor = data.create_datadescriptor(value)
+    except Exception:
+        return None
+
+    kind = 'scalar' if isinstance(descriptor, data.Scalar) else 'container'
+    context.register_binding(name, descriptor, kind)
+    return context.bindings.get(name)
 
 
 def _is_numpy_arraylike(descriptor: data.Data) -> bool:

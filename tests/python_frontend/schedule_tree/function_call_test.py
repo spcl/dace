@@ -2,6 +2,7 @@
 """Tests for function-call inlining in the schedule-tree frontend."""
 
 import numpy as np
+import pytest
 import dace
 from dace.frontend.python.schedule_tree import function_inlining
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -927,25 +928,81 @@ def test_nested_inference_sum_of_matmul():
     assert isinstance(desc, dace.data.Scalar)
 
 
+def test_descriptor_inference_custom_arraylike():
+    """np.asarray should infer descriptors for objects that implement __array__."""
+
+    class CustomArrayLike:
+
+        def __array__(self, dtype=None):
+            return np.eye(2, 5, dtype=dtype if dtype is not None else np.float64)
+
+    custom = CustomArrayLike()
+
+    @dace.program
+    def prog():
+        x = np.multiply(custom, 2)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 5)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_numpy_asarray_custom_arraylike():
+    """np.asarray should preserve shape and dtype for custom __array__ objects."""
+
+    class CustomArrayLike:
+
+        def __array__(self, dtype=None):
+            return np.eye(2, 5, dtype=dtype if dtype is not None else np.float64)
+
+    custom = CustomArrayLike()
+
+    @dace.program
+    def prog():
+        x = np.asarray(custom)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (2, 5)
+    assert desc.dtype == dace.float64
+
+
+def test_descriptor_inference_custom_array_interface():
+    """Objects with __array_interface__ should infer directly as array inputs."""
+
+    class CustomArrayInterfaceLike:
+
+        def __init__(self):
+            self._array = np.zeros((2, 5), dtype=np.float64)
+
+        @property
+        def __array_interface__(self):
+            return self._array.__array_interface__
+
+    custom = CustomArrayInterfaceLike()
+
+    @dace.program
+    def prog():
+        x = np.transpose(custom)
+        return x
+
+    stree = prog.to_schedule_tree()
+
+    assert 'x' in stree.containers
+    desc = stree.containers['x']
+    assert isinstance(desc, dace.data.Array)
+    assert tuple(desc.shape) == (5, 2)
+    assert desc.dtype == dace.float64
+
+
 if __name__ == '__main__':
-    test_basic_inlined_call()
-    test_call_with_return_value()
-    test_multiple_calls_to_same_function()
-    test_name_collision_renaming()
-    test_nested_calls_a_b_c()
-    test_call_with_materialized_args()
-    test_call_with_keyword_arguments()
-    test_function_call_scope_as_string()
-    test_bare_call_statement()
-    test_descriptor_inference_numpy_sum()
-    test_descriptor_inference_numpy_sum_full_reduction()
-    test_descriptor_inference_numpy_mean()
-    test_descriptor_inference_numpy_reshape()
-    test_descriptor_inference_numpy_transpose()
-    test_method_inference_sum_scalar()
-    test_method_inference_sum_with_axis()
-    test_method_inference_reshape()
-    test_attribute_inference_T()
-    test_operator_inference_matmul()
-    test_nested_inference_sum_of_matmul()
-    print('All tests passed.')
+    pytest.main([__file__])

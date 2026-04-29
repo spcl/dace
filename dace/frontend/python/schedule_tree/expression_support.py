@@ -291,8 +291,8 @@ class _ExpressionPlanner:
 
     def _is_array_constructor_call(self, node: ast.Call) -> bool:
         if self.context.resolve_callable_name is not None:
-            return self.context.resolve_callable_name(node.func) == 'numpy.array'
-        return astutils.rname(node.func) == 'numpy.array'
+            return self.context.resolve_callable_name(node.func) in {'numpy.array', 'numpy.asarray'}
+        return astutils.rname(node.func) in {'numpy.array', 'numpy.asarray'}
 
     def _materialize(self, node: ast.AST) -> ast.AST:
         descriptor = self.context.infer_descriptor(node)

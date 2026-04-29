@@ -2,6 +2,8 @@
 
 import ast
 
+import pytest
+
 from dace import data, dtypes
 from dace.frontend.python.schedule_tree.callable_support import CallableArgumentSpecializer, CallableResolver
 from dace.frontend.python.schedule_tree.lambda_support import LambdaResolver
@@ -67,3 +69,7 @@ def test_callable_specializer_extracts_lambda_and_callable_bindings():
     assert kwargs['literal'] == 5
     assert 'f' in lambda_bindings
     assert callable_bindings == {'cb': cb}
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])
