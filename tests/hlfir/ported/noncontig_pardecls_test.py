@@ -91,7 +91,6 @@ end subroutine fun
     assert np.all(d[1, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("2D noncontiguous slice double-copy via two index arrays not lowered")
 def test_fortran_frontend_noncontiguous_slices_2d_double_copy(tmp_path):
     src = """
 subroutine main(d, d2)
@@ -136,7 +135,6 @@ end subroutine fun
     assert np.all(d[[1, 3]][:, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("noncontiguous + range-pardecl mixed slicing not lowered")
 def test_fortran_frontend_noncontiguous_slices_2d_pardecl(tmp_path):
     src = """
 subroutine main(d, d2)
@@ -177,7 +175,6 @@ end subroutine fun
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("noncontiguous + full-range slicing not lowered")
 def test_fortran_frontend_noncontiguous_slices_2d_pardecl2(tmp_path):
     src = """
 subroutine main(d, d2)

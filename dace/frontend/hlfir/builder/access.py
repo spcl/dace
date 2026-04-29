@@ -356,7 +356,33 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
             continue
 
         # Bare iter name: remap through iter_map, then offset.
-        uid = iter_map.get(v, v)
+        #
+        # ``v`` is the bridge-side ``index_vars[dim]`` value —
+        # produced by ``resolveIndex(idx)`` which returns:
+        #   * the loop-iter name for a tracked block-arg iter
+        #     (``i``, ``je``, …); ``iter_map`` folds the SSA rename.
+        #   * ``traceToDecl(idx)`` as a fallback for everything
+        #     else, including ``fir.load %dgt(%c)`` where ``%dgt``
+        #     designates a flattened struct-member array — that
+        #     trace returns the WHOLE array's name (``ind_indices``
+        #     for ``fir.load %ind_indices_decl(%c1)``).
+        #
+        # The whole-array name is NOT a valid memlet index.  The
+        # authoritative form lives on ``index_exprs[dim]`` (``expr``):
+        # the bridge has already lifted the load to either a
+        # ``__sym_<arr>_<n>`` symbol (constant-indexed read of a
+        # read-only array) or to ``<arr>[idx]`` form (which the
+        # caller has further folded via the indirect machinery).
+        #
+        # Defaulting the iter_map fallback to ``expr`` instead of
+        # ``v`` keeps tracked iters working (iter_map.get(v, …)
+        # finds them) while letting non-iter v values fall through
+        # to the richer ``expr`` rendering.  See the matching
+        # ``internPosSymbol`` mutability gate in
+        # ``bridge/ast/assigns.cpp`` — the two together close the
+        # ``arr(struct_member(const))`` indirect-index path
+        # exercised by ``long_tasklet_test``.
+        uid = iter_map.get(v, expr)
         parts.append(f"{uid} - {offset_sym}")
 
     return ", ".join(parts)

@@ -53,10 +53,12 @@
 //    verifier rule).  When extent isn't a compile-time constant the
 //    pass aborts with a clear error pointing at the source location.
 //
-// 2. **Rank-1 elementals only.**  Higher-rank gathers
-//    (``d(cols2, cols)`` → 2-D elemental) follow the same shape but
-//    need nested loops + multi-dim indexing in the dest designate.
-//    Rank-2+ noncontig tests stay xfailed.
+// 2. **Rank-N elementals supported (N ≥ 1).**  Higher-rank gathers
+//    (``d(cols2, cols)`` → 2-D elemental, ``d(:, cols)`` → 2-D
+//    range+index gather) build a nested ``fir.do_loop`` tree
+//    matching the elemental's ``fir.shape<N>``.  The elemental body
+//    takes one ``index`` block-arg per dim; ``hlfir.apply`` and the
+//    destination ``hlfir.designate`` consume all N IVs.
 //
 // 3. **INTENT(in) gathers only.**  The i1 ``must finalise`` flag from
 //    ``hlfir.end_associate`` is hard-coded to ``false`` — i.e. no
@@ -195,49 +197,44 @@ struct MaterialiseAssociatesPass
                 "fir.shape op — unsupported elemental form");
         }
 
-        // Constraint #2 — rank-1 only.
-        if (shapeOp.getExtents().size() != 1) {
-            return assoc.emitError(
-                "hlfir-materialise-associates: rank-")
-                << shapeOp.getExtents().size()
-                << " gather elemental not yet supported "
-                   "(rank-1 only).  Common pattern: "
-                   "noncontiguous 2-D slice ``d(cols2, cols)``.";
+        // Per-dim extent values + static-or-dynamic classification.
+        // Rank-N elementals (the common 2-D pattern is
+        // ``d(cols2, cols)`` materialising a 2-D gather temp) follow
+        // the same shape as the rank-1 case but build a nested
+        // ``fir.do_loop`` tree below.
+        llvm::SmallVector<mlir::Value, 4> extents(
+            shapeOp.getExtents().begin(), shapeOp.getExtents().end());
+        unsigned rank = (unsigned)extents.size();
+        llvm::SmallVector<int64_t, 4> staticExts(rank,
+            fir::SequenceType::getUnknownExtent());
+        bool allStatic = true;
+        for (unsigned i = 0; i < rank; ++i) {
+            auto cstExt = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
+                extents[i].getDefiningOp());
+            if (cstExt)
+                if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(cstExt.getValue()))
+                    staticExts[i] = a.getInt();
+            if (staticExts[i] == fir::SequenceType::getUnknownExtent())
+                allStatic = false;
         }
-
-        mlir::Value extent = shapeOp.getExtents()[0];
-
-        // Static or symbolic extent: the loop-based gather pattern
-        // works either way (per-iteration symbol-slot reassignment).
-        // For the IR rewrite we emit a static-shape ``!fir.array<NxT>``
-        // when N is a compile-time constant (preferred — easier on
-        // downstream passes and the bridge's seq-extent fallback in
-        // ``extract_vars``) and a dynamic-shape ``!fir.array<?xT>``
-        // with an extent operand on the alloca otherwise.
-        auto cstExt = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
-            extent.getDefiningOp());
-        std::optional<int64_t> staticExt;
-        if (cstExt)
-            if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(cstExt.getValue()))
-                staticExt = a.getInt();
 
         mlir::OpBuilder b(assoc);
 
-        // 1) fir.alloca + hlfir.declare for the temp.
-        int64_t typeExt = staticExt.value_or(fir::SequenceType::getUnknownExtent());
-        auto seqTy = fir::SequenceType::get({typeExt}, eleTy);
+        // 1) fir.alloca + hlfir.declare for the temp.  Static-shape
+        //    when every dim is a compile-time constant (preferred —
+        //    easier on downstream passes and the bridge's seq-extent
+        //    fallback in ``extract_vars``); dynamic otherwise, with
+        //    extent operands threaded through ``shape``.
+        auto seqTy = fir::SequenceType::get(staticExts, eleTy);
         fir::AllocaOp alloca;
-        if (staticExt.has_value()) {
+        if (allStatic) {
             alloca = b.create<fir::AllocaOp>(loc, seqTy);
         } else {
-            // Dynamic-extent alloca: extent goes through ``shape``,
-            // NOT ``typeparams`` (typeparams is for LEN parameters of
-            // derived types; arrays use shape).
             alloca = b.create<fir::AllocaOp>(
                 loc, seqTy, /*uniqName=*/llvm::StringRef{},
                 /*bindcName=*/llvm::StringRef{},
                 /*typeparams=*/mlir::ValueRange{},
-                /*shape=*/mlir::ValueRange{extent});
+                /*shape=*/mlir::ValueRange{extents});
         }
         // Derive a Flang-style mangled name so extractName + sdfg_name
         // parse it like any other local: ``_QF<encl>E<src>_gather_<n>``.
@@ -287,15 +284,15 @@ struct MaterialiseAssociatesPass
         std::string uniqName = "_QF" + enclName + "E" + srcName + "_gather_" + std::to_string(id);
         // Result-type convention (matches what flang itself emits for
         // assumed-shape declares):
-        //   * static N: result#0 = result#1 = ``fir.ref<array<NxT>>``
-        //   * dynamic : result#0 = ``fir.box<array<?xT>>`` (HLFIR
-        //               variable form, carries shape), result#1 =
-        //               ``fir.ref<array<?xT>>`` (raw memref).
+        //   * all-static: result#0 = result#1 = ``fir.ref<array<...>>``
+        //   * any-dynamic: result#0 = ``fir.box<array<...>>`` (HLFIR
+        //                 variable form, carries shape), result#1 =
+        //                 ``fir.ref<array<...>>`` (raw memref).
         // Use the explicit-result-types builder so we control the
         // shape regardless of which short-form builder rule applies.
         hlfir::DeclareOp declOp;
         auto refTy = fir::ReferenceType::get(seqTy);
-        if (staticExt.has_value()) {
+        if (allStatic) {
             declOp = b.create<hlfir::DeclareOp>(
                 loc, alloca.getResult(), uniqName, shapeOper);
         } else {
@@ -313,25 +310,31 @@ struct MaterialiseAssociatesPass
                 /*data_attr=*/cuf::DataAttributeAttr{});
         }
 
-        // 2) Build the gather DO loop.  ``fir.do_loop`` from ``%c1`` to
-        //    ``%extent`` step 1 over an index-typed iterator.
+        // 2) Build the nested gather DO loop tree — one ``fir.do_loop``
+        //    per dim from outermost (dim 0) to innermost (dim N-1).
+        //    Collect the per-dim induction variables; the inner body
+        //    applies the elemental and stores into the temp at the
+        //    composite index.
         auto idxTy = b.getIndexType();
+        (void)idxTy;
         auto c1 = b.create<mlir::arith::ConstantOp>(loc, b.getIndexAttr(1));
-        auto loop = b.create<fir::DoLoopOp>(loc, c1, extent, c1,
-                                            /*unordered=*/false,
-                                            /*finalCountValue=*/false);
-        // body: apply + designate + assign
-        b.setInsertionPointToStart(loop.getBody());
-        mlir::Value iv = loop.getInductionVar();
-        // hlfir.apply expects the same SSA value the elemental produced.
+        llvm::SmallVector<mlir::Value, 4> ivs;
+        for (unsigned i = 0; i < rank; ++i) {
+            auto loop = b.create<fir::DoLoopOp>(loc, c1, extents[i], c1,
+                                                /*unordered=*/false,
+                                                /*finalCountValue=*/false);
+            ivs.push_back(loop.getInductionVar());
+            b.setInsertionPointToStart(loop.getBody());
+        }
+        // Inner body: apply + designate + assign.  ``hlfir.apply`` on
+        // an N-D elemental takes N index args matching the elemental's
+        // block-arg list.
         auto applied = b.create<hlfir::ApplyOp>(
-            loc, eleTy, src, mlir::ValueRange{iv},
+            loc, eleTy, src, mlir::ValueRange{ivs},
             /*typeparams=*/mlir::ValueRange{});
-        // Short DesignateOp build form: (result_type, memref, indices, ...).
         auto dest = b.create<hlfir::DesignateOp>(
             loc, fir::ReferenceType::get(eleTy),
-            declOp.getResult(0), mlir::ValueRange{iv});
-        // Short AssignOp build form: (rhs, lhs).
+            declOp.getResult(0), mlir::ValueRange{ivs});
         b.create<hlfir::AssignOp>(loc, applied.getResult(), dest.getResult());
 
         // 3) Replace associate uses.  Match the result-type convention
@@ -345,7 +348,7 @@ struct MaterialiseAssociatesPass
             loc, b.getBoolAttr(false));
         assoc.getResult(0).replaceAllUsesWith(declOp.getResult(0));
         assoc.getResult(1).replaceAllUsesWith(
-            staticExt.has_value() ? declOp.getResult(0) : declOp.getResult(1));
+            allStatic ? declOp.getResult(0) : declOp.getResult(1));
         assoc.getResult(2).replaceAllUsesWith(falseI1.getResult());
 
         // 4) Erase the associate, plus any matching end_associate / destroy

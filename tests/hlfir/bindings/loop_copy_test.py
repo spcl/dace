@@ -11,6 +11,8 @@ import pytest
 from dace.frontend.hlfir.bindings import FlattenRecipe
 from dace.frontend.hlfir.bindings.loop_copy import (
     render_alias_calls,
+    render_aos_alloc_pack_in,
+    render_aos_alloc_pack_out,
     render_copy_in_loop,
     render_copy_out_loop,
 )
@@ -138,6 +140,64 @@ def test_render_copy_out_loop_raises_on_empty_write_expr():
     )
     with pytest.raises(ValueError, match="empty write_expr"):
         render_copy_out_loop(r, outer_expr="fld%a")
+
+
+# --------------------------------------------------------------------------
+# render_aos_alloc_pack_in / render_aos_alloc_pack_out (Phase 5c-B boundary)
+# --------------------------------------------------------------------------
+
+
+def _aos_alloc_recipe() -> FlattenRecipe:
+    return FlattenRecipe(
+        flat_names=("a_w", ),
+        read_exprs=("a($i1)%w($i2)", ),
+        rank=2,
+        shape_exprs=("size(a, dim=1)", "cap_a_w"),
+        aliasable=False,
+        aos_alloc=True,
+        cap_symbol="cap_a_w",
+    )
+
+
+def test_render_aos_alloc_pack_in_emits_cap_max_loop():
+    lines = render_aos_alloc_pack_in(_aos_alloc_recipe(), outer_expr="a")
+    joined = "\n".join(lines)
+    # Cap is computed by max-ing per-instance ``size`` — guarded by
+    # ``allocated()`` so unallocated rows don't poison the max.
+    assert "cap_a_w = 0" in joined
+    assert "if (allocated(a(i1)%w))" in joined
+    assert "if (size(a(i1)%w) > cap_a_w) cap_a_w = size(a(i1)%w)" in joined
+    # Empty-batch sentinel keeps the buffer non-degenerate.
+    assert "if (cap_a_w == 0) cap_a_w = 1" in joined
+    # Buffer allocate at (N, cap) shape, zero-init, then per-row copy.
+    assert "allocate(a_w(size(a, dim=1), cap_a_w))" in joined
+    assert "a_w = 0" in joined
+    assert "a_w(i1, 1:size(a(i1)%w)) = a(i1)%w" in joined
+
+
+def test_render_aos_alloc_pack_out_copies_back_live_region():
+    lines = render_aos_alloc_pack_out(_aos_alloc_recipe(), outer_expr="a")
+    joined = "\n".join(lines)
+    # Per-row copy-back, guarded by ``allocated()`` (skips unalloc'd
+    # entries — bindings policy is to leave their buffer rows zeroed).
+    assert "if (allocated(a(i1)%w))" in joined
+    assert "a(i1)%w = a_w(i1, 1:size(a(i1)%w))" in joined
+    # Final deallocate releases the scratch.
+    assert "deallocate(a_w)" in joined
+
+
+def test_render_aos_alloc_pack_in_raises_on_non_aos_alloc():
+    plain = FlattenRecipe(
+        flat_names=("a_w", ),
+        read_exprs=("a($i1)%w($i2)", ),
+        rank=2,
+        shape_exprs=("size(a, dim=1)", "cap_a_w"),
+        aliasable=False,
+    )
+    with pytest.raises(ValueError, match="non-aos_alloc"):
+        render_aos_alloc_pack_in(plain, outer_expr="a")
+    with pytest.raises(ValueError, match="non-aos_alloc"):
+        render_aos_alloc_pack_out(plain, outer_expr="a")
 
 
 def test_kind_convert_recipe_rendering():

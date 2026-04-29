@@ -197,3 +197,88 @@ def render_copy_out_loop(recipe: FlattenRecipe, outer_expr: str) -> List[str]:
     for flat in recipe.flat_names:
         out.append(f"    deallocate({flat})")
     return out
+
+
+# ----------------------------------------------------------------------------
+# AoS + allocatable pack/unpack (Phase 5c-B boundary)
+# ----------------------------------------------------------------------------
+#
+# Padding-to-max contract for an AoS dummy whose elements own
+# allocatable / pointer array members.  The full design (mutually
+# exclusive flag matrix, mixed-struct splitting, empty-batch sentinel,
+# no-runtime-allocated-checks-in-the-SDFG policy) lives on
+# ``FlattenRecipe.aos_alloc`` in ``flatten_plan.py``.  This module
+# implements the two emitters that read those fields.
+#
+# The pair of helpers below extracts the per-instance member-access
+# expression (``A($i1)%w``) from ``recipe.read_exprs[0]`` — we strip
+# the inner index group ``($i2)`` so the remainder names the row.
+# The bridge always emits ``read_exprs[0]`` as
+# ``<outer>($i1)%<member>($i2)`` for an aos_alloc recipe, so the
+# split on ``"($i2)"`` is safe.  ``i1`` is the loop iterator that
+# ``build_wrapper_head`` already declares for any non-aliasable
+# recipe of rank >= 1.
+
+
+def _aos_alloc_member_at_i(recipe: FlattenRecipe) -> str:
+    """Extract ``<outer>(i1)%<member>`` (without the inner index)
+    from an aos_alloc recipe's ``read_exprs[0]``.  Used by both the
+    pack-in and pack-out emitters for ``allocated()`` / ``size()``
+    queries on the per-instance member.
+    """
+    template = recipe.read_exprs[0]  # "A($i1)%w($i2)"
+    base = template.split('($i2)')[0] if '($i2)' in template \
+        else template.rsplit('(', 1)[0]
+    return base.replace('$i1', 'i1')
+
+
+def render_aos_alloc_pack_in(recipe: FlattenRecipe, outer_expr: str) -> List[str]:
+    """Compute ``cap``, allocate the 2D buffer, pack each allocated
+    row's live region.  Returns the Fortran lines for the wrapper
+    body.  ``recipe.aos_alloc`` must be True.
+    """
+    if not recipe.aos_alloc:
+        raise ValueError("render_aos_alloc_pack_in called on non-aos_alloc recipe")
+    flat = recipe.flat_names[0]
+    cap = recipe.cap_symbol
+    n_extent = recipe.shape_exprs[0] if recipe.shape_exprs else "size(" + outer_expr + ")"
+    member_at_i = _aos_alloc_member_at_i(recipe)
+    return [
+        f"    ! ----- AoS+allocatable pack-in: {outer_expr} → {flat} (cap = {cap}) -----",
+        f"    {cap} = 0",
+        f"    do i1 = 1, {n_extent}",
+        f"      if (allocated({member_at_i})) then",
+        f"        if (size({member_at_i}) > {cap}) {cap} = size({member_at_i})",
+        f"      end if",
+        f"    end do",
+        # Empty-batch sentinel — keep cap >= 1 so the buffer is non-degenerate.
+        f"    if ({cap} == 0) {cap} = 1",
+        f"    allocate({flat}({n_extent}, {cap}))",
+        f"    {flat} = 0",
+        f"    do i1 = 1, {n_extent}",
+        f"      if (allocated({member_at_i})) then",
+        f"        {flat}(i1, 1:size({member_at_i})) = {member_at_i}",
+        f"      end if",
+        f"    end do",
+    ]
+
+
+def render_aos_alloc_pack_out(recipe: FlattenRecipe, outer_expr: str) -> List[str]:
+    """Copy each allocated row's live region back from the buffer
+    and free the scratch.  No reallocation — the kernel doesn't
+    change per-instance sizes in 5c-B; that's reserved for 5c-C.
+    """
+    if not recipe.aos_alloc:
+        raise ValueError("render_aos_alloc_pack_out called on non-aos_alloc recipe")
+    flat = recipe.flat_names[0]
+    n_extent = recipe.shape_exprs[0] if recipe.shape_exprs else "size(" + outer_expr + ")"
+    member_at_i = _aos_alloc_member_at_i(recipe)
+    return [
+        f"    ! ----- AoS+allocatable pack-out: {flat} → {outer_expr} -----",
+        f"    do i1 = 1, {n_extent}",
+        f"      if (allocated({member_at_i})) then",
+        f"        {member_at_i} = {flat}(i1, 1:size({member_at_i}))",
+        f"      end if",
+        f"    end do",
+        f"    deallocate({flat})",
+    ]

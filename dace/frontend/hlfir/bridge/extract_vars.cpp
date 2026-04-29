@@ -231,6 +231,69 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
     }
 }
 
+// Extract the dense initial values of a ``fir.global ... constant``
+// op into a flat ``std::vector<double>`` (row-major).  Returns an
+// empty vector when the global isn't a recognisable constant pool
+// entry (no initialiser, non-dense init, non-numeric element type).
+//
+// Background: Flang lowers Fortran array literals like
+// ``(/ 2.0d0, 3.0d0, 4.0d0 /)`` to a read-only ``fir.global`` with
+// a ``dense<[...]>`` attribute, addressed via ``fir.address_of``.
+// We surface the data on the corresponding VarInfo so the SDFG
+// builder can synthesise an init state writing those values into
+// the transient — the kernel's reads then see the right data
+// instead of zeros.
+//
+// All values widen to ``double`` for transport; the Python side
+// narrows to the actual SDFG dtype (``int32`` / ``float32`` / ...)
+// at descriptor-write time.
+static std::vector<double> extractGlobalInitData(fir::GlobalOp gop) {
+    std::vector<double> out;
+    if (!gop || !gop.getConstant().value_or(false)) return out;
+    auto initOpt = gop.getInitVal();
+    if (!initOpt) return out;
+    auto dense = mlir::dyn_cast<mlir::DenseElementsAttr>(*initOpt);
+    if (!dense) return out;
+    auto eleTy = dense.getElementType();
+    if (eleTy.isF64()) {
+        for (auto v : dense.getValues<double>()) out.push_back(v);
+    } else if (eleTy.isF32()) {
+        for (auto v : dense.getValues<float>()) out.push_back((double)v);
+    } else if (eleTy.isInteger(8)) {
+        for (auto v : dense.getValues<int8_t>()) out.push_back((double)v);
+    } else if (eleTy.isInteger(16)) {
+        for (auto v : dense.getValues<int16_t>()) out.push_back((double)v);
+    } else if (eleTy.isInteger(32)) {
+        for (auto v : dense.getValues<int32_t>()) out.push_back((double)v);
+    } else if (eleTy.isInteger(64)) {
+        for (auto v : dense.getValues<int64_t>()) out.push_back((double)v);
+    } else if (eleTy.isInteger(1)) {
+        for (auto v : dense.getValues<bool>()) out.push_back(v ? 1.0 : 0.0);
+    }
+    return out;
+}
+
+// Trace a declare's memref back to the global it references via
+// ``fir.address_of``.  Returns the symbol name (without leading
+// ``@``) or empty string if the chain doesn't end at an address_of.
+// Walks through ``fir.convert`` shims that flang occasionally
+// inserts between the address_of and the declare's memref.
+static std::string traceToGlobalSymbol(mlir::Value memref) {
+    for (int i = 0; i < 8 && memref; ++i) {
+        auto *d = memref.getDefiningOp();
+        if (!d) return {};
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
+            memref = cv.getValue();
+            continue;
+        }
+        if (auto ad = mlir::dyn_cast<fir::AddrOfOp>(d)) {
+            return ad.getSymbol().getRootReference().str();
+        }
+        return {};
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Main extraction
 // ---------------------------------------------------------------------------
@@ -783,6 +846,22 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 av.lower_bounds.assign(av.shape_symbols.size(), "1");
                 av.role          = "array";
                 vars.push_back(std::move(av));
+            }
+        }
+
+        // Constant-pool detection.  A declare with the ``parameter``
+        // Fortran attribute whose memref traces to ``fir.address_of``
+        // of a ``fir.global ... constant`` is the read-only constant
+        // pool entry Flang synthesises for an array / scalar literal.
+        // Pull the dense init data so the SDFG builder can write it
+        // into the transient at function entry.
+        if (auto a = op.getFortranAttrs()) {
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::parameter)) {
+                std::string sym = traceToGlobalSymbol(op.getMemref());
+                if (!sym.empty()) {
+                    auto gop = module.lookupSymbol<fir::GlobalOp>(sym);
+                    v.const_data = extractGlobalInitData(gop);
+                }
             }
         }
 

@@ -8,13 +8,25 @@
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
+#include <algorithm>
 #include <unordered_map>
 
 namespace hlfir_bridge {
 
 std::string extractName(const std::string &m) {
     auto p = m.rfind('E');
-    return p != std::string::npos ? m.substr(p + 1) : m;
+    std::string name = p != std::string::npos ? m.substr(p + 1) : m;
+    // Sanitize dots — flang emits compiler-generated globals like
+    // ``_QQro.4xi4.0`` (read-only constant pool for array literals)
+    // whose names contain ``.``.  DaCe's ``NestedDict`` reserves
+    // ``.`` as a nested-key separator and rejects dotted keys
+    // outright.  Fortran identifiers can't contain ``.``, so
+    // replacing every ``.`` with ``_`` is collision-free w.r.t.
+    // user names.  Done at the boundary (extractName is the
+    // canonical "MLIR mangled → Python-side name" helper) so the
+    // raw mangled names in the IR stay intact.
+    std::replace(name.begin(), name.end(), '.', '_');
+    return name;
 }
 
 // Allocatable re-allocation alias map.  Keyed by the raw Fortran name

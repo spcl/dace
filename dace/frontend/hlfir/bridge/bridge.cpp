@@ -264,6 +264,8 @@ public:
                 recipeDict["shape_exprs"]   = asStrList(recipe.get("shape_exprs"));
                 recipeDict["aliasable"]     = asBool  (recipe.get("aliasable"));
                 recipeDict["scratch_dtype"] = asStr   (recipe.get("scratch_dtype"));
+                recipeDict["aos_alloc"]     = asBool  (recipe.get("aos_alloc"));
+                recipeDict["cap_symbol"]    = asStr   (recipe.get("cap_symbol"));
             }
             entryDict["recipe"] = recipeDict;
             entries.append(entryDict);
@@ -322,6 +324,7 @@ NB_MODULE(hlfir_bridge, m) {
         .def_ro("shape_symbols", &VarInfo::shape_symbols)
         .def_ro("lower_bounds",  &VarInfo::lower_bounds)
         .def_ro("role",          &VarInfo::role)
+        .def_ro("const_data",    &VarInfo::const_data)
         .def("__repr__", [](const VarInfo &v) {
             std::string s = "<" + v.role + " '" + v.fortran_name + "'";
             if (v.rank > 0) {

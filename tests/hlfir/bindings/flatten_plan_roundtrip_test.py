@@ -122,3 +122,98 @@ end subroutine
 """, tmp_path)
     assert len(plan.entries) == 1
     assert plan.entries[0].writeback_intent == "in"
+
+
+def test_aos_allocatable_dummy_emits_aos_alloc_recipe(tmp_path: Path):
+    """Phase 5c-B (true SDFG boundary): an AoS+allocatable struct
+    dummy yields one ``aos_alloc=True`` recipe per allocatable
+    member, with a ``cap_<base>_<member>`` symbol on the inner dim
+    and rank == outer_rank + 1.
+    """
+    plan = _plan_from_fortran(
+        """
+module aos_mod
+  implicit none
+  type, public :: row_t
+    real(8), allocatable :: w(:)
+  end type
+end module
+
+subroutine kernel(A, n, m, out)
+  use aos_mod
+  implicit none
+  type(row_t), intent(inout) :: A(2)
+  integer, intent(in) :: n, m
+  real(8), intent(out) :: out
+  integer :: i, j
+  do i = 1, n
+    do j = 1, m
+      A(i)%w(j) = A(i)%w(j) * 2.0d0
+    end do
+  end do
+  out = A(1)%w(1)
+end subroutine
+""", tmp_path)
+    # Exactly one entry — the allocatable member.  No regular entry
+    # (every member excluded from the regular path).  Flang lowercases
+    # all identifiers, so the outer name comes out as ``a`` and the
+    # flat companion as ``a_w``.
+    assert len(plan.entries) == 1
+    e = plan.entries[0]
+    assert e.outer_expr == "a"
+    assert e.writeback_intent == "inout"
+    r = e.recipe
+    assert r.aos_alloc is True
+    assert r.aliasable is False
+    assert r.flat_names == ("a_w", )
+    assert r.cap_symbol == "cap_a_w"
+    assert r.rank == 2
+    assert r.shape_exprs == ("size(a, dim=1)", "cap_a_w")
+    assert r.read_exprs == ("a($i1)%w($i2)", )
+    assert r.scratch_dtype == "float64"
+
+
+def test_mixed_aos_alloc_and_plain_member_split_into_two_entries(tmp_path: Path):
+    """A struct with both an allocatable and a plain (static-shape)
+    member — Phase 5c-B emits a separate ``aos_alloc=True`` recipe
+    per allocatable member, AND a regular aliasable recipe covering
+    the non-allocatable members.
+    """
+    plan = _plan_from_fortran(
+        """
+module aos_mod
+  implicit none
+  type, public :: row2_t
+    real(8), allocatable :: w(:)
+    integer :: tag
+  end type
+end module
+
+subroutine kernel(A, n, m, out)
+  use aos_mod
+  implicit none
+  type(row2_t), intent(inout) :: A(3)
+  integer, intent(in) :: n, m
+  real(8), intent(out) :: out
+  integer :: i, j
+  do i = 1, n
+    A(i)%tag = i
+    do j = 1, m
+      A(i)%w(j) = A(i)%w(j) + real(A(i)%tag, kind=8)
+    end do
+  end do
+  out = A(1)%w(1)
+end subroutine
+""", tmp_path)
+    # Two entries: one aos_alloc for w, one regular for tag.  Flang
+    # lowercases identifiers — the flat companions are ``a_w`` / ``a_tag``.
+    aos_entries = [e for e in plan.entries if e.recipe.aos_alloc]
+    plain_entries = [e for e in plan.entries if not e.recipe.aos_alloc]
+    assert len(aos_entries) == 1
+    assert len(plain_entries) == 1
+    aos = aos_entries[0].recipe
+    assert aos.flat_names == ("a_w", )
+    assert aos.cap_symbol == "cap_a_w"
+    plain = plain_entries[0].recipe
+    assert plain.flat_names == ("a_tag", )
+    assert "tag" in plain.read_exprs[0]

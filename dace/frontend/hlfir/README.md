@@ -174,7 +174,7 @@ they do not invent parallel channels.
 | Artefact | Produced at | Consumed at | Role |
 | --- | --- | --- | --- |
 | `FortranInterface` | (1) snapshot | (5) emit | Caller-facing dummy list + derived-type layouts |
-| `FlattenPlan` (MLIR attr) | (3) `hlfir-flatten-structs` | (5) emit | Per-dummy AoS→SoA unpack recipe |
+| `FlattenPlan` (MLIR attr) | (3) `hlfir-flatten-structs` | (5) emit | Per-dummy AoS→SoA unpack recipe (`flat_names`, `read_exprs`, `shape_exprs`, `aliasable`, `aos_alloc`+`cap_symbol` for padding-to-max) |
 | `VarInfo[]` | (4) `extract_vars` | (4) `SDFGBuilder` | Classification + shape + intent per variable |
 | `ASTNode` tree | (4) `extract_ast` | (4) `SDFGBuilder` | Normalised CFG + assigns + library-op references |
 | `FrozenSignature` | (4) end of `build()` | codegen, (5) emit | SDFG arglist snapshot — drift check at codegen time |
@@ -281,6 +281,47 @@ lifetime-compatible) or an explicit Fortran `do`-loop copy into a
 scratch member-typed array. The original caller's signature stays
 intact — the binding module is the AoS↔SoA boundary, the SDFG only
 ever sees SoA.
+
+**AoS + allocatable members — padding-to-max contract (Phase 5c).**
+A struct with allocatable / pointer array members on an AoS dummy
+(`type t :: real, allocatable :: w(:); type(t) :: A(N)`) can't
+flatten to a single static-shape companion: each instance owns its
+own descriptor with a runtime size, and the sizes generally differ.
+Two sub-cases, one shared contract:
+
+  * **5c-A — local instance, kernel-internal allocate.**  When `A`
+    is a local `fir.alloca` and every `allocate(A(i)%w(M))` site
+    uses the same compile-time constant `M`, the pass synthesises a
+    fully static 2D companion `A_w(N, M)` and erases the per-instance
+    allocate / freemem chain (the buffer is pre-allocated at the
+    static shape, so each `allocate` becomes a semantic no-op).  The
+    helpers `aosAllocUniformConstSize`, `rewriteAosWholeMemberAssign`,
+    `collapseAosAllocReads`, `eraseAosAllocDeallocChain`, and
+    `stripReallocOnAosMember` together turn the original IR into a
+    flat 2-index designate over `A_w`.
+
+  * **5c-B — true SDFG-boundary dummy.**  When `A` is an
+    `intent(inout)` (or `intent(in)`) AoS dummy on the SDFG entry
+    itself, per-instance sizes are caller-determined and may differ
+    at runtime.  The pass emits one FlattenEntry per allocatable
+    member with `aos_alloc=True` and `cap_symbol="cap_<base>_<m>"`,
+    and inserts two block args per member — a runtime cap (`index`
+    ref) and a 2D data buffer `ref<array<N x ?xT>>`.  The cap declare's
+    `uniq_name = cap_<base>_<m>` makes `traceToDecl` resolve the
+    inner extent to that symbol on the SDFG signature.  Stage (5)'s
+    bindings emitter (`render_aos_alloc_pack_in` /
+    `render_aos_alloc_pack_out` in `bindings/loop_copy.py`) computes
+    `cap = max_i(merge(size(A(i)%w), 0, allocated(A(i)%w)))`,
+    allocates `A_w(N, cap)`, packs each allocated row's live region
+    in, and (for `out`/`inout`) unpacks back on return.  Mixed
+    allocation states are allowed — unallocated rows stay as the
+    zero-padded default and the user's program logic is responsible
+    for not reading them.  An empty-batch sentinel (`cap == 0 → 1`)
+    keeps the buffer non-degenerate.  Mixed structs (one allocatable
+    + one plain member) split into one `aos_alloc=True` entry per
+    allocatable plus one regular aliasable entry covering the rest;
+    `recordStructArgEntry` takes an exclude-set to skip members
+    already covered by the per-member path.
 
 **Signature freezing.** `codegen.generate_code` verifies
 `sdfg._frozen_signature` before emitting the C++ header. Drift from
@@ -390,8 +431,12 @@ xfails), ❌ never (out of scope).
 | Array-of-struct with array members (`A(N)%w(M,M)`) | ✅ Phase 1.5 | shape concatenation; designate chains `A(i)%w(j,k)` rewrite to `A_w(i,j,k)` |
 | Whole-member access on AoS (`A(i)%w = ...`) | ✅ Phase 1.5 | rewriter emits triplet section `A_w(i, 1:M:1, ...)` |
 | Cross-subroutine struct args (incl. AoS) | ✅ Phase 2.2 | function signature rewrite + per-member block args + `hlfir.flatten_plan` attribute carries the recipe |
-| Module-level derived type, allocatable members | 🟡 Phase 3 | 4 xfails — needs runtime max-computation + symbol-per-padded-dim |
-| Batched CSR (jagged AoS with per-instance allocatable members) | 🟡 Phase 3 | xfailed contract test pins the design |
+| Module-level derived type, allocatable members | ✅ Phase 5a/5b | scalar struct + 1-D allocatable / pointer member — flat top-level allocatable companion + per-allocate-site rename |
+| AoS + allocatable, uniform compile-time size (`type(t) :: A(N); allocate(A(i)%w(M))` with constant `M`) | ✅ Phase 5c-A | static 2D companion `A_w(N, M)`; allocate / freemem chain erased post-flatten |
+| AoS + allocatable as inlined-kernel dummy | ✅ Phase 5c-B (inlined) | `collapseAosAllocReads` follows alias chains through `hlfir-inline-all`'s declare aliases |
+| AoS + allocatable as true SDFG-boundary dummy | ✅ Phase 5c-B | padding-to-max contract: bindings layer computes `cap = max_i(size(A(i)%w))`, packs/unpacks live regions; runtime cap symbol on SDFG signature |
+| AoS + allocatable, kernel-internal reallocation (`intent(out)` first allocation inside kernel) | 🟡 Phase 5c-C | needs an HLFIR shape-discovery pre-pass + caller-side stub interface |
+| Batched CSR (jagged AoS with per-instance allocatable members of differing sizes) | 🟡 Phase 5c+ | xfailed contract test pins the design; padding-to-max works mechanically but the two-different-members `(rowptr, colidx, val)` shape needs separate cap symbols (in scope but not yet exercised) |
 | Derived type with parametric array dim from struct field | 🟡 Phase 4 | 1 xfail |
 | Circular type definitions | ❌ | recursion through pointer chain — out of scope |
 

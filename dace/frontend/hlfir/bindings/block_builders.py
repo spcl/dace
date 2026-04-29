@@ -21,6 +21,8 @@ from dace.frontend.hlfir.bindings.frozen_signature import FrozenSignature
 from dace.frontend.hlfir.bindings.loop_copy import (
     _fortran_type,
     render_alias_calls,
+    render_aos_alloc_pack_in,
+    render_aos_alloc_pack_out,
     render_copy_in_loop,
     render_copy_out_loop,
 )
@@ -232,7 +234,11 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     body: List[str] = ["    ! ----- Copy-in / alias per flatten entry -----"]
     for entry in plan.entries:
         r = entry.recipe
-        if r.aliasable:
+        # Three mutually exclusive emitter shapes — see FlattenRecipe
+        # for the flag matrix.
+        if r.aos_alloc:
+            body.extend(render_aos_alloc_pack_in(r, entry.outer_expr))
+        elif r.aliasable:
             body.extend(render_alias_calls(r))
         else:
             body.extend(render_copy_in_loop(r))
@@ -284,6 +290,15 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     copy_out_lines: List[str] = []
     for entry in plan.entries:
         r = entry.recipe
+        if r.aos_alloc:
+            if entry.writeback_intent in ('out', 'inout'):
+                copy_out_lines.extend(render_aos_alloc_pack_out(r, entry.outer_expr))
+            else:
+                # intent(in): no copy-back, but the scratch buffer
+                # was allocated unconditionally in pack-in and still
+                # needs releasing.
+                copy_out_lines.append(f"    deallocate({r.flat_names[0]})")
+            continue
         if r.aliasable:
             continue
         if not r.write_expr:
@@ -479,9 +494,19 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
     to find the first recipe whose ``shape_exprs`` mention the
     symbol; falls back to a TODO comment if none does.
     """
+    # Cap symbols of aos_alloc recipes are populated by the pack-in
+    # code (``render_aos_alloc_pack_in`` writes ``cap_<m> = max_i(...)``)
+    # before the SDFG call — skip them here so we don't emit a stray
+    # TODO line or duplicate assignment.
+    aos_cap_syms = {
+        entry.recipe.cap_symbol
+        for entry in plan.entries if entry.recipe.aos_alloc and entry.recipe.cap_symbol
+    }
     out: List[str] = []
     for sym in frozen.free_symbols:
         if sym in outer_dummy_set:
+            continue
+        if sym in aos_cap_syms:
             continue
         found = False
         for entry in plan.entries:

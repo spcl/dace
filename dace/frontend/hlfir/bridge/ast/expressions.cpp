@@ -174,6 +174,30 @@ std::string lowerIsPresent(mlir::Value operand) {
     auto *defOp = memref.getDefiningOp();
     if (!defOp) return raw;
 
+    // ``RewritePointerAssigns`` may have substituted the memref with
+    // a slice-rebind value: ``fir.rebox(fir.embox(designate(parent,
+    // slice)))``.  Walk through those wrappers to find the section
+    // designate that carries the slice's lower bound, so the rebase
+    // below fires the same way it does for an explicit
+    // ``hlfir.designate %parent_section (%i)`` chain.  Without this,
+    // a rebound slice ``ptr => arr(3:7)`` reads ``arr(i)`` instead of
+    // ``arr(i + 2)`` for every ``ptr(i)`` access.
+    {
+        mlir::Value v = memref;
+        for (int hop = 0; hop < limits::kConvertChainDepth && v; ++hop) {
+            auto *d = v.getDefiningOp();
+            if (!d) break;
+            if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d))   { v = rb.getBox(); continue; }
+            if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d))   { v = eb.getMemref(); continue; }
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) { v = cv.getValue(); continue; }
+            if (mlir::isa<hlfir::DesignateOp>(d)) {
+                defOp = d;  // Found a section designate further up;
+                            // fall into the existing parent path below.
+            }
+            break;
+        }
+    }
+
     // Section-designate parent contribution.
     if (auto parentDg = mlir::dyn_cast<hlfir::DesignateOp>(defOp)) {
         auto triplets = parentDg.getIsTriplet();

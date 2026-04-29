@@ -260,6 +260,15 @@ class SDFGBuilder:
         self._id_counter = 0
         sdfg = SDFG(sdfg_name(self))
         add_descriptors(self, sdfg)
+        # Constant-pool (Flang's ``_QQro.<...>`` globals): for every
+        # ``parameter``-attributed declare whose backing global carries
+        # a dense init, register the data via ``sdfg.add_constant``.
+        # That bakes the values into codegen so the kernel's reads land
+        # on the right data instead of an uninitialised transient.  The
+        # array descriptor stays in ``sdfg.arrays`` (created by
+        # ``add_descriptors``); the constant table just attaches the
+        # initial-value tuple to it.
+        self._register_constants(sdfg)
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)
@@ -293,6 +302,45 @@ class SDFGBuilder:
         self._run_post_gen_passes(sdfg)
         self._attach_frozen_signature(sdfg)
         return sdfg
+
+    def _register_constants(self, sdfg: SDFG) -> None:
+        """Attach Flang's constant-pool data to the SDFG.
+
+        Every ``VarInfo`` with non-empty ``const_data`` represents a
+        ``_QQro.<shape>x<dtype>.<counter>`` global — the read-only
+        backing for an array or scalar literal in the source.  The
+        bridge has already added a transient descriptor for it via
+        ``add_descriptors``; this hook attaches the dense values so
+        DaCe's codegen materialises them into the binary.
+
+        The data widens to ``double`` on the bridge side for
+        transport; we narrow to the descriptor's actual dtype here
+        and reshape back to the rank-N companion shape.  Scalar
+        constants (rank 0, single value) are uncommon — Fortran
+        ``parameter`` scalars typically inline as ``arith.constant``
+        — but the path supports them with a trivial 1-element array.
+        """
+        import numpy as np
+        for v in self.variables:
+            if not v.const_data:
+                continue
+            if v.fortran_name not in sdfg.arrays:
+                continue
+            desc = sdfg.arrays[v.fortran_name]
+            np_dtype = desc.dtype.as_numpy_dtype()
+            arr = np.asarray(v.const_data, dtype=np.float64).astype(np_dtype)
+            if v.rank > 0:
+                # Bridge transports row-major doubles; reshape to
+                # the descriptor's declared shape.  The bridge
+                # currently only emits constant pools for rank-1
+                # globals (Flang shape: a flat dense<[...]> tensor),
+                # so this is a no-op pass-through today, but the
+                # reshape keeps the contract honest if higher-rank
+                # globals start surfacing.
+                shape = tuple(int(d) for d in desc.shape)
+                if arr.size == int(np.prod(shape)):
+                    arr = arr.reshape(shape, order='C')
+            sdfg.add_constant(v.fortran_name, arr, desc)
 
     def _run_post_gen_passes(self, sdfg: SDFG) -> None:
         """Run the post-generation cleanup passes that take a freshly-

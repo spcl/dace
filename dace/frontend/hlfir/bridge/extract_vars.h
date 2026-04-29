@@ -31,6 +31,14 @@ struct VarInfo {
     std::vector<std::string> shape_symbols;
     std::vector<std::string> lower_bounds;
     std::string role;
+    /// Compile-time constant data for the read-only constant pool
+    /// (Flang's ``_QQro.<shape>x<dtype>.<counter>`` globals).  When
+    /// non-empty the SDFG builder synthesises an init state writing
+    /// these values into the transient before the kernel body runs.
+    /// Empty for ordinary variables.  Value layout: row-major doubles
+    /// (one per element) — the Python side narrows to the actual
+    /// dtype on use.  Booleans surface as 0.0 / 1.0.
+    std::vector<double> const_data;
 };
 
 /// Walk the module and build one VarInfo per hlfir.declare.

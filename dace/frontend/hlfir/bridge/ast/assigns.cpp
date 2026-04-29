@@ -101,15 +101,43 @@ namespace hlfir_bridge {
                 if (arrName.empty()) arrName = traceToDecl(dg.getMemref());
                 if (arrName.empty()) return "?";
                 // Constant-indexed array element used as an index / bound
-                // (Fortran ``pos(1):pos(2)`` / ``a(idx(1), j)`` / …).  Mint
-                // an SDFG symbol ``__sym_<arr>_<n>`` and return the symbol
-                // name; the registry's contents become ``kind="symbol_init"``
-                // AST nodes prepended to the body in ``extractAST``, which
-                // the Python emitter stages as an interstate-edge load
-                // ``__sym_<arr>_<n> = <arr>[n-1]`` at SDFG entry.  The
-                // memlet subset using the symbol is then a closed-form
-                // expression DaCe can simplify, instead of a data
-                // reference DaCe can't represent.
+                // (Fortran ``pos(1):pos(2)`` / ``a(idx(1), j)`` / …).
+                //
+                // Two lowerings are available:
+                //
+                //   (a) ``internPosSymbol`` — mint a one-shot SDFG
+                //       symbol ``__sym_<arr>_<n>`` and prepend a
+                //       ``kind="symbol_init"`` AST node that the
+                //       Python emitter stages as an interstate-edge
+                //       load ``__sym_<arr>_<n> = <arr>[n-1]`` at
+                //       SDFG entry.  Every memlet that uses the
+                //       symbol is then a closed-form expression DaCe
+                //       can simplify, instead of a data reference it
+                //       can't represent in subset form.
+                //
+                //   (b) Fall through to the ``arr[idx]`` form below
+                //       — the per-occurrence indirect-symbol
+                //       machinery (``collect_indirect`` /
+                //       ``indirect_to_dace`` in
+                //       ``builder/access.py``) mints a fresh
+                //       ``<arr>_at<gid>`` symbol at the read site.
+                //
+                // (a) is cheaper (one symbol shared across uses) but
+                // ONLY safe when the array's contents don't change
+                // after SDFG entry — read-only ``parameter``
+                // constants and ``intent(in)`` dummies fit; arrays
+                // the kernel writes do NOT.  An entry-time read of
+                // a not-yet-initialised local captures uninitialised
+                // memory, and every subsequent use of the symbol
+                // sees garbage.  long_tasklet_test exercises this:
+                // ``ind%indices(:) = 1; ... arr(ind%indices(1))`` —
+                // (a) loads ``ind_indices[0]`` BEFORE the body's
+                // initialiser runs.
+                //
+                // Gate: if the source declare is the LHS of any
+                // ``hlfir.assign`` in the enclosing function (walked
+                // through chained ``hlfir.designate`` ops on the
+                // LHS), treat it as mutable and fall through to (b).
                 auto idxOps = dg.getIndices();
                 bool allConstScalar = !idxOps.empty();
                 std::vector<int64_t> consts;
@@ -118,8 +146,42 @@ namespace hlfir_bridge {
                     if (!c) { allConstScalar = false; break; }
                     consts.push_back(*c);
                 }
-                if (allConstScalar && consts.size() == 1)
-                    return internPosSymbol(arrName, consts[0]);
+                if (allConstScalar && consts.size() == 1) {
+                    bool isMutable = false;
+                    if (auto srcDecl = mlir::dyn_cast_or_null<hlfir::DeclareOp>(
+                            dg.getMemref().getDefiningOp())) {
+                        if (auto func = srcDecl->getParentOfType<mlir::func::FuncOp>()) {
+                            func.walk([&](hlfir::AssignOp aop) {
+                                auto lhs = aop.getLhs();
+                                for (int hop = 0; hop < 8 && lhs; ++hop) {
+                                    if (lhs == srcDecl.getResult(0) ||
+                                        lhs == srcDecl.getResult(1)) {
+                                        isMutable = true;
+                                        return;
+                                    }
+                                    auto *ld = lhs.getDefiningOp();
+                                    if (!ld) break;
+                                    if (auto innerDg = mlir::dyn_cast<hlfir::DesignateOp>(ld)) {
+                                        lhs = innerDg.getMemref();
+                                        continue;
+                                    }
+                                    break;
+                                }
+                            });
+                        }
+                    }
+                    if (!isMutable)
+                        return internPosSymbol(arrName, consts[0]);
+                    // Mutable source — fall through.  The matching
+                    // Python-side fix lives in
+                    // ``builder/access.py::build_memlet_index``: the
+                    // bare-iter-name fallback now defaults to the
+                    // bridge-supplied ``index_exprs[dim]`` instead
+                    // of ``index_vars[dim]``, so the ``<arr>[idx]``
+                    // form rendered below survives all the way to
+                    // the memlet without being clobbered by
+                    // ``resolveIndex``'s whole-array-name fallback.
+                }
                 // Multi-dim constant-indexed reads (``pos(1, 2)``) are not
                 // yet folded to a symbol; the legacy ``pos[0, 1]`` form
                 // below still applies.

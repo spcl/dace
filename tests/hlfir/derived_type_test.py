@@ -993,19 +993,21 @@ end subroutine main
     assert out[0] == 3.0
 
 
-@pytest.mark.xfail(reason="Phase 3 — per-instance allocatable members. The "
-                   "per-member SoA mapping is "
-                   "``A_<member>(N, max_i(size(A(i)%<member>)))`` with "
-                   "padding-to-max; needs an upstream pass to compute "
-                   "the per-instance sizes and a runtime-extent declare "
-                   "for each flattened member.  Sketch only — kept "
-                   "xfailed as a gap-tracking contract.")
 def test_batched_csr_allocatable_xfail(tmp_path: Path):
     """Genuinely jagged batched CSR — each instance's CSR arrays are
-    runtime-allocated to different sizes.  The intended Phase 3
-    lowering: ``A_rowptr(N, max_rowptr)``, ``A_colidx(N, max_nnz)``,
-    ``A_val(N, max_nnz)`` with per-instance sizes tracked separately
-    and padding beyond the live region.
+    runtime-allocated to different (compile-time-constant) sizes.
+
+    Lowering chain:
+      * ``aosAllocMaxConstSize`` records ``max_i(N_i)`` per allocatable
+        member as the companion column count.
+      * ``rewriteAosWholeMemberAssign`` resolves a per-instance
+        section bound when the parent's outer index is a constant —
+        each ``A(i)%w = (/...lit.../)`` lowers to a row section sized
+        to that instance's specific allocate size, not the global cap.
+      * The constant-pool feature (``parameter``-attributed declares
+        backed by ``fir.global ... constant``) ships the literal data
+        through ``sdfg.add_constant`` so the kernel's reads see the
+        right values.
     """
     src = """
 module lib
