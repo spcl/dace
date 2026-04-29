@@ -119,30 +119,16 @@ def test_monolithic_strategy_accepts_pre_expanded_sdfg():
         f"got {len(syncs)}.")
 
 
-def test_codegen_raises_when_legacy_stream_symbol_lacks_connector():
-    """A Tasklet references ``__dace_current_stream`` but isn't recognized
-    as a stream consumer (no connector wired) → ``_annotate_legacy_cuda_stream``
-    must raise. Silent fallback to stream 0 is the bug class this contract
-    prevents.
-
-    Constructs the failing condition directly and invokes the codegen
-    annotator — bypasses full compilation so the test stays focused on the
-    contract."""
-    sdfg = dace.SDFG('legacy_stream_no_connector')
-    state = sdfg.add_state('s')
-    state.add_tasklet('legacy_user',
-                      inputs=set(),
-                      outputs=set(),
-                      code='// __dace_current_stream goes here',
-                      language=dace.Language.CPP,
-                      side_effects=True)
-
-    from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
-
-    # Bind only the bits the annotator reads — no need to construct a full
-    # codegen instance.
-    class _Probe:
-        _annotate_legacy_cuda_stream = ExperimentalCUDACodeGen._annotate_legacy_cuda_stream
-
-    with pytest.raises(ValueError, match="no stream in-connector"):
-        _Probe._annotate_legacy_cuda_stream(_Probe(), sdfg, {})
+def test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet():
+    """The pipeline must wire a ``__stream`` connector onto every
+    pre-expanded GPU runtime tasklet. The codegen prelude binds
+    ``__dace_current_stream`` from that connector — so a tasklet using
+    the legacy symbol without a wired connector would generate
+    ill-formed C++. We verify the connector is present after the
+    pipeline, which is what makes the codegen prelude work."""
+    sdfg = _build_h2d_d2h_pre_expanded_sdfg()
+    GPUStreamPipeline().apply_pass(sdfg, {})
+    for tasklet, _ in _runtime_tasklets(sdfg):
+        assert any(t == dace.dtypes.gpuStream_t for t in tasklet.in_connectors.values()), (
+            f"Pre-expanded runtime tasklet '{tasklet.label}' must carry a "
+            f"gpuStream_t in-connector after the pipeline runs.")

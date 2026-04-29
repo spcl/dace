@@ -10,16 +10,15 @@ decisions produce are identical across strategies and live here:
   hosts a stream consumer.
 * :func:`wire_stream_connectors` — for each stream id, build the
   per-stream chain of ``gpu_streams`` AccessNodes that feed each
-  consumer's ``__stream_<i>`` / ``stream`` connector. Routes through
-  ``Sequential``-map scopes via ``IN_stream`` / ``OUT_stream``
-  pass-through connectors.
+  consumer's ``__stream`` connector. Routes through ``Sequential``-map
+  scopes via ``IN___stream`` / ``OUT___stream`` pass-through connectors.
 * :func:`insert_state_end_syncs` / :func:`insert_per_node_syncs` — emit
   ``cudaStreamSynchronize`` tasklets at the requested locations.
 
 No policy lives here.
 """
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes
@@ -207,25 +206,51 @@ def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn
     return next_access
 
 
-def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
-                             accessed_slot: str, stream_array_name: str) -> None:
+def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node,
+                                    target_conn: str, get_source_access: 'Callable[[], nodes.AccessNode]',
+                                    memlet_factory: 'Callable[[], Memlet]') -> None:
+    """Thread a stream handle from a source AccessNode through every map in
+    ``scope_chain`` (outermost → innermost) into ``target.target_conn``.
+
+    Each map gets ``IN_<STREAM_CONNECTOR>`` / ``OUT_<STREAM_CONNECTOR>``
+    pass-through connectors. ``IN_<STREAM_CONNECTOR>`` accepts only one
+    incoming edge, so the routing is idempotent: a sibling consumer that
+    already routed through the same map reuses the existing wire and
+    only the inner-most segment is added.
+
+    Parameterised so both top-level wiring (``wire_stream_connectors``,
+    sourcing from a fresh ``gpu_streams[<i>]`` AccessNode) and post-
+    expansion reconnect (``ReconnectWithinExpandedSDFGs``, sourcing from
+    the wrapper SDFG's ``stream`` Scalar) can share the routing logic
+    without duplicating it.
+    """
     in_conn = f"IN_{STREAM_CONNECTOR}"
     out_conn = f"OUT_{STREAM_CONNECTOR}"
     outermost = scope_chain[0]
     outermost.add_in_connector(in_conn)
     outermost.add_out_connector(out_conn)
-    # Reuse the existing IN_stream wire if a sibling consumer already
-    # routed through this Sequential map — the connector accepts only one
-    # incoming edge, and the ``OUT_stream`` side feeds every inner consumer.
     if not any(e.dst_conn == in_conn for e in state.in_edges(outermost)):
-        src_access = state.add_access(stream_array_name)
-        state.add_edge(src_access, None, outermost, in_conn, Memlet(accessed_slot))
+        state.add_edge(get_source_access(), None, outermost, in_conn, memlet_factory())
     for outer, inner in zip(scope_chain, scope_chain[1:]):
         inner.add_in_connector(in_conn)
         inner.add_out_connector(out_conn)
         if not any(e.dst_conn == in_conn for e in state.in_edges(inner)):
-            state.add_edge(outer, out_conn, inner, in_conn, Memlet(accessed_slot))
-    state.add_edge(scope_chain[-1], out_conn, target, target_conn, Memlet(accessed_slot))
+            state.add_edge(outer, out_conn, inner, in_conn, memlet_factory())
+    state.add_edge(scope_chain[-1], out_conn, target, target_conn, memlet_factory())
+
+
+def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
+                             accessed_slot: str, stream_array_name: str) -> None:
+    """Top-level seq-scope routing: source is a fresh ``gpu_streams[<i>]``
+    AccessNode, memlet is the matching slice on the chain edges."""
+    thread_stream_through_seq_scope(
+        state,
+        scope_chain,
+        target,
+        target_conn,
+        get_source_access=lambda: state.add_access(stream_array_name),
+        memlet_factory=lambda: Memlet(accessed_slot),
+    )
 
 
 def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:

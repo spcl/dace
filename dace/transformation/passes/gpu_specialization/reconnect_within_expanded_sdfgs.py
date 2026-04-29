@@ -95,48 +95,33 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
 
     @staticmethod
     def _wire_stream_to_consumer(state: SDFGState, stream_an: nodes.AccessNode, consumer, sdfg: SDFG):
-        """Wire ``stream_an → consumer.stream`` with single-element memlets.
-        If ``consumer`` sits inside one or more Sequential map scopes, route
-        the stream through each map's ``IN_stream`` / ``OUT_stream``
-        pass-through connectors instead of crossing scope boundaries with a
-        direct edge."""
-        # Add the stream input connector on the consumer.
+        """Wire ``stream_an → consumer.__stream``.
+
+        Top-level consumer → single direct edge. Consumer inside one or
+        more Sequential map scopes → reuse the shared seq-scope routing
+        from :mod:`stream_lowering_helpers` so the same idempotent
+        ``IN_<conn>`` / ``OUT_<conn>`` chain logic applies on both
+        sides of the expand boundary.
+        """
+        from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (
+            thread_stream_through_seq_scope)
+
+        # Add the stream input connector on the consumer (if missing).
         if isinstance(consumer, nodes.MapEntry):
             add_gpu_stream_connector(consumer, STREAM_CONNECTOR, single_stream=True)
         elif STREAM_CONNECTOR not in consumer.in_connectors:
-            # LibraryNode / Tasklet — connector may already exist from a
-            # prior expansion; add only if missing.
             add_gpu_stream_connector(consumer, STREAM_CONNECTOR, single_stream=True)
 
         chain = enclosing_map_chain(state, consumer, dtypes.ScheduleType.Sequential)
         if not chain:
-            # Consumer at state top level — single direct edge.
-            state.add_edge(stream_an, None, consumer, STREAM_CONNECTOR,
-                           Memlet(STREAM_CONNECTOR))
+            state.add_edge(stream_an, None, consumer, STREAM_CONNECTOR, Memlet(STREAM_CONNECTOR))
             return
 
-        # Thread through every enclosing Sequential map: outermost map's
-        # IN_stream binds to the wrapper's stream AccessNode; inner maps
-        # chain via OUT_stream → next IN_stream; final OUT_stream goes to
-        # the consumer's connector. ``IN_stream`` accepts only one incoming
-        # edge, so reuse the existing wire when a sibling consumer routed
-        # through the same map first.
-        outermost = chain[0]
-        in_conn = f"IN_{STREAM_CONNECTOR}"
-        out_conn = f"OUT_{STREAM_CONNECTOR}"
-        outermost.add_in_connector(in_conn)
-        outermost.add_out_connector(out_conn)
-        if not any(e.dst_conn == in_conn for e in state.in_edges(outermost)):
-            state.add_edge(stream_an, None, outermost, in_conn,
-                           Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))
-
-        for outer, inner in zip(chain, chain[1:]):
-            inner.add_in_connector(in_conn)
-            inner.add_out_connector(out_conn)
-            if not any(e.dst_conn == in_conn for e in state.in_edges(inner)):
-                state.add_edge(outer, out_conn, inner, in_conn,
-                               Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))
-
-        # Innermost map → consumer.
-        state.add_edge(chain[-1], out_conn, consumer, STREAM_CONNECTOR,
-                       Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))
+        thread_stream_through_seq_scope(
+            state,
+            chain,
+            consumer,
+            STREAM_CONNECTOR,
+            get_source_access=lambda: stream_an,
+            memlet_factory=lambda: Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]),
+        )

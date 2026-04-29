@@ -125,7 +125,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # ``expand_library_nodes(recursive=True)``:
         # * ``GPUStreamPipeline`` (pre-expansion) lifts implicit copies,
         #   schedules streams, threads ``gpu_streams`` everywhere needed,
-        #   wires per-kernel ``__stream_<i>`` connectors, emits sync
+        #   wires each consumer's ``__stream`` connector, emits sync
         #   tasklets. Idempotent via the ``is_gpu_lowering_applied`` signal.
         # * ``GPUPostExpansionPipeline`` (post-expansion) reconnects internal
         #   GPU consumers of expansion-spawned NestedSDFGs and lifts
@@ -186,13 +186,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
 
-        # ``_annotate_legacy_cuda_stream`` is no longer called: the CPU
-        # codegen prelude (``cpp.py``) now binds ``__dace_current_stream``
-        # directly from the ``gpuStream_t``-typed in-connector when one is
-        # present, so we don't need a separate ``_cuda_stream`` annotation
-        # back-channel. The legacy codegen still uses that path; we keep
-        # the method on this class as dead code only if a caller pre-applies
-        # it explicitly.
+        # No ``_cuda_stream`` annotation pass: the CPU codegen prelude in
+        # ``cpp.py`` binds ``__dace_current_stream`` directly from the
+        # ``gpuStream_t``-typed in-connector when one is present. Legacy
+        # codegen keeps its own ``_cuda_stream`` path in ``cuda.py``.
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
@@ -228,51 +225,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # it walks every GPU_Device map in the SDFG, so an unmodified kernel
         # gets an identical (grid, block) tuple back.
         self._kernel_dimensions_map.update(InferGPUGridAndBlockSize().apply_pass(sdfg, self._tb_inserted_kernels))
-
-    def _annotate_legacy_cuda_stream(self, sdfg: SDFG, assignments: Dict[Any, int]) -> None:
-        """Set ``_cuda_stream`` on tasklets that reference ``__dace_current_stream``.
-
-        The CPU codegen prelude at ``cpp.py:830`` emits ``__dace_current_stream``
-        only when the node has ``_cuda_stream``. Two valid binding shapes
-        exist:
-
-        * **Top-level Tasklet**: the strategy added a ``stream`` in-connector
-          wired to ``gpu_streams[<i>]``; the Tasklet's bound stream id is
-          ``assignments[node]`` and we stamp it on ``_cuda_stream``.
-        * **Wrapper-internal Tasklet**: the libnode expansion put a
-          ``stream`` Scalar in the wrapper SDFG and bound it via the
-          NestedSDFG-node connector. The codegen reads the Scalar at
-          runtime, so no per-Tasklet connector or ``_cuda_stream`` is
-          required — the prelude already resolves the symbol from the
-          surrounding Scalar binding.
-
-        Missing both shapes is a contract violation — the strategy missed
-        the Tasklet, so silently binding stream 0 (the old fallback) hid
-        bugs. Raise instead.
-        """
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
-                                                                                       has_stream_connector)
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            in_wrapper = STREAM_CONNECTOR in nsdfg.arrays and nsdfg.parent_sdfg is not None
-            for state in nsdfg.states():
-                for node in state.nodes():
-                    if not isinstance(node, nodes.Tasklet):
-                        continue
-                    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-                    if '__dace_current_stream' not in code:
-                        continue
-                    if in_wrapper:
-                        # Wrapper Scalar binds the symbol — nothing to stamp.
-                        continue
-                    if not has_stream_connector(node):
-                        raise ValueError(
-                            f"Tasklet '{node.label}' in state '{state.label}' (SDFG '{nsdfg.name}') "
-                            f"references ``__dace_current_stream`` but has no stream in-connector "
-                            f"wired by the GPU stream pipeline. The strategy must recognise this "
-                            f"tasklet as a stream consumer (e.g. ``is_gpu_stream_consumer``); fix the "
-                            f"strategy / pipeline so it assigns and wires a stream id, instead of "
-                            f"the legacy ``_cuda_stream = 0`` fallback that previously hid such bugs.")
-                    node._cuda_stream = assignments[node]
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.

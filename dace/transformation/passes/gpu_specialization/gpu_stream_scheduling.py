@@ -310,39 +310,51 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     """
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
-        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-        from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-
         offenders: List[str] = []
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for node in state.nodes():
-                    if isinstance(node, nodes.Tasklet):
-                        # Accepted: in-kernel tasklets, and host-level tasklets
-                        # that are already-lowered GPU runtime calls (e.g. an
-                        # expanded ``CopyLibraryNode`` that issues
-                        # ``cudaMemcpyAsync``). The latter still need a
-                        # stream id; the strategy assigns them stream 0.
-                        if (not is_devicelevel_gpu(nsdfg, state, node)
-                                and not is_already_lowered_gpu_runtime_call(node)):
-                            offenders.append(f"Tasklet '{node.label}' in state '{state.label}' "
-                                             f"(SDFG '{nsdfg.name}') is not inside a GPU_Device map "
-                                             "and isn't a recognized GPU runtime call.")
-                        continue
-                    if isinstance(node, nodes.LibraryNode):
-                        if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)):
-                            continue
-                        sched = getattr(node, 'schedule', None)
-                        if sched == dtypes.ScheduleType.GPU_Device or is_devicelevel_gpu(nsdfg, state, node):
-                            continue
-                        offenders.append(f"LibraryNode '{node.label}' in state '{state.label}' "
-                                         f"(SDFG '{nsdfg.name}') has schedule {sched} and is not inside "
-                                         "a GPU_Device scope.")
+                    why = self._not_acceptable_reason(node, nsdfg, state)
+                    if why is not None:
+                        offenders.append(f"{type(node).__name__} '{getattr(node, 'label', node)}' in state "
+                                         f"'{state.label}' (SDFG '{nsdfg.name}'): {why}")
         if offenders:
             raise ValueError("MonolithicSingleStreamGPUScheduler requires every Tasklet/LibraryNode "
                              "to run on-device. Offenders:\n  - " + "\n  - ".join(offenders))
 
         return {node: 0 for node, _, _ in find_inner_gpu_consumers(sdfg)}
+
+    @staticmethod
+    def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
+        """Return a one-line reason if ``node`` violates the all-on-GPU
+        contract, or ``None`` if it's acceptable.
+
+        Composes the existing predicates instead of re-classifying:
+
+        * Tasklets must execute inside a ``GPU_Device`` scope OR be
+          recognised as already-lowered GPU runtime calls (the strategy
+          will assign them a stream).
+        * Library nodes must be pipeline-managed Copy/Memset libnodes,
+          have ``GPU_Device`` schedule, or sit inside a kernel scope.
+        * Other node classes (AccessNode, MapEntry/Exit, NestedSDFG, …)
+          are unrestricted by this strategy.
+        """
+        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+        from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+
+        if isinstance(node, nodes.Tasklet):
+            if is_devicelevel_gpu(nsdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
+                return None
+            return "host-level Tasklet that isn't a recognized GPU runtime call"
+        if isinstance(node, nodes.LibraryNode):
+            if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)):
+                return None
+            if getattr(node, 'schedule', None) == dtypes.ScheduleType.GPU_Device:
+                return None
+            if is_devicelevel_gpu(nsdfg, state, node):
+                return None
+            return f"LibraryNode with schedule {getattr(node, 'schedule', None)} outside a GPU_Device scope"
+        return None
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]) -> None:
         """Sync after states that perform HOST↔DEVICE transfers (the only
