@@ -7,21 +7,13 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from dace.transformation.interstate import StateFusionExtended
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
-from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (get_gpu_stream_array_name,
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR, get_gpu_stream_array_name,
                                                                                get_gpu_stream_connector_name)
 
-gpu_stream_pipeline = Pipeline([
-    InsertExplicitGPUGlobalMemoryCopies(),
-    NaiveGPUStreamScheduler(),
-    InsertGPUStreams(),
-    ConnectGPUStreamsToNodes(),
-    InsertGPUStreamSyncTasklets(),
-])
+gpu_stream_pipeline = GPUStreamPipeline()
 
 backend = common.get_gpu_backend()
 
@@ -99,14 +91,16 @@ def test_extended():
     state = sdfg.states()[0]
 
     syncs = _sync_tasklets(state)
-    assert len(syncs) == 1, f"Expected exactly one end-of-state sync tasklet, got {len(syncs)}"
-    sync = syncs[0]
-    assert sync.side_effects is True
-    assert state.out_degree(sync) == 0
-
-    stream_conns = sorted(c for c in sync.in_connectors if c.startswith(_STREAM_VAR_PREFIX))
-    assert len(stream_conns) == 2, (f"Sync tasklet must carry one in-connector per synchronized stream "
-                                    f"(two components -> two streams); got {stream_conns}")
+    # One sync tasklet per stream — every sync carries a single
+    # ``__stream`` ``gpuStream_t`` connector, fed by ``gpu_streams[<i>]``.
+    assert len(syncs) == 2, f"Expected one sync tasklet per stream (two streams); got {len(syncs)}"
+    for sync in syncs:
+        assert sync.side_effects is True
+        assert state.out_degree(sync) == 0
+        assert len(sync.in_connectors) == 1
+        only_conn = next(iter(sync.in_connectors))
+        assert only_conn == STREAM_CONNECTOR
+        assert sync.in_connectors[only_conn] == dace.dtypes.gpuStream_t
 
     # Memcpy tasklets emitted by the non-library GPU transformation still
     # need a stream connector (the library-node expansion handles its own
@@ -226,9 +220,6 @@ def test_three_kernels_dependent_and_independent():
         # Step 2: run the remaining stream-specialization passes.
         Pipeline([
             NaiveGPUStreamScheduler(),
-            InsertGPUStreams(),
-            ConnectGPUStreamsToNodes(),
-            InsertGPUStreamSyncTasklets(),
         ]).apply_pass(sdfg, {})
 
         kernel_states = []
@@ -243,29 +234,43 @@ def test_three_kernels_dependent_and_independent():
         kernel_state, kernels = kernel_states[0]
         assert len(kernels) == 3
 
-        def stream_conn_of(map_entry):
-            conns = [c for c in map_entry.in_connectors if c.startswith(_STREAM_VAR_PREFIX)]
-            assert len(conns) == 1, f"Kernel {map_entry} must have exactly one stream connector, got {conns}"
-            return conns[0]
+        def stream_id_of(map_entry):
+            """Read the stream id from the wired ``gpu_streams[<i>]`` memlet
+            on the kernel's stream connector. The connector name is
+            uniformly ``__stream``; the id rides on the memlet subset."""
+            stream_inputs = [
+                e for e in kernel_state.in_edges(map_entry)
+                if e.dst_conn == STREAM_CONNECTOR
+            ]
+            assert len(stream_inputs) == 1
+            return int(stream_inputs[0].data.subset[0][0])
 
         by_stream = {}
         for ker in kernels:
-            by_stream.setdefault(stream_conn_of(ker), []).append(ker)
+            by_stream.setdefault(stream_id_of(ker), []).append(ker)
         assert len(by_stream) == 2
         assert sorted(len(g) for g in by_stream.values()) == [1, 2]
 
         syncs = _sync_tasklets(kernel_state)
-        assert len(syncs) == 1
-        sync = syncs[0]
-        assert sync.label == "gpu_streams_synchronization"
-        assert sync.side_effects is True
-        assert kernel_state.out_degree(sync) == 0, "Sync tasklet must be a sink under the path-based chain"
+        # One sync tasklet per stream (two streams here → two syncs).
+        assert len(syncs) == 2
+        sync_ids = set()
+        for sync in syncs:
+            assert sync.label == "gpu_streams_synchronization"
+            assert sync.side_effects is True
+            assert kernel_state.out_degree(sync) == 0, "Sync tasklet must be a sink under the path-based chain"
+            assert STREAM_CONNECTOR in sync.in_connectors
+            stream_inputs = [e for e in kernel_state.in_edges(sync) if e.dst_conn == STREAM_CONNECTOR]
+            assert len(stream_inputs) == 1
+            sync_ids.add(int(stream_inputs[0].data.subset[0][0]))
+        assert set(by_stream.keys()) == sync_ids
 
-        sync_in_conns = set(sync.in_connectors)
-        assert set(by_stream.keys()).issubset(sync_in_conns)
-
-        for stream_name in by_stream:
-            assert stream_name in sync.code.as_string
+        # Sync code is uniform — every sync tasklet calls
+        # ``cudaStreamSynchronize(__stream)`` against its single
+        # ``__stream`` connector. The stream id rides on the wired
+        # memlet (asserted above via ``sync_ids``), not in the code.
+        for sync in syncs:
+            assert STREAM_CONNECTOR in sync.code.as_string
 
         gpu = dace.dtypes.StorageType.GPU_Global
         cpu_like = {
@@ -318,15 +323,12 @@ def test_single_copy_library_node():
 
     Pipeline([
         NaiveGPUStreamScheduler(),
-        InsertGPUStreams(),
-        ConnectGPUStreamsToNodes(),
-        InsertGPUStreamSyncTasklets(),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
-    assert "stream" in cp.in_connectors, "CopyLibraryNode must have its 'stream' in-connector wired"
+    assert STREAM_CONNECTOR in cp.in_connectors, "CopyLibraryNode must have its STREAM_CONNECTOR in-connector wired"
 
-    stream_inputs = [e for e in state.in_edges(cp) if e.dst_conn == "stream"]
+    stream_inputs = [e for e in state.in_edges(cp) if e.dst_conn == STREAM_CONNECTOR]
     assert len(stream_inputs) == 1
     assert isinstance(stream_inputs[0].src, dace.nodes.AccessNode)
     assert stream_inputs[0].src.data == _STREAM_ARRAY
@@ -351,15 +353,12 @@ def test_single_memset_library_node():
 
     Pipeline([
         NaiveGPUStreamScheduler(),
-        InsertGPUStreams(),
-        ConnectGPUStreamsToNodes(),
-        InsertGPUStreamSyncTasklets(),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
-    assert "stream" in ms.in_connectors, "MemsetLibraryNode must have its 'stream' in-connector wired"
+    assert STREAM_CONNECTOR in ms.in_connectors, "MemsetLibraryNode must have its STREAM_CONNECTOR in-connector wired"
 
-    stream_inputs = [e for e in state.in_edges(ms) if e.dst_conn == "stream"]
+    stream_inputs = [e for e in state.in_edges(ms) if e.dst_conn == STREAM_CONNECTOR]
     assert len(stream_inputs) == 1
     assert isinstance(stream_inputs[0].src, dace.nodes.AccessNode)
     assert stream_inputs[0].src.data == _STREAM_ARRAY
@@ -463,17 +462,15 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     # Run the GPU stream pipeline on the un-expanded SDFG.
     Pipeline([
         NaiveGPUStreamScheduler(),
-        InsertGPUStreams(),
-        ConnectGPUStreamsToNodes(),
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays, ("Stream array must be present after the pipeline runs")
     # The MatMul itself must have been wired with a `stream` in-connector
     # from a `gpu_streams` AccessNode (currently fails: scheduler ignores
     # generic GPU library nodes).
-    assert "stream" in matmul.in_connectors, ("MatMul (a GPU library node) should be wired with a `stream` connector "
+    assert STREAM_CONNECTOR in matmul.in_connectors, ("MatMul (a GPU library node) should be wired with a `stream` connector "
                                               "by the stream pipeline before it is expanded")
-    matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == "stream"]
+    matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == STREAM_CONNECTOR]
     assert len(matmul_stream_in) == 1
     assert isinstance(matmul_stream_in[0].src, dace.nodes.AccessNode)
     assert matmul_stream_in[0].src.data == _STREAM_ARRAY
@@ -488,10 +485,10 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     assert type(child).__name__.endswith("Gemm"), (f"Expected Gemm-family child, got {type(child).__name__}")
 
     # The child must have inherited the parent's stream wiring.
-    assert "stream" in child.in_connectors, (
+    assert STREAM_CONNECTOR in child.in_connectors, (
         f"Child library node {type(child).__name__} (produced by expanding MatMul) "
         f"must have a `stream` in-connector inherited from the parent")
-    child_stream_in = [e for e in state.in_edges(child) if e.dst_conn == "stream"]
+    child_stream_in = [e for e in state.in_edges(child) if e.dst_conn == STREAM_CONNECTOR]
     assert len(child_stream_in) == 1
     assert isinstance(child_stream_in[0].src, dace.nodes.AccessNode)
     assert child_stream_in[0].src.data == _STREAM_ARRAY
@@ -506,7 +503,7 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     ``ExpandTransformation.apply`` only moves the parent's stream connector
     onto the NestedSDFG node — it doesn't reach into the nested SDFG to wire
     the inner library nodes. After expansion, a follow-up pipeline pass that
-    re-runs ``InsertGPUStreams`` + ``ConnectGPUStreamsToNodes`` must wire the
+    re-runs ``ReconnectWithinExpandedSDFGs`` must wire the
     inner nodes against the nested SDFG's ``gpu_streams`` array.
 
     Pre-fix: inner Potrf / Transpose nodes have no ``stream`` connector after
@@ -528,12 +525,10 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
 
     Pipeline([
         NaiveGPUStreamScheduler(),
-        InsertGPUStreams(),
-        ConnectGPUStreamsToNodes(),
     ]).apply_pass(sdfg, {})
 
     # (a)-fix sanity: the Cholesky itself was wired.
-    assert "stream" in chol.in_connectors
+    assert STREAM_CONNECTOR in chol.in_connectors
 
     # Force the nested-SDFG-spawning expansion (cuSolverDn).
     chol.implementation = "cuSolverDn"
@@ -552,8 +547,6 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     # its inner library nodes get wired.
     Pipeline([
         NaiveGPUStreamScheduler(),
-        InsertGPUStreams(),
-        ConnectGPUStreamsToNodes(),
     ]).apply_pass(sdfg, {})
 
     # The nested SDFG must now have the stream array declared.
@@ -562,11 +555,11 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
 
     # Every inner library node must have its `stream` in-connector wired.
     for inner_libnode in inner_libnodes:
-        assert "stream" in inner_libnode.in_connectors, (
+        assert STREAM_CONNECTOR in inner_libnode.in_connectors, (
             f"Inner library node {type(inner_libnode).__name__} "
             f"({inner_libnode.label}) must have its `stream` in-connector wired "
             f"by the follow-up pipeline run")
-        stream_in = [e for e in inner_state.in_edges(inner_libnode) if e.dst_conn == "stream"]
+        stream_in = [e for e in inner_state.in_edges(inner_libnode) if e.dst_conn == STREAM_CONNECTOR]
         assert len(stream_in) == 1
         assert isinstance(stream_in[0].src, dace.nodes.AccessNode)
         assert stream_in[0].src.data == _STREAM_ARRAY

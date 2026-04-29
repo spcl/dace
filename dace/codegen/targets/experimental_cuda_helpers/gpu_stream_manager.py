@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict
 from dace import SDFG, nodes
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
 
 class GPUStreamManager:
@@ -20,7 +21,16 @@ class GPUStreamManager:
         self.sdfg = sdfg
         self._stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
         self._assignments = assignments
-        self._num_gpu_streams = max(assignments.values()) + 1 if assignments else 0
+        # ``num_gpu_streams`` is the source-of-truth set by ``InsertGPUStreams``
+        # when it added the descriptor; reading the shape avoids re-deriving via
+        # ``max(assignments) + 1`` which is not invariant under pipeline
+        # re-application (the scheduler's WCC walk is graph-shape-dependent and
+        # the pipeline mutates the graph).
+        stream_array = get_gpu_stream_array_name()
+        if stream_array in sdfg.arrays:
+            self._num_gpu_streams = int(sdfg.arrays[stream_array].shape[0])
+        else:
+            self._num_gpu_streams = 0
 
     def get_stream_node(self, node: nodes.Node) -> str:
         """Return the access expression for the GPU stream assigned to ``node``,

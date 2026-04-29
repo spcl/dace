@@ -1113,6 +1113,45 @@ def test_copy_single_element_memcpy_connector_types():
     assert found > 0, 'no memcpy tasklet found in expanded d2h SDFG'
 
 
+def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
+    """Regression: a single-element copy between Register and GPU_Global
+    inside a GPU kernel must route to the ``Tasklet`` impl, not
+    ``MappedTasklet``.
+
+    The MappedTasklet path collapses every length-1 dim, ends up with a
+    0-D map, and crashes propagation (``NoneType`` subset). This fired on
+    heat_3d's ``__map_fusion_gpu_B`` Register → GPU_Global scalar copy
+    inside the kernel scope produced by ``auto_optimize``.
+    """
+    sdfg = dace.SDFG('reg_to_gpuglobal_in_kernel')
+    sdfg.add_array('R', [1, 1, 1], dace.float64, dace.StorageType.Register, transient=True)
+    sdfg.add_array('G', [4, 4, 4], dace.float64, dace.StorageType.GPU_Global, transient=True)
+    state = sdfg.add_state('s')
+
+    # Wrap the copy inside a GPU_Device map so ``is_devicelevel_gpu`` returns True.
+    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    r = state.add_access('R')
+    g = state.add_access('G')
+    libnode = CopyLibraryNode(name='reg_to_g')
+    state.add_node(libnode)
+    state.add_memlet_path(me, r, memlet=dace.Memlet())
+    state.add_edge(r, None, libnode, '_in', dace.Memlet('R[0, 0, 0]'))
+    state.add_edge(libnode, '_out', g, None, dace.Memlet('G[0, 0, 0]'))
+    state.add_memlet_path(g, mx, memlet=dace.Memlet())
+
+    sdfg.expand_library_nodes()
+
+    # No NestedSDFG should appear; the ``Tasklet`` impl emits a direct
+    # ``_out = _in`` Tasklet without the SDFG wrapper.
+    nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert nsdfg_count == 0, (
+        f"Single-element in-kernel copy should expand to a direct Tasklet, "
+        f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
+    assignments = [n for n, _ in sdfg.all_nodes_recursive()
+                   if isinstance(n, dace.nodes.Tasklet) and '_out = _in' in n.code.as_string]
+    assert assignments, "Expected at least one ``_out = _in`` Tasklet from the expansion."
+
+
 if __name__ == "__main__":
     test_copy_pure_cpu()
     test_copy_cpu_memcpy()

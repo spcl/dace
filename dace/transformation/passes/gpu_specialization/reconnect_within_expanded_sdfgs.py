@@ -15,7 +15,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    COPY_MEMSET_STREAM_CONNECTOR, add_gpu_stream_connector, enclosing_map_chain, has_stream_connector,
+    STREAM_CONNECTOR, add_gpu_stream_connector, enclosing_map_chain, has_stream_connector,
     is_expanded_libnode_nsdfg, is_gpu_stream_consumer)
 
 
@@ -65,8 +65,8 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
 
         # Inner-side ``stream`` Scalar must exist and match the dtype the
         # outer connector binds (``gpuStream_t``). Add or fix in place.
-        if COPY_MEMSET_STREAM_CONNECTOR not in inner_sdfg.arrays:
-            inner_sdfg.add_scalar(COPY_MEMSET_STREAM_CONNECTOR,
+        if STREAM_CONNECTOR not in inner_sdfg.arrays:
+            inner_sdfg.add_scalar(STREAM_CONNECTOR,
                                   dtypes.gpuStream_t,
                                   storage=dtypes.StorageType.Register,
                                   transient=False)
@@ -78,7 +78,7 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
             # same node so the codegen sees a single bound stream.
             stream_an: Optional[nodes.AccessNode] = None
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == COPY_MEMSET_STREAM_CONNECTOR:
+                if isinstance(node, nodes.AccessNode) and node.data == STREAM_CONNECTOR:
                     stream_an = node
                     break
 
@@ -88,7 +88,7 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
                 if has_stream_connector(node):
                     continue
                 if stream_an is None:
-                    stream_an = state.add_access(COPY_MEMSET_STREAM_CONNECTOR)
+                    stream_an = state.add_access(STREAM_CONNECTOR)
                 self._wire_stream_to_consumer(state, stream_an, node, inner_sdfg)
                 wired += 1
         return wired
@@ -102,37 +102,41 @@ class ReconnectWithinExpandedSDFGs(ppl.Pass):
         direct edge."""
         # Add the stream input connector on the consumer.
         if isinstance(consumer, nodes.MapEntry):
-            add_gpu_stream_connector(consumer, COPY_MEMSET_STREAM_CONNECTOR, single_stream=True)
-        elif COPY_MEMSET_STREAM_CONNECTOR not in consumer.in_connectors:
+            add_gpu_stream_connector(consumer, STREAM_CONNECTOR, single_stream=True)
+        elif STREAM_CONNECTOR not in consumer.in_connectors:
             # LibraryNode / Tasklet — connector may already exist from a
             # prior expansion; add only if missing.
-            add_gpu_stream_connector(consumer, COPY_MEMSET_STREAM_CONNECTOR, single_stream=True)
+            add_gpu_stream_connector(consumer, STREAM_CONNECTOR, single_stream=True)
 
         chain = enclosing_map_chain(state, consumer, dtypes.ScheduleType.Sequential)
         if not chain:
             # Consumer at state top level — single direct edge.
-            state.add_edge(stream_an, None, consumer, COPY_MEMSET_STREAM_CONNECTOR,
-                           Memlet(COPY_MEMSET_STREAM_CONNECTOR))
+            state.add_edge(stream_an, None, consumer, STREAM_CONNECTOR,
+                           Memlet(STREAM_CONNECTOR))
             return
 
         # Thread through every enclosing Sequential map: outermost map's
         # IN_stream binds to the wrapper's stream AccessNode; inner maps
         # chain via OUT_stream → next IN_stream; final OUT_stream goes to
-        # the consumer's connector.
+        # the consumer's connector. ``IN_stream`` accepts only one incoming
+        # edge, so reuse the existing wire when a sibling consumer routed
+        # through the same map first.
         outermost = chain[0]
-        in_conn = f"IN_{COPY_MEMSET_STREAM_CONNECTOR}"
-        out_conn = f"OUT_{COPY_MEMSET_STREAM_CONNECTOR}"
+        in_conn = f"IN_{STREAM_CONNECTOR}"
+        out_conn = f"OUT_{STREAM_CONNECTOR}"
         outermost.add_in_connector(in_conn)
         outermost.add_out_connector(out_conn)
-        state.add_edge(stream_an, None, outermost, in_conn,
-                       Memlet.from_array(COPY_MEMSET_STREAM_CONNECTOR, sdfg.arrays[COPY_MEMSET_STREAM_CONNECTOR]))
+        if not any(e.dst_conn == in_conn for e in state.in_edges(outermost)):
+            state.add_edge(stream_an, None, outermost, in_conn,
+                           Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))
 
         for outer, inner in zip(chain, chain[1:]):
             inner.add_in_connector(in_conn)
             inner.add_out_connector(out_conn)
-            state.add_edge(outer, out_conn, inner, in_conn,
-                           Memlet.from_array(COPY_MEMSET_STREAM_CONNECTOR, sdfg.arrays[COPY_MEMSET_STREAM_CONNECTOR]))
+            if not any(e.dst_conn == in_conn for e in state.in_edges(inner)):
+                state.add_edge(outer, out_conn, inner, in_conn,
+                               Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))
 
         # Innermost map → consumer.
-        state.add_edge(chain[-1], out_conn, consumer, COPY_MEMSET_STREAM_CONNECTOR,
-                       Memlet.from_array(COPY_MEMSET_STREAM_CONNECTOR, sdfg.arrays[COPY_MEMSET_STREAM_CONNECTOR]))
+        state.add_edge(chain[-1], out_conn, consumer, STREAM_CONNECTOR,
+                       Memlet.from_array(STREAM_CONNECTOR, sdfg.arrays[STREAM_CONNECTOR]))

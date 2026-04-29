@@ -25,6 +25,8 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import (GPUPostExpansionPipeline,
                                                                                        GPUStreamPipeline)
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    read_stream_assignments_from_wired_sdfg, validate_stream_indices_within_bounds)
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -132,14 +134,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         #   kernel scope.
         # ----------------------------------------------------------------
         self._dispatcher._used_targets.add(self)
-        stream_pipeline_result = GPUStreamPipeline().apply_pass(sdfg, {})
-        if stream_pipeline_result and 'NaiveGPUStreamScheduler' in stream_pipeline_result:
-            gpustream_assignments = stream_pipeline_result['NaiveGPUStreamScheduler']
-        else:
-            # Pipeline gated as already-applied (test fixtures pre-run it,
-            # or a caller pre-lowered the SDFG). Re-derive the assignments
-            # without mutating: ``NaiveGPUStreamScheduler`` is read-only.
-            gpustream_assignments = NaiveGPUStreamScheduler().assign(sdfg)
+        GPUStreamPipeline().apply_pass(sdfg, {})
+        # Strategy stamps the full WCC assignment dict on the SDFG; codegen
+        # consumers (memory-pool path needs AccessNode stream ids, not just
+        # wired-consumer ids) read from there. If the SDFG comes in already
+        # lowered, fall back to reading consumers from wired connectors —
+        # caller-pre-lowered fixtures don't have the cache attribute.
+        gpustream_assignments = (getattr(sdfg, '_gpu_stream_assignments', None)
+                                 or read_stream_assignments_from_wired_sdfg(sdfg))
+
+        # Defensive bounds check: catch out-of-range stream ids before the
+        # codegen emits an out-of-bounds ``__state->gpu_context->streams[i]``.
+        validate_stream_indices_within_bounds(sdfg)
 
         sdfg.expand_library_nodes(recursive=True)
         GPUPostExpansionPipeline().apply_pass(sdfg, {})
@@ -180,12 +186,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
 
-        # Annotate Tasklets with ``_cuda_stream`` so the CPU codegen emits the
-        # legacy ``__dace_current_stream`` local before the tasklet body.
-        # Library nodes already expanded with ``__dace_current_stream`` in
-        # their generated code (cuBLAS, cuFFT, cudaMemcpyAsync without an
-        # explicit stream connector, etc.) need this symbol in scope.
-        self._annotate_legacy_cuda_stream(sdfg, gpustream_assignments)
+        # ``_annotate_legacy_cuda_stream`` is no longer called: the CPU
+        # codegen prelude (``cpp.py``) now binds ``__dace_current_stream``
+        # directly from the ``gpuStream_t``-typed in-connector when one is
+        # present, so we don't need a separate ``_cuda_stream`` annotation
+        # back-channel. The legacy codegen still uses that path; we keep
+        # the method on this class as dead code only if a caller pre-applies
+        # it explicitly.
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
@@ -226,11 +233,27 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """Set ``_cuda_stream`` on tasklets that reference ``__dace_current_stream``.
 
         The CPU codegen prelude at ``cpp.py:830`` emits ``__dace_current_stream``
-        only when the node has ``_cuda_stream``. We assign it from the stream
-        scheduler's mapping, falling back to stream 0 for tasklets the
-        scheduler did not visit.
+        only when the node has ``_cuda_stream``. Two valid binding shapes
+        exist:
+
+        * **Top-level Tasklet**: the strategy added a ``stream`` in-connector
+          wired to ``gpu_streams[<i>]``; the Tasklet's bound stream id is
+          ``assignments[node]`` and we stamp it on ``_cuda_stream``.
+        * **Wrapper-internal Tasklet**: the libnode expansion put a
+          ``stream`` Scalar in the wrapper SDFG and bound it via the
+          NestedSDFG-node connector. The codegen reads the Scalar at
+          runtime, so no per-Tasklet connector or ``_cuda_stream`` is
+          required — the prelude already resolves the symbol from the
+          surrounding Scalar binding.
+
+        Missing both shapes is a contract violation — the strategy missed
+        the Tasklet, so silently binding stream 0 (the old fallback) hid
+        bugs. Raise instead.
         """
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
+                                                                                       has_stream_connector)
         for nsdfg in sdfg.all_sdfgs_recursive():
+            in_wrapper = STREAM_CONNECTOR in nsdfg.arrays and nsdfg.parent_sdfg is not None
             for state in nsdfg.states():
                 for node in state.nodes():
                     if not isinstance(node, nodes.Tasklet):
@@ -238,7 +261,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
                     if '__dace_current_stream' not in code:
                         continue
-                    node._cuda_stream = assignments.get(node, 0)
+                    if in_wrapper:
+                        # Wrapper Scalar binds the symbol — nothing to stamp.
+                        continue
+                    if not has_stream_connector(node):
+                        raise ValueError(
+                            f"Tasklet '{node.label}' in state '{state.label}' (SDFG '{nsdfg.name}') "
+                            f"references ``__dace_current_stream`` but has no stream in-connector "
+                            f"wired by the GPU stream pipeline. The strategy must recognise this "
+                            f"tasklet as a stream consumer (e.g. ``is_gpu_stream_consumer``); fix the "
+                            f"strategy / pipeline so it assigns and wires a stream id, instead of "
+                            f"the legacy ``_cuda_stream = 0`` fallback that previously hid such bugs.")
+                    node._cuda_stream = assignments[node]
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.

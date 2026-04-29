@@ -27,9 +27,6 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies, )
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
-from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 
 # Make the existing polybench / NPBench kernel modules importable.
 _TESTS_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -81,9 +78,6 @@ import vadv_test  # noqa: E402
 _GPU_STREAM_PIPELINE = Pipeline([
     InsertExplicitGPUGlobalMemoryCopies(),
     NaiveGPUStreamScheduler(),
-    InsertGPUStreams(),
-    ConnectGPUStreamsToNodes(),
-    InsertGPUStreamSyncTasklets(),
 ])
 
 _TSTEPS_SMALL = 3

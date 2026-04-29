@@ -3,21 +3,9 @@ import pytest
 
 import dace
 from dace.codegen import common
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
-from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_nodes import ConnectGPUStreamsToNodes
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-    InsertExplicitGPUGlobalMemoryCopies)
-from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 
-gpu_stream_pipeline = Pipeline([
-    InsertExplicitGPUGlobalMemoryCopies(),
-    NaiveGPUStreamScheduler(),
-    InsertGPUStreams(),
-    ConnectGPUStreamsToNodes(),
-    InsertGPUStreamSyncTasklets(),
-])
+gpu_stream_pipeline = GPUStreamPipeline()
 
 backend = common.get_gpu_backend()
 
@@ -36,6 +24,14 @@ def _sync_tasklet(state):
 def _stream_in_edges(state, node):
     """Return the in-edges of ``node`` that carry a ``gpu_streams[...]`` memlet."""
     return [e for e in state.in_edges(node) if e.data is not None and str(e.data).startswith('gpu_streams[')]
+
+
+def _all_sync_tasklets(state):
+    backend = common.get_gpu_backend()
+    return [
+        n for n in state.nodes()
+        if isinstance(n, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in n.code.as_string
+    ]
 
 
 @pytest.mark.gpu
@@ -65,7 +61,8 @@ def test_basic():
 
 @pytest.mark.gpu
 def test_extended():
-    """Two independent components on two streams, both synchronized at the end of the state."""
+    """Two independent components on two streams, each synchronized by its own
+    sync tasklet (one tasklet per stream — uniform single-connector shape)."""
 
     @dace.program
     def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
@@ -80,23 +77,24 @@ def test_extended():
 
     state = sdfg.states()[0]
 
-    sync = _sync_tasklet(state)
-    stream_edges = _stream_in_edges(state, sync)
-    stream_slots = {str(e.data) for e in stream_edges}
-    assert stream_slots == {'gpu_streams[0]',
-                            'gpu_streams[1]'}, (f"Expected both streams to feed the sync tasklet, got {stream_slots}")
-    for e in stream_edges:
-        assert e.src.desc(state).dtype == dace.dtypes.gpuStream_t, (
-            "Every gpu_streams in-edge must originate from a gpu_streams AccessNode.")
+    syncs = _all_sync_tasklets(state)
+    assert len(syncs) == 2, f"Expected one sync tasklet per stream (two streams); got {len(syncs)}."
+    seen_slots = set()
+    for sync in syncs:
+        stream_edges = _stream_in_edges(state, sync)
+        assert len(stream_edges) == 1
+        seen_slots.add(str(stream_edges[0].data))
+        assert stream_edges[0].src.desc(state).dtype == dace.dtypes.gpuStream_t
+    assert seen_slots == {'gpu_streams[0]', 'gpu_streams[1]'}
 
     copy_libnodes = [n for n in state.nodes() if type(n).__name__ == 'CopyLibraryNode']
     assert copy_libnodes, ("Expected at least one CopyLibraryNode after gpu_transformations + "
                            "InsertExplicitGPUGlobalMemoryCopies.")
+    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import STREAM_CONNECTOR
     for cn in copy_libnodes:
-        assert 'stream' in cn.in_connectors, ("CopyLibraryNode must expose a 'stream' in-connector "
-                                              "for the GPU stream handle.")
+        assert STREAM_CONNECTOR in cn.in_connectors, (
+            f"CopyLibraryNode must expose a {STREAM_CONNECTOR!r} in-connector for the GPU stream handle.")
         stream_edges_cn = _stream_in_edges(state, cn)
         assert len(stream_edges_cn) == 1, (f"CopyLibraryNode '{cn.label}' must have exactly one "
                                            f"gpu_streams in-edge, got {len(stream_edges_cn)}.")
-        assert stream_edges_cn[0].dst_conn == 'stream', ("The gpu_streams in-edge must target the "
-                                                         "'stream' connector.")
+        assert stream_edges_cn[0].dst_conn == STREAM_CONNECTOR

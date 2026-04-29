@@ -857,7 +857,22 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         cuda_impl = Config.get("compiler", "cuda", "implementation")
         host_node_on_gpu_memory = (not is_devicelevel_gpu(sdfg, state_dfg, node)
                                    and connected_to_gpu_memory(node, state_dfg, sdfg))
-        if host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
+        # Experimental codegen path: every stream-using Tasklet carries a
+        # ``gpuStream_t``-typed in-connector. Bind the legacy
+        # ``__dace_current_stream`` symbol to that connector value so any
+        # Tasklet body that still names the symbol (e.g. an already-lowered
+        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without
+        # the ``_cuda_stream`` attribute / ``_annotate_legacy_cuda_stream``
+        # back-channel.
+        gpu_stream_conn = next(
+            (cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t), None)
+        body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
+        if (host_node_on_gpu_memory and gpu_stream_conn is not None
+                and '__dace_current_stream' in str(body_str)):
+            callsite_stream.write(
+                f'{common.get_gpu_backend()}Stream_t __dace_current_stream = {gpu_stream_conn};',
+                cfg, state_id, node)
+        elif host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'

@@ -20,11 +20,17 @@ from typing import List, Optional
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
 
-# Name of the `stream` in-connector on CopyLibraryNode / MemsetLibraryNode.
-# Kept in sync with the ``_STREAM_CONN`` constant in the library-node
-# modules so the stream passes can add the connector without importing
-# the private constant.
-COPY_MEMSET_STREAM_CONNECTOR = "stream"
+# Canonical name of the GPU-stream in-connector across the codebase.
+# Every stream consumer (kernel ``MapEntry``, Copy/Memset libnode,
+# pre-expanded runtime Tasklet, sync tasklet, Sequential-map
+# pass-through) uses this single name. Detection is type-based
+# (``gpuStream_t``-typed in-connector); the constant exists so
+# producers can name the connector consistently when they create one.
+STREAM_CONNECTOR = "__stream"
+
+# Back-compat alias. Pre-existing callers use this name; new code should
+# use :data:`STREAM_CONNECTOR`.
+COPY_MEMSET_STREAM_CONNECTOR = STREAM_CONNECTOR
 
 
 def get_gpu_stream_array_name() -> str:
@@ -95,7 +101,9 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
 
 
 def get_gpu_stream_connector_name() -> str:
-    return "__stream_"
+    """Deprecated. Use :data:`STREAM_CONNECTOR` directly. Returned name is
+    the single canonical connector name (no per-id suffix anymore)."""
+    return STREAM_CONNECTOR
 
 
 # Storages that mark a copy/memset library node as "GPU-relevant" — i.e.
@@ -124,19 +132,71 @@ def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     return False
 
 
-def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """Return True for nodes that *take* a GPU stream as an in-connector.
+def is_gpu_kernel_launcher(node) -> bool:
+    """``GPU_Device`` kernel ``MapEntry`` — the launcher binds the stream
+    handle via the ``__stream_<i>`` connector on enter."""
+    return isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device
 
-    The two classes are GPU_Device kernel ``MapEntry`` (the kernel launcher
-    binds the stream handle on enter) and copy/memset library nodes touching
-    GPU-side storage (their expansions wire ``stream`` to the runtime call).
+
+def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
+    """Return True for nodes that *take* a GPU stream.
+
+    Composed of three named predicates, one per class:
+
+    * :func:`is_gpu_kernel_launcher` — kernel ``MapEntry``.
+    * :func:`is_gpu_copy_or_memset_libnode` — Copy/Memset libnode
+      touching GPU-side storage.
+    * :func:`is_already_lowered_gpu_runtime_call` — Tasklet that takes a
+      ``gpuStream_t`` connector or references the legacy
+      ``__dace_current_stream`` placeholder.
+
     AccessNodes are *excluded* — they're memory references, not stream
-    consumers. Use :func:`is_gpu_relevant_node` for the broader "does this
-    state/component involve GPU work" question.
+    consumers. Use :func:`is_gpu_relevant_node` for the broader "does
+    this state/component involve GPU work" question.
     """
-    if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_memset_libnode(node, sdfg, state)
+            or is_already_lowered_gpu_runtime_call(node))
+
+
+def is_already_lowered_gpu_runtime_call(node) -> bool:
+    """True for a Tasklet that issues a stream-bound GPU runtime call —
+    the canonical post-libnode-expansion shape.
+
+    Two structural signals (whichever fires first):
+
+    1. The Tasklet has an in-connector typed ``gpuStream_t`` — a libnode
+       expansion with a wired stream input produces this shape.
+    2. The Tasklet's body references the legacy ``__dace_current_stream``
+       placeholder — a libnode expanded *before* stream wiring relies on
+       this symbol; the codegen prelude / wrapper Scalar binds it.
+
+    Pipeline-emitted sync tasklets (:func:`is_pipeline_sync_tasklet`)
+    are excluded — they were added by the pipeline itself and carry a
+    ``__stream_<i>`` connector that doesn't make them consumers in the
+    WCC sense.
+    """
+    if not isinstance(node, nodes.Tasklet):
+        return False
+    if is_pipeline_sync_tasklet(node):
+        return False
+    if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
         return True
-    return is_gpu_copy_or_memset_libnode(node, sdfg, state)
+    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
+    return '__dace_current_stream' in code
+
+
+SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization")
+
+
+def is_pipeline_sync_tasklet(node) -> bool:
+    """True iff ``node`` is a sync tasklet emitted by the stream pipeline.
+
+    The pipeline's own sync tasklets carry a ``gpuStream_t`` in-connector
+    (so they can call ``cudaStreamSynchronize``) — they're not stream
+    consumers in the WCC sense and must be excluded from re-detection.
+    Identified by their canonical labels.
+    """
+    return isinstance(node, nodes.Tasklet) and node.label in SYNC_TASKLET_LABELS
 
 
 def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
@@ -156,18 +216,24 @@ def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
     return False
 
 
-def is_stream_connector(conn_name: str) -> bool:
-    """Return True for the two GPU-stream connector naming conventions:
-    the per-kernel-id ``__stream_<id>`` connectors added by
-    ``ConnectGPUStreamsToNodes`` and the library-node ``stream`` connector
-    used by ``CopyLibraryNode`` / ``MemsetLibraryNode``."""
-    return conn_name == COPY_MEMSET_STREAM_CONNECTOR or conn_name.startswith(get_gpu_stream_connector_name())
+def is_stream_typed_connector(node, conn_name: str) -> bool:
+    """True iff ``conn_name`` is an in-connector on ``node`` typed
+    ``gpuStream_t`` — the type IS the contract.
+
+    The codebase uses a single connector name (:data:`STREAM_CONNECTOR`,
+    ``"__stream"``) for stream inputs across all consumer classes
+    (kernels, Copy/Memset libnodes, runtime tasklets, sync tasklets,
+    Sequential-map pass-through). Detection is always type-based.
+    """
+    t = node.in_connectors.get(conn_name)
+    return t is not None and t == dtypes.gpuStream_t
 
 
 def has_stream_connector(node) -> bool:
-    """Return True if ``node`` already carries any GPU-stream input connector
-    (``stream`` or ``__stream_<id>``). Use to skip nodes a prior pass wired."""
-    return any(is_stream_connector(c) for c in node.in_connectors)
+    """Return True if ``node`` already carries any GPU-stream in-connector
+    — i.e. any in-connector typed ``gpuStream_t``. Type-based, so it
+    accepts whatever name the libnode expansion chose."""
+    return any(t is not None and t == dtypes.gpuStream_t for t in node.in_connectors.values())
 
 
 def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
@@ -201,3 +267,61 @@ def find_inner_gpu_consumers(sdfg: SDFG):
             for node in state.nodes():
                 if is_gpu_stream_consumer(node, nsdfg, state):
                     yield node, nsdfg, state
+
+
+def read_stream_assignments_from_wired_sdfg(sdfg: SDFG):
+    """Recover ``{node: stream_id}`` from a post-pipeline SDFG by reading the
+    ``gpu_streams[<i>]`` subset wired into each consumer's stream
+    in-connector. The pipeline already encoded the assignments into the
+    graph — re-running the scheduler on the post-pipeline graph would give
+    different results because pipeline-internal AccessNodes / sync
+    tasklets stitch otherwise-independent components together. Returns
+    ``{}`` if the lowering hasn't run yet.
+    """
+    if not is_gpu_lowering_applied(sdfg):
+        return {}
+    stream_array = get_gpu_stream_array_name()
+    assignments = {}
+    for node, parent_sdfg, state in find_inner_gpu_consumers(sdfg):
+        for edge in state.in_edges(node):
+            if not edge.dst_conn or not is_stream_typed_connector(node, edge.dst_conn):
+                continue
+            if edge.data is None or edge.data.data != stream_array or edge.data.subset is None:
+                continue
+            # The wired memlet is ``gpu_streams[<i>]`` — a single-element
+            # ``Range`` whose start equals its end. Read the start.
+            try:
+                stream_id = int(edge.data.subset[0][0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            assignments[node] = stream_id
+            break
+    return assignments
+
+
+def validate_stream_indices_within_bounds(sdfg: SDFG):
+    """Raise if any wired ``gpu_streams[<i>]`` memlet refers to ``i`` outside
+    ``[0, len(gpu_streams))``. Caught here so the codegen never emits an
+    out-of-bounds access into ``__state->gpu_context->streams``."""
+    if not is_gpu_lowering_applied(sdfg):
+        return
+    stream_array = get_gpu_stream_array_name()
+    num = int(sdfg.arrays[stream_array].shape[0])
+    offenders = []
+    for node, parent_sdfg, state in find_inner_gpu_consumers(sdfg):
+        for edge in state.in_edges(node):
+            if not edge.dst_conn or not is_stream_typed_connector(node, edge.dst_conn):
+                continue
+            if edge.data is None or edge.data.data != stream_array or edge.data.subset is None:
+                continue
+            try:
+                stream_id = int(edge.data.subset[0][0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if stream_id >= num or stream_id < 0:
+                offenders.append(f"  - {type(node).__name__} (state '{state.label}'): "
+                                 f"gpu_streams[{stream_id}] out of bounds (gpu_streams has length {num})")
+    if offenders:
+        raise ValueError("Stream-index validation failed: a consumer references a stream id outside "
+                         f"[0, {num}). Re-run the GPU stream pipeline or expand the gpu_streams "
+                         "array. Offenders:\n" + "\n".join(offenders))

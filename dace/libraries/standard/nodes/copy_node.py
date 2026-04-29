@@ -81,23 +81,32 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         return 'SharedMemoryCollective'
 
-    # 2. Otherwise in-device-scope: ``cudaMemcpyAsync`` cannot be issued from
-    # device code. Inline the copy as device-side element-wise loops.
-    if is_devicelevel_gpu(parent_sdfg, parent_state, node):
-        return 'MappedTasklet'
-
-    # 3. Single-element copies short-circuit the MappedTasklet path (which
-    # would otherwise build a 0-D map and crash propagation). Routing by
-    # side: CPU↔CPU → ``Tasklet`` (a host ``_out = _in`` Python tasklet);
-    # any GPU memory involvement (same-side GPU↔GPU or cross CPU/GPU) →
-    # ``MemcpyCUDA1D`` (``cudaMemcpyAsync`` infers the direction from
-    # endpoint storages).
+    # 2. Single-element copies short-circuit the MappedTasklet path (which
+    # would otherwise build a 0-D map and crash propagation). Routing:
+    #   - cross CPU/GPU → ``MemcpyCUDA1D`` (``cudaMemcpyAsync``).
+    #   - same-side, inside a kernel → ``Tasklet`` (both sides accessible
+    #     from device code; a direct ``_out = _in`` is correct).
+    #   - same-side, outside a kernel, both GPU_Global → ``MemcpyCUDA1D``
+    #     (``DeviceToDevice``; a host Python tasklet can't dereference
+    #     device pointers).
+    #   - same-side, outside a kernel, at least one host-accessible →
+    #     ``Tasklet`` (host runs the assignment).
     in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
     out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
     if in_volume == 1 and out_volume == 1:
-        if inp.storage in _CPU_STORAGES and out.storage in _CPU_STORAGES:
-            return 'Tasklet'
-        return 'MemcpyCUDA1D'
+        if _is_cross_cpu_gpu(inp.storage, out.storage):
+            return 'MemcpyCUDA1D'
+        inside_kernel = is_devicelevel_gpu(parent_sdfg, parent_state, node)
+        both_gpu_global = (inp.storage == dtypes.StorageType.GPU_Global
+                           and out.storage == dtypes.StorageType.GPU_Global)
+        if both_gpu_global and not inside_kernel:
+            return 'MemcpyCUDA1D'
+        return 'Tasklet'
+
+    # 3. Otherwise in-device-scope: ``cudaMemcpyAsync`` cannot be issued from
+    # device code. Inline the copy as device-side element-wise loops.
+    if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+        return 'MappedTasklet'
 
     # 4. Coarse pick by storage pair: any copy touching GPU memory goes
     # through the cudaMemcpy family; everything else falls through to
@@ -773,13 +782,15 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
 @library.expansion
 class ExpandTasklet(ExpandTransformation):
-    """Single-element same-storage scalar copy: a Python tasklet doing
+    """Single-element same-side scalar copy: a Python tasklet doing
     ``_out = _in`` directly. No map, no SDFG wrapper, no pointer cast.
 
-    Both subsets must be volume 1. Storages must match — except that all
-    CPU storages (``CPU_Heap``, ``CPU_Pinned``, ``CPU_ThreadLocal``) are
-    treated as one side: a one-element copy between them is a plain
-    address-space-equivalent assignment. For multi-element copies use
+    Both subsets must be volume 1. The copy must not cross the CPU/GPU
+    boundary — but storages within one side may differ (e.g. ``CPU_Heap``
+    ↔ ``CPU_Pinned``, or ``Register`` ↔ ``GPU_Global``). ``GPU_Shared``
+    is rejected: a direct write doesn't carry the ``__syncthreads`` that
+    block-collective shared-memory updates need — use
+    ``SharedMemoryCollective`` instead. For multi-element copies use
     ``MappedTasklet`` (mapped element-wise) or ``CopyNDTemplate`` (strided)."""
     environments = []
 
@@ -788,10 +799,12 @@ class ExpandTasklet(ExpandTransformation):
         inp_name, inp, in_subset, out_name, out, out_subset, _dyn, _stream = node.validate(parent_sdfg,
                                                                                            parent_state,
                                                                                            allow_cross_storage=True)
-        same_side_cpu = inp.storage in _CPU_STORAGES and out.storage in _CPU_STORAGES
-        if inp.storage != out.storage and not same_side_cpu:
-            raise ValueError(f"Tasklet expansion: storage types must match (or both be CPU); "
-                             f"got {inp.storage} -> {out.storage}.")
+        if (inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared):
+            raise ValueError(f"Tasklet expansion: storage types must match (Shared memory needs the "
+                             f"SharedMemoryCollective expansion); got {inp.storage} -> {out.storage}.")
+        if _is_cross_cpu_gpu(inp.storage, out.storage):
+            raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
+                             f"got {inp.storage} -> {out.storage}. Use a MemcpyCUDA1D variant instead.")
 
         in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
         out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)

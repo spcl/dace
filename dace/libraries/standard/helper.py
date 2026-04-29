@@ -8,7 +8,7 @@ import dace
 import copy
 from dace.sdfg import nodes
 
-STREAM_CONN = "stream"
+STREAM_CONN = "__stream"
 
 
 def add_stream_descriptor(sdfg: dace.SDFG, stream_input: Optional[dace.data.Data]):

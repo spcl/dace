@@ -240,6 +240,61 @@ def test_insert_nested_sdfg():
     assert _count_copy_nodes(outer) == 1
 
 
+def _count_nested_sdfgs(sdfg):
+    """Count NestedSDFGs in ``sdfg`` (top level only — not recursive into them)."""
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+
+
+def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
+    """Single-element same-side copies must expand to direct
+    ``_out = _in`` Tasklets — never wrapped in a NestedSDFG.
+
+    The MappedTasklet path would build a 0-D map for these (every dim
+    collapses), which crashes propagation; the routing in
+    ``select_copy_implementation`` short-circuits to the ``Tasklet`` impl
+    instead. This test pins that behavior on a mix of CPU↔CPU and
+    Register↔GPU_Global single-element copies — the canonical "scalar
+    transfer" cases produced by ``auto_optimize`` for stencil kernels.
+    """
+    cpu = dace.StorageType.CPU_Heap
+    pinned = dace.StorageType.CPU_Pinned
+    register = dace.StorageType.Register
+    gpu = dace.StorageType.GPU_Global
+
+    sdfg = dace.SDFG("scalar_copies")
+    # Cross-CPU storage scalars (CPU_Heap -> CPU_Pinned, single element).
+    sdfg.add_array("c_in", [1], dace.float64, cpu)
+    sdfg.add_array("c_out", [1], dace.float64, pinned)
+    # Same-side GPU register scalars.
+    sdfg.add_array("r_in", [1], dace.float64, register, transient=True)
+    sdfg.add_array("r_out", [1], dace.float64, register, transient=True)
+
+    st = sdfg.add_state("s")
+    c_in = st.add_access("c_in")
+    c_out = st.add_access("c_out")
+    r_in = st.add_access("r_in")
+    r_out = st.add_access("r_out")
+    st.add_edge(c_in, None, c_out, None, Memlet("c_in[0]"))
+    st.add_edge(r_in, None, r_out, None, Memlet("r_in[0]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    assert _count_copy_nodes(sdfg) == 2
+
+    sdfg.expand_library_nodes()
+
+    # No NestedSDFGs should remain — every single-element copy must have
+    # expanded directly to a Tasklet via the ``Tasklet`` impl.
+    assert _count_nested_sdfgs(sdfg) == 0, (
+        "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
+        f"Found {_count_nested_sdfgs(sdfg)} NestedSDFG(s) after expansion.")
+
+    # Sanity: the expansions left tasklets behind that do ``_out = _in``.
+    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
+    assert any("_out = _in" in t.code.as_string for t in tasklets), (
+        f"Expected at least one ``_out = _in`` Tasklet from CopyLibraryNode expansion; "
+        f"got tasklets with code: {[t.code.as_string for t in tasklets]}")
+
+
 def test_insert_validates_after_pass():
     """SDFG passes validation after InsertExplicitCopies."""
     cpu = dace.StorageType.CPU_Heap
