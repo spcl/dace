@@ -54,6 +54,117 @@ end subroutine main
     assert int(out[0]) == int(out_ref) == 14
 
 
+def test_dead_store_rebind_is_collapsed(tmp_path: Path):
+    """Sequential dead-store rebinds (``ptr => A; ptr => B; use ptr``)
+    are not ambiguous — only the LAST rebind is observable.  The
+    pass takes the last and erases the earlier dead store.
+
+    Pattern shows up in ICON-style code where flang lowers an
+    aggregate rebind as multiple stores to the same pointer slot."""
+    src = """
+subroutine main(out)
+  implicit none
+  integer, intent(out) :: out
+  integer, target  :: x, y
+  integer, pointer :: tmp
+  x = 1
+  y = 2
+  tmp => x
+  tmp => y
+  out = tmp
+end subroutine main
+"""
+    sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out)
+    assert int(out[0]) == 2  # last rebind wins
+
+
+def test_unsupported_interleaved_rebinds_raises(tmp_path: Path):
+    """Loud-failure contract: a READ between two rebinds observes the
+    earlier target — collapsing to one would lose that semantics.
+    The pass must surface a clear unsupported error.
+
+    NOTE: triggering this from Fortran source needs a non-trivial
+    use of the first target between rebinds.  We assemble the IR
+    pattern by force-feeding the bridge two rebind sites with a
+    read in the middle; since Fortran source doesn't usually emit
+    this shape, the test guards against future bridge changes that
+    might silently coalesce reads with rebinds."""
+    src = """
+subroutine main(out)
+  implicit none
+  integer, intent(out) :: out(2)
+  integer, target  :: x, y
+  integer, pointer :: tmp
+  x = 1
+  y = 2
+  tmp => x
+  out(1) = tmp     ! read of tmp -> x
+  tmp => y
+  out(2) = tmp     ! read of tmp -> y
+end subroutine main
+"""
+    with pytest.raises(RuntimeError):
+        build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+
+
+def test_unsupported_bounds_remap_raises(tmp_path: Path):
+    """Loud-failure contract: ``ptr(0:n-1) => src(1:n)`` re-bases the
+    lower bound.  Flang encodes the remap on the rebox's
+    ``fir.shift`` / ``fir.shape_shift`` operand; collapsing without
+    observing the remap would shift every subsequent read by
+    ``remap_lo - 1``.  Until the remap is properly handled in the
+    rewrite, the pass must reject."""
+    src = """
+subroutine main(n, src, res)
+  implicit none
+  integer, intent(in)        :: n
+  real, intent(in), target   :: src(n)
+  real, intent(out)          :: res
+  real, pointer              :: w(:)
+  w(0:n-1) => src(1:n)
+  res = w(0)
+end subroutine main
+"""
+    with pytest.raises(RuntimeError):
+        build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+
+
+def test_pointer_rebind_to_array_slice(tmp_path: Path):
+    """``w => store(1:n); res = w(2) + w(4)`` — pointer rebound to a
+    triplet section of a TARGET array.  Distinct from
+    ``ptr => target_decl`` (the existing test): the rebind value is
+    ``fir.rebox(hlfir.designate(parent, slice))`` rather than
+    ``fir.embox(declare)``.  ``hlfir-rewrite-pointer-assigns``'s
+    slice-target arm forwards the rebound section box to every load
+    of the pointer slot, skipping the alloca round-trip; the bridge's
+    ``traceToDecl`` then walks through ``fir.rebox`` and the
+    ``hlfir.designate`` chain back to the parent declare so each
+    ``w(i)`` reads ``parent(i)`` directly.
+
+    Strict-no-aliasing assumption: the rewrite is unsafe if the
+    program relies on aliasing.  No runtime ALLOCATED checks.
+    """
+    src = """
+subroutine main(n, store, res)
+  implicit none
+  integer, intent(in)             :: n
+  real, intent(in), target        :: store(n)
+  real, intent(out)               :: res
+  real, pointer                   :: w(:)
+  w => store(1:n)
+  res = w(2) + w(4)
+end subroutine main
+"""
+    sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
+    n = 5
+    store = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    res = np.zeros(1, dtype=np.float32)
+    sdfg(n=n, store=store, res=res)
+    assert res[0] == 6.0  # store[1] + store[3] = 2 + 4
+
+
 def test_pointer_to_struct_scalar_field(tmp_path: Path):
     """``tmp => s%a; tmp = 13`` — pointer rebound onto a scalar struct field.
 

@@ -64,7 +64,7 @@ def test_if_condition_with_array_subscripts(tmp_path: Path):
     #   i=3: F OR F -> F ; out(3) = 0   <-- the bridge's bug surfaces here
     #   i=4: F OR T -> T ; out(4) = 1
     #   i=5: T OR F -> T ; out(5) = 1
-    mask = np.array([0, 1, 0, 0, 1, 0], dtype=np.int32)
+    mask = np.array([False, True, False, False, True, False], dtype=np.bool_)
     expected = np.array([1, 1, 0, 1, 1, 0], dtype=np.float64)
 
     # gfortran reference -- confirms the test's intent.

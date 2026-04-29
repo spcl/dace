@@ -38,7 +38,7 @@ end subroutine
     sdfg = build_sdfg(src, tmp_path, name='probe').build()
     for mask_val in (True, False):
         out = np.zeros(1, dtype=np.float64)
-        sdfg(a=1.5, b=2.5, mask=(1 if mask_val else 0), out=out)
+        sdfg(a=1.5, b=2.5, mask=mask_val, out=out)
         expected = 1.5 if mask_val else 2.5
         assert float(out[0]) == expected, f"mask={mask_val}: got {out[0]}, want {expected}"
 
@@ -79,10 +79,10 @@ end subroutine main
     n = 12
     t = np.ascontiguousarray(rng.standard_normal(n, dtype=np.float64))
     f = np.ascontiguousarray(rng.standard_normal(n, dtype=np.float64))
-    mask = np.ascontiguousarray((rng.random(n) > 0.5).astype(np.int32))
+    mask = np.ascontiguousarray(rng.random(n) > 0.5)
     out = np.zeros(n, dtype=np.float64)
     sdfg(t=t, f=f, mask=mask, out=out, n=n)
-    np.testing.assert_array_equal(out, np.where(mask.astype(bool), t, f))
+    np.testing.assert_array_equal(out, np.where(mask, t, f))
 
 
 def test_merge_array_verifies_libnode_present(tmp_path: Path):

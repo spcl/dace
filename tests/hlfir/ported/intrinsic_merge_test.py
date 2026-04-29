@@ -38,7 +38,7 @@ END SUBROUTINE merge_test_function
 
     first = np.full([size], 13, order="F", dtype=np.float64)
     second = np.full([size], 42, order="F", dtype=np.float64)
-    mask = np.full([size], 0, order="F", dtype=np.int32)
+    mask = np.full([size], False, order="F", dtype=np.bool_)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     sdfg(input1=first, input2=second, mask=mask, res=res)
@@ -46,17 +46,17 @@ END SUBROUTINE merge_test_function
         assert val == 42
 
     for i in range(int(size / 2)):
-        mask[i] = 1
+        mask[i] = True
     sdfg(input1=first, input2=second, mask=mask, res=res)
     for i in range(int(size / 2)):
         assert res[i] == 13
     for i in range(int(size / 2), size):
         assert res[i] == 42
 
-    mask[:] = 0
+    mask[:] = False
     for i in range(size):
         if i % 2 == 1:
-            mask[i] = 1
+            mask[i] = True
     sdfg(input1=first, input2=second, mask=mask, res=res)
     for i in range(size):
         if i % 2 == 1:
@@ -258,14 +258,14 @@ END SUBROUTINE merge_test_function
     first = np.full([size], 13, order="F", dtype=np.float64)
     second = np.full([size], 42, order="F", dtype=np.float64)
     third = np.full([size], 43, order="F", dtype=np.float64)
-    mask1 = np.full([size], 0, order="F", dtype=np.int32)
-    mask2 = np.full([size], 1, order="F", dtype=np.int32)
+    mask1 = np.full([size], False, order="F", dtype=np.bool_)
+    mask2 = np.full([size], True, order="F", dtype=np.bool_)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     for i in range(int(size / 2)):
-        mask1[i] = 1
+        mask1[i] = True
 
-    mask2[-1] = 0
+    mask2[-1] = False
 
     sdfg(input1=first, input2=second, input3=third, mask1=mask1, mask2=mask2, res=res)
 

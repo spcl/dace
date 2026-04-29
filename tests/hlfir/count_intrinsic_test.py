@@ -52,7 +52,7 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     rng = np.random.default_rng(0)
     n = 16
-    mask = (rng.random(n) > 0.5).astype(np.int32)
+    mask = (rng.random(n) > 0.5)
     res = np.zeros(1, dtype=np.int32)
     sdfg(mask=mask, n=n, res=res)
     assert int(res[0]) == int(mask.sum())
@@ -72,7 +72,7 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     rng = np.random.default_rng(1)
     n, m = 6, 8
-    mask = np.asfortranarray((rng.random((n, m)) > 0.5).astype(np.int32))
+    mask = np.asfortranarray(rng.random((n, m)) > 0.5)
     res = np.zeros(1, dtype=np.int32)
     sdfg(mask=mask, n=n, m=m, res=res)
     assert int(res[0]) == int(mask.sum())
@@ -99,7 +99,7 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     rng = np.random.default_rng(2)
     n, m = 5, 7
-    mask = np.asfortranarray((rng.random((n, m)) > 0.5).astype(np.int32))
+    mask = np.asfortranarray(rng.random((n, m)) > 0.5)
     res = np.zeros(n, dtype=np.int32)
     sdfg(mask=mask, n=n, m=m, res=res)
     np.testing.assert_array_equal(res, mask.sum(axis=1))
@@ -119,7 +119,7 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main').build()
     rng = np.random.default_rng(3)
     n, m = 4, 6
-    mask = np.asfortranarray((rng.random((n, m)) > 0.5).astype(np.int32))
+    mask = np.asfortranarray(rng.random((n, m)) > 0.5)
     res = np.zeros(m, dtype=np.int32)
     sdfg(mask=mask, n=n, m=m, res=res)
     np.testing.assert_array_equal(res, mask.sum(axis=0))

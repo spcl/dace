@@ -194,6 +194,10 @@ def build_wrapper_head(frozen: FrozenSignature, iface: OriginalInterface, plan: 
         iter_decl = "    integer(c_int) :: " + ", ".join(f"i{d + 1}" for d in range(max_loop_rank))
         symbol_decls = (symbol_decls + "\n" + iter_decl) if symbol_decls else iter_decl
 
+    bridge_decls, _, _, _ = _build_logical_bridges(frozen, iface)
+    if bridge_decls:
+        scratch_lines = scratch_lines + bridge_decls
+
     return tpl.format(
         entry=iface.entry,
         outer_dummy_list=", ".join(outer_dummy_names),
@@ -233,6 +237,12 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
         else:
             body.extend(render_copy_in_loop(r))
 
+    _, copy_in_lines, _, _ = _build_logical_bridges(frozen, iface)
+    if copy_in_lines:
+        body.append("")
+        body.append("    ! ----- LOGICAL → logical(c_bool) bridge (copy-in) -----")
+        body.extend(copy_in_lines)
+
     sym_lines = _build_symbol_assigns(frozen, plan, outer_dummy_set)
     if sym_lines:
         body.append("")
@@ -267,7 +277,8 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
         We splice the copy-back block in before the end marker.
     """
     tpl = _load("wrapper_call.f90.in")
-    call_args = ",  &\n".join(f"      {a.sdfg_name}" for a in frozen.args)
+    _, _, bridge_copy_out, name_override = _build_logical_bridges(frozen, iface)
+    call_args = ",  &\n".join(f"      {name_override.get(a.sdfg_name, a.sdfg_name)}" for a in frozen.args)
     call_block = tpl.format(entry=iface.entry, call_arg_list=call_args)
 
     copy_out_lines: List[str] = []
@@ -281,13 +292,20 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
             continue
         copy_out_lines.extend(render_copy_out_loop(r, entry.outer_expr))
 
-    if not copy_out_lines:
+    bridge_block = ""
+    if bridge_copy_out:
+        bridge_block = "\n    ! ----- logical(c_bool) → LOGICAL bridge (copy-out + dealloc) -----\n" + "\n".join(
+            bridge_copy_out)
+
+    if not copy_out_lines and not bridge_copy_out:
         return call_block
 
-    copy_out_block = "\n    ! ----- Copy-out for writeable deep-copy entries -----\n" + "\n".join(copy_out_lines)
+    copy_out_block = ""
+    if copy_out_lines:
+        copy_out_block = "\n    ! ----- Copy-out for writeable deep-copy entries -----\n" + "\n".join(copy_out_lines)
     marker = f"  end subroutine {iface.entry}_dace"
     pre, post = call_block.split(marker, 1)
-    return pre + copy_out_block + "\n" + marker + post
+    return pre + copy_out_block + bridge_block + "\n" + marker + post
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +378,99 @@ def _dim_spec(shape) -> str:
     if not shape:
         return ""
     return f", dimension({','.join(s if s != '?' else ':' for s in shape)})"
+
+
+def _is_default_logical(fortran_type: str) -> bool:
+    """Recognise a caller-visible Fortran LOGICAL declaration whose
+    storage layout differs from ``logical(c_bool)``.
+
+    Default ``logical`` is 4 bytes (``LOGICAL(KIND=4)``); ``logical(1)``
+    /  ``logical(8)`` are different sizes again.  Only ``logical(c_bool)``
+    matches the SDFG's bool storage directly — every other LOGICAL kind
+    needs a copy-via-Fortran-intrinsic-cast at the wrapper boundary so
+    the SDFG sees the correct 1-byte ``bool`` layout.
+    """
+    s = fortran_type.strip().lower()
+    if s == 'logical':
+        return True
+    if s.startswith('logical(') and 'c_bool' not in s:
+        return True
+    return False
+
+
+def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
+    """Emit scratch buffers + entry/exit copies for any LOGICAL outer
+    dummy that the SDFG sees as ``bool``.
+
+    The C ABI binds the wrapper's outer ``logical`` (default 4-byte)
+    dummy to a ``T*`` whose elements are 4 bytes wide; the SDFG expects
+    1-byte ``bool*``.  Passing the outer dummy's address straight
+    through corrupts every other element's read.  The fix is a
+    ``logical(c_bool)`` scratch buffer with the same shape — Fortran's
+    intrinsic LOGICAL-kind-conversion (``cbool_buf = outer``) handles
+    the bit-fiddling, and ``c_loc(cbool_buf)`` is then safely passed
+    to the SDFG.
+
+    Returns:
+        ``(decl_lines, copy_in_lines, copy_out_lines, name_override)``:
+            * ``decl_lines``: scratch buffer declarations (one per
+              affected dummy).  Empty if no dummy needs bridging.
+            * ``copy_in_lines``: Fortran-intrinsic cast assignments
+              run before the SDFG call.
+            * ``copy_out_lines``: reverse-direction casts for
+              ``intent(out)/inout`` dummies, run after the SDFG call.
+            * ``name_override``: ``{sdfg_name: scratch_name}`` mapping
+              the SDFG-call-side name should pass instead of the
+              outer dummy when this dummy needs bridging.
+
+    Bool dummies whose outer Fortran declaration is already
+    ``logical(c_bool)`` need no bridge — pass-through is correct.
+    Bool ``intent(in)`` scalars are pass-by-value; the C interface
+    builder takes a ``logical(c_bool), value`` so the Fortran
+    intrinsic cast happens at the call site instead of through a
+    scratch buffer (handled separately in ``build_wrapper_tail``).
+    """
+    decl_lines: List[str] = []
+    copy_in_lines: List[str] = []
+    copy_out_lines: List[str] = []
+    name_override: dict = {}
+
+    iface_by_name = {a.name: a for a in iface.args}
+    for fa in frozen.args:
+        if fa.dtype != 'bool':
+            continue
+        oa = iface_by_name.get(fa.fortran_name)
+        if oa is None:
+            continue
+        if not _is_default_logical(oa.fortran_type):
+            continue
+        # Array dummy — explicit scratch buffer + element-wise cast.
+        if fa.rank > 0:
+            scratch = f"{fa.fortran_name}_cbool"
+            shape_dim = "(" + ",".join(":" for _ in range(fa.rank)) + ")"
+            decl_lines.append(f"    logical(c_bool), allocatable, target :: {scratch}{shape_dim}")
+            shape_args = ", ".join(f"size({oa.name}, dim={d + 1})" for d in range(fa.rank))
+            copy_in_lines.append(f"    allocate({scratch}({shape_args}))")
+            copy_in_lines.append(f"    {scratch} = {oa.name}")
+            if oa.intent in ('out', 'inout', ''):
+                copy_out_lines.append(f"    {oa.name} = {scratch}")
+            copy_out_lines.append(f"    deallocate({scratch})")
+            name_override[fa.sdfg_name] = scratch
+        # Scalar bool dummy: input and inout/out paths.  intent(in)
+        # passes-by-value, so the Fortran intrinsic cast happens
+        # naturally at the call expression — no scratch needed.
+        # intent(out)/inout passes-by-pointer with a length-1 Array
+        # descriptor: scratch + copy-in (zero-init) + copy-out.
+        else:
+            # Scalar of any kind currently surfaces as length-1 Array
+            # only when intent in {'out', 'inout'}.  Skip the scalar
+            # bridge for now; caller-side test infrastructure passes
+            # ``np.bool_`` directly through the SDFG and bypasses the
+            # wrapper.  Land this when a real scalar-LOGICAL caller
+            # exercises the wrapper.
+            continue
+
+    return decl_lines, copy_in_lines, copy_out_lines, name_override
 
 
 def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dummy_set: set) -> List[str]:

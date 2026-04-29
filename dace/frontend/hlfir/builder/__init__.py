@@ -115,6 +115,13 @@ DEFAULT_PIPELINE = (
     # by ``hlfir-reject-polymorphism`` immediately after.
     "fir-polymorphic-op,"
     "hlfir-reject-polymorphism,"
+    # Collapse Fortran sequence-association adapters (caller passing a
+    # scalar element of an array where the formal expects an
+    # explicit-shape array) into an explicit section designate of the
+    # parent.  Runs AFTER inline-all (so the inlined callee body's
+    # declare-of-converted-ref is visible) and BEFORE flatten-structs
+    # (so the section view feeds into the usual designate-rewrite).
+    "hlfir-rewrite-sequence-association,"
     "hlfir-flatten-structs,"
     # Collapse Fortran ``ptr => target`` rebinds under the strict-no-
     # aliasing assumption: every read or write of the pointer becomes
@@ -306,6 +313,23 @@ class SDFGBuilder:
         """
         from dace.sdfg.construction_utils import replace_length_one_arrays_with_scalars
         from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
+
+        # Empty-region cleanup: any ControlFlowRegion (LoopRegion,
+        # ConditionalBlock branch, the top-level SDFG, etc.) that
+        # ended up with zero internal blocks gets a single empty
+        # state added.  Validation requires every CFG region to
+        # have a defined start block; an empty region triggers
+        # "Ambiguous starting block".  Such empties arise legitimately
+        # from Fortran source — a ``do i = 1, N; <only-stripped-by-
+        # flatten>; end do`` whose body became a no-op after
+        # AoS+allocatable flattening, an empty IF branch, etc.
+        # The empty state is semantically equivalent to the source
+        # construct (a loop iterating over a no-op body is still
+        # a no-op overall).
+        for region in list(sdfg.all_control_flow_regions()):
+            if len(list(region.nodes())) == 0:
+                region.add_state("empty_body", is_start_block=True)
+
         SSALoopIterators().apply_pass(sdfg, {})
         # ``transient_only=True``: only fold LOCAL 1-element transients
         # (e.g. accumulators left as length-1 arrays by the bridge).  The

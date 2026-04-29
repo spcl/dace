@@ -553,6 +553,45 @@ std::vector<ASTNode> buildSectionScalarAssign(
     }
     inner.accesses.push_back(std::move(wa));
 
+    // Bug fix: also collect read accesses on the scalar RHS.
+    // ``inner.expr`` is the rendered RHS string (e.g. ``bob(1)``),
+    // and Python ``emit_tasklet`` rewrites every array-name occurrence
+    // to ``_in_<name>_<N>`` and creates one in_connector + memlet PER
+    // ``AccessInfo`` in ``inner.accesses``.  Without read AccessInfos
+    // here the connector references in the rewritten code become
+    // dangling — and DaCe's free-symbol analysis later treats the
+    // unbound ``_in_<name>_<N>`` token as an undefined symbol,
+    // surfacing as ``KeyError: '_in_bob_0'`` at SDFG construction.
+    // Mirrors the ``collectReads`` walker inside ``buildAssignNode``
+    // (lines ~304–361 above); kept inline rather than extracted as a
+    // free helper because the only shared piece would be the walker
+    // and the AccessInfo emission, which already differs in subtle
+    // ways (no per-dim ``index_vars`` reset rules at the section level).
+    std::function<void(mlir::Value, int)> collectScalarRhsReads =
+        [&](mlir::Value v, int depth) {
+        if (depth > 40) return;
+        auto *op = v.getDefiningOp();
+        if (!op) return;
+        if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(op)) {
+            AccessInfo ra;
+            ra.array_name = traceToDecl(dg.getMemref());
+            ra.is_read = true;
+            unsigned di = 0;
+            for (auto idx : dg.getIndices()) {
+                auto n = resolveIndex(idx);
+                ra.index_vars.push_back(n.empty() ? "?" : n);
+                ra.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx, 0));
+                ++di;
+                collectScalarRhsReads(idx, depth + 1);
+            }
+            inner.accesses.push_back(std::move(ra));
+            return;
+        }
+        for (auto operand : op->getOperands())
+            collectScalarRhsReads(operand, depth + 1);
+    };
+    collectScalarRhsReads(assign.getOperand(0), 0);
+
     // Wrap descending so the outermost ASTNode is the outermost loop.
     // Lower bound goes into loop_lower_expr (string form) so symbolic
     // lowers like ``res(a:b)`` survive — emit_loop prefers it over the

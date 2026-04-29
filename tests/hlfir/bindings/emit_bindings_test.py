@@ -280,3 +280,83 @@ def test_nested_struct_no_copy_overhead(tmp_path: Path):
     src = _nested_struct(tmp_path)
     assert "allocate(" not in src
     assert "do i1 =" not in src
+
+
+# --------------------------------------------------------------------------
+# LOGICAL → logical(c_bool) bridge
+# --------------------------------------------------------------------------
+
+
+def _logical_array_kernel(tmp_path: Path) -> str:
+    """A kernel taking a top-level ``LOGICAL`` array dummy.  After the
+    LOGICAL-to-bool migration the SDFG sees this as ``np.bool_`` (1 byte)
+    while the caller-visible Fortran type stays default ``LOGICAL`` (4
+    bytes).  The wrapper has to bridge the two with a
+    ``logical(c_bool)`` scratch buffer + an intrinsic-cast copy on
+    entry / exit."""
+    frozen = FrozenSignature(
+        entry="kernel",
+        mangled="_QPkernel",
+        args=(FrozenArg(fortran_name="mask",
+                        sdfg_name="mask",
+                        kind="array",
+                        dtype="bool",
+                        rank=1,
+                        shape=("n", ),
+                        intent="inout",
+                        from_struct_member="",
+                        layout="same"),
+              FrozenArg(fortran_name="n",
+                        sdfg_name="n",
+                        kind="symbol",
+                        dtype="int32",
+                        rank=0,
+                        shape=(),
+                        intent="in",
+                        from_struct_member="",
+                        layout="same")),
+        free_symbols=("n", ),
+    )
+    iface = OriginalInterface(
+        entry="kernel",
+        args=(OriginalArg(name="mask", fortran_type="logical", rank=1, shape=("n", ),
+                          intent="inout"), OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in")),
+    )
+    plan = FlattenPlan(entries=())
+    out = tmp_path / "kernel_bindings.f90"
+    emit_bindings(frozen, iface, plan, str(out))
+    return out.read_text()
+
+
+def test_logical_array_emits_cbool_scratch(tmp_path: Path):
+    """The wrapper declares a ``logical(c_bool), allocatable, target``
+    scratch buffer for any LOGICAL outer-dummy whose SDFG dtype is
+    ``bool`` and whose outer Fortran type isn't already
+    ``logical(c_bool)``."""
+    src = _logical_array_kernel(tmp_path)
+    assert "logical(c_bool), allocatable, target :: mask_cbool(:)" in src
+
+
+def test_logical_array_emits_intrinsic_cast_on_entry(tmp_path: Path):
+    """Wrapper body copies the outer dummy into the scratch via the
+    Fortran intrinsic LOGICAL-kind-conversion (a whole-array assign)."""
+    src = _logical_array_kernel(tmp_path)
+    assert "allocate(mask_cbool(size(mask, dim=1)))" in src
+    assert "mask_cbool = mask" in src
+
+
+def test_logical_array_passes_scratch_to_sdfg(tmp_path: Path):
+    """The SDFG-call argument list uses the scratch name, not the outer
+    dummy — passing the outer would corrupt every other element."""
+    src = _logical_array_kernel(tmp_path)
+    # The call line should reference ``mask_cbool``, not bare ``mask``.
+    call_block = src[src.index("call dace_program_kernel"):]
+    assert "mask_cbool" in call_block.splitlines()[1] or any("mask_cbool" in l for l in call_block.splitlines()[:6])
+
+
+def test_logical_array_emits_intrinsic_cast_on_exit(tmp_path: Path):
+    """For ``intent(inout)`` the wrapper copies the scratch back into
+    the outer dummy after the SDFG call, then deallocates."""
+    src = _logical_array_kernel(tmp_path)
+    assert "mask = mask_cbool" in src
+    assert "deallocate(mask_cbool)" in src

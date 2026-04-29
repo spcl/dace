@@ -164,7 +164,6 @@ end subroutine inner_loops
     np.testing.assert_allclose(out, inp + 1.0, rtol=1e-6, atol=1e-6)
 
 
-@xfail("module-contained function called as f(d(11), 5) — needs use-association + array-slice-as-scalar lowering")
 def test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_literal_size(tmp_path):
     src = """
 module lib
@@ -197,7 +196,6 @@ end subroutine main
     assert d[0] == 65
 
 
-@xfail("module-contained function with symbolic size argument — same path as the literal-size variant")
 def test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_symbolic_size(tmp_path):
     src = """
 module lib

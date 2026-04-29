@@ -29,7 +29,7 @@ END SUBROUTINE intrinsic_count_test_function
     sdfg = build_sdfg(src, tmp_path, name='intrinsic_count_test_function').build()
 
     size = 5
-    d = np.full([size], False, order="F", dtype=np.int32)
+    d = np.full([size], False, order="F", dtype=np.bool_)
     res = np.full([2], 42, order="F", dtype=np.int32)
 
     d[2] = True
@@ -45,7 +45,7 @@ def test_fortran_frontend_count_array_dim(tmp_path):
     src = """
 SUBROUTINE intrinsic_count_test_function(d, res)
 logical, dimension(5) :: d
-logical, dimension(2) :: res
+integer, dimension(2) :: res
 
 res(1) = COUNT(d, 1)
 
@@ -55,11 +55,17 @@ END SUBROUTINE intrinsic_count_test_function
 
 
 def test_fortran_frontend_count_array_comparison(tmp_path):
+    # ``res`` is declared ``integer, dimension(7)`` so the COUNT result
+    # (an INTEGER) round-trips cleanly.  The original f2dace port used
+    # ``integer, dimension(7) :: res`` for the same shape, but that
+    # made the assertion ambiguous (assigning an INTEGER count to a
+    # LOGICAL scalar via Fortran's truthy-cast).  Switching to an
+    # integer ``res`` matches the rest of the COUNT tests in this file.
     src = """
 SUBROUTINE intrinsic_count_test_function(first, second, res)
 integer, dimension(5) :: first
 integer, dimension(5) :: second
-logical, dimension(7) :: res
+integer, dimension(7) :: res
 
 res(1) = COUNT(first .eq. second)
 res(2) = COUNT(first(:) .eq. second)
@@ -102,7 +108,7 @@ def test_fortran_frontend_count_array_scalar_comparison(tmp_path):
     src = """
 SUBROUTINE intrinsic_count_test_function(first, res)
 integer, dimension(5) :: first
-logical, dimension(8) :: res
+integer, dimension(8) :: res
 
 res(1) = COUNT(first .eq. 42)
 res(2) = COUNT(first(:) .eq. 42)
@@ -143,7 +149,7 @@ def test_fortran_frontend_count_array_2d(tmp_path):
     src = """
 SUBROUTINE intrinsic_count_test_function(d, res)
 logical, dimension(5,7) :: d
-logical, dimension(2) :: res
+integer, dimension(2) :: res
 
 res(1) = COUNT(d)
 
@@ -152,7 +158,7 @@ END SUBROUTINE intrinsic_count_test_function
     sdfg = build_sdfg(src, tmp_path, name='intrinsic_count_test_function').build()
 
     sizes = [5, 7]
-    d = np.full(sizes, True, order="F", dtype=np.int32)
+    d = np.full(sizes, True, order="F", dtype=np.bool_)
     res = np.full([2], 42, order="F", dtype=np.int32)
     sdfg(d=d, res=res)
     assert res[0] == 35
@@ -161,7 +167,7 @@ END SUBROUTINE intrinsic_count_test_function
     sdfg(d=d, res=res)
     assert res[0] == 34
 
-    d = np.full(sizes, False, order="F", dtype=np.int32)
+    d = np.full(sizes, False, order="F", dtype=np.bool_)
     sdfg(d=d, res=res)
     assert res[0] == 0
 
@@ -175,7 +181,7 @@ def test_fortran_frontend_count_array_comparison_2d(tmp_path):
 SUBROUTINE intrinsic_count_test_function(first, second, res)
 integer, dimension(5,4) :: first
 integer, dimension(5,4) :: second
-logical, dimension(7) :: res
+integer, dimension(7) :: res
 
 res(1) = COUNT(first .eq. second)
 res(2) = COUNT(first(:,:) .eq. second)
@@ -210,7 +216,7 @@ def test_fortran_frontend_count_array_comparison_2d_subset(tmp_path):
 SUBROUTINE intrinsic_count_test_function(first, second, res)
 integer, dimension(5,4) :: first
 integer, dimension(5,4) :: second
-logical, dimension(2) :: res
+integer, dimension(2) :: res
 
 ! Now test subsets - make sure the equal values are only
 ! in the tested area.
@@ -242,7 +248,7 @@ def test_fortran_frontend_count_array_comparison_2d_subset_offset(tmp_path):
 SUBROUTINE intrinsic_count_test_function(first, second, res)
 integer, dimension(20:24,4) :: first
 integer, dimension(5,7:10) :: second
-logical, dimension(2) :: res
+integer, dimension(2) :: res
 
 ! Now test subsets - make sure the equal values are only
 ! in the tested area.

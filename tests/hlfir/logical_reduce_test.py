@@ -38,12 +38,12 @@ end subroutine
     sdfg = build_sdfg(src, tmp_path, name="kernel_any", pipeline="hlfir-propagate-shapes").build()
 
     rng = np.random.default_rng(42)
-    # Fortran default LOGICAL(4) → int32 at the f2py / SDFG boundary.
-    mask = np.asfortranarray((rng.random(8) > 0.5).astype(np.int32))
-    result = np.zeros(1, dtype=np.int32)
+    # Fortran ``LOGICAL`` → ``np.bool_`` on the SDFG signature.
+    mask = np.asfortranarray(rng.random(8) > 0.5)
+    result = np.zeros(1, dtype=np.bool_)
     sdfg(mask=mask, result=result, n=8)
-    expected = 1 if mask.any() else 0
-    assert int(result[0]) == expected, f"ANY({mask.tolist()}) → {int(result[0])}, want {expected}"
+    expected = bool(mask.any())
+    assert bool(result[0]) == expected, f"ANY({mask.tolist()}) → {bool(result[0])}, want {expected}"
 
 
 def test_all_whole_array(tmp_path: Path):
@@ -60,13 +60,13 @@ end subroutine
     sdfg = build_sdfg(src, tmp_path, name="kernel_all", pipeline="hlfir-propagate-shapes").build()
 
     # All-true case
-    mask_all = np.asfortranarray(np.ones(5, dtype=np.int32))
-    res_all = np.zeros(1, dtype=np.int32)
+    mask_all = np.asfortranarray(np.ones(5, dtype=np.bool_))
+    res_all = np.zeros(1, dtype=np.bool_)
     sdfg(mask=mask_all, result=res_all, n=5)
-    assert int(res_all[0]) == 1
+    assert bool(res_all[0]) is True
 
     # One-false case
-    mask_mixed = np.asfortranarray(np.array([1, 1, 0, 1, 1], dtype=np.int32))
-    res_mixed = np.zeros(1, dtype=np.int32)
+    mask_mixed = np.asfortranarray(np.array([True, True, False, True, True], dtype=np.bool_))
+    res_mixed = np.zeros(1, dtype=np.bool_)
     sdfg(mask=mask_mixed, result=res_mixed, n=5)
-    assert int(res_mixed[0]) == 0
+    assert bool(res_mixed[0]) is False

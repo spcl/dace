@@ -412,6 +412,525 @@ end subroutine spmv_batched
     sdfg(out=out)
 
 
+def test_local_struct_allocatable_member_element_writes(tmp_path: Path):
+    """Phase 5a: ``type t :: real, allocatable :: w(:)`` — local
+    struct instance with one allocatable array member, allocate then
+    per-element writes, then read back two elements and sum.
+
+    The flatten pass replaces ``s%w`` with a flat top-level allocatable
+    ``s_w`` (declare carrying ``fortran_attrs = #fir.var_attrs<allocatable>``)
+    and renames the per-allocate ``fir.allocmem`` op so the bridge's
+    ``collectAllocSites`` finds it under ``s_w.alloc``.
+    """
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(n, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n
+  real, intent(out)   :: res
+  type(t) :: s
+  allocate(s%w(n))
+  s%w(1) = 1.0
+  s%w(2) = 2.0
+  s%w(3) = 3.0
+  s%w(4) = 4.0
+  res = s%w(2) + s%w(4)
+  deallocate(s%w)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path)
+    res = np.zeros(1, dtype=np.float32)
+    sdfg(n=4, res=res)
+    assert res[0] == 6.0
+
+
+def test_local_struct_allocatable_with_scalar_sibling_member(tmp_path: Path):
+    """Phase 5a: struct with one scalar field and one allocatable
+    array field.  The scalar member also flattens (existing path) —
+    test pins both flat declares co-existing and the scalar field
+    being usable as the allocate's extent."""
+    src = """
+module lib
+  implicit none
+  type t
+    integer :: n
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(extent, res)
+  use lib
+  implicit none
+  integer, intent(in) :: extent
+  real, intent(out)   :: res
+  type(t) :: s
+  s%n = extent
+  allocate(s%w(s%n))
+  s%w(1) = 10.0
+  s%w(s%n) = 20.0
+  res = s%w(1) + s%w(s%n)
+  deallocate(s%w)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path)
+    res = np.zeros(1, dtype=np.float32)
+    sdfg(extent=5, res=res)
+    assert res[0] == 30.0
+
+
+def test_local_struct_allocatable_whole_array_assign(tmp_path: Path):
+    """Phase 5a: per-element copy into the allocatable member then
+    read back.  Pins the allocate-then-loop pattern against the
+    rewritten ``s_w`` flat declare."""
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(n, src, res)
+  use lib
+  implicit none
+  integer, intent(in)    :: n
+  real, intent(in)       :: src(n)
+  real, intent(out)      :: res(n)
+  type(t) :: s
+  integer :: i
+  allocate(s%w(n))
+  do i = 1, n
+    s%w(i) = src(i)
+  end do
+  do i = 1, n
+    res(i) = s%w(i)
+  end do
+  deallocate(s%w)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path)
+    n = 6
+    src_arr = np.arange(1.0, n + 1.0, dtype=np.float32)
+    res = np.zeros(n, dtype=np.float32)
+    sdfg(n=n, src=src_arr, res=res)
+    np.testing.assert_array_equal(res, src_arr)
+
+
+def test_dummy_struct_with_allocatable_member_top_level_call(tmp_path: Path):
+    """Phase 5b: ``type(t), intent(in) :: s`` where ``t`` has an
+    allocatable member, passed across a top-level subroutine call
+    (NOT module-contained).  After ``hlfir-inline-all`` the callee
+    body is spliced into main and ``s%w`` reads designate the inlined
+    alias which traces back to the caller's struct decl.
+
+    Removes the dummy-arg-with-allocatable gate from
+    ``planAndReplaceStructArgs``: per the saved bindings policy, the
+    flatten pass treats the member like any other allocatable and the
+    bindings-side wrapper handles the descriptor marshalling
+    (nullptr if not allocated, packed copy if allocated; no runtime
+    ``ALLOCATED()`` checks — the program is responsible for tracking
+    allocation state)."""
+    src = """
+module lib
+  implicit none
+  type t
+    integer :: n
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real, intent(out) :: out
+  type(t) :: s
+  s%n = 4
+  allocate(s%w(s%n))
+  s%w(1) = 10.0
+  s%w(2) = 20.0
+  s%w(3) = 30.0
+  s%w(4) = 40.0
+  call accumulate(s, out)
+  deallocate(s%w)
+end subroutine main
+
+subroutine accumulate(s, out)
+  use lib
+  implicit none
+  type(t), intent(in) :: s
+  real, intent(out) :: out
+  integer :: i
+  out = 0.0
+  do i = 1, s%n
+    out = out + s%w(i)
+  end do
+end subroutine accumulate
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    out = np.zeros(1, dtype=np.float32)
+    sdfg(out=out)
+    assert out[0] == 100.0
+
+
+def test_struct_pointer_member_slice_rebind(tmp_path: Path):
+    """Phase 5b: ``type t :: real, pointer :: w(:)`` — local struct
+    instance with a pointer array member, rebound to a section of a
+    TARGET'd array (``s%w => src(1:n)``).  The flatten pass treats
+    pointer members the same as allocatable members (Phase 5a):
+    synthesises a flat top-level companion ``s_w`` carrying the
+    ``pointer`` fortran_attr.  ``hlfir-rewrite-pointer-assigns``'s
+    slice-target arm then forwards the rebound section box to every
+    load of the flat companion's box-ref slot, so each ``s%w(i)``
+    read lands on ``src(i)`` directly.
+
+    Strict-no-aliasing assumption: the rewrite is unsafe if the
+    program relies on aliasing.  The test exercises the read-only
+    direction (``res = s%w(2) + s%w(4)``); writes through the
+    pointer follow the same lowering path."""
+    src = """
+module lib
+  implicit none
+  type t
+    real, pointer :: w(:)
+  end type t
+end module lib
+
+subroutine main(n, src, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n
+  real, intent(in), target :: src(n)
+  real, intent(out) :: res
+  type(t) :: s
+  s%w => src(1:n)
+  res = s%w(2) + s%w(4)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    n = 5
+    src_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    res = np.zeros(1, dtype=np.float32)
+    sdfg(n=n, src=src_arr, res=res)
+    assert res[0] == 6.0  # src[1] + src[3] = 2 + 4
+
+
+def test_local_struct_allocatable_via_inlined_subprogram(tmp_path: Path):
+    """Phase 5b: allocate happens INSIDE a module-contained subroutine
+    that takes the struct as an ``intent(inout)`` dummy.  After
+    ``hlfir-inline-all`` runs, the callee's ``s%w`` designate is
+    rooted at an inlined alias declare, not the caller's struct
+    declare.  ``renameMemberAllocmems`` must follow alias chains
+    (``hlfir.declare`` → ``fir.embox``/``fir.convert`` → caller's
+    declare) to find the allocate site and rename it.  Without the
+    alias walk the SDFG ends up with an unbound ``s_w_d0`` symbol
+    even though the user-visible Fortran name ``n`` is in scope.
+
+    NOTE: ``entry='_QPmain'`` is REQUIRED.  The Fortran source
+    declares two public functions (``_QMlibPfill_and_set`` and
+    ``_QPmain``).  Without explicit entry the bridge would walk the
+    first public function in module order — ``fill_and_set`` —
+    whose un-inlined body is unsupported (struct dummy with
+    allocatable member).  Passing ``entry`` marks every other
+    func.func private so symbol-dce drops them after inlining."""
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+contains
+  subroutine fill_and_set(s, n)
+    type(t), intent(inout) :: s
+    integer, intent(in) :: n
+    integer :: i
+    allocate(s%w(n))
+    do i = 1, n
+      s%w(i) = real(i * 10)
+    end do
+  end subroutine fill_and_set
+end module lib
+
+subroutine main(n, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n
+  real, intent(out) :: res(3)
+  type(t) :: s
+  call fill_and_set(s, n)
+  res(1) = s%w(1)
+  res(2) = s%w(n / 2)
+  res(3) = s%w(n)
+  deallocate(s%w)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    res = np.zeros(3, dtype=np.float32)
+    sdfg(n=6, res=res)
+    np.testing.assert_array_equal(res, [10.0, 30.0, 60.0])
+
+
+def test_parametric_dim_from_struct_field(tmp_path: Path):
+    """Phase 6: ``real :: bob(st%a)`` — local array whose extent is a
+    struct field's runtime value.  After flatten, ``st%a`` becomes
+    ``st_a`` and is bound as an SDFG symbol; ``bob``'s shape is
+    ``(st_a,)`` and the bridge emits a transient with that runtime
+    extent.  Element writes, whole-array assigns, and elementwise
+    arithmetic all flow through the existing array-of-symbol path."""
+    src = """
+module lib
+  implicit none
+  type t
+    integer :: a
+  end type t
+end module lib
+
+subroutine main(n, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n
+  real, intent(out) :: res(10)
+  type(t) :: st
+  st%a = n
+  block
+    real :: bob(st%a)
+    bob(:) = 0.0
+    bob(1) = 5.5
+    res(1:st%a) = bob + 1.0
+  end block
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    res = np.zeros(10, dtype=np.float32)
+    sdfg(n=4, res=res)
+    np.testing.assert_array_equal(res, [6.5, 1.0, 1.0, 1.0, 0, 0, 0, 0, 0, 0])
+
+
+def test_parametric_dim_two_locals_one_struct(tmp_path: Path):
+    """Phase 6: two parametric locals from sibling fields of the same
+    struct.  Each gets its own SDFG symbol (``st_a`` / ``st_b``) and
+    the bridge keeps them independent — the transient declarations
+    don't shadow each other."""
+    src = """
+module lib
+  implicit none
+  type t
+    integer :: a
+    integer :: b
+  end type t
+end module lib
+
+subroutine main(av, bv, res)
+  use lib
+  implicit none
+  integer, intent(in) :: av, bv
+  real, intent(out) :: res(20)
+  type(t) :: st
+  st%a = av
+  st%b = bv
+  block
+    real :: outer(st%a)
+    real :: inner(st%b)
+    integer :: i
+    outer = 1.5
+    inner = 2.5
+    do i = 1, st%a
+      res(i) = outer(i)
+    end do
+    do i = 1, st%b
+      res(st%a + i) = inner(i)
+    end do
+  end block
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    res = np.zeros(20, dtype=np.float32)
+    sdfg(av=3, bv=4, res=res)
+    np.testing.assert_array_equal(res, [1.5, 1.5, 1.5, 2.5, 2.5, 2.5, 2.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+
+def test_parametric_dim_via_inlined_subprogram(tmp_path: Path):
+    """Phase 6 + cross-subprogram: parametric local ``bob(st%a)`` lives
+    inside a module-contained subroutine that gets inlined into main.
+    Pins that the runtime-extent symbol is bound at the right scope
+    after inlining."""
+    src = """
+module lib
+  implicit none
+  type t
+    integer :: a
+  end type t
+contains
+  subroutine fill(d, st)
+    type(t), intent(in) :: st
+    real, intent(out) :: d(10)
+    real :: bob(st%a)
+    integer :: i
+    do i = 1, st%a
+      bob(i) = real(i)
+    end do
+    do i = 1, st%a
+      d(i) = bob(i) * 2.0
+    end do
+  end subroutine fill
+end module lib
+
+subroutine main(n, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n
+  real, intent(out) :: res(10)
+  type(t) :: st
+  st%a = n
+  call fill(res, st)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    res = np.zeros(10, dtype=np.float32)
+    sdfg(n=4, res=res)
+    np.testing.assert_array_equal(res, [2, 4, 6, 8, 0, 0, 0, 0, 0, 0])
+
+
+def test_local_struct_allocatable_member_reallocate(tmp_path: Path):
+    """Phase 5a: allocate / deallocate / re-allocate cycle on the same
+    member.  Pins the multiple-allocate-site path: each
+    ``fir.allocmem`` gets renamed by the flatten pass; the second
+    site comes back from ``collectAllocSites`` as a separate
+    ``fir.allocmem`` and ``allocAliasName`` mints a second-site
+    transient name (``s_w_alloc1``)."""
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(n1, n2, res)
+  use lib
+  implicit none
+  integer, intent(in) :: n1, n2
+  real, intent(out)   :: res
+  type(t) :: s
+  allocate(s%w(n1))
+  s%w(1) = 7.0
+  deallocate(s%w)
+  allocate(s%w(n2))
+  s%w(1) = 11.0
+  res = s%w(1)
+  deallocate(s%w)
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path)
+    res = np.zeros(1, dtype=np.float32)
+    sdfg(n1=3, n2=4, res=res)
+    assert res[0] == 11.0
+
+
+def test_aos_allocatable_uniform_const_size(tmp_path: Path):
+    """Phase 5c-A: AoS + allocatable member with uniform compile-time
+    constant allocate sizes.  Each ``A(i)`` allocates ``A(i)%w`` to
+    the SAME constant ``M`` elements, so the flat companion is
+    fully static ``A_w(N, M)`` and the kernel-internal allocate /
+    deallocate sites become semantic no-ops over the pre-existing
+    2D buffer.
+
+    Bridge changes coordinated for this case:
+      * ``FlattenStructs.cpp::aosAllocUniformConstSize`` predicate
+        gates the AoS+allocatable path on uniform-const sizes.
+      * Phase 5c-A synth emits ``A_<member>(N, M)`` (concat extent).
+      * ``collapseAosAllocReads`` rewrites the
+        ``fir.load + hlfir.designate (loaded, j)`` chain into a
+        direct 2-index ``hlfir.designate flatBase (i, j)``.
+      * ``stripReallocOnAosMember`` drops the ``realloc`` flag from
+        whole-array assigns so the verifier accepts the now-static
+        LHS.
+      * ``eraseAosAllocDeallocChain`` sweeps the per-instance
+        allocate / freemem ops; the wrapping ``deallocate`` loop's
+        body becomes empty.
+      * Post-gen sweep in ``SDFGBuilder.build()`` adds an empty
+        state to any zero-block CFG region, keeping the empty
+        deallocate loop's ``LoopRegion`` valid.
+    """
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real, intent(out) :: out
+  type(t) :: A(2)
+  integer :: i, j
+  do i = 1, 2
+    allocate(A(i)%w(3))
+    do j = 1, 3
+      A(i)%w(j) = real(i * j)
+    end do
+  end do
+  out = A(1)%w(1) + A(2)%w(2)
+  do i = 1, 2
+    deallocate(A(i)%w)
+  end do
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    out = np.zeros(1, dtype=np.float32)
+    sdfg(out=out)
+    # A(1)%w(1) = 1*1 = 1, A(2)%w(2) = 2*2 = 4, sum = 5
+    assert out[0] == 5.0
+
+
+def test_aos_allocatable_whole_array_assign(tmp_path: Path):
+    """Phase 5c-A: whole-array assign on AoS-allocatable member.
+    ``A(i)%w = scalar`` must lower to ``A_w(i, 1:M:1) = scalar`` —
+    a row-section assign — NOT a whole-2D-array broadcast.  Without
+    the section rewrite, every iteration's scalar would be
+    splatted across all rows, silently corrupting earlier rows.
+
+    Pinned by ``rewriteAosWholeMemberAssign`` in FlattenStructs.cpp.
+    """
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real, intent(out) :: out
+  type(t) :: A(2)
+  integer :: i
+  do i = 1, 2
+    allocate(A(i)%w(3))
+    A(i)%w = real(i)         ! whole-array assign of scalar
+  end do
+  out = A(1)%w(1) + A(2)%w(2)
+  do i = 1, 2
+    deallocate(A(i)%w)
+  end do
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    out = np.zeros(1, dtype=np.float32)
+    sdfg(out=out)
+    # A(1)%w = [1, 1, 1], A(2)%w = [2, 2, 2]; sum = 1 + 2 = 3.
+    assert out[0] == 3.0
+
+
 @pytest.mark.xfail(reason="Phase 3 — per-instance allocatable members. The "
                    "per-member SoA mapping is "
                    "``A_<member>(N, max_i(size(A(i)%<member>)))`` with "

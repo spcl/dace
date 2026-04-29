@@ -298,18 +298,22 @@ def test_icon_loopnest_6_sdfg_matches_f2py(tmp_path: Path):
     i_startblk, i_endblk = 2, 10
     jk_start, jk_end = 3, nlev - 3
 
-    # Fortran default LOGICAL(4) → int32 at the f2py / SDFG boundary.
-    levmask = np.asfortranarray((rng.random((nblks_c, nlev)) > 0.7).astype(np.int32))
+    # f2py expects Fortran default LOGICAL(4) as ``np.int32`` at its ABI;
+    # the SDFG signature uses ``np.bool_`` (1 byte) end-to-end.  Build
+    # both shapes from the same random source so the two backends see
+    # identical truth values.
+    levmask_bool = np.asfortranarray(rng.random((nblks_c, nlev)) > 0.7)
+    levmask_int = levmask_bool.astype(np.int32)
     levelmask_ref = np.zeros(nlev, dtype=np.int32)
-    levelmask_sdfg = np.zeros(nlev, dtype=np.int32)
+    levelmask_sdfg = np.zeros(nlev, dtype=np.bool_)
 
-    ref.kernel_flat(levmask, levelmask_ref, jk_start, jk_end, i_startblk, i_endblk)
+    ref.kernel_flat(levmask_int, levelmask_ref, jk_start, jk_end, i_startblk, i_endblk)
 
-    kw = dict(levmask=levmask, levelmask=levelmask_sdfg, nlev=nlev, nblks_c=nblks_c)
+    kw = dict(levmask=levmask_bool, levelmask=levelmask_sdfg, nlev=nlev, nblks_c=nblks_c)
     kw.update(_sdfg_call_args(sdfg, dict(jk_start=jk_start, jk_end=jk_end, i_startblk=i_startblk, i_endblk=i_endblk)))
     sdfg(**kw)
 
-    np.testing.assert_array_equal(levelmask_sdfg, levelmask_ref)
+    np.testing.assert_array_equal(levelmask_sdfg.astype(np.int32), levelmask_ref)
 
 
 # ---------------------------------------------------------------------------

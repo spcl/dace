@@ -234,6 +234,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     # reordering, so emit_loop is responsible for picking the right
     # one as init.
     step = getattr(n, 'loop_step', 1)
+
     if step >= 0:
         loop = LoopRegion(
             label=f"loop_{uid}_{builder.nid()}",
@@ -260,6 +261,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
 
     # Cache .children once — nanobind copies on every access.
     children = n.children
+
     child_loops = [c for c in children if c.kind == "loop"]
     child_assigns = [c for c in children if c.kind == "assign"]
     # Anything beyond nested DO loops and plain assignments (IF/ELSE,

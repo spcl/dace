@@ -43,28 +43,47 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     auto shape = decl.getShape();
     if (!shape) return syms;
 
-    if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
-        for (auto ext : sh.getExtents()) {
-            auto n = traceToDecl(ext);
-            if (!n.empty()) { syms.push_back(n); continue; }
-            if (auto c = traceConstInt(ext)) {
-                syms.push_back(std::to_string(*c));
-                continue;
+    // Two unknown-extent sentinels reach the shape op as plain
+    // ``arith.constant`` operands and must NOT be stringified into
+    // the DaCe descriptor (which rejects negative extents with
+    // "Found negative shape in Data"):
+    //
+    //   * ``fir::SequenceType::getUnknownExtent()`` (= INT64_MIN) —
+    //     the canonical "this dim is dynamic" marker on
+    //     ``fir.array<?xT>`` types.
+    //   * ``-1`` — the convention flang uses on the shape op of an
+    //     assumed-size dummy (``arr(*)``).  See the IR
+    //     ``%shape = fir.shape %c-1 : (index) -> !fir.shape<1>``
+    //     emitted for ``real, intent(in) :: src(*)`` — flang picks
+    //     ``-1`` rather than ``INT64_MIN`` here because the operand
+    //     is an ``index`` value the runtime would otherwise treat as
+    //     a real extent.
+    //
+    // Either case → push ``"?"`` so the per-dim synthetic-name
+    // fallback at the caller site mints ``<name>_d<i>``.  Any other
+    // negative integer is genuinely invalid and we let it surface
+    // (flang shouldn't emit such a thing for legal programs).
+    auto pushExtent = [&](mlir::Value ext) {
+        auto n = traceToDecl(ext);
+        if (!n.empty()) { syms.push_back(n); return; }
+        if (auto c = traceConstInt(ext)) {
+            if (*c == fir::SequenceType::getUnknownExtent() || *c == -1) {
+                syms.push_back("?");
+                return;
             }
-            syms.push_back("?");
+            syms.push_back(std::to_string(*c));
+            return;
         }
+        syms.push_back("?");
+    };
+    if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
+        for (auto ext : sh.getExtents())
+            pushExtent(ext);
 
     if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
         auto ops = ss->getOperands();
-        for (unsigned i = 1; i < ops.size(); i += 2) {
-            auto n = traceToDecl(ops[i]);
-            if (!n.empty()) { syms.push_back(n); continue; }
-            if (auto c = traceConstInt(ops[i])) {
-                syms.push_back(std::to_string(*c));
-                continue;
-            }
-            syms.push_back("?");
-        }
+        for (unsigned i = 1; i < ops.size(); i += 2)
+            pushExtent(ops[i]);
     }
 
     return syms;
@@ -411,6 +430,24 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         auto lb = traceToDecl(lp.getLowerBound());
         if (!lb.empty()) symbolNames.insert(lb);
     });
+    // Allocatable shape sources: every ``fir.allocmem`` site's shape
+    // operands are runtime extents of the resulting array — promote
+    // their traced declares to symbols so ``allocate(x(n))``
+    // (without any surrounding do-loop) still flips ``n`` from scalar
+    // to symbol.  Bug fix for Phase 5a (allocatable struct members):
+    // ``s%w`` allocates only at the explicit ``allocate(s%w(n))``
+    // statement and may have no other use of ``n``, so neither
+    // ``resolveShapeSyms`` (declare has no shape) nor the do-loop
+    // pass picks up ``n``.  Without this walk, ``n`` lands as a
+    // ``scalar`` data-descriptor and collides with the symbol the
+    // SDFG construction step then tries to emit for the array
+    // extent.
+    module.walk([&](fir::AllocMemOp am) {
+        for (auto sz : am.getShape()) {
+            auto n = traceToDecl(sz);
+            if (!n.empty()) symbolNames.insert(n);
+        }
+    });
 
     // Pass 2c: scalars used as array indices (``a(i)``) are also symbols.
     // Catches the DO-with-EXIT / DO-WHILE shape where lift-cf-to-scf
@@ -489,10 +526,36 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // box-typed dummies stay rank-0 (scalar passthrough).
         auto ty = op.getResult(0).getType();
         bool isAllocatableAttr = false;
-        if (auto a = op.getFortranAttrs())
+        bool isPointerAttr = false;
+        if (auto a = op.getFortranAttrs()) {
             if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::allocatable))
                 isAllocatableAttr = true;
-        if (isAllocatableAttr) {
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::pointer))
+                isPointerAttr = true;
+        }
+        // Pointer declares peel the same way as allocatables: their
+        // declared type is ``ref<box<ptr<array<?xT>>>>`` and we want
+        // the inner array's element type + rank for the SDFG
+        // descriptor.  Without peeling, a top-level ``real, pointer
+        // :: w(:)`` (or a Phase 5b flat companion ``s_w`` for a
+        // pointer struct member) ends up classified as a scalar of
+        // dtype ``!fir.box<!fir.ptr<...>>`` — useless to the SDFG.
+        //
+        // Guard: only peel pointer declares whose results are
+        // actually USED downstream.  Pointer declares with all-empty
+        // results survive ``hlfir-rewrite-pointer-assigns`` only as
+        // dangling artifacts (rebind successfully collapsed → all
+        // reads forwarded → declare is dead but not yet erased) or
+        // as cross-procedure / unsupported-target leftovers.  Peel
+        // always exposes a phantom rank>0 array on the SDFG
+        // signature; without the guard, even a successfully-collapsed
+        // pointer demanded its own ``_d0`` symbols.
+        bool peelPointer = false;
+        if (isPointerAttr) {
+            if (!op.getResult(0).use_empty() || !op.getResult(1).use_empty())
+                peelPointer = true;
+        }
+        if (isAllocatableAttr || peelPointer) {
             for (int peel = 0; peel < 6; ++peel) {
                 if (auto b = mlir::dyn_cast<fir::BoxType>(ty))       { ty = b.getEleTy(); continue; }
                 if (auto r = mlir::dyn_cast<fir::ReferenceType>(ty)) { ty = r.getEleTy(); continue; }
@@ -627,10 +690,22 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         }
 
         // Assumed-shape fallback: synthesise per-dim symbol names.
+        // Two entry shapes:
+        //   * ``shape_symbols`` is empty entirely (no shape op on the
+        //     declare) — synthesize all dims.
+        //   * ``shape_symbols`` has per-dim ``"?"`` slots (an
+        //     unknown-extent sentinel reached us, e.g. assumed-size
+        //     ``arr(*)``) — replace just the unresolved slots, keep
+        //     the resolved ones.
         if (v.shape_symbols.empty() && v.rank > 0)
             for (int dim = 0; dim < v.rank; ++dim)
                 v.shape_symbols.push_back(
                     v.fortran_name + "_d" + std::to_string(dim));
+        else
+            for (size_t dim = 0; dim < v.shape_symbols.size(); ++dim)
+                if (v.shape_symbols[dim] == "?")
+                    v.shape_symbols[dim] =
+                        v.fortran_name + "_d" + std::to_string(dim);
 
         // Classify.
         if (v.rank > 0)                             v.role = "array";

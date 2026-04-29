@@ -220,6 +220,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/ExpandRegionAssign.cpp
     passes/RejectPolymorphism.cpp
     passes/RewritePointerAssigns.cpp
+    passes/RewriteSequenceAssociation.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core

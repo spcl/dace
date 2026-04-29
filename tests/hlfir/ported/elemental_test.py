@@ -69,7 +69,6 @@ END SUBROUTINE
     assert np.allclose(arg3, res3)
 
 
-@xfail("CLASS(...) polymorphic dummy with type-bound percent-member access not lowered")
 def test_fortran_frontend_elemental_ecrad_scalar(tmp_path):
     src = """
 MODULE test_interface

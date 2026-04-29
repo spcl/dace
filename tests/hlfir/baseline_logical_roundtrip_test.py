@@ -74,3 +74,34 @@ end subroutine not_kernel
     b = np.zeros(n, dtype=np.bool_)
     sdfg(a=a, b=b, n=n)
     np.testing.assert_array_equal(b, np.logical_not(a))
+
+
+def test_logical_array_inplace_invert_roundtrip(tmp_path: Path):
+    """In-place ``mask = .not. mask`` over a LOGICAL array.  The dummy
+    is ``intent(inout)`` so the caller's buffer is read AND written;
+    the SDFG signature exposes it as a non-transient ``np.bool_`` Array.
+    Round-trip pins both directions of the data flow: caller's input
+    pattern is read by the kernel, inverted in place, and the inverted
+    pattern observed in the caller's buffer."""
+    src = """
+subroutine invert_in_place(mask, n)
+  implicit none
+  integer, intent(in)    :: n
+  logical, intent(inout) :: mask(n)
+  integer :: i
+  do i = 1, n
+    mask(i) = .not. mask(i)
+  end do
+end subroutine invert_in_place
+"""
+    sdfg = build_sdfg(src, tmp_path, name='invert_in_place', entry='_QPinvert_in_place').build()
+
+    n = 6
+    original = np.array([True, False, True, True, False, True], dtype=np.bool_)
+    mask = original.copy()
+    sdfg(mask=mask, n=n)
+    # SDFG read the original pattern, wrote back the inverted one.
+    np.testing.assert_array_equal(mask, np.logical_not(original))
+    # Symmetry: invoking again restores the original.
+    sdfg(mask=mask, n=n)
+    np.testing.assert_array_equal(mask, original)

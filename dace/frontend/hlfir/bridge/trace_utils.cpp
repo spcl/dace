@@ -58,6 +58,17 @@ std::string traceToDecl(mlir::Value val, int max) {
             { val = l.getMemref(); continue; }
         if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d))
             { val = co.getRef(); continue; }
+        // ``fir.rebox`` retypes an existing box (e.g. section view box
+        // → ``box<ptr<...>>`` for a Fortran ``ptr => slice`` rebind);
+        // it doesn't change the underlying storage.  Walk through so a
+        // downstream designate over the reboxed value still resolves
+        // to the parent's name.  Same role as the
+        // ``hlfir-rewrite-pointer-assigns`` slice-target forwarding:
+        // pointer reads land back on the parent array.
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d))
+            { val = rb.getBox(); continue; }
+        if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d))
+            { val = eb.getMemref(); continue; }
         // Section / element designates (``a(lo:hi)``, ``a(i)``) — walk
         // through to the underlying memref so a reduce over an
         // ``hlfir.any %levmask(i_startblk:i_endblk, jk)`` resolves its

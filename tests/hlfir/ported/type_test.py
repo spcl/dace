@@ -123,8 +123,31 @@ end subroutine internal_function
     assert (a[2, 0] == 42)
 
 
-@xfail("derived type with parametric array dimension (real bob2(st%a)) not lowered")
 def test_fortran_frontend_type_pardecl(tmp_path):
+    """Parametric struct-dim local (``real bob2(st%a)``) plus a
+    PARAMETER-sized companion (``real bob(n)``).
+
+    Originally xfailed claiming "parametric array dimension not lowered",
+    but the actual blocker was test-side bugs: the test passed
+    ``np.full([4, 5])`` for a ``d(5, 5)`` dummy (shape mismatch) AND
+    wrote ``d(:, 1) = bob(1) + bob2`` — illegal Fortran since LHS is
+    rank-1 length 5 and RHS broadcasts to length 10 (the size of
+    ``bob2``).  Flang lowered the illegal assign by writing 10
+    elements column-major, spilling into column 2 of ``d`` — undefined
+    behaviour that made the assertion ``a[1, 1] == 42`` fail (the
+    value got overwritten to 5.5).
+
+    Fixes (preserve original intent):
+      * Truncate ``bob2`` to length 5 via the slice ``bob2(1:5)`` so the
+        assignment is valid Fortran.  ``bob2(st%a=10)`` retains its
+        full declared extent so the parametric-dim feature is still
+        exercised.
+      * ``np.full([5, 5])`` matches the dummy shape.
+
+    Parametric struct dim works today (Phase 5a + 6); this test is the
+    cross-subroutine variant of ``derived_type_test.py::
+    test_parametric_dim_via_inlined_subprogram``.
+    """
     src = """
 module lib
   implicit none
@@ -155,7 +178,7 @@ subroutine internal_function(d, st)
   bob(1) = 5.5
   bob2(:) = 0
   bob2(1) = 5.5
-  d(:, 1) = bob(1) + bob2
+  d(:, 1) = bob(1) + bob2(1:5)
 end subroutine internal_function
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
@@ -167,7 +190,6 @@ end subroutine internal_function
     assert (a[1, 1] == 42)
 
 
-@xfail("derived type passed by reference between subroutines not lowered")
 def test_fortran_frontend_type_struct(tmp_path):
     src = """
 module lib

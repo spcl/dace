@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -59,7 +58,6 @@ end subroutine fun
     assert (res[0] == 0 and res[5] == 0)
 
 
-@xfail("nested derived types passed across subroutines not lowered")
 def test_fortran_struct_lhs(tmp_path):
     src = """
 module lib
@@ -78,8 +76,8 @@ subroutine main(res, start, end)
   use lib
   implicit none
   integer, dimension(6) :: res
-  integer :: start
-  integer :: end
+  integer, intent(in) :: start
+  integer, intent(in) :: end
   type(test_type) :: indices
   type(test_type2) :: val
   indices%res=res

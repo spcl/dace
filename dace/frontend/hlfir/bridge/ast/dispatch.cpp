@@ -659,6 +659,21 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                         bool emitted = false;
                         if (!e.py_op.empty() && sd->getNumOperands() > 0) {
                             auto srcVal = sd->getOperand(0);
+                            // Peel ``fir.convert`` chains so a section
+                            // designate hidden behind a box rebox (the
+                            // shape canonicalisation that shows up after
+                            // ``hlfir-rewrite-sequence-association`` —
+                            // ``box<array<NxT>>`` → ``box<array<?xT>>``)
+                            // still matches the section-reduce path.
+                            // Safe because at this point ``srcVal`` is
+                            // a box/ref of an array element type — the
+                            // converts here are shape-bookkeeping only,
+                            // never value-altering casts (which only
+                            // appear at scalar value sites).
+                            while (auto cv = mlir::dyn_cast_or_null<fir::ConvertOp>(
+                                       srcVal.getDefiningOp())) {
+                                srcVal = cv.getValue();
+                            }
                             if (auto *srcOp = srcVal.getDefiningOp()) {
                                 if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(srcOp)) {
                                     bool hasTrip = false;
