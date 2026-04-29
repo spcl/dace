@@ -25,12 +25,15 @@ def wire_stream_to(sdfg: dace.SDFG, state: dace.SDFGState, target: nodes.Node, t
                    stream_input: Optional[dace.data.Data]):
     """Connect the SDFG-level ``stream`` access node to ``target`` on
     ``target_conn``. No-op when no stream is wired. For map entries the
-    connector is added on the target; for tasklets it must already exist."""
+    connector is added on the target typed as ``gpuStream_t`` — type-based
+    detection in :func:`has_stream_connector` relies on this so the
+    post-expansion reconnect pass treats the libnode-wired consumer as
+    already-wired and doesn't re-thread a duplicate edge."""
     if stream_input is None:
         return
     stream_access = state.add_access(STREAM_CONN)
     if isinstance(target, nodes.MapEntry):
-        target.add_in_connector(target_conn)
+        target.add_in_connector(target_conn, dace.dtypes.gpuStream_t)
     state.add_edge(stream_access, None, target, target_conn,
                    dace.memlet.Memlet.from_array(STREAM_CONN, sdfg.arrays[STREAM_CONN]))
 
