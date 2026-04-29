@@ -27,7 +27,7 @@ from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumPro
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
-from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg import propagation as sdprop
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -1978,7 +1978,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2009,7 +2009,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))
@@ -2137,7 +2137,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Add external edge
         if external_memlet is None:
             # If undefined, propagate
-            external_memlet = propagate_memlet(self, internal_memlet, scope_node, True)
+            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True)
 
         if isinstance(scope_node, nd.EntryNode):
             eedge = self.add_edge(
@@ -2258,7 +2258,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 snode = edge.dst if propagate_forward else edge.src
                 if not cur_memlet.is_empty():
                     if propagate:
-                        cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
+                        cur_memlet = sdprop.propagate_memlet(self, cur_memlet, snode, True)
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.sdfg, self, edge)
@@ -2652,7 +2652,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         pass
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
-        """Propagate connector-adjacent memlets from child blocks to this region boundary."""
+        """
+        Propagate child-block memlets to this region boundary.
+
+        The default implementation treats the region conservatively as
+        straight-line control flow: it collects memlets from child states and
+        nested regions, then merges them as if every collected contribution may
+        reach the region boundary.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in-place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
         from dace.sdfg import propagation as sdprop
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
@@ -3557,7 +3569,21 @@ class LoopRegion(ControlFlowRegion):
             replace_in_codeblock(self.update_statement, replacements)
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
-        from dace.sdfg import propagation as sdprop
+        """
+        Propagate memlets across a loop region boundary.
+
+        When the loop trip count can be derived from the loop metadata, the
+        region propagates its candidate memlets through that symbolic iteration
+        range. Inverted loops are split into their unconditional first
+        iteration and the remaining iterations. Loops that cannot be analyzed
+        precisely fall back to the conservative base-region behavior.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in-place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
+        # Avoid cyclic import
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.has_break:
@@ -3582,6 +3608,7 @@ class LoopRegion(ControlFlowRegion):
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
         def _range_is_definitely_empty(start, stop) -> bool:
+            """Returns True only when the remaining inverted-loop range is provably empty."""
             simplified_start = symbolic.simplify(start)
             simplified_stop = symbolic.simplify(stop)
             simplified_stride = symbolic.simplify(stride)
@@ -3594,6 +3621,7 @@ class LoopRegion(ControlFlowRegion):
             return (simplified_start < simplified_stop) == True
 
         def _propagate_range(start, stop, target_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+            """Propagates all candidate memlets through one loop-iteration range."""
             loop_range = Range([(start, stop, stride)])
             for direction in target_memlets:
                 for connector in target_memlets[direction]:
@@ -3622,6 +3650,9 @@ class LoopRegion(ControlFlowRegion):
 
         remaining_iterations_memlets = sdprop._make_border_memlets(border_memlets)
         remaining_start = symbolic.simplify(init + stride)
+        # For inverted loops with update-before-condition disabled, the body can
+        # execute once at ``end + stride`` before the termination condition is
+        # observed, so the propagated range must include that final iteration.
         remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride)
         if not _range_is_definitely_empty(remaining_start, remaining_end):
             _propagate_range(remaining_start, remaining_end, remaining_iterations_memlets)
@@ -3793,6 +3824,19 @@ class ConditionalBlock(AbstractControlFlowRegion):
         return read_memlets
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+        """
+        Propagate memlets across a conditional region boundary.
+
+        Each branch is propagated independently and then merged into a single
+        boundary memlet. Because at most one branch executes per traversal, the
+        merged subset is the union of branch subsets while the merged volume is
+        an upper bound over branch volumes instead of their sum.
+
+        :param border_memlets: A mapping from connector direction and name to
+                               the accumulated border memlet. The mapping is
+                               updated in place.
+        :note: ``border_memlets`` mapping is updated in-place.
+        """
         from dace.sdfg import propagation as sdprop
         has_condition = False
 

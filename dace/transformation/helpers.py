@@ -1728,7 +1728,16 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
 
 def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterable[Edge[InterstateEdge]]:
     """
-    Helper function that generates an iterable of all edges potentially encountered between two control flow blocks.
+    Collects all interstate edges that may lie on a path between two blocks (e.g., states, loop regions).
+
+    The result is conservative: when paths cross nested control-flow regions,
+    interstate edges inside those regions that may contribute to the path are
+    included as well.
+
+    :param src: The control-flow block where the path starts.
+    :param dst: The control-flow block where the path ends.
+    :return: An iterable of unique interstate edges that may be encountered on
+             any path from ``src`` to ``dst``.
     """
 
     def _parent_chain(block: ControlFlowBlock) -> List[ControlFlowRegion]:
@@ -1838,6 +1847,12 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
 
 
 def _assigned_names_in_ast(node: ast.AST) -> Set[str]:
+    """
+    Returns symbol names assigned by an assignment-target AST node (left-hand side of an assignment).
+
+    :param node: The AST node representing an assignment target.
+    :return: A set of assigned symbol names extracted from the target.
+    """
     if isinstance(node, ast.Name):
         return {node.id}
     if isinstance(node, (ast.Tuple, ast.List)):
@@ -1849,6 +1864,15 @@ def _assigned_names_in_ast(node: ast.AST) -> Set[str]:
 
 
 def _symbols_assigned_in_codeblock(codeblock: Optional[CodeBlock]) -> Set[str]:
+    """
+    Collects symbols assigned within a Python code block.
+
+    Only assignment-like statements represented as Python AST nodes are
+    inspected.
+
+    :param codeblock: The code block to inspect.
+    :return: A set of symbol names assigned within the code block.
+    """
     if codeblock is None or not isinstance(codeblock.code, list):
         return set()
 
@@ -1865,6 +1889,15 @@ def _symbols_assigned_in_codeblock(codeblock: Optional[CodeBlock]) -> Set[str]:
 
 
 def _modified_symbols_in_region(region: ControlFlowRegion) -> Set[str]:
+    """
+    Collects symbols modified directly by control flow region metadata.
+
+    This currently includes loop variables and symbols assigned in loop
+    initializer and update code blocks.
+
+    :param region: The control-flow region to inspect.
+    :return: A set of symbol names modified by the region metadata itself.
+    """
     result = set()
     if isinstance(region, LoopRegion):
         if region.loop_variable:
@@ -1876,10 +1909,16 @@ def _modified_symbols_in_region(region: ControlFlowRegion) -> Set[str]:
 
 def modified_symbols_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Set[str]:
     """
-    Conservatively returns all symbols that may be modified on any path between two control-flow blocks.
+    Returns symbols that may be modified on any path between two blocks.
 
-    In addition to assignments on interstate edges, this includes loop-region metadata that also mutates symbols,
-    such as loop initializers, update statements, and loop variables.
+    In addition to assignments on interstate edges, this includes symbol
+    mutations expressed in loop-region metadata, such as loop initializers,
+    update statements, and loop variables.
+
+    :param src: The control-flow block where the path starts.
+    :param dst: The control-flow block where the path ends.
+    :return: A conservative set of symbol names that may be modified on any
+             path between ``src`` and ``dst``.
     """
     result = set()
     for edge in all_isedges_between(src, dst):

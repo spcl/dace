@@ -964,6 +964,20 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
 
 
 def _make_border_memlets(connectors, as_lists: bool = False):
+    """
+    Create the connector map used while aggregating nested border memlets.
+
+    The returned structure mirrors the nested-SDFG connector layout,
+    containing separate input and output connector dictionaries.
+
+    :param connectors: A mapping with ``in`` and ``out`` entries whose
+                       values are the connector collections to initialize.
+    :param as_lists: If True, initializes each connector entry with an empty
+                     list of candidate memlets. Otherwise, initializes each
+                     entry with ``None`` for incremental merged results.
+    :return: A dictionary of the form ``{'in': {...}, 'out': {...}}`` with
+             initialized connector entries.
+    """
     border_memlets = {
         'in': {},
         'out': {},
@@ -975,6 +989,20 @@ def _make_border_memlets(connectors, as_lists: bool = False):
 
 
 def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) -> None:
+    """
+    Collect state-local memlets attached to nested border (i.e., not internal) access nodes.
+
+    For nested SDFG inputs this inspects outgoing edges of the corresponding
+    access node, while for outputs it inspects incoming edges. The collected
+    memlets are left unpropagated so that the caller can later apply the
+    appropriate control-flow semantics.
+
+    :param state: The state whose access-node edges should be inspected.
+    :param border_memlets: A candidate memlet mapping, typically created with
+                           ``_make_border_memlets(..., as_lists=True)``, which
+                           is updated in place.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
     for node in state.data_nodes():
         for direction in border_memlets:
             if node.label not in border_memlets[direction]:
@@ -985,6 +1013,15 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
 
 
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
+    """
+    Append propagated child-region memlets to a candidate memlet map.
+
+    :param border_memlets: The candidate memlet mapping to append to. Each
+                           connector entry is expected to hold a list.
+    :param propagated_memlets: A propagated connector mapping whose non-None
+                               memlets should be appended as candidates.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
     for direction in border_memlets:
         for connector in border_memlets[direction]:
             memlet = propagated_memlets[direction][connector]
@@ -993,6 +1030,21 @@ def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None
 
 
 def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    """
+    Merge two border memlets using union aggregation semantics.
+
+    This merge rule sums volumes, unions subsets, and preserves dynamic
+    unbounded behavior. It is the default aggregation mode for states and
+    control-flow regions where all collected contributions conservatively count
+    toward the same border memlet.
+
+    :param existing: The accumulated border memlet so far, or None if no
+                     memlet has been accumulated yet.
+    :param incoming: The newly propagated memlet to merge into the result.
+    :param array: The array descriptor used to fall back to a full-array subset
+                  when subset unioning cannot preserve a more precise result.
+    :return: The merged memlet.
+    """
     if incoming is None:
         return existing
     if existing is None:
@@ -1028,6 +1080,21 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
 
 
 def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    """
+    Merge two border memlets using upper-bound conditional semantics.
+
+    Conditional regions may execute only one branch per traversal. Their
+    propagated subset is therefore the union of all branch subsets, while the
+    propagated volume is the maximum branch volume instead of the sum.
+
+    :param existing: The accumulated border memlet so far, or None if no
+                     memlet has been accumulated yet.
+    :param incoming: The newly propagated branch memlet to merge into the
+                     result.
+    :param array: The array descriptor used to fall back to a full-array subset
+                  when subset unioning cannot preserve a more precise result.
+    :return: The merged memlet that conservatively upper-bounds the branches.
+    """
     if incoming is None:
         return existing
     if existing is None:
@@ -1069,6 +1136,30 @@ def _propagate_border_memlet_candidates(candidates,
                                         params=None,
                                         rng=None,
                                         scale_by_range: bool = False) -> Memlet:
+    """
+    Propagate candidate memlets through a symbolic iteration range.
+
+    The helper collects all candidate memlets for a single connector, applies
+    subset propagation through the supplied symbolic range, and optionally keeps
+    or removes the usual range-size volume scaling.
+
+    :param candidates: A candidate memlet mapping whose connector entries hold
+                       lists of memlets.
+    :param arrays: The array descriptor mapping of the containing SDFG.
+    :param direction: Either ``in`` or ``out``, indicating which connector
+                      direction should be propagated.
+    :param connector: The connector name whose candidate memlets should be
+                      propagated.
+    :param params: Optional iteration variable names for the propagation range.
+                   If omitted together with ``rng``, a dummy singleton range is
+                   used.
+    :param rng: Optional symbolic iteration range to propagate through.
+    :param scale_by_range: If True, preserves the default ``propagate_subset``
+                           volume scaling by the size of ``rng``. If False,
+                           keeps only the sum of the candidate memlet volumes.
+    :return: The propagated memlet for the connector, or ``None`` if no candidate
+             memlets exist.
+    """
     memlets = candidates[direction][connector]
     if len(memlets) == 0:
         return None
@@ -1093,6 +1184,20 @@ def _propagate_border_memlet_candidates(candidates,
 
 
 def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) -> None:
+    """
+    Propagate all connector-adjacent memlets contributed by one state.
+
+    State-local subsets are propagated through the state's symbolic ranges, and
+    the resulting memlets are then scaled according to the state's execution
+    metadata before being merged into the nested-SDFG border memlets.
+
+    :param state: The state whose connector-adjacent memlets should be
+                  propagated.
+    :param border_memlets: The accumulated border memlet mapping to update.
+    :param arrays: The array descriptor mapping used for propagation and merge
+                   fallback behavior.
+    :note: The ``border_memlets`` mapping is updated in-place.
+    """
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_state_border_memlet_candidates(state, candidates)
 
@@ -1148,6 +1253,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     """
     # We import late to avoid cyclic imports here.
     from dace.transformation.helpers import unsqueeze_memlet
+    from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
@@ -1160,13 +1266,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     sdfg = nsdfg_node.sdfg
     outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
 
-    # For each state, go through all access nodes corresponding to any in- or
-    # out-connectors to and from this SDFG. Given those access nodes, collect
-    # the corresponding memlets and use them to calculate the memlet volume and
-    # subset corresponding to the outside memlet attached to that connector.
-    # This is passed out via `border_memlets` and propagated along from there.
-    from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
-
+    # Collect contributions from top-level CFG blocks. Plain states contribute
+    # directly, while control-flow regions aggregate their child blocks via
+    # their own propagate_memlets implementations.
     for block in sdfg.nodes():
         if isinstance(block, SDFGState):
             _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
