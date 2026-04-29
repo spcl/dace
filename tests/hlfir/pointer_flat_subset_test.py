@@ -124,12 +124,6 @@ end subroutine main
     assert out[0] == 10.0
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Rank-2 column-slice rebind "
-                   "(``p => s%w(:, 3)`` mixing one full-range and one "
-                   "scalar dim) leaves ``p`` un-collapsed; the rewriter's "
-                   "slice path needs the mixed-triplet shape handled "
-                   "alongside the all-triplet 1-D case.")
 def test_pointer_to_2d_member_column(tmp_path: Path):
     """Rank-2 struct member, pointer to a column slice.
     ``p => s%w(:, 3)`` after flatten rebinds onto ``s_w(:, 3)``.
@@ -171,12 +165,6 @@ end subroutine main
     np.testing.assert_array_equal(out, [31.0, 32.0, 33.0, 34.0])
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Write-through pointer to a "
-                   "section of a flat companion (``p => s%w(3:5); p(i) = …``) "
-                   "leaves ``p`` un-collapsed; the rewriter's slice path "
-                   "currently forwards reads only, not stores through the "
-                   "designate-of-loaded-box LHS form.")
 def test_pointer_write_through_to_member_slice(tmp_path: Path):
     """Write through the pointer, read back through the host struct
     member.  Pins that the rebind preserves write-back semantics

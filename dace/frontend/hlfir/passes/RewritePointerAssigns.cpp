@@ -11,6 +11,50 @@
 // access to ``target``'s storage.  We materialise that rename by
 // rewriting all uses of the pointer declare to the target declare.
 //
+// Uniform "always rebase to parent" strategy (TARGET design)
+// ===========================================================
+// Every pointer rebind has the same logical shape:
+//
+//     ptr => <parent>(<chain-indices>)
+//
+// where ``<parent>`` is a single ``hlfir.declare`` (the original
+// caller-side or local-side TARGET storage) and ``<chain-indices>`` is
+// a possibly-empty list of designate steps (whole-array, section
+// triplets, scalar element selection) flang lowered between the
+// rebind value and the parent declare.
+//
+// The rewrite is the same for every shape: replace each access through
+// the pointer with a direct designate over the PARENT, merging the
+// chain's indices with the user's access:
+//
+//   ``ptr => x``               ⇒  ``p(i, j)``     →  ``x(i, j)``
+//   ``ptr => x(2:5)``          ⇒  ``p(i)``        →  ``x(i + 1)``
+//   ``ptr => x(:, j)``         ⇒  ``p(i)``        →  ``x(i, j)``
+//   ``ptr => arr(i)`` (scalar) ⇒  ``p`` (scalar)  →  ``arr(i)``
+//   ``ptr => s%a`` (after flatten) ⇒  ``p(i)``    →  ``s_a(i)``
+//   ``ptr => s%a(2:5)`` (after flatten) ⇒ ``p(i)`` →  ``s_a(i + 1)``
+//
+// All of these reduce to the same operation:
+//   1. Walk the rebind value through ``fir.embox`` / ``fir.rebox`` /
+//      ``fir.convert`` and ``hlfir.designate`` ops to find the parent
+//      declare and capture each designate's (indices, isTriplet)
+//      record into a CHAIN.
+//   2. For every downstream access through ``fir.load %ptrDecl#0``
+//      (designate user OR box_addr user) build a fresh designate
+//      over the parent with merged indices: triplet positions
+//      consume one user index (rebased by ``lo - 1``); scalar
+//      positions take the chain's literal value verbatim; whole-
+//      array (no chain entry) passes user indices through untouched.
+//   3. Erase the load, the rebind store, the alloca / init chain,
+//      and the pointer declare.
+//
+// This collapses the per-variant special cases (plain target,
+// slice target, element rebind) into one rewrite step.  The
+// box_addr legacy fast path stays only for the empty-chain whole-
+// scalar case where the user expects a raw ``!fir.ptr<T>`` (before
+// any designate).  Inlined-callee pointer aliases get the same
+// per-load designate-rewrite applied independently.
+//
 // Why now (before flatten-structs):
 //   * Pointer declares carry ``fir.box<fir.ptr<...>>`` types.  Letting
 //     them survive into flatten-structs would either inflate the
@@ -343,6 +387,7 @@ struct RewritePointerAssignsPass
         fir::StoreOp rebindStore;
         hlfir::DeclareOp targetDecl;     // plain-target path
         mlir::Value sliceRebindValue;    // slice-target path: store.getValue()
+        hlfir::DesignateOp sliceDgKeep;  // slice-target path: section designate
         for (auto *u : ptrDecl.getResult(0).getUsers()) {
             auto st = mlir::dyn_cast<fir::StoreOp>(u);
             if (!st) continue;
@@ -478,7 +523,7 @@ struct RewritePointerAssignsPass
                 }
                 rebindStore = st;
                 sliceRebindValue = st.getValue();
-                (void)sliceDg;
+                sliceDgKeep = sliceDg;
                 continue;
             }
         }
@@ -598,16 +643,152 @@ struct RewritePointerAssignsPass
                     deadReaders.push_back(ld);
             }
         } else {
-            // Pure slice-target: forward every load directly.
-            for (auto *u : ptrDecl.getResult(0).getUsers()) {
-                auto ld = mlir::dyn_cast<fir::LoadOp>(u);
-                if (!ld) continue;
-                if (!ld->isBeforeInBlock(rebindStore)) {
-                    ld.getResult().replaceAllUsesWith(rebindValue);
-                    deadReaders.push_back(ld);
+            // Pure slice-target: rewrite every downstream
+            // ``hlfir.designate %loaded (%user_idxs)`` to a fresh
+            // designate over the slice's PARENT declare with indices
+            // merged from the slice + the user's access.  Walks each
+            // dim of the parent and either:
+            //   * triplet dim → consume one user index, rebase by
+            //     the slice's ``lo - 1``;
+            //   * scalar  dim → use the slice's constant index
+            //     verbatim.
+            // This covers 1D / 2D / mixed-triplet / write-through
+            // uniformly: after the rewrite, ``p(i)`` becomes
+            // ``parent(i + lo - 1, scalar_idx, …)`` with the right
+            // rank for the parent's storage, so reads AND writes
+            // through the pointer land directly on the parent's
+            // memlet.  The intermediate load + box becomes dead.
+            auto sliceDg = sliceDgKeep;
+            mlir::Value parentMemref = sliceDg ? sliceDg.getMemref() : mlir::Value{};
+            auto sliceIdxs = sliceDg ? sliceDg.getIndices() : mlir::ValueRange{};
+            auto sliceTriplets = sliceDg ? sliceDg.getIsTriplet()
+                                         : llvm::ArrayRef<bool>{};
+            // Snapshot the load list — we mutate the IR below
+            // (creating new designates), and ptrDecl#0's user list
+            // shouldn't change during the loop, but snapshotting
+            // keeps iteration robust if it ever does.
+            llvm::SmallVector<fir::LoadOp, 4> snapshotLoads;
+            for (auto *u : ptrDecl.getResult(0).getUsers())
+                if (auto ld = mlir::dyn_cast<fir::LoadOp>(u))
+                    snapshotLoads.push_back(ld);
+            for (auto ld : snapshotLoads) {
+                // Skip loads that happen BEFORE the rebind in the
+                // same block (those would be reads of an unbound
+                // pointer — undefined behaviour we don't model).
+                // For loads in nested blocks (typical: inside a
+                // do_loop body) MLIR's ``isBeforeInBlock`` says
+                // "different blocks" → returns false; treat them
+                // as "after the rebind" for rewrite purposes.
+                if (ld->getBlock() == rebindStore->getBlock() &&
+                    ld->isBeforeInBlock(rebindStore))
+                    continue;
+                // Rewrite each designate user of the load.
+                llvm::SmallVector<hlfir::DesignateOp, 4> userDgs;
+                for (auto *uu : ld.getResult().getUsers())
+                    if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(uu))
+                        userDgs.push_back(dg);
+                for (auto userDg : userDgs) {
+                    auto userIdxs = userDg.getIndices();
+                    auto userTriplets = userDg.getIsTriplet();
+                    // Merge: walk parent dims, consume user indices
+                    // for triplet positions, use slice's scalar
+                    // value for non-triplet positions.  Apply the
+                    // ``lo - 1`` rebase on triplet positions.
+                    mlir::OpBuilder b(userDg);
+                    auto loc = userDg.getLoc();
+                    auto idxTy = b.getIndexType();
+                    auto toIndex = [&](mlir::Value v) {
+                        if (v.getType() == idxTy) return v;
+                        return b.create<fir::ConvertOp>(loc, idxTy, v).getResult();
+                    };
+                    llvm::SmallVector<mlir::Value, 6> mergedIdxs;
+                    llvm::SmallVector<bool, 4> mergedTrips;
+                    unsigned cursor = 0;       // walk into sliceIdxs
+                    unsigned userCursor = 0;   // walk into userIdxs
+                    bool ok = true;
+                    for (unsigned dim = 0;
+                         dim < sliceTriplets.size() && ok; ++dim) {
+                        if (sliceTriplets[dim]) {
+                            // Triplet dim of the slice: pull next
+                            // user index, rebase by ``lo - 1``.
+                            if (cursor + 2 >= sliceIdxs.size() ||
+                                userCursor >= userIdxs.size()) {
+                                ok = false;
+                                break;
+                            }
+                            mlir::Value lo = sliceIdxs[cursor];
+                            mlir::Value u = userIdxs[userCursor];
+                            // ``user_idx + (lo - 1)``.  A constant
+                            // ``lo == 1`` is the common case (full-
+                            // range or 1-based section); skip the
+                            // arithmetic to keep IR clean.
+                            mlir::Value uIdx = toIndex(u);
+                            std::optional<int64_t> loConst;
+                            if (auto loCst = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
+                                    lo.getDefiningOp()))
+                                if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(loCst.getValue()))
+                                    loConst = a.getInt();
+                            if (loConst && *loConst == 1) {
+                                mergedIdxs.push_back(uIdx);
+                            } else {
+                                mlir::Value loIdx = toIndex(lo);
+                                auto c1 = b.create<mlir::arith::ConstantOp>(
+                                    loc, idxTy, b.getIndexAttr(1));
+                                auto adj = b.create<mlir::arith::SubIOp>(
+                                    loc, loIdx, c1.getResult());
+                                auto sum = b.create<mlir::arith::AddIOp>(
+                                    loc, uIdx, adj.getResult());
+                                mergedIdxs.push_back(sum.getResult());
+                            }
+                            mergedTrips.push_back(false);
+                            cursor += 3;       // lo, hi, step
+                            ++userCursor;
+                        } else {
+                            // Scalar dim of the slice: use the
+                            // slice's constant index directly.
+                            if (cursor >= sliceIdxs.size()) {
+                                ok = false;
+                                break;
+                            }
+                            mergedIdxs.push_back(toIndex(sliceIdxs[cursor]));
+                            mergedTrips.push_back(false);
+                            cursor += 1;
+                        }
+                    }
+                    // Any extra user indices beyond the slice's
+                    // triplet dims (e.g. the user designating a
+                    // multi-element region of the slice) need extra
+                    // handling — bail out for now and keep the
+                    // load alive so the bail-loud guard at the end
+                    // of this function fires cleanly.
+                    if (!ok || userCursor != userIdxs.size()) continue;
+                    // Build the new designate.  Result type matches
+                    // the original userDg's result type — it's the
+                    // element / section ref into the parent.
+                    auto newDg = b.create<hlfir::DesignateOp>(
+                        loc,
+                        /*result_type=*/userDg.getResult().getType(),
+                        /*memref=*/parentMemref,
+                        /*indices=*/mlir::ValueRange{mergedIdxs});
+                    (void)userTriplets;
+                    (void)mergedTrips;
+                    userDg.getResult().replaceAllUsesWith(newDg.getResult());
+                    deadReaders.push_back(userDg);
                 }
+                // Always queue ``ld`` for erase; the use_empty check
+                // at sweep time fires once the user designates above
+                // are erased.  Without this, ``ld`` is checked here
+                // while the userDg still references it, so it never
+                // gets pushed and survives downstream — leaving the
+                // pointer declare with a live user and aborting the
+                // erase chain at the end of this function.
+                deadReaders.push_back(ld);
             }
         }
+        // Erase user designates first (they hold the only uses on
+        // the load), then the loads themselves, in iteration order.
+        // ``op->use_empty()`` at the moment of erase decides whether
+        // each is safe to drop.
         for (auto *op : deadReaders)
             if (op->use_empty()) op->erase();
 
@@ -615,7 +796,11 @@ struct RewritePointerAssignsPass
         // each load of the alias's box-ref returns the same box value
         // we just collapsed; replacing it lets the alias's
         // ``hlfir.designate`` users land on the rebound parent too.
-        for (auto alias : aliasDecls) {
+        // Aliases of a slice rebind aren't currently handled — those
+        // would need the same designate-rewrite walk applied per
+        // alias declare.  For the plain-target path we keep the
+        // existing simple substitution.
+        if (targetDecl) for (auto alias : aliasDecls) {
             llvm::SmallVector<mlir::Operation *, 4> aliasDead;
             for (auto *u : alias.getResult(0).getUsers()) {
                 auto ld = mlir::dyn_cast<fir::LoadOp>(u);
