@@ -58,12 +58,12 @@ def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFG
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
     has_stream = stream_input is not None
     stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
-    code = f"cudaMemsetAsync(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});"
+    code = f"cudaMemsetAsync(_mset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});"
 
     in_conns = {_STREAM_CONN: dace.dtypes.gpuStream_t} if has_stream else {}
     return nodes.Tasklet(node.name,
                          inputs=in_conns,
-                         outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                         outputs={"_mset_out": dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -75,11 +75,11 @@ def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGS
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
-    code = f"memset(_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
+    code = f"memset(_mset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
 
     return nodes.Tasklet(node.name,
                          inputs={},
-                         outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                         outputs={"_mset_out": dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -181,7 +181,7 @@ class MemsetLibraryNode(nodes.LibraryNode):
     def validate(
             self, sdfg: dace.SDFG,
             state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict, Optional[dace.data.Data]]:
-        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
+        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_mset_out"]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")
 

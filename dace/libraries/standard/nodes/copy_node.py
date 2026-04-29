@@ -292,13 +292,17 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
     map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
     access_expr = ','.join(map_params)
-    inputs = {"_cpy_in": dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
-    outputs = {"_cpy_out": dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    # Inner Tasklet connectors must differ from the wrapper SDFG's
+    # parameter array names (``_cpy_in`` / ``_cpy_out``, matching the
+    # libnode's outer connectors); fall back to plain ``_in`` / ``_out``
+    # which are safe inside this wrapper namespace.
+    inputs = {"_in": dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
+    outputs = {"_out": dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
                                                    inputs,
-                                                   "_cpy_out = _cpy_in",
+                                                   "_out = _in",
                                                    outputs,
                                                    schedule=schedule,
                                                    external_edges=True)
@@ -365,8 +369,8 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
         one_elem=(cp_size == 1),
         in_is_cpu=(inp.storage != dtypes.StorageType.GPU_Global),
         out_is_cpu=(out.storage != dtypes.StorageType.GPU_Global),
-        in_conn='_in',
-        out_conn='_out')
+        in_conn='_cpy_in',
+        out_conn='_cpy_out')
 
     has_stream, stream_expr = _stream_expr(stream_input)
     kind = _memcpy_kind(inp, out)
@@ -374,12 +378,12 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
     code = (f"cudaMemcpyAsync({out_arg}, {in_arg}, "
             f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), {kind}, {stream_expr});")
 
-    in_conns = {"_in": in_conn_type}
+    in_conns = {"_cpy_in": in_conn_type}
     if has_stream:
         in_conns[_STREAM_CONN] = dace.dtypes.gpuStream_t
     return nodes.Tasklet(node.name,
                          inputs=in_conns,
-                         outputs={"_out": out_conn_type},
+                         outputs={"_cpy_out": out_conn_type},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -540,12 +544,12 @@ class ExpandCopyNDTemplate(ExpandTransformation):
                                   in_shape_collapsed,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
-                                  in_arg='_in',
-                                  out_arg='_out')
+                                  in_arg='_cpy_in',
+                                  out_arg='_cpy_out')
 
         return nodes.Tasklet(node.name,
-                             inputs={"_in": dace.dtypes.pointer(inp.dtype)},
-                             outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                             inputs={"_cpy_in": dace.dtypes.pointer(inp.dtype)},
+                             outputs={"_cpy_out": dace.dtypes.pointer(out.dtype)},
                              code=code,
                              language=dace.Language.CPP)
 
@@ -582,12 +586,12 @@ class ExpandMemcpyCPU(ExpandTransformation):
                                                                                 one_elem=(cp_size == 1),
                                                                                 in_is_cpu=True,
                                                                                 out_is_cpu=True,
-                                                                                in_conn='_in',
-                                                                                out_conn='_out')
+                                                                                in_conn='_cpy_in',
+                                                                                out_conn='_cpy_out')
 
         return nodes.Tasklet(node.name,
-                             inputs={"_in": in_conn_type},
-                             outputs={"_out": out_conn_type},
+                             inputs={"_cpy_in": in_conn_type},
+                             outputs={"_cpy_out": out_conn_type},
                              code=f"memcpy({out_arg}, {in_arg}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
                              language=dace.Language.CPP)
 
@@ -655,12 +659,12 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         code = (f"cudaMemcpy2DAsync(_out, {dpitch}, _in, {spitch}, "
                 f"{width}, {height}, {kind}, {stream_expr});")
 
-        in_conns = {"_in": dace.dtypes.pointer(inp.dtype)}
+        in_conns = {"_cpy_in": dace.dtypes.pointer(inp.dtype)}
         if has_stream:
             in_conns[_STREAM_CONN] = dace.dtypes.gpuStream_t
         tasklet = nodes.Tasklet(node.name,
                                 inputs=in_conns,
-                                outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                                outputs={"_cpy_out": dace.dtypes.pointer(out.dtype)},
                                 code=code,
                                 language=dace.Language.CPP)
         return tasklet
@@ -718,14 +722,14 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
             # Degenerate case: a single contiguous run. Emit a flat Tasklet
             # with the libnode's connector naming directly — no wrapper SDFG.
             has_stream, stream_expr = _stream_expr(stream_input)
-            code = (f"DACE_GPU_CHECK(cudaMemcpyAsync(_out, _in, "
+            code = (f"DACE_GPU_CHECK(cudaMemcpyAsync(_cpy_out, _cpy_in, "
                     f"{chunk} * sizeof({ctype}), {kind}, {stream_expr}));")
-            in_conns = {"_in": dace.dtypes.pointer(inp.dtype)}
+            in_conns = {"_cpy_in": dace.dtypes.pointer(inp.dtype)}
             if has_stream:
                 in_conns[_STREAM_CONN] = dace.dtypes.gpuStream_t
             return nodes.Tasklet(node.name,
                                  inputs=in_conns,
-                                 outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                                 outputs={"_cpy_out": dace.dtypes.pointer(out.dtype)},
                                  code=code,
                                  language=dace.Language.CPP)
 
@@ -755,22 +759,24 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
         in_memlet = dace.memlet.Memlet(data=ctx.inp_name, subset=_row_subset(ctx.in_shape_collapsed))
         out_memlet = dace.memlet.Memlet(data=ctx.out_name, subset=_row_subset(ctx.out_shape_collapsed))
-        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync(_cpy_out, _cpy_in, "
+        # Inner tasklet connectors must differ from the wrapper SDFG's
+        # parameter array names (``_cpy_in``/``_cpy_out``).
+        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync(_out, _in, "
                 f"{chunk} * sizeof({ctype}), {kind}, {stream_expr}));")
 
         inner_tasklet, map_entry, _map_exit = ctx.state.add_mapped_tasklet(name=f"{node.label}_tasklet",
                                                                            map_ranges=map_ranges,
-                                                                           inputs={"_cpy_in": in_memlet},
+                                                                           inputs={"_in": in_memlet},
                                                                            code=code,
-                                                                           outputs={"_cpy_out": out_memlet},
+                                                                           outputs={"_out": out_memlet},
                                                                            schedule=dace.dtypes.ScheduleType.Sequential,
                                                                            language=dace.Language.CPP,
                                                                            external_edges=True)
         # Force pointer connectors on the inner tasklet so the codegen
-        # types `_cpy_in`/`_cpy_out` as `T*` (matching cudaMemcpyAsync's
+        # types `_in`/`_out` as `T*` (matching cudaMemcpyAsync's
         # signature) instead of dereferencing them as values.
-        inner_tasklet.in_connectors["_cpy_in"] = dace.dtypes.pointer(inp.dtype)
-        inner_tasklet.out_connectors["_cpy_out"] = dace.dtypes.pointer(out.dtype)
+        inner_tasklet.in_connectors["_in"] = dace.dtypes.pointer(inp.dtype)
+        inner_tasklet.out_connectors["_out"] = dace.dtypes.pointer(out.dtype)
         if has_stream:
             # Wrapper SDFG ``stream`` access threads through MapEntry's
             # IN_stream / OUT_stream pass-through into the inner Tasklet.
@@ -783,7 +789,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 @library.expansion
 class ExpandTasklet(ExpandTransformation):
     """Single-element same-side scalar copy: a Python tasklet doing
-    ``_out = _in`` directly. No map, no SDFG wrapper, no pointer cast.
+    ``_cpy_out = _cpy_in`` directly inside a wrapper SDFG.
 
     Both subsets must be volume 1. The copy must not cross the CPU/GPU
     boundary — but storages within one side may differ (e.g. ``CPU_Heap``
@@ -791,7 +797,12 @@ class ExpandTasklet(ExpandTransformation):
     is rejected: a direct write doesn't carry the ``__syncthreads`` that
     block-collective shared-memory updates need — use
     ``SharedMemoryCollective`` instead. For multi-element copies use
-    ``MappedTasklet`` (mapped element-wise) or ``CopyNDTemplate`` (strided)."""
+    ``MappedTasklet`` (mapped element-wise) or ``CopyNDTemplate`` (strided).
+
+    The wrapper SDFG isolates the inner Tasklet's connector names from
+    the outer ``_in`` / ``_out`` parameter arrays, which can otherwise
+    appear as parameter array names inside common LibraryNode expansions
+    (e.g. ``Reduce``) and trip DaCe's connector-vs-array-name rule."""
     environments = []
 
     @staticmethod
@@ -815,9 +826,9 @@ class ExpandTasklet(ExpandTransformation):
                              f"or CopyNDTemplate for strided ones.")
 
         return nodes.Tasklet(node.name,
-                             inputs={"_in": inp.dtype},
-                             outputs={"_out": out.dtype},
-                             code="_out = _in",
+                             inputs={"_cpy_in": inp.dtype},
+                             outputs={"_cpy_out": out.dtype},
+                             code="_cpy_out = _cpy_in",
                              language=dace.Language.Python)
 
 
@@ -870,12 +881,12 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
                                   in_shape_collapsed,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
-                                  in_arg='_in',
-                                  out_arg='_out') + "\n__syncthreads();"
+                                  in_arg='_cpy_in',
+                                  out_arg='_cpy_out') + "\n__syncthreads();"
 
         return nodes.Tasklet(node.name,
-                             inputs={"_in": dace.dtypes.pointer(inp.dtype)},
-                             outputs={"_out": dace.dtypes.pointer(out.dtype)},
+                             inputs={"_cpy_in": dace.dtypes.pointer(inp.dtype)},
+                             outputs={"_cpy_out": dace.dtypes.pointer(out.dtype)},
                              code=code,
                              language=dace.Language.CPP)
 
@@ -919,10 +930,10 @@ class CopyLibraryNode(nodes.LibraryNode):
     default_implementation = 'Auto'
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_in"}, outputs={"_out"}, **kwargs)
+        super().__init__(name, *args, inputs={"_cpy_in"}, outputs={"_cpy_out"}, **kwargs)
 
     def src_storage(self, state, sdfg) -> dtypes.StorageType:
-        in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_in"]
+        in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_cpy_in"]
         if not in_edges:
             return dtypes.StorageType.Default
         outer = state.memlet_path(in_edges[0])[0].src
@@ -931,7 +942,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         return sdfg.arrays[outer.data].storage
 
     def dst_storage(self, state, sdfg) -> dtypes.StorageType:
-        out_edges = [e for e in state.out_edges(self) if e.src_conn == "_out"]
+        out_edges = [e for e in state.out_edges(self) if e.src_conn == "_cpy_out"]
         if not out_edges:
             return dtypes.StorageType.Default
         outer = state.memlet_path(out_edges[0])[-1].dst
@@ -944,7 +955,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         optional stream descriptor. Raises if the libnode is not wired
         with exactly one ``_in`` and one ``_out`` data edge, dtypes mismatch,
         or (when ``allow_cross_storage`` is False) the two storages differ."""
-        out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
+        out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == "_cpy_out"]
         if len(out_edges) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")
         oe = out_edges[0]
@@ -952,9 +963,12 @@ class CopyLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        stream_input, dynamic_inputs = extract_stream_and_dynamic_inputs(self, sdfg, state, reserved_conns=("_in", ))
+        stream_input, dynamic_inputs = extract_stream_and_dynamic_inputs(self,
+                                                                         sdfg,
+                                                                         state,
+                                                                         reserved_conns=("_cpy_in", ))
 
-        in_edges = [ie for ie in state.in_edges(self) if ie.dst_conn == "_in"]
+        in_edges = [ie for ie in state.in_edges(self) if ie.dst_conn == "_cpy_in"]
         if len(in_edges) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one data input edge "
                              "connected to the `_in` connector.")

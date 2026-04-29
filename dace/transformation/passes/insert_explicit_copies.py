@@ -343,8 +343,8 @@ class InsertExplicitCopies(ppl.Pass):
 
             state.remove_edge(edge)
             state.add_node(libnode)
-            state.add_edge(src_node, None, libnode, "_in", in_memlet)
-            state.add_edge(libnode, "_out", dst_node, None, out_memlet)
+            state.add_edge(src_node, None, libnode, "_cpy_in", in_memlet)
+            state.add_edge(libnode, "_cpy_out", dst_node, None, out_memlet)
             count += 1
 
         return count
@@ -416,11 +416,11 @@ class InsertExplicitCopies(ppl.Pass):
             state.remove_edge(edge)
             state.add_node(libnode)
             if direction == 'in':
-                state.add_edge(scope_node, edge.src_conn, libnode, "_in", outer_copy)
-                state.add_edge(libnode, "_out", local_an, None, local_memlet)
+                state.add_edge(scope_node, edge.src_conn, libnode, "_cpy_in", outer_copy)
+                state.add_edge(libnode, "_cpy_out", local_an, None, local_memlet)
             else:
-                state.add_edge(local_an, None, libnode, "_in", local_memlet)
-                state.add_edge(libnode, "_out", scope_node, edge.dst_conn, outer_copy)
+                state.add_edge(local_an, None, libnode, "_cpy_in", local_memlet)
+                state.add_edge(libnode, "_cpy_out", scope_node, edge.dst_conn, outer_copy)
 
             count += 1
 

@@ -22,12 +22,12 @@ def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={"_out"})
+    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={"_mset_out"})
     if implementation is not None:
         libnode.implementation = implementation
 
     # Only set a slice
-    state.add_edge(libnode, "_out", b1, None, dace.memlet.Memlet(f"{name}[50:100]"))
+    state.add_edge(libnode, "_mset_out", b1, None, dace.memlet.Memlet(f"{name}[50:100]"))
 
     return sdfg
 
@@ -45,12 +45,12 @@ def _get_multi_dim_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="copy2", inputs={}, outputs={"_out"})
+    libnode = MemsetLibraryNode(name="copy2", inputs={}, outputs={"_mset_out"})
     if implementation is not None:
         libnode.implementation = implementation
 
     # Only set a slice
-    state.add_edge(libnode, "_out", b1, None, dace.memlet.Memlet(f"{name}[40:50, 0:2, 0:2]"))
+    state.add_edge(libnode, "_mset_out", b1, None, dace.memlet.Memlet(f"{name}[40:50, 0:2, 0:2]"))
 
     return sdfg
 

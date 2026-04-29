@@ -288,11 +288,12 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
         "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
         f"Found {_count_nested_sdfgs(sdfg)} NestedSDFG(s) after expansion.")
 
-    # Sanity: the expansions left tasklets behind that do ``_out = _in``.
+    # Sanity: the expansions left tasklets behind that do the copy assignment.
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
-    assert any("_out = _in" in t.code.as_string
-               for t in tasklets), (f"Expected at least one ``_out = _in`` Tasklet from CopyLibraryNode expansion; "
-                                    f"got tasklets with code: {[t.code.as_string for t in tasklets]}")
+    assert any(
+        "_cpy_out = _cpy_in" in t.code.as_string
+        for t in tasklets), (f"Expected at least one ``_cpy_out = _cpy_in`` Tasklet from CopyLibraryNode expansion; "
+                             f"got tasklets with code: {[t.code.as_string for t in tasklets]}")
 
 
 def test_insert_validates_after_pass():
@@ -432,8 +433,8 @@ def test_insert_self_copy_subset_is_dst_side():
     copies = [n for n in st.nodes() if isinstance(n, CopyLibraryNode)]
     assert len(copies) == 1
     cn = copies[0]
-    in_e = [e for e in st.in_edges(cn) if e.dst_conn == "_in"][0]
-    out_e = [e for e in st.out_edges(cn) if e.src_conn == "_out"][0]
+    in_e = [e for e in st.in_edges(cn) if e.dst_conn == "_cpy_in"][0]
+    out_e = [e for e in st.out_edges(cn) if e.src_conn == "_cpy_out"][0]
 
     # The destination side (column 4) must be on the `_out` edge; the source
     # side (column 3) on the `_in` edge.
@@ -450,7 +451,7 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
     assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
     cn = copies[0]
     parent = next(p for n, p in sdfg.all_nodes_recursive() if n is cn)
-    out_e = [e for e in parent.out_edges(cn) if e.src_conn == "_out"][0]
+    out_e = [e for e in parent.out_edges(cn) if e.src_conn == "_cpy_out"][0]
     assert out_e.data.data == dst_name
     assert str(out_e.data.subset) == ', '.join(
         f"0:{s}" for s in dst_shape), (f"dst memlet subset should span full {dst_shape}, got {out_e.data.subset}")

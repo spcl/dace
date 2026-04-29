@@ -312,12 +312,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}", )
             state.add_node(tasklet)
             self.rmid += 1
-            state.add_edge(new_src_access_node, None, tasklet, "_in",
+            state.add_edge(new_src_access_node, None, tasklet, "_cpy_in",
                            dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
-            state.add_edge(tasklet, "_out", new_dst_access_node, None,
+            state.add_edge(tasklet, "_cpy_out", new_dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=new_dst_access_node.data))
-            tasklet.add_in_connector("_in")
-            tasklet.add_out_connector("_out")
+            tasklet.add_in_connector("_cpy_in")
+            tasklet.add_out_connector("_cpy_out")
             for ie in in_edges:
                 if not ie.dst_conn.startswith("IN_"):
                     _an = state.add_access(ie.data.data)
@@ -367,10 +367,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             in_edges = state.in_edges(map_entry)
 
             tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
-            tasklet.add_out_connector("_out")
+            tasklet.add_out_connector("_mset_out")
             state.add_node(tasklet)
             self.rmid += 1
-            state.add_edge(tasklet, "_out", dst_access_node, None,
+            state.add_edge(tasklet, "_mset_out", dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             for ie in in_edges:
                 if not ie.dst_conn.startswith("IN_"):

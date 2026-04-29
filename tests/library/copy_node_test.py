@@ -38,8 +38,8 @@ def _make_same_storage_sdfg(implementation,
     if implementation is not None:
         libnode.implementation = implementation
 
-    state.add_edge(a1, None, libnode, "_in", dace.memlet.Memlet(f"{a_name}[{src_slice.start}:{src_slice.stop}]"))
-    state.add_edge(libnode, "_out", b1, None, dace.memlet.Memlet(f"{b_name}[{dst_slice.start}:{dst_slice.stop}]"))
+    state.add_edge(a1, None, libnode, "_cpy_in", dace.memlet.Memlet(f"{a_name}[{src_slice.start}:{src_slice.stop}]"))
+    state.add_edge(libnode, "_cpy_out", b1, None, dace.memlet.Memlet(f"{b_name}[{dst_slice.start}:{dst_slice.stop}]"))
 
     return sdfg, a_name, b_name
 
@@ -63,8 +63,8 @@ def _make_cross_storage_sdfg(implementation, src_storage, dst_storage, size=128)
     libnode = CopyLibraryNode(name="cp_cross")
     libnode.implementation = implementation
 
-    state.add_edge(src_access, None, libnode, "_in", dace.memlet.Memlet(f"{src_name}[0:{size}]"))
-    state.add_edge(libnode, "_out", dst_access, None, dace.memlet.Memlet(f"{dst_name}[0:{size}]"))
+    state.add_edge(src_access, None, libnode, "_cpy_in", dace.memlet.Memlet(f"{src_name}[0:{size}]"))
+    state.add_edge(libnode, "_cpy_out", dst_access, None, dace.memlet.Memlet(f"{dst_name}[0:{size}]"))
 
     return sdfg, src_name, dst_name
 
@@ -148,8 +148,8 @@ def test_copy_copynd_rejects_non_c_packed():
     libnode = CopyLibraryNode(name="cp_fortran")
     libnode.implementation = "CopyNDTemplate"
 
-    state.add_edge(src, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
-    state.add_edge(libnode, "_out", dst, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+    state.add_edge(src, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_cpy_out", dst, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
 
     sdfg.validate()
     with pytest.raises(ValueError, match="C-packed"):
@@ -187,8 +187,8 @@ def test_copy_copynd_rejects_padded_strides():
 
     libnode = CopyLibraryNode(name="cp_padded")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(src, None, libnode, "_in", dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
-    state.add_edge(libnode, "_out", dst, None, dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
+    state.add_edge(src, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
+    state.add_edge(libnode, "_cpy_out", dst, None, dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
 
     sdfg.validate()
     with pytest.raises(ValueError, match="C-packed"):
@@ -335,8 +335,8 @@ def test_copy_cuda_4d_strided_host_to_device():
 
     # Source slice [1:6, 1:7, 1:8, 1:9] picks a 4D sub-cube with strided
     # outer dims relative to the full array's row-major strides.
-    state.add_edge(src_access, None, libnode, "_in", dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
-    state.add_edge(libnode, "_out", dst_access, None, dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
+    state.add_edge(src_access, None, libnode, "_cpy_in", dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
+    state.add_edge(libnode, "_cpy_out", dst_access, None, dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -390,8 +390,8 @@ def test_copy_fortran_packed_cpu_default_pure():
     s_a = state.add_access("src")
     d_a = state.add_access("dst")
     libnode = CopyLibraryNode(name="cp_fortran_cpu")
-    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
-    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+    state.add_edge(s_a, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_cpy_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -434,8 +434,8 @@ def test_copy_fortran_packed_gpu_falls_back_to_pure():
     d_a = state.add_access("dst")
     libnode = CopyLibraryNode(name="cp_fortran_gpu")
     libnode.implementation = "MemcpyCUDA1D"
-    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
-    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+    state.add_edge(s_a, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_cpy_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -480,8 +480,8 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     d_a = state.add_access("dst")
     libnode = CopyLibraryNode(name="cp_fortran_h2d")
     libnode.implementation = "MemcpyCUDA1D"
-    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
-    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
+    state.add_edge(s_a, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, "_cpy_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -527,8 +527,8 @@ def test_copy_no_common_stride1_axis_raises():
     d_a = state.add_access("dst")
     libnode = CopyLibraryNode(name="cp_no_common")
     libnode.implementation = "Auto"  # exercise the refine-time strided-pattern check
-    state.add_edge(s_a, None, libnode, "_in", dace.memlet.Memlet("src[0:4, 0:4, 0:5]"))
-    state.add_edge(libnode, "_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:4, 0:5]"))
+    state.add_edge(s_a, None, libnode, "_cpy_in", dace.memlet.Memlet("src[0:4, 0:4, 0:5]"))
+    state.add_edge(libnode, "_cpy_out", d_a, None, dace.memlet.Memlet("dst[0:4, 0:4, 0:5]"))
 
     sdfg.validate()
     with pytest.raises(ValueError, match="cross-CPU/GPU"):
@@ -545,8 +545,8 @@ def test_copy_node_storage_from_edges():
     b = state.add_access("B")
     node = CopyLibraryNode(name="edges_to_storage")
     state.add_node(node)
-    state.add_edge(a, None, node, "_in", dace.memlet.Memlet("A[0:10]"))
-    state.add_edge(node, "_out", b, None, dace.memlet.Memlet("B[0:10]"))
+    state.add_edge(a, None, node, "_cpy_in", dace.memlet.Memlet("A[0:10]"))
+    state.add_edge(node, "_cpy_out", b, None, dace.memlet.Memlet("B[0:10]"))
 
     assert node.src_storage(state, sdfg) == dace.dtypes.StorageType.CPU_Heap
     assert node.dst_storage(state, sdfg) == dace.dtypes.StorageType.GPU_Global
@@ -586,8 +586,8 @@ def test_copy_dtype_mismatch_rejected():
     a = state.add_access("A")
     b = state.add_access("B")
     libnode = CopyLibraryNode(name="cp_bad")
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:10]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:10]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[0:10]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:10]"))
 
     with pytest.raises(ValueError, match="data types must match"):
         sdfg.expand_library_nodes()
@@ -604,8 +604,8 @@ def test_cpu_memcpy_rejects_non_contiguous_subset():
     libnode = CopyLibraryNode(name="cp_nc")
     libnode.implementation = "MemcpyCPU"
     # A[2:6, 0:10] is non-contiguous: partial in dim 0, NOT full in dim 1
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:6, 0:10]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[2:6, 0:10]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
 
     with pytest.raises(Exception, match="contiguous"):
         sdfg.expand_library_nodes()
@@ -622,8 +622,8 @@ def test_strided_expansions_accept_non_contiguous():
         b = state.add_access("B")
         libnode = CopyLibraryNode(name="cp")
         libnode.implementation = impl
-        state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:6, 0:10]"))
-        state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
+        state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[2:6, 0:10]"))
+        state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
 
         # Should NOT raise -- these handle strides
         sdfg.expand_library_nodes()
@@ -639,8 +639,8 @@ def test_register_copy_expands_with_register_storage():
     r_out = state.add_access("R_out")
     libnode = CopyLibraryNode(name="regcpy")
     libnode.implementation = "MappedTasklet"
-    state.add_edge(r_in, None, libnode, "_in", dace.memlet.Memlet("R_in[0:8]"))
-    state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
+    state.add_edge(r_in, None, libnode, "_cpy_in", dace.memlet.Memlet("R_in[0:8]"))
+    state.add_edge(libnode, "_cpy_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
 
     sdfg.expand_library_nodes()
 
@@ -683,8 +683,8 @@ def test_direct_assignment_register_to_register():
     r_out = state.add_access("R_out")
     libnode = CopyLibraryNode(name="da")
     libnode.implementation = "Tasklet"
-    state.add_edge(r_in, None, libnode, "_in", dace.memlet.Memlet("R_in[0]"))
-    state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0]"))
+    state.add_edge(r_in, None, libnode, "_cpy_in", dace.memlet.Memlet("R_in[0]"))
+    state.add_edge(libnode, "_cpy_out", r_out, None, dace.memlet.Memlet("R_out[0]"))
 
     sdfg.expand_library_nodes()
 
@@ -692,11 +692,11 @@ def test_direct_assignment_register_to_register():
     found_map = False
     for n, _ in sdfg.all_nodes_recursive():
         if (isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.Python
-                and "_out = _in" in n.code.as_string):
+                and "_cpy_out = _cpy_in" in n.code.as_string):
             found_tasklet = True
         if isinstance(n, dace.sdfg.nodes.MapEntry):
             found_map = True
-    assert found_tasklet, "Tasklet impl should produce a Python tasklet with `_out = _in`."
+    assert found_tasklet, "Tasklet impl should produce a Python tasklet with `_cpy_out = _cpy_in`."
     assert not found_map, "Tasklet impl should NOT produce a map."
 
 
@@ -710,8 +710,8 @@ def test_direct_assignment_rejects_shared_memory():
     s_out = state.add_access("S_out")
     libnode = CopyLibraryNode(name="da_bad")
     libnode.implementation = "Tasklet"
-    state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0]"))
-    state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0]"))
+    state.add_edge(g_in, None, libnode, "_cpy_in", dace.memlet.Memlet("G_in[0]"))
+    state.add_edge(libnode, "_cpy_out", s_out, None, dace.memlet.Memlet("S_out[0]"))
 
     with pytest.raises(Exception, match="storage types must match"):
         sdfg.expand_library_nodes()
@@ -727,8 +727,8 @@ def test_direct_assignment_rejects_cross_boundary():
     g_out = state.add_access("G_out")
     libnode = CopyLibraryNode(name="da_cross")
     libnode.implementation = "Tasklet"
-    state.add_edge(c_in, None, libnode, "_in", dace.memlet.Memlet("C_in[0]"))
-    state.add_edge(libnode, "_out", g_out, None, dace.memlet.Memlet("G_out[0]"))
+    state.add_edge(c_in, None, libnode, "_cpy_in", dace.memlet.Memlet("C_in[0]"))
+    state.add_edge(libnode, "_cpy_out", g_out, None, dace.memlet.Memlet("G_out[0]"))
 
     sdfg.validate()
     with pytest.raises(Exception, match="storage types must match"):
@@ -746,8 +746,8 @@ def test_shared_memory_copy_global_to_shared_is_collective():
     s_out = state.add_access("S_out")
     libnode = CopyLibraryNode(name="shmcpy")
     libnode.implementation = "SharedMemoryCollective"
-    state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:64]"))
-    state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:64]"))
+    state.add_edge(g_in, None, libnode, "_cpy_in", dace.memlet.Memlet("G_in[0:64]"))
+    state.add_edge(libnode, "_cpy_out", s_out, None, dace.memlet.Memlet("S_out[0:64]"))
 
     sdfg.expand_library_nodes()
 
@@ -780,8 +780,8 @@ def test_shared_memory_copy_shared_to_register_is_thread_level():
     r_out = state.add_access("R_out")
     libnode = CopyLibraryNode(name="shmcpy_thr")
     libnode.implementation = "MappedTasklet"
-    state.add_edge(s_in, None, libnode, "_in", dace.memlet.Memlet("S_in[0:8]"))
-    state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
+    state.add_edge(s_in, None, libnode, "_cpy_in", dace.memlet.Memlet("S_in[0:8]"))
+    state.add_edge(libnode, "_cpy_out", r_out, None, dace.memlet.Memlet("R_out[0:8]"))
 
     sdfg.expand_library_nodes()
 
@@ -804,8 +804,8 @@ def test_shared_memory_copy_rejects_no_shared():
     r_out = state.add_access("R_out")
     libnode = CopyLibraryNode(name="shmcpy_bad")
     libnode.implementation = "SharedMemoryCollective"
-    state.add_edge(g_in, None, libnode, "_in", dace.memlet.Memlet("G_in[0:32]"))
-    state.add_edge(libnode, "_out", r_out, None, dace.memlet.Memlet("R_out[0:32]"))
+    state.add_edge(g_in, None, libnode, "_cpy_in", dace.memlet.Memlet("G_in[0:32]"))
+    state.add_edge(libnode, "_cpy_out", r_out, None, dace.memlet.Memlet("R_out[0:32]"))
 
     with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
         sdfg.expand_library_nodes()
@@ -821,8 +821,8 @@ def test_shared_memory_copy_rejects_cpu():
     s_out = state.add_access("S_out")
     libnode = CopyLibraryNode(name="shmcpy_cpu")
     libnode.implementation = "SharedMemoryCollective"
-    state.add_edge(c_in, None, libnode, "_in", dace.memlet.Memlet("C_in[0:32]"))
-    state.add_edge(libnode, "_out", s_out, None, dace.memlet.Memlet("S_out[0:32]"))
+    state.add_edge(c_in, None, libnode, "_cpy_in", dace.memlet.Memlet("C_in[0:32]"))
+    state.add_edge(libnode, "_cpy_out", s_out, None, dace.memlet.Memlet("S_out[0:32]"))
 
     with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
         sdfg.expand_library_nodes()
@@ -849,8 +849,8 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
     libnode = CopyLibraryNode(name="shmcpy_bad")
     libnode.implementation = "SharedMemoryCollective"
 
-    state.add_memlet_path(a, ome, ime, libnode, dst_conn="_in", memlet=dace.Memlet("A[bi:bi+32]"))
-    state.add_memlet_path(libnode, imx, omx, shm, src_conn="_out", memlet=dace.Memlet("shmem[0:32]"))
+    state.add_memlet_path(a, ome, ime, libnode, dst_conn="_cpy_in", memlet=dace.Memlet("A[bi:bi+32]"))
+    state.add_memlet_path(libnode, imx, omx, shm, src_conn="_cpy_out", memlet=dace.Memlet("shmem[0:32]"))
 
     with pytest.raises(Exception, match="GPU_ThreadBlock"):
         sdfg.expand_library_nodes()
@@ -867,8 +867,8 @@ def test_copynd_expansion_generates_copynd_call():
     b = state.add_access("B")
     libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:8, 5:15]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[2:8, 5:15]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
 
     sdfg.expand_library_nodes()
 
@@ -902,8 +902,8 @@ def test_copynd_expansion_rejects_cross_boundary():
     b = state.add_access("B")
     libnode = CopyLibraryNode(name="cpnd_bad")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:10]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:10]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[0:10]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:10]"))
 
     with pytest.raises(Exception, match="CPU/GPU boundary"):
         sdfg.expand_library_nodes()
@@ -921,8 +921,8 @@ def test_copynd_uses_static_template_for_concrete_dims():
     b = state.add_access("B")
     libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[10:30]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:20]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[10:30]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:20]"))
 
     sdfg.expand_library_nodes()
 
@@ -956,8 +956,8 @@ def test_copynd_falls_back_to_dynamic_for_symbolic_dims():
     b = state.add_access("B")
     libnode = CopyLibraryNode(name="cpnd")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[0:N]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:N]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[0:N]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:N]"))
 
     sdfg.expand_library_nodes()
 
@@ -989,8 +989,8 @@ def test_copy_pure_cpu_2d():
     libnode = CopyLibraryNode(name="cp2d")
     libnode.implementation = "MappedTasklet"
 
-    state.add_edge(a, None, libnode, "_in", dace.memlet.Memlet("A[2:8, 5:15]"))
-    state.add_edge(libnode, "_out", b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
+    state.add_edge(a, None, libnode, "_cpy_in", dace.memlet.Memlet("A[2:8, 5:15]"))
+    state.add_edge(libnode, "_cpy_out", b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -1029,8 +1029,8 @@ def _build_explicit_copy_sdfg(direction: str, dtype: dace.dtypes.typeclass = dac
 
     cn = CopyLibraryNode(name=f'copy_{direction}')
     state.add_node(cn)
-    state.add_edge(src, None, cn, '_in', dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
-    state.add_edge(cn, '_out', dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
+    state.add_edge(src, None, cn, '_cpy_in', dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
+    state.add_edge(cn, '_cpy_out', dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
     return sdfg
 
 
@@ -1064,8 +1064,8 @@ def test_copy_two_element_h2d():
     src, dst = state.add_read('host'), state.add_write('dev')
     cn = CopyLibraryNode(name='copy_h2d_2')
     state.add_node(cn)
-    state.add_edge(src, None, cn, '_in', dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
-    state.add_edge(cn, '_out', dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
+    state.add_edge(src, None, cn, '_cpy_in', dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
+    state.add_edge(cn, '_cpy_out', dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
 
     host = np.array([1.0, 2.0], dtype=np.float64)
     dev = cp.zeros(2, dtype=cp.float64)
@@ -1103,11 +1103,11 @@ def test_copy_single_element_memcpy_connector_types():
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet) and 'cudaMemcpyAsync' in node.code.as_string:
-                assert isinstance(node.in_connectors['_in'], dace.dtypes.pointer), \
+                assert isinstance(node.in_connectors['_cpy_in'], dace.dtypes.pointer), \
                     'GPU input must be pointer-typed'
-                assert not isinstance(node.out_connectors['_out'], dace.dtypes.pointer), \
+                assert not isinstance(node.out_connectors['_cpy_out'], dace.dtypes.pointer), \
                     'single-element CPU output must be value-typed'
-                assert '&_out' in node.code.as_string, \
+                assert '&_cpy_out' in node.code.as_string, \
                     'CPU value-typed output must be addressed via & in the memcpy call'
                 found += 1
     assert found > 0, 'no memcpy tasklet found in expanded d2h SDFG'
@@ -1135,22 +1135,22 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
     libnode = CopyLibraryNode(name='reg_to_g')
     state.add_node(libnode)
     state.add_memlet_path(me, r, memlet=dace.Memlet())
-    state.add_edge(r, None, libnode, '_in', dace.Memlet('R[0, 0, 0]'))
-    state.add_edge(libnode, '_out', g, None, dace.Memlet('G[0, 0, 0]'))
+    state.add_edge(r, None, libnode, '_cpy_in', dace.Memlet('R[0, 0, 0]'))
+    state.add_edge(libnode, '_cpy_out', g, None, dace.Memlet('G[0, 0, 0]'))
     state.add_memlet_path(g, mx, memlet=dace.Memlet())
 
     sdfg.expand_library_nodes()
 
     # No NestedSDFG should appear; the ``Tasklet`` impl emits a direct
-    # ``_out = _in`` Tasklet without the SDFG wrapper.
+    # ``_cpy_out = _cpy_in`` Tasklet without the SDFG wrapper.
     nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     assert nsdfg_count == 0, (f"Single-element in-kernel copy should expand to a direct Tasklet, "
                               f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
     assignments = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and '_out = _in' in n.code.as_string
+        if isinstance(n, dace.nodes.Tasklet) and '_cpy_out = _cpy_in' in n.code.as_string
     ]
-    assert assignments, "Expected at least one ``_out = _in`` Tasklet from the expansion."
+    assert assignments, "Expected at least one ``_cpy_out = _cpy_in`` Tasklet from the expansion."
 
 
 if __name__ == "__main__":
