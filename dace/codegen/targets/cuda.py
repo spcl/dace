@@ -2172,9 +2172,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     f'Grid size has more than 2 non-1 dimensions ({grid_size}) and multiple chiplets are used. '
                     'Reducing dimensions beyond the second into the last dimension to fit the 3D grid limit.'
                 )
-                new_grid_size = [number_of_chiplets, grid_size[0], functools.reduce(sympy.Mul, grid_size[1:], 1)]
+                new_grid_size = [number_of_chiplets, int_ceil(grid_size[0], number_of_chiplets),
+                                 functools.reduce(sympy.Mul, grid_size[1:], 1)]
             else:
-                new_grid_size = [number_of_chiplets] + grid_size[:-1]
+                new_grid_size = [number_of_chiplets, int_ceil(grid_size[0], number_of_chiplets)] + grid_size[1:-1]
             grid_size = new_grid_size
             warnings.warn(f'Multiple chiplets enabled, adjusting grid size from {original_grid_size} to {grid_size} by adding an extra dimension for the chiplet ID.') 
 
@@ -2244,9 +2245,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # and the second work dimension uses blockIdx.z.
                 if number_of_chiplets > 1:
                     if i == 0:
+                        # Contiguous partitioning: chiplet = blockIdx.x, local slot = blockIdx.y
+                        # flat block index = blockIdx.x * gridDim.y + blockIdx.y
+                        # → chiplet k owns blocks [k*gridDim.y .. (k+1)*gridDim.y - 1]
                         block_expr = '(blockIdx.x * gridDim.y + blockIdx.y)'
                     else:
-                        block_expr = 'blockIdx.%s' % _named_idx(i+1)
+                        block_expr = 'blockIdx.%s' % _named_idx(i + 1)
                 else:
                     # If we defaulted to a fixed number of threads per block, offset by thread ID
                     block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))

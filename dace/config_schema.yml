@@ -363,7 +363,7 @@ required:
                         description: >
                             Number of chiplets to distribute the work on. Based on a Round-Robin distribution,
                             which is the default for MI300A GPU.
-                        default: 4
+                        default: 6
 
                     dynamic_map_block_size:
                         type: str
