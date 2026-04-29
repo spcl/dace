@@ -67,13 +67,13 @@ class GPUStreamPipeline(Pipeline):
                 "GPUStreamPipeline: skipping re-application — the SDFG already has the "
                 "``gpu_streams`` array, indicating the pipeline has run. Stream "
                 "assignment is single-shot and re-running it would corrupt the wiring.",
-                UserWarning, stacklevel=2)
+                UserWarning,
+                stacklevel=2)
             return {}
         if sdfg.parent_sdfg is not None:
-            raise ValueError(
-                f"GPUStreamPipeline: must run on the root SDFG. Got nested SDFG "
-                f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). Nested SDFGs share "
-                "the root's decisions; do not invoke the pipeline on them.")
+            raise ValueError(f"GPUStreamPipeline: must run on the root SDFG. Got nested SDFG "
+                             f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). Nested SDFGs share "
+                             "the root's decisions; do not invoke the pipeline on them.")
         return super().apply_pass(sdfg, pipeline_results)
 
 

@@ -10,7 +10,8 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR, get_gpu_stream_array_name,
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
+                                                                               get_gpu_stream_array_name,
                                                                                get_gpu_stream_connector_name)
 
 gpu_stream_pipeline = GPUStreamPipeline()
@@ -238,10 +239,7 @@ def test_three_kernels_dependent_and_independent():
             """Read the stream id from the wired ``gpu_streams[<i>]`` memlet
             on the kernel's stream connector. The connector name is
             uniformly ``__stream``; the id rides on the memlet subset."""
-            stream_inputs = [
-                e for e in kernel_state.in_edges(map_entry)
-                if e.dst_conn == STREAM_CONNECTOR
-            ]
+            stream_inputs = [e for e in kernel_state.in_edges(map_entry) if e.dst_conn == STREAM_CONNECTOR]
             assert len(stream_inputs) == 1
             return int(stream_inputs[0].data.subset[0][0])
 
@@ -468,8 +466,9 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     # The MatMul itself must have been wired with a `stream` in-connector
     # from a `gpu_streams` AccessNode (currently fails: scheduler ignores
     # generic GPU library nodes).
-    assert STREAM_CONNECTOR in matmul.in_connectors, ("MatMul (a GPU library node) should be wired with a `stream` connector "
-                                              "by the stream pipeline before it is expanded")
+    assert STREAM_CONNECTOR in matmul.in_connectors, (
+        "MatMul (a GPU library node) should be wired with a `stream` connector "
+        "by the stream pipeline before it is expanded")
     matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == STREAM_CONNECTOR]
     assert len(matmul_stream_in) == 1
     assert isinstance(matmul_stream_in[0].src, dace.nodes.AccessNode)

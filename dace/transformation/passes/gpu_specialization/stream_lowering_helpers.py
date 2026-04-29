@@ -27,17 +27,10 @@ from dace.memlet import Memlet
 from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
-                                                                               add_gpu_stream_connector,
-                                                                               dependency_edge, enclosing_map_chain,
-                                                                               get_gpu_stream_array_name,
-                                                                               get_gpu_stream_connector_name,
-                                                                               has_stream_connector,
-                                                                               innermost_enclosing_map,
-                                                                               is_gpu_relevant_node,
-                                                                               is_gpu_stream_consumer,
-                                                                               is_inside_gpu_device_kernel)
-
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
+    get_gpu_stream_connector_name, has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node,
+    is_gpu_stream_consumer, is_inside_gpu_device_kernel)
 
 # ---------------------------------------------------------------------------
 # Stream-array allocation + propagation
@@ -192,12 +185,11 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
             continue
 
         prev_access = _link_top_level_consumer(state, entry, exit_, in_conn, accessed_slot, stream_array_name,
-                                                prev_access)
+                                               prev_access)
 
 
 def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn: str, accessed_slot: str,
-                             stream_array_name: str,
-                             prev_access: Optional[nodes.AccessNode]) -> nodes.AccessNode:
+                             stream_array_name: str, prev_access: Optional[nodes.AccessNode]) -> nodes.AccessNode:
     if prev_access is None:
         prev_access = state.add_access(stream_array_name)
     state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
@@ -206,8 +198,8 @@ def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn
     return next_access
 
 
-def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node,
-                                    target_conn: str, get_source_access: 'Callable[[], nodes.AccessNode]',
+def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
+                                    get_source_access: 'Callable[[], nodes.AccessNode]',
                                     memlet_factory: 'Callable[[], Memlet]') -> None:
     """Thread a stream handle from a source AccessNode through every map in
     ``scope_chain`` (outermost → innermost) into ``target.target_conn``.
@@ -273,8 +265,7 @@ def _stream_in_connector_name(node: Node, stream_id: int, stream_var_prefix: str
 # ---------------------------------------------------------------------------
 
 
-def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]],
-                           assignments: Dict[Node, int]) -> None:
+def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]) -> None:
     """Emit one ``cudaStreamSynchronize`` tasklet **per stream** at the
     end of each state. Each tasklet has a single ``__stream`` in-connector
     fed by ``gpu_streams[<i>]``.
@@ -313,12 +304,10 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]],
                 state.add_edge(sink, None, tasklet, None, dependency_edge())
 
             src_access = stream_sinks.get(stream) or state.add_access(stream_array_name)
-            state.add_edge(src_access, None, tasklet, STREAM_CONNECTOR,
-                           dace.Memlet(f"{stream_array_name}[{stream}]"))
+            state.add_edge(src_access, None, tasklet, STREAM_CONNECTOR, dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
-def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState],
-                          assignments: Dict[Node, int]) -> None:
+def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]) -> None:
     """Emit a sync tasklet on the path between ``node`` and its successors,
     syncing the node's bound stream via a single ``__stream`` connector."""
     stream_array_name = get_gpu_stream_array_name()
@@ -355,8 +344,7 @@ def _make_sync_tasklet(state: SDFGState, name: str) -> nodes.Tasklet:
     return tasklet
 
 
-def _stream_for_access_node(state: SDFGState, access: nodes.AccessNode,
-                            assignments: Dict[Node, int]) -> Optional[int]:
+def _stream_for_access_node(state: SDFGState, access: nodes.AccessNode, assignments: Dict[Node, int]) -> Optional[int]:
     for e in state.in_edges(access):
         src = e.src
         if src in assignments:

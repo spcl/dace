@@ -290,9 +290,9 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
 
     # Sanity: the expansions left tasklets behind that do ``_out = _in``.
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
-    assert any("_out = _in" in t.code.as_string for t in tasklets), (
-        f"Expected at least one ``_out = _in`` Tasklet from CopyLibraryNode expansion; "
-        f"got tasklets with code: {[t.code.as_string for t in tasklets]}")
+    assert any("_out = _in" in t.code.as_string
+               for t in tasklets), (f"Expected at least one ``_out = _in`` Tasklet from CopyLibraryNode expansion; "
+                                    f"got tasklets with code: {[t.code.as_string for t in tasklets]}")
 
 
 def test_insert_validates_after_pass():

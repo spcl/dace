@@ -24,7 +24,6 @@ import pytest
 import dace
 from dace.codegen import common
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
@@ -59,18 +58,14 @@ def _build_h2d_d2h_pre_expanded_sdfg():
 
 
 def _runtime_tasklets(sdfg):
-    return [(n, state) for nsdfg in sdfg.all_sdfgs_recursive()
-            for state in nsdfg.states()
-            for n in state.nodes()
+    return [(n, state) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for n in state.nodes()
             if is_already_lowered_gpu_runtime_call(n)]
 
 
 def _sync_tasklets(sdfg):
     backend = common.get_gpu_backend()
     needle = f"{backend}StreamSynchronize("
-    return [(n, state) for nsdfg in sdfg.all_sdfgs_recursive()
-            for state in nsdfg.states()
-            for n in state.nodes()
+    return [(n, state) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for n in state.nodes()
             if isinstance(n, dace.nodes.Tasklet) and needle in n.code.as_string]
 
 
@@ -114,9 +109,8 @@ def test_monolithic_strategy_accepts_pre_expanded_sdfg():
     GPUStreamPipeline(scheduling_strategy=MonolithicSingleStreamGPUScheduler()).apply_pass(sdfg, {})
 
     syncs = _sync_tasklets(sdfg)
-    assert len(syncs) == 1, (
-        f"Monolithic on the H2D+D2H state should emit exactly one host-boundary sync; "
-        f"got {len(syncs)}.")
+    assert len(syncs) == 1, (f"Monolithic on the H2D+D2H state should emit exactly one host-boundary sync; "
+                             f"got {len(syncs)}.")
 
 
 def test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet():
@@ -129,6 +123,7 @@ def test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet():
     sdfg = _build_h2d_d2h_pre_expanded_sdfg()
     GPUStreamPipeline().apply_pass(sdfg, {})
     for tasklet, _ in _runtime_tasklets(sdfg):
-        assert any(t == dace.dtypes.gpuStream_t for t in tasklet.in_connectors.values()), (
-            f"Pre-expanded runtime tasklet '{tasklet.label}' must carry a "
-            f"gpuStream_t in-connector after the pipeline runs.")
+        assert any(
+            t == dace.dtypes.gpuStream_t
+            for t in tasklet.in_connectors.values()), (f"Pre-expanded runtime tasklet '{tasklet.label}' must carry a "
+                                                       f"gpuStream_t in-connector after the pipeline runs.")

@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
 import dace
@@ -24,9 +24,8 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import (GPUPostExpansionPipeline,
                                                                                        GPUStreamPipeline)
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    read_stream_assignments_from_wired_sdfg, validate_stream_indices_within_bounds)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (read_stream_assignments_from_wired_sdfg,
+                                                                               validate_stream_indices_within_bounds)
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize

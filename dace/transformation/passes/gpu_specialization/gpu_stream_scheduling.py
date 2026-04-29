@@ -24,7 +24,7 @@ Calling :meth:`apply_pass` on a non-root SDFG raises.
 """
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.config import Config
@@ -67,10 +67,9 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[nodes.Node, int]:
         if sdfg.parent_sdfg is not None:
-            raise ValueError(
-                f"{type(self).__name__}: stream scheduling must run on the root SDFG. "
-                f"Got nested SDFG '{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). "
-                "Nested SDFGs share the root's decisions; do not invoke the strategy on them.")
+            raise ValueError(f"{type(self).__name__}: stream scheduling must run on the root SDFG. "
+                             f"Got nested SDFG '{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). "
+                             "Nested SDFGs share the root's decisions; do not invoke the strategy on them.")
 
         assignments = self.assign_streams(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1
@@ -79,7 +78,8 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         warnings.warn(
             f"{type(self).__name__}: allocating {num_streams} stream(s) "
             f"(max_concurrent_streams={max_concurrent}).",
-            UserWarning, stacklevel=2)
+            UserWarning,
+            stacklevel=2)
 
         allocate_stream_array(sdfg, num_streams)
         wire_stream_connectors(sdfg, assignments)
@@ -164,8 +164,8 @@ _NAIVE_SYNC_RULES: List[_SyncRule] = [
     ),
     # Stream-bound copy/memset libnode that needs sync after.
     _SyncRule(
-        predicate=lambda c: (is_gpu_copy_or_memset_libnode(c.src, c.state.sdfg, c.state) and
-                             STREAM_CONNECTOR in c.src.in_connectors),
+        predicate=lambda c:
+        (is_gpu_copy_or_memset_libnode(c.src, c.state.sdfg, c.state) and STREAM_CONNECTOR in c.src.in_connectors),
         stream_id=lambda c, s: s[c.src],
     ),
     # Already-lowered GPU runtime tasklet (``cudaMemcpyAsync`` /
@@ -204,8 +204,8 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             self._assign_in_state(sdfg, False, state, assignments, 0)
         return assignments
 
-    def _assign_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState,
-                         assignments: Dict[nodes.Node, int], gpu_stream: int):
+    def _assign_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assignments: Dict[nodes.Node, int],
+                         gpu_stream: int):
         for component in self._weakly_connected(state):
             if not self._requires_gpu_stream(state, component):
                 continue
@@ -263,8 +263,8 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         insert_per_node_syncs(sdfg, per_node, assignments)
 
     def _classify_sync_points(
-            self, sdfg: SDFG, assignments: Dict[nodes.Node, int]
-    ) -> Tuple[Dict[SDFGState, Set[int]], Dict[nodes.Node, SDFGState]]:
+            self, sdfg: SDFG, assignments: Dict[nodes.Node,
+                                                int]) -> Tuple[Dict[SDFGState, Set[int]], Dict[nodes.Node, SDFGState]]:
         state_end: Dict[SDFGState, Set[int]] = {}
         per_node: Dict[nodes.Node, SDFGState] = {}
         for edge, parent in sdfg.all_edges_recursive():
@@ -419,5 +419,3 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                    'hipMemcpyHostToDevice' in code or 'hipMemcpyDeviceToHost' in code:
                     return True
         return False
-
-

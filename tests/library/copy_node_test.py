@@ -1144,11 +1144,12 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
     # No NestedSDFG should appear; the ``Tasklet`` impl emits a direct
     # ``_out = _in`` Tasklet without the SDFG wrapper.
     nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    assert nsdfg_count == 0, (
-        f"Single-element in-kernel copy should expand to a direct Tasklet, "
-        f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
-    assignments = [n for n, _ in sdfg.all_nodes_recursive()
-                   if isinstance(n, dace.nodes.Tasklet) and '_out = _in' in n.code.as_string]
+    assert nsdfg_count == 0, (f"Single-element in-kernel copy should expand to a direct Tasklet, "
+                              f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
+    assignments = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and '_out = _in' in n.code.as_string
+    ]
     assert assignments, "Expected at least one ``_out = _in`` Tasklet from the expansion."
 
 
