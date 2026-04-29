@@ -189,6 +189,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
         expected_files = {
             "CACHEDIR.TAG": pathlib.Path.is_file,
             "FOLDER_MODE": pathlib.Path.is_file,
+            "program.sdfgz": pathlib.Path.is_file,
             lib1_path.name: pathlib.Path.is_file,
             libstub1_path.name: pathlib.Path.is_file,
             lib2_path.name: pathlib.Path.is_file,
