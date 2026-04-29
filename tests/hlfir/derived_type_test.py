@@ -891,6 +891,68 @@ end subroutine main
     assert out[0] == 5.0
 
 
+def test_aos_allocatable_via_inlined_kernel(tmp_path: Path):
+    """Phase 5c-B: AoS+allocatable struct passed as ``intent(inout)``
+    dummy to a module-contained kernel.  After ``hlfir-inline-all``
+    splices the kernel body into the caller, the kernel's reads/
+    writes through ``A(i)%w(j)`` are rooted at an alias declare
+    (dummy_scope), not the caller's original struct decl.
+
+    ``collapseAosAllocReads`` must follow alias chains
+    (``hlfir.declare`` → ``fir.embox`` / ``fir.convert`` → caller's
+    decl) to find every load-of-member-designate inside the inlined
+    body.  Without the alias walk, the kernel's reads stay as 1-D
+    designates against the loaded 2D companion, silently producing
+    wrong indices.
+    """
+    src = """
+module lib
+  implicit none
+  type t
+    real, allocatable :: w(:)
+  end type t
+contains
+  subroutine kernel(A, n, m, out)
+    type(t), intent(inout) :: A(2)
+    integer, intent(in) :: n, m
+    real, intent(out) :: out
+    integer :: i, j
+    do i = 1, n
+      do j = 1, m
+        A(i)%w(j) = A(i)%w(j) * 2.0
+      end do
+    end do
+    out = A(1)%w(1) + A(2)%w(2)
+  end subroutine kernel
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  real, intent(out) :: out
+  type(t) :: A(2)
+  integer :: i, j
+  do i = 1, 2
+    allocate(A(i)%w(3))
+    do j = 1, 3
+      A(i)%w(j) = real(i + j)
+    end do
+  end do
+  call kernel(A, 2, 3, out)
+  do i = 1, 2
+    deallocate(A(i)%w)
+  end do
+end subroutine main
+"""
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    out = np.zeros(1, dtype=np.float32)
+    sdfg(out=out)
+    # Original A(1)%w(1) = 1+1 = 2; after kernel doubles every cell,
+    # A(1)%w = [4, 6, 8] and A(2)%w = [6, 8, 10].
+    # out = A(1)%w(1) + A(2)%w(2) = 4 + 8 = 12.
+    assert out[0] == 12.0
+
+
 def test_aos_allocatable_whole_array_assign(tmp_path: Path):
     """Phase 5c-A: whole-array assign on AoS-allocatable member.
     ``A(i)%w = scalar`` must lower to ``A_w(i, 1:M:1) = scalar`` —

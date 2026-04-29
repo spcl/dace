@@ -1535,6 +1535,37 @@ struct FlattenStructsPass
     void collapseAosAllocReads(hlfir::DeclareOp decl,
                                llvm::StringRef memName,
                                mlir::Value flatBase) {
+        // Phase 5c-B: also recognise inlined-callee aliased declares.
+        // When ``hlfir-inline-all`` splices a module-contained
+        // ``call kernel(A)`` body into the caller, the kernel's
+        // ``A`` dummy becomes a fresh ``hlfir.declare %caller_A_decl
+        // dummy_scope %dsc {uniq_name="..."}`` aliasing the same
+        // storage.  Designates inside the inlined kernel body are
+        // rooted at the alias's results, not ``decl``'s — without
+        // following alias chains we'd miss every read inside the
+        // inlined call.
+        auto isDeclOrAlias = [&](mlir::Value v) -> bool {
+            for (int i = 0; i < kFlattenMaxDepth && v; ++i) {
+                if (v == decl.getResult(0) || v == decl.getResult(1))
+                    return true;
+                auto *d = v.getDefiningOp();
+                if (!d) return false;
+                if (auto inner = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+                    v = inner.getMemref();
+                    continue;
+                }
+                if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d)) {
+                    v = eb.getMemref();
+                    continue;
+                }
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
+                    v = cv.getValue();
+                    continue;
+                }
+                return false;
+            }
+            return false;
+        };
         if (auto func = decl->getParentOfType<mlir::func::FuncOp>()) {
             llvm::SmallVector<mlir::Operation*, 16> deadOps;
             func.walk([&](fir::LoadOp load) {
@@ -1551,8 +1582,7 @@ struct FlattenStructsPass
                 auto parent = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
                     memDg.getMemref().getDefiningOp());
                 if (!parent) return;
-                if (parent.getMemref() != decl.getResult(0) &&
-                    parent.getMemref() != decl.getResult(1))
+                if (!isDeclOrAlias(parent.getMemref()))
                     return;
                 // parent must be element-form (no triplets).
                 for (bool t : parent.getIsTriplet()) if (t) return;
