@@ -82,6 +82,8 @@ module iso_fortran_env
   integer, parameter :: real64 = 8
   integer, parameter :: int32 = 4
   integer, parameter :: int64 = 8
+  integer, parameter :: error_unit = 0
+  integer, parameter :: output_unit = 6
   !> Character constants providing compiler information (stubbed as empty).
   character, parameter :: compiler_version = "", compiler_options = ""
 end module iso_fortran_env
