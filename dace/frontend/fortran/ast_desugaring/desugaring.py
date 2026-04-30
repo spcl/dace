@@ -399,18 +399,64 @@ def deconstruct_associations(ast: f03.Program) -> f03.Program:
                         while isinstance(access, (f03.Data_Ref, f03.Part_Ref)):
                             access = access.children[-1]
                         if isinstance(access, f03.Section_Subscript_List):
-                            # We cannot just chain accesses, so we need to combine them to produce a single access.
-                            # TODO: Maybe `isinstance(c, Subscript_Triplet)` + offset manipulation?
-                            free_comps = [(i, c) for i, c in enumerate(access.children)
-                                          if c == f03.Subscript_Triplet(':')]
-                            assert len(free_comps) >= len(subsc.children), \
-                                f"Free rank cannot increase, got {root}/{access} => {subsc}"
+                            assert(len(access.children) == len(subsc.children))
+
+                            if any(not isinstance(c, f03.Subscript_Triplet) for c in access.children):
+                                raise NotImplementedError("For ASSOCIATE selector (`access`), only children of type f03.Subscript_Triplet currently supported.")
+
                             for i, c in enumerate(subsc.children):
-                                idx, _ = free_comps[i]
-                                free_comps[i] = (idx, c)
-                            free_comps = {i: c for i, c in free_comps}
-                            utils.set_children(access, [free_comps.get(i, c) for i, c in enumerate(access.children)])
-                            # Now replace the entire `pr` with `repl`.
+                                access_child_triplet = access.children[i]
+                                if isinstance(c, f03.Name):
+                                    # Replace subscript triplet (low:high:stride) with single Level_2_Expr
+                                    low_expr = access_child_triplet.children[0]
+                                    if low_expr:
+                                        new_access_index = f03.Expr(f"{low_expr.tostr()}+({c.tostr()})")
+                                    else:
+                                        new_access_index = f03.Expr(c.tostr())
+                                    utils.replace_node(access.children[i], new_access_index)
+                                elif isinstance(c, f03.Subscript_Triplet):
+                                    # Combine the two subscript triplets (low:high:stride)
+                                    # We only perform combinations if the subscript in `rest` is not None.
+
+                                    # Combine low
+                                    low_expr = access_child_triplet.children[0]
+                                    low_expr_str = f"{low_expr if low_expr else ''}" # empty string if None
+                                    if c.children[0] is not None:
+                                        if low_expr:
+                                            new_low_expr_str = f03.Expr(f"{low_expr_str} + ({c.children[0].tostr()})").tostr()
+                                        else:
+                                            new_low_expr_str = f03.Expr(f"{c.children[0].tostr()}").tostr()
+                                    else:
+                                        new_low_expr_str = low_expr_str
+
+                                    # Combine high
+                                    high_expr = access_child_triplet.children[1]
+                                    high_expr_str = f"{high_expr if high_expr else ''}"
+                                    if c.children[1] is not None:
+                                        if high_expr:
+                                            # TODO: Confirm how upper bound is enforced inside Fortran ASSOCIATE construct.
+                                            raise NotImplementedError()
+                                        elif low_expr:
+                                            # original access has (low::). Combine to be (:low+high_subsc:)
+                                            new_high_expr_str = f03.Expr(f"{low_expr_str} + ({c.children[1].tostr()})").tostr()
+                                        else:
+                                            # original access was (::)
+                                            new_high_expr_str = f03.Expr(f"{c.children[1].tostr()}").tostr()
+                                    else:
+                                        new_high_expr_str = high_expr_str
+
+                                    # TODO: combine stride.
+                                    stride_expr = access_child_triplet.children[2]
+                                    if c.children[2] is not None:
+                                        raise NotImplementedError("Combining strides of f03.Subscript_Triplet not yet supported.")
+                                    new_stride_expr_str = f"{stride_expr if stride_expr else ''}"
+
+                                    new_triplet = f03.Subscript_Triplet(f"{new_low_expr_str}:{new_high_expr_str}:{new_stride_expr_str}")
+                                    utils.replace_node(access.children[i], new_triplet)
+
+                                else:
+                                    raise NotImplementedError(f"Only types f03.Name and f03.Subscript Triplet in subscript list of Part_Ref. Got type {type(c)}.")
+
                             utils.replace_node(pr, repl)
                             continue
                     # Otherwise, just replace normally.
