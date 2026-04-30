@@ -53,7 +53,12 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         tgt, attrs, plist = node.children
         assert len(plist.children) == 1, \
             f"Only one procedure per statement is accepted due to Fparser bug. Break down the line: {node}"
-        name = ast_utils.singular(ast_utils.children_of_type(plist, f03.Name))
+        # The first child can be of type f03.Name. 
+        # TODO: Need to figure out exact Proc_Component_Def_Stmt syntax.
+        if isinstance(tgt, f03.Name):
+            name = tgt
+        else:
+            name = ast_utils.singular(ast_utils.children_of_type(plist, f03.Name))
     else:
         # TODO: Test out other type specific ways of finding names.
         name = ast_utils.singular(ast_utils.children_of_type(node, f03.Name))
