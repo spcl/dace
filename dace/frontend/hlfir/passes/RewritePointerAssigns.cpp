@@ -70,37 +70,93 @@
 //     pointer locals.  Splitting these two concerns simplifies both
 //     passes.
 //
-// Pattern matched:
-//   %ptrAlloca  = fir.alloca !fir.box<!fir.ptr<T>>
-//   %nullPtr    = fir.zero_bits !fir.ptr<T>
-//   %nullBox    = fir.embox %nullPtr
-//   fir.store %nullBox to %ptrAlloca                  -- initial nullify
-//   %ptrDecl:2  = hlfir.declare %ptrAlloca {pointer, uniq_name="...tmp"}
-//   %targetBox  = fir.embox %target_decl#0  (or fir.embox of a designate
-//                                            of a TARGET'd struct field)
-//   fir.store %targetBox to %ptrDecl#0                -- the => rebind
+// ============================================================================
+// I-level design — uniform "rebase to parent" rewrite
+// ============================================================================
 //
-// Reads then look like:
-//   %boxLoad   = fir.load %ptrDecl#0 : !fir.ref<box<ptr<T>>>
-//   %addr      = fir.box_addr %boxLoad : (box<ptr<T>>) -> !fir.ptr<T>
-//   %v         = fir.load %addr : !fir.ptr<T>
+// Every Fortran pointer rebind has the same logical shape:
 //
-// Rewrite under no-alias:
-//   Replace every ``fir.box_addr`` whose memref chain traces back to
-//   ``ptrDecl`` with the original ``target_decl#0`` (a ``fir.ref<T>``).
-//   The intermediate ``fir.load %ptrDecl#0`` and ``fir.box_addr`` ops
-//   become dead and are erased.  ``ptrDecl`` itself, the alloca, the
-//   zero_bits + initial embox + initial store, and the rebind store
-//   all become dead and are erased.
+//     ptr => <parent>(<chain>)
 //
-// Warning emitted on every firing:
-//   ``hlfir-rewrite-pointer-assigns: collapsing pointer rebind <ptr> =>
-//     <target> under the strict-no-aliasing assumption.  Fortran allows
-//     aliased pointer access; if your program relies on alias semantics
-//     this rewrite is unsafe.``
+// where ``<parent>`` is a single ``hlfir.declare`` (the original
+// caller-side or local-side TARGET storage) and ``<chain>`` is a
+// possibly-empty list of ``hlfir.designate`` steps (whole-array,
+// section triplets, scalar element selection) flang lowered between
+// the rebind value and the parent.  After this pass, every access
+// through ``ptr`` lands on a direct ``hlfir.designate`` of the
+// parent with indices merged from the chain and the user's access:
 //
-// FIR/HLFIR box & shape primer (essential for understanding the
-// rebind variants below)
+//   ``ptr => x``               ⇒  ``p(i, j)``     →  ``x(i, j)``
+//   ``ptr => x(2:5)``          ⇒  ``p(i)``        →  ``x(i + 1)``
+//   ``ptr => x(:, j)``         ⇒  ``p(i)``        →  ``x(i, j)``
+//   ``ptr => arr(i)`` (scalar) ⇒  ``p`` (scalar)  →  ``arr(i)``
+//   ``ptr => s%a`` (after flatten) ⇒  ``p(i)``    →  ``s_a(i)``
+//   ``ptr => s%a(2:5)`` (after flatten) ⇒ ``p(i)`` →  ``s_a(i + 1)``
+//
+// All variants reduce to the same three-step rewrite:
+//   1. Walk the rebind value through ``fir.embox`` / ``fir.rebox`` /
+//      ``fir.convert`` and ``hlfir.designate`` ops to find the
+//      parent declare and capture each designate's
+//      (indices, isTriplet) record into a CHAIN.
+//   2. For every downstream access through ``fir.load %ptrDecl#0``
+//      — ``hlfir.designate`` users (array pointers) AND
+//      ``fir.box_addr`` users (scalar pointers) — build a fresh
+//      designate over the parent with merged indices.  Triplet
+//      positions consume one user index (rebased by ``lo - 1``);
+//      scalar positions take the chain's literal value verbatim;
+//      whole-array (no chain entry) passes user indices through
+//      untouched.
+//   3. Erase the load + chain (all dead after the rewrite),
+//      the rebind store, the alloca / init chain, and the
+//      pointer declare.
+//
+// Helper interface (defined below):
+//
+//   struct RebindChain {
+//       hlfir::DeclareOp         parent;   // root TARGET declare
+//       SmallVector<hlfir::DesignateOp, 2> chain;  // walks-back order:
+//                                                  // outermost designate first
+//   };
+//
+//   /// Trace a rebind value through embox/rebox/convert/designate
+//   /// chains to the parent declare; returns ``parent == nullptr``
+//   /// if the chain doesn't end at a declare.
+//   static RebindChain traceRebindChain(mlir::Value rebindValue);
+//
+//   /// Compose user_indices with the chain's per-step indices into
+//   /// a flat index list over the parent's storage.  The result
+//   /// list has one entry per parent dim, ready to drop into a
+//   /// new ``hlfir.designate %parent (...)`` op.  Emits any rebase
+//   /// arithmetic (``user_idx + lo - 1``) at the supplied builder /
+//   /// loc.  Returns false if the merge can't be expressed (rare:
+//   /// section-of-section with overlapping triplet/user index
+//   /// counts that don't reconcile).
+//   static bool mergeIndices(const RebindChain &c,
+//                            mlir::ValueRange user_indices,
+//                            mlir::OpBuilder &b, mlir::Location loc,
+//                            SmallVectorImpl<mlir::Value> &out);
+//
+// Bail-loud guards (preflight, run BEFORE the rewrite):
+//
+//   * INTERLEAVED REBIND/READ — ``ptr => A; use; ptr => B; use``.
+//     A read between two distinct rebinds observes the EARLIER
+//     target; collapsing to one would lose that semantics.
+//     Sequential dead-store rebinds (no reads between) are fine —
+//     the last rebind is the only observable one.
+//   * BOUNDS REMAP — ``ptr(0:n-1) => src(1:n)``.  The user pointer's
+//     lower bound differs from the section box's natural ``lo=1``.
+//     Flang emits a ``fir.shift`` / ``fir.shape_shift`` operand on
+//     the rebox to record the remap; forwarding silently would
+//     shift every access by ``remap_lo - 1``.
+//   * REBOX SLICE OPERAND — defensive reject (flang doesn't
+//     typically emit this for pointer rebinds; would mean an
+//     additional stride/section overlay we don't model).
+//
+// Each guard is independent of the rewrite: preflight scans the
+// rebind value's chain BEFORE invoking ``traceRebindChain``.
+//
+// FIR/HLFIR box & shape primer (essential context for the chain
+// walker)
 // =============================================================
 // Pointer rebinds operate on box-typed values.  The exact wrapper
 // shape and shape-encoding choice flang makes determines whether
@@ -109,100 +165,32 @@
 //  Wrapper types (outer → inner):
 //   * ``fir.ref<T>``         — plain pointer-to-T, no metadata.
 //   * ``fir.box<T>``         — descriptor: data pointer + shape /
-//                              stride / type info.  ``T`` is the
-//                              element type or ``fir.ptr/heap`` of
-//                              an array type.
-//   * ``fir.ptr<T>``         — Fortran POINTER indirection.  Box
-//                              over ``ptr<...>`` carries the
-//                              POINTER attribute.
+//                              stride / type info.
+//   * ``fir.ptr<T>``         — Fortran POINTER indirection.
 //   * ``fir.heap<T>``        — Fortran ALLOCATABLE indirection.
-//                              Box over ``heap<...>`` is what
-//                              ``allocate`` allocates into.
 //
 //  Shape ops on the box/declare:
-//   * ``fir.shape  %e0, %e1, …``           — extents only.  Lower
-//                                             bounds default to 1.
-//                                             Bounds-preserving
-//                                             rebox.
-//   * ``fir.shift  %lo0, %lo1, …``         — lower bounds only.
-//                                             Used for bounds REMAP
-//                                             on rebox (the user
-//                                             wrote ``ptr(0:..) =>
-//                                             src``).
-//   * ``fir.shape_shift %e0,%lo0, %e1,%lo1,…``
-//                                          — both extents + lower
-//                                             bounds.  Also
-//                                             remap-carrying.
+//   * ``fir.shape``       — extents only; bounds default to 1.
+//   * ``fir.shift``       — lower bounds only (REMAP marker).
+//   * ``fir.shape_shift`` — both extents and bounds (also REMAP).
 //
-//  Rebind value forms (right-hand side of ``fir.store ... to %ptrDecl#0``):
-//   * ``embox(declare)``            — plain target.  ``ptr => x``
-//                                      where ``x`` is a whole
-//                                      variable.
-//   * ``embox(designate(d, slice))`` — section target.  Flang may
-//                                      still wrap with a
-//                                      ``fir.rebox`` to retype
-//                                      ``box<array<...>>`` →
-//                                      ``box<ptr<array<...>>>``.
-//   * ``rebox(embox(... designate(d, slice) ...))``
-//                                   — section target through a
-//                                      type retag.  This is the
-//                                      ``ptr => arr(1:n)`` shape
-//                                      this pass forwards.
-//   * ``embox(designate(d, scalar_idx))``
-//                                   — element target.  Bail
-//                                      (loud-failure) — different
-//                                      semantics from a section.
-//   * ``embox(zero_bits)``          — initial nullify; skipped.
-//
-// Unsupported cases (loud-failure contract)
-// =========================================
-// The pass emits ``signalPassFailure()`` + a clear error rather
-// than silently producing wrong code in the following cases.
-// Every case below has at least one unit test in
-// ``baseline_pointer_assign_test.py`` that pins the contract.
-//
-//  1. INTERLEAVED REBIND/READ:
-//      ``ptr => A; use ptr; ptr => B; use ptr``.
-//      The first ``use ptr`` observes ``A``, the second ``B``.
-//      Single-substitution would lose that semantics.
-//      DETECTION: walk all ``fir.load %ptrDecl#0`` ops and check
-//      if any sits between two non-nullify rebind stores.
-//      DEAD-STORE rebinds (``ptr => A; ptr => B; use ptr``, no
-//      reads between) are NOT this case — only the LAST rebind
-//      is observable, the earlier one is a dead store and we
-//      take the LAST one as the effective rebind.
-//
-//  2. ELEMENT-FORM REBIND TARGET:
-//      ``ptr => arr(i)`` for a SCALAR pointer rebound to one
-//      array element.  IR shape: ``embox(designate(d, scalar_idx))``
-//      where the designate has ``isTriplet=[false, …]``.
-//      Different semantics from a section: a SECTION (``ptr =>
-//      arr(i:i)``) creates a rank-1 view of length 1; an ELEMENT
-//      (``ptr => arr(i)``) creates a SCALAR alias.  Forwarding
-//      the section box would shift the type but downstream
-//      designate(load(ptr))(j) wouldn't make sense.
-//      DETECTION: the source designate has indices and no
-//      triplet flags.
-//
-//  3. BOUNDS REMAP:
-//      ``ptr(0:n-1) => src(1:n)``.  The user pointer's lower
-//      bound differs from the section box's natural ``lo=1``.
-//      Flang encodes the remap by emitting a ``fir.shift`` (or
-//      ``fir.shape_shift``) operand on the rebox.  Forwarding
-//      the rebound box value as-is would silently shift every
-//      read by ``remap_lo - 1`` (off-by-N indexing on every
-//      access through the pointer).
-//      DETECTION: any ``fir.rebox`` in the rebind value's
-//      definition chain has a ``shape`` operand defined by
-//      ``fir.shift`` or ``fir.shape_shift``.  A plain
-//      ``fir.shape`` (extents only) is bounds-preserving and
-//      safe to forward.
-//
-//  4. REBOX SLICE OPERAND:
-//      Flang doesn't typically generate this for pointer
-//      rebinds, but defensively reject any ``fir.rebox`` whose
-//      ``slice`` operand is non-empty — would mean an additional
-//      stride/section overlay we don't model.
+//  Rebind value forms collapsed into the unified path:
+//   * ``embox(declare)``                          — chain = []
+//   * ``embox(designate(declare, indices))``      — chain = [dg]
+//   * ``rebox(embox(... designate ...))``         — chain = [dg]
+//                                                   (rebox is a
+//                                                   metadata retag,
+//                                                   bounds-preserving
+//                                                   if its shape is a
+//                                                   plain fir.shape)
+//   * ``embox(designate(d, scalar_idx))``         — chain = [dg]
+//                                                   (element rebind:
+//                                                   user idxs empty,
+//                                                   chain provides
+//                                                   all indices)
+//   * ``embox(zero_bits)``                        — initial nullify;
+//                                                   skipped (no
+//                                                   rebind store).
 //
 // Survivor declares (NOT loud failures)
 // =====================================
@@ -222,13 +210,9 @@
 // body into the caller, the callee's pointer dummy declare
 // becomes a fresh ``hlfir.declare %callerDecl#0 dummy_scope %dsc
 // {pointer, uniq_name="..."}`` whose ``memref`` operand is the
-// caller's ``ptrDecl#0``.  The alias has the same ``pointer``
-// attribute and would be processed independently, finding no
-// in-scope rebind store of its own and surviving as live.  We
-// avoid that by collecting alias declares (any pointer declare
-// whose memref traces back to ``ptrDecl`` through
-// ``hlfir.declare`` / ``fir.convert`` chains) at rewrite time
-// and forwarding their loads in lockstep with the parent's.
+// caller's ``ptrDecl#0``.  The unified rewrite walks each alias
+// declare's loads in lockstep with the parent's, applying the
+// same merge to every downstream user.
 // ============================================================================
 
 #include "passes/Passes.h"
