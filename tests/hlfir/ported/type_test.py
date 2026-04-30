@@ -309,10 +309,6 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("3-level nested struct (simple_type → simple_type2 → simple_type3) — "
-       "Phase 1 of derived-type support handles flat-member structs only; "
-       "extract_vars now drops the un-flattened struct silently and downstream "
-       "raises KeyError on the dropped VarInfo name.  Targets Phase 2 work.")
 def test_fortran_frontend_type_array(tmp_path):
     src = """
 module lib
@@ -352,8 +348,6 @@ end subroutine f2
     sdfg(d=a)
 
 
-@xfail("3-level nested struct with extra integer-array member — same Phase 2 "
-       "gap as test_fortran_frontend_type_array (nested struct member chain).")
 def test_fortran_frontend_type_array2(tmp_path):
     src = """
 module lib

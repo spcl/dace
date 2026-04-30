@@ -698,7 +698,14 @@ static std::string walkDesignateChain(
             // Triplet sections on intermediate levels would mean a
             // non-uniform slice through the array-of-record path
             // (e.g. ``p_prog%pprog(2:5)%w(j)``); not in scope.
-            for (bool t : cur.getIsTriplet()) if (t) return "";
+            //
+            // ``getIsTriplet()`` returns a nullable
+            // ``DenseBoolArrayAttr`` — iterating a null attr (when
+            // the designate carries no isTriplet, the common case
+            // for component-only or scalar-index designates) is a
+            // crash, so guard via the raw attr accessor first.
+            if (auto trip = cur.getIsTripletAttr())
+                for (bool t : trip.asArrayRef()) if (t) return "";
             llvm::SmallVector<mlir::Value, 4> these(
                 cur.getIndices().begin(), cur.getIndices().end());
             intermediateIdxGroupsRev.push_back(std::move(these));
@@ -777,7 +784,8 @@ static bool rewriteDesignateChain(
     // leaf itself has triplets is rare in this shape — a section
     // on the innermost array of a record-of-record-of-... — and
     // is also out of scope; bail to keep the contract narrow.
-    for (bool t : leaf.getIsTriplet()) if (t) return false;
+    if (auto leafTrip = leaf.getIsTripletAttr())
+        for (bool t : leafTrip.asArrayRef()) if (t) return false;
     llvm::SmallVector<mlir::Value, 6> merged(intermediateIndices.begin(),
                                               intermediateIndices.end());
     for (auto v : leaf.getIndices()) merged.push_back(v);
