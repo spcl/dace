@@ -1439,17 +1439,29 @@ struct FlattenStructsPass
                 if (!fieldTy) return {};
                 auto refFieldTy = fir::ReferenceType::get(fieldTy);
                 auto componentAttr = mlir::StringAttr::get(b.getContext(), component);
+                // Array-valued field needs a fir.shape operand for the
+                // hlfir.designate verifier ("shape must be provided if
+                // and only if the result is an array that is not a box
+                // address").  Static extents only — dynamic-extent
+                // record members aren't reachable through
+                // ``collectFlatLeaves`` anyway.
+                mlir::Value fieldShape;
+                if (auto seq = mlir::dyn_cast<fir::SequenceType>(fieldTy)) {
+                    auto exts = staticArrayExtents(seq);
+                    if (exts.empty()) return {};
+                    fieldShape = emitStaticShape(b, loc, exts);
+                }
                 auto newOp = b.create<hlfir::DesignateOp>(
                     loc,
                     /*resultType0=*/refFieldTy,
                     /*memref=*/cur,
                     /*component=*/componentAttr,
-                    /*component_shape=*/mlir::Value{},
+                    /*component_shape=*/fieldShape,
                     /*indices=*/mlir::ValueRange{},
                     /*is_triplet=*/mlir::DenseBoolArrayAttr{},
                     /*substring=*/mlir::ValueRange{},
                     /*complex_part=*/mlir::BoolAttr{},
-                    /*shape=*/mlir::Value{},
+                    /*shape=*/fieldShape,
                     /*typeparams=*/mlir::ValueRange{},
                     /*fortran_attrs=*/fir::FortranVariableFlagsAttr{});
                 cur = newOp.getResult();
