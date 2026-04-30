@@ -195,6 +195,9 @@ def identifier_specs(ast: f03.Program) -> types.SPEC_TABLE:
         if isinstance(stmt, f03.Stmt_Function_Stmt):
             # An exception is statement-functions, which must have a dummy variable already declared in the same scope.
             continue
+        if isinstance(stmt, f03.Target_Entity_Decl) and spec in ident_map:
+            # Some target functions have dummy variables already declared as well.
+            continue
         assert spec not in ident_map, f"{spec}"
         ident_map[spec] = stmt
     return ident_map
