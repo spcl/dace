@@ -281,7 +281,7 @@ def alias_specs(ast: f03.Program) -> types.SPEC_TABLE:
     return alias_map
 
 
-def search_real_ident_spec(ident: str, in_spec: types.SPEC, alias_map: types.SPEC_TABLE) -> Optional[types.SPEC]:
+def search_real_ident_spec(ident: str, in_spec: types.SPEC, alias_map: types.SPEC_TABLE, node_types: Optional[Union[Base, tuple[Base]]] = None) -> Optional[types.SPEC]:
     """
     Searches for the canonical (real) specifier for an identifier string within a given scope.
     It traverses up the scope hierarchy until the identifier is found in the alias map.
@@ -289,29 +289,33 @@ def search_real_ident_spec(ident: str, in_spec: types.SPEC, alias_map: types.SPE
     :param ident: The identifier string to search for.
     :param in_spec: The spec of the scope to start the search from.
     :param alias_map: The complete alias map.
+    :param node_type: (Optional) A node type or a tuple of node types to which identifier should map. 
     :return: The canonical spec of the identifier, or None if not found.
     """
     k = in_spec + (ident, )
     if k in alias_map:
-        return ident_spec(alias_map[k])
+        if (node_types is None) or isinstance(alias_map[k], node_types): # if type specified, only return if node matches desired type
+            return ident_spec(alias_map[k])
     k = in_spec + (INTERFACE_NAMESPACE, ident)
     if k in alias_map:
-        return ident_spec(alias_map[k])
+        if (node_types is None) or isinstance(alias_map[k], node_types): # if type specified, only return if node matches desired type
+            return ident_spec(alias_map[k])
     if not in_spec:
         return None
     return search_real_ident_spec(ident, in_spec[:-1], alias_map)
 
 
-def find_real_ident_spec(ident: str, in_spec: types.SPEC, alias_map: types.SPEC_TABLE) -> types.SPEC:
+def find_real_ident_spec(ident: str, in_spec: types.SPEC, alias_map: types.SPEC_TABLE, node_types: Optional[Union[Base, tuple[Base]]] = None) -> types.SPEC:
     """
     A wrapper around `search_real_ident_spec` that asserts an identifier is always found.
 
     :param ident: The identifier string to search for.
     :param in_spec: The spec of the scope to start the search from.
     :param alias_map: The complete alias map.
+    :param node_type: (Optional) A node type or a tuple of node types to which identifier should map. 
     :return: The canonical spec of the identifier.
     """
-    spec = search_real_ident_spec(ident, in_spec, alias_map)
+    spec = search_real_ident_spec(ident, in_spec, alias_map, node_types)
     assert spec, f"cannot find {ident} / {in_spec}"
     return spec
 
@@ -790,7 +794,7 @@ def interface_specs(ast: f03.Program, alias_map: types.SPEC_TABLE) -> Dict[types
                 fns.append(utils.find_name_of_stmt(fn))
             elif isinstance(fn, f03.Procedure_Stmt):
                 fns.extend(nm.string for nm in walk(fn, f03.Name))
-        fn_specs = tuple(find_real_ident_spec(f, scope_spec, alias_map) for f in fns)
+        fn_specs = tuple(find_real_ident_spec(f, scope_spec, alias_map, (f03.Function_Stmt, f03.Subroutine_Stmt)) for f in fns)
         assert ifspec not in fn_specs
         iface_map[ifspec] = fn_specs
 
