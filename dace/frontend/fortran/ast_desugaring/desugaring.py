@@ -17,11 +17,15 @@ The goal is to produce a simplified AST that is easier to analyze and from which
 DaCe SDFGs can be generated.
 """
 import sys
-from typing import Tuple, Dict, List, Set
+from typing import Tuple, Dict, List, Set, Union
+from io import StringIO
+import warnings
 
 import fparser.two.Fortran2003 as f03
 from fparser.api import get_reader
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, BlockBase, UnaryOpBase, BinaryOpBase, walk
+from fparser.common.readfortran import FortranReaderBase
+from fparser.common.sourceinfo import FortranFormat
 
 from . import analysis, pruning, types, utils
 from .. import ast_utils
@@ -616,112 +620,301 @@ end function {fn}
     return ast
 
 
-def deconstuct_goto_statements(ast: f03.Program) -> f03.Program:
+def deconstruct_goto_statements(ast: f03.Program) -> f03.Program:
     """
-    Attempts to convert `GOTO` statements into structured `IF` constructs.
+    Attempts to convert `GOTO` statements into structured `IF` or 'DO WHILE' construct(s).
 
-    This pass replaces `GOTO` statements with structured control flow by introducing
-    boolean flag variables. This simplifies the control flow graph, making it more
-    amenable to analysis.
+    All `GOTO`-target pairs are first collated and classified as forward or backward jumps. Each 
+    jump is then deconstructed individually by the corresponding forward/backward helper function. 
 
-    The current implementation supports a specific pattern:
-    - It handles forward-facing `GOTO` statements that jump out of an `IF` block
-      to a `CONTINUE` statement later in the same execution part.
-    - A boolean variable (e.g., `goto_1`) is created for each `GOTO`.
-    - The `GOTO` is replaced by an assignment setting the flag to `.true.`.
-    - The code between the original `IF` block and the `GOTO`'s target label is
-      wrapped in a new `IF` condition that checks if the flag is `.not. .true.`.
+    NOTE: The order in which `GOTO`s are deconstructed affects correctness. All backward `GOTO`s 
+    should be deconstructed before forward `GOTO`s. Backward `GOTO`s should also be processed in 
+    descending order of the line number of the `GOTO` statement.
+    (This ordering ensures correct control flow due to the addition of `DO WHILE` loop constructs 
+    in backward `GOTO` deconstruction.)
 
-    This effectively transforms a jump into a series of conditional blocks.
-
-    NOTE: This pass has limited support and will raise a `NotImplementedError`
-    for more complex `GOTO` patterns (e.g., backward jumps).
+    NOTE: Only GOTOs in the subtree from parent of target are currently implemented.
+    TODO: Support complex nesting.
 
     :param ast: The Fortran AST to modify.
     :return: The modified Fortran AST.
     """
-    # TODO: Support `Compound_Goto_Stmt`.
     for node in walk(ast, Base):
         # Move any label on a non-continue statement onto one (except for format statement which require one).
         if not isinstance(node, (f03.Continue_Stmt, f03.Format_Stmt)) and node.item and node.item.label is not None:
             cont = f03.Continue_Stmt("CONTINUE")
             cont.item = node.item
             node.item = None
-            utils.replace_node(node, (cont, node))
 
-    labels: Dict[str, Base] = {}
-    for node in walk(ast, Base):
-        if node.item and node.item.label is not None and isinstance(node, f03.Continue_Stmt):
-            labels[str(node.item.label)] = node
-
-    # TODO: We have a very limited supported pattern of GOTO here, and possibly need to expand.
-    # Assumptions: Each GOTO goes only forward. The target's parent is same as either the parent or the grandparent of
-    # the GOTO. If the GOTO and its target have different parents, then the GOTO's parent is a if-construct.
-
-    COUNTER = 0
-    for goto in walk(ast, f03.Goto_Stmt):
-        target, = goto.children
-        target = target.string
-        target = labels[target]
-        if goto.parent == target.parent:
-            raise NotImplementedError
-
-        ifc = goto.parent
-        ifc_par = ifc.parent
-        assert isinstance(ifc, (f03.If_Stmt, f03.If_Construct)), \
-            f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
-        assert ifc.parent is target.parent
-        ifc_pos, target_pos = None, None
-        for pos, c in enumerate(ifc.parent.children):
-            if c is ifc:
-                ifc_pos = pos
-            elif c is target:
-                target_pos = pos
-        assert target_pos > ifc_pos, f"Only forward-facing GOTOs are supported"
-
-        ex = goto.parent
-        while not isinstance(ex, f03.Execution_Part):
-            ex = ex.parent
-        spec = ast_utils.atmost_one(ast_utils.children_of_type(ex.parent, f03.Specification_Part))
-        assert spec
-
-        if not isinstance(ifc, (f03.If_Stmt, f03.If_Construct)):
-            raise NotImplementedError
-
-        goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
-        utils.append_children(spec, f03.Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
-        utils.replace_node(goto, f03.Assignment_Stmt(f"{goto_var} = .true."))
-
-        for else_op in ifc_par.children[ifc_pos + 1:target_pos]:
-            if isinstance(else_op, f03.Continue_Stmt):
-                # Continue statements are no-op, but they may have label attached, so we leave them be.
-                continue
-            if isinstance(else_op, f03.If_Stmt):
-                # We merge the condition with existing if.
-                cond, op = else_op.children
-                nu_cond = f03.Expr(f".not.({goto_var}) .and. {cond}")
-                utils.replace_node(cond, nu_cond)
-            elif isinstance(else_op, f03.If_Construct):
-                # We merge the condition with existing if.
-                for c in else_op.children:
-                    if isinstance(c, f03.If_Then_Stmt):
-                        cond, = c.children
-                        nu_cond = f03.Expr(f".not.({goto_var}) .and. {cond}")
-                        utils.replace_node(cond, nu_cond)
-                    elif isinstance(c, f03.Else_If_Stmt):
-                        cond, _ = c.children
-                        nu_cond = f03.Expr(f".not.({goto_var}) .and. {cond}")
-                        utils.replace_node(cond, nu_cond)
-                    elif isinstance(c, f03.Else_Stmt):
-                        nu_else = f03.Else_If_Stmt(f"else if (.not.({goto_var})) then")
-                        utils.replace_node(c, nu_else)
-                    else:
-                        continue
+            if isinstance(node, (f03.If_Then_Stmt, f03.Nonlabel_Do_Stmt, f03.Label_Do_Stmt)):
+                node_pos = ast_utils.singular(iter([i for i, x in enumerate(node.parent.children) if x is node]))
+                assert (node_pos == 0)
+                utils.replace_node(node.parent, (cont, node.parent))
             else:
-                nu_if = f03.If_Stmt(f"if (.not.({goto_var})) call x")
-                utils.replace_node(else_op, nu_if)
-                utils.replace_node(ast_utils.singular(nm for nm in walk(nu_if, f03.Call_Stmt)), else_op)
+                utils.replace_node(node, (cont, node))
 
-        utils.replace_node(ifc, [f03.Assignment_Stmt(f"{goto_var} = .false."), ifc])
+    # Process each module/function/subroutine, one at a time.
+    # Upon moving to next node of type in SCOPE_OBJECT_TYPES, all `GOTO`s in current scope_ast should be deconstructed. 
+    for scope_ast in walk(ast, Union[f03.Function_Subprogram, f03.Subroutine_Subprogram]):
+        # Maintain list of forward- and backward-facing gotos. Each entry is a tuple of (goto_node, target_node)
+        forward_gotos = []
+        backward_gotos = []
+
+        # Resolve `GOTO` statements, classify into forward- and backward-facing.
+        for goto in walk(scope_ast, f03.Goto_Stmt):
+            label, = goto.children
+            label = label.string
+
+            # Inefficient search of target by walking through scope of parent function/subroutine.
+            # Required, as subroutines can contain other subroutines.
+            ancestor = goto.parent
+            while ancestor and not isinstance(ancestor, (f03.Function_Subprogram, f03.Subroutine_Subprogram)):
+                ancestor = ancestor.parent
+            assert ancestor, f"Ancestor not found for GOTO {goto.item}."
+            ancestor_subroutine = ancestor
+
+            target = None
+            for cont_node in walk(ancestor_subroutine, f03.Continue_Stmt):
+                if (str(cont_node.item.label) == label):
+                    assert (target is None), f"Multiple instances of label {label} found in subroutine/function {ancestor_subroutine.content[0].items[1]}. Expected each label to be unique."
+                    target = cont_node
+            assert target, f"Target of GOTO {goto.item} not found in scope of its parent Subroutine/Function."
+
+            # Check that `GOTO` is in subtree from parent of `CONTINUE`.
+            goto_in_parent_ast = (utils.lineage(target.parent, goto) is not None)
+            if not goto_in_parent_ast:
+                raise NotImplementedError("Only GOTOs in the subtree from parent of target are supported.")
+
+            # Note: If `CONTINUE` was created from non-continue label, the `CONTINUE` is prepended into original node.
+            # In this case, ensure `GOTO` is in subtree from -grandparent- of `CONTINUE`.
+            # goto_in_grandparent_ast = (target == target.parent.children[0]) and (utils.lineage(target.parent.parent, goto) is not None)
+            # if not (goto_in_parent_ast or goto_in_grandparent_ast):
+            #     raise NotImplementedError("Only GOTOs in the subtree from parent/grandparent of target are supported.")
+
+            # Determine whether `GOTO` is forward- or backward-facing.
+            # We use the `walk` method of fparser (DFS) - checking whether goto or target encountered first.
+            for node in walk(ancestor_subroutine, Base):
+                if (node is target):
+                    backward_gotos.append((ancestor_subroutine, goto, target))
+                    break
+                elif (node is goto):
+                    forward_gotos.append((ancestor_subroutine, goto, target))
+                    break
+
+        # Sort backward_gotos list in descending order of line number of `GOTO` 
+        # (`list.reverse()` also works due to order of adding nodes by DFS).
+        # Attempted to sort by line number using `goto.item.span[0]`, but oddly not all `f03.Goto_Stmt` nodes have the line number in item.
+        backward_gotos.reverse()
+
+        for (ancestor_subroutine, goto, target) in backward_gotos:
+            ancestor_subroutine = deconstruct_backward_goto_statements(ancestor_subroutine, goto, target)
+
+        for (ancestor_subroutine, goto, target) in forward_gotos:
+            ancestor_subroutine = deconstruct_forward_goto_statements(ancestor_subroutine, goto, target)
 
     return ast
+
+
+def deconstruct_forward_goto_statements(ancestor_subroutine : Union[f03.Function_Subprogram, f03.Subroutine_Subprogram], goto: f03.Goto_Stmt, target: f03.Continue_Stmt):
+    """
+    Replaces forward-facing `GOTO` statements (i.e. forward jumps) with structured control flow by
+    introducing boolean flag variables.
+
+    Current implementation:
+    - A boolean variable (e.g., `goto_10`) is created for each `GOTO`, and initialized to `.false.` .
+    - The `GOTO` is replaced by an assignment setting the flag to `.true.`.
+    - The AST is traversed upwards from the replaced `GOTO` to the parent containing the target `CONTINUE`, 
+      adding conditional execution/exits to code between `GOTO` and `CONTINUE` for the following cases:
+      + If parent is a loop construct and does not contain target `CONTINUE`, add a conditional `EXIT` that 
+        executes if flag is `.true.`.
+      + Otherwise, conditional execution is added to succeeding code until `CONTINUE` statement, to execute 
+        only if flag is `.false.`.
+
+    NOTE: Only `GOTO`s in the subtree from parent of `CONTINUE` are currently implemented.
+
+    :param ancestor_subroutine: The subroutine or function AST containing `GOTO` and target.
+    :param goto: `GOTO` statement node.
+    :param target: 'CONTINUE` statement node that is target of `GOTO`.
+    :return: The modified subroutine/function containing deconstructed `GOTO`-target.
+    """
+    exec_part = ast_utils.singular(ast_utils.children_of_type(ancestor_subroutine, f03.Execution_Part))
+    spec_part = ast_utils.singular(ast_utils.children_of_type(ancestor_subroutine, f03.Specification_Part))
+    label = target.item.label
+    goto_var = f"goto_{label}" # Only label used for readability. TODO: Can include COUNTER
+
+    # Check whether target has been deconstructed before. If not, perform deconstruction.
+    if goto_var not in spec_part.tostr():
+        # Add boolean flag `goto_{label}` to scope.
+        utils.append_children(spec_part, f03.Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
+        utils.prepend_children(exec_part, f03.Assignment_Stmt(f"{goto_var} = .false.")) # initialize flag
+        
+        # Unset flag after `CONTINUE` 
+        utils.replace_node(target, (target, f03.Assignment_Stmt(f"{goto_var} = .false.")))
+
+    # Replace `GOTO` with assignement of flag to .true.
+    goto_replacement = f03.Assignment_Stmt(f"{goto_var} = .true.")
+    utils.replace_node(goto, goto_replacement)
+    goto = goto_replacement
+
+    # Transform ancestors of `GOTO`. We traverse up the AST, from `goto.parent` to `target.parent`.
+    child_w_goto = goto
+    par = child_w_goto.parent
+
+    for _n in range(len(utils.lineage(target.parent, goto))-1):
+        # determine position of `GOTO`/ancestor of `GOTO`, and `CONTINUE` (if applicable)
+        child_pos = ast_utils.singular(iter([i for i, x in enumerate(par.children) if x is child_w_goto]))
+        target_pos = ast_utils.singular(iter([i for i, x in enumerate(par.children) if x is target])) if par is target.parent else None
+
+        if isinstance(par, (f03.Block_Label_Do_Construct, f03.Block_Nonlabel_Do_Construct)) and (par is not target.parent):
+            # if EXIT has been previously added, break loop
+            if (len(par.children) > (child_pos + 1)) and isinstance(par.children[child_pos+1], f03.If_Stmt) and (f"IF ({goto_var}) EXIT" in par.children[child_pos+1].tostr()):
+                break
+
+            # otherwise, insert conditional EXIT after child with goto
+            utils.replace_node(child_w_goto, (child_w_goto, f03.If_Stmt(f"IF ( {goto_var} ) EXIT")))
+
+        else:
+            # For operations between (1) `GOTO` and end of parent block, (2) an ancestor of `GOTO` and `CONTINUE`, or (3) `GOTO` and `CONTINUE`,
+            # Wrap these operations in a new `IF` condition that executes if flag is not set (`.not. goto_{label}`). 
+            cond_str = f".not. {goto_var}"
+            add_condition_to_node_execution(cond_str, par.children[child_pos+1:target_pos])
+
+        child_w_goto = par
+        par = child_w_goto.parent
+
+    return ancestor_subroutine
+
+def deconstruct_backward_goto_statements(ancestor_subroutine : Union[f03.Function_Subprogram, f03.Subroutine_Subprogram], goto: f03.Goto_Stmt, target: f03.Continue_Stmt):
+    """
+    Replaces backward-facing `GOTO` statements (i.e. forward jumps) with `DO WHILE` loop and structured 
+    control flow with an introduced boolean flag variables.
+
+    If backward `GOTO` is already in a `DO WHILE` block implemented for the same target `CONTINUE`, the 
+    existing `DO WHILE` and boolean flag is reused.
+
+    Current implementation:
+    - If not existing, a boolean flag (e.g., `goto_10`) is created for each `CONTINUE`.
+    - If not existing, the `CONTINUE` is replaced with a statement setting boolean flag to `.true.`.
+    - If not existing, the code between `CONTINUE` and the last `GOTO` targeting it (highest line number) 
+      is wrapped in a `DO WHILE` block, which executes when the flag is `.true.`. Upon entry to the loop 
+      block, the flag is set to `.false.`.
+    - The `GOTO` is replaced by an assignment setting the flag to `.true.`. 
+    - The AST is traversed upwards from the replaced `GOTO` to the added `DO WHILE`, adding conditional 
+      execution/exits to the succeeding code after the `GOTO` (similar to foward `GOTO`s):
+      + If parent is a loop construct that is NOT the added `DO WHILE`, add a conditional `EXIT` that 
+        executes if flag is `.true.`.
+      + Otherwise, conditional execution is added to succeeding code to execute if flag is `.false.`.
+
+    NOTE: Only `GOTO`s in the subtree from parent of `CONTINUE` are currently implemented.
+
+    :param ancestor_subroutine: The subroutine or function AST containing `GOTO` and target.
+    :param goto: `GOTO` statement node.
+    :param target: 'CONTINUE` statement node that is target of `GOTO`.
+    :return: The modified subroutine/function containing deconstructed `GOTO`-target.
+    """
+    spec_part = ast_utils.singular(ast_utils.children_of_type(ancestor_subroutine, f03.Specification_Part))
+    label = target.item.label
+    goto_var = f"goto_{label}" # Only label used for readability. TODO: Can include COUNTER
+
+    # Check whether target has already been deconstructed into DO WHILE loop. If not, perform deconstruction.
+    if goto_var not in spec_part.tostr():
+        # Add boolean flag `goto_{label}` to scope.
+        utils.append_children(spec_part, f03.Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
+
+        # Find ancestor of GOTO at the same tree depth as `CONTINUE`
+        anc = goto
+        while anc.parent and (anc.parent is not target.parent):
+            anc = anc.parent
+        assert (anc.parent is target.parent)
+
+        target_pos = ast_utils.singular(iter([i for i, x in enumerate(target.parent.children) if x is target]))
+        anc_pos = ast_utils.singular(iter([i for i, x in enumerate(anc.parent.children) if x is anc]))
+        children_to_wrap = target.parent.children[target_pos+1:anc_pos+1]
+
+        # Wrap blocks between `CONTINUE` and `GOTO` in loop
+        do_while_constr_buffer = StringIO(f"DO WHILE ({goto_var})\n {goto_var} = .false.\n CALL x\nEND DO")
+        do_while_constr_reader = FortranReaderBase(do_while_constr_buffer, mode=FortranFormat(True, False), ignore_comments=True)
+        do_while_constr = f03.Block_Nonlabel_Do_Construct(do_while_constr_reader)
+        utils.remove_children(target.parent, children_to_wrap)
+        utils.replace_node(ast_utils.singular(nm for nm in walk(do_while_constr, f03.Call_Stmt)), children_to_wrap)
+        utils.replace_node(target, (target, do_while_constr))
+
+        # Set flag to .true. before loop.
+        utils.replace_node(target, (target, f03.Assignment_Stmt(f"{goto_var} = .true.")))
+
+    # Replace `GOTO` with assignement of flag to .true.
+    goto_replacement = f03.Assignment_Stmt(f"{goto_var} = .true.")
+    utils.replace_node(goto, goto_replacement)
+    goto = goto_replacement
+
+    # Transform ancestors of `GOTO`. We traverse up the AST, from `goto.parent` to `DO WHILE` wrapper.
+    child_w_goto = goto
+    par = child_w_goto.parent
+
+    for _n in range(len(utils.lineage(target.parent, goto))-2):
+        # determine position of `GOTO`/ancestor of `GOTO`
+        child_pos = ast_utils.singular(iter([i for i, x in enumerate(par.children) if x is child_w_goto]))
+
+        if isinstance(par, f03.Block_Nonlabel_Do_Construct) and (f"DO WHILE ({goto_var})" in par.content[0].tostr()):
+            # If parent is the `DO WHILE` wrapper we created, no action needed and deconstruction is complete.
+            break
+
+        elif isinstance(par, (f03.Block_Label_Do_Construct, f03.Block_Nonlabel_Do_Construct)):
+            # if EXIT has been previously added, break loop
+            if (len(par.children) > (child_pos + 1)) and isinstance(par.children[child_pos+1], f03.If_Stmt) and (f"IF ({goto_var}) EXIT" in par.children[child_pos+1].tostr()):
+                break
+
+            # otherwise, insert conditional EXIT after child with goto
+            utils.replace_node(child_w_goto, (child_w_goto, f03.If_Stmt(f"IF ( {goto_var} ) EXIT")))
+
+        else:
+            # For operations between (1) `GOTO` and end of parent block, (2) an ancestor of `GOTO` and `CONTINUE`, or (3) `GOTO` and `CONTINUE`,
+            # Wrap these operations in a new `IF` condition that executes if flag is not set (`.not. goto_{label}`). 
+            cond_str = f".not. {goto_var}"
+            add_condition_to_node_execution(cond_str, par.children[child_pos+1:])
+
+        child_w_goto = par
+        par = child_w_goto.parent
+
+    return ancestor_subroutine
+
+def add_condition_to_node_execution(cond: Union[str, UnaryOpBase, BinaryOpBase], nodes: Union[Base, List[Base]]):
+    """
+    Adds a condition to the execution of given nodes. Nodes are executed only if condition is evaluated
+    as `.true.`.
+
+    :param cond: The condition (logical expression) to add.
+    :param nodes: Node or list of nodes to add conditional execution.
+    """
+    if isinstance(cond, (UnaryOpBase, BinaryOpBase)):
+        cond = cond.tostr()
+    
+    if isinstance(nodes, Base):
+        nodes = [nodes]
+
+    for node in nodes:
+        if isinstance(node, (f03.Continue_Stmt, f03.EndStmtBase)):
+            # Continue statements are no-op, but they may have label attached, so we leave them be.
+            continue
+        elif isinstance(node, (f03.If_Stmt, f03.Else_If_Stmt)):
+            # We merge the condition with existing if.
+            own_cond = node.children[0]
+            if cond in own_cond.tostr():
+                continue
+            new_cond = f03.Expr(f"{cond} .and. {own_cond.tostr()}")
+            utils.replace_node(own_cond, new_cond)
+        elif isinstance(node, f03.Else_Stmt):
+            new_else = f03.Else_If_Stmt(f"else if ({cond}) then")
+            utils.replace_node(node, new_else)
+        elif isinstance(node, (f03.If_Construct, f03.Block_Label_Do_Construct, f03.Block_Nonlabel_Do_Construct, f03.Case_Construct)):
+            # Wrap block in `If_Construct`
+            if_constr_buffer = StringIO(f"IF ({cond}) THEN\n CALL x\nEND IF")
+            if_constr_reader = FortranReaderBase(if_constr_buffer, mode=FortranFormat(True, False), ignore_comments=True)
+            if_constr = f03.If_Construct(if_constr_reader)
+            utils.replace_node(node, if_constr)
+            utils.replace_node(ast_utils.singular(nm for nm in walk(if_constr, f03.Call_Stmt)), node)
+        else:
+            assert not isinstance(node, BlockBase), f"Encountered an unexpected BlockBase instance."
+            new_if = f03.If_Stmt(f"if ({cond}) call x")
+            utils.replace_node(node, new_if)
+            utils.replace_node(ast_utils.singular(nm for nm in walk(new_if, f03.Call_Stmt)), node)
