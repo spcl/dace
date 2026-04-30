@@ -2475,12 +2475,20 @@ struct FlattenStructsPass
             }
         }
         if (allMembersFlattenable(rec, outerIsArray)) return true;
-        // Nested-struct fallback: no outer array wrapper.  Walk the
-        // path-leaf set and check every leaf flat.
-        if (outerIsArray) return false;
+        // Nested-struct fallback.  ``collectFlatLeaves`` recurses
+        // through ``RecordType`` and ``array<N x RecordType>``
+        // members, building each leaf's flat companion shape.  When
+        // the outer declare is itself an array of a nested record
+        // (``type(t) :: s(3)`` with ``t`` nested), the same walker
+        // accepts: thread the outer extents in as the initial
+        // ``outerDims`` so every leaf's flat companion concatenates
+        // them as leading dims (matching what ``splitLocal`` does
+        // when it builds the alloca below).
         llvm::SmallVector<std::string, 4> prefix;
+        llvm::SmallVector<int64_t, 4> initialDims(outerShape.begin(),
+                                                   outerShape.end());
         llvm::SmallVector<FlatLeaf, 8> leaves;
-        return collectFlatLeaves(rec, prefix, leaves);
+        return collectFlatLeaves(rec, prefix, initialDims, leaves);
     }
 
     void splitLocal(hlfir::DeclareOp decl) {
@@ -2499,12 +2507,20 @@ struct FlattenStructsPass
         // one declare per leaf, indexed by the path-joined name
         // (``o_inner_x``).  The single-level path below stays the
         // hot path for non-nested structs.
+        //
+        // When the outer declare is itself an array of a nested
+        // record (``type(t) :: s(3)`` where ``t`` is nested), the
+        // outer extents thread into ``collectFlatLeaves`` as the
+        // initial ``outerDims`` so each leaf's flat companion
+        // concatenates them as leading dims (e.g. ``s(3)%w(5,5)``
+        // collapses to ``s_w`` of shape ``(3, 5, 5)``).
         bool nested = !allMembersFlattenable(rec, outerIsArray);
         if (nested) {
-            if (outerIsArray) return;  // array-of-nested unsupported
             llvm::SmallVector<std::string, 4> prefix;
+            llvm::SmallVector<int64_t, 4> initialDims(outerShape.begin(),
+                                                       outerShape.end());
             llvm::SmallVector<FlatLeaf, 8> leaves;
-            if (!collectFlatLeaves(rec, prefix, leaves)) return;
+            if (!collectFlatLeaves(rec, prefix, initialDims, leaves)) return;
 
             llvm::StringMap<mlir::Value> leafBase;
             for (auto &leaf : leaves) {

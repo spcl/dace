@@ -1349,6 +1349,47 @@ end subroutine main
     assert d[0][0] == 47.0
 
 
+def test_outer_array_of_nested_struct(tmp_path: Path):
+    """Phase 2 extension: outer-array of a NESTED struct
+    (``type(t) :: s(3)`` where ``t`` itself contains a struct
+    member).  The outer extent threads into the leaf's flat
+    companion shape: ``s(3)`` over ``simple_type{inner{w(5,5)}}``
+    collapses to ``s_inner_w`` of shape ``(3, 5, 5)``.
+    Exercises the nested-fallback path in ``isLocallyFlattenable``
+    + ``splitLocal`` with ``outerIsArray = true``.
+    """
+    src = """
+module lib
+  implicit none
+  type inner_t
+    real :: w(5, 5)
+  end type inner_t
+  type simple_t
+    type(inner_t) :: inner
+  end type simple_t
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  real, intent(out) :: d(2)
+  type(simple_t) :: s(3)
+  s(1)%inner%w(1, 1) = 11.0
+  s(3)%inner%w(2, 2) = 33.0
+  d(1) = s(1)%inner%w(1, 1)
+  d(2) = s(3)%inner%w(2, 2)
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "outer_array_nested_ref")
+    d_ref = np.asarray(mod.main(), dtype=np.float32)
+
+    sdfg = _build(src, tmp_path)
+    d = np.zeros(2, dtype=np.float32)
+    sdfg(d=d)
+    np.testing.assert_array_equal(d, d_ref)
+    np.testing.assert_array_equal(d, [11.0, 33.0])
+
+
 def test_aos_member_to_member_array_copy(tmp_path: Path):
     """AoS pattern ``a(i)%b = a(j)%c`` where ``b`` and ``c`` are array
     members — the assignment is a whole-array copy of one inner row.
