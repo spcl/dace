@@ -25,7 +25,8 @@
 //
 // The rewrite is the same for every shape: replace each access through
 // the pointer with a direct designate over the PARENT, merging the
-// chain's indices with the user's access:
+// chain's indices with the access (the Fortran source author's
+// ``p(i, j)``):
 //
 //   ``ptr => x``               ⇒  ``p(i, j)``     →  ``x(i, j)``
 //   ``ptr => x(2:5)``          ⇒  ``p(i)``        →  ``x(i + 1)``
@@ -42,9 +43,10 @@
 //   2. For every downstream access through ``fir.load %ptrDecl#0``
 //      (designate user OR box_addr user) build a fresh designate
 //      over the parent with merged indices: triplet positions
-//      consume one user index (rebased by ``lo - 1``); scalar
+//      consume one access index (rebased by ``lo - 1``); scalar
 //      positions take the chain's literal value verbatim; whole-
-//      array (no chain entry) passes user indices through untouched.
+//      array (no chain entry) passes the access indices through
+//      untouched.
 //   3. Erase the load, the rebind store, the alloca / init chain,
 //      and the pointer declare.
 //
@@ -84,7 +86,7 @@
 // section triplets, scalar element selection) flang lowered between
 // the rebind value and the parent.  After this pass, every access
 // through ``ptr`` lands on a direct ``hlfir.designate`` of the
-// parent with indices merged from the chain and the user's access:
+// parent with indices merged from the chain and the access:
 //
 //   ``ptr => x``               ⇒  ``p(i, j)``     →  ``x(i, j)``
 //   ``ptr => x(2:5)``          ⇒  ``p(i)``        →  ``x(i + 1)``
@@ -93,7 +95,15 @@
 //   ``ptr => s%a`` (after flatten) ⇒  ``p(i)``    →  ``s_a(i)``
 //   ``ptr => s%a(2:5)`` (after flatten) ⇒ ``p(i)`` →  ``s_a(i + 1)``
 //
-// All variants reduce to the same three-step rewrite:
+// All variants reduce to the same three-step rewrite.  Throughout
+// this pass, ``access_indices`` means "the indices supplied by the
+// Fortran source author's access through the pointer" — e.g.
+// ``p(i, j)`` produces ``access_indices = [i, j]``.  Spelt out
+// "access" rather than "user" because MLIR already has ``user`` as
+// the SSA-downstream consumer of a value (``Op->getUsers()``); the
+// two are unrelated and the bare term ``user`` would be
+// ambiguous in a pass-level comment.
+//
 //   1. Walk the rebind value through ``fir.embox`` / ``fir.rebox`` /
 //      ``fir.convert`` and ``hlfir.designate`` ops to find the
 //      parent declare and capture each designate's
@@ -102,10 +112,10 @@
 //      — ``hlfir.designate`` users (array pointers) AND
 //      ``fir.box_addr`` users (scalar pointers) — build a fresh
 //      designate over the parent with merged indices.  Triplet
-//      positions consume one user index (rebased by ``lo - 1``);
-//      scalar positions take the chain's literal value verbatim;
-//      whole-array (no chain entry) passes user indices through
-//      untouched.
+//      positions in the chain consume one access index (rebased
+//      by ``lo - 1``); scalar positions take the chain's literal
+//      value verbatim; whole-array (no chain entry) passes the
+//      access indices through untouched.
 //   3. Erase the load + chain (all dead after the rewrite),
 //      the rebind store, the alloca / init chain, and the
 //      pointer declare.
@@ -123,16 +133,20 @@
 //   /// if the chain doesn't end at a declare.
 //   static RebindChain traceRebindChain(mlir::Value rebindValue);
 //
-//   /// Compose user_indices with the chain's per-step indices into
-//   /// a flat index list over the parent's storage.  The result
+//   /// ``access_indices`` — the indices supplied by the Fortran
+//   /// source author's access through the pointer (e.g.
+//   /// ``p(i, j)`` → access_indices = [i, j]).  "Access"
+//   /// disambiguates from MLIR's SSA ``user`` (Op->getUsers()).
+//   /// Compose them with the chain's per-step indices into a
+//   /// flat index list over the parent's storage.  The result
 //   /// list has one entry per parent dim, ready to drop into a
 //   /// new ``hlfir.designate %parent (...)`` op.  Emits any rebase
-//   /// arithmetic (``user_idx + lo - 1``) at the supplied builder /
-//   /// loc.  Returns false if the merge can't be expressed (rare:
-//   /// section-of-section with overlapping triplet/user index
-//   /// counts that don't reconcile).
+//   /// arithmetic (``access_idx + lo - 1``) at the supplied
+//   /// builder / loc.  Returns false if the merge can't be
+//   /// expressed (rare: section-of-section with overlapping
+//   /// triplet / access-index counts that don't reconcile).
 //   static bool mergeIndices(const RebindChain &c,
-//                            mlir::ValueRange user_indices,
+//                            mlir::ValueRange access_indices,
 //                            mlir::OpBuilder &b, mlir::Location loc,
 //                            SmallVectorImpl<mlir::Value> &out);
 //
@@ -185,9 +199,10 @@
 //                                                   plain fir.shape)
 //   * ``embox(designate(d, scalar_idx))``         — chain = [dg]
 //                                                   (element rebind:
-//                                                   user idxs empty,
-//                                                   chain provides
-//                                                   all indices)
+//                                                   access_indices
+//                                                   empty, chain
+//                                                   provides all
+//                                                   indices)
 //   * ``embox(zero_bits)``                        — initial nullify;
 //                                                   skipped (no
 //                                                   rebind store).
@@ -221,6 +236,7 @@
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
@@ -230,58 +246,177 @@ namespace hlfir_bridge {
 
 namespace {
 
-/// Trace ``v`` back to the ``hlfir.declare`` op it ultimately references,
-/// walking through the embox / convert / designate / load chain Flang
-/// inserts around a TARGET'd entity.  Returns null on an unrecognised
-/// chain.
-static hlfir::DeclareOp traceTarget(mlir::Value v) {
+/// One step of an ``hlfir.designate`` chain captured during a
+/// rebind-value trace.  Records the indices and per-dim triplet
+/// flags exactly as flang lowered them, so ``mergeIndices`` can
+/// recombine them with the access (the Fortran source author's
+/// ``p(i, j)``) without re-walking the IR.
+struct ChainStep {
+    /// The original designate op — kept for source-loc / verifier
+    /// hints; not strictly required for the merge.
+    hlfir::DesignateOp dg;
+    /// Indices in HLFIR designate operand order: each triplet dim
+    /// contributes 3 entries (lo, hi, step); each scalar dim
+    /// contributes 1.  ``triplets[d]`` says which case ``d`` is.
+    llvm::SmallVector<mlir::Value, 6> indices;
+    llvm::SmallVector<bool, 4> triplets;
+};
+
+/// Output of ``traceRebindChain``: the parent declare and the chain
+/// of designate steps that produced the rebind value.  ``parent``
+/// is null when the trace doesn't terminate at an ``hlfir.declare``
+/// (rare; the rewriter bails for those cases).
+///
+/// Chain order is walks-back: ``chain[0]`` is the OUTERMOST
+/// designate (closest to the rebind value), ``chain.back()`` is
+/// the INNERMOST (closest to the parent).  Since hlfir.designate
+/// composes inside-out (``designate(designate(parent, A), B)``
+/// applies B to the result of A), the OUTERMOST step is the one
+/// the access (the Fortran source author's ``p(i, j)``) binds
+/// against — its triplet positions consume access indices first.
+/// ``mergeIndices`` walks the chain in outer-first order to apply
+/// access indices at the right level.
+struct RebindChain {
+    hlfir::DeclareOp parent;
+    llvm::SmallVector<ChainStep, 2> chain;
+};
+
+/// Trace a rebind value back through ``fir.embox``/``fir.rebox``/
+/// ``fir.convert``/``hlfir.designate`` ops to the originating
+/// ``hlfir.declare``.  Each designate encountered is captured into
+/// the chain so ``mergeIndices`` can compose them with the
+/// access indices (see the term explanation on
+/// ``mergeIndices``).  Returns ``parent == nullptr`` when the
+/// chain hits something the rewriter doesn't model (e.g. an
+/// ``hlfir.declare`` with no parent storage, or an unsupported
+/// op shape).
+static RebindChain traceRebindChain(mlir::Value v) {
+    RebindChain out;
     for (int i = 0; i < 16 && v; ++i) {
         auto *def = v.getDefiningOp();
-        if (!def) return {};
-        if (auto e = mlir::dyn_cast<fir::EmboxOp>(def))     { v = e.getMemref(); continue; }
-        if (auto c = mlir::dyn_cast<fir::ConvertOp>(def))   { v = c.getValue(); continue; }
-        if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(def)) return d;
-        // Designate-of-target (``s%a`` where ``s`` is TARGET): the
-        // designate's memref leads back to the struct's declare; we
-        // would need component-aware rewriting for that case.  Return
-        // null so the pass leaves the rebind alone.  ``flatten-structs``
-        // will turn ``s%a`` into a direct flat declare, after which a
-        // future iteration of this pass could pick it up.
-        if (mlir::isa<hlfir::DesignateOp>(def)) return {};
-        return {};
+        if (!def) return out;
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def))   { v = rb.getBox(); continue; }
+        if (auto eb = mlir::dyn_cast<fir::EmboxOp>(def))   { v = eb.getMemref(); continue; }
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { v = cv.getValue(); continue; }
+        if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(def)) {
+            ChainStep step;
+            step.dg = dg;
+            step.indices.assign(dg.getIndices().begin(), dg.getIndices().end());
+            for (bool t : dg.getIsTriplet()) step.triplets.push_back(t);
+            out.chain.push_back(std::move(step));
+            v = dg.getMemref();
+            continue;
+        }
+        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(def)) {
+            out.parent = dc;
+            return out;
+        }
+        // Unsupported op in the chain — return with parent=null so
+        // the caller bails.
+        return out;
     }
-    return {};
+    return out;
 }
 
-/// Recognise a SLICE-target rebind: the stored value walks back
-/// through ``fir.rebox`` / ``fir.convert`` to a section-form
-/// ``hlfir.designate`` of some parent declare.  Returns the
-/// designate on match, null otherwise.  The slice variant is what
-/// ``w => src(1:n)`` lowers to: a section view box that gets
-/// reboxed to ``box<ptr<...>>`` before being stored to the pointer
-/// declare's box-ref slot.  Distinct from ``traceTarget`` (which
-/// only handles plain ``embox(declare)``) because the slice's bounds
-/// must be preserved — collapsing to ``parent_decl#0`` would lose
-/// them.
-static hlfir::DesignateOp traceSliceTarget(mlir::Value v) {
-    for (int i = 0; i < 16 && v; ++i) {
-        auto *def = v.getDefiningOp();
-        if (!def) return {};
-        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def))    { v = rb.getBox(); continue; }
-        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))  { v = cv.getValue(); continue; }
-        if (auto e = mlir::dyn_cast<fir::EmboxOp>(def))     { v = e.getMemref(); continue; }
-        if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(def)) {
-            // Must be a triplet section (some-dim has triplet=true).
-            // Element-form designate on the rebind path would mean
-            // something else (taking address of a single element);
-            // reject it here.
-            for (bool t : dg.getIsTriplet()) if (t) return dg;
-            return {};
-        }
-        return {};
+/// Compose ``access_indices`` with the chain's per-step indices
+/// into a flat index list over the parent's storage, suitable for
+/// ``hlfir.designate %parent (...result...)``.
+///
+/// ``access_indices`` — the indices supplied by the Fortran source
+/// author's access through the pointer (e.g. ``p(i, j)`` →
+/// ``access_indices = [i, j]``).  Spelt "access" rather than "user"
+/// because MLIR already uses ``user`` for the SSA-downstream
+/// consumer of a value (``Op->getUsers()``); the two are unrelated.
+///
+/// Algorithm: walk the chain INNER-first (the chain itself is
+/// stored in walks-back / outer-first order, so we iterate
+/// ``rbegin..rend``).  At each step:
+///   * triplet positions consume one access index (with rebase);
+///   * scalar  positions take the chain's literal value verbatim.
+/// The output of one step becomes the access-index list for the
+/// next-outer step.  After the outermost step's merge, the
+/// resulting list has one entry per parent dim and is ready to
+/// drop into ``hlfir.designate %parent (...)``.
+///
+/// In practice the bridge rarely sees chains of length > 1 because
+/// ``hlfir-flatten-structs`` has already collapsed component
+/// chains; the recursion is for completeness (section-of-section).
+///
+/// Empty chain → ``access_indices`` pass through unchanged (the
+/// whole-rebind case ``ptr => x``; ``p(i, j)`` ↦ ``x(i, j)``).
+///
+/// Returns ``true`` when the merge is well-defined.  ``false`` when
+/// triplet / access-index counts don't reconcile (rare; the
+/// rewriter leaves the access alone in that case).
+///
+/// Index rebase: a triplet ``(lo, hi, step)`` with ``lo == 1``
+/// passes the access index through unchanged.  Otherwise emits
+/// ``access_idx + (lo - 1)`` as plain ``arith.addi`` over
+/// ``index``.  The ``step`` and ``hi`` are not used in element
+/// rebasing (they only shape extents, which DaCe gets from the
+/// parent declare's own shape).
+static bool mergeIndices(const RebindChain &c,
+                         mlir::ValueRange access_indices,
+                         mlir::OpBuilder &b, mlir::Location loc,
+                         llvm::SmallVectorImpl<mlir::Value> &out) {
+    if (c.chain.empty()) {
+        for (auto v : access_indices) out.push_back(v);
+        return true;
     }
-    return {};
+    auto idxTy = b.getIndexType();
+    auto toIndex = [&](mlir::Value v) {
+        if (v.getType() == idxTy) return v;
+        return b.create<fir::ConvertOp>(loc, idxTy, v).getResult();
+    };
+    auto rebase = [&](mlir::Value access_idx, mlir::Value lo) -> mlir::Value {
+        // Constant-fold ``lo == 1`` to keep the IR clean.
+        if (auto loCst = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
+                lo.getDefiningOp())) {
+            if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(loCst.getValue())) {
+                if (a.getInt() == 1) return toIndex(access_idx);
+            }
+        }
+        mlir::Value aIdx  = toIndex(access_idx);
+        mlir::Value loIdx = toIndex(lo);
+        auto c1 = b.create<mlir::arith::ConstantOp>(loc, idxTy, b.getIndexAttr(1));
+        auto adj = b.create<mlir::arith::SubIOp>(loc, loIdx, c1.getResult());
+        return b.create<mlir::arith::AddIOp>(loc, aIdx, adj.getResult())
+            .getResult();
+    };
+
+    // Apply each chain step in INNER-first order.  Walk
+    // ``chain.back()`` (innermost) first; result becomes the input
+    // for the next-outer step (towards chain[0]).  Final result is
+    // the index list against the parent's storage.
+    llvm::SmallVector<mlir::Value, 6> cur(access_indices.begin(),
+                                          access_indices.end());
+    for (auto it = c.chain.rbegin(); it != c.chain.rend(); ++it) {
+        const ChainStep &s = *it;
+        llvm::SmallVector<mlir::Value, 6> next;
+        unsigned cursor = 0;          // walks s.indices
+        unsigned accessCursor = 0;    // walks cur (the access-index list)
+        for (unsigned d = 0; d < s.triplets.size(); ++d) {
+            if (s.triplets[d]) {
+                if (cursor + 2 >= s.indices.size() ||
+                    accessCursor >= cur.size()) {
+                    return false;
+                }
+                next.push_back(rebase(cur[accessCursor], s.indices[cursor]));
+                cursor += 3;          // lo, hi, step
+                ++accessCursor;
+            } else {
+                if (cursor >= s.indices.size()) return false;
+                next.push_back(toIndex(s.indices[cursor]));
+                cursor += 1;
+            }
+        }
+        if (accessCursor != cur.size()) return false;
+        cur = std::move(next);
+    }
+    out.append(cur.begin(), cur.end());
+    return true;
 }
+
 
 struct RewritePointerAssignsPass
     : public mlir::PassWrapper<RewritePointerAssignsPass,
@@ -369,9 +504,6 @@ struct RewritePointerAssignsPass
                 loads.push_back(ld);
         }
         fir::StoreOp rebindStore;
-        hlfir::DeclareOp targetDecl;     // plain-target path
-        mlir::Value sliceRebindValue;    // slice-target path: store.getValue()
-        hlfir::DesignateOp sliceDgKeep;  // slice-target path: section designate
         for (auto *u : ptrDecl.getResult(0).getUsers()) {
             auto st = mlir::dyn_cast<fir::StoreOp>(u);
             if (!st) continue;
@@ -417,106 +549,65 @@ struct RewritePointerAssignsPass
             }
         }
 
-        // Walk the LAST non-nullify store as the effective rebind.
-        // Earlier stores are dead-store rebinds (no observable
-        // reads between them); the existing alloca-store cleanup at
-        // the end of this function will erase them.
-        for (auto st : llvm::reverse(nonNullifyStores)) {
-            if (rebindStore) continue;  // already chosen
-            auto *valDef = st.getValue().getDefiningOp();
+        // Pick the LAST non-nullify store as the effective rebind.
+        // Earlier stores are dead-store rebinds (no observable reads
+        // between them); the alloca-store cleanup at the end of this
+        // function will erase them.
+        if (!nonNullifyStores.empty())
+            rebindStore = nonNullifyStores.back();
+        if (!rebindStore) return;
 
-            // Element-form designate target: ``ptr => arr(i)`` (scalar
-            // pointer rebound to a single element).  Detected as
-            // ``embox`` of a designate whose isTriplet is all-false.
-            if (auto embox = mlir::dyn_cast_or_null<fir::EmboxOp>(valDef)) {
-                if (auto dg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
-                        embox.getMemref().getDefiningOp())) {
-                    bool anyTrip = false;
-                    for (bool t : dg.getIsTriplet()) if (t) { anyTrip = true; break; }
-                    if (!anyTrip && !dg.getIndices().empty()) {
-                        st.emitError(
-                            "hlfir-rewrite-pointer-assigns: element-form "
-                            "designate target (``ptr => arr(i)`` for a "
-                            "scalar pointer) not yet supported.  Refactor to "
-                            "rebind a section (``ptr => arr(i:i)``) or use a "
-                            "scalar variable.");
+        // Preflight bail-loud guards on the rebind value's chain.
+        // Each guard is independent of the chain trace below so
+        // unsupported shapes surface a clean error rather than a
+        // miscompile.
+        //   * BOUNDS REMAP — ``fir.rebox`` with ``fir.shift`` /
+        //     ``fir.shape_shift`` operand encodes a remapped lower
+        //     bound (``ptr(0:..) => src``).  Forwarding silently
+        //     shifts every access by ``remap_lo - 1``.
+        //   * REBOX SLICE OPERAND — defensive; flang doesn't emit
+        //     this for pointer rebinds today, but it would mean an
+        //     extra stride/section overlay we don't model.
+        for (mlir::Value v = rebindStore.getValue(); v;) {
+            auto *def = v.getDefiningOp();
+            if (!def) break;
+            if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def)) {
+                if (mlir::Value shape = rb.getShape()) {
+                    auto *shapeDef = shape.getDefiningOp();
+                    if (mlir::isa_and_nonnull<fir::ShiftOp>(shapeDef) ||
+                        mlir::isa_and_nonnull<fir::ShapeShiftOp>(shapeDef)) {
+                        rebindStore.emitError(
+                            "hlfir-rewrite-pointer-assigns: pointer "
+                            "rebind with bounds remap (``ptr(<lo>:..) "
+                            "=> src(..)``) not supported — flang "
+                            "encodes the remapped lower bound on the "
+                            "rebox's shift operand and forwarding the "
+                            "rebound box would silently shift every "
+                            "read by ``remap_lo - 1``.");
                         signalPassFailure();
                         return;
                     }
                 }
-            }
-
-            // Plain-target path.
-            if (auto embox = mlir::dyn_cast_or_null<fir::EmboxOp>(valDef)) {
-                if (auto target = traceTarget(embox.getMemref())) {
-                    rebindStore = st;
-                    targetDecl  = target;
-                    continue;
+                if (rb.getSlice()) {
+                    rebindStore.emitError(
+                        "hlfir-rewrite-pointer-assigns: pointer "
+                        "rebind with rebox slice operand not "
+                        "supported.");
+                    signalPassFailure();
+                    return;
                 }
+                v = rb.getBox(); continue;
             }
-            // Slice-target path.
-            if (auto sliceDg = traceSliceTarget(st.getValue())) {
-                // Bounds remap detection: a ``fir.rebox`` with a
-                // ``fir.shift`` operand re-bases the lower bound.
-                // Walk the chain: if any rebox in the rebind value's
-                // definition path carries a non-empty ``shift``
-                // operand, abort.
-                mlir::Value v = st.getValue();
-                for (int i = 0; i < 16 && v; ++i) {
-                    auto *def = v.getDefiningOp();
-                    if (!def) break;
-                    if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def)) {
-                        // Bounds remap: flang encodes the remapped
-                        // lower bound on the rebox's ``shape`` operand
-                        // when it's a ``fir.shift`` or
-                        // ``fir.shape_shift`` (both carry per-dim lo
-                        // values).  A plain ``fir.shape`` (extents
-                        // only) is bounds-preserving and safe.  A
-                        // ``slice`` operand on the rebox would also
-                        // be a remap but flang doesn't generate that
-                        // form for pointer rebinds.
-                        if (mlir::Value shape = rb.getShape()) {
-                            auto *shapeDef = shape.getDefiningOp();
-                            if (mlir::isa_and_nonnull<fir::ShiftOp>(shapeDef) ||
-                                mlir::isa_and_nonnull<fir::ShapeShiftOp>(shapeDef)) {
-                                st.emitError(
-                                    "hlfir-rewrite-pointer-assigns: pointer "
-                                    "rebind with bounds remap (``ptr(<lo>:..) "
-                                    "=> src(..)``) not supported — flang "
-                                    "encodes the remapped lower bound on the "
-                                    "rebox's shift operand and forwarding the "
-                                    "rebound box would silently shift every "
-                                    "read by ``remap_lo - 1``.");
-                                signalPassFailure();
-                                return;
-                            }
-                        }
-                        if (rb.getSlice()) {
-                            st.emitError(
-                                "hlfir-rewrite-pointer-assigns: pointer "
-                                "rebind with rebox slice operand not "
-                                "supported.");
-                            signalPassFailure();
-                            return;
-                        }
-                        v = rb.getBox();
-                        continue;
-                    }
-                    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { v = cv.getValue(); continue; }
-                    break;
-                }
-                rebindStore = st;
-                sliceRebindValue = st.getValue();
-                sliceDgKeep = sliceDg;
-                continue;
-            }
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { v = cv.getValue(); continue; }
+            break;
         }
-        if (!rebindStore) return;
-        if (!targetDecl && !sliceRebindValue) return;
-        // (Multi-rebind detection: handled above by the
-        // interleaved-rebind check.  Sequential dead-store rebinds
-        // are fine — we use the LAST one as the effective rebind
-        // and the earlier stores get cleaned up with the alloca.)
+
+        // Trace the rebind value to (parent, chain).  Bail out if the
+        // chain doesn't terminate at an ``hlfir.declare`` — leave the
+        // pointer declare alive; downstream extract_vars treats it as
+        // a scalar passthrough.
+        RebindChain chain = traceRebindChain(rebindStore.getValue());
+        if (!chain.parent) return;
 
         // Inlined-callee alias collapse: any other pointer declare in
         // the function whose memref traces back to ``ptrDecl`` (via
@@ -553,248 +644,153 @@ struct RewritePointerAssignsPass
             });
         }
 
-        if (targetDecl) {
-            ptrDecl.emitWarning()
-                << "hlfir-rewrite-pointer-assigns: collapsing pointer "
-                << "rebind under the strict-no-aliasing assumption "
-                << "(target: " << targetDecl.getUniqName().str() << ").  "
-                << "Fortran allows aliased pointer access; if your program "
-                << "relies on alias semantics this rewrite is unsafe.";
-        } else {
-            ptrDecl.emitWarning()
-                << "hlfir-rewrite-pointer-assigns: forwarding pointer "
-                << "rebind ``" << ptrDecl.getUniqName().str()
-                << " => <section>`` under the strict-no-aliasing "
-                << "assumption.  Section indexing on the pointer is "
-                << "rewritten to read directly through the rebound "
-                << "box; if your program relies on alias semantics "
-                << "this rewrite is unsafe.";
-        }
+        ptrDecl.emitWarning()
+            << "hlfir-rewrite-pointer-assigns: collapsing pointer "
+            << "rebind ``" << ptrDecl.getUniqName().str()
+            << " => " << chain.parent.getUniqName().str()
+            << "(...chain...)`` under the strict-no-aliasing "
+            << "assumption.  Every access through the pointer is "
+            << "rewritten to a direct designate of the parent's "
+            << "storage; if your program relies on alias semantics "
+            << "this rewrite is unsafe.";
 
-        // Unified rewrite: forward every ``fir.load %ptrDecl#0`` to
-        // the rebind value (the box stored at the rebind site).  Both
-        // plain-target (``embox(declare)``) and slice-target
-        // (``rebox(designate(parent, slice))``) end up with the same
-        // shape — a box whose data pointer + shape describe the
-        // target's storage — so loads and downstream
-        // ``hlfir.designate`` ops can pull straight through to the
-        // rebound value, skipping the alloca round-trip.
+        // Unified rewrite: for every ``fir.load %ptrDecl#0`` (and
+        // every load through an aliased pointer declare — the
+        // inlined-callee shape), walk its users and rewrite each:
         //
-        // Plain-target legacy fast path: when the consumer of the
-        // load is ``fir.box_addr`` (the simple scalar / whole-array
-        // case before the bridge generalised to designate-over-box),
-        // collapse to the target's raw ref directly — that's how the
-        // pre-Phase-5b code worked, and downstream consumers may
-        // still depend on the resulting ``ref<T>`` type rather than a
-        // ``box<...>``.
+        //   * ``hlfir.designate %loaded (access_indices)``
+        //     → ``hlfir.designate %parent (mergeIndices(chain,
+        //                                               access_indices))``
+        //   * ``fir.box_addr %loaded``
+        //     → ``%parent.getResult(0)`` if chain is empty (whole
+        //                                rebind), else a direct
+        //                                designate over parent
+        //                                using the chain's indices
+        //                                with no access-index
+        //                                contribution (element
+        //                                rebind / scalar view).
+        //                                Any type mismatch with
+        //                                the box_addr's result
+        //                                is bridged with a
+        //                                ``fir.convert``.
         //
-        // SSA dominance: the load sites use the loaded box AFTER the
-        // store, so substituting the store's input value (which
-        // dominates the store) is dominance-correct for any load that
-        // comes after the store.  Loads BEFORE the rebind would be
-        // reads of an unbound pointer — undefined behaviour we don't
-        // handle.
+        // SSA dominance: load sites use the loaded box AFTER the
+        // store, so substituting the store's input value is
+        // dominance-correct for any load that comes after the
+        // store.  Loads BEFORE the rebind would be reads of an
+        // unbound pointer — undefined behaviour we don't model.
         llvm::SmallVector<mlir::Operation *, 8> deadReaders;
-        mlir::Value rebindValue = rebindStore.getValue();
-        if (targetDecl) {
-            // Try the legacy box_addr fast path first.
-            mlir::Value targetRef = targetDecl.getResult(0);
-            for (auto *u : ptrDecl.getResult(0).getUsers()) {
-                auto ld = mlir::dyn_cast<fir::LoadOp>(u);
-                if (!ld) continue;
-                bool consumedByBoxAddr = false;
-                for (auto *uu : ld.getResult().getUsers()) {
-                    auto ba = mlir::dyn_cast<fir::BoxAddrOp>(uu);
-                    if (!ba) continue;
-                    consumedByBoxAddr = true;
-                    mlir::Value replacement = targetRef;
-                    if (replacement.getType() != ba.getResult().getType()) {
-                        mlir::OpBuilder b(ba);
-                        replacement = b.create<fir::ConvertOp>(
-                            ba.getLoc(), ba.getResult().getType(), targetRef);
-                    }
-                    ba.getResult().replaceAllUsesWith(replacement);
-                    deadReaders.push_back(ba);
-                }
-                // If any user was NOT box_addr (e.g. hlfir.designate),
-                // forward the load to the rebind value so it picks up
-                // a proper box.  Type matches: load returns the same
-                // ``box<ptr<...>>`` type the rebind store deposits.
-                if (!ld->use_empty() && ld->isBeforeInBlock(rebindStore) == false) {
-                    ld.getResult().replaceAllUsesWith(rebindValue);
-                }
-                if (consumedByBoxAddr || ld->use_empty())
-                    deadReaders.push_back(ld);
-            }
-        } else {
-            // Pure slice-target: rewrite every downstream
-            // ``hlfir.designate %loaded (%user_idxs)`` to a fresh
-            // designate over the slice's PARENT declare with indices
-            // merged from the slice + the user's access.  Walks each
-            // dim of the parent and either:
-            //   * triplet dim → consume one user index, rebase by
-            //     the slice's ``lo - 1``;
-            //   * scalar  dim → use the slice's constant index
-            //     verbatim.
-            // This covers 1D / 2D / mixed-triplet / write-through
-            // uniformly: after the rewrite, ``p(i)`` becomes
-            // ``parent(i + lo - 1, scalar_idx, …)`` with the right
-            // rank for the parent's storage, so reads AND writes
-            // through the pointer land directly on the parent's
-            // memlet.  The intermediate load + box becomes dead.
-            auto sliceDg = sliceDgKeep;
-            mlir::Value parentMemref = sliceDg ? sliceDg.getMemref() : mlir::Value{};
-            auto sliceIdxs = sliceDg ? sliceDg.getIndices() : mlir::ValueRange{};
-            auto sliceTriplets = sliceDg ? sliceDg.getIsTriplet()
-                                         : llvm::ArrayRef<bool>{};
-            // Snapshot the load list — we mutate the IR below
-            // (creating new designates), and ptrDecl#0's user list
-            // shouldn't change during the loop, but snapshotting
-            // keeps iteration robust if it ever does.
-            llvm::SmallVector<fir::LoadOp, 4> snapshotLoads;
-            for (auto *u : ptrDecl.getResult(0).getUsers())
-                if (auto ld = mlir::dyn_cast<fir::LoadOp>(u))
-                    snapshotLoads.push_back(ld);
-            for (auto ld : snapshotLoads) {
-                // Skip loads that happen BEFORE the rebind in the
-                // same block (those would be reads of an unbound
-                // pointer — undefined behaviour we don't model).
-                // For loads in nested blocks (typical: inside a
-                // do_loop body) MLIR's ``isBeforeInBlock`` says
-                // "different blocks" → returns false; treat them
-                // as "after the rebind" for rewrite purposes.
-                if (ld->getBlock() == rebindStore->getBlock() &&
-                    ld->isBeforeInBlock(rebindStore))
-                    continue;
-                // Rewrite each designate user of the load.
-                llvm::SmallVector<hlfir::DesignateOp, 4> userDgs;
-                for (auto *uu : ld.getResult().getUsers())
-                    if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(uu))
-                        userDgs.push_back(dg);
-                for (auto userDg : userDgs) {
-                    auto userIdxs = userDg.getIndices();
-                    auto userTriplets = userDg.getIsTriplet();
-                    // Merge: walk parent dims, consume user indices
-                    // for triplet positions, use slice's scalar
-                    // value for non-triplet positions.  Apply the
-                    // ``lo - 1`` rebase on triplet positions.
+
+        // Helper closure: rewrites all users of one load.
+        auto rewriteLoadUsers = [&](fir::LoadOp ld) {
+            // Skip loads that happen BEFORE the rebind in the same
+            // block (reads of an unbound pointer).  Loads in nested
+            // blocks (typical: inside a do_loop body) report as
+            // "different blocks" — treat them as "after" since they
+            // can only execute after the enclosing block reaches
+            // the loop.
+            if (ld->getBlock() == rebindStore->getBlock() &&
+                ld->isBeforeInBlock(rebindStore))
+                return;
+            // Snapshot users — we rewrite in place and the user
+            // list mutates as we go.
+            llvm::SmallVector<mlir::Operation *, 4> userOps;
+            for (auto *uu : ld.getResult().getUsers()) userOps.push_back(uu);
+            for (auto *uu : userOps) {
+                if (auto userDg = mlir::dyn_cast<hlfir::DesignateOp>(uu)) {
                     mlir::OpBuilder b(userDg);
                     auto loc = userDg.getLoc();
-                    auto idxTy = b.getIndexType();
-                    auto toIndex = [&](mlir::Value v) {
-                        if (v.getType() == idxTy) return v;
-                        return b.create<fir::ConvertOp>(loc, idxTy, v).getResult();
-                    };
-                    llvm::SmallVector<mlir::Value, 6> mergedIdxs;
-                    llvm::SmallVector<bool, 4> mergedTrips;
-                    unsigned cursor = 0;       // walk into sliceIdxs
-                    unsigned userCursor = 0;   // walk into userIdxs
-                    bool ok = true;
-                    for (unsigned dim = 0;
-                         dim < sliceTriplets.size() && ok; ++dim) {
-                        if (sliceTriplets[dim]) {
-                            // Triplet dim of the slice: pull next
-                            // user index, rebase by ``lo - 1``.
-                            if (cursor + 2 >= sliceIdxs.size() ||
-                                userCursor >= userIdxs.size()) {
-                                ok = false;
-                                break;
-                            }
-                            mlir::Value lo = sliceIdxs[cursor];
-                            mlir::Value u = userIdxs[userCursor];
-                            // ``user_idx + (lo - 1)``.  A constant
-                            // ``lo == 1`` is the common case (full-
-                            // range or 1-based section); skip the
-                            // arithmetic to keep IR clean.
-                            mlir::Value uIdx = toIndex(u);
-                            std::optional<int64_t> loConst;
-                            if (auto loCst = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
-                                    lo.getDefiningOp()))
-                                if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(loCst.getValue()))
-                                    loConst = a.getInt();
-                            if (loConst && *loConst == 1) {
-                                mergedIdxs.push_back(uIdx);
-                            } else {
-                                mlir::Value loIdx = toIndex(lo);
-                                auto c1 = b.create<mlir::arith::ConstantOp>(
-                                    loc, idxTy, b.getIndexAttr(1));
-                                auto adj = b.create<mlir::arith::SubIOp>(
-                                    loc, loIdx, c1.getResult());
-                                auto sum = b.create<mlir::arith::AddIOp>(
-                                    loc, uIdx, adj.getResult());
-                                mergedIdxs.push_back(sum.getResult());
-                            }
-                            mergedTrips.push_back(false);
-                            cursor += 3;       // lo, hi, step
-                            ++userCursor;
-                        } else {
-                            // Scalar dim of the slice: use the
-                            // slice's constant index directly.
-                            if (cursor >= sliceIdxs.size()) {
-                                ok = false;
-                                break;
-                            }
-                            mergedIdxs.push_back(toIndex(sliceIdxs[cursor]));
-                            mergedTrips.push_back(false);
-                            cursor += 1;
-                        }
-                    }
-                    // Any extra user indices beyond the slice's
-                    // triplet dims (e.g. the user designating a
-                    // multi-element region of the slice) need extra
-                    // handling — bail out for now and keep the
-                    // load alive so the bail-loud guard at the end
-                    // of this function fires cleanly.
-                    if (!ok || userCursor != userIdxs.size()) continue;
-                    // Build the new designate.  Result type matches
-                    // the original userDg's result type — it's the
-                    // element / section ref into the parent.
+                    llvm::SmallVector<mlir::Value, 6> merged;
+                    if (!mergeIndices(chain, userDg.getIndices(), b, loc, merged))
+                        continue;  // leave userDg alive; bail-loud
+                                   // path or downstream surfaces
+                                   // the unsupported shape
                     auto newDg = b.create<hlfir::DesignateOp>(
                         loc,
                         /*result_type=*/userDg.getResult().getType(),
-                        /*memref=*/parentMemref,
-                        /*indices=*/mlir::ValueRange{mergedIdxs});
-                    (void)userTriplets;
-                    (void)mergedTrips;
+                        /*memref=*/chain.parent.getResult(0),
+                        /*indices=*/mlir::ValueRange{merged});
                     userDg.getResult().replaceAllUsesWith(newDg.getResult());
                     deadReaders.push_back(userDg);
+                    continue;
                 }
-                // Always queue ``ld`` for erase; the use_empty check
-                // at sweep time fires once the user designates above
-                // are erased.  Without this, ``ld`` is checked here
-                // while the userDg still references it, so it never
-                // gets pushed and survives downstream — leaving the
-                // pointer declare with a live user and aborting the
-                // erase chain at the end of this function.
-                deadReaders.push_back(ld);
+                if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(uu)) {
+                    mlir::OpBuilder b(ba);
+                    auto loc = ba.getLoc();
+                    mlir::Value replacement;
+                    if (chain.chain.empty()) {
+                        // Whole rebind — box_addr resolves directly
+                        // to the parent's ref.
+                        replacement = chain.parent.getResult(0);
+                    } else {
+                        // Chained rebind — build a designate over
+                        // the parent using the chain's own indices
+                        // with no access-index contribution.  This
+                        // is the element-rebind shape
+                        // (``ptr => arr(i)``) and the rare
+                        // scalar-view-of-section.
+                        llvm::SmallVector<mlir::Value, 6> merged;
+                        if (!mergeIndices(chain, /*access_indices=*/{},
+                                          b, loc, merged))
+                            continue;
+                        // Result type follows the original box_addr's
+                        // result; designate yields a ref into the
+                        // parent's storage at the chain's position.
+                        replacement = b.create<hlfir::DesignateOp>(
+                            loc, ba.getResult().getType(),
+                            chain.parent.getResult(0),
+                            mlir::ValueRange{merged}).getResult();
+                    }
+                    if (replacement.getType() != ba.getResult().getType()) {
+                        replacement = b.create<fir::ConvertOp>(
+                            loc, ba.getResult().getType(), replacement);
+                    }
+                    ba.getResult().replaceAllUsesWith(replacement);
+                    deadReaders.push_back(ba);
+                    continue;
+                }
+                // Other user shapes (rare) — leave alone.  The
+                // surviving load + ptr declare keep them
+                // resolvable downstream as a scalar passthrough.
             }
+            // Always queue the load — use_empty is checked at
+            // sweep time.  Without this, the load is checked here
+            // while user ops still reference it and is never
+            // pushed for erase, leaving the pointer declare with a
+            // live user.
+            deadReaders.push_back(ld);
+        };
+
+        // Snapshot loads of the primary pointer declare.
+        llvm::SmallVector<fir::LoadOp, 4> snapshotLoads;
+        for (auto *u : ptrDecl.getResult(0).getUsers())
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(u))
+                snapshotLoads.push_back(ld);
+        for (auto ld : snapshotLoads) rewriteLoadUsers(ld);
+
+        // Same walk for each aliased pointer declare — every load
+        // returns the same box value we just rewrote, so rewriting
+        // its users via the same chain lands them on the rebound
+        // parent too.
+        llvm::SmallVector<hlfir::DeclareOp, 4> aliasesToErase;
+        for (auto alias : aliasDecls) {
+            llvm::SmallVector<fir::LoadOp, 4> aliasLoads;
+            for (auto *u : alias.getResult(0).getUsers())
+                if (auto ld = mlir::dyn_cast<fir::LoadOp>(u))
+                    aliasLoads.push_back(ld);
+            for (auto ld : aliasLoads) rewriteLoadUsers(ld);
+            aliasesToErase.push_back(alias);
         }
-        // Erase user designates first (they hold the only uses on
-        // the load), then the loads themselves, in iteration order.
+
+        // Erase user ops first (they hold the only uses on each
+        // load), then the loads themselves, in iteration order.
         // ``op->use_empty()`` at the moment of erase decides whether
         // each is safe to drop.
         for (auto *op : deadReaders)
             if (op->use_empty()) op->erase();
 
-        // Apply the same forwarding to every aliased pointer declare:
-        // each load of the alias's box-ref returns the same box value
-        // we just collapsed; replacing it lets the alias's
-        // ``hlfir.designate`` users land on the rebound parent too.
-        // Aliases of a slice rebind aren't currently handled — those
-        // would need the same designate-rewrite walk applied per
-        // alias declare.  For the plain-target path we keep the
-        // existing simple substitution.
-        if (targetDecl) for (auto alias : aliasDecls) {
-            llvm::SmallVector<mlir::Operation *, 4> aliasDead;
-            for (auto *u : alias.getResult(0).getUsers()) {
-                auto ld = mlir::dyn_cast<fir::LoadOp>(u);
-                if (!ld) continue;
-                ld.getResult().replaceAllUsesWith(rebindValue);
-                aliasDead.push_back(ld);
-            }
-            for (auto *op : aliasDead)
-                if (op->use_empty()) op->erase();
-            // Erase the alias declare if it's now use-free.
+        // Erase use-empty alias declares.
+        for (auto alias : aliasesToErase) {
             if (alias.getResult(0).use_empty() &&
                 alias.getResult(1).use_empty())
                 alias.erase();

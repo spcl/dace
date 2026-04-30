@@ -165,6 +165,39 @@ end subroutine main
     np.testing.assert_array_equal(out, [31.0, 32.0, 33.0, 34.0])
 
 
+def test_pointer_to_array_element_rebind(tmp_path: Path):
+    """Element-form rebind: ``p => arr(i)`` for a scalar pointer.
+    The chain has a single all-scalar designate, no triplets, and
+    the user's access (``p``, ``p = ...``) carries no indices.  The
+    unified rewrite emits a direct designate over the parent with
+    the chain's literal scalar values (``arr(i)``), no user index
+    contribution.
+    """
+    src = """
+subroutine main(out)
+  implicit none
+  integer, intent(out) :: out
+  integer, target :: arr(5)
+  integer, pointer :: p
+  integer :: i
+  do i = 1, 5
+    arr(i) = i * 10
+  end do
+  p => arr(3)
+  out = p + 1
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "ptr_element_rebind_ref")
+    out_ref = np.asarray(mod.main(), dtype=np.int32)
+
+    sdfg = _build(src, tmp_path, entry='_QPmain')
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out)
+    np.testing.assert_array_equal(out, out_ref)
+    # arr(3) = 30; p + 1 = 31.
+    assert out[0] == 31
+
+
 def test_pointer_write_through_to_member_slice(tmp_path: Path):
     """Write through the pointer, read back through the host struct
     member.  Pins that the rebind preserves write-back semantics
