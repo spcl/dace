@@ -22,6 +22,7 @@ from io import StringIO
 import warnings
 
 import fparser.two.Fortran2003 as f03
+import fparser.two.Fortran2008 as f08
 from fparser.api import get_reader
 from fparser.two.utils import Base, BlockBase, UnaryOpBase, BinaryOpBase, walk
 from fparser.common.readfortran import FortranReaderBase
