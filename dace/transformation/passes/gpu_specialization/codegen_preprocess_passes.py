@@ -1,0 +1,114 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Wrapper :class:`Pass` classes that turn previously-imperative steps in
+``experimental_cuda.preprocess`` into composable Pipeline members.
+
+Each pass corresponds to one of the manual operations the codegen target
+used to call directly (``sdfg.expand_library_nodes``,
+``apply_transformations_once_everywhere(AddThreadBlockMap)``, etc.) and
+exposes the same behaviour through the Pipeline framework so the order
+becomes declarative and testable.
+"""
+from typing import Any, Dict, Optional
+
+from dace import SDFG, dtypes, nodes, properties
+from dace.transformation import pass_pipeline as ppl, transformation
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class ExpandLibraryNodes(ppl.Pass):
+    """Wraps :meth:`SDFG.expand_library_nodes` (recursive) as a Pipeline
+    Pass so library-node expansion can be ordered declaratively
+    alongside other transformations."""
+
+    def depends_on(self):
+        return set()
+
+    def modifies(self) -> ppl.Modifies:
+        return (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
+                | ppl.Modifies.Symbols)
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
+        sdfg.expand_library_nodes(recursive=True)
+        return True
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class AddThreadBlockMaps(ppl.Pass):
+    """Tile every ``GPU_Device`` map without an inner ``GPU_ThreadBlock``
+    map (via :class:`AddThreadBlockMap`) and infer the resulting
+    ``(grid, block)`` dimensions for codegen.
+
+    Returns a dict ``{'kernel_dimensions_map': …, 'tb_inserted_kernels':
+    set(MapEntry)}`` that callers (the codegen target) read out of
+    ``pipeline_results``.
+
+    Tiles late on purpose: the kernel-internal transient hoist
+    (``MoveArrayOutOfKernel``) sees user-authored kernel shapes, not
+    post-tile shapes — tiling earlier introduces an inner-map range like
+    ``Min(N-1, b_i+31) - b_i + 1`` whose ``b_i`` outer-loop symbol then
+    leaks into host-side ``cudaMalloc`` size expressions for any
+    transient lifted out of the kernel.
+    """
+
+    def depends_on(self):
+        return set()
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, Any]:
+        from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+        from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
+
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        tb_inserted_kernels = {
+            n
+            for n in new_nodes
+            if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+        }
+        kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, tb_inserted_kernels) or {}
+        return {
+            'kernel_dimensions_map': kernel_dimensions_map,
+            'tb_inserted_kernels': tb_inserted_kernels,
+        }
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class InvalidateAndInferConnectorTypes(ppl.Pass):
+    """Reset stale Array-vs-Scalar connector typings on NestedSDFGs (some
+    are spawned by library expansion with construction-time typing that
+    no longer matches the inner descriptor) and re-infer per sub-SDFG.
+
+    ``infer_connector_types`` only walks top-level states, so we iterate
+    every nested SDFG explicitly.
+    """
+
+    def depends_on(self):
+        return set()
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Connectors | ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+        from dace.sdfg import infer_types
+        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        invalidate_array_connectors(sdfg)
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            infer_types.infer_connector_types(nsdfg)
+        return None
+
+

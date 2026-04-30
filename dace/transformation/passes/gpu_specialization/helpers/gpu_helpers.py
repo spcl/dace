@@ -248,15 +248,6 @@ def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
     node.add_in_connector(conn_name, dtype)
 
 
-def is_expanded_libnode_nsdfg(nsdfg_node) -> bool:
-    """Return True if ``nsdfg_node`` is a NestedSDFG that inherited a single
-    ``stream`` connector from a ``CopyLibraryNode`` / ``MemsetLibraryNode``
-    expansion. Such NestedSDFGs already carry one bound stream and should
-    reuse it for every internal GPU consumer instead of receiving a fresh
-    ``gpu_streams`` array."""
-    return COPY_MEMSET_STREAM_CONNECTOR in nsdfg_node.in_connectors
-
-
 def find_inner_gpu_consumers(sdfg: SDFG):
     """Yield ``(node, sdfg, state)`` for every GPU stream consumer reachable
     inside ``sdfg`` (recursively). Used by the stream-wiring passes to

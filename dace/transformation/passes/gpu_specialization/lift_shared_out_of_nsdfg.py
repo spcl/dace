@@ -27,7 +27,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (dependency_edge, innermost_enclosing_map)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
-from dace.transformation.passes.gpu_specialization.reconnect_within_expanded_sdfgs import ReconnectWithinExpandedSDFGs
 
 
 @properties.make_properties
@@ -45,11 +44,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         #   Shared edges into ``CopyLibraryNode`` instances; without it,
         #   inner Shared transients used only on the copy edge wouldn't
         #   surface as descriptors with ``transient=True``.
-        # * ``ReconnectWithinExpandedSDFGs`` is the post-expansion pass
-        #   that wires inherited stream connectors through expanded
-        #   NestedSDFG bodies; it must run before this lift so the
-        #   inner-NSDFG topology is final.
-        return {InsertExplicitGPUGlobalMemoryCopies, ReconnectWithinExpandedSDFGs}
+        return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors

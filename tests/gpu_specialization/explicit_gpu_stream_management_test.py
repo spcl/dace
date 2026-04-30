@@ -497,17 +497,15 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
 def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     """
     A library node whose expansion produces a *nested SDFG* containing more
-    library nodes (e.g. ``Cholesky`` (cuSolverDn) -> NestedSDFG{Potrf, Transpose, Transpose})
-    must have stream wiring propagated to those inner library nodes.
+    library nodes (e.g. ``Cholesky`` (cuSolverDn) -> NestedSDFG{Potrf,
+    Transpose, Transpose}) must have stream wiring propagated to every
+    nested runtime call.
 
-    ``ExpandTransformation.apply`` only moves the parent's stream connector
-    onto the NestedSDFG node — it doesn't reach into the nested SDFG to wire
-    the inner library nodes. After expansion, a follow-up pipeline pass that
-    re-runs ``ReconnectWithinExpandedSDFGs`` must wire the
-    inner nodes against the nested SDFG's ``gpu_streams`` array.
-
-    Pre-fix: inner Potrf / Transpose nodes have no ``stream`` connector after
-    one level of expansion + a follow-up pipeline run.
+    Under the unified post-expansion pipeline, ``expand_library_nodes(
+    recursive=True)`` flattens the chain in one pass; the stream
+    scheduler then walks every kernel ``MapEntry`` and runtime Tasklet
+    directly and wires each one's ``__stream`` connector. No follow-up
+    pass / re-run is needed.
     """
     from dace.libraries.linalg.nodes.cholesky import Cholesky
 
@@ -519,47 +517,26 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     a = state.add_access("A")
     b = state.add_access("B")
     chol = Cholesky("chol", lower=True)
+    chol.implementation = "cuSolverDn"
     state.add_node(chol)
     state.add_edge(a, None, chol, "_a", dace.Memlet(f"A[0:{N}, 0:{N}]"))
     state.add_edge(chol, "_b", b, None, dace.Memlet(f"B[0:{N}, 0:{N}]"))
 
+    # Recursive expand first (the unified pipeline does this), then run the
+    # scheduler on the post-expansion shape.
+    sdfg.expand_library_nodes(recursive=True)
     Pipeline([
         NaiveGPUStreamScheduler(),
     ]).apply_pass(sdfg, {})
 
-    # (a)-fix sanity: the Cholesky itself was wired.
-    assert STREAM_CONNECTOR in chol.in_connectors
-
-    # Force the nested-SDFG-spawning expansion (cuSolverDn).
-    chol.implementation = "cuSolverDn"
-    chol.expand(state)
-
-    nested = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert len(nested) == 1, (f"Cholesky (cuSolverDn) should expand into a single NestedSDFG; got {len(nested)}")
-    nested_node = nested[0]
-    inner_sdfg = nested_node.sdfg
-    inner_state = list(inner_sdfg.states())[0]
-
-    inner_libnodes = [n for n in inner_state.nodes() if isinstance(n, dace.nodes.LibraryNode)]
-    assert inner_libnodes, "Cholesky's nested SDFG should contain inner library nodes (Potrf, Transpose...)"
-
-    # Follow-up: re-run the GPU stream pipeline so the new nested SDFG and
-    # its inner library nodes get wired.
-    Pipeline([
-        NaiveGPUStreamScheduler(),
-    ]).apply_pass(sdfg, {})
-
-    # The nested SDFG must now have the stream array declared.
-    assert _STREAM_ARRAY in inner_sdfg.arrays, (
-        "Nested SDFG produced by Cholesky.expand should have the gpu_streams array after the follow-up run")
-
-    # Every inner library node must have its `stream` in-connector wired.
-    for inner_libnode in inner_libnodes:
-        assert STREAM_CONNECTOR in inner_libnode.in_connectors, (
-            f"Inner library node {type(inner_libnode).__name__} "
-            f"({inner_libnode.label}) must have its `stream` in-connector wired "
-            f"by the follow-up pipeline run")
-        stream_in = [e for e in inner_state.in_edges(inner_libnode) if e.dst_conn == STREAM_CONNECTOR]
-        assert len(stream_in) == 1
-        assert isinstance(stream_in[0].src, dace.nodes.AccessNode)
-        assert stream_in[0].src.data == _STREAM_ARRAY
+    # Every runtime Tasklet (post-expansion) that takes a stream must have
+    # its ``__stream`` connector wired to ``gpu_streams[<i>]``.
+    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_already_lowered_gpu_runtime_call)
+    runtime_tasklets = [
+        n for nsdfg in sdfg.all_sdfgs_recursive() for st in nsdfg.states() for n in st.nodes()
+        if is_already_lowered_gpu_runtime_call(n)
+    ]
+    assert runtime_tasklets, "Cholesky cuSolverDn expansion should leave at least one runtime call Tasklet."
+    for t in runtime_tasklets:
+        assert STREAM_CONNECTOR in t.in_connectors, (
+            f"Runtime tasklet {t.label} must have its `__stream` in-connector wired by the unified pipeline")

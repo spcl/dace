@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
 import dace
@@ -21,18 +21,12 @@ from dace.codegen.targets.cpp import (codeblock_to_cpp, mangle_dace_state_struct
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 from dace.transformation.passes import analysis as ap
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import (GPUPostExpansionPipeline,
-                                                                                       GPUStreamPipeline)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (read_stream_assignments_from_wired_sdfg,
-                                                                               validate_stream_indices_within_bounds)
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import read_stream_assignments_from_wired_sdfg
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
-from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
-from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
-from dace.sdfg.core_dialect import (CoreDialectCompliant, warn_if_not_core_dialect)
 
 from dace.codegen.targets import cpp
 
@@ -96,109 +90,39 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
     def preprocess(self, sdfg: SDFG) -> None:
-        """Prepare the SDFG for GPU code generation."""
+        """Prepare the SDFG for GPU code generation.
 
-        # ----------------------------------------------------------------
-        # Pipeline 1 — codegen preparation. Establishes invariants the
-        # transformation pipeline below relies on: every descriptor has
-        # decided storage / schedule, and every Scalar that cannot live on
-        # the GPU as a Scalar (rule 1) or that the kernel writes to (rule 2)
-        # has been promoted to a length-1 Array. After this pipeline, the
-        # SDFG is "well-formed for GPU codegen" — no further inference or
-        # descriptor rewrites should be needed.
-        # ----------------------------------------------------------------
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
-                                                                              PromoteGPUScalarsToArrays)
-        codegen_preparation_pipeline = Pipeline([
-            InferDefaultSchedulesAndStorages(),
-            PromoteGPUScalarsToArrays(),
-        ])
-        codegen_preparation_pipeline.apply_pass(sdfg, {})
-
-        # ``AddThreadBlockMap`` is intentionally deferred until *after* the
-        # GPU specialization pipeline + ``expand_library_nodes``: tiling
-        # before the hoist (`MoveArrayOutOfKernel`) introduces an inner
-        # ``GPU_ThreadBlock`` map whose range expression references the
-        # outer block index, which then leaks into host-side
-        # ``cudaMalloc`` size expressions for any transient lifted out of
-        # the kernel.
+        All SDFG-level transformation lives in
+        :class:`GPUCodegenPreprocessPipeline`. This method only does
+        framecode-target bookkeeping: the ``gpu_context`` statestruct
+        entry, kernel-dimension cache hand-off, frame symbol cache rebuild,
+        ``GPUStreamManager`` construction, pool-release computation, and
+        the per-kernel arglist build.
+        """
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
-
-        # ----------------------------------------------------------------
-        # Pipeline 2 — GPU specialization. Two-phase around
-        # ``expand_library_nodes(recursive=True)``:
-        # * ``GPUStreamPipeline`` (pre-expansion) lifts implicit copies,
-        #   schedules streams, threads ``gpu_streams`` everywhere needed,
-        #   wires each consumer's ``__stream`` connector, emits sync
-        #   tasklets. Idempotent via the ``is_gpu_lowering_applied`` signal.
-        # * ``GPUPostExpansionPipeline`` (post-expansion) reconnects internal
-        #   GPU consumers of expansion-spawned NestedSDFGs and lifts
-        #   ``GPU_Shared`` transients out of inner NestedSDFGs so the
-        #   framecode walker pins their ``__shared__`` allocation to the
-        #   kernel scope.
-        # ----------------------------------------------------------------
         self._dispatcher._used_targets.add(self)
-        GPUStreamPipeline().apply_pass(sdfg, {})
-        # Strategy stamps the full WCC assignment dict on the SDFG; codegen
-        # consumers (memory-pool path needs AccessNode stream ids, not just
-        # wired-consumer ids) read from there. If the SDFG comes in already
-        # lowered, fall back to reading consumers from wired connectors —
-        # caller-pre-lowered fixtures don't have the cache attribute.
-        gpustream_assignments = (getattr(sdfg, '_gpu_stream_assignments', None)
-                                 or read_stream_assignments_from_wired_sdfg(sdfg))
 
-        # Defensive bounds check: catch out-of-range stream ids before the
-        # codegen emits an out-of-bounds ``__state->gpu_context->streams[i]``.
-        validate_stream_indices_within_bounds(sdfg)
+        pipeline_results: Dict[str, Any] = {}
+        GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
 
-        sdfg.expand_library_nodes(recursive=True)
-        GPUPostExpansionPipeline().apply_pass(sdfg, {})
+        # The ``AddThreadBlockMaps`` Pass returns the kernel-dimension
+        # map and the set of kernels it tiled; the codegen consults both
+        # when emitting kernel launches.
+        atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
+        self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
+        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
 
-        # Core-dialect compliance is a property of the *post-pipeline* SDFG —
-        # probing earlier would warn about every implicit copy the pipeline
-        # subsequently lifts to a ``CopyLibraryNode``, drowning real bugs in
-        # noise. The strict guard against leftover implicit GPU-memory copies
-        # also runs here, after both ``expand_library_nodes`` rounds, so an
-        # offender introduced by library expansion is caught instead of slipping
-        # through into ill-formed generated code.
-        warn_if_not_core_dialect(sdfg, source='ExperimentalCUDACodeGen')
-        leftover = CoreDialectCompliant.offenders_implicit_gpu_copies(sdfg)
-        if leftover:
-            raise ValueError("ExperimentalCUDACodeGen: " + str(len(leftover)) +
-                             " implicit GPU-memory copy edge(s) survived InsertExplicitGPUGlobalMemoryCopies + "
-                             "expand_library_nodes. Every CPU↔GPU and GPU↔GPU AccessNode→AccessNode edge must be "
-                             "expressed via an explicit CopyLibraryNode. Offenders:\n  - " + "\n  - ".join(leftover))
-
-        from dace.sdfg import infer_types
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
-        # Reset stale Array-vs-scalar connector types on NestedSDFGs (some
-        # are spawned by library expansion with construction-time typing
-        # that no longer matches the inner descriptor) and re-infer per
-        # sub-SDFG — ``infer_connector_types`` only walks top-level states.
-        invalidate_array_connectors(sdfg)
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            infer_types.infer_connector_types(nsdfg)
-
-        # Library-node expansion can add new nested SDFGs with new cfg_ids; re-seed
+        # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
         self._rebuild_frame_symbol_cache(sdfg)
 
+        # Strategy stamps the WCC assignment dict on the SDFG; codegen
+        # consumers (memory-pool path needs AccessNode stream ids, not
+        # just wired-consumer ids) read it from there. Pre-lowered
+        # fixtures fall back to reading consumers from wired connectors.
+        gpustream_assignments = (getattr(sdfg, '_gpu_stream_assignments', None)
+                                 or read_stream_assignments_from_wired_sdfg(sdfg))
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments)
-
-        # No ``_cuda_stream`` annotation pass: the CPU codegen prelude in
-        # ``cpp.py`` binds ``__dace_current_stream`` directly from the
-        # ``gpuStream_t``-typed in-connector when one is present. Legacy
-        # codegen keeps its own ``_cuda_stream`` path in ``cuda.py``.
-
-        # Tile every ``GPU_Device`` map with an explicit ``GPU_ThreadBlock``
-        # inner map. Done here — as late as possible, after the GPU
-        # specialization pipeline, ``expand_library_nodes``, and the
-        # post-expansion pipeline — so the kernel-internal transient hoist
-        # (``MoveArrayOutOfKernel``) sees the user-authored kernel shape,
-        # not the post-tile shape. Tiling earlier introduces an inner map
-        # range like ``Min(N-1, b_i+31) - b_i + 1`` whose ``b_i`` outer-loop
-        # symbol then leaks into host-side ``cudaMalloc`` size expressions.
-        self._infer_kernel_dimensions(sdfg)
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
@@ -212,28 +136,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
-
-    def _infer_kernel_dimensions(self, sdfg: SDFG):
-        """Run ``AddThreadBlockMap`` over any GPU_Device maps that don't yet
-        carry a ThreadBlock map and refresh ``_kernel_dimensions_map`` for
-        every GPU_Device map currently in the SDFG. Idempotent — safe to call
-        repeatedly between library-expansion rounds, since
-        ``InferGPUGridAndBlockSize`` re-walks the SDFG and re-emits the full
-        mapping. ``_tb_inserted_kernels`` accumulates across calls so that a
-        kernel auto-tiled in an earlier round still uses
-        ``_get_inserted_gpu_block_size`` (and not ``_infer_gpu_block_size``,
-        which would flag the user's explicit ``gpu_block_size`` against the
-        tile-derived inner map size as a conflict)."""
-        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
-        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
-        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
-        for n in new_nodes:
-            if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device:
-                self._tb_inserted_kernels.add(n)
-        # Pre-existing entries are preserved by re-running the inference pass:
-        # it walks every GPU_Device map in the SDFG, so an unmodified kernel
-        # gets an identical (grid, block) tuple back.
-        self._kernel_dimensions_map.update(InferGPUGridAndBlockSize().apply_pass(sdfg, self._tb_inserted_kernels))
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.

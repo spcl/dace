@@ -126,13 +126,6 @@ def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]) -> None:
     for sub_sdfg in sdfg.all_sdfgs_recursive():
         if is_inside_gpu_device_kernel(sub_sdfg):
             continue
-        # Wrapper SDFGs born from libnode expansion already carry their
-        # own ``stream`` Scalar; the codegen prelude (and post-expansion
-        # ``ReconnectWithinExpandedSDFGs``) handles binding for inner
-        # consumers. Adding a fresh ``stream`` connector here would clash
-        # with that array name in the wrapper's namespace.
-        if sub_sdfg is not sdfg and STREAM_CONNECTOR in sub_sdfg.arrays:
-            continue
         for state in sub_sdfg.states():
             _connect_streams_in_state(state, assignments, stream_array_name, stream_var_prefix)
 

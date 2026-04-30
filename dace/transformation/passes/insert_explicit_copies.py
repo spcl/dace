@@ -420,7 +420,18 @@ class InsertExplicitCopies(ppl.Pass):
 
             outer_memlet = edge.data
             local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
-            outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
+            # When the original memlet's ``data`` already references the
+            # outer array, ``subset`` is the outer-side access. When it
+            # points at the local transient instead, ``other_subset``
+            # carries the outer-side access (DaCe's frontend uses this
+            # form for memlets like ``Memlet(data='tmp', subset='0',
+            # other_subset='__i1')`` — written when the user wants the
+            # local subset on the data side). Either way the libnode's
+            # outer-side memlet must reference the outer array name.
+            if outer_memlet.data == local_an.data and outer_memlet.other_subset is not None:
+                outer_copy = Memlet(data=outer_an.data, subset=_copy.deepcopy(outer_memlet.other_subset))
+            else:
+                outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
             name = (f"copy_{outer_an.data}_to_{local_an.data}"
                     if direction == 'in' else f"copy_{local_an.data}_to_{outer_an.data}")
             libnode = CopyLibraryNode(name=name)

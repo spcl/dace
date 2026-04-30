@@ -21,6 +21,39 @@ from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopi
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
 
+def _is_true_scalar(desc) -> bool:
+    """Return True if every dimension of ``desc.shape`` is the literal
+    integer ``1`` (e.g. ``(1,)``, ``(1, 1)``, ``(1, 1, 1)``)."""
+    try:
+        for dim in desc.shape:
+            if isinstance(dim, int):
+                if dim != 1:
+                    return False
+            elif hasattr(dim, 'is_Integer') and dim.is_Integer:
+                if int(dim) != 1:
+                    return False
+            else:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _has_wcr_incoming(sdfg, data_name: str) -> bool:
+    """Return True if any memlet in the SDFG writes to ``data_name`` with
+    a WCR (write-conflict-resolution = atomic accumulator). Such arrays
+    must stay shared across threads — demoting them to Register would
+    silently break the accumulation."""
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.states():
+            for e in state.edges():
+                if e.data.wcr is None:
+                    continue
+                if e.data.data == data_name:
+                    return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
@@ -97,9 +130,20 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         for data_name, desc, kernel_entry in transients_in_kernels:
             if (data_name, desc) in transients_outside:
                 continue
-            to_hoist.add((data_name, kernel_entry))
+            to_hoist.add((data_name, desc, kernel_entry))
 
-        for data_name, kernel_entry in to_hoist:
+        for data_name, desc, kernel_entry in to_hoist:
+            # If the transient is a true scalar (every dim literal 1)
+            # AND has no incoming WCR memlet (which would indicate a
+            # cross-thread atomic accumulator that must stay shared),
+            # demote it to Register instead of lifting. A per-thread
+            # scalar should never have been GPU_Global; lifting it
+            # stretches the shape by the kernel's iteration range and
+            # leaks block-index symbols into host-side ``cudaMalloc``
+            # size expressions.
+            if _is_true_scalar(desc) and not _has_wcr_incoming(sdfg, data_name):
+                desc.storage = dtypes.StorageType.Register
+                continue
             warnings.warn(f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel "
                           f"{kernel_entry}. GPU_Global memory cannot be allocated within GPU kernels; "
                           f"the array will be lifted outside the kernel as a non-transient GPU_Global array.")

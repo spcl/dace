@@ -11,8 +11,6 @@ and would leak into ``cudaMalloc`` size expressions. The fix lives in
 """
 import sympy
 
-import dace
-from dace import dtypes
 from dace.transformation.passes.move_array_out_of_kernel import _tile_extent
 
 
