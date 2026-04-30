@@ -622,7 +622,7 @@ end function {fn}
 
 def deconstruct_goto_statements(ast: f03.Program) -> f03.Program:
     """
-    Attempts to convert `GOTO` statements into structured `IF` or 'DO WHILE' construct(s).
+    Attempts to convert `GOTO` statements into structured `IF` or `DO WHILE` construct(s).
 
     All `GOTO`-target pairs are first collated and classified as forward or backward jumps. Each 
     jump is then deconstructed individually by the corresponding forward/backward helper function. 
