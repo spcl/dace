@@ -739,17 +739,70 @@ static std::string designateChainPath(hlfir::DesignateOp leaf,
     return joined;
 }
 
+/// Path-prefix accumulated while tracing an alias declare back to its
+/// underlying decl: outermost component first.  Surfaces when an
+/// inlined-callee dummy aliases ``decl`` through
+/// ``hlfir.declare → fir.convert → fir.embox → hlfir.designate*``
+/// chains.  ``rewriteDesignateChain`` prepends this prefix so a leaf
+/// rooted at the alias designs into the same flat companion as a
+/// leaf rooted directly at ``decl``.
+struct AliasPrefix {
+    llvm::SmallVector<std::string, 4> path;
+    llvm::SmallVector<mlir::Value, 4> indices;
+};
+
 /// Rewrite a multi-level ``hlfir.designate`` chain ending at ``leaf``
 /// (e.g. ``designate{"x"}.designate{"inner"} %o`` for ``o%inner%x``)
 /// to read directly from the path-flattened declare named in
 /// ``leafBase``.  ``leaf`` may carry indices (``a(i,j)``) — those are
-/// preserved.  Returns true if the rewrite fired.
+/// preserved.  ``aliasPrefixes`` lets the rewriter prepend a buried
+/// prefix when the chain bottoms out at an inlined-callee alias
+/// declare whose source threads through embox/convert into a
+/// designate chain rooted at ``decl`` (the type_arg2 / type_array
+/// shape).  Returns true if the rewrite fired.
 static bool rewriteDesignateChain(
     hlfir::DesignateOp leaf,
-    const llvm::StringMap<mlir::Value> &leafBase) {
+    const llvm::StringMap<mlir::Value> &leafBase,
+    const llvm::DenseMap<mlir::Value, AliasPrefix> *aliasPrefixes = nullptr) {
 
     llvm::SmallVector<mlir::Value, 4> intermediateIndices;
     std::string path = walkDesignateChain(leaf, intermediateIndices);
+
+    // Augment with any alias-prefix attached to the chain's root
+    // designate's memref (the declare that the innermost ``cur``
+    // selects from).
+    if (aliasPrefixes) {
+        hlfir::DesignateOp cur = leaf;
+        for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
+            auto memref = cur.getMemref();
+            auto nextDg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
+                memref.getDefiningOp());
+            if (!nextDg) {
+                auto pit = aliasPrefixes->find(memref);
+                if (pit != aliasPrefixes->end()) {
+                    const auto &pref = pit->second;
+                    std::string joined;
+                    for (auto &c : pref.path) {
+                        if (!joined.empty()) joined += "_";
+                        joined += c;
+                    }
+                    if (!path.empty()) {
+                        if (!joined.empty()) joined += "_";
+                        joined += path;
+                    }
+                    path = std::move(joined);
+                    llvm::SmallVector<mlir::Value, 4> merged(
+                        pref.indices.begin(), pref.indices.end());
+                    merged.append(intermediateIndices.begin(),
+                                  intermediateIndices.end());
+                    intermediateIndices = std::move(merged);
+                }
+                break;
+            }
+            cur = nextDg;
+        }
+    }
+
     if (path.empty()) return false;
     auto it = leafBase.find(path);
     if (it == leafBase.end()) return false;
@@ -786,12 +839,65 @@ static bool rewriteDesignateChain(
     // is also out of scope; bail to keep the contract narrow.
     if (auto leafTrip = leaf.getIsTripletAttr())
         for (bool t : leafTrip.asArrayRef()) if (t) return false;
+
+    // Whole-component-array access surfaced through the chain
+    // (``p_prog%pprog(i)%w`` with leaf having a ``shape`` operand
+    // and no own indices, but result type ``ref<array<M1, M2, ...>>``).
+    // The flat companion is a higher-rank array (intermediate dims
+    // ++ inner dims).  Replacing the leaf with a plain N-index
+    // designate where N = #intermediates only would crash the
+    // verifier (rank mismatch) — instead emit a section designate
+    // ``flat(idx_1, ..., 1:M_1:1, 1:M_2:1)`` so the result keeps
+    // the leaf's array shape while the outer scalar indices pin
+    // the record element.
+    mlir::OpBuilder rb(leaf);
+    auto loc = leaf.getLoc();
+    if (leaf.getIndices().empty()) {
+        if (auto memberSeqTy = mlir::dyn_cast<fir::SequenceType>(
+                fir::unwrapRefType(leaf.getResult().getType()))) {
+            auto idxTy = rb.getIndexType();
+            auto c1 = rb.create<mlir::arith::ConstantOp>(
+                loc, idxTy, rb.getIndexAttr(1));
+            llvm::SmallVector<mlir::Value, 8> sliceIndices;
+            llvm::SmallVector<bool, 4> isTriplet;
+            for (auto idx : intermediateIndices) {
+                sliceIndices.push_back(idx);
+                isTriplet.push_back(false);
+            }
+            for (auto d : memberSeqTy.getShape()) {
+                if (d == fir::SequenceType::getUnknownExtent())
+                    return false;
+                auto cN = rb.create<mlir::arith::ConstantOp>(
+                    loc, idxTy, rb.getIndexAttr(d));
+                sliceIndices.push_back(c1.getResult());
+                sliceIndices.push_back(cN.getResult());
+                sliceIndices.push_back(c1.getResult());
+                isTriplet.push_back(true);
+            }
+            auto newOp = rb.create<hlfir::DesignateOp>(
+                loc,
+                /*result_type=*/leaf.getResult().getType(),
+                /*memref=*/newBase,
+                /*component=*/mlir::StringAttr{},
+                /*component_shape=*/mlir::Value{},
+                /*indices=*/mlir::ValueRange{sliceIndices},
+                /*is_triplet=*/rb.getDenseBoolArrayAttr(isTriplet),
+                /*substring=*/mlir::ValueRange{},
+                /*complex_part=*/mlir::BoolAttr{},
+                /*shape=*/leaf.getShape(),
+                /*typeparams=*/mlir::ValueRange{},
+                /*fortran_attrs=*/fir::FortranVariableFlagsAttr{});
+            leaf.getResult().replaceAllUsesWith(newOp.getResult());
+            leaf.erase();
+            return true;
+        }
+    }
+
     llvm::SmallVector<mlir::Value, 6> merged(intermediateIndices.begin(),
                                               intermediateIndices.end());
     for (auto v : leaf.getIndices()) merged.push_back(v);
-    mlir::OpBuilder rb(leaf);
     auto newOp = rb.create<hlfir::DesignateOp>(
-        leaf.getLoc(),
+        loc,
         leaf.getResult().getType(),
         newBase,
         mlir::ValueRange{merged});
@@ -2586,13 +2692,43 @@ struct FlattenStructsPass
             // Trace ``other``'s memref back through ``hlfir.declare`` /
             // ``fir.embox`` / ``fir.convert`` ops; if it reaches
             // ``decl`` they're sequential aliases of the same storage.
-            auto aliasesDecl = [&](hlfir::DeclareOp other) -> bool {
+            // Trace ``other``'s memref back through embox / convert /
+            // declare ops AND ``hlfir.designate`` ops, building the
+            // (path, indices) prefix that an alias root buries.  When
+            // an inlined-callee dummy aliases ``decl`` via
+            // ``convert(embox(designate{"w"}(designate{"pprog"}(i))))``,
+            // a leaf rooted at the alias declare needs the
+            // ``("pprog", "w") + [i]`` prefix prepended so the rewrite
+            // designs into the right flat companion.  Triplet sections
+            // on intermediate steps are out of scope.
+            auto traceAliasPrefix =
+                [&](hlfir::DeclareOp other) -> std::optional<AliasPrefix> {
+                llvm::SmallVector<std::string, 4> pathRev;
+                llvm::SmallVector<llvm::SmallVector<mlir::Value, 4>, 4>
+                    indexGroupsRev;
                 mlir::Value mr = other.getMemref();
                 for (int i = 0; i < kFlattenMaxDepth && mr; ++i) {
                     auto *d = mr.getDefiningOp();
-                    if (!d) return false;
-                    if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d))
-                        return outer == decl;
+                    if (!d) return std::nullopt;
+                    if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+                        if (outer == decl) {
+                            AliasPrefix info;
+                            for (auto it = pathRev.rbegin();
+                                 it != pathRev.rend(); ++it)
+                                info.path.push_back(*it);
+                            for (auto it = indexGroupsRev.rbegin();
+                                 it != indexGroupsRev.rend(); ++it)
+                                info.indices.append(it->begin(), it->end());
+                            return info;
+                        }
+                        // Intermediate declare (a previously-inlined
+                        // alias).  Continue walking from its source —
+                        // declares act as identity wrappers around their
+                        // memref operand for the purposes of alias
+                        // tracking.
+                        mr = outer.getMemref();
+                        continue;
+                    }
                     if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
                         mr = cv.getValue();
                         continue;
@@ -2601,19 +2737,41 @@ struct FlattenStructsPass
                         mr = eb.getMemref();
                         continue;
                     }
-                    return false;
+                    if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d)) {
+                        mlir::StringAttr compAttr;
+                        for (auto nm : {"component_name", "component"})
+                            if (auto a = dg->getAttrOfType<mlir::StringAttr>(nm)) {
+                                compAttr = a;
+                                break;
+                            }
+                        if (compAttr) pathRev.push_back(compAttr.getValue().str());
+                        if (auto trip = dg.getIsTripletAttr())
+                            for (bool t : trip.asArrayRef())
+                                if (t) return std::nullopt;
+                        llvm::SmallVector<mlir::Value, 4> these(
+                            dg.getIndices().begin(), dg.getIndices().end());
+                        indexGroupsRev.push_back(std::move(these));
+                        mr = dg.getMemref();
+                        continue;
+                    }
+                    return std::nullopt;
                 }
-                return false;
+                return std::nullopt;
             };
 
             llvm::DenseSet<mlir::Value> equivalentRoots;
+            llvm::DenseMap<mlir::Value, AliasPrefix> aliasPrefixes;
             equivalentRoots.insert(decl.getResult(0));
             decl->getParentOfType<mlir::func::FuncOp>().walk(
                 [&](hlfir::DeclareOp other) {
                     if (other == decl) return;
-                    if (aliasesDecl(other)) {
+                    if (auto info = traceAliasPrefix(other)) {
                         equivalentRoots.insert(other.getResult(0));
                         equivalentRoots.insert(other.getResult(1));
+                        if (!info->path.empty()) {
+                            aliasPrefixes[other.getResult(0)] = *info;
+                            aliasPrefixes[other.getResult(1)] = *info;
+                        }
                     }
                 });
 
@@ -2645,7 +2803,7 @@ struct FlattenStructsPass
                     }
                 });
             for (auto dg : chainLeaves)
-                rewriteDesignateChain(dg, leafBase);
+                rewriteDesignateChain(dg, leafBase, &aliasPrefixes);
 
             if (decl.getResult(0).use_empty()
                     && decl.getResult(1).use_empty()) {

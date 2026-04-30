@@ -460,7 +460,6 @@ end subroutine main
     sdfg(d=a)
 
 
-@xfail("nested derived types passed via percent-percent path not lowered")
 def test_fortran_frontend_type_arg2(tmp_path):
     src = """
 module lib

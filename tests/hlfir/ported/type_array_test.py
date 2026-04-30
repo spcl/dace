@@ -53,7 +53,6 @@ end subroutine main
     assert d[0][0] == 1
 
 
-@xfail("nested derived type array via percent-percent path (p_prog%pprog(1)) not lowered")
 def test_fortran_frontend_type_array(tmp_path):
     src = """
 module lib
