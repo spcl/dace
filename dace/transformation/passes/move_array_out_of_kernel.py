@@ -18,6 +18,30 @@ from dace.memlet import Memlet
 from dace.symbolic import symbol
 
 
+def _tile_extent(max_elem, min_elem):
+    """Per-iteration extent of an inner-map range, falling back to the
+    static tile width for outer-symbol-dependent ranges.
+
+    For a tile pattern ``i = start : Min(X, start+Y) + 1`` (the shape
+    DaCe's ``MapTiling`` produces for a kernel block stride of ``Y+1``),
+    the upper-bound number of iterations is ``Y + 1`` — independent of
+    ``start``. Recognise the ``Min`` argument that simplifies to a
+    non-negative integer offset from ``min_elem`` and return ``offset+1``.
+
+    For everything else (plain bounded maps, sequential inner maps, etc.)
+    fall back to the symbolic ``max_elem + 1 - min_elem`` form, which
+    is correct as long as no outer-loop symbols appear in the bounds —
+    the caller is responsible for shape symbols being host-visible at
+    the lift destination.
+    """
+    if isinstance(max_elem, sympy.Min):
+        for arg in max_elem.args:
+            diff = sympy.simplify(arg - min_elem)
+            if diff.is_Integer and diff >= 0:
+                return diff + 1
+    return max_elem + 1 - min_elem
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class MoveArrayOutOfKernel(Pass):
@@ -468,6 +492,15 @@ class MoveArrayOutOfKernel(Pass):
         gpu_A's shape changes from [64] to [128, 32, 64] to give each thread its own slice
         (i.e. gpu_A[x, y, 64]).
 
+        For a tiled inner ``GPU_ThreadBlock`` map of the form
+        ``i = start : Min(X, start+Y) + 1``, the per-iteration extent is
+        ``-start + Min(X, start+Y) + 1``, which references ``start`` — an
+        outer-loop symbol that is not visible at host scope. The static
+        upper bound on the tile width is ``Y + 1`` (the partial last block
+        is smaller; ``Y + 1`` is tight). :func:`_tile_extent` recognises
+        this pattern and substitutes the constant; the fallback path
+        keeps the original ``max - min + 1`` form for non-tiled maps.
+
         Args:
             array_desc: Original array descriptor.
             map_exit_chain: List of MapEntry nodes between array and kernel exit.
@@ -485,7 +518,7 @@ class MoveArrayOutOfKernel(Pass):
             map_range: Range = next_map.map.range
             max_elements = map_range.max_element()
             min_elements = map_range.min_element()
-            range_size = [max_elem + 1 - min_elem for max_elem, min_elem in zip(max_elements, min_elements)]
+            range_size = [_tile_extent(mx, mn) for mx, mn in zip(max_elements, min_elements)]
 
             #TODO: check this / clean (maybe support packed C and packed Fortran layouts separately for code readability future)
             old_total_size = array_desc.total_size

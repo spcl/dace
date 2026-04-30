@@ -656,7 +656,7 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
                                       f"src_strides={src_strides}, dst_strides={dst_strides}.")
 
         has_stream, stream_expr = _stream_expr(stream_input)
-        code = (f"cudaMemcpy2DAsync(_out, {dpitch}, _in, {spitch}, "
+        code = (f"cudaMemcpy2DAsync(_cpy_out, {dpitch}, _cpy_in, {spitch}, "
                 f"{width}, {height}, {kind}, {stream_expr});")
 
         in_conns = {"_cpy_in": dace.dtypes.pointer(inp.dtype)}

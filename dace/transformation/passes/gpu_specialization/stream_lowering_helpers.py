@@ -266,18 +266,20 @@ def _stream_in_connector_name(node: Node, stream_id: int, stream_var_prefix: str
 
 
 def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]) -> None:
-    """Emit one ``cudaStreamSynchronize`` tasklet **per stream** at the
-    end of each state. Each tasklet has a single ``__stream`` in-connector
-    fed by ``gpu_streams[<i>]``.
+    """Emit one fused ``cudaStreamSynchronize`` tasklet at the end of each
+    state, syncing every stream the state needs to wait on.
 
-    One tasklet per stream (instead of one with N connectors named
-    ``__stream_<i>``) keeps the connector convention uniform across
-    every consumer in the codebase: name is always
-    :data:`STREAM_CONNECTOR`, type is always ``gpuStream_t``.
+    The fused tasklet carries one ``__stream_<id>`` in-connector per stream
+    (where ``<id>`` is the offset into the ``gpu_streams`` array), each
+    typed ``gpuStream_t``. The body chains one ``cudaStreamSynchronize``
+    call per connector. Fusing keeps the SDFG compact and gives the
+    codegen a single deterministic sync site per state.
     """
     stream_array_name = get_gpu_stream_array_name()
 
     for state, streams in sync_state.items():
+        if not streams:
+            continue
         # Pair each stream with its chain-trailing ``gpu_streams``
         # AccessNode (lets the sync tasklet hook onto the existing chain
         # rather than adding a fresh access).
@@ -290,57 +292,67 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], as
             if sid is not None and sid not in stream_sinks:
                 stream_sinks[sid] = node
 
-        # Sinks the sync tasklets must run after — captured before adding
-        # new tasklets so the bookkeeping doesn't pick up our own work.
+        # Sinks the sync tasklet must run after — captured before adding
+        # the new tasklet so the bookkeeping doesn't pick up our own work.
         existing_sinks = list(state.sink_nodes())
 
-        for stream in streams:
-            tasklet = _make_sync_tasklet(state, "gpu_streams_synchronization")
-            for sink in existing_sinks:
-                if sink is tasklet:
-                    continue
-                if isinstance(sink, nodes.AccessNode) and sink.desc(state).dtype == dtypes.gpuStream_t:
-                    continue
-                state.add_edge(sink, None, tasklet, None, dependency_edge())
+        sorted_streams = sorted(streams)
+        tasklet = _make_sync_tasklet(state, "gpu_streams_synchronization", sorted_streams)
+        for sink in existing_sinks:
+            if sink is tasklet:
+                continue
+            if isinstance(sink, nodes.AccessNode) and sink.desc(state).dtype == dtypes.gpuStream_t:
+                continue
+            state.add_edge(sink, None, tasklet, None, dependency_edge())
 
+        for stream in sorted_streams:
             src_access = stream_sinks.get(stream) or state.add_access(stream_array_name)
-            state.add_edge(src_access, None, tasklet, STREAM_CONNECTOR, dace.Memlet(f"{stream_array_name}[{stream}]"))
+            state.add_edge(src_access, None, tasklet, _stream_connector_name(stream),
+                           dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
 def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]) -> None:
     """Emit a sync tasklet on the path between ``node`` and its successors,
-    syncing the node's bound stream via a single ``__stream`` connector."""
+    syncing the node's bound stream via a single ``__stream_<id>`` connector
+    (single-stream form of :func:`insert_state_end_syncs`)."""
     stream_array_name = get_gpu_stream_array_name()
 
     for node, state in sync_node.items():
         stream = assignments.get(node)
         if stream is None:
             raise NotImplementedError("Using the default 'nullptr' gpu stream is not supported yet.")
-        tasklet = _make_sync_tasklet(state, "gpu_stream_synchronization")
+        tasklet = _make_sync_tasklet(state, "gpu_stream_synchronization", [stream])
         for succ in list(state.successors(node)):
             state.add_edge(tasklet, None, succ, None, dependency_edge())
         state.add_edge(node, None, tasklet, None, dependency_edge())
-        state.add_edge(state.add_access(stream_array_name), None, tasklet, STREAM_CONNECTOR,
+        state.add_edge(state.add_access(stream_array_name), None, tasklet, _stream_connector_name(stream),
                        dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
-def _make_sync_tasklet(state: SDFGState, name: str) -> nodes.Tasklet:
-    """Build a side-effect-only ``cudaStreamSynchronize`` tasklet with a
-    single ``__stream`` in-connector typed ``gpuStream_t``.
+def _stream_connector_name(stream_id: int) -> str:
+    """Connector name on a sync tasklet for stream ``<stream_id>`` — the
+    suffix is the offset into the ``gpu_streams`` array bound by the
+    matching memlet."""
+    return f"{STREAM_CONNECTOR}_{stream_id}"
 
-    The body references the connector by name; the codegen passes the
-    handle as a parameter, so no symbolic ``__dace_current_stream``
-    placeholder or ``_cuda_stream`` attribute is involved.
-    """
+
+def _make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
+    """Build a side-effect-only fused-sync tasklet with one
+    ``__stream_<id>`` in-connector per requested stream id (typed
+    ``gpuStream_t``). The body chains one ``cudaStreamSynchronize`` call
+    per connector. Caller wires each connector to the matching
+    ``gpu_streams[<id>]`` AccessNode after construction."""
     backend: str = common.get_gpu_backend()
-    sync_code = f"DACE_GPU_CHECK({backend}StreamSynchronize({STREAM_CONNECTOR}));"
+    sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({_stream_connector_name(sid)}));" for sid in stream_ids]
+    sync_code = "\n".join(sync_lines)
     tasklet = state.add_tasklet(name=name,
                                 inputs=set(),
                                 outputs=set(),
                                 code=sync_code,
                                 language=dtypes.Language.CPP,
                                 side_effects=True)
-    tasklet.add_in_connector(STREAM_CONNECTOR, dtypes.gpuStream_t)
+    for sid in stream_ids:
+        tasklet.add_in_connector(_stream_connector_name(sid), dtypes.gpuStream_t)
     return tasklet
 
 

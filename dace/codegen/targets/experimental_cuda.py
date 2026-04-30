@@ -115,8 +115,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         ])
         codegen_preparation_pipeline.apply_pass(sdfg, {})
 
-        self._infer_kernel_dimensions(sdfg)
-
+        # ``AddThreadBlockMap`` is intentionally deferred until *after* the
+        # GPU specialization pipeline + ``expand_library_nodes``: tiling
+        # before the hoist (`MoveArrayOutOfKernel`) introduces an inner
+        # ``GPU_ThreadBlock`` map whose range expression references the
+        # outer block index, which then leaks into host-side
+        # ``cudaMalloc`` size expressions for any transient lifted out of
+        # the kernel.
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # ----------------------------------------------------------------
@@ -148,11 +153,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         sdfg.expand_library_nodes(recursive=True)
         GPUPostExpansionPipeline().apply_pass(sdfg, {})
-
-        # Library-node expansion (CopyLibraryNode "pure" implementations etc.)
-        # can produce fresh GPU_Device maps that weren't present when
-        # ``_kernel_dimensions_map`` was first built.
-        self._infer_kernel_dimensions(sdfg)
 
         # Core-dialect compliance is a property of the *post-pipeline* SDFG —
         # probing earlier would warn about every implicit copy the pipeline
@@ -189,6 +189,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # ``cpp.py`` binds ``__dace_current_stream`` directly from the
         # ``gpuStream_t``-typed in-connector when one is present. Legacy
         # codegen keeps its own ``_cuda_stream`` path in ``cuda.py``.
+
+        # Tile every ``GPU_Device`` map with an explicit ``GPU_ThreadBlock``
+        # inner map. Done here — as late as possible, after the GPU
+        # specialization pipeline, ``expand_library_nodes``, and the
+        # post-expansion pipeline — so the kernel-internal transient hoist
+        # (``MoveArrayOutOfKernel``) sees the user-authored kernel shape,
+        # not the post-tile shape. Tiling earlier introduces an inner map
+        # range like ``Min(N-1, b_i+31) - b_i + 1`` whose ``b_i`` outer-loop
+        # symbol then leaks into host-side ``cudaMalloc`` size expressions.
+        self._infer_kernel_dimensions(sdfg)
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)

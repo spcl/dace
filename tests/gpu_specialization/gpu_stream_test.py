@@ -61,8 +61,8 @@ def test_basic():
 
 @pytest.mark.gpu
 def test_extended():
-    """Two independent components on two streams, each synchronized by its own
-    sync tasklet (one tasklet per stream — uniform single-connector shape)."""
+    """Two independent components on two streams, fused into one sync tasklet
+    per state with one ``__stream_<id>`` connector per stream id."""
 
     @dace.program
     def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
@@ -78,13 +78,14 @@ def test_extended():
     state = sdfg.states()[0]
 
     syncs = _all_sync_tasklets(state)
-    assert len(syncs) == 2, f"Expected one sync tasklet per stream (two streams); got {len(syncs)}."
-    seen_slots = set()
-    for sync in syncs:
-        stream_edges = _stream_in_edges(state, sync)
-        assert len(stream_edges) == 1
-        seen_slots.add(str(stream_edges[0].data))
-        assert stream_edges[0].src.desc(state).dtype == dace.dtypes.gpuStream_t
+    assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}."
+    sync = syncs[0]
+    stream_edges = _stream_in_edges(state, sync)
+    assert len(stream_edges) == 2, (f"Fused sync tasklet must have one gpu_streams[<i>] edge per stream; "
+                                    f"got {len(stream_edges)}: {[str(e.data) for e in stream_edges]}")
+    seen_slots = {str(e.data) for e in stream_edges}
+    for e in stream_edges:
+        assert e.src.desc(state).dtype == dace.dtypes.gpuStream_t
     assert seen_slots == {'gpu_streams[0]', 'gpu_streams[1]'}
 
     copy_libnodes = [n for n in state.nodes() if type(n).__name__ == 'CopyLibraryNode']

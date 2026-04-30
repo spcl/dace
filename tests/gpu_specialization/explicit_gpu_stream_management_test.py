@@ -92,16 +92,18 @@ def test_extended():
     state = sdfg.states()[0]
 
     syncs = _sync_tasklets(state)
-    # One sync tasklet per stream — every sync carries a single
-    # ``__stream`` ``gpuStream_t`` connector, fed by ``gpu_streams[<i>]``.
-    assert len(syncs) == 2, f"Expected one sync tasklet per stream (two streams); got {len(syncs)}"
-    for sync in syncs:
-        assert sync.side_effects is True
-        assert state.out_degree(sync) == 0
-        assert len(sync.in_connectors) == 1
-        only_conn = next(iter(sync.in_connectors))
-        assert only_conn == STREAM_CONNECTOR
-        assert sync.in_connectors[only_conn] == dace.dtypes.gpuStream_t
+    # Per-state syncs are fused into a single tasklet that synchronizes
+    # every stream the state needs to wait on, with one
+    # ``__stream_<id>`` ``gpuStream_t`` connector per stream id (the
+    # offset into the ``gpu_streams`` array).
+    assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}"
+    sync = syncs[0]
+    assert sync.side_effects is True
+    assert state.out_degree(sync) == 0
+    assert len(sync.in_connectors) == 2
+    for conn_name, conn_type in sync.in_connectors.items():
+        assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
+        assert conn_type == dace.dtypes.gpuStream_t
 
     # Memcpy tasklets emitted by the non-library GPU transformation still
     # need a stream connector (the library-node expansion handles its own
@@ -250,25 +252,24 @@ def test_three_kernels_dependent_and_independent():
         assert sorted(len(g) for g in by_stream.values()) == [1, 2]
 
         syncs = _sync_tasklets(kernel_state)
-        # One sync tasklet per stream (two streams here → two syncs).
-        assert len(syncs) == 2
+        # Per-state syncs are fused into one tasklet with N
+        # ``__stream_<id>`` connectors (one per synced stream).
+        assert len(syncs) == 1
+        sync = syncs[0]
+        assert sync.label == "gpu_streams_synchronization"
+        assert sync.side_effects is True
+        assert kernel_state.out_degree(sync) == 0, "Sync tasklet must be a sink under the path-based chain"
         sync_ids = set()
-        for sync in syncs:
-            assert sync.label == "gpu_streams_synchronization"
-            assert sync.side_effects is True
-            assert kernel_state.out_degree(sync) == 0, "Sync tasklet must be a sink under the path-based chain"
-            assert STREAM_CONNECTOR in sync.in_connectors
-            stream_inputs = [e for e in kernel_state.in_edges(sync) if e.dst_conn == STREAM_CONNECTOR]
-            assert len(stream_inputs) == 1
-            sync_ids.add(int(stream_inputs[0].data.subset[0][0]))
+        for conn_name, conn_type in sync.in_connectors.items():
+            assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
+            assert conn_type == dace.dtypes.gpuStream_t
+            inc = [e for e in kernel_state.in_edges(sync) if e.dst_conn == conn_name]
+            assert len(inc) == 1
+            sync_ids.add(int(inc[0].data.subset[0][0]))
         assert set(by_stream.keys()) == sync_ids
-
-        # Sync code is uniform — every sync tasklet calls
-        # ``cudaStreamSynchronize(__stream)`` against its single
-        # ``__stream`` connector. The stream id rides on the wired
-        # memlet (asserted above via ``sync_ids``), not in the code.
-        for sync in syncs:
-            assert STREAM_CONNECTOR in sync.code.as_string
+        # Body chains one ``cudaStreamSynchronize`` per ``__stream_<id>`` connector.
+        for sid in sync_ids:
+            assert f"{STREAM_CONNECTOR}_{sid}" in sync.code.as_string
 
         gpu = dace.dtypes.StorageType.GPU_Global
         cpu_like = {
@@ -316,8 +317,8 @@ def test_single_copy_library_node():
     b = state.add_access("B")
     cp = CopyLibraryNode(name="copy_A_to_B")
     state.add_node(cp)
-    state.add_edge(a, None, cp, "_in", dace.Memlet("A[0:128]"))
-    state.add_edge(cp, "_out", b, None, dace.Memlet("B[0:128]"))
+    state.add_edge(a, None, cp, "_cpy_in", dace.Memlet("A[0:128]"))
+    state.add_edge(cp, "_cpy_out", b, None, dace.Memlet("B[0:128]"))
 
     Pipeline([
         NaiveGPUStreamScheduler(),
@@ -345,9 +346,9 @@ def test_single_memset_library_node():
     state = sdfg.add_state("memset_state")
 
     b = state.add_access("B")
-    ms = MemsetLibraryNode(name="memset_B", inputs=set(), outputs={"_out"})
+    ms = MemsetLibraryNode(name="memset_B", inputs=set(), outputs={"_mset_out"})
     state.add_node(ms)
-    state.add_edge(ms, "_out", b, None, dace.Memlet("B[0:128]"))
+    state.add_edge(ms, "_mset_out", b, None, dace.Memlet("B[0:128]"))
 
     Pipeline([
         NaiveGPUStreamScheduler(),

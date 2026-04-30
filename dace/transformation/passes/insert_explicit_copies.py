@@ -382,6 +382,18 @@ class InsertExplicitCopies(ppl.Pass):
             if not isinstance(outer_an, nodes.AccessNode):
                 continue
 
+            # Skip lifts where either endpoint is a View — Views are
+            # logical aliases, not real data movement. Forcing a copy
+            # would write through the alias and break the View's read
+            # semantics. The codegen handles View access as pointer
+            # arithmetic; leave it alone here.
+            local_an = e.dst if direction == 'in' else e.src
+            from dace import data as dt
+            if isinstance(sdfg.arrays[local_an.data], dt.View):
+                continue
+            if isinstance(sdfg.arrays[outer_an.data], dt.View):
+                continue
+
             edges_to_process.append((direction, e, outer_an))
 
         count = 0
