@@ -287,7 +287,7 @@ def prune_coarsely(ast: f03.Program, keepers: Iterable[types.SPEC]) -> f03.Progr
                 elist = v.parent
                 utils.remove_self(v)
                 elist_tdecl = elist.parent
-                assert isinstance(elist_tdecl, (f03.Type_Declaration_Stmt, f03.Procedure_Declaration_Stmt))
+                assert isinstance(elist_tdecl, (f03.Type_Declaration_Stmt, f03.Procedure_Declaration_Stmt, f03.Proc_Component_Def_Stmt))
                 if not elist.children:
                     utils.remove_self(elist_tdecl)
                 removed_something = True
