@@ -3046,6 +3046,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     # NOTE: We need a coarse pruning as early (and as often) as reasonably possible to make it easier on the operations
     # that rely on full resolution (e.g., builds an alias map). After this pruning, a full resolution is expected.
     ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
+    ast.init([n for n in ast.children if n is not None])
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
     logging.debug("FParser Op: Removing remote indirections from AST...")
