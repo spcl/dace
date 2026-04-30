@@ -918,3 +918,130 @@ def add_condition_to_node_execution(cond: Union[str, UnaryOpBase, BinaryOpBase],
             new_if = f03.If_Stmt(f"if ({cond}) call x")
             utils.replace_node(node, new_if)
             utils.replace_node(ast_utils.singular(nm for nm in walk(new_if, f03.Call_Stmt)), node)
+
+
+def deconstruct_external_statements(ast: f03.Program) -> f03.Program:
+    """
+    Attemps to convert `EXTERNAL` statements to `USE` statements.
+    Raises warning if target module/subroutine/function is not found in program. In this case, the target 
+    likely requires a library node that should be created separately.
+
+    If target subroutine/function is in the program but not contained in a module, the subroutine/function 
+    is wrapped in a new module with similar name (e.g. `foo_module`).
+
+    :param ast: The Fortran AST to modify.
+    :return: The modified Fortran AST.
+    """
+    # Build a dictionary of subprogram name to subprogram node
+    subprograms_wo_modules: Dict[str, Union[f03.Function_Subprogram, f03.Subroutine_Subprogram]] = {}
+    # Build a dictionary of subprogram name to module
+    new_modules_name_map: Dict[str, str] = {}
+    # Keep track of functions/subroutines with unsupported features. Raise error only if `EXTERNAL` references them.
+    not_supported : list[str] = []
+
+    # (1) Populate subprograms_wo_modules
+    for node in walk(ast, (f03.Function_Stmt, f03.Subroutine_Stmt)):
+        subprog_name = node.items[1].tostr()
+        subprogram = node.parent
+
+        # Check whether already in Module. If yes, do nothing and continue to next subprogram.
+        anc = subprogram
+        while anc and not isinstance(anc, f03.Module):
+            anc = anc.parent
+        if isinstance(anc, f03.Module):
+            continue
+
+        # TODO: Check Fortran standard on referencing subroutines/functions contained inside other subroutine/function.
+        # Only Function_Subprogram and Subroutine_Subprogram supported for now (not yet: Subroutine_Body, Function_Body). Raise exception later if referenced by `EXTERNAL`.
+        if not isinstance(subprogram, (f03.Function_Subprogram, f03.Subroutine_Subprogram)):
+            not_supported.append(subprog_name)
+
+        # NOT supported: multiple subprograms with same name.
+        # TODO: Support same names according to scope.
+        if (subprog_name in subprograms_wo_modules):
+            not_supported.append(subprog_name)
+            # warnings.warn(f"When deconstructing `EXTERNAL` statements, found duplicate names of subprogram {subprog_name} (can ignore if not referenced).")
+
+        subprograms_wo_modules[subprog_name] = subprogram
+
+    # (2) Create new modules for subprograms referenced by `EXTERNAL` statements.
+    for node in walk(ast, (f03.External_Stmt, f03.Type_Declaration_Stmt)):
+        # Get external subprogram names ( EXTERNAL :: [ ext_subprogram_names:list ] )
+        if isinstance(node, f03.External_Stmt):
+            ext_subprogram_names = node.children[1].children
+        elif isinstance(node, f03.Type_Declaration_Stmt):
+            attr_spec_list = ast_utils.atmost_one(ast_utils.children_of_type(node, f08.Attr_Spec_List))
+            if attr_spec_list and ('EXTERNAL' in attr_spec_list.tostr()):
+                entity_decl_list = ast_utils.singular(ast_utils.children_of_type(node, f03.Entity_Decl_List))
+                ext_subprogram_names = entity_decl_list.children
+            else:
+                continue
+
+        # Process each external reference
+        for name_node in ext_subprogram_names:
+            name_str = name_node.tostr()
+
+            if name_str in new_modules_name_map:
+                continue
+
+            if name_str in not_supported:
+                raise NotImplementedError(f"Function/subroutine with name {name_str} referenced in EXTERNAL statement, but not yet supported. Possible causes: (1) name shared by several functions, (2) Subroutine_Body not in Module.")
+
+            # If subprogram not in parsed code, a warning is raised for now. These may be calls to library nodes, to be added later.
+            if (name_str not in subprograms_wo_modules):
+                warnings.warn(f"Unresolved `EXTERNAL` reference: {name_str} (subprogram not found in parsed code)")
+                continue
+
+            # Wrap in module (default name: {name_str}_module)
+            module_new_buffer = StringIO(f"""
+                MODULE {name_str}_module
+                IMPLICIT NONE
+                CONTAINS
+                {subprograms_wo_modules[name_str].tostr()}
+                END MODULE {name_str}_module
+            """)
+            module_new_reader = FortranReaderBase(module_new_buffer, mode=FortranFormat(True, False), ignore_comments=True)
+            module_new = f03.Module(module_new_reader)
+
+            # add module to AST at root
+            utils.append_children(ast, module_new)
+            new_modules_name_map[name_str] = f"{name_str}_module"
+
+            utils.replace_node(subprograms_wo_modules[name_str], None) # remove original subprogram from AST if newly wrapped in module.
+            subprograms_wo_modules.pop(name_str)
+        
+    # (3) For each function/subroutine - convert `EXTERNAL` statements to `USE`, if present.
+    for subprogram_node in walk(ast, (f03.Function_Subprogram, f03.Subroutine_Subprogram, f03.Module)):
+        spec_part = ast_utils.atmost_one(ast_utils.children_of_type(subprogram_node, f03.Specification_Part))
+        if spec_part is None:
+            continue
+
+        nodes_to_remove = []
+        for ext_node in walk(spec_part, (f03.External_Stmt, f03.Type_Declaration_Stmt)):
+            # Get external subprogram names ( EXTERNAL :: [ ext_subprogram_names:list ] )
+            # This part is repetitive, but object management is cleaner by separating passes (2) and (3)
+            if isinstance(ext_node, f03.External_Stmt):
+                ext_subprogram_names = ext_node.children[1].children
+            elif isinstance(ext_node, f03.Type_Declaration_Stmt):
+                attr_spec_list = ast_utils.atmost_one(ast_utils.children_of_type(ext_node, f08.Attr_Spec_List))
+                if attr_spec_list and ('EXTERNAL' in attr_spec_list.tostr()):
+                    entity_decl_list = ast_utils.singular(ast_utils.children_of_type(ext_node, f03.Entity_Decl_List))
+                    ext_subprogram_names = entity_decl_list.children
+                else:
+                    continue
+
+            for name_node in ext_subprogram_names:
+                name_str = name_node.tostr()
+                if name_str in new_modules_name_map:
+                    utils.prepend_children(spec_part, f03.Use_Stmt(f"USE {new_modules_name_map[name_str]}"))
+            
+            if all([(name_node.tostr() in new_modules_name_map) for name_node in ext_subprogram_names]):
+                nodes_to_remove.append(ext_node)
+            else:
+                nodes_to_remove += [n for n in ext_subprogram_names if (n.tostr() in new_modules_name_map)]
+
+        utils.remove_self(nodes_to_remove)
+        # for node in nodes_to_remove:
+        #     utils.remove_children(node.parent, node)
+
+    return ast

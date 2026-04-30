@@ -3042,6 +3042,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast = desugaring.deconstruct_associations(ast)
     ast = cleanup.remove_access_and_bind_statements(ast)
     ast = desugaring.deconstruct_goto_statements(ast)
+    ast = desugaring.deconstruct_external_statements(ast)
     # NOTE: We need a coarse pruning as early (and as often) as reasonably possible to make it easier on the operations
     # that rely on full resolution (e.g., builds an alias map). After this pruning, a full resolution is expected.
     ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
