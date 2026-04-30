@@ -418,8 +418,31 @@ struct FlatLeaf {
 /// realistic ~10).
 static constexpr int kFlattenMaxDepth = 12;
 
+/// Recursively walk a record type and append every reachable flat
+/// leaf to ``out``.  Returns false if any path bottoms out at a
+/// non-flat shape (allocatable / pointer member, dynamic-extent
+/// inner array, etc.); on false the caller falls back to a
+/// non-nested rewrite and the un-flattened struct surfaces a
+/// loud failure downstream.
+///
+/// Three member shapes are recognised at each level:
+///   * **flat member** (scalar / static-shape array of scalar) —
+///     contributes one leaf with its intrinsic shape preserved
+///     (the ``outerDims`` accumulated above are prepended so
+///     intermediate ``array<N x RecordType>`` levels concat into
+///     the leaf's flat companion shape).
+///   * **pure record** (``RecordType`` directly) — recurses with
+///     no shape contribution.
+///   * **array of records** (``array<N x RecordType>``) — recurses
+///     into the inner record after pushing ``N`` onto
+///     ``outerDims``; every leaf produced by that recursion
+///     inherits ``N`` as a leading dim.  This is what enables
+///     ``p_prog%pprog(i)%w(j, k)`` (where ``pprog: type(t)(10)``
+///     is an array-of-struct member) to flatten to a 3D companion
+///     ``p_prog_pprog_w`` of shape ``(10, 5, 5)``.
 static bool collectFlatLeaves(fir::RecordType rec,
                               llvm::SmallVectorImpl<std::string> &prefix,
+                              llvm::SmallVectorImpl<int64_t> &outerDims,
                               llvm::SmallVectorImpl<FlatLeaf> &out,
                               int depth = 0) {
     if (depth > kFlattenMaxDepth) return false;
@@ -428,16 +451,70 @@ static bool collectFlatLeaves(fir::RecordType rec,
         if (isFlatMemberType(pair.second)) {
             FlatLeaf leaf;
             leaf.path.assign(prefix.begin(), prefix.end());
-            leaf.leafTy = pair.second;
+            // Compose the leaf's flat companion shape:
+            //   outerDims (accumulated array-of-record dims walked
+            //   on the way down) ++ memberDims (the leaf member's
+            //   own intrinsic shape, if any).
+            mlir::Type leafEle = pair.second;
+            llvm::SmallVector<int64_t, 4> memberDims;
+            if (auto seq = mlir::dyn_cast<fir::SequenceType>(leafEle)) {
+                for (auto d : seq.getShape()) {
+                    if (d == fir::SequenceType::getUnknownExtent()) {
+                        prefix.pop_back();
+                        return false;  // dynamic extents in the
+                                       // leaf require a runtime
+                                       // shape we don't synthesise
+                                       // in this path.
+                    }
+                    memberDims.push_back(d);
+                }
+                leafEle = seq.getEleTy();
+            }
+            if (outerDims.empty() && memberDims.empty()) {
+                // Pure scalar leaf — no array wrapper.
+                leaf.leafTy = leafEle;
+            } else {
+                llvm::SmallVector<int64_t, 6> shape(outerDims.begin(),
+                                                    outerDims.end());
+                shape.append(memberDims.begin(), memberDims.end());
+                leaf.leafTy = fir::SequenceType::get(shape, leafEle);
+            }
             out.push_back(std::move(leaf));
         } else if (auto innerRec = mlir::dyn_cast<fir::RecordType>(pair.second)) {
-            if (!collectFlatLeaves(innerRec, prefix, out, depth + 1)) {
+            if (!collectFlatLeaves(innerRec, prefix, outerDims, out, depth + 1)) {
+                prefix.pop_back();
+                return false;
+            }
+        } else if (auto seq = mlir::dyn_cast<fir::SequenceType>(pair.second)) {
+            // Array-of-record member: recurse INTO the inner record
+            // with the outer extents pushed on so each leaf inherits
+            // them as leading dims.  Bail on dynamic extents — those
+            // would need a runtime-shape companion the synth path
+            // doesn't yet emit.
+            auto innerRec = mlir::dyn_cast<fir::RecordType>(seq.getEleTy());
+            if (!innerRec) {
+                prefix.pop_back();
+                return false;
+            }
+            llvm::SmallVector<int64_t, 4> theseDims;
+            for (auto d : seq.getShape()) {
+                if (d == fir::SequenceType::getUnknownExtent()) {
+                    prefix.pop_back();
+                    return false;
+                }
+                theseDims.push_back(d);
+            }
+            for (auto d : theseDims) outerDims.push_back(d);
+            bool ok = collectFlatLeaves(innerRec, prefix, outerDims, out,
+                                        depth + 1);
+            for (size_t i = 0; i < theseDims.size(); ++i) outerDims.pop_back();
+            if (!ok) {
                 prefix.pop_back();
                 return false;
             }
         } else {
-            // Member is e.g. an array of struct, or an allocatable —
-            // not flattenable here.  Bail out so the pass leaves the
+            // Member is e.g. allocatable / pointer — not flattenable
+            // through this path.  Bail so the pass leaves the
             // struct untouched and the loud-failure throw in
             // extract_vars points at the right gap.
             prefix.pop_back();
@@ -446,6 +523,17 @@ static bool collectFlatLeaves(fir::RecordType rec,
         prefix.pop_back();
     }
     return true;
+}
+
+/// Top-level entry point for the flat-leaf walker.  Internal
+/// callers always start with empty ``outerDims``.  Forwards to
+/// the recursive form above.
+static bool collectFlatLeaves(fir::RecordType rec,
+                              llvm::SmallVectorImpl<std::string> &prefix,
+                              llvm::SmallVectorImpl<FlatLeaf> &out,
+                              int depth = 0) {
+    llvm::SmallVector<int64_t, 4> outerDims;
+    return collectFlatLeaves(rec, prefix, outerDims, out, depth);
 }
 
 /// Detect a "jagged" scalar-struct: every member is a 1-D array of the same
@@ -559,9 +647,42 @@ static int memberRank(mlir::Type memTy) {
 /// first non-designate operand (typically the original ``hlfir.declare``
 /// of the struct root).  Returns the joined "_" path on success and an
 /// empty string if the chain doesn't end in pure component selectors.
-static std::string designateChainPath(hlfir::DesignateOp leaf,
-                                      hlfir::DesignateOp &outAnchor) {
-    llvm::SmallVector<std::string, 4> parts;
+/// Walk a chain of ``hlfir.designate`` ops back from the leaf up
+/// to the underlying ``hlfir.declare``, collecting:
+///   * ``path``                  — outer-first list of component names.
+///   * ``intermediateIndices``   — outer-first list of indices that
+///                                 appeared on NON-LEAF designates
+///                                 (i.e. on intermediate steps of
+///                                 the chain).  Empty for the
+///                                 simple case where only the leaf
+///                                 carries indices.
+///
+/// Two chain shapes are handled by separate downstream paths:
+///
+///   1. **Leaf-only indices** (the original case): every
+///      intermediate designate is a pure ``{component}`` selector,
+///      and any indices live on the leaf itself.  Caller clones
+///      the leaf and swaps its memref to the flat companion —
+///      preserving triplet sections, shape operands, and any
+///      other leaf-side attributes.
+///
+///   2. **Intermediate indices** (array-of-record member): the
+///      chain has a ``designate(idx)`` step between component
+///      designates, e.g. ``p_prog%pprog(i)%w(j, k)``.  Caller
+///      builds a fresh designate over the flat companion with
+///      indices merged across all chain steps.  Triplet sections
+///      on intermediate steps aren't in scope here (rare; would
+///      need separate handling).
+///
+/// Returns the joined ``"a_b_c"`` path key on success (matching the
+/// FlatLeaf naming the synth produces); empty string if the chain
+/// has no component step at all, or if a triplet section appears
+/// at a non-leaf level.
+static std::string walkDesignateChain(
+    hlfir::DesignateOp leaf,
+    llvm::SmallVectorImpl<mlir::Value> &intermediateIndices) {
+    llvm::SmallVector<std::string, 4> compsRev;
+    llvm::SmallVector<llvm::SmallVector<mlir::Value, 4>, 4> intermediateIdxGroupsRev;
     hlfir::DesignateOp cur = leaf;
     for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
         mlir::StringAttr compAttr;
@@ -570,26 +691,44 @@ static std::string designateChainPath(hlfir::DesignateOp leaf,
                 compAttr = a;
                 break;
             }
-        if (!compAttr) {
-            // Reached a non-component designate (a subscripted access
-            // ``a(i,j)``) — that's only valid as the LEAF of the chain,
-            // i.e. the very first call.  Stop here.
-            break;
+        if (compAttr) compsRev.push_back(compAttr.getValue().str());
+        bool isLeaf = (cur == leaf);
+        if (!isLeaf) {
+            // Intermediate steps must be plain (no triplets).
+            // Triplet sections on intermediate levels would mean a
+            // non-uniform slice through the array-of-record path
+            // (e.g. ``p_prog%pprog(2:5)%w(j)``); not in scope.
+            for (bool t : cur.getIsTriplet()) if (t) return "";
+            llvm::SmallVector<mlir::Value, 4> these(
+                cur.getIndices().begin(), cur.getIndices().end());
+            intermediateIdxGroupsRev.push_back(std::move(these));
         }
-        parts.push_back(compAttr.getValue().str());
-        outAnchor = cur;
-        // Walk to the parent; if it's another designate keep going.
+        // Walk to parent.
         auto memref = cur.getMemref();
         cur = mlir::dyn_cast_or_null<hlfir::DesignateOp>(memref.getDefiningOp());
     }
-    if (parts.empty()) return "";
-    // Reverse to outermost-first order matching FlatLeaf.path.
-    std::reverse(parts.begin(), parts.end());
+    if (compsRev.empty()) return "";
+    // Reverse to outer-first.  Components join with "_" to match
+    // FlatLeaf.path's canonical form.
     std::string joined;
-    for (unsigned i = 0; i < parts.size(); ++i) {
-        if (i) joined += "_";
-        joined += parts[i];
+    for (auto it = compsRev.rbegin(); it != compsRev.rend(); ++it) {
+        if (!joined.empty()) joined += "_";
+        joined += *it;
     }
+    for (auto it = intermediateIdxGroupsRev.rbegin();
+         it != intermediateIdxGroupsRev.rend(); ++it)
+        intermediateIndices.append(it->begin(), it->end());
+    return joined;
+}
+
+/// Backwards-compatible wrapper used by callers that only need the
+/// path (no merged indices) — keeps the original entry point shape
+/// while ``walkDesignateChain`` is the canonical implementation.
+static std::string designateChainPath(hlfir::DesignateOp leaf,
+                                      hlfir::DesignateOp &outAnchor) {
+    llvm::SmallVector<mlir::Value, 4> ignored;
+    auto joined = walkDesignateChain(leaf, ignored);
+    outAnchor = leaf;
     return joined;
 }
 
@@ -602,27 +741,53 @@ static bool rewriteDesignateChain(
     hlfir::DesignateOp leaf,
     const llvm::StringMap<mlir::Value> &leafBase) {
 
-    hlfir::DesignateOp anchor;
-    std::string path = designateChainPath(leaf, anchor);
+    llvm::SmallVector<mlir::Value, 4> intermediateIndices;
+    std::string path = walkDesignateChain(leaf, intermediateIndices);
     if (path.empty()) return false;
     auto it = leafBase.find(path);
     if (it == leafBase.end()) return false;
     auto newBase = it->second;
 
-    // ``leaf`` is the INNERMOST (component or component-with-indices) op.
-    // Its result is what the rest of the IR consumes.
-    if (leaf.getIndices().empty()) {
-        leaf.getResult().replaceAllUsesWith(newBase);
+    // Leaf-only path (no intermediate indices).  Preserves the
+    // leaf's full shape — including triplet sections, shape
+    // operand, complex_part, etc. — by cloning and rewiring just
+    // the memref + clearing the component attrs.  Whole-leaf
+    // access (``base{"a"}{"b"}`` with no indices) just RAUWs.
+    if (intermediateIndices.empty()) {
+        if (leaf.getIndices().empty()) {
+            leaf.getResult().replaceAllUsesWith(newBase);
+            leaf.erase();
+            return true;
+        }
+        mlir::OpBuilder rb(leaf);
+        auto *clone = rb.clone(*leaf.getOperation());
+        clone->setOperand(0, newBase);
+        clone->removeAttr("component");
+        clone->removeAttr("component_name");
+        leaf.getResult().replaceAllUsesWith(clone->getResult(0));
         leaf.erase();
         return true;
     }
 
+    // Intermediate-indices path (array-of-record member surfaced
+    // by ``collectFlatLeaves``'s extra outerDims).  Build a fresh
+    // designate over the flat companion with intermediate +
+    // leaf indices merged in outer-first order.  No triplets at
+    // intermediate levels (walker bails on that).  Whether the
+    // leaf itself has triplets is rare in this shape — a section
+    // on the innermost array of a record-of-record-of-... — and
+    // is also out of scope; bail to keep the contract narrow.
+    for (bool t : leaf.getIsTriplet()) if (t) return false;
+    llvm::SmallVector<mlir::Value, 6> merged(intermediateIndices.begin(),
+                                              intermediateIndices.end());
+    for (auto v : leaf.getIndices()) merged.push_back(v);
     mlir::OpBuilder rb(leaf);
-    auto *clone = rb.clone(*leaf.getOperation());
-    clone->setOperand(0, newBase);
-    clone->removeAttr("component");
-    clone->removeAttr("component_name");
-    leaf.getResult().replaceAllUsesWith(clone->getResult(0));
+    auto newOp = rb.create<hlfir::DesignateOp>(
+        leaf.getLoc(),
+        leaf.getResult().getType(),
+        newBase,
+        mlir::ValueRange{merged});
+    leaf.getResult().replaceAllUsesWith(newOp.getResult());
     leaf.erase();
     return true;
 }

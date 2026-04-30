@@ -1310,6 +1310,45 @@ end subroutine main
     np.testing.assert_array_equal(d, d_ref)
 
 
+def test_array_of_nested_struct_member(tmp_path: Path):
+    """Phase 2 extension: a struct member is an ARRAY of another
+    struct (``type(simple_type) :: pprog(10)``).  The flat
+    companion folds the array dim into the leaf's shape so
+    ``p_prog%pprog(i)%w(j, k)`` rewrites to a 3D companion
+    ``p_prog_pprog_w(i, j, k)``.  Exercises ``collectFlatLeaves``'s
+    ``array<N x RecordType>`` branch and ``walkDesignateChain``'s
+    intermediate-indices path together.
+    """
+    src = """
+module lib
+  implicit none
+  type simple_type
+    real :: w(5, 5)
+  end type simple_type
+  type simple_type2
+    type(simple_type) :: pprog(10)
+  end type simple_type2
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  real, intent(out) :: d(5, 5)
+  type(simple_type2) :: p_prog
+  p_prog%pprog(1)%w(1, 1) = 47.0
+  d(1, 1) = p_prog%pprog(1)%w(1, 1)
+end subroutine main
+"""
+    mod = f2py_compile(src, tmp_path / "ref", "array_of_nested_struct_ref")
+    d_ref = np.asarray(mod.main(), dtype=np.float32)
+
+    sdfg = _build(src, tmp_path)
+    d = np.zeros((5, 5), order="F", dtype=np.float32)
+    sdfg(d=d)
+    np.testing.assert_array_equal(d, d_ref)
+    assert d[0][0] == 47.0
+
+
 def test_aos_member_to_member_array_copy(tmp_path: Path):
     """AoS pattern ``a(i)%b = a(j)%c`` where ``b`` and ``c`` are array
     members — the assignment is a whole-array copy of one inner row.
