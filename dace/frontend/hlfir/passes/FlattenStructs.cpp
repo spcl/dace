@@ -906,6 +906,127 @@ static bool rewriteDesignateChain(
     return true;
 }
 
+/// Trace ``other``'s memref back through ``hlfir.declare`` /
+/// ``fir.convert`` / ``fir.embox`` / ``hlfir.designate`` ops, building
+/// the ``(path, indices)`` prefix that an alias root buries.  When an
+/// inlined-callee dummy aliases ``decl`` via
+/// ``convert(embox(designate{"w"}(designate{"pprog"}(i))))``, a leaf
+/// rooted at the alias declare needs the ``("pprog", "w") + [i]``
+/// prefix prepended so the rewrite designs into the right flat
+/// companion.  Triplet sections on intermediate steps are out of scope.
+static std::optional<AliasPrefix>
+traceAliasPrefixToDecl(hlfir::DeclareOp other, hlfir::DeclareOp decl) {
+    llvm::SmallVector<std::string, 4> pathRev;
+    llvm::SmallVector<llvm::SmallVector<mlir::Value, 4>, 4> indexGroupsRev;
+    mlir::Value mr = other.getMemref();
+    for (int i = 0; i < kFlattenMaxDepth && mr; ++i) {
+        auto *d = mr.getDefiningOp();
+        if (!d) return std::nullopt;
+        if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+            if (outer == decl) {
+                AliasPrefix info;
+                for (auto it = pathRev.rbegin(); it != pathRev.rend(); ++it)
+                    info.path.push_back(*it);
+                for (auto it = indexGroupsRev.rbegin();
+                     it != indexGroupsRev.rend(); ++it)
+                    info.indices.append(it->begin(), it->end());
+                return info;
+            }
+            // Intermediate declare (a previously-inlined alias).
+            // Continue walking from its source — declares act as
+            // identity wrappers around their memref operand for the
+            // purposes of alias tracking.
+            mr = outer.getMemref();
+            continue;
+        }
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
+            mr = cv.getValue();
+            continue;
+        }
+        if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d)) {
+            mr = eb.getMemref();
+            continue;
+        }
+        if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d)) {
+            mlir::StringAttr compAttr;
+            for (auto nm : {"component_name", "component"})
+                if (auto a = dg->getAttrOfType<mlir::StringAttr>(nm)) {
+                    compAttr = a;
+                    break;
+                }
+            if (compAttr) pathRev.push_back(compAttr.getValue().str());
+            if (auto trip = dg.getIsTripletAttr())
+                for (bool t : trip.asArrayRef())
+                    if (t) return std::nullopt;
+            llvm::SmallVector<mlir::Value, 4> these(
+                dg.getIndices().begin(), dg.getIndices().end());
+            indexGroupsRev.push_back(std::move(these));
+            mr = dg.getMemref();
+            continue;
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+/// Walk every ``hlfir.designate`` chain rooted at ``decl`` (or any
+/// inlined-callee alias of it) and rewrite each leaf to the matching
+/// flat companion in ``leafBase``.  Shared between the local-declare
+/// path (``splitLocal``) and the dummy-arg path
+/// (``replaceStructArgNested``) — both produce the same ``leafBase``
+/// shape and need the same rewrite logic.
+static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
+                                  const llvm::StringMap<mlir::Value> &leafBase) {
+    auto func = decl->getParentOfType<mlir::func::FuncOp>();
+    if (!func) return;
+
+    // Discover declares that alias ``decl`` (inlined-callee dummies
+    // whose memref chain leads back to it).  Each gets its buried
+    // path + scalar prefix recorded for the chain rewriter.
+    llvm::DenseSet<mlir::Value> equivalentRoots;
+    llvm::DenseMap<mlir::Value, AliasPrefix> aliasPrefixes;
+    equivalentRoots.insert(decl.getResult(0));
+    equivalentRoots.insert(decl.getResult(1));
+    func.walk([&](hlfir::DeclareOp other) {
+        if (other == decl) return;
+        if (auto info = traceAliasPrefixToDecl(other, decl)) {
+            equivalentRoots.insert(other.getResult(0));
+            equivalentRoots.insert(other.getResult(1));
+            if (!info->path.empty()) {
+                aliasPrefixes[other.getResult(0)] = *info;
+                aliasPrefixes[other.getResult(1)] = *info;
+            }
+        }
+    });
+
+    // Find each chain's leaf — a designate whose users are NOT
+    // themselves designates (otherwise we'd rewrite a parent and
+    // lose the inner part of the chain) — then verify the chain
+    // bottoms out at one of the equivalent roots.
+    llvm::SmallVector<hlfir::DesignateOp, 16> chainLeaves;
+    func.walk([&](hlfir::DesignateOp dg) {
+        bool hasDesignateUser = false;
+        for (auto *u : dg.getResult().getUsers())
+            if (mlir::isa<hlfir::DesignateOp>(u)) {
+                hasDesignateUser = true;
+                break;
+            }
+        if (hasDesignateUser) return;
+        hlfir::DesignateOp cur = dg;
+        for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
+            auto memref = cur.getMemref();
+            if (equivalentRoots.contains(memref)) {
+                chainLeaves.push_back(dg);
+                return;
+            }
+            cur = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
+                memref.getDefiningOp());
+        }
+    });
+    for (auto dg : chainLeaves)
+        rewriteDesignateChain(dg, leafBase, &aliasPrefixes);
+}
+
 static void rewriteDesignate(
     hlfir::DesignateOp dg,
     const llvm::StringMap<mlir::Value> &memberBase,
@@ -2684,138 +2805,13 @@ struct FlattenStructsPass
                 leafBase[joinedKey] = newDecl.getResult(0);
             }
 
-            // Walk the original declare's users (which are component
-            // designates) and follow the chain to the LEAF designate.
-            // We can't simply walk decl.getResult(0).getUsers because
-            // those are the FIRST-level designates; we need the
-            // innermost one.  Approach: find every hlfir.designate in
-            // the function whose ultimate ancestor (through the chain)
-            // is ``decl`` and rewrite the chain.
-            // Build the set of declares whose results are equivalent
-            // to ``decl``'s — that's ``decl`` plus every inlined-callee
-            // alias declare reaching ``decl`` through embox/convert
-            // chains.  ``hlfir-inline-all`` splices a callee body into
-            // the caller, leaving the callee's dummy declared as a
-            // fresh ``hlfir.declare`` whose memref ultimately resolves
-            // back to ``decl``.  Without this set, designate chains
-            // rooted at the inlined alias declare wouldn't be
-            // recognised as belonging to ``decl`` and stay un-rewritten
-            // (surfacing as ``_out = ?`` placeholders downstream).
-            // Trace ``other``'s memref back through ``hlfir.declare`` /
-            // ``fir.embox`` / ``fir.convert`` ops; if it reaches
-            // ``decl`` they're sequential aliases of the same storage.
-            // Trace ``other``'s memref back through embox / convert /
-            // declare ops AND ``hlfir.designate`` ops, building the
-            // (path, indices) prefix that an alias root buries.  When
-            // an inlined-callee dummy aliases ``decl`` via
-            // ``convert(embox(designate{"w"}(designate{"pprog"}(i))))``,
-            // a leaf rooted at the alias declare needs the
-            // ``("pprog", "w") + [i]`` prefix prepended so the rewrite
-            // designs into the right flat companion.  Triplet sections
-            // on intermediate steps are out of scope.
-            auto traceAliasPrefix =
-                [&](hlfir::DeclareOp other) -> std::optional<AliasPrefix> {
-                llvm::SmallVector<std::string, 4> pathRev;
-                llvm::SmallVector<llvm::SmallVector<mlir::Value, 4>, 4>
-                    indexGroupsRev;
-                mlir::Value mr = other.getMemref();
-                for (int i = 0; i < kFlattenMaxDepth && mr; ++i) {
-                    auto *d = mr.getDefiningOp();
-                    if (!d) return std::nullopt;
-                    if (auto outer = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
-                        if (outer == decl) {
-                            AliasPrefix info;
-                            for (auto it = pathRev.rbegin();
-                                 it != pathRev.rend(); ++it)
-                                info.path.push_back(*it);
-                            for (auto it = indexGroupsRev.rbegin();
-                                 it != indexGroupsRev.rend(); ++it)
-                                info.indices.append(it->begin(), it->end());
-                            return info;
-                        }
-                        // Intermediate declare (a previously-inlined
-                        // alias).  Continue walking from its source —
-                        // declares act as identity wrappers around their
-                        // memref operand for the purposes of alias
-                        // tracking.
-                        mr = outer.getMemref();
-                        continue;
-                    }
-                    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
-                        mr = cv.getValue();
-                        continue;
-                    }
-                    if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d)) {
-                        mr = eb.getMemref();
-                        continue;
-                    }
-                    if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d)) {
-                        mlir::StringAttr compAttr;
-                        for (auto nm : {"component_name", "component"})
-                            if (auto a = dg->getAttrOfType<mlir::StringAttr>(nm)) {
-                                compAttr = a;
-                                break;
-                            }
-                        if (compAttr) pathRev.push_back(compAttr.getValue().str());
-                        if (auto trip = dg.getIsTripletAttr())
-                            for (bool t : trip.asArrayRef())
-                                if (t) return std::nullopt;
-                        llvm::SmallVector<mlir::Value, 4> these(
-                            dg.getIndices().begin(), dg.getIndices().end());
-                        indexGroupsRev.push_back(std::move(these));
-                        mr = dg.getMemref();
-                        continue;
-                    }
-                    return std::nullopt;
-                }
-                return std::nullopt;
-            };
-
-            llvm::DenseSet<mlir::Value> equivalentRoots;
-            llvm::DenseMap<mlir::Value, AliasPrefix> aliasPrefixes;
-            equivalentRoots.insert(decl.getResult(0));
-            decl->getParentOfType<mlir::func::FuncOp>().walk(
-                [&](hlfir::DeclareOp other) {
-                    if (other == decl) return;
-                    if (auto info = traceAliasPrefix(other)) {
-                        equivalentRoots.insert(other.getResult(0));
-                        equivalentRoots.insert(other.getResult(1));
-                        if (!info->path.empty()) {
-                            aliasPrefixes[other.getResult(0)] = *info;
-                            aliasPrefixes[other.getResult(1)] = *info;
-                        }
-                    }
-                });
-
-            llvm::SmallVector<hlfir::DesignateOp, 16> chainLeaves;
-            decl->getParentOfType<mlir::func::FuncOp>().walk(
-                [&](hlfir::DesignateOp dg) {
-                    // A leaf is a designate whose users are NOT themselves
-                    // hlfir.designate ops (otherwise we'd rewrite a parent
-                    // and lose the chain).
-                    bool hasDesignateUser = false;
-                    for (auto *u : dg.getResult().getUsers())
-                        if (mlir::isa<hlfir::DesignateOp>(u)) {
-                            hasDesignateUser = true;
-                            break;
-                        }
-                    if (hasDesignateUser) return;
-                    // Walk the chain to verify it ends at any equivalent
-                    // root (``decl`` itself or one of its inlined-alias
-                    // declares).
-                    hlfir::DesignateOp cur = dg;
-                    for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
-                        auto memref = cur.getMemref();
-                        if (equivalentRoots.contains(memref)) {
-                            chainLeaves.push_back(dg);
-                            return;
-                        }
-                        cur = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
-                            memref.getDefiningOp());
-                    }
-                });
-            for (auto dg : chainLeaves)
-                rewriteDesignateChain(dg, leafBase, &aliasPrefixes);
+            // Walk every hlfir.designate chain rooted at ``decl`` (or
+            // any inlined-callee alias of it) and rewrite each leaf to
+            // the matching flat companion in ``leafBase``.  Shared
+            // helper with the dummy-arg nested path
+            // (``replaceStructArgNested``) — both sides build the same
+            // ``leafBase`` and need the same chain-rewrite logic.
+            rewriteChainsRootedAt(decl, leafBase);
 
             if (decl.getResult(0).use_empty()
                     && decl.getResult(1).use_empty()) {
