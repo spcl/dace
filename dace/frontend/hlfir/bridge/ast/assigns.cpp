@@ -696,18 +696,47 @@ std::vector<ASTNode> buildSectionScalarAssign(
 /// a wrong answer.  The dispatcher relies on this — it does NOT have
 /// a section-to-section recovery path.
 std::vector<ASTNode> buildSectionToSectionAssign(
-    hlfir::AssignOp assign, hlfir::DesignateOp dst) {
+    hlfir::AssignOp assign, mlir::Value dst) {
     auto srcVal = assign.getOperand(0);
     auto *srcDef = srcVal.getDefiningOp();
     if (!srcDef) return {};
 
-    auto dstTriplets = dst.getIsTriplet();
-    if (dstTriplets.empty()) return {};
-    unsigned dstTC = 0;
-    for (bool t : dstTriplets) if (t) dstTC++;
-    if (dstTC == 0) return {};
+    // Destination form parallels the src dispatch below: a designate
+    // with triplets carries its own slicing, while a bare declare
+    // means whole-array (synthesise full-extent triplets, lo=1, the
+    // hi unused since RHS section bounds drive the loop).  This
+    // symmetric handling is what lets ``t0_w = p%pprog(1)%w``
+    // (LHS bare decl, RHS section) lower to a per-element loop
+    // instead of falling through to ``buildCopyNode`` (which would
+    // copy the whole 3D companion).
+    auto *dstDef = dst.getDefiningOp();
+    if (!dstDef) return {};
+    auto dstDg = mlir::dyn_cast<hlfir::DesignateOp>(dstDef);
+    auto dstDecl = mlir::dyn_cast<hlfir::DeclareOp>(dstDef);
+    if (!dstDg && !dstDecl) return {};
 
-    auto dstName = traceToDecl(dst.getMemref());
+    // ``dstTC`` (triplet count) is set up-front for both forms so the
+    // rank-match check below can fire before we parse per-dim details.
+    // Bare-decl: every dim is a triplet, so rank == triplet count.
+    std::string dstName;
+    unsigned dstTC = 0;
+    if (dstDg) {
+        auto dstTriplets = dstDg.getIsTriplet();
+        if (dstTriplets.empty()) return {};
+        for (bool t : dstTriplets) if (t) dstTC++;
+        if (dstTC == 0) return {};
+        dstName = traceToDecl(dstDg.getMemref());
+    } else {
+        dstName = allocAliasFor(extractName(dstDecl.getUniqName().str()));
+        auto ty = dstDecl.getResult(0).getType();
+        if (auto b = mlir::dyn_cast<fir::BoxType>(ty))       ty = b.getEleTy();
+        if (auto r = mlir::dyn_cast<fir::ReferenceType>(ty)) ty = r.getEleTy();
+        if (auto h = mlir::dyn_cast<fir::HeapType>(ty))      ty = h.getEleTy();
+        if (auto p = mlir::dyn_cast<fir::PointerType>(ty))   ty = p.getEleTy();
+        if (auto seq = mlir::dyn_cast<fir::SequenceType>(ty))
+            dstTC = seq.getShape().size();
+        if (dstTC == 0) return {};
+    }
     if (dstName.empty()) return {};
 
     // Source can be either a designate (its own slicing) or a bare
@@ -774,7 +803,22 @@ std::vector<ASTNode> buildSectionToSectionAssign(
     // silently.  Genuine section mismatches (different lo/hi/stride
     // each side) require parseable bounds and are caught below.
     std::vector<DesignateDim> dstDims;
-    if (!parseDesignateDims(dst, dstDims)) return {};
+    if (dstDg) {
+        if (!parseDesignateDims(dstDg, dstDims)) return {};
+    } else {
+        // Bare decl: synthesise full-extent triplets per dim, mirroring
+        // the bare-source path above.  Loop bounds come from the src
+        // section (see boundsSide selection later); the lo="1" here
+        // just feeds the per-dim source-shift formula and keeps the
+        // memlet index expression Fortran 1-based.
+        for (unsigned i = 0; i < dstTC; ++i) {
+            DesignateDim d;
+            d.isTriplet = true;
+            d.lo = "1";
+            d.hi = "1";  // unused; loop bounds come from RHS
+            dstDims.push_back(std::move(d));
+        }
+    }
 
     // Stride: only stride 1 is supported on both sides for now.  Any
     // non-1 stride is rejected loudly so the caller is forced to confront
@@ -866,14 +910,18 @@ std::vector<ASTNode> buildSectionToSectionAssign(
     inner.accesses.push_back(std::move(wa));
     inner.accesses.push_back(std::move(ra));
 
-    // Wrap in nested loops over LHS triplet bounds (Fortran 1-based form
-    // so emit_loop's offset_<arr>_d<i> subtraction lands the write at
-    // the right element).
+    // Wrap in nested loops over the bounds-bearing side's triplets
+    // (Fortran 1-based form so emit_loop's offset_<arr>_d<i>
+    // subtraction lands the write at the right element).  When the
+    // dst is a bare declare its synthesised dims carry placeholder
+    // hi="1" — drive the loop from src's section instead.  In the
+    // mirror case (bare-decl src, designate dst) dstDims already
+    // hold the real bounds, which has been the long-standing path.
     ASTNode current = inner;
     {
-        unsigned tDim = 0;
+        const auto &boundsSide = dstDg ? dstDims : srcDims;
         std::vector<std::pair<std::string, std::string>> bounds;
-        for (auto &d : dstDims)
+        for (auto &d : boundsSide)
             if (d.isTriplet) bounds.push_back({d.lo, d.hi});
         for (int i = (int)bounds.size() - 1; i >= 0; --i) {
             ASTNode wrap;
@@ -884,7 +932,6 @@ std::vector<ASTNode> buildSectionToSectionAssign(
             wrap.children.push_back(current);
             current = wrap;
         }
-        (void)tDim;
     }
     return {current};
 }

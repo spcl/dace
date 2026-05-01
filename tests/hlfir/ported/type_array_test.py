@@ -91,7 +91,6 @@ end subroutine main
     assert d[0][0] == 47
 
 
-@xfail("nested derived type with whole-struct copy + recall not lowered")
 def test_fortran_frontend_type_arrayv2(tmp_path):
     src = """
 module lib

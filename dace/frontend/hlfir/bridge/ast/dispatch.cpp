@@ -388,8 +388,17 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // ignore scalar dims and slice offsets (e.g.
             // ``res(nval, pos(1):pos(2)) = a(nval, pos(3):pos(4))``).
             if (dst_is_array && src_is_array && !src_is_hlfir_expr) {
-                if (auto dstSec = asSectionDesignate(dst)) {
-                    auto built = buildSectionToSectionAssign(assign, dstSec);
+                bool dstIsSection = (bool)asSectionDesignate(dst);
+                bool srcIsSection = (bool)asSectionDesignate(src);
+                // Either side carrying section info is enough — the
+                // helper handles bare-decl on whichever side is plain
+                // whole-array.  Without this the dst-bare-decl form
+                // (``t0_w = p_prog_pprog_w(1, 1:5:1, 1:5:1)`` produced
+                // by Phase 2 nested-DT flattening of an AoS-element
+                // whole-struct copy) would fall through to
+                // ``buildCopyNode`` and copy the entire 3D companion.
+                if (dstIsSection || srcIsSection) {
+                    auto built = buildSectionToSectionAssign(assign, dst);
                     if (!built.empty()) {
                         for (auto &n : built)
                             nodes.push_back(std::move(n));

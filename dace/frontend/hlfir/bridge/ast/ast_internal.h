@@ -31,7 +31,7 @@ std::vector<ASTNode> buildSectionScalarAssign(
     hlfir::AssignOp assign, hlfir::DesignateOp dst);
 
 std::vector<ASTNode> buildSectionToSectionAssign(
-    hlfir::AssignOp assign, hlfir::DesignateOp dst);
+    hlfir::AssignOp assign, mlir::Value dst);
 
 ASTNode buildSelectCaseChain(fir::SelectCaseOp sel);
 
