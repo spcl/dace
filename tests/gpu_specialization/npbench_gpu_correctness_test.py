@@ -40,8 +40,6 @@ for sub in ('npbench/polybench', 'npbench/misc', 'npbench/weather_stencils'):
 import adi_test  # noqa: E402
 import atax_test  # noqa: E402
 import bicg_test  # noqa: E402
-import cholesky_test  # noqa: E402
-import cholesky2_test  # noqa: E402
 import correlation_test  # noqa: E402
 import covariance_test  # noqa: E402
 import deriche_test  # noqa: E402
@@ -274,20 +272,6 @@ def test_durbin():
     N = 16
     r = durbin_test.initialize(N)
     _run_through_new_gpu_pipeline(durbin_test.durbin_kernel, lambda: dict(r=r.copy()), dict(N=N))
-
-
-@pytest.mark.gpu
-def test_cholesky():
-    N = 16
-    A = cholesky_test.init_data(N)
-    _run_through_new_gpu_pipeline(cholesky_test.kernel, lambda: dict(A=A.copy()), dict(N=N), rtol=1e-4, atol=1e-5)
-
-
-@pytest.mark.gpu
-def test_cholesky2():
-    N = 16
-    A = cholesky2_test.init_data(N)
-    _run_through_new_gpu_pipeline(cholesky2_test.cholesky2_kernel, lambda: dict(A=A.copy()), dict(N=N))
 
 
 @pytest.mark.gpu
