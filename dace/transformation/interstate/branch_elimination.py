@@ -295,10 +295,6 @@ class BranchElimination(transformation.MultiStateTransformation):
                          for node in preorder_traversal(rhs_as_symexpr) if isinstance(node, Function)
                      }) - {"AND", "OR", "NOT", "and", "or", "not", "And", "Or", "Not"}
 
-        # For array accesses such as arr1(i, j) get the dictionary tha tmaps name to accesses {arr1: [i,j]}
-        # And remove the array accesses
-        cleaned, extracted_subsets = self._extract_bracket_content(rhs)
-
         # Collect inputs we need
         arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
         sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
@@ -316,11 +312,15 @@ class BranchElimination(transformation.MultiStateTransformation):
             find_new_name=True,
         )
 
-        # For all non-symbol (=array/scalar) inputs replace the name with the connector version
-        # Connector version is `_in_{arr_input}_{offset}` (to not repeat the connectors)
-        symbol_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
-        for i, arr_input in enumerate(arr_inputs):
-            cleaned = cutil.token_replace_dict(cleaned, {arr_input: f"_in_{arr_input}_{i}"})
+        # Replace each array access `arr[...]` with its scalar connector `_in_arr_<i>` and
+        # capture the per-array subset string in one structural pass over the SymExpr tree.
+        # SymExpr-based substitution avoids the regex+token brittleness around identifier
+        # overlaps; nested array reads inside subsets are kept as `name[args]` because we
+        # pass `arrays=set(state.sdfg.arrays)` to the printer.
+        symbol_inputs = sym_inputs
+        arr_to_conn = {arr_input: f"_in_{arr_input}_{i}" for i, arr_input in enumerate(arr_inputs)}
+        cleaned, extracted_subsets = dace.symbolic.replace_array_accesses_with_connectors(
+            rhs, arr_to_conn, arrays=set(state.sdfg.arrays.keys()))
 
         assert arr_inputs.union(symbol_inputs) == free_vars
 

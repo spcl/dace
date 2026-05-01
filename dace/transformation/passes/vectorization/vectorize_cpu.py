@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Set
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
@@ -29,7 +29,8 @@ class VectorizeCPU(ppl.Pipeline):
                  only_apply_vectorization_pass: bool = False,
                  no_inline: bool = False,
                  fail_on_unvectorizable: bool = False,
-                 eliminate_trivial_vector_map: bool = True):
+                 eliminate_trivial_vector_map: bool = True,
+                 user_skip_nsdfg_arrays: Optional[Set[str]] = None):
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
@@ -79,7 +80,8 @@ class VectorizeCPU(ppl.Pipeline):
             apply_on_maps=apply_on_maps,
             insert_copies=insert_copies,
             fail_on_unvectorizable=fail_on_unvectorizable,
-            eliminate_trivial_vector_map=eliminate_trivial_vector_map)
+            eliminate_trivial_vector_map=eliminate_trivial_vector_map,
+            user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),
@@ -114,7 +116,7 @@ class VectorizeCPU(ppl.Pipeline):
         """
         if self._applied_before is False:
             CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-            self._applied_before is True
+            self._applied_before = True
         for p in self.passes:
             p: Pass
             yield p

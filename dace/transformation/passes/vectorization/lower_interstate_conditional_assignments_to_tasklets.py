@@ -119,7 +119,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     else:
                         for sn in ln.nodes():
                             if isinstance(sn, nodes.NestedSDFG):
-                                if self._apply(sn.sdfg) and self.apply_pass:
+                                if self._apply(sn.sdfg) and self.apply_once:
                                     return True
             else:
                 # Ok if a break block just connintue

@@ -1510,6 +1510,69 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
         return '(' + sstr + ')'
 
 
+def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str, str],
+                                           arrays: Set[str]) -> Tuple[str, Dict[str, str]]:
+    """
+    Parse a Python expression where array reads use ``A[i, j]`` syntax, replace each
+    ``A[...]`` whose name is in ``arr_to_connector`` with a bare connector name, and
+    return the rewritten expression along with the (per-array) subset strings.
+
+    The expression is parsed via :class:`SymExpr`, which models array accesses as
+    ``sympy.Function('A')(i, j)``. Each such function whose name is in
+    ``arr_to_connector`` is structurally replaced with ``sympy.Symbol(<connector>)``.
+    Printing uses :class:`DaceSympyPrinter` with ``arrays=arrays`` so that any
+    *remaining* function whose name is in ``arrays`` (e.g. an indirect read inside
+    a captured subset) is emitted as ``name[args]`` rather than ``name(args)``.
+
+    Replacement is performed structurally, not at the text level, so identifier
+    overlaps (``arr`` vs ``arr10``) are handled correctly without token splitting.
+
+    Parameters
+    ----------
+    rhs : str
+        Python expression with possible array reads, e.g. ``"A[i, j] + B[k] - 5"``.
+    arr_to_connector : Dict[str, str]
+        Map from array name to scalar connector name to substitute, e.g.
+        ``{"A": "_in_A_0", "B": "_in_B_1"}``.
+    arrays : Set[str]
+        Names of all arrays in scope; used to ensure nested array reads inside
+        subsets are printed with ``[]`` brackets rather than ``()``.
+
+    Returns
+    -------
+    Tuple[str, Dict[str, str]]
+        ``(rewritten_expression, {arr_name: "[i, j]"})``. The subset string is the
+        first ``args`` tuple seen for each array name (matches ``token_replace_dict``
+        semantics: one connector per array name regardless of how many distinct
+        subsets the original expression used).
+    """
+    expr = SymExpr(rhs)
+    # SymExpr may wrap; unwrap to the underlying sympy expression for traversal.
+    base = expr.expr if isinstance(expr, SymExpr) else expr
+    printer = DaceSympyPrinter(arrays)
+    rewrites: Dict[sympy.Basic, sympy.Basic] = {}
+    arr_subsets: Dict[str, str] = {}
+    for node in sympy.preorder_traversal(base):
+        # Array/scalar read with subscript: arr[...] -> Function('arr')(...)
+        if isinstance(node, sympy.Function):
+            fname = str(node.func)
+            if fname in arr_to_connector:
+                rewrites[node] = sympy.Symbol(arr_to_connector[fname])
+                if fname not in arr_subsets:
+                    args_str = ", ".join(printer.doprint(a) for a in node.args)
+                    arr_subsets[fname] = f"[{args_str}]"
+        # Bare scalar reference (no subscript): arr -> Symbol('arr')
+        elif isinstance(node, sympy.Symbol):
+            sname = str(node)
+            if sname in arr_to_connector:
+                rewrites[node] = sympy.Symbol(arr_to_connector[sname])
+                # No subset captured — caller's downstream lookup of `extracted_subsets.get(name)`
+                # will fall back to a zero-tuple, which matches the original
+                # `_extract_bracket_content` behavior for un-bracketed references.
+    new_base = base.xreplace(rewrites) if rewrites else base
+    return printer.doprint(new_base), arr_subsets
+
+
 def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
                  replace_callback: Callable[[Dict[str, str]], None],
                  value_as_string: bool = False) -> None:

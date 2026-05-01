@@ -294,7 +294,7 @@ def test_s441():
             "c": c,
             "d": d
         },
-        params={"LEN_1D": LEN_1D_val},
+        params={"LEN_1D": LEN_1D_val, "ITERATIONS": 1},
         save_sdfgs=True,
         sdfg_name="dace_s441",
         apply_loop_to_map=True,

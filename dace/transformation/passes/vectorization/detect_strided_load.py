@@ -136,9 +136,7 @@ strided_load_double(_in, _out, {vector_length}, {stride});
                         continue
 
                     # Check numbers form a contiguous sequence 0..N-1
-                    if set(numbers) == set(range(len(numbers))):
-                        print(f"Gather load detected for node {node.data}, tasklets: {numbers}")
-                    else:
+                    if set(numbers) != set(range(len(numbers))):
                         # Numbers are not contiguous 0..N-1
                         continue
 
@@ -148,7 +146,6 @@ strided_load_double(_in, _out, {vector_length}, {stride});
                     idx_data = set()
                     idx_data_and_subset = list()
                     tasklet_srcs_sorted = sort_tasklets_by_number(tasklet_srcs)
-                    print(tasklet_srcs_sorted)
                     for src in tasklet_srcs_sorted:
                         src_in_edges = state.in_edges(src)
                         if len(src_in_edges) != 1:
@@ -167,12 +164,9 @@ strided_load_double(_in, _out, {vector_length}, {stride});
 
                     initializer_values = ", ".join([str(s) for d, s in idx_data_and_subset])
                     initializers = [str(s) for d, s in idx_data_and_subset]
-                    print(initializers)
                     fixed_increment, base_expr = detect_fixed_increment(initializers)
                     if fixed_increment is None:
                         continue
-                    else:
-                        print(f"Found fixed increment {fixed_increment}")
 
                     gather_code = DetectStridedLoad.gather_template.format(initializer_values=initializer_values,
                                                                            vector_length=vector_length,
@@ -194,7 +188,6 @@ strided_load_double(_in, _out, {vector_length}, {stride});
 
                     # Handle connectors
                     t1 = state.add_tasklet("gather_load", {"_in"}, {"_out"}, gather_code, dace.dtypes.Language.CPP)
-                    print(indirect_src, indirect_ie.src_conn)
                     # Does not need to be an access node
                     base = base_expr
                     end = base + vector_length * fixed_increment

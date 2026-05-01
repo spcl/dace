@@ -120,3 +120,15 @@ def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Num
 @oprepo.replaces('round')
 def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
     return simple_call(pv, sdfg, state, input, 'round', dtypes.typeclass(int))
+
+
+@oprepo.replaces('pow')
+@oprepo.replaces('dace.pow')
+@oprepo.replaces('math.pow')
+def _pow(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Union[str, Number, symbolic.symbol],
+         y: Union[str, Number, symbolic.symbol]):
+    """Two-argument ``pow(x, y)`` — delegates to ``np.power`` so the resulting tasklet body uses
+    the same ``__out = __in1 ** __in2`` shape that the rest of the pipeline (in particular
+    ``PowerOperatorExpansion``) is set up to rewrite."""
+    from dace.frontend.python.replacements.ufunc import implement_ufunc
+    return implement_ufunc(pv, None, sdfg, state, 'power', [x, y], {})[0]

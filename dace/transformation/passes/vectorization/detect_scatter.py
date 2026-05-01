@@ -11,7 +11,7 @@ def sort_tasklets_by_number(tasklets):
     """
     Sort tasklets with labels of the form 'assign_<number>' by the numeric part.
     """
-    pattern = re.compile(r"^a_(\d+)$")
+    pattern = re.compile(r"^assign_(\d+)$")
 
     def get_number(tasklet):
         m = pattern.match(tasklet.label)
@@ -65,7 +65,7 @@ scatter_double(_in, idx, _out, {vector_length});
 
                     # Extract numbers from labels of the form "assign_X"
                     numbers = []
-                    pattern = re.compile(r"^a_(\d+)$")
+                    pattern = re.compile(r"^assign_(\d+)$")
                     all_match = True
                     for t in tasklet_dsts:
                         m = pattern.match(t.label)
@@ -78,9 +78,7 @@ scatter_double(_in, idx, _out, {vector_length});
                         continue
 
                     # Check numbers form a contiguous sequence 0..N-1
-                    if set(numbers) == set(range(len(numbers))):
-                        print(f"Scatter store detected for node {node.data}, tasklets: {numbers}")
-                    else:
+                    if set(numbers) != set(range(len(numbers))):
                         # Numbers are not contiguous 0..N-1
                         continue
 
@@ -90,7 +88,6 @@ scatter_double(_in, idx, _out, {vector_length});
                     idx_data = set()
                     idx_data_and_subset = list()
                     tasklet_dsts_sorted = sort_tasklets_by_number(tasklet_dsts)
-                    print(tasklet_dsts_sorted)
                     for dst in tasklet_dsts_sorted:
                         dst_in_edges = state.out_edges(dst)
                         if len(dst_in_edges) != 1:

@@ -78,9 +78,7 @@ gather_double(_in, idx, _out, {vector_length});
                         continue
 
                     # Check numbers form a contiguous sequence 0..N-1
-                    if set(numbers) == set(range(len(numbers))):
-                        print(f"Gather load detected for node {node.data}, tasklets: {numbers}")
-                    else:
+                    if set(numbers) != set(range(len(numbers))):
                         # Numbers are not contiguous 0..N-1
                         continue
 
@@ -90,7 +88,6 @@ gather_double(_in, idx, _out, {vector_length});
                     idx_data = set()
                     idx_data_and_subset = list()
                     tasklet_srcs_sorted = sort_tasklets_by_number(tasklet_srcs)
-                    print(tasklet_srcs_sorted)
                     for src in tasklet_srcs_sorted:
                         src_in_edges = state.in_edges(src)
                         if len(src_in_edges) != 1:

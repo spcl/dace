@@ -324,9 +324,7 @@ class VectorizeBreak(ppl.Pass):
         loops: Set[LoopRegion] = set()
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, LoopRegion):
-                print(cfg, self._has_break(cfg), self._has_no_nsdfg(cfg))
                 if self._has_break(cfg) and self._has_no_nsdfg(cfg) and self._has_no_inner_loops(cfg):
-                    print(cfg, " has a break but no nsdfg and innermsot loop")
                     loops.add(cfg)
 
         old_existing_maps = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
@@ -336,7 +334,6 @@ class VectorizeBreak(ppl.Pass):
         c += 1
         new_maps = now_existing_maps - old_existing_maps
         condition_strs = dict()
-        print("New Maps", new_maps)
         for m, state in new_maps:
             m.map.schedule = dace.dtypes.ScheduleType.Sequential
 
@@ -362,7 +359,6 @@ class VectorizeBreak(ppl.Pass):
         c += 1
         EliminateBranches().apply_pass(sdfg, {})
         for new_map, state in new_maps:
-            print(new_map)
             VectorizeCPU(vector_width=self.vector_width,
                          try_to_demote_symbols_in_nsdfgs=True,
                          fuse_overlapping_loads=False,
@@ -405,7 +401,6 @@ class VectorizeBreak(ppl.Pass):
                         n.sdfg.add_node(_break_node)
                         n.sdfg.add_edge(sink, _break_node, InterstateEdge())
 
-                    print(condition_str)
                     ccondition_str = condition_str[1:-1] if condition_str.startswith("(") and condition_str.endswith(
                         ")") else condition_str
                     tokens = ccondition_str.split(" ")
@@ -413,15 +408,13 @@ class VectorizeBreak(ppl.Pass):
                     lhs, op, rhs = tokens
                     identifiers, op2 = extract_identifiers(condition_str)
                     assert op == op2
-                    print(identifiers)
                     for lane in range(self.vector_width):
-                        lane_expr = generate_lane_expression(
+                        generate_lane_expression(
                             condition_str, lane, identifiers,
                             {s
                              for s, arr in n.sdfg.arrays.items() if isinstance(arr, dace.data.Array)},
                             {str(s)
                              for s in n.sdfg.symbols})
-                        print(lane_expr)
                     sink_nodes_dicts = dict()
                     for inner_node in n.sdfg.nodes():
                         if isinstance(inner_node, SDFGState):
@@ -517,7 +510,6 @@ class VectorizeBreak(ppl.Pass):
                         tokens = ccondition_str.split(" ")
                         assert len(tokens) == 3
                         lhs, op, rhs = tokens
-                        print(tokens, lhs in safe_mask_state.sdfg.arrays, rhs in safe_mask_state.sdfg.arrays)
                         ss = ""
                         if lhs in safe_mask_state.sdfg.arrays:
                             assert isinstance(safe_mask_state.sdfg.arrays[lhs], dace.data.Array)
@@ -562,7 +554,6 @@ class VectorizeBreak(ppl.Pass):
                             name_map_rev.update({v: k for k, v in name_map.items()})
 
                     for k, v in name_map_rev.items():
-                        print(k, v)
                         # Find last write to k
                         last_node_with_write_to_k = None
                         for inner_node in n.sdfg.bfs_nodes():
@@ -587,7 +578,6 @@ class VectorizeBreak(ppl.Pass):
                              for s in n.sdfg.symbols}) for lane in range(self.vector_width)
                     ]
                     new_cond = " or ".join(lane_exprs)
-                    print("NEW COND", new_cond)
 
                     break_if_block.branches[0][0] = CodeBlock(new_cond)
 

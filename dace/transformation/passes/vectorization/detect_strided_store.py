@@ -135,9 +135,7 @@ strided_store_double(_in, _out, {vector_length}, {stride});
                         continue
 
                     # Check numbers form a contiguous sequence 0..N-1
-                    if set(numbers) == set(range(len(numbers))):
-                        print(f"Scatter store detected for node {node.data}, tasklets: {numbers}")
-                    else:
+                    if set(numbers) != set(range(len(numbers))):
                         # Numbers are not contiguous 0..N-1
                         continue
 
@@ -147,7 +145,6 @@ strided_store_double(_in, _out, {vector_length}, {stride});
                     idx_data = set()
                     idx_data_and_subset = list()
                     tasklet_dsts_sorted = sort_tasklets_by_number(tasklet_dsts)
-                    print(tasklet_dsts_sorted)
                     for dst in tasklet_dsts_sorted:
                         dst_in_edges = state.out_edges(dst)
                         if len(dst_in_edges) != 1:
@@ -166,12 +163,9 @@ strided_store_double(_in, _out, {vector_length}, {stride});
 
                     initializer_values = ", ".join([str(s) for d, s in idx_data_and_subset])
                     initializers = [str(s) for d, s in idx_data_and_subset]
-                    print(initializers)
                     fixed_increment, base_expr = detect_fixed_increment(initializers)
                     if fixed_increment is None:
-                        raise Exception("uwu?")
-                    else:
-                        print(f"Found fixed increment {fixed_increment}")
+                        continue
 
                     scatter_code = DetectStridedStore.scatter_template.format(initializer_values=initializer_values,
                                                                               vector_length=vector_length,

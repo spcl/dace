@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import copy
+import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from dace import SDFG, Memlet, SDFGState, properties, transformation
 from dace import typeclass
@@ -34,11 +35,13 @@ class Vectorize(ppl.Pass):
     insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
     fail_on_unvectorizable = properties.Property(dtype=bool, default=False, allow_none=False)
     eliminate_trivial_vector_map = properties.Property(dtype=bool, default=True, allow_none=False)
+    user_skip_nsdfg_arrays = properties.SetProperty(element_type=str, default=set())
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
                  global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
-                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool):
+                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool,
+                 user_skip_nsdfg_arrays: Optional[Set[str]] = None):
         super().__init__()
 
         self.templates = templates
@@ -52,9 +55,9 @@ class Vectorize(ppl.Pass):
         self.insert_copies = insert_copies
         self.fail_on_unvectorizable = fail_on_unvectorizable
         self._used_names = set()
-        self._tasklet_vectorizable_map = dict()
         self._apply_on_maps = apply_on_maps
         self.eliminate_trivial_vector_map = eliminate_trivial_vector_map
+        self.user_skip_nsdfg_arrays = set(user_skip_nsdfg_arrays) if user_skip_nsdfg_arrays else set()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -130,17 +133,11 @@ class Vectorize(ppl.Pass):
         state.sdfg.validate()
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
 
-        # Need to check that all tasklets within the map are vectorizable
         nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
-        #assert all(
-        #    {self._is_vectorizable(state, node)
-        #     for node in nodes if isinstance(node, dace.nodes.Tasklet)}
-        #), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
         # Updates memlets from [k, i] to [k, i:i+4]
         if not has_single_nested_sdfg:
             array_accesses_to_be_packed = {k for k, v in vectorizable_arrays.items() if v is False}
-            #print(array_accesses_to_be_packed)
             # Squeeeze the memlets that have more volume than the vector with (strided access) that need to be packed
             # e.g. stride-2 access will be something like [2*i:2*i+15] (vector length 8) before packing we need to make it back to [2*i:2*i].
             squeeze_memlets_of_packed_arrays(state, new_inner_map, array_accesses_to_be_packed)
@@ -188,8 +185,12 @@ class Vectorize(ppl.Pass):
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
 
             if self.insert_copies:
+                # Combine the pass's per-call "unstructured" arrays (computed during nested-SDFG
+                # vectorization) with any user-supplied opt-in skip list, then forward as the
+                # `skip` parameter — replaces the previously-hardcoded cloudsc array names.
+                copy_skip = unstructured_data | self.user_skip_nsdfg_arrays
                 inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
-                                                                         self.vector_input_storage, unstructured_data)
+                                                                         self.vector_input_storage, copy_skip)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
@@ -802,7 +803,7 @@ class Vectorize(ppl.Pass):
                                 find_new_name=False,
                             )
                         nv = tutil.token_replace_dict(nv, {ca: f"{ca}[{i}]"})
-                    new_assignments[f"{k}_laneid_{i}"] = nv
+                    new_assignments[LaneIdScheme.make(k, i)] = nv
                     if i == 0:
                         new_assignments[k] = nv
                 duplicated_symbols.add(k)
@@ -895,104 +896,78 @@ class Vectorize(ppl.Pass):
         self._extend_memlets_from_node_and_edge_list(state, edges)
 
     def _extend_memlets_from_node_and_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]]):
+        # For each memlet, find the dimension whose range expression contains the inner map param
+        # and (if it is stride-1 in the array) extend it to a vector-width slice.
+        #
+        # Behavior matches the original F/C-driven extension on the common case (param in the
+        # contiguous dim) and is a no-op when the param sits in a non-stride-1 dim — those
+        # gather-shaped accesses are handled by the strided-load / multiplex path elsewhere; it
+        # is *not* this helper's job to refuse them.
+        #
+        # We keep `raise NotImplementedError` only for cases that are genuinely impossible to
+        # interpret: param appearing in two dims at once, or the param-bearing stride-1 dim
+        # having a non-1 step.
         for edge in edges:
             memlet: dace.memlet.Memlet = edge.data
-            # If memlet is equal to the array shape, we have a clear case of over-approximation
-            # For the check we know: last dimension results in contiguous access,
-            # We should memlets of form:
-            # [(b, e, s), ...] the b, e, s may depend on i.
-            # If b is i, e is i (inclusive range), then extension needs to result with (i, i + vector_width - 1, 1)
-            # We can assume (and check) that s == 1
-            # if b is 2*i and e is 2*i then we should extend the i in the end with 2*(i + vector_width - 1)
             map_entry: dace.nodes.MapEntry = state.entry_node(
                 edge.src) if not isinstance(edge.src, dace.nodes.MapEntry) else state.entry_node(edge.dst)
+            used_param = map_entry.map.params[-1]
+            param_sym = dace.symbolic.symbol(used_param)
 
-            used_param = map_entry.map.params[
-                -1]  # Regardless of offsets F / C we assume last parameter of the map is used
-
-            if memlet.subset is not None:
+            if memlet.subset is None:
+                new_memlet = dace.memlet.Memlet(None)
+            else:
+                arr_strides = state.sdfg.arrays[memlet.data].strides if memlet.data is not None else None
                 new_range_list = [(b, e, s) for (b, e, s) in memlet.subset]
-                stride_offset = 0 if self._stride_type == "F" else -1  # left-contig is Fortran and right-contig is C
-                range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr,
-                                 dace.symbolic.SymExpr] = new_range_list[stride_offset]
-                lb, le, ls = range_tup
-                if isinstance(le, int):
-                    le = dace.symbolic.SymExpr(str(le))
-                assert ls == 1, f"Previous checks must have ensured the final dimension should result in unit-stride access"
-                new_range_list[stride_offset] = (
-                    lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")),
-                    ls) if lb == le else (lb,
-                                          le.subs(used_param,
-                                                  dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1")),
-                                          ls)
+
+                param_dims = []
+                for d, (b, e, _) in enumerate(new_range_list):
+                    free_syms = set()
+                    for expr in (b, e):
+                        if hasattr(expr, "free_symbols"):
+                            free_syms |= {str(fs) for fs in expr.free_symbols}
+                    if used_param in free_syms:
+                        param_dims.append(d)
+
+                if len(param_dims) > 1:
+                    raise NotImplementedError(
+                        f"Vectorize: map param {used_param} appears in multiple dimensions of memlet {memlet} "
+                        f"on edge {edge} (state {state.label}); precondition map_param_appears_in_multiple_dimensions "
+                        f"should have filtered this")
+
+                # Extend only when the param is in a stride-1 dim. If the param sits in a
+                # non-stride-1 dim, leave the memlet alone — the gather/strided-load path will
+                # handle it (mirrors the original code, which would no-op-substitute in such
+                # cases by extending the contiguous dim that did not contain the param).
+                if len(param_dims) == 1 and arr_strides is not None and arr_strides[param_dims[0]] == 1:
+                    d = param_dims[0]
+                    lb, le, ls = new_range_list[d]
+                    if isinstance(le, int):
+                        le = dace.symbolic.SymExpr(str(le))
+                    if ls != 1:
+                        raise NotImplementedError(
+                            f"Vectorize: param-bearing dim {d} has non-1 step {ls} on memlet {memlet} "
+                            f"(edge {edge}, state {state.label})")
+
+                    if lb == le:
+                        new_le = le.subs(param_sym,
+                                         dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
+                    else:
+                        new_le = le.subs(param_sym,
+                                         dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1"))
+                    new_range_list[d] = (lb, new_le, ls)
 
                 new_memlet = dace.memlet.Memlet(
                     data=memlet.data,
                     subset=dace.subsets.Range(new_range_list),
                 )
-            else:
-                new_memlet = dace.memlet.Memlet(None)
 
-            assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+            if memlet.other_subset is not None:
+                raise NotImplementedError(
+                    f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
+                    f"(edge {edge}, state {state.label})")
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
-
-    def _is_vectorizable(self, state: SDFGState, node: dace.nodes.Tasklet):
-        # Arr1 -> Tasklet1 -> sc1 -> Tasklet2 -> sc3 -> Tasklet3 -> Arr
-        # Arr2
-        # Should return [Arr,Arr], [Arr]
-        # It is important to determine if a tasklet is "vectorizable"
-        # Only a tasklet that reads from arrays and writes to arrays are vectorizable
-        # But if we only check Tasklet1, Tasklet2 or Tasklet3's ddirect neighbors we would consider
-        # they can't, but they can
-
-        # First check cache
-        if node in self._tasklet_vectorizable_map:
-            return self._tasklet_vectorizable_map[node]
-
-        in_edges = state.in_edges(node)
-        out_edges = state.out_edges(node)
-        input_types = set()
-        output_types = set()
-        while in_edges:
-            in_edge = in_edges.pop()
-            if state.in_degree(in_edge.src) == 0:
-                if isinstance(in_edge.src, dace.nodes.AccessNode):
-                    input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
-                else:
-                    if in_edge.data is not None:
-                        raise Exception(
-                            f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode ({in_edge.data})"
-                        )
-            if not isinstance(in_edge.src, dace.nodes.MapEntry):
-                in_edges += state.in_edges(in_edge.src)
-            else:
-                if in_edge.data.data is not None:
-                    input_types.add(type(state.sdfg.arrays[in_edge.data.data]))
-        while out_edges:
-            out_edge = out_edges.pop()
-            if state.out_degree(out_edge.dst) == 0:
-                if isinstance(out_edge.dst, dace.nodes.AccessNode):
-                    output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
-                else:
-                    if out_edge.data is not None:
-                        raise Exception(
-                            f"Unsupported Type for out_edge.dst got type {type(out_edge.dst)}, need AccessNode ({in_edge.data})"
-                        )
-            if not isinstance(out_edge.dst, dace.nodes.MapExit):
-                out_edges = state.out_edges(out_edge.dst)
-            else:
-                if out_edge.data.data is not None:
-                    output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
-
-        vectorizable = (all({
-            isinstance(itype, dace.data.Array) or itype == dace.data.Array or itype == dace.data.Scalar
-            or isinstance(itype, dace.data.Scalar)
-            for itype in input_types
-        }) and all({isinstance(otype, dace.data.Array) or otype == dace.data.Array
-                    for otype in output_types}))
-        self._tasklet_vectorizable_map[node] = vectorizable
-        return vectorizable
 
     def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vector_map_param: str,
                           modified_nodes: Set[dace.nodes.AccessNode]):
@@ -1057,10 +1032,10 @@ class Vectorize(ppl.Pass):
 
     def _iterate_on_path_from_map_entry_to_exit(self, state: SDFGState, map_exit: dace.nodes.MapExit,
                                                 data_in_edge: Edge[Memlet], dataname: str, new_dataname: str):
-        # IMPORTANT!
-        # Get memlet paths until we reach map exit
-        # This will create a problem if the input flows into the exit because we can't distinguish,
-        # We will assume the first occurence flow to the exit
+        # BFS along the dataflow rewriting matching memlets to the new (vector) data name.
+        # The traversal pops one edge at a time, replaces its memlet, then enqueues the out-edges
+        # of the new edge's dst — so the next iteration sees the up-to-date graph. Mutation and
+        # iteration are decoupled per-edge.
         edges_to_check = {data_in_edge}
         sink_node = None
         while edges_to_check:
@@ -1073,8 +1048,10 @@ class Vectorize(ppl.Pass):
                 continue
 
             memlet: dace.memlet.Memlet = edge.data
-
-            assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+            if memlet.other_subset is not None:
+                raise NotImplementedError(
+                    f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
+                    f"(edge {edge}, state {state.label})")
 
             new_memlet = dace.memlet.Memlet(
                 data=new_dataname,
@@ -1102,15 +1079,22 @@ class Vectorize(ppl.Pass):
         if isinstance(sink_node, (CodeNode, dace.nodes.Tasklet)):
             for ie in state.out_edges(sink_node):
                 if ie.data.data is not None and ie.data.data == dataname:
-                    print(
-                        f"After sink node, the data {dataname} is still used, which read propagates to write can't be reasonably detected. Implementation assumes, the first one flows out we have two inputs that access the same"
-                    )
+                    warnings.warn(
+                        f"Vectorize: data {dataname} still used after sink node; read-write detection assumes "
+                        f"the first occurrence flows out (state {state.label})")
 
     def _iterate_on_path_from_map_exit_to_entry(self, state: SDFGState, map_entry: dace.nodes.MapEntry,
                                                 data_out_edge: Edge[Memlet], dataname: str, new_dataname: str):
+        # Walk backward from a map_exit out-edge through the producing dataflow, rewriting matching
+        # memlets to the new (vector) data name. The traversal stops as soon as the producing
+        # path forks (multiple in-edges into a node) — this is intentional: the rewrite then leaves
+        # the un-traversed branches alone, which matches the read-write detection convention used
+        # in `_iterate_on_path_from_map_entry_to_exit` (warn afterwards if a downstream user might
+        # still see the old name).
         edges_to_check = state.memlet_path(data_out_edge)
 
         while edges_to_check:
+            source_node = None
             for edge in edges_to_check:
                 if edge.src == map_entry:
                     edges_to_check = None
@@ -1120,8 +1104,10 @@ class Vectorize(ppl.Pass):
                     continue
 
                 memlet: dace.memlet.Memlet = edge.data
-
-                assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+                if memlet.other_subset is not None:
+                    raise NotImplementedError(
+                        f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
+                        f"(edge {edge}, state {state.label})")
 
                 new_memlet = dace.memlet.Memlet(
                     data=new_dataname,
@@ -1133,24 +1119,20 @@ class Vectorize(ppl.Pass):
 
             if edges_to_check is not None:
                 source_node = edges_to_check[0].src
-                # Tasklet (SSA-ed) or access nodes can appear, this means one edge
                 new_in_edges = state.in_edges(source_node)
-                #assert len(new_in_edges) == 1, f"Source node {source_node} has out edges {new_in_edges}, excepted to have 1 out-edge"
-                # if length is not 1 we cant now what to do anymore
                 if len(new_in_edges) == 1:
                     new_in_edge = new_in_edges[0]
                     edges_to_check = state.memlet_path(new_in_edge)
                 else:
-                    new_in_edge = None
                     edges_to_check = None
 
             # the sink node is a code node and out data has the same array then we have a problem (not that we can fix but it needs to be preprocessed)
             if isinstance(source_node, (CodeNode, dace.nodes.Tasklet)):
                 for ie in state.in_edges(source_node):
                     if ie.data.data is not None and ie.data.data == dataname:
-                        print(
-                            f"After source node, the data {dataname} is still used, which read propagates to write can't be reasonably detected. Implementation assumes, the first one flows out we have two inputs that access the same"
-                        )
+                        warnings.warn(
+                            f"Vectorize: data {dataname} still used after source node; read-write detection assumes "
+                            f"the first occurrence flows out (state {state.label})")
 
     def _offset_memlets_on_path(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str,
                                 new_dataname: str):
@@ -1246,7 +1228,9 @@ class Vectorize(ppl.Pass):
         out_datas = set()
         for oe in state.out_edges(map_exit):
             if oe.data.data is None:
-                state.sdfg.save("failing.sdfgz", compress=True)
+                raise RuntimeError(
+                    f"Map exit out-edge has no data in {state.label}; pre-flatten before vectorization "
+                    f"(map_entry={map_entry})")
             oe_arr = state.sdfg.arrays[oe.data.data]
             assert isinstance(oe_arr, dace.data.Array)
 
@@ -1287,8 +1271,10 @@ class Vectorize(ppl.Pass):
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
-        self._stride_type = stride_type
+        # Sanity check: every array must have a consistent unit-stride dim; raises on mixed layouts.
+        # The result is no longer cached because callers now resolve the contiguous dim per-array
+        # (via desc.strides.index(1)) rather than from a global F/C classification.
+        assert_strides_are_packed_C_or_packed_Fortran(sdfg)
 
         sdfg.validate()
 
@@ -1346,30 +1332,27 @@ class Vectorize(ppl.Pass):
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
                 if self._apply_on_maps is not None and map_entry not in self._apply_on_maps:
-                    print(f"{map_entry} not in {self._apply_on_maps}")
                     continue
 
                 # If no unit stride dimension continue
                 strides = [s for (b, e, s) in map_entry.map.range]
                 if not any({s == 1 for s in strides}):
-                    print("Map has no unit-stride dimension")
+                    warnings.warn(f"Vectorize: skipping {map_entry} ({state.label}) - no unit-stride dimension")
                     continue
 
                 if map_entry.map.label.startswith("vectorloop_"):
-                    print(
-                        "`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change the name"
-                    )
                     continue
 
                 # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
                 if has_nsdfg_depth_more_than_one(state, map_entry):
-                    print(f"Map {map_entry} in {state} has multiple levels of nested SDFGs inisde, can't vectorize")
+                    warnings.warn(
+                        f"Vectorize: skipping {map_entry} ({state.label}) - multiple levels of nested SDFGs inside")
                     continue
 
                 if not last_dim_of_map_is_contiguous_accesses(state, map_entry):
-                    print(
-                        f"Last dimension of the map does fall on contiguous accesses, indirect accesses might not always be packed {map_entry}, {state}"
-                    )
+                    warnings.warn(
+                        f"Vectorize: {map_entry} ({state.label}) last dimension does not fall on contiguous accesses; "
+                        f"indirect accesses might not always be packed")
 
                 if not map_consists_of_single_nsdfg_or_no_nsdfg(state, map_entry):
                     if self.fail_on_unvectorizable:
@@ -1378,7 +1361,8 @@ class Vectorize(ppl.Pass):
                         continue
 
                 if map_param_appears_in_multiple_dimensions(state, map_entry):
-                    print("Map param (vectorized) is used to access multiple dimensions, can't vectorize")
+                    warnings.warn(
+                        f"Vectorize: skipping {map_entry} ({state.label}) - map param accesses multiple dimensions")
                     continue
 
                 opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)
@@ -1389,9 +1373,9 @@ class Vectorize(ppl.Pass):
                         if has_only_states_or_single_block_with_break_only(nsdfg.sdfg):
                             pass
                         else:
-                            print(
-                                f"Nested SDFG inside map nodes other than states, of the if blocks do not consist only of breaks"
-                            )
+                            warnings.warn(
+                                f"Vectorize: skipping {map_entry} ({state.label}) - nested SDFG contains "
+                                f"non-state nodes other than break-only conditionals")
                             continue
 
                 if not no_other_subset(state, map_entry):

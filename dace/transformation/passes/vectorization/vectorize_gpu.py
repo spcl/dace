@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Set
 import dace
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
@@ -96,7 +96,8 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                  fuse_overlapping_loads: bool = False,
                  apply_on_maps: Optional[List[dace.nodes.MapEntry]] = None,
                  insert_copies: bool = False,
-                 fail_on_unvectorizable: bool = False):
+                 fail_on_unvectorizable: bool = False,
+                 user_skip_nsdfg_arrays: Optional[Set[str]] = None):
         passes = [
             EliminateBranches(),
             LowerInterstateConditionalAssignmentsToTasklets(),
@@ -124,7 +125,8 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                       try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
                       apply_on_maps=apply_on_maps,
                       insert_copies=insert_copies,
-                      fail_on_unvectorizable=fail_on_unvectorizable)
+                      fail_on_unvectorizable=fail_on_unvectorizable,
+                      user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
         ]
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())

@@ -6,7 +6,7 @@ import sympy
 import dace
 import ast
 import math
-from typing import Dict, Iterable, Set, Tuple, Union
+from typing import Dict, Iterable, Optional, Set, Tuple, Union
 from dace import SDFGState, typeclass
 from dace import Any
 from dace import List
@@ -18,6 +18,47 @@ import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
 from dace.symbolic import DaceSympyPrinter
+
+
+class LaneIdScheme:
+    """Centralised lane-id naming for the vectorization passes.
+
+    The vectorization pipeline expands a single symbol used inside a vector tile into
+    one symbol per lane, named ``<base>_laneid_<i>``. This class is the single owner
+    of that scheme — every place in the codebase that constructs or inspects such a
+    name must go through ``LaneIdScheme.make`` / ``LaneIdScheme.parse`` /
+    ``LaneIdScheme.is_laneid`` instead of raw string concatenation or regex.
+
+    Centralising the scheme is what makes the lane-expansion passes idempotent: a
+    symbol that already encodes its lane in its name (parses non-trivially) is
+    treated as fixed, never re-expanded into ``<base>_laneid_<i>_laneid_<j>``.
+    """
+
+    SUFFIX = "_laneid_"
+    _PARSE_RE = re.compile(r"^(.*)_laneid_(\d+)$")
+
+    @staticmethod
+    def make(base: str, lane: int) -> str:
+        """Build the lane-encoded name ``<base>_laneid_<lane>``."""
+        return f"{base}{LaneIdScheme.SUFFIX}{lane}"
+
+    @staticmethod
+    def parse(name: str) -> Optional[Tuple[str, int]]:
+        """Return ``(base, lane)`` if ``name`` ends with ``_laneid_<digits>``, else ``None``.
+
+        For nested forms like ``foo_laneid_3_laneid_0`` the *trailing* lane is peeled
+        once: the result is ``("foo_laneid_3", 0)``. Callers that want the original
+        un-encoded base must call ``parse`` repeatedly until it returns ``None``.
+        """
+        m = LaneIdScheme._PARSE_RE.match(name)
+        if m is None:
+            return None
+        return m.group(1), int(m.group(2))
+
+    @staticmethod
+    def is_laneid(name: str) -> bool:
+        """True iff ``name`` matches the ``<base>_laneid_<digits>`` pattern."""
+        return LaneIdScheme.parse(name) is not None
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -486,15 +527,20 @@ def count_param_in_expr(expr, param_str: str):
     """
     Count occurrences of a parameter inside a SymPy expression, including
     inside function-call arguments.
+
+    Compares by symbol *name*, not by SymPy ``==``, because DaCe's
+    ``dace.symbolic.symbol`` is a SymPy ``Symbol`` subclass whose equality
+    semantics carry extra attributes — two symbols with the same name but
+    different DaCe metadata can compare unequal under ``==`` while being the
+    same identifier from the pass's perspective.
     """
     if not isinstance(expr, sympy.Basic):
         return 0
 
-    param = sympy.Symbol(param_str)
     count = 0
-    # 1) Count standalone symbol occurrences
+    # 1) Count standalone symbol occurrences (match by name)
     for atom in expr.atoms(sympy.Symbol):
-        if atom == param:
+        if str(atom) == param_str:
             count += 1
 
     # 2) Count function-call argument occurrences (nested)
@@ -1337,53 +1383,87 @@ def extract_bracket_contents(expr: str, name: str):
     return full_match, parts
 
 
+class _DropDimsTransformer(ast.NodeTransformer):
+    """AST transformer that drops dimensions from every Subscript access of a named array.
+
+    Walks the tree and rewrites `Name(dataname)[indices]` so that any index whose position
+    has `dim_mask[i] == 0` is removed. Indices kept according to `dim_mask[i] == 1`.
+    Raises ValueError if any access has a dimension count different from len(dim_mask).
+    """
+
+    def __init__(self, dataname: str, dim_mask: Tuple[int, ...]):
+        self.dataname = dataname
+        self.dim_mask = dim_mask
+
+    def _filter_indices(self, slice_node: ast.AST) -> ast.AST:
+        # Pre-3.9, slice was wrapped in ast.Index. Unwrap if present.
+        if hasattr(ast, "Index") and isinstance(slice_node, ast.Index):  # pragma: no cover - py<3.9
+            inner = slice_node.value
+            new_inner = self._filter_indices(inner)
+            return ast.Index(value=new_inner)
+        if isinstance(slice_node, ast.Tuple):
+            elts = slice_node.elts
+            if len(elts) != len(self.dim_mask):
+                raise ValueError(
+                    f"drop_dims_from_str: array {self.dataname!r} accessed with {len(elts)} dimensions, "
+                    f"dim_mask has {len(self.dim_mask)}")
+            kept = [e for e, m in zip(elts, self.dim_mask) if m]
+            if len(kept) == 1:
+                return kept[0]
+            return ast.Tuple(elts=kept, ctx=ast.Load())
+        # Single-element subscript (1-D access)
+        if len(self.dim_mask) != 1:
+            raise ValueError(
+                f"drop_dims_from_str: array {self.dataname!r} accessed with 1 dimension, "
+                f"dim_mask has {len(self.dim_mask)}")
+        if self.dim_mask[0]:
+            return slice_node
+        # Dropping the only dim collapses the subscript; return the bare value (caller swaps Subscript->value).
+        return None
+
+    def visit_Subscript(self, node):
+        self.generic_visit(node)
+        if isinstance(node.value, ast.Name) and node.value.id == self.dataname:
+            new_slice = self._filter_indices(node.slice)
+            if new_slice is None:
+                return node.value
+            node.slice = new_slice
+        return node
+
+
 def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str:
     """
-    Remove dimensions from array accesses in a code string.
+    Remove dimensions from every array access of `dataname` in a Python expression string.
 
-    This function finds array access patterns for a specific array name in a
-    string and removes dimensions according to a binary mask. Dimensions with
-    mask value 0 are removed, dimensions with mask value 1 are kept.
+    Dimensions where `dim_mask` is 0 are removed; dimensions where it is 1 are kept.
+    Rewrites are AST-based, so multiple occurrences within the same string are all updated
+    (and string-literal subscripts like ``"A[i]"`` inside another expression are not).
 
     Args:
-        src_str: Source string containing potential array accesses
-        dim_mask: Tuple of 0s and 1s indicating which dimensions to keep
-                 (1 = keep, 0 = drop)
-        dataname: Name of the array whose accesses should be modified
+        src_str: Source expression / statement(s).
+        dim_mask: Tuple of 0/1 indicating which dimensions to keep.
+        dataname: Name of the array whose accesses should be rewritten.
 
     Returns:
-        Modified string with dimensions dropped from array accesses
-
-    Examples:
-        >>> drop_dims_from_str("A[i, 0, j] + B[k]", (1, 0, 1), "A")
-        "A[i, j] + B[k]"
-
+        Modified string with dimensions dropped from each occurrence.
 
     Raises:
-        AssertionError: If the number of dimensions in the access doesn't match
-                        the length of dim_mask
+        ValueError: If any access has a dimension count different from `len(dim_mask)`.
 
     Notes:
-        - If no array access is found, returns the original string unchanged
+        - Returns the original string unchanged if no matching access is found.
+        - Falls back to returning the original string when the input does not parse as
+          Python (e.g. raw C++ code blocks); callers that pass non-Python should be fixed
+          to use a language-aware rewriter rather than this helper.
     """
-    # Find and parse array access in the string
-    matched_substring, access_tokens = extract_bracket_contents(src_str, dataname)
-
-    if access_tokens == []:
-        # No array access found - return unchanged
+    try:
+        tree = ast.parse(src_str)
+    except SyntaxError:
         return src_str
-
-    # Verify dimension count matches
-    assert len(access_tokens) == len(dim_mask), (
-        f"Dimension mismatch: array access has {len(access_tokens)} dimensions "
-        f"but dim_mask has {len(dim_mask)} entries")
-
-    # Filter dimensions: keep only those where mask is 1
-    filtered = [dimension_expr for dimension_expr, mask_bit in zip(access_tokens, dim_mask) if mask_bit]
-
-    filtered_str = "[" + ", ".join(filtered) + "]"
-
-    return src_str.replace(matched_substring, dataname + filtered_str)
+    transformer = _DropDimsTransformer(dataname, tuple(dim_mask))
+    new_tree = transformer.visit(tree)
+    ast.fix_missing_locations(new_tree)
+    return ast.unparse(new_tree)
 
 
 def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
@@ -2882,90 +2962,81 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
     for edge in inner_sdfg.all_interstate_edges():
         new_assignments = dict()
         assignments = edge.data.assignments
-        #print(f"Work expanding interstate edge {edge.src} -> {edge.dst} ({edge.data.assignments})")
+
+        # Idempotency: any LHS that already encodes a lane in its name is taken as
+        # fixed (its lane is fully determined by the suffix). Re-expanding it would
+        # produce <base>_laneid_<i>_laneid_<j> double-suffixed garbage. Carry the
+        # already-expanded assignments through unchanged and drive the per-lane loop
+        # only over the plain (un-encoded) keys.
+        plain_assignments = {}
         for k, v in assignments.items():
-            # Add a new symbol for each lane
+            if LaneIdScheme.is_laneid(k):
+                new_assignments[k] = v
+            else:
+                plain_assignments[k] = v
+
+        for k, v in plain_assignments.items():
             original_v_expr = dace.symbolic.SymExpr(v)
-            #print(f"Update {k} assignments")
             for i in range(vector_width):
-                # I do not know why is it happening but:
-                # This function tries to apply expansion on something such as 'jo_laneid_3'
-                # If 2 symbols need to be expanded then we get 'jo_laneid_3_laneid_0' (for vector length 8 we get 8x8 symbols that are wrong)
-                # The update should be done only when both laneid's match and
-                # in this case the anme should not be updated
-                if "laneid" in k:
-                    m = re.search(r"_(\d+)$", k)
-                    assert m
-                    idx = int(m.group(1))
-                    if i != idx:
-                        continue
-                    new_k = k
-                else:
-                    new_k = f"{k}_laneid_{i}"
-                #print(f"{new_k} is from {k}")
+                new_k = LaneIdScheme.make(k, i)
                 v_expr = dace.symbolic.SymExpr(v)
 
                 funcs = {str(f) for f in v_expr.atoms(sympy.Function)}
                 non_func_free_syms = {str(s) for s in v_expr.free_symbols if str(s) not in funcs}
-                # Collect functions that are accesses
                 array_accesses = {f for f in funcs if f in inner_sdfg.arrays}
                 variant_array_accesses = (array_accesses.union(non_func_free_syms)) - invariant_data
 
                 if len(variant_array_accesses) == 0:
-                    # Copy the old self
+                    # Whole expression is invariant — keep the original (un-expanded) symbol only.
                     new_assignments[k] = v
                     continue
 
                 if new_k not in inner_sdfg.symbols:
                     inner_sdfg.add_symbol(new_k, inner_sdfg.symbols.get(k, dace.float64))
 
-                # Replace map param `_for_it` with `_for_it + laneid`
-                v_expr_old = copy.deepcopy(v_expr)
+                # Replace the vector iterator with iter+lane
                 v_expr = v_expr.subs(vectorized_param, f"({vectorized_param} + {i})")
-                #print(v_expr_old, "->", v_expr)
 
-                # All other symbols are replaced with `s` -> `s{laneid}`, except free symbols
-                # Those are kept as they are
+                # Other free symbols are duplicated per-lane; symbols that already encode
+                # a lane (parse non-trivially) are skipped so we never produce a doubly
+                # lane-suffixed name.
                 non_map_free_syms = {str(s)
                                      for s in original_v_expr.free_symbols} - ({vectorized_param}.union(
                                          inner_sdfg.free_symbols))
-
                 assert vectorized_param not in non_map_free_syms
 
                 for free_sym in non_map_free_syms:
-                    # The free_sym can be an array, scalar or symbol
                     free_sym_str = str(free_sym)
                     assert free_sym_str in inner_sdfg.arrays or free_sym_str in inner_sdfg.symbols
 
-                    # If it is a symbol replace with laneid
-                    if free_sym_str in inner_sdfg.symbols:
-                        #print(f"Subs {free_sym} with {free_sym}_laneid_{i}")
-                        if free_sym_str == vector_map_param:
-                            assert False
-                        else:
-                            v_expr = v_expr.subs(free_sym, f"{free_sym}_laneid_{i}")
+                    if LaneIdScheme.is_laneid(free_sym_str):
+                        # Already lane-bound; its lane is fixed by the name. Don't re-encode.
+                        continue
 
-                            # Add the new symbol to the symbols
-                            if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
-                                inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
-                                                      inner_sdfg.symbols.get(str(free_sym), dace.float64))
+                    if free_sym_str in inner_sdfg.symbols:
+                        if free_sym_str == vector_map_param:
+                            raise AssertionError(
+                                f"vector_map_param {vector_map_param!r} appeared in non_map_free_syms; "
+                                f"upstream filtering is broken")
+                        lane_sym = LaneIdScheme.make(free_sym_str, i)
+                        v_expr = v_expr.subs(free_sym, lane_sym)
+                        if lane_sym not in inner_sdfg.symbols:
+                            inner_sdfg.add_symbol(lane_sym,
+                                                  inner_sdfg.symbols.get(free_sym_str, dace.float64))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
-                            #print(f"Subs {free_sym} with {free_sym}")
                             v_expr = v_expr.subs(free_sym, f"{free_sym}")
                         else:
                             assert inner_sdfg.arrays[free_sym_str].shape != (1, )
-                            #print(f"Subs {free_sym} with {free_sym}({i})")
                             v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
 
                 new_v = sympy.pycode(v_expr, allow_unknown_functions=True)
                 new_v = tutil.rewrite_boolean_functions_to_boolean_ops(new_v)
-                # Convert non-standard function calls back to array accesses before assigning
                 new_assignments[new_k] = convert_nonstandard_calls(new_v)
 
                 if i == 0:
-                    # In case the symbol is used for something vectorizable - then this duplication was necessary
-                    # Let's hope compiler will prune the unused data, have laneid 0 one for the original symbol too
+                    # Keep the original un-suffixed symbol bound to the lane-0 expansion so
+                    # downstream consumers that haven't been retargeted yet still see it.
                     new_assignments[k] = convert_nonstandard_calls(new_v)
 
         edge.data.assignments = new_assignments
@@ -3266,11 +3337,6 @@ def add_copies_before_and_after_nsdfg(
         for k, v in dataname_to_subsets.items() if k in inner_sdfg.arrays and inner_sdfg.arrays[k].transient is False
         and isinstance(inner_sdfg.arrays[k], dace.data.Array)
     }
-
-    # TODO: Fix ice supersaturation case
-    skip.add("zqxfg")
-    skip.add("zsolqb")
-    skip.add("zsolqa")
 
     movable_arrays = set()
     unmovable_arrays = dict()
@@ -3699,10 +3765,12 @@ def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
         assignments = {}
 
         for missing_sym in unresolved:
-            assert "_laneid_" in missing_sym, \
-                f"Unexpected symbol without '_laneid_': {missing_sym}"
-
-            base, laneid = missing_sym.split("_laneid_")
+            parsed = LaneIdScheme.parse(missing_sym)
+            if parsed is None:
+                raise NotImplementedError(
+                    f"Unexpected free symbol {missing_sym!r} without `_laneid_<i>` suffix; "
+                    f"cannot auto-construct")
+            base, laneid = parsed
 
             if base == vector_map_param:
                 # vector iterator -> add lane offset
@@ -3945,23 +4013,23 @@ def try_clean_other_subset_going_out_from_map_entry(state: SDFGState, map_entry:
 def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vector_length):
     all_nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
     map_param = new_inner_map.map.params[-1]
-    #all_edges = state.all_edges(*all_nodes)
     all_edges = state.out_edges(new_inner_map)
     modified_nodes = set()
     modified_edges = set()
     for edge in all_edges:
         if edge.data.subset is not None:
-            detected = False
+            detected_param = None
             detected_divisor = None
             for b, e, s in edge.data.subset:
                 param, divisor = detect_halve_index_impl(b)
-                print(f"Detected for {b} -> {param} / {divisor} (map_param: {map_param})")
                 if param is not None and divisor is not None:
-                    detected = True
-                    assert detected_divisor is None
+                    if detected_param is not None:
+                        raise NotImplementedError(
+                            f"Multiple halve-indexed dimensions on memlet {edge.data}; "
+                            f"only one supported (state {state.label}, edge {edge})")
+                    detected_param = param
                     detected_divisor = divisor
-            if detected:
-                assert detected_divisor is not None
+            if detected_param is not None:
                 # Multiply end expression with
                 desc = state.sdfg.arrays[edge.data.data]
                 arr_name, arr = state.sdfg.add_array(name=f"multiplexed_{edge.data.data}",
@@ -3970,23 +4038,25 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                                                      transient=True,
                                                      storage=dace.dtypes.StorageType.Register,
                                                      find_new_name=True)
-                assert vector_length % detected_divisor == 0
+                if vector_length % detected_divisor != 0:
+                    raise NotImplementedError(
+                        f"vector_length={vector_length} not divisible by halve-index divisor "
+                        f"{detected_divisor} on memlet {edge.data}")
                 t = state.add_tasklet(
                     "pack_tasklet", {"_in"}, {"_out"},
                     f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
                     language=dace.dtypes.Language.CPP,
                     code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
                 modified_nodes.add(t)
-                dst = edge.dst
-                dstconn = edge.dst_conn
-                #edata = copy.deepcopy(edge.data)
                 state.remove_edge(edge)
                 new_range_list = list()
-                # Detection means we should have b -> b+8 / d step size 1
+                # Detection means we should have b -> b+vector_length step size 1 on the param dim
                 for (b, e, s) in edge.data.subset:
                     nb = b
-                    assert hasattr(nb, "subs")
-                    ne = nb.subs(detected, f"({detected}+{vector_length})")
+                    if not hasattr(nb, "subs"):
+                        raise NotImplementedError(
+                            f"detect_halve_index expected symbolic begin, got {type(nb)}: {nb}")
+                    ne = nb.subs(detected_param, f"({detected_param}+{vector_length})")
                     ns = 1
                     new_range_list.append((nb, ne, ns))
                 e1 = state.add_edge(edge.src, edge.src_conn, t, "_in",
