@@ -32,7 +32,11 @@ class ExpandLibraryNodes(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
+        from dace.sdfg import infer_types
         sdfg.expand_library_nodes(recursive=True)
+        # Expansion can spawn fresh NSDFGs whose inner Maps still carry
+        # ``ScheduleType.Default``; the codegen dispatcher rejects those.
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
         return True
 
 
@@ -73,8 +77,7 @@ class AddThreadBlockMaps(ppl.Pass):
         new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
         tb_inserted_kernels = {
             n
-            for n in new_nodes
-            if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
         kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, tb_inserted_kernels) or {}
         return {
@@ -110,5 +113,3 @@ class InvalidateAndInferConnectorTypes(ppl.Pass):
         for nsdfg in sdfg.all_sdfgs_recursive():
             infer_types.infer_connector_types(nsdfg)
         return None
-
-
