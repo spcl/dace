@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail('indices(...) used as array index — LazyFunction subtraction')
 def test_fortran_frontend_nested_array_access(tmp_path):
     src = """
 subroutine main(d)

@@ -158,6 +158,34 @@ MULTI_FILE_PIPELINE = ("hlfir-inline-all,"
                        "lift-cf-to-scf,"
                        "sccp,canonicalize,cse")
 
+# Sympy module-level attributes that turn user-source identifiers into
+# parser hazards.  ``test`` / ``doctest`` are ``LazyFunction`` wrappers
+# that fail sympify with ``cannot sympify object of type LazyFunction``
+# whenever a string referencing them is parsed (interstate-edge
+# expressions, memlet subsets, etc.).  The bridge renames any matching
+# Fortran identifier to ``program_<name>`` at the SDFG layer; the binding
+# emitter restores the original name on the Python wrapper.
+_RESERVED_DACE_NAMES = frozenset({"test", "doctest"})
+
+_DACE_NAME_PREFIX = "program_"
+
+
+def _rename_reserved_collisions(sdfg) -> dict:
+    """Walk ``sdfg.arrays`` / ``sdfg.symbols`` for entries whose name
+    collides with a reserved sympy attribute and apply a deterministic
+    ``program_<name>`` rename via ``sdfg.replace`` (which sweeps every
+    memlet, code string, interstate-edge expression, and access node
+    in lockstep).  Returns ``{user_fortran_name: dace_name}`` for the
+    binding emitter; empty dict when nothing collided.
+    """
+    renames = {}
+    for name in list(sdfg.arrays.keys()) + list(sdfg.symbols.keys()):
+        if name in _RESERVED_DACE_NAMES:
+            renames[name] = _DACE_NAME_PREFIX + name
+    for old, new in renames.items():
+        sdfg.replace(old, new)
+    return renames
+
 
 class SDFGBuilder:
     """Walks the HLFIR ASTNode tree and emits a DaCe SDFG.
@@ -272,6 +300,15 @@ class SDFGBuilder:
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)
+        # User-source identifiers that collide with sympy module-level
+        # names (``test`` / ``doctest`` are ``LazyFunction`` attributes
+        # that crash sympify; bare letters like ``I`` resolve to
+        # ``ImaginaryUnit``).  Rewrite to ``program_<name>`` so DaCe's
+        # symbolic parsers stop reaching for the sympy attribute.  The
+        # binding emitter consults ``self.dace_name_map`` to expose the
+        # original Fortran name on the Python wrapper, so user-side
+        # calls (``sdfg(test=arr)``) keep working.
+        self.dace_name_map = _rename_reserved_collisions(sdfg)
         # Always-on post-emit substitution.  ``offset_values`` carries
         # two flavours of mapping: int constants (``offset_d_d0 = 50``
         # for ``dimension(50:54)``) and symbol aliases (``offset_d_d0 =
@@ -406,9 +443,14 @@ class SDFGBuilder:
         from dace.frontend.hlfir.bindings.frozen_signature import FrozenArg, FrozenSignature
 
         args_list = []
+        # Reverse the rename map so we can recover the user-source
+        # Fortran name from the SDFG-internal name.  Empty dict when no
+        # reserved-name collision fired, so the lookup becomes a no-op.
+        dace_to_user = {v: k for k, v in getattr(self, 'dace_name_map', {}).items()}
         for sdfg_name_, desc in sdfg.arglist().items():
-            v = (self.arrays.get(sdfg_name_) or self.symbols.get(sdfg_name_) or self.scalars.get(sdfg_name_))
-            if sdfg_name_ in self.symbols:
+            user_key = dace_to_user.get(sdfg_name_, sdfg_name_)
+            v = (self.arrays.get(user_key) or self.symbols.get(user_key) or self.scalars.get(user_key))
+            if user_key in self.symbols:
                 kind = 'symbol'
             elif isinstance(desc, _Scalar):
                 kind = 'scalar'
@@ -421,7 +463,7 @@ class SDFGBuilder:
             shape = tuple(str(s) for s in getattr(desc, 'shape', ()))
             args_list.append(
                 FrozenArg(
-                    fortran_name=v.fortran_name if v is not None else sdfg_name_,
+                    fortran_name=v.fortran_name if v is not None else user_key,
                     sdfg_name=sdfg_name_,
                     kind=kind,
                     dtype=dtype_str,
