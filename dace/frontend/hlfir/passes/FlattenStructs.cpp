@@ -1628,6 +1628,13 @@ struct FlattenStructsPass
             // Members that must take the Phase 5c-B AoS+allocatable
             // path (cap+data block-arg pair, runtime inner extent).
             llvm::SmallVector<std::string, 2> aosAllocMembers;
+            // Nested branch: when ``rec`` has any member that's itself
+            // a record, ``allMembersFlattenable`` returns false and the
+            // single-level flat path bails.  Instead, walk every leaf
+            // path and replace the single struct dummy with one block
+            // arg per leaf.  Static-shape leaves only at first cut.
+            bool             nested = false;
+            llvm::SmallVector<FlatLeaf, 8> leaves;
         };
 
         // Keep plans sorted by ORIGINAL argument index.
@@ -1668,8 +1675,21 @@ struct FlattenStructsPass
             p.outerShape.assign(outerShape.begin(), outerShape.end());
             if (!outerIsArray && isJaggedScalarStruct(rec, p.jaggedEleTy, p.jaggedExtents))
                 p.jagged = true;
-            else if (!allMembersFlattenable(rec, outerIsArray))
-                continue;
+            else if (!allMembersFlattenable(rec, outerIsArray)) {
+                // Nested branch: the struct has at least one record-
+                // typed member.  Walk every leaf path; if every leaf is
+                // a flat type with static extents we can replace the
+                // single struct dummy with one block arg per leaf.
+                // Outer-array nested (``type(t)::s(N)`` where ``t`` is
+                // nested) is left for a follow-up — the dummy-arg block-
+                // arg shape would need extra outer-dim handling.
+                if (outerIsArray) continue;
+                llvm::SmallVector<std::string, 4> prefix;
+                llvm::SmallVector<FlatLeaf, 8> leaves;
+                if (!collectFlatLeaves(rec, prefix, leaves)) continue;
+                p.nested = true;
+                p.leaves = std::move(leaves);
+            }
             // Phase 5b: dummy struct args with allocatable members
             // flatten the same way as local instances — each
             // allocatable member becomes a flat top-level allocatable
@@ -1703,6 +1723,17 @@ struct FlattenStructsPass
                 replaceStructArgJagged(func, idx, p.argDecl, p.rec,
                                        p.jaggedEleTy, p.jaggedExtents);
                 // Jagged path is not represented in the plan yet.
+                continue;
+            }
+            if (p.nested) {
+                // Phase 2 dummy-arg extension: replace the nested struct
+                // dummy with one block arg per leaf.  Bindings-side
+                // ``FlattenEntry`` emission for ``outer_kind="dummy_nested"``
+                // is a separate follow-up — Python-side callers can pass
+                // the flat companions directly via kwargs today; the
+                // Fortran caller wrapper needs the recipe to pack the
+                // nested struct's path-form members on its end.
+                replaceStructArgNested(func, idx, p.argDecl, p.leaves);
                 continue;
             }
             // Record the entry BEFORE the declare is erased.  If
@@ -1929,6 +1960,100 @@ struct FlattenStructsPass
         // than breaking the IR.
         if (!argDecl.getResult(0).use_empty() ||
             !argDecl.getResult(1).use_empty())
+            return;
+        argDecl.erase();
+        if (!block.getArgument(argIdx).use_empty()) return;
+        block.eraseArgument(argIdx);
+    }
+
+    /// Replace a NESTED struct dummy arg with one block arg per flat
+    /// leaf.  Mirrors ``replaceStructArg`` for the single-level case
+    /// but consumes ``collectFlatLeaves`` output to handle arbitrary
+    /// nesting depth.  Static-shape leaves only — dynamic-extent or
+    /// allocatable leaves are left for the Phase 5b nested follow-up
+    /// (the leaf walker bails on those upstream).
+    ///
+    /// For each leaf with path ``[a, b, c]`` and type ``leafTy``:
+    ///   * Insert a block arg of type ``ref<leafTy>`` after the
+    ///     original struct dummy.
+    ///   * Synthesise an ``hlfir.declare`` with
+    ///     ``uniq_name = <base>_a_b_c`` and a static shape operand
+    ///     when ``leafTy`` is an array.
+    ///
+    /// Then walks every chain rooted at the original ``argDecl`` (or
+    /// any inlined-callee alias of it) and rewrites it via the shared
+    /// ``rewriteChainsRootedAt`` helper.  Erases the old declare and
+    /// the original block arg if all uses cleared.
+    void replaceStructArgNested(mlir::func::FuncOp func, unsigned argIdx,
+                                hlfir::DeclareOp argDecl,
+                                llvm::ArrayRef<FlatLeaf> leaves) {
+        auto &block = func.front();
+        auto loc = argDecl.getLoc();
+        auto *ctx = func.getContext();
+        auto baseName = argDecl.getUniqName().str();
+        auto demangledBase = demangleVarName(baseName);
+
+        llvm::StringMap<mlir::Value> leafBase;
+        unsigned leafCount = 0;
+        for (auto &leaf : leaves) {
+            // Build the joined-path key (matches ``rewriteDesignateChain``'s
+            // ``walkDesignateChain`` output).
+            std::string joinedKey;
+            for (unsigned i = 0; i < leaf.path.size(); ++i) {
+                if (i) joinedKey += "_";
+                joinedKey += leaf.path[i];
+            }
+            std::string suffix = joinedKey;
+
+            auto leafTy = leaf.leafTy;
+            auto refTy = fir::ReferenceType::get(leafTy);
+
+            unsigned newArgIdx = argIdx + 1 + leafCount;
+            block.insertArgument(newArgIdx, refTy, loc);
+            auto newArg = block.getArgument(newArgIdx);
+            ++leafCount;
+
+            mlir::OpBuilder b(argDecl);
+
+            // Array leaves need a fir.shape operand on the declare;
+            // dynamic-extent leaves were filtered upstream by
+            // ``collectFlatLeaves``.
+            mlir::Value leafShape;
+            if (auto seq = mlir::dyn_cast<fir::SequenceType>(leafTy)) {
+                llvm::SmallVector<int64_t, 4> exts;
+                for (auto d : seq.getShape()) {
+                    if (d == fir::SequenceType::getUnknownExtent()) return;
+                    exts.push_back(d);
+                }
+                leafShape = emitStaticShape(b, loc, exts);
+            }
+
+            llvm::SmallVector<mlir::Value, 2> operands{newArg};
+            if (leafShape) operands.push_back(leafShape);
+            mlir::NamedAttrList attrs;
+            attrs.append("uniq_name",
+                         mlir::StringAttr::get(ctx,
+                                               demangledBase + "_" + suffix));
+            attrs.append(declareSegments(b, /*hasShape=*/leafShape != nullptr));
+
+            auto newDecl = b.create<hlfir::DeclareOp>(
+                loc, mlir::TypeRange{refTy, refTy},
+                mlir::ValueRange(operands), attrs);
+
+            leafBase[joinedKey] = newDecl.getResult(0);
+        }
+
+        // Reuse the chain-rewrite machinery from the local-instance
+        // path: walks every designate chain rooted at ``argDecl`` (or
+        // any inlined-callee alias of it) and folds it down to the
+        // matching flat companion.
+        rewriteChainsRootedAt(argDecl, leafBase);
+
+        // Erase the original struct declare + block arg if all uses
+        // cleared.  If something still references the old declare,
+        // leave both in place so the IR stays valid.
+        if (!argDecl.getResult(0).use_empty()
+            || !argDecl.getResult(1).use_empty())
             return;
         argDecl.erase();
         if (!block.getArgument(argIdx).use_empty()) return;

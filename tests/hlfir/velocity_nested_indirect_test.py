@@ -31,7 +31,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -73,9 +72,6 @@ end subroutine kernel
 """
 
 
-@xfail("nested struct dummy arg + struct-member indirection not lowered "
-       "(flatten-structs dummy-arg path bails on non-flat members; bridge "
-       "produces ``arr[other[i]]`` memlet that DaCe's parser rejects)")
 def test_velocity_nested_struct_indirection(tmp_path: Path):
     """End-to-end numerical check on the velocity-tendencies indirect
     pattern.  Sizes match the user's request: ``nproma = nlev = nblks
