@@ -234,7 +234,22 @@ static mlir::Type unwrapAll(mlir::Type t) {
 }
 
 static bool isSimpleScalar(mlir::Type t) {
-    return t.isF32() || t.isF64() || t.isInteger(32) || t.isInteger(64);
+    if (t.isF32() || t.isF64()) return true;
+    // Match every integer width that ``extract_vars.cpp`` knows how
+    // to map to a DaCe dtype (int8/16/32/64) so the predicates agree.
+    if (t.isInteger(8) || t.isInteger(16)
+            || t.isInteger(32) || t.isInteger(64))
+        return true;
+    // Fortran ``LOGICAL(KIND=N)`` lowers to ``fir.logical<N>`` — a
+    // distinct MLIR type from IntegerType.  Storage is N bytes (1, 2,
+    // 4, 8); ``extract_vars.cpp`` maps each kind to the matching
+    // ``int<N*8>`` dtype.  The kind-preserving mapping is required at
+    // the SDFG layer because the flat companion's array stride /
+    // total_size depend on element bytes; the bindings wrapper does
+    // ``.TRUE.``/``.FALSE.`` ↔ ``1``/``0`` conversion at the Fortran
+    // caller boundary.
+    if (mlir::isa<fir::LogicalType>(t)) return true;
+    return false;
 }
 
 /// Recognise an allocatable-array OR pointer-array struct member:
@@ -2017,8 +2032,15 @@ struct FlattenStructsPass
 
             // Array leaves need a fir.shape operand on the declare;
             // dynamic-extent leaves were filtered upstream by
-            // ``collectFlatLeaves``.
+            // ``collectFlatLeaves``.  Allocatable / pointer leaves
+            // (``box<heap<array<?>>>`` / ``box<ptr<array<?>>>``) carry
+            // their shape in the descriptor at runtime — no explicit
+            // shape op, but the Fortran ``allocatable`` / ``pointer``
+            // attr must be set so ``extract_vars`` peels through every
+            // wrapper to find the inner SequenceType (rank > 0
+            // classification).
             mlir::Value leafShape;
+            fir::FortranVariableFlagsAttr fortranAttrs;
             if (auto seq = mlir::dyn_cast<fir::SequenceType>(leafTy)) {
                 llvm::SmallVector<int64_t, 4> exts;
                 for (auto d : seq.getShape()) {
@@ -2026,6 +2048,14 @@ struct FlattenStructsPass
                     exts.push_back(d);
                 }
                 leafShape = emitStaticShape(b, loc, exts);
+            } else if (auto box = mlir::dyn_cast<fir::BoxType>(leafTy)) {
+                // Allocatable / pointer leaf — the box wraps a
+                // ``fir.heap`` (allocatable) or ``fir.ptr`` (pointer).
+                bool isPointer = mlir::isa<fir::PointerType>(box.getEleTy());
+                fortranAttrs = fir::FortranVariableFlagsAttr::get(
+                    ctx,
+                    isPointer ? fir::FortranVariableFlagsEnum::pointer
+                              : fir::FortranVariableFlagsEnum::allocatable);
             }
 
             llvm::SmallVector<mlir::Value, 2> operands{newArg};
@@ -2034,6 +2064,7 @@ struct FlattenStructsPass
             attrs.append("uniq_name",
                          mlir::StringAttr::get(ctx,
                                                demangledBase + "_" + suffix));
+            if (fortranAttrs) attrs.append("fortran_attrs", fortranAttrs);
             attrs.append(declareSegments(b, /*hasShape=*/leafShape != nullptr));
 
             auto newDecl = b.create<hlfir::DeclareOp>(

@@ -360,3 +360,104 @@ def test_logical_array_emits_intrinsic_cast_on_exit(tmp_path: Path):
     src = _logical_array_kernel(tmp_path)
     assert "mask = mask_cbool" in src
     assert "deallocate(mask_cbool)" in src
+
+
+# --------------------------------------------------------------------------
+# Per-kind LOGICAL(N) bridge coverage
+# --------------------------------------------------------------------------
+#
+# Default ``logical`` is ``LOGICAL(KIND=4)`` (4 bytes), but Fortran
+# permits explicit kinds 1, 2, 4, 8.  The SDFG-internal storage is
+# always 1-byte ``bool`` (the C ABI of ``logical(c_bool)``); the
+# wrapper bridges by allocating a ``logical(c_bool)`` scratch and
+# letting Fortran's intrinsic LOGICAL-kind-conversion handle the
+# bit fiddling.  Only the explicit ``logical(c_bool)`` outer type
+# needs no bridge — it already matches.
+#
+# These tests parametrise the outer Fortran type per kind to confirm
+# the bridge fires for every non-c_bool flavour and is suppressed for
+# c_bool.
+
+
+def _logical_kernel_with_outer_type(tmp_path: Path, fortran_outer_type: str, arr_name: str = "flag") -> str:
+    """Same shape as ``_logical_array_kernel`` but with the outer
+    Fortran type configurable so the test can probe each LOGICAL kind."""
+    frozen = FrozenSignature(
+        entry="kernel",
+        mangled="_QPkernel",
+        args=(FrozenArg(fortran_name=arr_name,
+                        sdfg_name=arr_name,
+                        kind="array",
+                        dtype="bool",
+                        rank=1,
+                        shape=("n", ),
+                        intent="inout",
+                        from_struct_member="",
+                        layout="same"),
+              FrozenArg(fortran_name="n",
+                        sdfg_name="n",
+                        kind="symbol",
+                        dtype="int32",
+                        rank=0,
+                        shape=(),
+                        intent="in",
+                        from_struct_member="",
+                        layout="same")),
+        free_symbols=("n", ),
+    )
+    iface = OriginalInterface(
+        entry="kernel",
+        args=(OriginalArg(name=arr_name, fortran_type=fortran_outer_type, rank=1, shape=("n", ),
+                          intent="inout"), OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in")),
+    )
+    plan = FlattenPlan(entries=())
+    out = tmp_path / "kernel_bindings.f90"
+    emit_bindings(frozen, iface, plan, str(out))
+    return out.read_text()
+
+
+def test_logical_kind_1_emits_bridge(tmp_path: Path):
+    """``LOGICAL(KIND=1)`` — even though the byte width matches
+    ``c_bool``, Fortran treats them as distinct kinds; the wrapper
+    plays it safe with an explicit intrinsic-cast bridge."""
+    src = _logical_kernel_with_outer_type(tmp_path, "logical(1)")
+    assert "logical(c_bool), allocatable, target :: flag_cbool(:)" in src
+    assert "flag_cbool = flag" in src
+    assert "flag = flag_cbool" in src
+    assert "deallocate(flag_cbool)" in src
+
+
+def test_logical_kind_2_emits_bridge(tmp_path: Path):
+    """``LOGICAL(KIND=2)`` — 2-byte storage, must bridge."""
+    src = _logical_kernel_with_outer_type(tmp_path, "logical(2)")
+    assert "logical(c_bool), allocatable, target :: flag_cbool(:)" in src
+    assert "flag_cbool = flag" in src
+    assert "flag = flag_cbool" in src
+
+
+def test_logical_kind_4_emits_bridge(tmp_path: Path):
+    """``LOGICAL(KIND=4)`` — the default kind, 4 bytes.  Most ICON
+    code lands here; the bridge is the hot path."""
+    src = _logical_kernel_with_outer_type(tmp_path, "logical(4)")
+    assert "logical(c_bool), allocatable, target :: flag_cbool(:)" in src
+    assert "flag_cbool = flag" in src
+    assert "flag = flag_cbool" in src
+
+
+def test_logical_kind_8_emits_bridge(tmp_path: Path):
+    """``LOGICAL(KIND=8)`` — 8-byte storage, must bridge."""
+    src = _logical_kernel_with_outer_type(tmp_path, "logical(8)")
+    assert "logical(c_bool), allocatable, target :: flag_cbool(:)" in src
+    assert "flag_cbool = flag" in src
+    assert "flag = flag_cbool" in src
+
+
+def test_logical_cbool_passes_through_no_bridge(tmp_path: Path):
+    """``logical(c_bool)`` already matches the SDFG's bool layout — no
+    scratch buffer, no Fortran-intrinsic cast.  The outer dummy goes
+    straight through to the SDFG."""
+    src = _logical_kernel_with_outer_type(tmp_path, "logical(c_bool)")
+    # No scratch declaration.
+    assert "_cbool" not in src.replace("logical(c_bool)", "")
+    # No copy-in / copy-out / deallocate.
+    assert "flag_cbool" not in src
