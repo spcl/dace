@@ -371,6 +371,7 @@ class SDFGBuilder:
         — but the path supports them with a trivial 1-element array.
         """
         import numpy as np
+        from dace.data import Scalar as _Scalar
         for v in self.variables:
             if not v.const_data:
                 continue
@@ -379,17 +380,22 @@ class SDFGBuilder:
             desc = sdfg.arrays[v.fortran_name]
             np_dtype = desc.dtype.as_numpy_dtype()
             arr = np.asarray(v.const_data, dtype=np.float64).astype(np_dtype)
-            if v.rank > 0:
-                # Bridge transports row-major doubles; reshape to
-                # the descriptor's declared shape.  The bridge
-                # currently only emits constant pools for rank-1
-                # globals (Flang shape: a flat dense<[...]> tensor),
-                # so this is a no-op pass-through today, but the
-                # reshape keeps the contract honest if higher-rank
-                # globals start surfacing.
-                shape = tuple(int(d) for d in desc.shape)
-                if arr.size == int(np.prod(shape)):
-                    arr = arr.reshape(shape, order='C')
+            # Scalar (rank 0) globals — e.g. ``real :: bob = 1`` at
+            # module scope — pass through as a Python scalar so DaCe's
+            # ``framecode.generate_constants`` writes a
+            # ``constexpr <T> name = <val>`` (not the array form which
+            # tries to ``sym2cpp`` a numpy array and chokes with
+            # ``unhashable type: 'numpy.ndarray'``).
+            if isinstance(desc, _Scalar) or v.rank == 0:
+                if arr.size != 1:
+                    continue
+                sdfg.add_constant(v.fortran_name, arr.item(), desc)
+                continue
+            # Array globals: reshape from row-major doubles transport
+            # to the descriptor's declared shape.
+            shape = tuple(int(d) for d in desc.shape)
+            if arr.size == int(np.prod(shape)):
+                arr = arr.reshape(shape, order='C')
             sdfg.add_constant(v.fortran_name, arr, desc)
 
     def _run_post_gen_passes(self, sdfg: SDFG) -> None:

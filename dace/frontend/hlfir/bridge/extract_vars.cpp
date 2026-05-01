@@ -249,26 +249,56 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 // at descriptor-write time.
 static std::vector<double> extractGlobalInitData(fir::GlobalOp gop) {
     std::vector<double> out;
-    if (!gop || !gop.getConstant().value_or(false)) return out;
-    auto initOpt = gop.getInitVal();
-    if (!initOpt) return out;
-    auto dense = mlir::dyn_cast<mlir::DenseElementsAttr>(*initOpt);
-    if (!dense) return out;
-    auto eleTy = dense.getElementType();
-    if (eleTy.isF64()) {
-        for (auto v : dense.getValues<double>()) out.push_back(v);
-    } else if (eleTy.isF32()) {
-        for (auto v : dense.getValues<float>()) out.push_back((double)v);
-    } else if (eleTy.isInteger(8)) {
-        for (auto v : dense.getValues<int8_t>()) out.push_back((double)v);
-    } else if (eleTy.isInteger(16)) {
-        for (auto v : dense.getValues<int16_t>()) out.push_back((double)v);
-    } else if (eleTy.isInteger(32)) {
-        for (auto v : dense.getValues<int32_t>()) out.push_back((double)v);
-    } else if (eleTy.isInteger(64)) {
-        for (auto v : dense.getValues<int64_t>()) out.push_back((double)v);
-    } else if (eleTy.isInteger(1)) {
-        for (auto v : dense.getValues<bool>()) out.push_back(v ? 1.0 : 0.0);
+    if (!gop) return out;
+    // Path 1: ``fir.global ... constant`` arrays / scalars whose
+    // initialiser lives on the op as a ``DenseElementsAttr`` —
+    // Flang's encoding for ``parameter, dimension(...) :: x = (/ … /)``
+    // and ``parameter :: x = <literal>``.  Restricted to globals
+    // marked ``constant`` because the dense attribute is the
+    // canonical static data.
+    if (gop.getConstant().value_or(false)) {
+        if (auto initOpt = gop.getInitVal()) {
+            if (auto dense = mlir::dyn_cast<mlir::DenseElementsAttr>(*initOpt)) {
+                auto eleTy = dense.getElementType();
+                if (eleTy.isF64()) {
+                    for (auto v : dense.getValues<double>()) out.push_back(v);
+                } else if (eleTy.isF32()) {
+                    for (auto v : dense.getValues<float>()) out.push_back((double)v);
+                } else if (eleTy.isInteger(8)) {
+                    for (auto v : dense.getValues<int8_t>()) out.push_back((double)v);
+                } else if (eleTy.isInteger(16)) {
+                    for (auto v : dense.getValues<int16_t>()) out.push_back((double)v);
+                } else if (eleTy.isInteger(32)) {
+                    for (auto v : dense.getValues<int32_t>()) out.push_back((double)v);
+                } else if (eleTy.isInteger(64)) {
+                    for (auto v : dense.getValues<int64_t>()) out.push_back((double)v);
+                } else if (eleTy.isInteger(1)) {
+                    for (auto v : dense.getValues<bool>()) out.push_back(v ? 1.0 : 0.0);
+                }
+                if (!out.empty()) return out;
+            }
+        }
+    }
+    // Path 2: scalar ``fir.global`` (e.g. ``real :: bob = 1`` declared
+    // at module scope without ``parameter``).  The initialiser lives
+    // in the body as an ``arith.constant`` feeding a ``fir.has_value``
+    // terminator — extract the constant attribute, narrowing to a
+    // single-element ``out`` vector.
+    if (gop.getRegion().empty()) return out;
+    for (auto &op : gop.getRegion().front()) {
+        auto hv = mlir::dyn_cast<fir::HasValueOp>(op);
+        if (!hv) continue;
+        auto *def = hv.getResval().getDefiningOp();
+        if (!def) return out;
+        auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def);
+        if (!cst) return out;
+        auto attr = cst.getValue();
+        if (auto fa = mlir::dyn_cast<mlir::FloatAttr>(attr)) {
+            out.push_back(fa.getValueAsDouble());
+        } else if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(attr)) {
+            out.push_back((double)ia.getInt());
+        }
+        return out;
     }
     return out;
 }
@@ -849,20 +879,20 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             }
         }
 
-        // Constant-pool detection.  A declare with the ``parameter``
-        // Fortran attribute whose memref traces to ``fir.address_of``
-        // of a ``fir.global ... constant`` is the read-only constant
-        // pool entry Flang synthesises for an array / scalar literal.
-        // Pull the dense init data so the SDFG builder can write it
-        // into the transient at function entry.
-        if (auto a = op.getFortranAttrs()) {
-            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::parameter)) {
-                std::string sym = traceToGlobalSymbol(op.getMemref());
-                if (!sym.empty()) {
-                    auto gop = module.lookupSymbol<fir::GlobalOp>(sym);
-                    v.const_data = extractGlobalInitData(gop);
-                }
-            }
+        // Init-value detection.  Two shapes feed the same path:
+        //   * ``parameter`` declares pointing at ``fir.global ... constant``
+        //     — the read-only constant pool Flang synthesises for array
+        //     / scalar literals.
+        //   * Plain module-data declares pointing at ``fir.global`` with
+        //     a ``fir.has_value`` body init (Fortran's ``real :: bob = 1``
+        //     at module scope, no ``parameter`` attribute).
+        // ``extractGlobalInitData`` covers both.  The SDFG side treats
+        // the data as the transient's initial-value vector; writes to
+        // the variable still flow through normally.
+        std::string sym = traceToGlobalSymbol(op.getMemref());
+        if (!sym.empty()) {
+            auto gop = module.lookupSymbol<fir::GlobalOp>(sym);
+            v.const_data = extractGlobalInitData(gop);
         }
 
         vars.push_back(std::move(v));
