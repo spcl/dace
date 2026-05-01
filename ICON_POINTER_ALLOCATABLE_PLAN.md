@@ -170,6 +170,78 @@ cosmetic, document and defer.
    currently-xfailed tests, both reuse existing synthesis paths.
 3. **Phase G** as a spike after F unblocks the probe, only if shape
    `(1,)` causes a downstream failure.
+4. **Phase H + Phase I** (below) after F lands — both are SDFG-shape
+   correctness issues independent of the pointer/alloc work, but
+   surfaced by the velocity probe inspection.
+
+### Phase H — Drop unconditional `_allocated` tracking on non-allocatable struct members [NEW]
+**Source of finding:** velocity probe SDFG inspection.
+**Symptom.** Every flattened static-shape member of `t_patch` (30 of
+them — `cell_idx`, `edge_blk`, `f_e`, etc.) gets:
+* a `<member>_allocated : int32` scalar in `sdfg.arrays`, default 0,
+* a `post_<member>_allocated_<n>` empty state with no in/out edges.
+
+The members aren't ALLOCATABLE — `t_patch` declares them as plain
+fixed-shape arrays (`integer :: cell_idx(nproma, nblks, 2)`). The
+allocate-tracking scalar + post-allocate state is dead weight for any
+member without a `fortran_attrs = allocatable` (or pointer) on the
+synthesised companion declare.
+**Approach.** Gate the allocate-tracking-scalar emission on the
+companion declare carrying `fortran_attrs = allocatable | pointer`.
+Static-shape members skip the tracker entirely; their data is
+allocated at the SDFG arglist and never has a "not yet allocated"
+state.
+**Files.** `dace/frontend/hlfir/bridge/extract_vars.cpp` (or wherever
+allocate-tracking scalars are synthesised) — single conditional gate.
+**Verification.** Re-run the velocity probe; expect 30 fewer
+`<member>_allocated` scalars + 30 fewer `post_<member>_allocated_<n>`
+orphan states. Sweep stays at 553 P / 13 xF.
+
+### Phase I — Read-then-writeback to same struct member needs distinct access nodes [NEW]
+**Source of finding:** velocity probe SDFG inspection (state
+`s_476`).
+**Symptom.** Two-statement Fortran source
+```
+max_vcfl_dyn = MAX(p_diag % max_vcfl_dyn,
+                   MAXVAL(vcflmax(i_startblk : i_endblk)))
+p_diag % max_vcfl_dyn = max_vcfl_dyn
+```
+collapses into one SDFG state where the SINGLE
+`p_diag_max_vcfl_dyn` access node is BOTH:
+* read by `set_max_vcfl_dyn` (the MAX tasklet's `_in_` edge), AND
+* written by `set_p_diag_max_vcfl_dyn` (the writeback tasklet's
+  `_out_` edge).
+
+This forms a cycle on the access node — the same data container
+appears as both source and sink within one state with no snapshot
+between, which is invalid SDFG topology.
+
+The cycle is an interaction with the new
+`hlfir-lift-reduction-operands` pass: the lifted
+`_QQred_lift_0 = MAXVAL(...)` runs first, then the consuming
+two-statement read/writeback emits into a single state where the
+bridge re-uses the same access node for both endpoints.
+
+**Approach.** When buildAssignNode encounters a writeback whose RHS
+reads from the SAME data container as the LHS (directly or through
+struct-member flattening), emit two distinct access nodes for that
+container — an input read-snapshot used by all reads in the state,
+and an output write-target consumed only by the writeback tasklet.
+Topologically these become a chain: `[in] → tasklet → [tmp] →
+writeback → [out]`. Or split into two states.
+**Files.** `dace/frontend/hlfir/bridge/extract_ast.cpp` (assign-node
+emission and access-node bookkeeping).
+**Verification.** Re-run the velocity probe; the s_476 cycle
+disappears. Add a focused unit test in
+`tests/hlfir/read_then_writeback_test.py`:
+```fortran
+subroutine kernel(x, arr, n)
+  ...
+  x = max(x, maxval(arr(1:n)))   ! read x + write x
+end subroutine
+```
+SDFG should have two `x` access nodes (input + output) connected
+through the MAX tasklet.
 
 ## What is **not** carried over from the old frontend
 
