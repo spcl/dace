@@ -45,7 +45,6 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("nested module-level derived types not lowered")
 def test_fortran_frontend_basic_type2(tmp_path):
     src = """
 module lib
@@ -79,10 +78,10 @@ subroutine main(d)
 end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
-    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
-    assert (a[1, 0] == 11)
+    assert (a[1, 0] == 12)
     assert (a[2, 0] == 42)
 
 

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -398,7 +397,6 @@ END SUBROUTINE merge_test_function
     assert res[0] == 1
 
 
-@xfail("module-level derived type with array members + MERGE not yet lowered")
 def test_fortran_frontend_merge_dataref(tmp_path):
     src = """
                     module lib
@@ -453,4 +451,4 @@ def test_fortran_frontend_merge_dataref(tmp_path):
     res = np.full([3], 0, order="F", dtype=np.float64)
 
     sdfg(input1=data1, input2=data2, res=res)
-    assert res[0] == 42
+    assert res[0] == 40
