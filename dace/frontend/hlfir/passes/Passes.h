@@ -28,6 +28,7 @@ std::unique_ptr<mlir::Pass> createExpandRegionAssignPass();
 std::unique_ptr<mlir::Pass> createRejectPolymorphismPass();
 std::unique_ptr<mlir::Pass> createRewritePointerAssignsPass();
 std::unique_ptr<mlir::Pass> createRewriteSequenceAssociationPass();
+std::unique_ptr<mlir::Pass> createLiftReductionOperandsPass();
 
 // --- Registry ---
 

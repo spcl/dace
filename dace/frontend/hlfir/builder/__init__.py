@@ -134,6 +134,15 @@ DEFAULT_PIPELINE = (
     # access; relying on alias semantics is unsafe under this pass).
     "hlfir-rewrite-pointer-assigns,"
     "hlfir-propagate-shapes,"
+    # Lift array-reducing intrinsics (sum/maxval/minval/product/any/all)
+    # that appear as INLINE expression operands into a preceding
+    # scalar-temp assign.  ``buildExpr`` can't render reductions in a
+    # tasklet expression — ``out = max(x, MAXVAL(slice))`` would otherwise
+    # surface as ``_out = max(_in_x, ?)`` and crash Python ast.parse.
+    # After this pass, the lifted ``temp = MAXVAL(slice)`` is a top-
+    # level assign the existing reduce-emit dispatch handles, and the
+    # outer expression sees a clean scalar load.
+    "hlfir-lift-reduction-operands,"
     "hlfir-default-intent,"
     # Lift cf.br / cf.cond_br loops into scf.while so extract_ast can walk them.
     "lift-cf-to-scf,"
