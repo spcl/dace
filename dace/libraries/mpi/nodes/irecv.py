@@ -63,7 +63,7 @@ class Irecv(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    grid = dace.properties.DataProperty(default=None)
 
     def __init__(self, name, grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer", "_request"}, **kwargs)

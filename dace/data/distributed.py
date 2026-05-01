@@ -1,25 +1,51 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains type definitions for distributed SDFGs. """
+import copy
 from numbers import Integral
-from typing import Sequence, Union
+from typing import Sequence, Set, Union
 
 import dace.dtypes as dtypes
 from dace import symbolic, serialize
-from dace.properties import (Property, make_properties, ShapeProperty, SymbolicProperty, TypeClassProperty,
-                             ListProperty)
+from dace.data.core import Data
+from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
+class DistributedDescriptor(Data):
+    """Base class for distributed communication descriptors stored in an SDFG."""
+
+    def clone(self):
+        return copy.deepcopy(self)
+
+    def is_equivalent(self, other):
+        return type(self) is type(other) and self == other
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        raise TypeError(f'{type(self).__name__} descriptors are not SDFG call arguments')
+
+    def as_python_arg(self, with_types=True, for_call=False, name=None):
+        raise TypeError(f'{type(self).__name__} descriptors are not Python call arguments')
+
+
+def _symbols_from_shape(shape) -> Set[symbolic.SymbolicType]:
+    result: Set[symbolic.SymbolicType] = set()
+    for s in shape:
+        if isinstance(s, symbolic.sympy.Basic):
+            result |= set(s.free_symbols)
+    return result
+
+
 @make_properties
-class ProcessGrid(object):
+class ProcessGrid(DistributedDescriptor):
     """
-    Process-grids implement cartesian topologies similarly to cartesian communicators created with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
+    Process-grids implement cartesian topologies similarly to cartesian communicators created with
+    [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
     and [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html).
 
     The boolean property `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
-    create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
+    created with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
 
     If `is_subgrid` is false, a "parent" process-grid is created. The `shape` property is equivalent to the `dims`
     parameter of `MPI_Cart_create`. The other properties are ignored. All "parent" process-grids spawn out of
@@ -39,7 +65,6 @@ class ProcessGrid(object):
 
     name = Property(dtype=str, desc="The process-grid's name.")
     is_subgrid = Property(dtype=bool, default=False, desc="If true, spanws sub-grids out of the parent process-grid.")
-    shape = ShapeProperty(default=[], desc="The process-grid's shape.")
     parent_grid = Property(dtype=str,
                            allow_none=True,
                            default=None,
@@ -68,14 +93,21 @@ class ProcessGrid(object):
         self.name = name
         self.is_subgrid = is_subgrid
         if is_subgrid:
-            self.parent_grid = parent_grid.name
+            self.parent_grid = parent_grid.name if isinstance(parent_grid, ProcessGrid) else parent_grid
             self.color = color
             self.exact_grid = exact_grid
-            self.shape = [parent_grid.shape[i] for i, remain in enumerate(color) if remain]
+            if isinstance(parent_grid, ProcessGrid):
+                shape = [parent_grid.shape[i] for i, remain in enumerate(color) if remain]
+            else:
+                shape = shape or []
         else:
-            self.shape = shape
+            self.parent_grid = None
+            self.color = None
+            self.exact_grid = None
+            shape = shape or []
         self.root = root
-        self._validate()
+        super().__init__(dtypes.opaque('MPI_Comm'), shape, True, dtypes.StorageType.Default, None,
+                         dtypes.AllocationLifetime.Scope, None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -96,10 +128,6 @@ class ProcessGrid(object):
             raise ValueError('Color must have only logical true (1) or false (0) values.')
         return True
 
-    @property
-    def dtype(self):
-        return type(self)
-
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}
@@ -110,6 +138,8 @@ class ProcessGrid(object):
         # Create dummy object
         ret = cls('tmp', False, [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret.dtype = dtypes.opaque('MPI_Comm')
+        ret.transient = False
         # Check validity now
         ret.validate()
         return ret
@@ -191,7 +221,7 @@ class ProcessGrid(object):
 
 
 @make_properties
-class SubArray(object):
+class SubArray(DistributedDescriptor):
     """
     Sub-arrays describe subsets of Arrays (see `dace::data::Array`) for purposes of distributed communication. They are
     implemented with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
@@ -208,8 +238,6 @@ class SubArray(object):
     """
 
     name = Property(dtype=str, desc="The type's name.")
-    dtype = TypeClassProperty(default=dtypes.int32)
-    shape = ShapeProperty(default=[], desc="The array's shape.")
     subshape = ShapeProperty(default=[], desc="The sub-array's shape.")
     pgrid = Property(dtype=str,
                      allow_none=True,
@@ -229,12 +257,10 @@ class SubArray(object):
                  pgrid: str = None,
                  correspondence: Sequence[Integral] = None):
         self.name = name
-        self.dtype = dtype
-        self.shape = shape
         self.subshape = subshape
         self.pgrid = pgrid
         self.correspondence = correspondence or list(range(len(shape)))
-        self._validate()
+        super().__init__(dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Scope, None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -269,9 +295,16 @@ class SubArray(object):
         # Create dummy object
         ret = cls('tmp', dtypes.int8, [], [], 'tmp', [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret.transient = False
         # Check validity now
         ret.validate()
         return ret
+
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        result = super().used_symbols(all_symbols)
+        if self.transient or all_symbols:
+            result |= _symbols_from_shape(self.subshape)
+        return result
 
     def init_code(self):
         """ Outputs MPI allocation/initialization code for the sub-array MPI datatype ONLY if the process-grid is set.
@@ -353,7 +386,7 @@ class SubArray(object):
 
 
 @make_properties
-class RedistrArray(object):
+class RedistrArray(DistributedDescriptor):
     """
     Describes the redistribution of an Array from one process-grid and sub-array descriptor (`array_a`) to another
     (`array_b`). The redistribution is implemented with MPI datatypes (see [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)
@@ -369,7 +402,8 @@ class RedistrArray(object):
         self.name = name
         self.array_a = array_a
         self.array_b = array_b
-        self._validate()
+        super().__init__(dtypes.opaque('dace::comm::RedistrArray'), [], True, dtypes.StorageType.Default, None,
+                         dtypes.AllocationLifetime.Scope, None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -392,6 +426,8 @@ class RedistrArray(object):
         # Create dummy object
         ret = cls('tmp', 'tmp', 'tmp')
         serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret.dtype = dtypes.opaque('dace::comm::RedistrArray')
+        ret.transient = False
         # Check validity now
         ret.validate()
         return ret

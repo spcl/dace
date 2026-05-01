@@ -592,6 +592,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             access_instances[sdfg.cfg_id] = instances
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
+            if isinstance(desc, data.DistributedDescriptor):
+                continue
             # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
             # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.
             top_desc = sdfg.arrays[name.split('.')[0]]

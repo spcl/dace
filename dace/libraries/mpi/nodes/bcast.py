@@ -71,7 +71,7 @@ class Bcast(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    grid = dace.properties.DataProperty(default=None)
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
     def __init__(self, name, grid=None, fcomm=None, *args, **kwargs):

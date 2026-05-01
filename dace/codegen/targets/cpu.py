@@ -34,7 +34,6 @@ class CPUCodeGen(TargetCodeGenerator):
     language = "cpp"
 
     def _define_sdfg_arguments(self, sdfg, arglist):
-
         # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
@@ -58,6 +57,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     _visit_structure(desc, args, name)
 
         for name, arg_type in args.items():
+            if isinstance(arg_type, data.DistributedDescriptor):
+                continue
             if isinstance(arg_type, data.Scalar):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow

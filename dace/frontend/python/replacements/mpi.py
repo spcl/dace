@@ -14,6 +14,15 @@ from typing import Sequence, Union
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
+
+def _canonical_data_name(pv: ProgramVisitor, sdfg: SDFG, name: str) -> str:
+    if isinstance(name, str) and name not in sdfg.arrays:
+        mapped_name = pv.variables.get(name)
+        if mapped_name in sdfg.arrays:
+            return mapped_name
+    return name
+
+
 ##### MPI Cartesian Communicators
 
 
@@ -77,6 +86,7 @@ def _cart_sub(pv: ProgramVisitor,
         :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
         :return: Name of the new sub-grid descriptor.
     """
+    parent_grid = _canonical_data_name(pv, sdfg, parent_grid)
     pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
 
     # Count sub-grid dimensions.
@@ -163,6 +173,7 @@ def _bcast(pv: ProgramVisitor,
     from dace.libraries.mpi.nodes.bcast import Bcast
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
+    grid = _canonical_data_name(pv, sdfg, grid)
     libnode = Bcast('_Bcast_', grid, fcomm)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
@@ -236,6 +247,7 @@ def _Reduce(pv: ProgramVisitor,
     from dace.libraries.mpi.nodes.reduce import Reduce
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
+    grid = _canonical_data_name(pv, sdfg, grid)
     libnode = Reduce('_Reduce_', op, grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
@@ -261,6 +273,7 @@ def _alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inbuffer: str, o
 
     from dace.libraries.mpi.nodes.alltoall import Alltoall
 
+    grid = _canonical_data_name(pv, sdfg, grid)
     libnode = Alltoall('_Alltoall_', grid)
     in_desc = sdfg.arrays[inbuffer]
     in_buffer = state.add_read(inbuffer)
@@ -307,6 +320,7 @@ def _allreduce(pv: ProgramVisitor,
         op = _mpi4py_to_MPI(MPI, op)
     if inp_buffer != MPI.IN_PLACE:
         raise ValueError('DaCe currently supports in-place Allreduce only.')
+    grid = _canonical_data_name(pv, sdfg, grid)
     libnode = Allreduce('_Allreduce_', op, grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
@@ -510,6 +524,7 @@ def _isend(pv: ProgramVisitor,
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.isend import Isend
 
+    grid = _canonical_data_name(pv, sdfg, grid)
     ret_req = False
     if not request:
         ret_req = True
@@ -730,6 +745,7 @@ def _irecv(pv: ProgramVisitor,
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.irecv import Irecv
 
+    grid = _canonical_data_name(pv, sdfg, grid)
     ret_req = False
     if not request:
         ret_req = True
@@ -933,6 +949,7 @@ def _subarray(pv: ProgramVisitor,
         subshape = subarray
         sub_dtype = None
     dtype = dtype or arr_dtype or sub_dtype
+    process_grid = _canonical_data_name(pv, sdfg, process_grid)
 
     subarray_name = sdfg.add_subarray(dtype, shape, subshape, process_grid, correspondence)
 

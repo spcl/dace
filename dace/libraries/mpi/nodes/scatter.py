@@ -119,9 +119,9 @@ class BlockScatter(MPINode):
     }
     default_implementation = "MPI"
 
-    subarray_type = properties.Property(dtype=str, default='tmp')
-    scatter_grid = properties.Property(dtype=str, default='tmp')
-    bcast_grid = properties.Property(dtype=str, allow_none=True, default=None)
+    subarray_type = properties.DataProperty(default='tmp')
+    scatter_grid = properties.DataProperty(default='tmp')
+    bcast_grid = properties.DataProperty(default=None)
 
     def __init__(self, name, subarray_type='tmp', scatter_grid='tmp', bcast_grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)

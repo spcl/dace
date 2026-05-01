@@ -477,6 +477,8 @@ class TargetDispatcher(object):
                           declare: bool = True,
                           allocate: bool = True) -> None:
         """ Dispatches a code generator for data allocation. """
+        if isinstance(datadesc, dt.DistributedDescriptor):
+            return
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
         if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
@@ -500,6 +502,8 @@ class TargetDispatcher(object):
                             node: nodes.AccessNode, datadesc: dt.Data, function_stream: prettycode.CodeIOStream,
                             callsite_stream: prettycode.CodeIOStream) -> None:
         """ Dispatches a code generator for a data deallocation. """
+        if isinstance(datadesc, dt.DistributedDescriptor):
+            return
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
         if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:

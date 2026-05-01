@@ -73,7 +73,7 @@ class Isend(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    grid = dace.properties.DataProperty(default=None)
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")
 
     def __init__(self, name, grid=None, *args, **kwargs):

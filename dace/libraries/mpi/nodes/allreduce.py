@@ -49,7 +49,7 @@ class Allreduce(MPINode):
     default_implementation = "MPI"
 
     op = dace.properties.Property(dtype=str, default='MPI_SUM')
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    grid = dace.properties.DataProperty(default=None)
 
     def __init__(self, name, op='MPI_SUM', grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)

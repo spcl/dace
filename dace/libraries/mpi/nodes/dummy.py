@@ -27,7 +27,7 @@ class ExpandDummyMPI(ExpandTransformation):
 class Dummy(MPINode):
     """
     The Dummy library node is used to add fields to the DaCe program's state (see code generation) that are strictly
-    related to MPI communication (see distributed descriptors `dace/distr_types`: ProcessGrid, Subarray, RedistrArray).
+    related to MPI communication (see distributed descriptors `dace.data.distributed`: ProcessGrid, Subarray, RedistrArray).
     NOTE: This is a temporary solution until the SDFG API has a method that adds fields to the DaCe program's state
     directly, without a Tasklet or CodeNode.
     """

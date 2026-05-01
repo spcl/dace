@@ -25,7 +25,7 @@ from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion, LoopRegion
 from dace.sdfg.type_inference import infer_expr_type
-from dace.distr_types import ProcessGrid, SubArray, RedistrArray
+from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
@@ -477,22 +477,6 @@ class SDFG(ControlFlowRegion):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    _pgrids = DictProperty(str,
-                           ProcessGrid,
-                           desc="Process-grid descriptors for this SDFG",
-                           to_json=_arrays_to_json,
-                           from_json=_arrays_from_json)
-    _subarrays = DictProperty(str,
-                              SubArray,
-                              desc="Sub-array descriptors for this SDFG",
-                              to_json=_arrays_to_json,
-                              from_json=_arrays_from_json)
-    _rdistrarrays = DictProperty(str,
-                                 RedistrArray,
-                                 desc="Sub-array redistribution descriptors for this SDFG",
-                                 to_json=_arrays_to_json,
-                                 from_json=_arrays_from_json)
-
     callback_mapping = DictProperty(str,
                                     str,
                                     desc='Mapping between callback name and its original callback '
@@ -549,11 +533,6 @@ class SDFG(ControlFlowRegion):
         # Helper fields to avoid code generation and compilation
         self._regenerate_code = True
         self._recompile = True
-
-        # Grid-distribution-related fields
-        self._pgrids = {}
-        self._subarrays = {}
-        self._rdistrarrays = {}
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -712,7 +691,12 @@ class SDFG(ControlFlowRegion):
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
 
-        attrs = json_obj['attributes']
+        attrs = dict(json_obj['attributes'])
+        legacy_pgrids = attrs.pop('_pgrids', None)
+        legacy_subarrays = attrs.pop('_subarrays', None)
+        legacy_rdistrarrays = attrs.pop('_rdistrarrays', None)
+        json_obj = dict(json_obj)
+        json_obj['attributes'] = attrs
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
@@ -724,6 +708,11 @@ class SDFG(ControlFlowRegion):
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+
+        for legacy_store in (legacy_pgrids, legacy_subarrays, legacy_rdistrarrays):
+            for name, desc in _arrays_from_json(legacy_store, context).items():
+                if name not in ret._arrays:
+                    ret.add_datadesc(name, desc)
 
         nodelist = []
         for n in nodes:
@@ -801,17 +790,17 @@ class SDFG(ControlFlowRegion):
     @property
     def process_grids(self):
         """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
-        return self._pgrids
+        return {name: desc for name, desc in self._arrays.items() if isinstance(desc, ProcessGrid)}
 
     @property
     def subarrays(self):
         """ Returns a dictionary of sub-array descriptors (`SubArray` objects) used in this SDFG. """
-        return self._subarrays
+        return {name: desc for name, desc in self._arrays.items() if isinstance(desc, SubArray)}
 
     @property
     def rdistrarrays(self):
         """ Returns a dictionary of sub-array redistribution descriptors (`RedistrArray` objects) used in this SDFG. """
-        return self._rdistrarrays
+        return {name: desc for name, desc in self._arrays.items() if isinstance(desc, RedistrArray)}
 
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
@@ -893,12 +882,6 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
             if name in self.arrays:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-            if name in self._subarrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
-            if name in self._rdistrarrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
-            if name in self._pgrids:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
@@ -1350,12 +1333,6 @@ class SDFG(ControlFlowRegion):
         :param value: The constant value.
         :param dtype: Optional data type of the symbol, or None to deduce automatically.
         """
-        if name in self._subarrays:
-            raise FileExistsError(f'Can not create constant "{name}", the name is used by a subarray.')
-        if name in self._rdistrarrays:
-            raise FileExistsError(f'Can not create constant "{name}", the name is used by a RedistrArray.')
-        if name in self._pgrids:
-            raise FileExistsError(f'Can not create constant "{name}", the name is used by a ProcessGrid.')
         self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
@@ -1819,8 +1796,7 @@ class SDFG(ControlFlowRegion):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys() | self.symbols.keys())
+        names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:
@@ -1830,12 +1806,6 @@ class SDFG(ControlFlowRegion):
         if name in self.symbols:
             return True
         if name in self.constants_prop:
-            return True
-        if name in self._pgrids:
-            return True
-        if name in self._subarrays:
-            return True
-        if name in self._rdistrarrays:
             return True
         return False
 
@@ -2186,12 +2156,6 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
-            if name in self._subarrays:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
-            if name in self._rdistrarrays:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
-            if name in self._pgrids:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
 
         def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):
@@ -2265,12 +2229,13 @@ class SDFG(ControlFlowRegion):
         grid_name = self._find_new_name('__pgrid')
         is_subgrid = (parent_grid is not None)
         if parent_grid and isinstance(parent_grid, str):
-            parent_grid = self._pgrids[parent_grid]
+            parent_grid = self.process_grids[parent_grid]
 
-        self._pgrids[grid_name] = ProcessGrid(grid_name, is_subgrid, shape, parent_grid, color, exact_grid, root)
+        pgrid = ProcessGrid(grid_name, is_subgrid, shape, parent_grid, color, exact_grid, root)
+        self.add_datadesc(grid_name, pgrid)
 
-        self.append_init_code(self._pgrids[grid_name].init_code())
-        self.append_exit_code(self._pgrids[grid_name].exit_code())
+        self.append_init_code(pgrid.init_code())
+        self.append_exit_code(pgrid.exit_code())
 
         return grid_name
 
@@ -2312,9 +2277,10 @@ class SDFG(ControlFlowRegion):
         # No need to ensure unique test.
         subarray_name = self._find_new_name('__subarray')
 
-        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
-        self.append_init_code(self._subarrays[subarray_name].init_code())
-        self.append_exit_code(self._subarrays[subarray_name].exit_code())
+        subarray = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
+        self.add_datadesc(subarray_name, subarray)
+        self.append_init_code(subarray.init_code())
+        self.append_exit_code(subarray.exit_code())
 
         return subarray_name
 
@@ -2329,9 +2295,10 @@ class SDFG(ControlFlowRegion):
         # No need to ensure unique test.
         name = self._find_new_name('__rdistrarray')
 
-        self._rdistrarrays[name] = RedistrArray(name, array_a, array_b)
-        self.append_init_code(self._rdistrarrays[name].init_code(self))
-        self.append_exit_code(self._rdistrarrays[name].exit_code(self))
+        rdistrarray = RedistrArray(name, array_a, array_b)
+        self.add_datadesc(name, rdistrarray)
+        self.append_init_code(rdistrarray.init_code(self))
+        self.append_exit_code(rdistrarray.exit_code(self))
         return name
 
     def add_loop(self,
