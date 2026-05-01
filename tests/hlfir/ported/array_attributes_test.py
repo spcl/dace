@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -195,7 +194,6 @@ end subroutine main
         assert a[i, 0] == (i + 1) * 2
 
 
-@xfail("assumed-shape array + module-contained subroutine call not yet lowered")
 def test_fortran_frontend_array_arbitrary_attribute2(tmp_path):
     src = """
 module lib
@@ -222,7 +220,11 @@ end module lib
     arrsize4 = 7
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
     b = np.full([arrsize3, arrsize4], 42, order="F", dtype=np.float64)
-    sdfg(d=a, d2=b)
+    # Assumed-shape ``(:,:)`` dummies leave the per-axis extent
+    # symbols on the SDFG signature; the caller has to supply them
+    # explicitly (DaCe doesn't infer them from the numpy buffer
+    # shape when using the kwarg-style call).
+    sdfg(d=a, d2=b, d_d0=arrsize, d_d1=arrsize2, d2_d0=arrsize3, d2_d1=arrsize4)
     assert a[0, 0] == arrsize
     assert a[0, 1] == arrsize2
     assert a[0, 2] == arrsize3
