@@ -317,6 +317,19 @@ class SDFGBuilder:
         # constants — feeding it a string would land on ``add_constant``
         # and downstream casting tries ``int64("arrsize")`` and
         # ValueError-s.
+        # TODO(future): replace the ``specialize`` call with
+        # ``sdfg.replace_dict`` so the offset symbols get erased from
+        # ``sdfg.symbols`` entirely (they currently linger as bound
+        # constants and bloat the symbol table).  An attempt at this
+        # broke ``test_fortran_frontend_type_array`` /
+        # ``test_fortran_frontend_type_array2`` in ``type_test.py``:
+        # for non-default lower bounds (``dimension(7:12)``) the
+        # ``replace_dict`` substitution didn't apply uniformly to
+        # every memlet subset, leaving raw-Fortran indices that went
+        # out-of-bounds against the 0-based flat companion.  Needs a
+        # careful audit of which property paths ``replace_dict``
+        # walks (vs. what ``specialize`` does in-place via the
+        # constants table) before re-trying.
         const_offsets, alias_offsets = {}, {}
         for k, v in self.offset_values.items():
             if v is None:
