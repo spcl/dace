@@ -1,9 +1,26 @@
 # ICON pointer / allocatable support — revised plan (2026-05-02)
 
-## Where we are
+## Status
 
-Sweep at **553 passed / 13 xfailed / 0 failed** after `hlfir-lift-reduction-operands`
-landed. The 13 xfailed cases bucket as:
+| Phase | Status | Commit |
+|---|---|---|
+| Lift reduction operands | landed | `e3cfbcc68` |
+| Phase H — gate `_allocated` tracker on actual usage | **landed** | `36f08e281` |
+| Phase I — split read+write access nodes for read-then-writeback | **landed** | `f8a6637bf` |
+| Phase F — alias resolution into inlined-callee bodies | open (next blocker) | — |
+| Phase A — module-level type with pointer member | open | — |
+| Phase B — plain pointer dummy as runtime-shape array | open | — |
+| Phase G — runtime-shape symbols for flattened ALLOCATABLE members | open (spike) | — |
+| Phase C / D / E | deferred | — |
+
+Sweep at **553 passed / 13 xfailed / 0 failed**. Velocity probe SDFG saved
+at `/tmp/probe_velocity/velocity_tendencies_partial.sdfg` (608 KB).
+Verified post-Phase-H+I: 30 dead `_allocated` arrays + 30 orphan init
+states gone; the s_442 read-then-writeback cycle has the expected
+2 access nodes for `p_diag_max_vcfl_dyn`. Next blocker still bare
+`p_int` in `set_zeta` (Phase F).
+
+The 13 xfailed cases bucket as:
 
 | Bucket | Tests | Status |
 |---|---|---|
