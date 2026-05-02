@@ -44,6 +44,16 @@ struct VarInfo {
 /// Walk the module and build one VarInfo per hlfir.declare.
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module);
 
+/// True iff the allocatable / pointer ``declName`` needs the
+/// per-variable ``<declName>_allocated`` int32 tracker scalar — i.e.
+/// either the kernel body writes it (an ALLOCATE / DEALLOCATE site
+/// exists) or reads it (an ``ALLOCATED(arr)`` / ``ASSOCIATED(ptr)``
+/// reader exists, lowered to ``fir.box_addr``).  Dummies passed in
+/// already-allocated and never queried by ``ALLOCATED(...)`` skip the
+/// tracker entirely.
+bool needsAllocatedTracker(const std::string &declName,
+                           mlir::ModuleOp module);
+
 /// Per-site name for an allocatable ``ALLOCATE``.  Site 0 keeps the
 /// original Fortran name (``x``); site 1+ mints synthetic transient
 /// names (``x_alloc1``, ``x_alloc2``, …).  Shared between

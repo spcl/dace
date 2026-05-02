@@ -18,6 +18,7 @@
 
 #include "bridge/ast/ast_helpers.h"
 #include "bridge/ast/ast_internal.h"
+#include "bridge/extract_vars.h"
 
 namespace hlfir_bridge {
 
@@ -888,7 +889,14 @@ std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
             if (!bitEnumContainsAny(*attrs, fir::FortranVariableFlagsEnum::allocatable))
                 return;
             std::string raw = extractName(op.getUniqName().str());
-            if (!raw.empty()) allocNames.push_back(std::move(raw));
+            if (raw.empty()) return;
+            // Skip allocatables with neither ALLOCATE writes nor
+            // ALLOCATED(...) reads — the tracker would be dead weight
+            // (Phase H).  ``needsAllocatedTracker`` keys on the
+            // declare's full uniq_name.
+            if (!needsAllocatedTracker(op.getUniqName().str(), module))
+                return;
+            allocNames.push_back(std::move(raw));
         });
         std::sort(allocNames.begin(), allocNames.end());
         allocNames.erase(std::unique(allocNames.begin(), allocNames.end()),

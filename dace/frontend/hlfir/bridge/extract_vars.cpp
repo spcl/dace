@@ -124,6 +124,47 @@ static std::vector<std::string> shapeFromAllocSite(fir::AllocMemOp alloc) {
     return syms;
 }
 
+/// True iff some ``fir.box_addr`` op in the module reads the
+/// allocatable / pointer descriptor of the declare whose
+/// (short, post-``extractName``) name is ``shortName``.
+/// ``ALLOCATED(arr)`` and ``ASSOCIATED(ptr)`` both lower to
+/// ``box_addr(load arr_box) != 0``; if no such reader exists the
+/// per-allocatable ``<arr>_allocated`` tracker scalar and its init
+/// state are dead weight in the SDFG.
+static bool hasAllocatedReader(const std::string &shortName,
+                               mlir::ModuleOp module) {
+    if (shortName.empty()) return false;
+    bool found = false;
+    module.walk([&](fir::BoxAddrOp ba) {
+        if (found) return;
+        // ``box_addr``'s operand is normally a ``fir.load`` of a
+        // box-ref; trace through that load to the declare.
+        auto src = ba.getVal();
+        if (auto *sd = src.getDefiningOp())
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(sd))
+                src = ld.getMemref();
+        // ``traceToDecl`` returns the short (extracted) name — match
+        // against ``shortName``, not the full mangled uniq_name.
+        if (traceToDecl(src) == shortName) found = true;
+    });
+    return found;
+}
+
+/// True iff the allocatable / pointer ``declUniqName`` needs the
+/// ``<short>_allocated`` tracker scalar — either because some
+/// kernel-body code writes it (an ALLOCATE / DEALLOCATE site exists,
+/// keyed on the full mangled uniq_name) OR because some kernel-body
+/// code reads it (an ``ALLOCATED(arr)`` / ``ASSOCIATED(ptr)`` reader
+/// exists, keyed on the short post-``extractName`` name).  Dummy /
+/// module-level allocatables passed in already-allocated and never
+/// queried by ``ALLOCATED(...)`` skip the tracker entirely.
+bool needsAllocatedTracker(const std::string &declUniqName,
+                           mlir::ModuleOp module) {
+    if (declUniqName.empty()) return false;
+    if (!collectAllocSites(declUniqName, module).empty()) return true;
+    return hasAllocatedReader(extractName(declUniqName), module);
+}
+
 /// First ALLOCATE keeps the allocatable's original Fortran name (so
 /// every existing single-allocation test stays green); subsequent
 /// allocations mint fresh transient names ``<x>_alloc1``,
@@ -836,7 +877,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // instead of inspecting the descriptor's heap pointer (which
         // DaCe's data model doesn't surface).  Initial value is 0
         // (DaCe default for transient scalars).
-        if (isAllocatable) {
+        if (isAllocatable && needsAllocatedTracker(v.mangled_name, module)) {
             // Role ``symbol`` (not ``scalar``) so writes land on
             // interstate edges and reads see the latest value across
             // state boundaries.  A plain transient scalar would let
