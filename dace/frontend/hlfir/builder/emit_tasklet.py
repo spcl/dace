@@ -191,10 +191,18 @@ def emit_scalar_assign(builder, state, target: str, value: str):
     # Self-update (``i = i + 1``): the read and write need DIFFERENT
     # access nodes so the state remains a DAG — ``Access(i_read) →
     # Tasklet → Access(i_write)`` instead of a cycle on one node.
-    # Plain ``i = 0`` still reuses the cached node.
-    if target in reads:
+    # Same rule applies (Phase I) when an EARLIER tasklet in the same
+    # state already read ``target`` through the cached access node —
+    # reusing it for our write would put both an in-edge and an
+    # out-edge on the same node, creating the same cycle.  Velocity-
+    # tendencies surfaces this with the two-line pattern
+    # ``max_vcfl_dyn = MAX(p_diag%max_vcfl_dyn, ...)``
+    # ``p_diag%max_vcfl_dyn = max_vcfl_dyn``: the second assign's
+    # writeback target was the first assign's RHS read.
+    cache = getattr(state, '_hlfir_access', None)
+    cached_has_readers = (cache is not None and target in cache and state.out_degree(cache[target]) > 0)
+    if (target in reads) or cached_has_readers:
         a = state.add_access(target)
-        cache = getattr(state, '_hlfir_access', None)
         if cache is not None:
             cache[target] = a
     else:
