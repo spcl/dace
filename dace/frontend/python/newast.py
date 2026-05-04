@@ -17,8 +17,8 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
-                                         StringLiteral)
+from dace.frontend.python.common import (DaceSyntaxError, ListLiteral, SDFGClosure, SDFGConvertible, TupleLiteral,
+                                         inverse_dict_lookup, StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -1378,7 +1378,7 @@ class ProgramVisitor(ExtNodeVisitor):
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
+        except (ImportError, ModuleNotFoundError, RuntimeError):
             pass
 
         return result
@@ -1410,8 +1410,19 @@ class ProgramVisitor(ExtNodeVisitor):
         # return the name of the left-hand side of the assignment.
         if len(self.current_ast_stack) > 1 and isinstance(self.current_ast_stack[-2], ast.Assign):
             target = self.current_ast_stack[-2].targets[0]
-            if isinstance(target, ast.Tuple) and len(target.elts) > output_index:
-                candidate = self._get_name_from_node(target.elts[output_index])
+            candidate = None
+            if isinstance(target, (ast.Tuple, ast.List)):
+                flat_targets = []
+                pending_targets = list(target.elts)
+                while pending_targets:
+                    current_target = pending_targets.pop(0)
+                    if isinstance(current_target, (ast.Tuple, ast.List)):
+                        pending_targets = list(current_target.elts) + pending_targets
+                    else:
+                        flat_targets.append(current_target)
+
+                if len(flat_targets) > output_index:
+                    candidate = self._get_name_from_node(flat_targets[output_index])
             elif isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
                 candidate = self._get_name_from_node(target)
 
@@ -3461,7 +3472,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Get targets (elts) and results
         elts = None
         results = None
-        if isinstance(node_target, (ast.Tuple, ast.List)):
+        unpack_target = isinstance(node_target, (ast.Tuple, ast.List))
+        if unpack_target:
             elts = list(node_target.elts)
         else:
             elts = [node_target]
@@ -3477,11 +3489,27 @@ class ProgramVisitor(ExtNodeVisitor):
                     tuple_found = True
                     break
 
+        assignment_output_index = 0
+
+        def _collect_assignment_results(value: ast.AST) -> List[Tuple[str, str]]:
+            nonlocal assignment_output_index
+            if isinstance(value, (ast.Tuple, ast.List)):
+                unpacked = []
+                for element in value.elts:
+                    unpacked.extend(_collect_assignment_results(element))
+                return unpacked
+
+            old_output_index = self.default_output_index
+            self.default_output_index = assignment_output_index
+            assignment_output_index += 1
+            try:
+                return self._gettype(value)
+            finally:
+                self.default_output_index = old_output_index
+
         results = []
-        if isinstance(node.value, (ast.Tuple, ast.List)):
-            for i, n in enumerate(node.value.elts):
-                self.default_output_index = i
-                results.extend(self._gettype(n))
+        if unpack_target and isinstance(node.value, (ast.Tuple, ast.List)):
+            results.extend(_collect_assignment_results(node.value))
             self.default_output_index = 0
         else:
             rval = self._gettype(node.value)
@@ -3515,6 +3543,13 @@ class ProgramVisitor(ExtNodeVisitor):
             true_name = None
             true_array = None
             visited_target = False
+
+            if isinstance(target, ast.Attribute) and name in defined_vars:
+                root_name = defined_vars[name]
+                root_desc = defined_arrays.get(root_name)
+                if isinstance(root_desc, data.PythonClass):
+                    self._emit_pythonclass_attribute_assignment(node, root_name, '.'.join(tokens), result)
+                    continue
 
             if name in defined_vars:
                 # Handle complex object assignment (e.g., A.flat[:])
@@ -4662,6 +4697,88 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             return return_names
 
+    def _emit_pythonclass_attribute_assignment(self, node: ast.AST, object_name: str, attribute_name: str,
+                                               value: Any) -> None:
+        if not attribute_name:
+            raise DaceSyntaxError(self, node, 'Expected a PythonClass attribute assignment target')
+        value_name = None
+        value_desc = None
+        member_desc = None
+
+        if isinstance(value, str) and value in self.sdfg.arrays:
+            value_name = value
+            value_desc = self.sdfg.arrays[value]
+            if isinstance(value_desc, data.Array):
+                member_desc = data.Reference.view(value_desc)
+            elif isinstance(value_desc, data.Scalar):
+                member_desc = data.Scalar(value_desc.dtype)
+        elif value in self.sdfg.symbols or symbolic.issymbolic(value):
+            code_value = str(value)
+            symdtype = symbolic.symtype(value) if symbolic.issymbolic(value) else self.sdfg.symbols[value]
+            member_desc = data.Scalar(symdtype)
+        elif isinstance(value, tuple(dtypes.dtype_to_typeclass().keys())):
+            code_value = repr(value.item() if hasattr(value, 'item') else value)
+            member_desc = data.create_datadescriptor(value.item() if hasattr(value, 'item') else value)
+        else:
+            raise DaceSyntaxError(
+                self, node, f'Unsupported PythonClass assignment value "{value}". '
+                'Please assign a scalar or symbol.')
+
+        state = self._add_state(f'pythonclass_attr_{node.lineno}')
+        self.last_block.set_default_lineinfo(self.current_lineinfo)
+
+        self._ensure_pythonclass_member(object_name, attribute_name, member_desc)
+
+        if isinstance(value_desc, data.Array):
+            ref_name = f'{object_name}.{attribute_name}'
+            value_read = state.add_read(value_name, debuginfo=self.current_lineinfo)
+            ref_write = state.add_write(ref_name, debuginfo=self.current_lineinfo)
+            ref_edge = state.add_edge(value_read, None, ref_write, 'set', Memlet.from_array(value_name, value_desc))
+            ref_edge.data = align_memlet(state, ref_edge, dst=False)
+            return
+
+        if value_desc is not None:
+            field_name = f'{object_name}.{attribute_name}'
+            value_read = state.add_read(value_name, debuginfo=self.current_lineinfo)
+            field_write = state.add_write(field_name, debuginfo=self.current_lineinfo)
+            field_edge = state.add_edge(value_read, None, field_write, None, Memlet.from_array(value_name, value_desc))
+            field_edge.data = align_memlet(state, field_edge, dst=False)
+            return
+
+        field_name = f'{object_name}.{attribute_name}'
+        value_tasklet = state.add_tasklet(f'pythonclass_attr_{node.lineno}', {}, {'__out'},
+                                          f'__out = {code_value}',
+                                          language=dtypes.Language.Python,
+                                          side_effects=False,
+                                          debuginfo=self.current_lineinfo)
+        value_tasklet.add_out_connector('__out', member_desc.dtype, force=True)
+
+        field_write = state.add_write(field_name, debuginfo=self.current_lineinfo)
+        field_edge = state.add_edge(value_tasklet, '__out', field_write, None,
+                                    Memlet.from_array(field_name, member_desc))
+        field_edge.data = align_memlet(state, field_edge, dst=False)
+
+    def _ensure_pythonclass_member(self, object_name: str, attribute_name: str, member_value_desc: data.Data) -> None:
+        root_desc = self.sdfg.arrays[object_name]
+        if not isinstance(root_desc, data.PythonClass):
+            raise DaceSyntaxError(self, None, f'Expected PythonClass root for "{object_name}"')
+
+        member_desc = root_desc
+        tokens = attribute_name.split('.')
+        for token in tokens[:-1]:
+            if token not in member_desc.members:
+                raise DaceSyntaxError(self, None, f'Unknown PythonClass attribute path "{attribute_name}"')
+            member_desc = member_desc.members[token]
+            if isinstance(member_desc, data.ContainerArray):
+                member_desc = member_desc.stype
+            if not isinstance(member_desc, data.Structure):
+                raise DaceSyntaxError(self, None, f'Cannot create nested PythonClass field under "{token}"')
+
+        leaf_name = tokens[-1]
+        if leaf_name not in member_desc.members:
+            member_desc.members[leaf_name] = copy.deepcopy(member_value_desc)
+            member_desc.members[leaf_name].transient = False
+
     def _connect_pystate(self,
                          tasklet: nodes.CodeNode,
                          state: SDFGState,
@@ -5149,6 +5266,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
+        if isinstance(opnode, ast.List):
+            return [(ListLiteral(tuple(self.visit(opnode))), ListLiteral)]
+        if isinstance(opnode, ast.Tuple):
+            return [(TupleLiteral(tuple(self.visit(opnode))), TupleLiteral)]
+
         if isinstance(opnode, ast.AST):
             operands = self.visit(opnode)
         else:
@@ -5192,6 +5314,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(op1_parsed) > 1:
             raise DaceSyntaxError(self, op1, 'Operand cannot be a tuple')
         operand1, op1type = op1_parsed[0]
+
         if op2 is not None:
             op2_parsed = self._gettype(op2)
             if len(op2_parsed) > 1:

@@ -328,3 +328,170 @@ def _einsum(pv: ProgramVisitor,
                               output_name=pv.get_target_name(),
                               alpha=alpha,
                               beta=beta)
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for operators (schedule-tree frontend)           #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_descriptor, infers_operator_descriptor
+from dace.frontend.common.einsum import EinsumParser
+from dace.frontend.python.replacements.type_inference import _get_desc
+from dace.frontend.python.schedule_tree.expression_support import (_matmul_output_shape)
+
+
+@infers_operator_descriptor('MatMult')
+def _infer_matmult(left_desc, right_desc):
+    """Infer result descriptor for the ``@`` (MatMult) operator."""
+    left_shape = tuple(left_desc.shape)
+    right_shape = tuple(right_desc.shape)
+    out_shape = _matmul_output_shape(left_shape, right_shape)
+    if out_shape is None:
+        return None
+
+    type1 = left_desc.dtype.type
+    type2 = right_desc.dtype.type
+    restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
+
+    if len(out_shape) == 0:
+        return data.Scalar(restype)
+    return data.Array(restype, list(out_shape), transient=True)
+
+
+@infers_descriptor('dace.linalg.inv')
+@infers_descriptor('numpy.linalg.inv')
+def _infer_inv(input_descs, inp_op, **_kw):
+    desc = input_descs.get(inp_op) if isinstance(inp_op, str) else inp_op
+    if not isinstance(desc, data.Data):
+        return None
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(desc.dtype, transient=True)
+    return data.Array(desc.dtype, list(desc.shape), transient=True)
+
+
+@infers_descriptor('dace.linalg.solve')
+@infers_descriptor('numpy.linalg.solve')
+def _infer_solve(input_descs, op_a, op_b, **_kw):
+    desc = input_descs.get(op_b) if isinstance(op_b, str) else op_b
+    if not isinstance(desc, data.Data):
+        return None
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(desc.dtype, transient=True)
+    return data.Array(desc.dtype, list(desc.shape), transient=True)
+
+
+@infers_descriptor('dace.linalg.cholesky')
+@infers_descriptor('numpy.linalg.cholesky')
+def _infer_cholesky(input_descs, inp_op, **_kw):
+    return _infer_inv(input_descs, inp_op, **_kw)
+
+
+@infers_descriptor('dace.dot')
+@infers_descriptor('numpy.dot')
+def _infer_dot(input_descs, op_a, op_b, op_out=None, **_kw):
+    from dace.frontend.python.replacements.ufunc import _infer_ufunc_descriptor
+    from dace.frontend.python.replacements.operators import result_type
+
+    desc_a = input_descs.get(op_a) if isinstance(op_a, str) else op_a
+    desc_b = input_descs.get(op_b) if isinstance(op_b, str) else op_b
+    if not isinstance(desc_a, data.Data) or not isinstance(desc_b, data.Data):
+        return None
+
+    if len(desc_a.shape) == 2 and len(desc_b.shape) == 2:
+        return _infer_matmult(desc_a, desc_b)
+
+    if (isinstance(desc_a, data.Scalar) or list(desc_a.shape) == [1] or isinstance(desc_b, data.Scalar)
+            or list(desc_b.shape) == [1]):
+        return _infer_ufunc_descriptor(input_descs, 'multiply', op_a, op_b, *(() if op_out is None else (op_out, )))
+
+    if len(desc_a.shape) > 2 or len(desc_b.shape) > 2:
+        return None
+    if desc_a.shape[0] != desc_b.shape[0]:
+        return None
+    if op_out is not None:
+        if isinstance(op_out, str) and op_out in input_descs:
+            out_desc = input_descs[op_out]
+            if isinstance(out_desc, data.Data):
+                return copy.deepcopy(out_desc)
+        return None
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    if not isinstance(restype, dtypes.typeclass):
+        return None
+    return data.Scalar(restype, transient=True)
+
+
+@infers_descriptor('dace.tensordot')
+@infers_descriptor('numpy.tensordot')
+def _infer_tensordot(input_descs, op_a, op_b, axes=2, out_axes=None, **_kw):
+    desc_a = input_descs.get(op_a) if isinstance(op_a, str) else op_a
+    desc_b = input_descs.get(op_b) if isinstance(op_b, str) else op_b
+    if not isinstance(desc_a, data.Data) or not isinstance(desc_b, data.Data):
+        return None
+
+    if isinstance(axes, Integral):
+        left_axes = list(range(len(desc_a.shape) - axes, len(desc_a.shape)))
+        right_axes = list(range(0, axes))
+    else:
+        if not isinstance(axes, (tuple, list)) or len(axes) != 2:
+            return None
+        left_axes = list(axes[0])
+        right_axes = list(axes[1])
+
+    if any(a >= len(desc_a.shape) or a < 0 for a in left_axes):
+        return None
+    if any(a >= len(desc_b.shape) or a < 0 for a in right_axes):
+        return None
+    if len(left_axes) != len(right_axes):
+        return None
+    if any(desc_a.shape[l] != desc_b.shape[r] for l, r in zip(left_axes, right_axes)):
+        return None
+
+    dot_shape = [s for i, s in enumerate(desc_a.shape) if i not in left_axes]
+    dot_shape.extend([s for i, s in enumerate(desc_b.shape) if i not in right_axes])
+
+    if out_axes is not None:
+        if not isinstance(out_axes, (tuple, list)):
+            return None
+        if list(sorted(out_axes)) != list(range(len(dot_shape))):
+            return None
+        dot_shape = [dot_shape[i] for i in out_axes]
+
+    if len(dot_shape) == 0:
+        return data.Scalar(desc_a.dtype, transient=True)
+    return data.Array(desc_a.dtype, list(dot_shape), transient=True)
+
+
+@infers_descriptor('numpy.einsum')
+def _infer_einsum(input_descs, einsum_string, *arrays, dtype=None, optimize=False, output=None, **_kw):
+    if output is not None:
+        explicit = _get_desc(input_descs, output)
+        if explicit is None:
+            return None
+        return copy.deepcopy(explicit)
+
+    try:
+        parser = EinsumParser(str(einsum_string))
+    except Exception:
+        return None
+
+    if len(parser.inputs) != len(arrays):
+        return None
+
+    chardict = {}
+    descs = []
+    for inp, arr in zip(parser.inputs, arrays):
+        desc = _get_desc(input_descs, arr)
+        if not isinstance(desc, data.Data):
+            return None
+        if len(inp) != len(desc.shape):
+            return None
+        descs.append(desc)
+        for char, shp in zip(inp, desc.shape):
+            if char in chardict and shp != chardict[char]:
+                return None
+            chardict[char] = shp
+
+    out_dtype = dtype or descs[0].dtype
+    output_shape = [chardict[k] for k in parser.output] or [1]
+    return data.Array(out_dtype, output_shape, transient=True)

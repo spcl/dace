@@ -10,10 +10,43 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import copy
 from numbers import Number, Integral
+import re
 from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
 import sympy as sp
+
+
+def arange_promoted_symbol_name(name: str) -> str:
+    sanitized = re.sub(r'\W|^(?=\d)', '_', name)
+    return f'__sym_{sanitized}'
+
+
+def normalize_arange_argument(value: Any, input_descs: Optional[dict[str, data.Data]] = None) -> Any:
+    if isinstance(value, Number) or symbolic.issymbolic(value):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    desc = (input_descs or {}).get(value)
+    if isinstance(desc, data.Scalar):
+        return symbolic.pystr_to_symbolic(arange_promoted_symbol_name(value))
+
+    try:
+        normalized = symbolic.pystr_to_symbolic(value)
+    except Exception:
+        return value
+    return normalized if symbolic.issymbolic(normalized) else value
+
+
+def infer_arange_shape(start: Any, stop: Any, step: Any) -> Optional[Sequence[Any]]:
+    if all(isinstance(v, Number) for v in (start, stop, step)):
+        return (int(np.ceil((stop - start) / step)), )
+    if any(not isinstance(v, Number) and not symbolic.issymbolic(v) for v in (start, stop, step)):
+        return None
+    if step == 1:
+        return (stop - start, )
+    return (symbolic.int_ceil(stop - start, step), )
 
 
 @oprepo.replaces('numpy.copy')
@@ -232,6 +265,24 @@ def _arange(pv: ProgramVisitor,
             like: Optional[str] = None):
     """ Implementes numpy.arange """
 
+    def _promote_scalar_argument(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if value not in sdfg.arrays:
+            return value
+
+        desc = sdfg.arrays[value]
+        if not isinstance(desc, data.Scalar):
+            return value
+
+        promoted_name = sdfg.add_symbol(arange_promoted_symbol_name(value), desc.dtype, find_new_name=True)
+        promoted = symbolic.symbol(promoted_name, desc.dtype)
+
+        symassign_state = pv.cfg_target.add_state_before(state, label=f'promote_{value}_to_{promoted_name}')
+        isedge = pv.cfg_target.edges_between(symassign_state, state)[0]
+        isedge.data.assignments[promoted_name] = value
+        return promoted
+
     start = 0
     stop = None
     step = 1
@@ -243,6 +294,10 @@ def _arange(pv: ProgramVisitor,
         start, stop = args
     else:
         start, stop, step = args
+
+    start = _promote_scalar_argument(start)
+    stop = _promote_scalar_argument(stop)
+    step = _promote_scalar_argument(step)
 
     if isinstance(start, str):
         raise TypeError(f'Cannot compile numpy.arange with a scalar start value "{start}" (only constants and symbolic '
@@ -258,13 +313,9 @@ def _arange(pv: ProgramVisitor,
     if isinstance(start, Number) and isinstance(stop, Number):
         actual_step = type(start + step)(start + step) - start
 
-    if any(not isinstance(s, Number) for s in [start, stop, step]):
-        if step == 1:  # Common case where ceiling is not necessary
-            shape = (stop - start, )
-        else:
-            shape = (symbolic.int_ceil(stop - start, step), )
-    else:
-        shape = (np.int64(np.ceil((stop - start) / step)), )
+    shape = infer_arange_shape(start, stop, step)
+    if shape is None:
+        raise TypeError('Cannot compile numpy.arange with non-scalar or unsupported dynamic arguments.')
 
     # Infer dtype from input arguments
     if dtype is None:
@@ -418,3 +469,237 @@ def _linspace(pv: ProgramVisitor,
         external_edges=True)
 
     return outname, stepname
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for array creation (schedule-tree frontend)      #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import (infers_descriptor, infers_method_descriptor)
+from dace.frontend.python.replacements.type_inference import _get_desc, _to_int
+
+
+@infers_descriptor('numpy.full')
+def _infer_full(input_descs, shape, fill_value=None, dtype=None, **_kw):
+    if isinstance(shape, (Number, np.integer)) or symbolic.issymbolic(shape):
+        shape = [shape]
+    if not isinstance(shape, (tuple, list)):
+        return None
+    out_shape = []
+    for s in shape:
+        v = _to_int(s)
+        if v is not None:
+            out_shape.append(v)
+        elif symbolic.issymbolic(s):
+            out_shape.append(s)
+        else:
+            return None
+    if dtype is None:
+        if isinstance(fill_value, (Number, np.bool_)):
+            dtype = dtypes.dtype_to_typeclass(type(fill_value))
+        else:
+            desc = _get_desc(input_descs, fill_value)
+            if desc is not None:
+                dtype = desc.dtype
+            else:
+                dtype = dtypes.float64
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Array(dtype, out_shape, transient=True)
+
+
+@infers_descriptor('numpy.empty')
+@infers_descriptor('numpy.zeros')
+@infers_descriptor('numpy.ones')
+def _infer_empty_zeros_ones(input_descs, shape, dtype=None, **_kw):
+    if isinstance(shape, (Number, np.integer)) or symbolic.issymbolic(shape):
+        shape = [shape]
+    if not isinstance(shape, (tuple, list)):
+        return None
+    out_shape = []
+    for s in shape:
+        v = _to_int(s)
+        if v is not None:
+            out_shape.append(v)
+        elif symbolic.issymbolic(s):
+            out_shape.append(s)
+        else:
+            return None
+    if dtype is None:
+        dtype = dtypes.float64
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Array(dtype, out_shape, transient=True)
+
+
+@infers_descriptor('numpy.empty_like')
+@infers_descriptor('numpy.zeros_like')
+@infers_descriptor('numpy.ones_like')
+def _infer_empty_zeros_ones_like(input_descs, prototype, dtype=None, shape=None, **_kw):
+    descriptor = _get_desc(input_descs, prototype)
+    if descriptor is None:
+        return None
+
+    result = copy.deepcopy(descriptor)
+    result.transient = True
+
+    if shape is not None:
+        if isinstance(shape, (Number, np.integer)) or symbolic.issymbolic(shape):
+            shape = [shape]
+        if not isinstance(shape, (tuple, list)):
+            return None
+        out_shape = []
+        for size in shape:
+            value = _to_int(size)
+            if value is not None:
+                out_shape.append(value)
+            elif symbolic.issymbolic(size):
+                out_shape.append(size)
+            else:
+                return None
+        if hasattr(result, 'set_shape'):
+            result.set_shape(out_shape)
+
+    if dtype is not None:
+        if not isinstance(dtype, dtypes.typeclass):
+            try:
+                dtype = dtypes.dtype_to_typeclass(dtype)
+            except (TypeError, ValueError):
+                return None
+        result.dtype = dtype
+
+    return result
+
+
+@infers_descriptor('numpy.full_like')
+def _infer_full_like(input_descs, prototype, fill_value=None, dtype=None, shape=None, **_kw):
+    return _infer_empty_zeros_ones_like(input_descs, prototype, dtype=dtype, shape=shape)
+
+
+@infers_descriptor('numpy.eye')
+def _infer_eye(input_descs, N, M=None, k=0, dtype=None, **_kw):
+    n = _to_int(N)
+    if n is None and not symbolic.issymbolic(N):
+        return None
+    if M is None:
+        M = N
+    m = _to_int(M)
+    if m is None and not symbolic.issymbolic(M):
+        return None
+    if dtype is None:
+        dtype = dtypes.float64
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Array(dtype, [N, M], transient=True)
+
+
+@infers_descriptor('numpy.identity')
+def _infer_identity(input_descs, n, dtype=None, **_kw):
+    return _infer_eye(input_descs, n, M=n, dtype=dtype)
+
+
+@infers_descriptor('numpy.arange')
+@infers_descriptor('dace.arange')
+def _infer_arange(input_descs, *args, dtype=None, **_kw):
+    if len(args) == 1:
+        start, stop, step = 0, args[0], 1
+    elif len(args) == 2:
+        start, stop, step = args[0], args[1], 1
+    elif len(args) >= 3:
+        start, stop, step = args[0], args[1], args[2]
+    else:
+        return None
+
+    start = normalize_arange_argument(start, input_descs)
+    stop = normalize_arange_argument(stop, input_descs)
+    step = normalize_arange_argument(step, input_descs)
+    shape = infer_arange_shape(start, stop, step)
+    if shape is None:
+        return None
+
+    if dtype is None:
+        if all(isinstance(v, Number) for v in args):
+            from dace.frontend.python.replacements.operators import result_type as rt
+            dtype, _ = rt(args)
+        else:
+            dtype = dtypes.float64
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Array(dtype, list(shape), transient=True)
+
+
+@infers_descriptor('numpy.linspace')
+def _infer_linspace(input_descs,
+                    start=None,
+                    stop=None,
+                    num=50,
+                    endpoint=True,
+                    retstep=False,
+                    dtype=None,
+                    axis=0,
+                    **_kw):
+    n = _to_int(num)
+    if n is None and not symbolic.issymbolic(num):
+        return None
+    if dtype is None:
+        dtype = dtypes.float64
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+
+    start_desc = _get_desc(input_descs, start)
+    stop_desc = _get_desc(input_descs, stop)
+    start_shape = list(start_desc.shape) if start_desc is not None and hasattr(start_desc, 'shape') else []
+    stop_shape = list(stop_desc.shape) if stop_desc is not None and hasattr(stop_desc, 'shape') else []
+
+    try:
+        shape, _ranges, _outind, _ind1, _ind2 = broadcast_together(start_shape, stop_shape)
+        shape_with_axis = _add_axis_to_shape(shape, axis, num if n is None else n)
+    except (TypeError, ValueError):
+        return None
+
+    array_result = data.Array(dtype, list(shape_with_axis), transient=True)
+    if not retstep:
+        return array_result
+
+    if shape:
+        step_result = data.Array(dtype, list(shape), transient=True)
+    else:
+        step_result = data.Scalar(dtype, transient=True)
+    return (array_result, step_result)
+
+
+@infers_descriptor('numpy.copy')
+def _infer_copy(input_descs, a, **_kw):
+    desc = _get_desc(input_descs, a)
+    if desc is None:
+        return None
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, list(desc.shape), transient=True)
+
+
+# Method: .copy()
+def _infer_method_copy(self_desc, **_kw):
+    if isinstance(self_desc, data.Scalar):
+        return data.Scalar(self_desc.dtype)
+    return data.Array(self_desc.dtype, list(self_desc.shape), transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'copy')(_infer_method_copy)
+    infers_method_descriptor(_cls, 'fill')(lambda self_desc, value=None, **_kw: ())

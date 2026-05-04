@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
+import asyncio
 from typing import Dict, Union
 import dace
 import numpy as np
@@ -139,6 +140,59 @@ def test_automatic_callback_method():
         out = autocallback_method(A)
 
     assert np.allclose(out, nd.q * A)
+
+
+def test_async_dace_program_is_rejected():
+
+    @dace.program
+    async def async_prog(A: dace.float64[N]):
+        return A
+
+    with pytest.raises(SyntaxError, match='Async @dace.program functions are unsupported'):
+        async_prog.to_sdfg()
+
+
+def test_async_callback_without_running_loop():
+
+    async def async_scale(a):
+        await asyncio.sleep(0)
+        return 2.0 * a
+
+    @dace.program
+    def autocallback_async(A: dace.float64[N], B: dace.float64[N]):
+        tmp: dace.float64[N] = async_scale(A)
+        B[:] = tmp
+
+    A = np.random.rand(24)
+    B = np.zeros_like(A)
+
+    with pytest.warns(match="Automatically creating callback"):
+        autocallback_async(A, B)
+
+    assert np.allclose(B, 2.0 * A)
+
+
+def test_async_callback_with_running_loop():
+
+    async def async_scale(a):
+        await asyncio.sleep(0)
+        return 2.0 * a
+
+    @dace.program
+    def autocallback_async(A: dace.float64[N], B: dace.float64[N]):
+        tmp: dace.float64[N] = async_scale(A)
+        B[:] = tmp
+
+    A = np.random.rand(24)
+    B = np.zeros_like(A)
+
+    async def invoke():
+        with pytest.warns(match="Automatically creating callback"):
+            autocallback_async(A, B)
+
+    asyncio.run(invoke())
+
+    assert np.allclose(B, 2.0 * A)
 
 
 @dace.program

@@ -27,6 +27,7 @@ from dace.data.core import (
     StructureReference,
     ContainerArrayReference,
 )
+from dace.data.pydata import PythonClass, PythonDict, PythonList, PythonTuple
 
 # Import prod from utils and expose as _prod for backward compatibility
 from dace.utils import prod as _prod
@@ -83,6 +84,10 @@ __all__ = [
     'ArrayReference',
     'StructureReference',
     'ContainerArrayReference',
+    'PythonList',
+    'PythonTuple',
+    'PythonDict',
+    'PythonClass',
     # Tensor support
     'TensorIterationTypes',
     'TensorAssemblyType',

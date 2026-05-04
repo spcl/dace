@@ -3,6 +3,7 @@
 Integration with the dace python frontend
 """
 
+import copy
 from typing import Optional, Union, Sequence
 import itertools
 
@@ -112,6 +113,11 @@ def backward(pv: newast.ProgramVisitor,
         state.add_edge(bwd_node, conn_name, write_an, None, sdfg.make_array_memlet(grad_name))
 
 
+@op_repository.infers_descriptor('torch.autograd.backward')
+def _infer_backward(input_descs, tensors: TensorOrTensors, grads: Optional[TensorOrTensors] = None, **_kw):
+    return ()
+
+
 @op_repository.replaces_attribute('ParameterArray', 'grad')
 def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
@@ -132,6 +138,14 @@ def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return desc.gradient
 
 
+@op_repository.infers_attribute_descriptor('ParameterArray', 'grad')
+def _infer_grad(self_desc: ParameterArray):
+    result = copy.deepcopy(self_desc)
+    result.__class__ = data.Array
+    result.transient = True
+    return result
+
+
 @op_repository.replaces_method('Array', 'requires_grad_')
 @op_repository.replaces_method('Scalar', 'requires_grad_')
 def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str):
@@ -145,6 +159,21 @@ def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self
     ParameterArray.make_parameter(sdfg, self)
 
 
+@op_repository.infers_method_descriptor('Array', 'requires_grad_')
+@op_repository.infers_method_descriptor('Scalar', 'requires_grad_')
+def _infer_requires_grad(input_desc, **_kw):
+    return ()
+
+
+@op_repository.infers_method_self_descriptor('Array', 'requires_grad_')
+def _infer_requires_grad_self(self_desc, **_kw):
+    result = copy.deepcopy(self_desc)
+    result.__class__ = ParameterArray
+    result.gradient = None
+    result.transient = True
+    return result
+
+
 @op_repository.replaces_method('Array', 'backward')
 @op_repository.replaces_method('Scalar', 'backward')
 def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: Optional[str] = None):
@@ -152,6 +181,12 @@ def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, sel
     Alias for ``torch.autograd.backward(self)``
     """
     backward(pv, sdfg, state, self, grad)
+
+
+@op_repository.infers_method_descriptor('Array', 'backward')
+@op_repository.infers_method_descriptor('Scalar', 'backward')
+def _infer_backward_method(self_desc, grad: Optional[str] = None, **_kw):
+    return ()
 
 
 dace.hooks.register_sdfg_call_hook(before_hook=lambda sdfg: expand_nodes(sdfg, lambda n: isinstance(n, BackwardPass)))

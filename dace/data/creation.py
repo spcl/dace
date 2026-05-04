@@ -18,7 +18,7 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, symbolic
-from dace.data.core import Array, Data, Scalar
+from dace.data.core import Array, Data, Scalar, Structure
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -92,6 +92,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      shape=interface['shape'],
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
+    elif isinstance(obj, dict):
+        from dace.data.pydata import infer_python_dict_descriptor_from_value
+        return infer_python_dict_descriptor_from_value(
+            obj, lambda value: create_datadescriptor(value, no_custom_desc=no_custom_desc), transient=False)
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
         obj = np.array(obj)
@@ -122,6 +126,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
     elif isinstance(obj, str) or obj is str:
         return Scalar(dtypes.string)
+    elif isinstance(obj, type):
+        try:
+            return Structure.from_class(obj)
+        except TypeError:
+            pass
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))

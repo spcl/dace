@@ -195,3 +195,9 @@ def ger_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, out
     state.add_edge(libnode, '_res', out, None, mm.Memlet(output))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.ger')
+@oprepo.infers_descriptor('dace.libraries.blas.Ger')
+def _infer_ger_libnode(input_descs, A, x, y, output, alpha, **_kw):
+    return ()

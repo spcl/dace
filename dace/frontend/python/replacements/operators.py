@@ -4,20 +4,46 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import ListLiteral, StringLiteral, TupleLiteral
 from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_together, cast_str, np_result_type,
                                                      representative_num, sym_type)
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 from numbers import Number
-from typing import List, Sequence, Tuple, Union
+from typing import Any, List, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
 import sympy as sp
 import dace  # noqa: F401 (used during evaluation of data types, e.g. casting in replaced op)
 
+from dace.frontend.common.op_repository import infers_operator_descriptor
+
 numpy_version = np.lib.NumpyVersion(np.__version__)
+
+
+def _materialize_sequence_literal(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+                                  literal: Union[ListLiteral, TupleLiteral]) -> str:
+    from dace.frontend.python.replacements.array_creation_dace import (infer_dynamic_literal_descriptor,
+                                                                       populate_dynamic_literal_array)
+
+    value = literal.value
+    desc = infer_dynamic_literal_descriptor(value, sdfg)
+    if desc is None:
+        raise SyntaxError('Operand cannot be materialized as an array literal')
+
+    name = sdfg.temp_data_name()
+    name = sdfg.add_datadesc(name, desc, find_new_name=True)
+    init_states = getattr(visitor, '_literal_init_states', None)
+    if init_states is None:
+        init_states = {}
+        setattr(visitor, '_literal_init_states', init_states)
+    init_state = init_states.get(state)
+    if init_state is None:
+        init_state = visitor.cfg_target.add_state_before(state)
+        init_states[state] = init_state
+    populate_dynamic_literal_array(init_state, sdfg, name, value)
+    return name
 
 
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
@@ -775,6 +801,16 @@ def _makebinop(op, opcode):
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('Array', op, otherclass='ListLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('Array', op, otherclass='TupleLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
     @oprepo.replaces_operator('View', op, otherclass='View')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -798,6 +834,16 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('View', op, otherclass='symbol')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='ListLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='TupleLiteral')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
@@ -846,6 +892,26 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='Array')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='View')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='Array')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='View')
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
@@ -926,3 +992,69 @@ _boolop_to_method = {
 }
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+def _operand_shape(operand) -> List[Any]:
+    if isinstance(operand, data.Scalar):
+        return []
+    if isinstance(operand, data.Data):
+        return list(operand.shape)
+    return []
+
+
+def _elementwise_binary_descriptor(left_desc, right_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([left_desc, right_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    left_shape = _operand_shape(left_desc)
+    right_shape = _operand_shape(right_desc)
+
+    try:
+        out_shape, _ranges, _out_idx, _left_idx, _right_idx = broadcast_together(left_shape, right_shape)
+    except Exception:
+        return None
+
+    if len(out_shape) == 0:
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(out_shape), transient=True)
+
+
+def _elementwise_unary_descriptor(operand_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([operand_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    if not isinstance(operand_desc, data.Data) or isinstance(operand_desc, data.Scalar):
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(operand_desc.shape), transient=True)
+
+
+def _register_unary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(operand_desc):
+        return _elementwise_unary_descriptor(operand_desc, opname)
+
+
+def _register_binary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(left_desc, right_desc):
+        return _elementwise_binary_descriptor(left_desc, right_desc, opname)
+
+
+for _descriptor_op in ('Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Mod', 'Pow', 'LShift', 'RShift', 'BitOr', 'BitXor',
+                       'BitAnd', 'And', 'Or', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'Is', 'IsNot'):
+    _register_binary_operator_descriptor(_descriptor_op)
+
+for _descriptor_unary_op in ('UAdd', 'USub', 'Not', 'Invert'):
+    _register_unary_operator_descriptor(_descriptor_unary_op)

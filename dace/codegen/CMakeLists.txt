@@ -58,9 +58,11 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 # Global DaCe external dependencies
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
+find_package(Python REQUIRED COMPONENTS Development)
 
 list(APPEND DACE_LIBS Threads::Threads)
 list(APPEND DACE_LIBS OpenMP::OpenMP_CXX)
+list(APPEND DACE_LIBS Python::Python)
 
 add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
 
