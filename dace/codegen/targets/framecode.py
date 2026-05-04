@@ -23,6 +23,8 @@ from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
+from dace.codegen.instrumentation.allocation import create_allocation_report
+
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
@@ -636,6 +638,26 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
+            elif top_lifetime is dtypes.AllocationLifetime.Explicit:
+                # Explicit lifetime: the pointer is declared in the state struct,
+                # but allocation/deallocation is handled via alloc/free on interstate edges.
+                # We register the variable in defined_vars (so references compile) but
+                # emit no auto new[]/delete[].
+
+                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
+
+                if top_storage != dtypes.StorageType.CPU_ThreadLocal:
+                    self.statestruct.append(definition)
+
+                alloc_node = first_node_instance if first_node_instance is not None else nodes.AccessNode(name)
+                alloc_state = first_state_instance
+
+                # allocate=True so defined_vars is populated; dispatcher discards streams
+                # (same as External). deallocate=False so no auto-deallocation is attempted.
+                self.to_allocate[top_sdfg].append(
+                    (sdfg, alloc_state, alloc_node, True, True, False))
+                self.where_allocated[(sdfg, name)] = top_sdfg
+                continue
             elif top_lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
                 # exists in the library state structure (to be passed along
@@ -820,6 +842,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.where_allocated[(sdfg, name)] = curscope
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
+        create_allocation_report(self.to_allocate)
 
     def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG],

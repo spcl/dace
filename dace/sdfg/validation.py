@@ -213,6 +213,10 @@ def validate_control_flow_region(sdfg: 'SDFG',
     # Check for interstate edges that write to scalars or arrays
     _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
+    # Check for explicit alloc/free lists on interstate edges
+    _validate_interstate_edge_explicit_alloc(sdfg)
+    _validate_explicit_allocation_balance(sdfg)
+
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
@@ -1155,3 +1159,186 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: 'dace.ControlFlowRe
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', cfg.sdfg,
                     cfg.edge_id(edge))
+
+
+def _validate_interstate_edge_explicit_alloc(sdfg: 'dace.sdfg.SDFG'):
+    """Validate the explicit-allocation annotations on *sdfg*'s interstate edges.
+
+    For every ``InterstateEdge``, every array name referenced in its
+    ``alloc``, ``free``, or ``reuse`` lists must:
+
+    - be declared in ``sdfg.arrays``, and
+    - carry ``AllocationLifetime.Explicit``.
+
+    ``reuse`` entries may take either of two shapes:
+
+    - 2-element ``[new_array, donor_array]``: same-dtype overlap; the
+      donor is consumed and the consumer takes over the heap block (the
+      donor's ``free`` is removed, the consumer's ``free`` lives on
+      somewhere else and frees via the consumer's pointer).
+    - 3-element ``[new_array, donor_array, offset_bytes]``: cross-dtype
+      or sub-block reuse; the consumer points into the donor's block at
+      ``offset_bytes`` via ``(T_new*)((char*)donor + offset)``. The
+      donor retains ownership (so the donor's ``free`` lives on
+      somewhere) and the consumer must never appear in any ``free``
+      list (it does not own the storage).
+
+    :raises InvalidSDFGInterstateEdgeError: on the first rule violation found.
+    """
+    from dace.sdfg import InterstateEdge
+    for edge in sdfg.edges():
+        if edge.data is None or not isinstance(edge.data, InterstateEdge):
+            continue
+        eid = sdfg.edge_id(edge)
+        for arr_name in edge.data.alloc:
+            if arr_name not in sdfg.arrays:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge alloc references non-existent array '{arr_name}'", sdfg, eid)
+            if sdfg.arrays[arr_name].lifetime is not dtypes.AllocationLifetime.Explicit:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge alloc references array '{arr_name}' with lifetime "
+                    f"{sdfg.arrays[arr_name].lifetime} — only AllocationLifetime.Explicit allowed", sdfg, eid)
+        for arr_name in edge.data.free:
+            if arr_name not in sdfg.arrays:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge free references non-existent array '{arr_name}'", sdfg, eid)
+            if sdfg.arrays[arr_name].lifetime is not dtypes.AllocationLifetime.Explicit:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge free references array '{arr_name}' with lifetime "
+                    f"{sdfg.arrays[arr_name].lifetime} — only AllocationLifetime.Explicit allowed", sdfg, eid)
+        for entry in edge.data.reuse:
+            if len(entry) == 2:
+                new_arr, donor_arr = entry
+                offset_bytes = None
+            elif len(entry) == 3:
+                new_arr, donor_arr, offset_bytes = entry
+                if not isinstance(offset_bytes, int) or offset_bytes < 0:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f"Edge reuse entry {entry!r} has invalid offset_bytes "
+                        f"{offset_bytes!r} — must be a non-negative int",
+                        sdfg, eid)
+            else:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge reuse entry {entry!r} must be a 2-element list "
+                    f"[new_array, donor_array] or a 3-element list "
+                    f"[new_array, donor_array, offset_bytes]",
+                    sdfg, eid)
+            for role, arr_name in [('new', new_arr), ('donor', donor_arr)]:
+                if arr_name not in sdfg.arrays:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f"Edge reuse references non-existent array '{arr_name}' (role: {role})",
+                        sdfg, eid)
+                if sdfg.arrays[arr_name].lifetime is not dtypes.AllocationLifetime.Explicit:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f"Edge reuse references array '{arr_name}' with lifetime "
+                        f"{sdfg.arrays[arr_name].lifetime} — only AllocationLifetime.Explicit allowed",
+                        sdfg, eid)
+            if new_arr in edge.data.alloc:
+                raise InvalidSDFGInterstateEdgeError(
+                    f"Edge has '{new_arr}' in both alloc and reuse — "
+                    f"remove alloc entry to avoid double allocation",
+                    sdfg, eid)
+            if offset_bytes is None:
+                # 2-tuple: consumer takes over the heap block, so donor must
+                # not be freed on this edge (donor's free was removed).
+                if donor_arr in edge.data.free:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f"Edge has '{donor_arr}' in both reuse (as donor) and free — "
+                        f"remove free entry; new_arr's free takes over ownership",
+                        sdfg, eid)
+            else:
+                # 3-tuple: donor retains ownership, so consumer must not
+                # appear in this edge's free (consumer never owns storage).
+                if new_arr in edge.data.free:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f"Edge has '{new_arr}' in both reuse (as new) and free — "
+                        f"3-tuple reuse means the consumer does not own the heap "
+                        f"block, so it must not be freed via its own pointer",
+                        sdfg, eid)
+
+
+def _all_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
+    """Yield (owner_region, edge) for every InterstateEdge anywhere in
+    sdfg's CFG (recurses into LoopRegion / ConditionalBlock) but NOT into
+    nested SDFGs."""
+    from dace.sdfg import InterstateEdge
+    for region in sdfg.all_control_flow_regions():
+        for edge in region.edges():
+            if isinstance(edge.data, InterstateEdge):
+                yield region, edge
+
+
+def _validate_explicit_allocation_balance(sdfg: 'dace.sdfg.SDFG'):
+    """Validate alloc/free balance for Explicit-lifetime arrays:
+    every such array must have at least one alloc edge and one free edge,
+    no edge may list a name twice in alloc or free, and no edge may list
+    the same name in both alloc and free."""
+    allocated, freed = set(), set()
+    for owner, edge in _all_interstate_edges(sdfg):
+        if len(edge.data.alloc) != len(set(edge.data.alloc)):
+            seen = set()
+            dup = next(n for n in edge.data.alloc if n in seen or seen.add(n))
+            raise InvalidSDFGInterstateEdgeError(
+                f"InterstateEdge.alloc contains duplicate array name {dup!r}. "
+                f"Each array may appear at most once in the alloc list of a "
+                f"single edge.", owner, owner.edge_id(edge))
+        if len(edge.data.free) != len(set(edge.data.free)):
+            seen = set()
+            dup = next(n for n in edge.data.free if n in seen or seen.add(n))
+            raise InvalidSDFGInterstateEdgeError(
+                f"InterstateEdge.free contains duplicate array name {dup!r}. "
+                f"Each array may appear at most once in the free list of a "
+                f"single edge.", owner, owner.edge_id(edge))
+        overlap = set(edge.data.alloc) & set(edge.data.free)
+        if overlap:
+            name = next(iter(overlap))
+            raise InvalidSDFGInterstateEdgeError(
+                f"InterstateEdge has {name!r} in both alloc and free — "
+                f"an allocate-and-free on the same edge has no well-defined "
+                f"order and is ambiguous. Remove one entry.",
+                owner, owner.edge_id(edge))
+        allocated.update(edge.data.alloc)
+        freed.update(edge.data.free)
+        for entry in edge.data.reuse:
+            new_arr = entry[0]
+            donor = entry[1]
+            allocated.add(new_arr)
+            # 2-tuple: donor is consumed (consumer's free covers it).
+            # 3-tuple: donor retains ownership (donor's free still lives
+            # on some edge), so its B2 obligation is met by edge.data.free.
+            if len(entry) == 2:
+                freed.add(donor)
+            else:
+                # 3-tuple consumer never owns storage, so the consumer's
+                # B2 obligation is met by the donor's free entry, which
+                # is freed on the edge that donor.free now lives on.
+                freed.add(new_arr)
+
+    used = {node.data for state in sdfg.all_states() for node in state.data_nodes()}
+    all_edge_ids = [owner.edge_id(e) for owner, e in _all_interstate_edges(sdfg)]
+
+    for name, desc in sdfg.arrays.items():
+        if desc.lifetime is not dtypes.AllocationLifetime.Explicit:
+            continue
+        if name not in used:
+            warnings.warn(
+                f"Explicit array {name!r} is declared with "
+                f"AllocationLifetime.Explicit but has no access nodes in "
+                f"this SDFG. Remove the array or change its lifetime to "
+                f"avoid a dead declaration.",
+                UserWarning)
+            continue
+        if name not in allocated:
+            raise InvalidSDFGError(
+                f"Explicit array {name!r} has no alloc edge anywhere in "
+                f"its SDFG. Add {name!r} to InterstateEdge.alloc on one of "
+                f"the SDFG's interstate edges, e.g. edge ids: {all_edge_ids}. "
+                f"(Alternatively: change the array's lifetime off "
+                f"AllocationLifetime.Explicit.)",
+                sdfg, None)
+        if name not in freed:
+            raise InvalidSDFGError(
+                f"Explicit array {name!r} has no free edge anywhere in "
+                f"its SDFG. Add {name!r} to InterstateEdge.free on one of "
+                f"the SDFG's interstate edges, e.g. edge ids: {all_edge_ids}.",
+                sdfg, None)

@@ -90,7 +90,7 @@ def copy_expr(
     dt = ""
 
     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                                       dtypes.AllocationLifetime.External)
+                                       dtypes.AllocationLifetime.External, dtypes.AllocationLifetime.Explicit)
     defined_types = None
     # Non-free symbol dependent Arrays due to their shape
     dependent_shape = (isinstance(data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
@@ -247,9 +247,10 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
 
-    # Special case: If memory is persistent and defined in this SDFG, add state
-    # struct to name
-    if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
+    # Special case: If memory is persistent/external/explicit and defined in this
+    # SDFG, add state struct to name (the pointer lives in the state struct).
+    if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External,
+                                             dtypes.AllocationLifetime.Explicit)):
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
