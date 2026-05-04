@@ -67,6 +67,7 @@ If you use DaCe, cite us:
    frontend/python
    codegen/codegen
    extensions/extensions
+   extensions/libraries
    general/errors
 
 .. toctree::
