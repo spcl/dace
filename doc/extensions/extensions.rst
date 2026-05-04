@@ -4,7 +4,7 @@ Extending DaCe
 The DaCe framework is designed to be user-extensible. Developers can externally extend DaCe by
 adding new types of nodes, frontend languages, transformations, and hardware architecture backends.
 
-The three key mechanisms of extensibility are class inheritance, :ref:`replacements <replacements>`, and :ref:`enums`.
+The three key mechanisms of extensibility are class inheritance, replacements, and enumerations.
 
    * Class inheritance is used for new :ref:`library nodes <libnodes>`, :ref:`data types <typeclasses>`,
      :ref:`transformations <transformations>`, :ref:`passes <pass>`, :ref:`code generator targets <codegen>`,
