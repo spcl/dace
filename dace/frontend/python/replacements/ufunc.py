@@ -2,6 +2,7 @@
 """
 Contains replacements for NumPy ufuncs.
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall

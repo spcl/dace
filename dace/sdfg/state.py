@@ -130,8 +130,8 @@ class BlockGraphView(object):
         (i.e., an SDFG or a scope block).
 
         :param predicate: An optional predicate function that decides on whether the traversal should recurse or not.
-        If the predicate returns False, traversal is not recursed any further into the graph found under NodeT for
-        a given [NodeT, GraphT] pair.
+                          If the predicate returns False, traversal is not recursed any further into the graph found
+                          under NodeT for a given [NodeT, GraphT] pair.
         """
         return []
 
@@ -2604,13 +2604,14 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                 ControlFlowBlock, abc.ABC):
     """
     Abstract superclass to represent all kinds of control flow regions in an SDFG.
-    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock``s,
-    ``SDFGState``s, and nested ``AbstractControlFlowRegion``s. An ``AbstractControlFlowRegion`` can further be either a
-    region that directly contains a control flow graph (``ControlFlowRegion``s and subclasses thereof), or something
+
+    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock`` s,
+    ``SDFGState`` s, and nested ``AbstractControlFlowRegion`` s. An ``AbstractControlFlowRegion`` can further be either a
+    region that directly contains a control flow graph (``ControlFlowRegion`` s and subclasses thereof), or something
     that acts like and has the same utilities as a control flow region, including the same API, but is itself not
     directly a single graph. An example of this is the ``ConditionalBlock``, which acts as a single control flow region
     to the outside, but contains multiple actual graphs (one per branch). As such, there are very few but important
-    differences between the subclasses of ``AbstractControlFlowRegion``s, such as how traversals are performed, how many
+    differences between the subclasses of ``AbstractControlFlowRegion`` s, such as how traversals are performed, how many
     start blocks there are, etc.
     """
 
