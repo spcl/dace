@@ -17,10 +17,10 @@ dace.cli.sdfv module
    :undoc-members:
    :show-inheritance:
 
-dace.cli.sdprof module
+dace.cli.daceprof module
 ----------------------
 
-.. automodule:: dace.cli.sdprof
+.. automodule:: dace.cli.daceprof
    :members:
    :undoc-members:
    :show-inheritance:

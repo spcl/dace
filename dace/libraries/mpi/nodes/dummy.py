@@ -3,8 +3,6 @@ from dace.libraries.mpi.nodes.node import MPINode
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.properties import ListProperty
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -16,13 +14,12 @@ class ExpandDummyMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            inputs={},
-            outputs={'__out'},
-            code='',
-            state_fields=node.fields,
-            side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          inputs={},
+                                          outputs={'__out'},
+                                          code='',
+                                          state_fields=node.fields,
+                                          side_effects=True)
         return tasklet
 
 
@@ -44,10 +41,7 @@ class Dummy(MPINode):
     fields = dace.properties.ListProperty(default=[], element_type=str)
 
     def __init__(self, name, fields=[], *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         outputs={'__out'},
-                         **kwargs)
+        super().__init__(name, *args, outputs={'__out'}, **kwargs)
         self.fields = fields
 
     def validate(self, sdfg, state):

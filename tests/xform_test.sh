@@ -5,8 +5,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 
-DACE_optimizer_transform_on_call=1
-DACE_optimizer_interface="dace.transformation.testing.TransformationTester"
+DACE_call_hooks="dace.transformation.testing.test_transformations_hook"
 DACE_TEST_NAME="Transformations"
 
 # Run the end-to-end tests with the TransformationTester

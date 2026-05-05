@@ -1,23 +1,19 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Types and wrappers used in DaCe's Python frontend. """
-from __future__ import print_function
 import numpy
 import itertools
 from collections import deque
 from typing import Deque, Generic, Type, TypeVar
 
-from dace import dtypes, symbolic
+from dace import dtypes
 
 T = TypeVar('T')
 
 
 def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
-    """ Returns a numpy ndarray where all symbols have been evaluated to
-        numbers and types are converted to numpy types. """
-    repldict = {sym: sym.get() for sym in symbolic.symlist(shape).values()}
-    new_shape = [int(s.subs(repldict) if symbolic.issymbolic(s) else s) for s in shape]
+    """ Returns a numpy ndarray where all types are converted to numpy types. """
     new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
-    return numpy.ndarray(shape=new_shape, dtype=new_dtype, *args, **kwargs)
+    return numpy.ndarray(shape=shape, dtype=new_dtype, *args, **kwargs)
 
 
 stream: Type[Deque[T]] = deque
@@ -25,6 +21,7 @@ stream: Type[Deque[T]] = deque
 
 class stream_array(Generic[T]):
     """ Stream array object in Python. """
+
     def __init__(self, dtype, shape):
         from dace import data
 

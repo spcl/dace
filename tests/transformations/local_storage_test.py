@@ -124,7 +124,7 @@ def test_in_local_storage_implicit():
 
     # Check array was set correctly
     serialized = sdfg.transformation_hist[0].to_json()
-    assert serialized["array"] == None
+    assert "array" not in serialized or serialized["array"] is None
 
 
 def test_out_local_storage_explicit():
@@ -217,7 +217,7 @@ def test_out_local_storage_implicit():
 
     # Check array was set correctly
     serialized = sdfg.transformation_hist[0].to_json()
-    assert serialized["array"] == None
+    assert "array" not in serialized or serialized["array"] is None
 
 
 @dace.program
@@ -250,8 +250,8 @@ class LocalStorageTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
     test_in_local_storage_explicit()
     test_in_local_storage_implicit()
     test_out_local_storage_explicit()
     test_out_local_storage_implicit()
+    unittest.main()

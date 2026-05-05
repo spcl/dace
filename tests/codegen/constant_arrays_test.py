@@ -8,7 +8,7 @@ def test_nsdfg_input():
 
     @dace.program
     def constexpr_nsdfg():
-        a = np.array([1.,2.,3.])
+        a = np.array([1., 2., 3.])
         b = np.max(a)
 
     with dace.config.set_temporary('compiler', 'inline_sdfgs', value=False):
@@ -20,7 +20,7 @@ def test_tasklet_input_cpu():
 
     @dace.program
     def constexpr_tasklet_cpu():
-        a = np.array([1.,2.,3.])
+        a = np.array([1., 2., 3.])
         b = np.max(a)
 
     with dace.config.set_temporary('optimizer', 'autooptimize', value=True):

@@ -1,6 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import SDFG, SDFGState
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
+else:
+    ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 
 class NestedCall():
@@ -18,7 +24,13 @@ class NestedCall():
            # return a tuple of the nest object and the result
            return nest, result
     """
-    def __init__(self, pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState):
+    state: SDFGState
+    last_state: Optional[SDFGState]
+    pv: ProgramVisitor
+    sdfg: SDFG
+    count: int
+
+    def __init__(self, pv: ProgramVisitor, sdfg: SDFG, state: SDFGState):
         self.pv = pv
         self.sdfg = sdfg
         self.state = state
@@ -26,6 +38,7 @@ class NestedCall():
         self.count = 0
 
     def __call__(self, func):
+
         def nested(*args, **kwargs):
             result = func(self.pv, self.sdfg,
                           self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),

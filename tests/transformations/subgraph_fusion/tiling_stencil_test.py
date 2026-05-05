@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import contextlib
+
 import dace
-from dace.sdfg import SDFG
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView
@@ -11,7 +12,6 @@ import pytest
 import itertools
 
 N = dace.symbol('N')
-N.set(100)
 
 
 @dace.program
@@ -96,10 +96,10 @@ def stencil_offset(A: dace.float64[N], B: dace.float64[N]):
 
 def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
 
-    A = np.random.rand(N.get()).astype(np.float64)
-    B1 = np.zeros((N.get()), dtype=np.float64)
-    B2 = np.zeros((N.get()), dtype=np.float64)
-    B3 = np.zeros((N.get()), dtype=np.float64)
+    A = np.random.rand(100).astype(np.float64)
+    B1 = np.zeros((100), dtype=np.float64)
+    B2 = np.zeros((100), dtype=np.float64)
+    B3 = np.zeros((100), dtype=np.float64)
 
     if offset:
         sdfg = stencil_offset.to_sdfg()
@@ -113,7 +113,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     # baseline
     sdfg.name = 'baseline'
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B1, N=N)
+    csdfg(A=A, B=B1, N=100)
     del csdfg
 
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
@@ -124,13 +124,17 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     assert st.can_be_applied(sdfg, subgraph)
     if unroll:
         st.unroll_loops = True
-    st.apply(sdfg)
+
+    ctxmgr = (pytest.warns(match="Either all ranges are equal to one or range difference is symbolic")
+              if unroll else contextlib.nullcontext())
+    with ctxmgr:
+        st.apply(sdfg)
     if view:
         sdfg.view()
     sdfg.name = 'tiled'
     sdfg.validate()
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B2, N=N)
+    csdfg(A=A, B=B2, N=100)
     del csdfg
     assert np.allclose(B1, B2)
 
@@ -144,7 +148,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     sf.apply(sdfg)
     sdfg.name = 'fused'
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B3, N=N)
+    csdfg(A=A, B=B3, N=100)
     del csdfg
 
     print(np.linalg.norm(B1))

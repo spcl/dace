@@ -3,13 +3,11 @@
 
 from copy import deepcopy
 from numbers import Number
-from typing import Dict, List
 import dace
 import sympy
-from dace import data, dtypes, subsets, symbolic
+from dace import data, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
@@ -319,7 +317,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
         Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 
-        from dace.data import _prod
+        from dace.utils import prod as _prod
 
         # NOTE: Maps with step in their ranges are currently not supported
         if len(map_entry.map.params) == 2:

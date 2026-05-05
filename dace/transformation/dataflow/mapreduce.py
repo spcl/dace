@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement the map-reduce-fusion 
+""" Contains classes and functions that implement the map-reduce-fusion
     transformation. """
 
 from dace.sdfg import SDFG, SDFGState
@@ -8,11 +8,10 @@ from dace.sdfg import nodes
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
-from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.map_fusion import MapFusion
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 
 @make_properties
@@ -56,9 +55,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # If memlet already has WCR and it is different from reduce node,
@@ -133,7 +132,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Add initialization state as necessary
         if not self.no_init and reduce_node.identity is not None:
-            init_state = sdfg.add_state_before(graph)
+            init_state = graph.parent_graph.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 'freduce_init',
                 [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)], {},
@@ -189,9 +188,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # Verify that reduction ranges match tasklet map
@@ -209,15 +208,17 @@ class MapWCRFusion(pm.SingleStateTransformation):
         # To apply, collapse the second map and then fuse the two resulting maps
         map_collapse = MapCollapse()
         map_collapse.setup_match(
-            sdfg, self.sdfg_id, self.state_id, {
+            sdfg, self.cfg_id, self.state_id, {
                 MapCollapse.outer_map_entry: graph.node_id(self.rmap_out_entry),
                 MapCollapse.inner_map_entry: graph.node_id(self.rmap_in_entry),
             }, 0)
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion()
-        map_fusion.setup_match(sdfg, self.sdfg_id, self.state_id, {
-            MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
-            MapFusion.second_map_entry: graph.node_id(map_entry),
-        }, 0)
+        map_fusion = MapFusionVertical()
+        map_fusion.setup_match(
+            sdfg, self.cfg_id, self.state_id, {
+                MapFusionVertical.first_map_exit: graph.node_id(self.tmap_exit),
+                MapFusionVertical.array: graph.node_id(self.in_array),
+                MapFusionVertical.second_map_entry: graph.node_id(map_entry),
+            }, 0)
         map_fusion.apply(graph, sdfg)

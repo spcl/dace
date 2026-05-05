@@ -20,7 +20,6 @@ _SVE_CTYPES = {
     float: "dace::float64",
     complex: "dace::complex64",
     bool: "dace::bool_",
-    numpy.bool: "dace::bool_",
     numpy.bool_: "dace::bool_",
     numpy.int8: "dace::int8",
     numpy.int16: "dace::int16",
@@ -42,6 +41,7 @@ SVE_LEN = dace.symbol('__dace_sve_len')
 
 
 class NotSupportedError(Exception):
+
     def __init__(self, message):
         super().__init__(message)
 

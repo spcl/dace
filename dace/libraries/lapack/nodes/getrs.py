@@ -3,11 +3,9 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
-from dace.frontend.common import op_repository as oprepo
+from dace import dtypes
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
 
@@ -110,7 +108,7 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
-                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res); 
+                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res);
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

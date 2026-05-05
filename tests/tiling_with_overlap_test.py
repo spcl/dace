@@ -10,6 +10,7 @@ J = dace.symbol("J")
 
 @dace.program
 def copy(inp: dace.float32[I, J], out: dace.float32[I, J]):
+
     @dace.map
     def copy(y: _[0:I], x: _[0:J]):
         i << inp[y, x]
@@ -18,6 +19,7 @@ def copy(inp: dace.float32[I, J], out: dace.float32[I, J]):
 
 
 class MapTilingWithOverlapTest(unittest.TestCase):
+
     def semantic_eq(self, tile_sizes):
         A = np.random.rand(16, 16).astype(np.float32)
         B1 = np.zeros((16, 16), dtype=np.float32)

@@ -1,16 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import tempfile
 import math
 import copy
-import numpy as np
 
 from typing import Generator, Dict, List, Tuple
 from collections import Counter
 
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
-from dace.sdfg.analysis import cutout as cutter
+from dace.sdfg.analysis.cutout import SDFGCutout
 
 from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
@@ -26,7 +24,11 @@ except (ImportError, ModuleNotFoundError):
 
 class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(self,
+                 sdfg: SDFG,
+                 i,
+                 j,
+                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -37,7 +39,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 nodes = state.nodes()
 
                 try:
-                    cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+                    cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
                     yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
                 except AttributeError:
                     continue
@@ -81,7 +83,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             # Skip no-map-states
             return math.inf
 
-
         if config[0] == 0:
             # Baseline
             return self.measure(candidate, dreport, measurements)
@@ -94,14 +95,14 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        map_fusion.setup_match(subgraph, candidate.cfg_id, candidate.node_id(candidate.start_state))
         if map_fusion.can_be_applied(candidate.start_state, candidate):
             fuse_counter = map_fusion.apply(candidate.start_state, candidate)
 
             if fuse_counter == 0:
                 return math.inf
 
-        return self.measure(candidate, dreport,  measurements)
+        return self.measure(candidate, dreport, measurements)
 
     def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
@@ -113,14 +114,14 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         sdfg = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id]
         state = sdfg.node(state_id)
         nodes = state.nodes()
-        cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+        cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
         maps_ = list(map(cutout.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
+        map_fusion.setup_match(subgraph, sdfg.cfg_id, state_id)
         if map_fusion.can_be_applied(state, sdfg):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
@@ -134,7 +135,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             state_id = int(state_id)
             state = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id].node(state_id)
             nodes = state.nodes()
-            cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+            cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
             pattern_desc = Counter()
             fusion_id, map_ids = self.config_from_key(config, cutout)
@@ -178,7 +179,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     continue
 
                 try:
-                    cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                    cutout = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                 except AttributeError:
                     continue
 
@@ -216,7 +217,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             continue
 
                         if base_runtime is None:
-                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                            baseline = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
 
                             dreport_ = {}
@@ -236,7 +237,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             if base_runtime == math.inf:
                                 break
 
-
                         # Construct subgraph greedily
                         subgraph_maps = []
                         for desc in pattern:
@@ -244,7 +244,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             subgraph_maps.extend(maps_desc[desc][:num])
 
                         # Apply
-                        experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                        experiment_sdfg_ = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                         experiment_state_ = experiment_sdfg_.start_state
                         experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
@@ -252,10 +252,12 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
 
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
+                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg,
+                                                                         graph=experiment_state,
+                                                                         map_entries=experiment_maps)
 
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
+                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.cfg_id,
                                                experiment_sdfg.node_id(experiment_state))
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
@@ -285,11 +287,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             best_pattern = subgraph_maps
                             best_pattern_runtime = fused_runtime
 
-
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        map_fusion.setup_match(subgraph, nsdfg.cfg_id, nsdfg.node_id(state))
                         actual_fuse_counter = map_fusion.apply(state, nsdfg)
 
                         best_pattern = None
@@ -298,10 +299,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     else:
                         break
 
-
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
-        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet), map(lambda edge: edge.dst, state.out_edges(map_entry)))
+        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet),
+                          map(lambda edge: edge.dst, state.out_edges(map_entry)))
         tasklets = set(tasklets)
 
         desc = []

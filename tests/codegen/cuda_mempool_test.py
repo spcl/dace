@@ -88,9 +88,9 @@ def test_memory_pool_tasklet():
         with dace.tasklet(dace.Language.CPP):
             t << tmp
             b >> B
-            """
+            '''
             // Do nothing
-            """
+            '''
         A[:] = B
 
     sdfg = tester.to_sdfg()
@@ -144,7 +144,7 @@ def test_memory_pool_multistate():
 
     code = sdfg.generate_code()[0].clean_code
     assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFree(pooled)') == 1
+    assert code.count('cudaFreeAsync(pooled, __state->gpu_context->streams[0]') == 1
 
     # Test code
     import cupy as cp
@@ -156,8 +156,61 @@ def test_memory_pool_multistate():
     assert cp.allclose(b, b_expected)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize('cnd', (0, 1))
+def test_memory_pool_if_states(cnd):
+    N = 20
+    sdfg = dace.SDFG('test_memory_pool_if_states')
+    sdfg.add_symbol('cnd', stype=dace.int32)
+
+    A, A_desc = sdfg.add_array('A', shape=[N], dtype=dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    tmp, tmp_desc = sdfg.add_temp_transient_like(A_desc)
+    tmp_desc.pool = True
+
+    entry_state = sdfg.add_state('entry', is_start_block=True)
+    exit_state = sdfg.add_state('exit')
+
+    tstate = sdfg.add_state('true_branch')
+    sdfg.add_edge(entry_state, tstate, dace.InterstateEdge(condition='Eq(cnd, 0)'))
+    sdfg.add_edge(tstate, exit_state, dace.InterstateEdge())
+
+    fstate = sdfg.add_state('false_branch')
+    sdfg.add_edge(entry_state, fstate, dace.InterstateEdge(condition='Ne(cnd, 0)'))
+    sdfg.add_edge(fstate, exit_state, dace.InterstateEdge())
+
+    tmp_node = tstate.add_access(tmp)
+    tstate.add_mapped_tasklet('write_zero',
+                              map_ranges=dict(i=f'0:{N}'),
+                              inputs={},
+                              outputs={'_val': dace.Memlet(data=tmp, subset='i')},
+                              output_nodes={tmp: tmp_node},
+                              code='_val = 0.0',
+                              external_edges=True)
+    tstate.add_nedge(tmp_node, tstate.add_access(A), sdfg.make_array_memlet(A))
+
+    fstate.add_mapped_tasklet('write_cond',
+                              map_ranges=dict(i=f'0:{N}'),
+                              inputs={},
+                              outputs={'_val': dace.Memlet(data=A, subset='i')},
+                              code='_val = dace.float64(cnd)',
+                              external_edges=True)
+
+    sdfg.validate()
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count('cudaMallocAsync') == 1
+    assert code.count(f'cudaFreeAsync({tmp}, __state->gpu_context->streams[0]') == 1
+
+    # Test code
+    import cupy as cp
+    a = cp.random.rand(N)
+    a_expected = cp.full(N, cnd, dtype=cp.float64)
+    sdfg(A=a, cnd=cnd)
+    assert cp.allclose(a, a_expected)
+
+
 if __name__ == '__main__':
     test_memory_pool()
     test_memory_pool_state()
     test_memory_pool_tasklet()
     test_memory_pool_multistate()
+    test_memory_pool_if_states()

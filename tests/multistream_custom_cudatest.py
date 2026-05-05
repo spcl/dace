@@ -6,7 +6,6 @@ import pytest
 
 # Create symbols
 N = dp.symbol('N')
-N.set(27)
 
 # Create a GPU SDFG with a custom C++ tasklet
 sdfg = dp.SDFG('cublas_multistream_test')
@@ -35,8 +34,8 @@ tasklet = state.add_tasklet(
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha, 
-                a, N, b, N, 
+                N, N, N, &alpha,
+                a, N, b, N,
                 &beta,
                 c, N);
     ''',
@@ -50,8 +49,8 @@ tasklet2 = state.add_tasklet(name='gemm2',
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha, 
-                a, N, b, N, 
+                N, N, N, &alpha,
+                a, N, b, N,
                 &beta,
                 c, N);
     ''',
@@ -101,6 +100,7 @@ sdfg.validate()
 
 @pytest.mark.gpu
 def test_multistream_custom():
+    N = 27
     # First, add libraries to link (CUBLAS) to configuration
     oldconf = dp.Config.get('compiler', 'cpu', 'libs')
     if os.name == 'nt':
@@ -109,13 +109,13 @@ def test_multistream_custom():
         dp.Config.append('compiler', 'cpu', 'libs', value='libcublas.so')
 
     # Initialize arrays. We are using column-major order to support CUBLAS!
-    A = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
-    B = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
-    C = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
+    A = np.ndarray([N, N], dtype=np.float64, order='F')
+    B = np.ndarray([N, N], dtype=np.float64, order='F')
+    C = np.ndarray([N, N], dtype=np.float64, order='F')
 
-    A[:] = np.random.rand(N.get(), N.get())
-    B[:] = np.random.rand(N.get(), N.get())
-    C[:] = np.random.rand(N.get(), N.get())
+    A[:] = np.random.rand(N, N)
+    B[:] = np.random.rand(N, N)
+    C[:] = np.random.rand(N, N)
 
     out_ref = A @ A @ B
 

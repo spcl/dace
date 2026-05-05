@@ -43,9 +43,9 @@ def relative_error(val, ref):
 
 
 def test_one():
-    N.set(42)
-    A = np.random.rand(N.get()).astype(np.float64)
-    B = np.random.rand(N.get()).astype(np.float64)
+    N = 42
+    A = np.random.rand(N).astype(np.float64)
+    B = np.random.rand(N).astype(np.float64)
     A_ref = A + 42 + 43
     B_ref = A + 42
 

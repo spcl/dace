@@ -14,13 +14,14 @@ t = nstate.add_tasklet('add', {'inp'}, {'out'}, 'out = inp + inp')
 nstate.add_edge(nstate.add_read('a'), None, t, 'inp', dace.Memlet.simple('a', '0'))
 nstate.add_edge(t, 'out', nstate.add_write('a'), None, dace.Memlet.simple('a', '0'))
 
-nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {})
+nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {})
 state.add_edge(state.add_read('A'), None, nsdfg_node, 'a', dace.Memlet.simple('A', '0'))
 
 
 def test():
     with pytest.raises(InvalidSDFGError):
         sdfg.validate()
+
 
 if __name__ == '__main__':
     test()

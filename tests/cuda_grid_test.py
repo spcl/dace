@@ -1,10 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-import os
-
 import dace
 from dace.transformation.dataflow import GPUTransformMap, Vectorization
-from dace.codegen import compiled_sdfg
+from dace.codegen import compiled_sdfg, common
 import numpy as np
 import pytest
 import subprocess
@@ -20,8 +17,8 @@ def was_vectorized(sdfg: dace.SDFG) -> bool:
     return b'.128' in output
 
 
-@dace.program(dace.float32[N], dace.float32[N])
-def cudahello(V, Vout):
+@dace.program
+def cudahello(V: dace.float32[N], Vout: dace.float32[N]):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):
@@ -31,18 +28,18 @@ def cudahello(V, Vout):
 
 
 def _test(sdfg):
-    N.set(52)
+    N = 52
 
-    print('Vector double CUDA %d' % (N.get()))
+    print('Vector double CUDA %d' % (N))
 
     V = dace.ndarray([N], dace.float32)
     Vout = dace.ndarray([N], dace.float32)
-    V[:] = np.random.rand(N.get()).astype(dace.float32.type)
+    V[:] = np.random.rand(N).astype(dace.float32.type)
     Vout[:] = dace.float32(0)
 
     sdfg(V=V, Vout=Vout, N=N)
 
-    diff = np.linalg.norm(2 * V - Vout) / N.get()
+    diff = np.linalg.norm(2 * V - Vout) / N
     print("Difference:", diff)
     assert diff <= 1e-5
 
@@ -69,7 +66,7 @@ def test_gpu_vec():
     _test(sdfg)
 
     # Skip if not CUDA
-    if dace.Config.get_bool('compiler', 'cuda', 'backend') == 'cuda':
+    if common.get_gpu_backend() == 'cuda':
         assert was_vectorized(sdfg)
 
 

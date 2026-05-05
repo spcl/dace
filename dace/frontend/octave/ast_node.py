@@ -5,6 +5,7 @@ from collections import OrderedDict
 
 
 class AST_Node():
+
     def __init__(self, context):
         self.context = context
         self.name = None  # Name of the variable holding the result in the SDFG
@@ -179,6 +180,7 @@ class AST_Node():
 
 
 class AST_Statements(AST_Node):
+
     def __init__(self, context, stmts):
         AST_Node.__init__(self, context)
         self.statements = stmts

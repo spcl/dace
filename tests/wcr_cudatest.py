@@ -3,7 +3,6 @@ import numpy as np
 import dace
 from dace.transformation.interstate import GPUTransformSDFG
 
-from typing import Dict, Tuple
 import pytest
 
 
@@ -17,8 +16,10 @@ def create_zero_initialization(init_state: dace.SDFGState, array_name):
 
     init_state.add_mapped_tasklet(output_nodes={array_name: array_access_node},
                                   name=(array_name + "_init_tasklet"),
-                                  map_ranges={k: "0:" + str(v)
-                                              for k, v in zip(indices, array_shape)},
+                                  map_ranges={
+                                      k: "0:" + str(v)
+                                      for k, v in zip(indices, array_shape)
+                                  },
                                   inputs={},
                                   code='val = 0',
                                   outputs=dict(val=dace.Memlet.simple(array_access_node.data, ",".join(indices))),

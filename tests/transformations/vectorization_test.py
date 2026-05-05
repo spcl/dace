@@ -14,6 +14,7 @@ N = dace.symbol('N')
 
 @dace.program
 def tovec_sym(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
+
     @dace.map
     def sum(i: _[0:N]):
         xx << x[i]

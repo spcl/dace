@@ -7,7 +7,7 @@
 
 #ifdef _MSC_VER
     //#define DACE_ALIGN(N) __declspec( align(N) )
-    #define DACE_ALIGN(N) 
+    #define DACE_ALIGN(N)
     #undef __in
     #undef __inout
     #undef __out
@@ -61,6 +61,14 @@
     #define __DACE_UNROLL
 #endif
 
+// If CUDA version is 11.4 or higher, __device__ variables can be declared as constexpr
+#if defined(__CUDACC__) && (__CUDACC_VER_MAJOR__ > 11 || (__CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINOR__ >= 4))
+    #define DACE_CONSTEXPR_HOSTDEV constexpr __host__ __device__
+#elif defined(__CUDACC__) || defined(__HIPCC__)
+    #define DACE_CONSTEXPR_HOSTDEV const __host__ __device__
+#else
+    #define DACE_CONSTEXPR_HOSTDEV const
+#endif
 
 
 namespace dace
@@ -74,6 +82,7 @@ namespace dace
     typedef uint16_t uint16;
     typedef uint32_t uint32;
     typedef uint64_t uint64;
+    typedef unsigned int uint;
     typedef float float32;
     typedef double float64;
 
@@ -89,12 +98,14 @@ namespace dace
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075
         half(float f) {
-            uint32_t x = *((uint32_t*)&f);
-            h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
+            union { float fval; uint32_t x; } u;
+            u.fval = f;
+            h = ((u.x>>16)&0x8000)|((((u.x&0x7f800000)-0x38000000)>>13)&0x7c00)|((u.x>>13)&0x03ff);
         }
         operator float() {
-            float f = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
-            return f;
+            union { float f; uint32_t tmp; } u;
+            u.tmp = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
+            return u.f;
         }
         uint16_t h;
     };
@@ -109,7 +120,7 @@ namespace dace
     template <int DIM, int... OTHER_DIMS>
     struct TotalNDSize
     {
-	enum 
+	enum
 	{
 	    value = DIM * TotalNDSize<OTHER_DIMS...>::value,
 	};
@@ -118,7 +129,7 @@ namespace dace
     template <int DIM>
     struct TotalNDSize<DIM>
     {
-	enum 
+	enum
 	{
 	    value = DIM,
 	};

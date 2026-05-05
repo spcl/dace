@@ -13,6 +13,7 @@ N = dace.symbol('N')
                                                 pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
                                                 pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemv_strided(implementation):
+
     @dace.program
     def gemv(A: dace.float64[M, N], x: dace.float64[N, N]):
         return A @ x[:, 1]
@@ -34,6 +35,7 @@ def test_gemv_strided(implementation):
 
 
 def test_dot_subset():
+
     @dace.program
     def dot(x: dace.float64[N, N], y: dace.float64[N, N]):
         return x[1, 1:N - 1] @ y[1:N - 1, 1]
@@ -56,6 +58,7 @@ def test_dot_subset():
                                                 pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
                                                 pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_dot_strided(implementation):
+
     @dace.program
     def dot(x: dace.float64[N, N], y: dace.float64[N, N]):
         return x[1, :] @ y[:, 1]

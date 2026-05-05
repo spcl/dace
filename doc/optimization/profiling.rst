@@ -5,20 +5,23 @@ Profiling and Instrumentation
 
 .. note::
 
-  For more information and examples, see the `Benchmarking and Instrumentation <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb>`_ tutorial.
+  For more information and examples, see the `Benchmarking and Instrumentation <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb>`_ tutorial.
 
 Simple profiling
 ----------------
 
-Full-program profiling of Python DaCe programs can be performed by using the :envvar:`profiling` configuration entry. 
-This simple profiling mode is performed within Python using timers, calling the same program for a configurable number (:envvar:`treps`)
+Full-program profiling of Python DaCe programs can be performed by using the :func:`~dace.builtin_hooks.profile` hook
+(or from the console via :ref:`daceprof`).
+This simple profiling mode is performed within Python using timers, calling the same program for a configurable number
 of times and printing the median execution time. It is not as accurate as the other profiling modes, but it is easy to
 use and does not require any additional tools.
 
+Every time an SDFG is invoked, a profiling report JSON file (see below) will be generated. You can also use the profiling
+results directly in Python with the ``as`` keyword. After the profiling section is complete, each SDFG and its timings will
+be stored in a list.
 
-The profiling configuration entry can be set globally through an environment variable or within code. Every time an SDFG
-is invoked, a profiling report CSV file will be generated in the following format: ``.dacecache/<program name>/profiling/results-<timestamp>.csv``.
-For example, the following code will print the execution time of the ``my_function`` function after running it 100 times:
+For example, the following code will print the execution time of the ``my_function`` function after running it 100 times,
+with 10 steps of warmup (where execution time is ignored):
 
 .. code-block:: python
 
@@ -30,16 +33,18 @@ For example, the following code will print the execution time of the ``my_functi
       return A + 1
 
   A = np.random.rand(10000)
-  
-  with dace.config.set_temporary('profiling', value=True):  # Enable profiling
-      with dace.config.set_temporary('treps', value=100):   # Run 100 times
-          my_function(A)
 
+  with dace.profile(repetitions=100, warmup=10) as prof:  # Enable profiling
+    my_function(A)
+
+  # Optionally, the following code will print each individual time of the first call
+  sdfg, timing = prof.times[0]
+  print(timing)
 
 .. note::
 
   This mode executes the same program multiple times. If the output would be affected by this (e.g., if an array is
-  incremented), either use :envvar:`treps` = 1 or use the :ref:`instrumentation` mode.
+  incremented), either use ``repetitions=1`` or use the :ref:`instrumentation` mode.
 
 .. _instrumentation:
 
@@ -54,11 +59,11 @@ directory.
 The instrumentation API can be used by setting ``element.instrument`` to the desired instrumentation type (see :class:`~dace.dtypes.InstrumentationType`
 for a list of the default available types). ``element`` can be almost any SDFG element, from the SDFG itself, through a
 state, to a variety of nodes, such as a Map, a Tasklet, or a NestedSDFG. The generated report can then be read programmatically
-as a :class:`~dace.codegen.instrumentation.report.InstrumentationReport` object. The SDFG class provides the methods 
-:func:`~dace.sdfg.sdfg.SDFG.get_latest_report` and :func:`~dace.sdfg.sdfg.SDFG.get_instrumentation_reports` to read the last or 
+as a :class:`~dace.codegen.instrumentation.report.InstrumentationReport` object. The SDFG class provides the methods
+:func:`~dace.sdfg.sdfg.SDFG.get_latest_report` and :func:`~dace.sdfg.sdfg.SDFG.get_instrumentation_reports` to read the last or
 all generated reports, respectively. See :class:`~dace.sdfg.sdfg.SDFG` for more methods related to instrumentation reports.
 
-A simple example use of SDFG instrumentation would be to mimic the simple profiling mode from above with a 
+A simple example use of SDFG instrumentation would be to mimic the simple profiling mode from above with a
 :class:`~dace.dtypes.InstrumentationType.Timer` instrumentation applied on the whole SDFG:
 
 .. code-block:: python
@@ -98,16 +103,16 @@ code will instrument the individual Map scopes in the above application:
   # SDFG Hash: 0f02b642249b861dc94b7cbc729190d4b27cab79607b8f28c7de3946e62d5977
   # ---------------------------------------------------------------------------
   # Element                          Runtime (ms)
-  #               Min            Mean           Median         Max            
+  #               Min            Mean           Median         Max
   # ---------------------------------------------------------------------------
-  # SDFG (0)                                                                   
-  # |-State (0)                                                                
-  # | |-Node (0)                                                               
-  # | | |Map _numpy_sin__map:                                                  
-  # | | |          11.654         11.654         11.654         11.654         
-  # | |-Node (5)                                                               
-  # | | |Map _Mult__map:                                                       
-  # | | |          1.524          1.524          1.524          1.524          
+  # SDFG (0)
+  # |-State (0)
+  # | |-Node (0)
+  # | | |Map _numpy_sin__map:
+  # | | |          11.654         11.654         11.654         11.654
+  # | |-Node (5)
+  # | | |Map _Mult__map:
+  # | | |          1.524          1.524          1.524          1.524
   # ---------------------------------------------------------------------------
 
 
@@ -115,29 +120,30 @@ There are more instrumentation types available, such as fine-grained GPU kernel 
 Instrumentation can also collect performance counters on CPUs and GPUs using `LIKWID <https://github.com/RRZE-HPC/likwid>`_.
 The :class:`~dace.dtypes.InstrumentationType.LIKWID_Counters` instrumentation type can be configured to collect
 a wide variety of performance counters on CPUs and GPUs. An example use can be found in the
-`LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/master/samples/instrumentation/matmul_likwid.py>`_.
-
+`LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/main/samples/instrumentation/matmul_likwid.py>`_.
+The :class:`~dace.dtypes.InstrumentationType.GPU_TX_MARKERS` instrumentation type wraps a DaCe program executed on the GPU with NVTX or rocTX markers. Important parts of the execution of the program on the GPU as the different states, SDFGs and initialization and finalization phases are marked with these markers.
+These markers can be used to visualize and measure the GPU activity using the NVIDIA Nsight Systems or ROCm Systems profilers.
 
 Instrumentation file format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Instrumentation uses a JSON file in the `Chrome Trace Event <https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview>`_ 
+Instrumentation uses a JSON file in the `Chrome Trace Event <https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview>`_
 format to store the collected metrics. You can view it in several ways:
 
   * In the Visual Studio Code extension, laid on top of a program (see :ref:`vscode_trace` for an example)
   * Separately, using `Speedscope <https://www.speedscope.app/>`_ (or, if you have Google Chrome, a viewer can also be
     accessed locally at  `<chrome://tracing>`_)
-  * Printed out in the console with :ref:`sdprof`
+  * Printed out in the console with :ref:`daceprof`
 
 
 
 Data Instrumentation
 ~~~~~~~~~~~~~~~~~~~~
 
-Similarly to timing events, data containers and their contents can be serialized for performance and validation 
+Similarly to timing events, data containers and their contents can be serialized for performance and validation
 reproducibility purposes. This is done by setting the ``instrument`` property of an :class:`~dace.sdfg.nodes.AccessNode`
 to a :class:`~dace.dtypes.DataInstrumentationType`, such as :class:`~dace.dtypes.DataInstrumentationType.Save`.
-The data will be serialized (keeping each version if the access node is encountered multiple times) in the 
+The data will be serialized (keeping each version if the access node is encountered multiple times) in the
 ``.dacecache/<program name>/data`` directory. The data can then be reloaded in subsequent executions by setting the
 ``instrument`` property to :class:`~dace.dtypes.DataInstrumentationType.Restore`.
 
@@ -167,16 +173,15 @@ Example of creating and reading such a report is as follows:
         return versioned
 
     sdfg = data_instrumentation.to_sdfg()
-    
+
     # ... Set instrument to Save on the AccessNodes and run the SDFG ...
 
     dreport = sdfg.get_instrumented_data()  # Returns an InstrumentedDataReport
     print(dreport.keys())                   # Will print "'A', 'versioned'"
     array = dreport['A']  # return value is a single array if there is only one version
     varrays = dreport['versioned']  # otherwise, return value is a sorted list of versions
-    
+
     # after loading, arrays can be used normally with numpy
     assert np.allclose(array, real_A)
     for arr in varrays:
         print(arr[5, :])
-

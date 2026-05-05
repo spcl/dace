@@ -1,14 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes import scalar_to_symbol
-from dace.sdfg.state import SDFGState
-from dace.transformation import transformation as xf, interstate as isxf
-from dace.transformation.interstate import loop_detection as ld
-from dace import registry
-from dace.transformation import helpers as xfh
+from dace.transformation import interstate as isxf
 
-import collections
+from sympy import core as sympy_core
 import numpy as np
 import pytest
 
@@ -50,7 +47,7 @@ def test_promote_simple():
 
     sdfg: dace.SDFG = testprog2.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # There should be two states:
@@ -98,7 +95,7 @@ def test_promote_simple_c():
     sdfg: dace.SDFG = testprog3.to_sdfg(simplify=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert scalars == {'i'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # SDFG: [empty] --i=0--> [Tasklet->j] --i=j+1--> [j->Tasklet->j, Tasklet->k]
@@ -121,7 +118,7 @@ def test_promote_disconnect():
 
     sdfg: dace.SDFG = testprog4.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # There should be two states:
@@ -157,7 +154,7 @@ def test_promote_copy():
     state.add_nedge(state.add_read('i'), state.add_write('A'), dace.Memlet('A[5, 5]'))
 
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # There should be two states:
@@ -189,16 +186,22 @@ def test_promote_array_assignment():
 
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_transformations_repeated(isxf.StateFusion)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated([isxf.StateFusion, isxf.BlockFusion])
 
-    # There should be 4 states:
-    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A] --> [empty]
-    #                   \--------------------------------------------/
-    assert sdfg.number_of_nodes() == 4
-    ctr = collections.Counter(s.number_of_nodes() for s in sdfg)
-    assert ctr[0] == 3
-    assert ctr[5] == 1
+    # There should be 2 states:
+    # [empty] --j=A[1, 1]--> [Conditional]
+    assert sdfg.number_of_nodes() == 2
+    # The conditional should contain one branch, with one state, with a single map from A->A inside of it.
+    cond = None
+    for n in sdfg.nodes():
+        if isinstance(n, ConditionalBlock):
+            cond = n
+            break
+    assert cond is not None
+    assert len(cond.branches) == 1
+    assert len(cond.branches[0][1].nodes()) == 1
+    assert len(cond.branches[0][1].nodes()[0].nodes()) == 5
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
@@ -221,7 +224,7 @@ def test_promote_array_assignment_tasklet():
 
     sdfg: dace.SDFG = testprog7.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # There should be two states:
@@ -237,24 +240,6 @@ def test_promote_array_assignment_tasklet():
     assert np.allclose(A, expected)
 
 
-class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
-    """ Tester method that sets loop index on a guard state. """
-
-    def can_be_applied(self, graph, expr_index, sdfg, permissive):
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
-            return False
-        guard = self.loop_guard
-        if hasattr(guard, '_LOOPINDEX'):
-            return False
-        return True
-
-    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
-        guard = self.loop_guard
-        edge = sdfg.in_edges(guard)[0]
-        loopindex = next(iter(edge.data.assignments.keys()))
-        guard._LOOPINDEX = loopindex
-
-
 def test_promote_loop():
     """ Loop promotion. """
     N = dace.symbol('N')
@@ -263,15 +248,15 @@ def test_promote_loop():
     def testprog8(A: dace.float32[20, 20]):
         i = dace.ndarray([1], dtype=dace.int32)
         i = 0
-        while i[0] < N:
+        while i < N:
             A += i
             i += 2
 
     sdfg: dace.SDFG = testprog8.to_sdfg(simplify=False)
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(LoopTester) == 1
+    assert any(isinstance(n, LoopRegion) for n in sdfg.nodes())
 
 
 def test_promote_loops():
@@ -294,9 +279,9 @@ def test_promote_loops():
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert 'i' in scalars
     assert 'k' in scalars
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(LoopTester) == 3
+    assert any(isinstance(n, LoopRegion) for n in sdfg.nodes())
 
 
 def test_promote_indirection():
@@ -329,7 +314,7 @@ def test_promote_indirection():
 
     sdfg: dace.SDFG = testprog10.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     for cursdfg in sdfg.all_sdfgs_recursive():
         scalar_to_symbol.remove_symbol_indirection(cursdfg)
     sdfg.simplify()
@@ -364,7 +349,7 @@ def test_promote_output_indirection():
 
     sdfg: dace.SDFG = testprog11.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
 
     assert sdfg.number_of_nodes() == 1
@@ -396,7 +381,7 @@ def test_promote_indirection_c():
 
     sdfg: dace.SDFG = testprog12.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
 
     sdfg.simplify()
@@ -419,14 +404,15 @@ def test_promote_indirection_impossible():
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
         with dace.tasklet:
+            ii << i
             s << scal
             a << A(1)[:, :]
             out >> A(1)[:, :]
-            out[i, s] = a[s, i]
+            out[ii, s] = a[s, ii]
 
     sdfg: dace.SDFG = testprog13.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
 
     # [A,scal->Tasklet->A]
@@ -470,7 +456,7 @@ def test_nested_promotion_connector(with_subscript):
     nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
     nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
 
-    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    nnode = state.add_nested_sdfg(nsdfg, {'a', 's'}, {'b'})
     aouter = state.add_read('A')
     souter = state.add_read('scal')
     bouter = state.add_write('B')
@@ -481,7 +467,7 @@ def test_nested_promotion_connector(with_subscript):
 
     # Promotion
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'scal'}
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
 
     assert sdfg.number_of_nodes() == 1
@@ -573,7 +559,7 @@ def test_indirection_with_reindex(language):
     memlet = dace.Memlet(expr="out", subset="S:N")
     state_compute.add_memlet_path(tasklet, dst, src_conn="_out", memlet=memlet)
 
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
 
     A = np.array(list(range(10)), dtype=np.float32)
@@ -596,7 +582,7 @@ def test_multiple_boolop():
             return 0
 
     sdfg = tester.to_sdfg(simplify=False)
-    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.validate()
 
     assert tester() == 0
@@ -666,6 +652,137 @@ def test_dynamic_mapind():
     sdfg.compile()
 
 
+@pytest.mark.parametrize('compile_time_evaluatable', (False, True))
+def test_ternary_expression(compile_time_evaluatable):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_symbol('M', dace.int32)
+    sdfg.add_scalar('a', dace.int32, transient=True)
+    state = sdfg.add_state()
+
+    if compile_time_evaluatable:
+        expr = '1 if N > N else 2'
+    else:
+        expr = '1 if N > M else 2'
+
+    # Test that symbolic conversion works
+    symexpr = dace.symbolic.pystr_to_symbolic(expr)
+    if compile_time_evaluatable:
+        assert symexpr == 2
+
+    t = state.add_tasklet('doit', {}, {'out'}, f'out = {expr}')
+    state.add_edge(t, 'out', state.add_access('a'), None, dace.Memlet('a[0]'))
+
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert promoted == {'a'}
+    sdfg.compile()
+
+
+def test_double_index_bug():
+
+    sdfg = dace.SDFG('test_')
+    state = sdfg.add_state()
+
+    sdfg.add_array('A', shape=(10, ), dtype=dace.float64)
+    sdfg.add_array('table', shape=(10, 2), dtype=dace.int64)
+    sdfg.add_array('B', shape=(10, ), dtype=dace.float64)
+    sdfg.add_scalar('idx', dace.int64, transient=True)
+    idx_node = state.add_access('idx')
+    set_tlet = state.add_tasklet('set_idx', code="_idx=0", inputs={}, outputs={"_idx"})
+    state.add_mapped_tasklet('map',
+                             map_ranges={'i': "0:10"},
+                             inputs={
+                                 'inp': dace.Memlet("A[0:10]"),
+                                 '_idx': dace.Memlet('idx[0]'),
+                                 'indices': dace.Memlet('table[0:10, 0:2]')
+                             },
+                             code="out = inp[indices[i,_idx]]",
+                             outputs={'out': dace.Memlet("B[i]")},
+                             external_edges=True,
+                             input_nodes={'idx': idx_node})
+
+    state.add_edge(set_tlet, '_idx', idx_node, None, dace.Memlet('idx[0]'))
+
+    sdfg.simplify()
+
+    # Check that `indices` (which is an array) is not used in a memlet subset
+    for state in sdfg.states():
+        for memlet in state.edges():
+            subset = memlet.data.subset
+            if not isinstance(subset, dace.subsets.Range):
+                continue
+            for range in subset.ranges:
+                for part in range:
+                    for sympy_node in sympy_core.preorder_traversal(part):
+                        assert getattr(sympy_node, "name", None) != "indices"
+
+
+def test_reversed_order():
+    """
+    Tests a failure reported in issue #1727.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('inputs', [1], dace.int32)
+    sdfg.add_transient('a', [1], dace.int32)
+    sdfg.add_transient('b', [1], dace.int32)
+    sdfg.add_array('output', [1], dace.int32)
+    initstate = sdfg.add_state()
+    state = sdfg.add_state_after(initstate)
+    finistate = sdfg.add_state_after(state)
+
+    # Note the order here
+    w = state.add_write('b')
+    t = state.add_tasklet('assign', {'inp'}, {'out'}, 'out = inp')
+    r = state.add_read('a')
+    state.add_edge(t, 'out', w, None, dace.Memlet('b'))
+    state.add_edge(r, None, t, 'inp', dace.Memlet('a'))
+
+    initstate.add_nedge(initstate.add_read('inputs'), initstate.add_write('a'), dace.Memlet('inputs'))
+    finistate.add_nedge(finistate.add_read('b'), finistate.add_write('output'), dace.Memlet('output'))
+
+    sdfg.validate()
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert promoted == {'a', 'b'}
+    sdfg.compile()
+
+
+@pytest.mark.parametrize('memlet_volume_n', (False, True))
+def test_scalar_index_regression(memlet_volume_n):
+    """
+    Tests a reported failure with an invalid promotion of a scalar index.
+    """
+    N = dace.symbol('N')
+    volume = 1 if not memlet_volume_n else N
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [10, 10, N], dace.float64)
+    sdfg.add_scalar('scal', dace.int64)
+    sdfg.add_scalar('tmp', dace.int64, transient=True)
+
+    init_state = sdfg.add_state()
+    t = init_state.add_tasklet('set', {}, {'t'}, 't = 1')
+    w = init_state.add_write('tmp')
+    init_state.add_edge(t, 't', w, None, dace.Memlet('tmp'))
+
+    state = sdfg.add_state_after(init_state)
+    r = state.add_read('scal')
+    rt = state.add_read('tmp')
+    t = state.add_tasklet('setone', {'s', 't'}, {'a'}, 'a[s + t] = -1')
+    w = state.add_write('A')
+    state.add_edge(rt, None, t, 't', dace.Memlet('tmp'))
+    state.add_edge(r, None, t, 's', dace.Memlet('scal'))
+    state.add_edge(t, 'a', w, None, dace.Memlet(data='A', subset='0, 0, 0:N', volume=volume))
+
+    sdfg.validate()
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+    a = np.random.rand(10, 10, 20)
+    scal = np.int64(5)
+    ref = np.copy(a)
+    ref[0, 0, scal + 1] = -1
+    sdfg(A=a, scal=scal, N=20)
+    assert np.allclose(a, ref)
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -687,3 +804,9 @@ if __name__ == '__main__':
     test_multiple_boolop()
     test_multidim_cpp()
     test_dynamic_mapind()
+    test_ternary_expression(False)
+    test_ternary_expression(True)
+    test_double_index_bug()
+    test_reversed_order()
+    test_scalar_index_regression(False)
+    test_scalar_index_regression(True)

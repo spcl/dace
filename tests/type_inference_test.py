@@ -3,13 +3,17 @@ import unittest
 import numpy as np
 import sympy as sp
 from dace.config import Config
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 from dace import dtypes
 import ast
 
 
 class TestTypeInference(unittest.TestCase):
+
     def testSimpleAssignment(self):
+
+        config_data_types = Config.get('compiler', 'default_data_types')
+
         # simple assignment tests
 
         #bool
@@ -61,10 +65,12 @@ class TestTypeInference(unittest.TestCase):
         self.assertEqual(inf_symbols["value"], dtypes.pointer(dtypes.int8))
 
         # type conversion
-        # in this case conversion is stricter (int-> int32)
         code_str = "value = int(1.1)"
         inf_symbols = type_inference.infer_types(code_str)
-        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int))
+        if config_data_types.lower() == "python":
+            self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int64))
+        else:
+            self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int32))
 
         code_str = "value = int32(1.1)"
         inf_symbols = type_inference.infer_types(code_str)
@@ -76,7 +82,10 @@ class TestTypeInference(unittest.TestCase):
 
         code_str = "value = float(1)"
         inf_symbols = type_inference.infer_types(code_str)
-        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float))
+        if config_data_types.lower() == "python":
+            self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float64))
+        else:
+            self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
 
     def testInferExpr(self):
 

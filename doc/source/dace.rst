@@ -17,6 +17,14 @@ Subpackages
 Submodules
 ----------
 
+dace.builtin_hooks module
+-------------------------
+
+.. automodule:: dace.builtin_hooks
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.config module
 ------------------
 
@@ -37,6 +45,14 @@ dace.dtypes module
 ------------------
 
 .. automodule:: dace.dtypes
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.hooks module
+------------------
+
+.. automodule:: dace.hooks
    :members:
    :undoc-members:
    :show-inheritance:

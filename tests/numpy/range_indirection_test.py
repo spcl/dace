@@ -15,19 +15,19 @@ def range_indirection(A: dace.float64[M, N], x: dace.int32[M]):
 
 
 def test():
-    M.set(100)
-    N.set(100)
+    M = 100
+    N = 100
 
-    x = np.ndarray((M.get(), ), dtype=np.int32)
-    for i in range(M.get()):
-        x[i] = M.get() - 1 - i
-    A = np.ndarray((M.get(), N.get()), dtype=np.float64)
+    x = np.ndarray((M, ), dtype=np.int32)
+    for i in range(M):
+        x[i] = M - 1 - i
+    A = np.ndarray((M, N), dtype=np.float64)
 
     range_indirection(A, x)
 
-    npA = np.ndarray((M.get(), N.get()), dtype=np.float64)
+    npA = np.ndarray((M, N), dtype=np.float64)
     npA[:] = 1.0
-    for j in range(1, M.get()):
+    for j in range(1, M):
         npA[x[j]] += npA[x[j - 1]]
 
     rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)

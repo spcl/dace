@@ -16,8 +16,8 @@ args = [
 ]
 
 
-@dace.program(datatype[N, N, N], datatype[N, N, N])  #, dace.int32, dace.int32)
-def heat3d(A, B):  #, N, tsteps):
+@dace.program
+def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  #, N, tsteps):
     for t in range(tsteps):
 
         @dace.map
@@ -53,8 +53,7 @@ def heat3d(A, B):  #, N, tsteps):
                 a
 
 
-def init_array(A, B):  #, N, tsteps):
-    n = N.get()
+def init_array(A, B, n, tsteps):
     for i in range(n):
         for j in range(n):
             for k in range(n):

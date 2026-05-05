@@ -19,15 +19,16 @@ def test():
     A = np.random.rand(5, 4)
     B = np.random.rand(4, 5)
     C = np.random.rand(4, 4)
-    N.set(5)
+    N = 5
 
     slicetest(A, B, C)
-    diff = np.linalg.norm(C - (A[1:N.get()] * B[:, 0:N.get() - 1]))
+    diff = np.linalg.norm(C - (A[1:N] * B[:, 0:N - 1]))
     print('Difference:', diff)
     assert diff <= 1e-5
 
 
 def test_slice_constant():
+
     @dace.program
     def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
@@ -42,6 +43,7 @@ def test_slice_constant():
 
 
 def test_slice_with_nones():
+
     @dace.program
     def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
@@ -56,6 +58,7 @@ def test_slice_with_nones():
 
 
 def test_literal_slice():
+
     @dace.program
     def slicer(A: dace.float64[20]):
         A[slice(2, 10, 2)] = 2
@@ -69,11 +72,13 @@ def test_literal_slice():
 
 
 def test_slice_member():
+
     @dace.program
     def inner(q, kslice: dace.compiletime):
         q[kslice] = 2 * q[kslice]
 
     class AClass:
+
         def __init__(self):
             self.kslice = slice(1, 80)
 

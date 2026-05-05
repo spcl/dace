@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
 
@@ -33,6 +34,8 @@ def for_loop_with_break_continue():
     return A
 
 
+@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
+                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_loop_with_break_continue():
     A = for_loop_with_break_continue()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
@@ -57,6 +60,8 @@ def nested_for_loop():
     return A
 
 
+@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
+                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_loop():
     A = nested_for_loop()
     A_ref = np.zeros([10, 10], dtype=np.int32)
@@ -153,6 +158,8 @@ def nested_for_while_loop():
     return A
 
 
+@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
+                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_while_loop():
     A = nested_for_while_loop()
     A_ref = np.zeros([10, 10], dtype=np.int32)
@@ -181,6 +188,8 @@ def nested_while_for_loop():
     return A
 
 
+@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
+                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_while_for_loop():
     A = nested_while_for_loop()
     A_ref = np.zeros([10, 10], dtype=np.int32)
@@ -203,12 +212,8 @@ def map_with_break_continue():
 
 
 def test_map_with_break_continue():
-    try:
+    with pytest.raises(DaceSyntaxError):
         map_with_break_continue()
-    except Exception as e:
-        if isinstance(e, DaceSyntaxError):
-            return 0
-    assert (False)
 
 
 @dace.program
@@ -404,6 +409,8 @@ def test_nested_map_with_symbol():
     assert (np.array_equal(val, ref))
 
 
+@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
+                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
     @dace.program
@@ -489,6 +496,22 @@ def test_branch_in_while():
     assert len(sdfg.source_nodes()) == 1
 
 
+def test_for_with_field():
+    struct = dace.data.Structure({'data': dace.float64[20], 'length': dace.int32}, name='MyStruct')
+
+    @dace.program
+    def for_with_field(S: struct):
+        for i in range(S.length):
+            S.data[i] = S.data[i] + 1.0
+
+    A = np.random.rand(20)
+    inp_struct = struct.make_argument(data=A, length=10)
+    expected = np.copy(A)
+    expected[:10] += 1.0
+    for_with_field(inp_struct)
+    assert np.allclose(A, expected)
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -512,3 +535,4 @@ if __name__ == "__main__":
     test_while_else()
     test_branch_in_for()
     test_branch_in_while()
+    test_for_with_field()

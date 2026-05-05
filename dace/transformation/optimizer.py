@@ -5,7 +5,6 @@
 import copy
 import os
 import re
-import time
 from typing import Any, Dict, Iterator, List, Optional, Type
 
 import dace
@@ -16,14 +15,14 @@ from dace.transformation.passes import pattern_matching
 from dace.transformation.transformation import PatternTransformation
 
 # This import is necessary since it registers all the patterns
-from dace.transformation import dataflow, interstate, subgraph
 
 
 class Optimizer(object):
     """ Implements methods for optimizing a DaCe program stateful dataflow
-        graph representation, by matching patterns and applying 
+        graph representation, by matching patterns and applying
         transformations on it.
     """
+
     def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
 
@@ -49,7 +48,7 @@ class Optimizer(object):
     def set_transformation_metadata(self,
                                     patterns: List[Type[PatternTransformation]],
                                     options: Optional[List[Dict[str, Any]]] = None):
-        """ 
+        """
         Caches transformation metadata for a certain set of patterns to match.
         """
         self.transformation_metadata = (pattern_matching.get_transformation_metadata(patterns, options))
@@ -85,6 +84,7 @@ class Optimizer(object):
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
+
         def get_actions(actions, graph, match):
             subgraph_node_ids = match.subgraph.values()
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
@@ -102,11 +102,11 @@ class Optimizer(object):
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
+            graph = sdfg.cfg_list[match.cfg_id].nodes()[match.state_id]
             return get_actions(actions, graph, match)
 
         def get_stateflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id]
+            graph = sdfg.cfg_list[match.cfg_id]
             return get_actions(actions, graph, match)
 
         actions = dict()
@@ -178,9 +178,10 @@ def _parse_cli_input(line):
 
 
 class SDFGOptimizer(Optimizer):
+
     def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
-        
+
             :return: An optimized SDFG object
         """
         sdfg_file = self.sdfg.name + '.sdfg'
@@ -207,7 +208,7 @@ class SDFGOptimizer(Optimizer):
             ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
             for pattern_match in ui_options:
-                sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+                sdfg = self.sdfg.cfg_list[pattern_match.cfg_id]
                 pattern_match._sdfg = sdfg
                 print('%d. Transformation %s' % (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
@@ -238,7 +239,7 @@ class SDFGOptimizer(Optimizer):
                 break
 
             match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
-            sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+            sdfg = self.sdfg.cfg_list[pattern_match.cfg_id]
             graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
             pattern_match._sdfg = sdfg
             print('You selected (%s) pattern %s with parameters %s' %

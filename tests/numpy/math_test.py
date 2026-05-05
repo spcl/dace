@@ -3,7 +3,7 @@ import numpy as np
 import dace
 from common import compare_numpy_output
 import math
-from numpy import exp, sin, cos, sqrt, log, conj, real, imag
+from numpy import exp, sin, cos, sqrt, log, log10, conj, real, imag
 import pytest
 
 M, N = 24, 24
@@ -32,6 +32,11 @@ def test_square_root(A: dace.complex64[M, N]):
 @compare_numpy_output(non_zero=True, positive=True)
 def test_logarithm(A: dace.complex64[M, N]):
     return log(A)
+
+
+@compare_numpy_output(non_zero=True, positive=True)
+def test_log10(A: dace.complex64[M, N]):
+    return log10(A)
 
 
 @compare_numpy_output()
@@ -78,9 +83,11 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
+
     @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
+
         @dace.program
         def func(arg):
             return mathfunc(arg)
@@ -94,6 +101,7 @@ class TestMathFuncs:
 
     @pytest.mark.parametrize("mathfunc", [min, max])
     def test_func2_scalar(self, mathfunc):
+
         @dace.program
         def func(arg1, arg2):
             return mathfunc(arg1, arg2)
@@ -103,6 +111,7 @@ class TestMathFuncs:
 
     @pytest.mark.parametrize("mathfunc", [np.minimum, np.maximum])
     def test_func2_arr(self, mathfunc):
+
         @dace.program
         def func(arg1, arg2):
             return mathfunc(arg1, arg2)
@@ -114,6 +123,7 @@ class TestMathFuncs:
 
 
 def test_scalarret_cond_1():
+
     @dace.program
     def func(arg: dace.float64):
         n = math.floor(1.0 + arg)
@@ -127,6 +137,7 @@ def test_scalarret_cond_1():
 
 
 def test_scalarret_cond_2():
+
     @dace.program
     def func():
         n = math.floor(1.0 + 2.0)
@@ -140,6 +151,7 @@ def test_scalarret_cond_2():
 
 
 def test_scalarret_cond_3():
+
     @dace.program
     def func():
         cval = 2.5
@@ -159,6 +171,7 @@ if __name__ == '__main__':
     test_cosine()
     test_square_root()
     test_logarithm()
+    test_log10()
     test_conjugate()
     test_real_part()
     test_imag_part()

@@ -2,12 +2,12 @@
 """ 2D histogram sample that showcases memlets with write-conflict resolution and unknown element. """
 import argparse
 import dace
-import math
 import numpy as np
 
 W = dace.symbol('W')
 H = dace.symbol('H')
 BINS = 256
+
 
 @dace.program
 def histogram(A: dace.float32[H, W], hist: dace.uint32[BINS]):

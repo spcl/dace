@@ -8,13 +8,13 @@ import warnings
 import sympy
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
+from dace import (data, dtypes, nodes, properties, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):
-    """ 
+    """
     Returns the post state (the state that copies the data a back from the FGPA device) if there is one.
     """
     for s in sdfg.all_sdfgs_recursive():
@@ -32,7 +32,7 @@ def is_int(i):
 
 def _collect_map_ranges(state: SDFGState,
                         memlet_path: List[gr.MultiConnectorEdge[mm.Memlet]]) -> List[Tuple[str, subsets.Range]]:
-    """ 
+    """
     Collects a list of parameters and ranges for every map (entry or exit)
     in the given memlet path.
     """
@@ -51,8 +51,8 @@ def _collect_map_ranges(state: SDFGState,
 
 
 def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
-    """ 
-    Turn a memlet subset expression (of a single element) into an expression 
+    """
+    Turn a memlet subset expression (of a single element) into an expression
     that does not depend on the map symbol names.
     """
     repldict = {symbolic.symbol(p): symbolic.symbol('__dace%d' % i) for i, (p, _) in enumerate(mapranges)}
@@ -62,15 +62,16 @@ def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.R
 
 def _do_memlets_correspond(memlet_a: mm.Memlet, memlet_b: mm.Memlet, mapranges_a: List[Tuple[str, subsets.Range]],
                            mapranges_b: List[Tuple[str, subsets.Range]]) -> bool:
-    """ 
+    """
     Returns True if the two memlets correspond to each other, disregarding
     symbols from equivalent maps.
     """
     for s1, s2 in zip(memlet_a.subset, memlet_b.subset):
         # Check for matching but disregard parameter names
-        s1b = s1[0].subs(
-            {symbolic.symbol(k1): symbolic.symbol(k2)
-             for (k1, _), (k2, _) in zip(mapranges_a, mapranges_b)})
+        s1b = s1[0].subs({
+            symbolic.symbol(k1): symbolic.symbol(k2)
+            for (k1, _), (k2, _) in zip(mapranges_a, mapranges_b)
+        })
         s2b = s2[0]
         # Since there is one element in both subsets, we can check only
         # the beginning
@@ -105,13 +106,13 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str, desc: data.Str
 
 @properties.make_properties
 class StreamingMemory(xf.SingleStateTransformation):
-    """ 
+    """
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
     If 'use_memory_buffering' is True, the transformation reads/writes data from memory
     using a wider data format (e.g. 512 bits), and then convert it
-    on the fly to the right data type used by the computation: 
+    on the fly to the right data type used by the computation:
     """
     access = xf.PatternNode(nodes.AccessNode)
     entry = xf.PatternNode(nodes.EntryNode)
@@ -149,8 +150,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             return False
         # If does not exist on off-chip memory, skip
         if sdfg.arrays[access.data].storage not in [
-                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global,
-                dtypes.StorageType.FPGA_Global
+                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global
         ]:
             return False
 
@@ -175,8 +175,10 @@ class StreamingMemory(xf.SingleStateTransformation):
             # The innermost end of the path must have a clearly defined memory
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
+            dtype = sdfg.arrays[innermost_edge.data.data].dtype
             if (innermost_edge.data.subset.num_elements() != 1 or innermost_edge.data.dynamic
-                    or innermost_edge.data.volume != 1):
+                    or (innermost_edge.data.volume != 1
+                        and not (isinstance(dtype, dtypes.vector) and innermost_edge.data.volume == dtype.veclen))):
                 return False
 
             # Check if any of the maps has a dynamic range
@@ -201,10 +203,6 @@ class StreamingMemory(xf.SingleStateTransformation):
 
             access = self.access
             desc = sdfg.arrays[access.data]
-
-            # Array has to be global array
-            if desc.storage != dtypes.StorageType.FPGA_Global:
-                return False
 
             # Type has to divide target bytes
             if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
@@ -232,7 +230,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             # Check if map has the right access pattern
             # Stride 1 access by innermost loop, innermost loop counter has to be divisible by vector size
             # Same code as in apply
-            state = sdfg.node(self.state_id)
+            state = graph
             dnode: nodes.AccessNode = self.access
             if self.expr_index == 0:
                 edges = state.out_edges(dnode)
@@ -414,7 +412,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     newdesc = input_gearbox_newdesc
 
             else:
-                # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+                # Qualify name to avoid name clashes
                 stream_name = "stream_" + dnode.data
                 name, newdesc = sdfg.add_stream(stream_name,
                                                 desc.dtype,
@@ -584,7 +582,7 @@ class StreamingMemory(xf.SingleStateTransformation):
 
 @properties.make_properties
 class StreamingComposition(xf.SingleStateTransformation):
-    """ 
+    """
     Converts two connected computations (nodes, map scopes) into two separate
     processing elements, with a stream connecting the results. Only applies
     if the memory access patterns of the two computations match.
@@ -693,7 +691,7 @@ class StreamingComposition(xf.SingleStateTransformation):
 
         # Create new stream of shape 1
         desc = sdfg.arrays[access.data]
-        # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+        # Qualify name to avoid name clashes
         stream_name = "stream_" + access.data
         name, newdesc = sdfg.add_stream(stream_name,
                                         desc.dtype,
@@ -703,7 +701,7 @@ class StreamingComposition(xf.SingleStateTransformation):
                                         find_new_name=True)
 
         # Remove transient array if possible
-        for ostate in sdfg.nodes():
+        for ostate in sdfg.states():
             if ostate is state:
                 continue
             if any(n.data == access.data for n in ostate.data_nodes()):

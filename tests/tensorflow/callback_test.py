@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+from importlib.util import find_spec
 
 
 @pytest.mark.tensorflow
 def test_callback():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
 
     input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])
     conv_filter = tf.constant(0.01, tf.float64, [1, 1, 1, 2, 2])
@@ -35,8 +36,5 @@ def test_callback():
 
 
 if __name__ == '__main__':
-    try:
-        import tensorflow
+    if find_spec("tensorflow"):
         test_callback()
-    except ImportError:
-        pass

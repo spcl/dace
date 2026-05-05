@@ -1,73 +1,246 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
-from dace import data, symbolic, dtypes
-import re
+from dace import symbolic
 import sympy as sp
 from functools import reduce
-import sympy.core.sympify
 from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
 
+def nng(expr):
+    # When dealing with set sizes, assume symbols are non-negative
+    if hasattr(expr, 'free_symbols'):
+        # TODO: Fix in symbol definition, not here
+        return expr.subs(((sym, sp.Symbol(sym.name, nonnegative=True)) for sym in list(expr.free_symbols)))
+    return expr
+
+
+def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
+    """Test if `subset_a` covers `subset_b`.
+
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The most important difference compared
+    to `bounding_box_cover_exact()` is that this function does not assume
+    that the symbols are positive.
+
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
+
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be covered.
+    :param approximation: If `True` then use the approximated bounds.
+    """
+    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
+
+    # NOTE: The original implementation always called `nng()`. However, it was decided that
+    #   this is an error and the call was removed in PR#2093.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
+    no_simplify = lambda expr: expr
+
+    # NOTE: Just doing the check is very fast, compared to simplify. Thus we first try to do the
+    #   matching without running if this does not work, then we try again with simplify.
+    for simp_fun in [no_simplify, simplify]:
+        if all((simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
+               for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)):
+            return True
+    return False
+
+
+def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
+    """Checks if `subset_a` covers `subset_b` using positivity assumption.
+
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The function will perform the
+    covering check under the assumption that all symbols are positive,
+    which is the main difference to `bounding_box_cover_exact()`.
+
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
+
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be covered.
+    :param approximation: If `True` then use the approximated bounds.
+
+    :note: In previous versions this function raised `TypeError` in some cases
+        when a truth value could not be determined. This behaviour was removed,
+        since the `bounding_box_cover_exact()` does not show this behaviour.
+    """
+    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
+
+    # NOTE: `nng()` is applied inside the loop.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
+    no_simplify = lambda expr: expr
+
+    for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
+        # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
+        #   first with the symbols we get and if we are unable to figuring out something, we run
+        #   simplify. Furthermore, we also try to postpone `nng()` as long as we can.
+        # NOTE: We use first `==` in the hope that it is much faster than `<=`.
+        # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
+        #   get an expression resulting in a `TypeError`.
+
+        # lower bound: first check whether symbolic positive condition applies
+        if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+            rb, orb = nng(rb), nng(orb)
+            for simp_fun in [no_simplify, simplify]:
+                simp_rb, simp_orb = simp_fun(rb), simp_fun(orb)
+                if (simp_rb == simp_orb) == True:
+                    break
+                elif (simp_rb <= simp_orb) == True:
+                    break
+            else:
+                # We were unable to determine covering for that dimension.
+                #  Thus we assume that there is no covering.
+                return False
+
+        # upper bound: first check whether symbolic positive condition applies
+        if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+            re, ore = nng(re), nng(ore)
+            for simp_fun in [no_simplify, simplify]:
+                simp_re, simp_ore = simp_fun(re), simp_fun(ore)
+                if (simp_re == simp_ore) == True:
+                    break
+                elif (simp_re >= simp_ore) == True:
+                    break
+            else:
+                return False
+
+    return True
+
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
+
+    def ndrange(self) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
+        """
+        Implements an iterator over strided N-dimensional rectangular regions of the subset.
+        Note that this may be an overapproximation of the actual subset, based on the subclass.
+
+        :return: An iterator over N-dimensional ranges.
+        """
+        raise NotImplementedError
+
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
-        def nng(expr):
-            # When dealing with set sizes, assume symbols are non-negative
-            try:
-                # TODO: Fix in symbol definition, not here
-                for sym in list(expr.free_symbols):
-                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-                return expr
-            except AttributeError:  # No free_symbols in expr
-                return expr
 
-        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
 
-        if not symbolic_positive:
-            try:
-                return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                                        other.min_element_approx(), other.max_element_approx())])
-            except TypeError:
-                return False
-
+        if Config.get('optimizer', 'symbolic_positive'):
+            return bounding_box_symbolic_positive(self, other, approximation=True)
         else:
-            try:
-                for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                            other.min_element_approx(), other.max_element_approx()):
-                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
-                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+            return bounding_box_cover_exact(self, other, approximation=True)
 
-                    # lower bound: first check whether symbolic positive condition applies
-                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+    def covers_precise(self, other):
+        """ Returns True if self contains all the elements in other. """
+
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
+
+        # If self does not cover other with a bounding box union, return false.
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+        if symbolic_positive and (not bounding_box_cover_exact(self, other)):
+            return False
+        elif not bounding_box_symbolic_positive(self, other):
+            return False
+
+        # NOTE: The original implementation always called `nng()`. However, it was decided that
+        #   and the application was made conditional on `symbolic_positive`, in PR#2093.
+        simplify = (lambda expr: symbolic.simplify_ext(nng(expr))) if symbolic_positive else (
+            lambda expr: symbolic.simplify_ext(expr))
+        no_simplify = lambda expr: expr
+
+        # In the following we will first perform the check as is, and if that fails try it again
+        #   with simplify. We do it because simplify is a very expensive operation and we try to
+        #   avoid calling it.
+        try:
+            # if self is an index no further distinction is needed
+            if isinstance(self, Indices):
+                return True
+
+            elif isinstance(self, Range):
+                # other is an index so we need to check if the step of self is such that other is covered
+                # self.start % self.step == other.index % self.step
+                if isinstance(other, Indices):
+                    # TODO: Think if inverting the order is simpler.
+                    for simp_fun in [no_simplify, simplify]:
+                        for (start, _, step), i in zip(self.ranges, other.indices):
+                            simp_step = simp_fun(step)
+                            simp_start = simp_fun(start)
+                            simp_i = simp_fun(i)
+                            if not (((simp_start % simp_step) == (simp_i % simp_step)) == True):
+                                return False
+                    return True
+
+                else:
+                    assert isinstance(other, Range)
+                    # other is a range so in every dimension self.step has to divide other.step and
+                    # self.start % self.step = other.start % other.step
+                    self_steps = [r[2] for r in self.ranges]
+                    other_steps = [r[2] for r in other.ranges]
+                    starts = self.min_element()
+                    ostarts = other.min_element()
+
+                    for i, simp_fun in enumerate([no_simplify, simplify]):
+                        try:
+                            for start, step, ostart, ostep in zip(starts, self_steps, ostarts, other_steps):
+                                simp_start = simp_fun(start)
+                                simp_ostart = simp_fun(ostart)
+                                if not (ostep % step == 0 and
+                                        ((simp_start == simp_ostart) or
+                                         (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True)):
+                                    return False
+                        except TypeError:
+                            # If a `TypeError happens during the "no simplify" phase, we immediately
+                            #   go to the simplify phase, in the hope that it might be possible to
+                            #   simplify the expression more. If we are already using simplify, then
+                            #   we return `False`.
+                            if i == 0:
+                                continue
                             return False
+                    return True
+            else:
+                raise ValueError(
+                    f'Does not know how to compare a `{type(self).__name__}` with a `{type(other).__name__}`.')
 
-                    # upper bound: first check whether symbolic positive condition applies
-                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
-                            return False
-            except TypeError:
-                return False
-
-            return True
+        except TypeError:
+            return False
 
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
     def at(self, i, strides):
@@ -131,6 +304,7 @@ def _tuple_to_symexpr(val):
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
+
     def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
@@ -146,8 +320,12 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: 'Indices'):
-        return Range([(i, i, 1) for i in indices.indices])
+    def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
+        if isinstance(indices, Indices):
+            return Range([(i, i, 1) for i in indices.indices])
+
+        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+        return Range([(i, i, 1) for i in indices])
 
     def to_json(self):
         ret = []
@@ -198,8 +376,21 @@ class Range(Subset):
         return hash(tuple(r for r in self.ranges))
 
     def __add__(self, other):
-        sum_ranges = self.ranges + other.ranges
-        return Range(sum_ranges)
+        return Range(
+            ((*ranges, tile) for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)))
+
+    def __deepcopy__(self, memo) -> 'Range':
+        """Performs a deepcopy of `self`.
+
+        For performance reasons only the mutable parts are copied.
+        """
+        # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
+        #  to shallow copy the list that stores them.
+        node = object.__new__(Range)
+        node.ranges = self.ranges.copy()
+        node.tile_sizes = self.tile_sizes.copy()
+
+        return node
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
@@ -304,32 +495,38 @@ class Range(Subset):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                                                        for ts in self.tile_sizes))
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+            if offset_end:
+                re = re + mult * off[i]
+            self.ranges[i] = (rb + mult * off[i], re, rs)
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
-                      for i in indices])
+        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
+                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
 
     def dims(self):
         return len(self.ranges)
@@ -360,14 +557,32 @@ class Range(Subset):
                 result |= symbolic.symlist(d).keys()
         return result
 
-    def reorder(self, order):
+    def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
+        """
+        Get set of free symbols by only looking at the dimension given by the indices list
+
+        :param indices: The indices of the dimensions to look at
+        :type indices: List[int]
+        :return: The set of free symbols
+        :rtype: Set[str]
+        """
+        result = set()
+        for i, dim in enumerate(self.ranges):
+            if i in indices:
+                for d in dim:
+                    result |= symbolic.symlist(d).keys()
+        return result
+
+    def reorder(self, order: Sequence[int]) -> None:
         """ Re-orders the dimensions in-place according to a permutation list.
 
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_ranges = [self.ranges[o] for o in order]
+        new_tile_sizes = [self.tile_sizes[o] for o in order]
         self.ranges = new_ranges
+        self.tile_sizes = new_tile_sizes
 
     @staticmethod
     def dim_to_string(d, t=1):
@@ -444,7 +659,7 @@ class Range(Subset):
                 # Open parenthesis found, increase count by 1
                 if token[i] == '(':
                     count += 1
-                # Closing parenthesis found, decrease cound by 1
+                # Closing parenthesis found, decrease count by 1
                 elif token[i] == ')':
                     count -= 1
                 # Move to the next character
@@ -461,8 +676,8 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                ranges.append(
-                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]), symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
+                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
+                ranges.append((value, value, 1))
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
@@ -505,7 +720,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.SympifyError:
+            except sp.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -564,10 +779,7 @@ class Range(Subset):
             idx = 0
             for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
                 if re - rb == 0:
-                    if isinstance(other, Indices):
-                        new_subset.append(rb)
-                    else:
-                        new_subset.append((rb, re, rs, rt))
+                    new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
@@ -579,10 +791,7 @@ class Range(Subset):
             # data_dims) -> all non-data dims remain
             for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
-                    if isinstance(other, Indices):
-                        new_subset.append(rb)
-                    else:
-                        new_subset.append((rb, re, rs, rt))
+                    new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
@@ -605,12 +814,20 @@ class Range(Subset):
 
         if isinstance(other, Range):
             return Range(new_subset)
-        elif isinstance(other, Indices):
-            return Indices(new_subset)
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices=None, offset=True):
+    def squeeze(self, ignore_indices: Optional[List[int]] = None, offset: bool = True) -> List[int]:
+        """
+        Removes size-1 ranges from the subset and returns a list of dimensions that remain.
+
+        For example, ``[i:i+10, j]`` will change the range to ``[i:i+10]`` and return ``[0]``.
+        If ``offset`` is True, the subset will become ``[0:10]``.
+
+        :param ignore_indices: An iterable of dimensions to not include in squeezing.
+        :param offset: If True, will offset the non-ignored indices back so that they start with 0.
+        :return: A list of dimension indices in the original subset, which remain in the squeezed result.
+        """
         ignore_indices = ignore_indices or []
         shape = self.size()
         non_ones = []
@@ -639,7 +856,7 @@ class Range(Subset):
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds 0:1 ranges to the subset, in the indices contained in axes.
-        
+
         The method is mostly used to restore subsets that had their length-1
         ranges removed (i.e., squeezed subsets). Hence, the method is
         called 'unsqueeze'.
@@ -719,249 +936,184 @@ class Range(Subset):
 
         return True
 
+    def is_contiguous_subset(self, array: 'dace.data.Array') -> bool:
+        """
+        Check if this subset represents a contiguous subset of the array descriptor provided.
+
+        For a subset to be contiguous:
+        - In Fortran layout: once a dimension is partial, all subsequent dimensions must have length 1
+        - In C layout: same rule applies after reversing dimensions
+
+        Args:
+            array: array descriptor to check against
+
+        Returns:
+            True if the subset is contiguous, False otherwise
+            Returns False on all arrays that are not have a packed layout,
+            meaning that the complete array is contiguously stored in 1D memory.
+        """
+        # Any step size != 1 -> not contiguous
+        if any(s != 1 for (_, _, s) in self):
+            return False
+
+        # Determine array layout and calculate expression lengths accordingly
+        if array.is_packed_fortran_strides():
+            # Fortran layout: first dimension varies fastest
+            expr_lens = [((e + 1) - b) for (b, e, s) in self]
+            shape_dims = array.shape
+        elif array.is_packed_c_strides():
+            # C layout: last dimension varies fastest, so reverse the order
+            expr_lens = list(reversed([((e + 1) - b) for (b, e, s) in self]))
+            shape_dims = list(reversed(array.shape))
+        else:
+            return False
+
+        # Check contiguity: once we find a partial dimension, all remaining must be length 1
+        for i, (expr_len, dim) in enumerate(zip(expr_lens, shape_dims)):
+            # Check if this dimension is partial (less than full shape)
+            if expr_len != dim:
+                # This dimension is partial - all remaining dimensions must be length 1
+                if any(expr_len != 1 for expr_len in expr_lens[i + 1:]):
+                    return False
+                # All remaining dimensions are 1, so this is contiguous
+                return True
+
+        # All dimensions are full size - this is contiguous
+        return True
+
 
 @dace.serialize.serializable
-class Indices(Subset):
+class Indices(Range):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
-    def __init__(self, indices):
-        if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty' ' array or None')
-        if isinstance(indices, str):
+
+    def __init__(self, indices: Sequence[int | str | symbolic.SymbolicType]):
+        warnings.warn("The Indices class is deprecated and will be removed in future versions of DaCe.",
+                      DeprecationWarning)
+        if indices is None:
+            raise TypeError('Expected an array of index expressions: got None')
+        elif isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
-            self.indices = indices
+            raise TypeError("Expected collection of index expression: got SymExpr")
+
+        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+        super().__init__([(idx, idx, 1) for idx in indices])
+
+    @property
+    def indices(self) -> List[symbolic.SymbolicType]:
+        return [rb for rb, _, _ in self.ranges]
+
+
+class SubsetUnion(Subset):
+    """
+    Wrapper subset type that stores multiple Subsets in a list.
+    """
+
+    def __init__(self, subset):
+        self.subset_list: list[Subset] = []
+        if isinstance(subset, SubsetUnion):
+            self.subset_list = subset.subset_list
+        elif isinstance(subset, list):
+            for subset in subset:
+                if not subset:
+                    break
+                if isinstance(subset, (Range, Indices)):
+                    self.subset_list.append(subset)
+                else:
+                    raise NotImplementedError
+        elif isinstance(subset, (Range, Indices)):
+            self.subset_list = [subset]
+
+    def covers(self, other):
+        """
+        Returns True if this SubsetUnion covers another subset (using a bounding box).
+        If other is another SubsetUnion then self and other will
+        only return true if self is other. If other is a different type of subset
+        true is returned when one of the subsets in self is equal to other.
+        """
+
+        if isinstance(other, SubsetUnion):
+            for subset in self.subset_list:
+                # check if there is a subset in self that covers every subset in other
+                if all(subset.covers(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
         else:
-            self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
-        self.tile_sizes = [1]
+            return any(s.covers(other) for s in self.subset_list)
 
-    def to_json(self):
-        def a2s(obj):
-            if isinstance(obj, symbolic.SymExpr):
-                return str(obj.expr)
-            else:
-                return str(obj)
-
-        return {'type': 'Indices', 'indices': list(map(a2s, self.indices))}
-
-    @staticmethod
-    def from_json(obj, context=None):
-        if obj['type'] != 'Indices':
-            raise TypeError("from_json of class \"Indices\" called on json "
-                            "with type %s (expected 'Indices')" % obj['type'])
-
-        #return Indices(symbolic.SymExpr(obj['indices']))
-        return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
-
-    def __hash__(self):
-        return hash(tuple(i for i in self.indices))
-
-    def num_elements(self):
-        return 1
-
-    def num_elements_exact(self):
-        return 1
-
-    def bounding_box_size(self):
-        return [1] * len(self.indices)
-
-    def size(self):
-        return [1] * len(self.indices)
-
-    def size_exact(self):
-        return self.size()
-
-    def min_element(self):
-        return self.indices
-
-    def max_element(self):
-        return self.indices
-
-    def max_element_approx(self):
-        return [_approx(ind) for ind in self.indices]
-
-    def min_element_approx(self):
-        return [_approx(ind) for ind in self.indices]
-
-    def data_dims(self):
-        return 0
-
-    def dims(self):
-        return len(self.indices)
-
-    def strides(self):
-        return [1] * len(self.indices)
-
-    def absolute_strides(self, global_shape):
-        return [1] * len(self.indices)
-
-    def offset(self, other, negative, indices=None):
-        if not isinstance(other, Subset):
-            if isinstance(other, (list, tuple)):
-                other = Indices(other)
-            else:
-                other = Indices([other for _ in self.indices])
-        mult = -1 if negative else 1
-        for i, off in enumerate(other.min_element()):
-            self.indices[i] += mult * off
-
-    def offset_new(self, other, negative, indices=None):
-        if not isinstance(other, Subset):
-            if isinstance(other, (list, tuple)):
-                other = Indices(other)
-            else:
-                other = Indices([other for _ in self.indices])
-        mult = -1 if negative else 1
-        return Indices([self.indices[i] + mult * off for i, off in enumerate(other.min_element())])
-
-    def coord_at(self, i):
-        """ Returns the offseted coordinates of this subset at
-            the given index tuple.
-            For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-
-            :param i: A tuple of the same dimensionality as subset.dims().
-            :return: Absolute coordinates for index i.
+    def covers_precise(self, other):
         """
-        if len(i) != len(self.indices):
-            raise ValueError('Invalid dimensionality of input tuple (expected'
-                             ' %d, got %d)' % (len(self.indices), len(i)))
-        if any([k != 0 for k in i]):
-            raise ValueError('Value out of bounds')
-
-        return tuple(r for r in self.indices)
-
-    def at(self, i, strides):
-        """ Returns the absolute index (1D memory layout) of this subset at
-            the given index tuple.
-            For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
-
-            :param i: A tuple of the same dimensionality as subset.dims().
-            :param strides: The strides of the array we are subsetting.
-            :return: Absolute 1D index at coordinate i.
+        Returns True if this SubsetUnion covers another
+        subset. If other is another SubsetUnion then self and other will
+        only return true if self is other. If other is a different type of subset
+        true is returned when one of the subsets in self is equal to other
         """
-        coord = self.coord_at(i)
 
-        # Return i0 + i1*size0 + i2*size1*size0 + ....
-        return sum(s * strides[i] for i, s in enumerate(coord))
-
-    def pystr(self):
-        return str(self.indices)
+        if isinstance(other, SubsetUnion):
+            for subset in self.subset_list:
+                # check if there is a subset in self that covers every subset in other
+                if all(subset.covers_precise(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
+        else:
+            return any(s.covers_precise(other) for s in self.subset_list)
 
     def __str__(self):
-        return ", ".join(map(str, self.indices))
+        string = ''
+        for subset in self.subset_list:
+            if not string == '':
+                string += " "
+            string += subset.__str__()
+        return string
+
+    def dims(self):
+        if not self.subset_list:
+            return 0
+        return next(iter(self.subset_list)).dims()
+
+    def union(self, other: Subset):
+        """In place union of self with another Subset"""
+        try:
+            if isinstance(other, SubsetUnion):
+                self.subset_list += other.subset_list
+            elif isinstance(other, Indices) or isinstance(other, Range):
+                self.subset_list.append(other)
+            else:
+                raise TypeError
+        except TypeError:  # cannot determine truth value of Relational
+            return None
 
     @property
     def free_symbols(self) -> Set[str]:
         result = set()
-        for dim in self.indices:
-            result |= symbolic.symlist(dim).keys()
-        return result
-
-    @staticmethod
-    def from_string(s):
-        return Indices([symbolic.pystr_to_symbolic(m.group(0)) for m in re.finditer("[^,;:]+", s)])
-
-    def __iter__(self):
-        return iter(self.indices)
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, key):
-        return self.indices.__getitem__(key)
-
-    def __setitem__(self, key, value):
-        return self.indices.__setitem__(key, value)
-
-    def __eq__(self, other):
-        if not isinstance(other, Indices):
-            return False
-        if len(self.indices) != len(other.indices):
-            return False
-        return all([i == o_i for i, o_i in zip(self.indices, other.indices)])
-
-    def reorder(self, order):
-        """ Re-orders the dimensions in-place according to a permutation list.
-
-            :param order: List or tuple of integers from 0 to self.dims() - 1,
-                          indicating the desired order of the dimensions.
-        """
-        new_indices = [self.indices[o] for o in order]
-        self.indices = new_indices
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-    def ndrange(self):
-        return [(i, i, 1) for i in self.indices]
-
-    def compose(self, other):
-        raise TypeError('Index subsets cannot be composed with other subsets')
-
-    def squeeze(self, ignore_indices=None):
-        ignore_indices = ignore_indices or []
-        non_ones = []
-        for i in range(len(self.indices)):
-            if i in ignore_indices:
-                non_ones.append(i)
-        squeezed_indices = [self.indices[i] for i in non_ones]
-        if not squeezed_indices:
-            squeezed_indices = [0]
-        self.indices = squeezed_indices
-        return non_ones
-
-    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
-        """ Adds zeroes to the subset, in the indices contained in axes.
-        
-        The method is mostly used to restore subsets that had their
-        zero-indices removed (i.e., squeezed subsets). Hence, the method is
-        called 'unsqueeze'.
-
-        Examples (initial subset, axes -> result subset, output):
-        - [i], [0] -> [0, i], [0]
-        - [i], [0, 1] -> [0, 0, i], [0, 1]
-        - [i], [0, 2] -> [0, i, 0], [0, 2]
-        - [i], [0, 1, 2, 3] -> [0, 0, 0, 0, i], [0, 1, 2, 3]
-        - [i], [0, 2, 3, 4] -> [0, i, 0, 0, 0], [0, 2, 3, 4]
-        - [i], [0, 1, 1] -> [0, 0, 0, i], [0, 1, 2]
-
-        :param axes: The axes where the zero-indices should be added.
-        :return: A list of the actual axes where the zero-indices were added.
-        """
-        result = []
-        for axis in sorted(axes):
-            self.indices.insert(axis, 0)
-
-            if len(result) > 0 and result[-1] >= axis:
-                result.append(result[-1] + 1)
-            else:
-                result.append(axis)
+        for subset in self.subset_list:
+            result |= subset.free_symbols
         return result
 
     def replace(self, repl_dict):
-        for i, ind in enumerate(self.indices):
-            self.indices[i] = (ind.subs(repl_dict) if symbolic.issymbolic(ind) else ind)
+        for subset in self.subset_list:
+            subset.replace(repl_dict)
 
-    def pop(self, dimensions):
-        new_indices = []
-        for i in range(len(self.indices)):
-            if i not in dimensions:
-                new_indices.append(self.indices[i])
-        self.indices = new_indices
+    def num_elements(self):
+        # TODO: write something more meaningful here
+        min = 0
+        for subset in self.subset_list:
+            try:
+                if subset.num_elements() < min or min == 0:
+                    min = subset.num_elements()
+            except:
+                continue
 
-    def intersects(self, other: 'Indices'):
-        return all(ind == oind for ind, oind in zip(self.indices, other.indices))
-
-    def intersection(self, other: 'Indices'):
-        if self.intersects(other):
-            return self
-        return None
+        return min
 
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
-    """ 
-    Special cases of subset unions. If case found, returns pair of 
+    """
+    Special cases of subset unions. If case found, returns pair of
     (min,max), otherwise returns None.
     """
     if are + 1 == brb:
@@ -1000,9 +1152,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    minrb = sympy.Min(arb, brb)
+                    minrb = sp.Min(arb, brb)
             else:
-                minrb = sympy.Min(arb, brb)
+                minrb = sp.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1013,9 +1165,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    maxre = sympy.Max(are, bre)
+                    maxre = sp.Max(are, bre)
             else:
-                maxre = sympy.Max(are, bre)
+                maxre = sp.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 
@@ -1026,7 +1178,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
-        
+
         :param subset_a: The first subset.
         :param subset_b: The second subset.
         :return: A Subset object whose size is at least the union of the two
@@ -1040,6 +1192,8 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
+        elif isinstance(subset_a, SubsetUnion) or isinstance(subset_b, SubsetUnion):
+            return list_union(subset_a, subset_b)
         elif type(subset_a) != type(subset_b):
             return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Indices):
@@ -1054,6 +1208,36 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                           ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
     except TypeError:  # cannot determine truth value of Relational
+        return None
+
+
+def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
+    """
+    Returns the union of two Subset lists.
+
+    :param subset_a: The first subset.
+    :param subset_b: The second subset.
+    :return: A SubsetUnion object that contains all elements of subset_a and subset_b.
+    """
+    # TODO(later): Merge subsets in both lists if possible
+    try:
+        if subset_a is not None and subset_b is None:
+            return subset_a
+        elif subset_b is not None and subset_a is None:
+            return subset_b
+        elif subset_a is None and subset_b is None:
+            raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            if isinstance(subset_b, SubsetUnion):
+                return SubsetUnion(subset_b.subset_list.append(subset_a))
+            else:
+                return SubsetUnion(subset_a.subset_list.append(subset_b))
+        elif isinstance(subset_a, SubsetUnion):
+            return SubsetUnion(subset_a.subset_list + subset_b.subset_list)
+        else:
+            return SubsetUnion([subset_a, subset_b])
+
+    except TypeError:
         return None
 
 

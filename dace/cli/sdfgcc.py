@@ -3,9 +3,10 @@
 
 import dace
 import os
-import sys
 import argparse
 import shutil
+
+from dace.transformation.optimizer import SDFGOptimizer
 
 
 def main():
@@ -43,10 +44,10 @@ def main():
     sdfg = dace.SDFG.from_file(filepath)
 
     if args.optimize:
-        sdfg.optimize()
+        sdfg = SDFGOptimizer(sdfg).optimize()
 
     # Compile SDFG
-    sdfg.compile(outpath)
+    sdfg.compile(outpath, return_program_handle=False)
 
     # Copying header file to optional path
     if outpath is not None:

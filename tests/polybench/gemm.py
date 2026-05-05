@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 try:
     import polybench
@@ -39,11 +38,7 @@ sizes = [{
 args = [([NI, NJ], datatype), ([NI, NK], datatype), ([NK, NJ], datatype), ([1], datatype), ([1], datatype)]
 
 
-def init_array(C, A, B, alpha, beta):
-    ni = NI.get()
-    nj = NJ.get()
-    nk = NK.get()
-
+def init_array(C, A, B, alpha, beta, ni, nj, nk):
     alpha[0] = datatype(1.5)
     beta[0] = datatype(1.2)
 
@@ -58,8 +53,9 @@ def init_array(C, A, B, alpha, beta):
             B[i, j] = datatype(i * (j + 2) % nj) / nj
 
 
-@dace.program(datatype[NI, NJ], datatype[NI, NK], datatype[NK, NJ], datatype[1], datatype[1])
-def gemm(C, A, B, alpha, beta):
+@dace.program
+def gemm(C: datatype[NI, NJ], A: datatype[NI, NK], B: datatype[NK, NJ], alpha: datatype[1], beta: datatype[1]):
+
     @dace.map
     def mult_c(i: _[0:NI], j: _[0:NJ]):
         inp << C[i, j]
@@ -81,6 +77,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(0, 'C')], init_array, gemm)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         gemm(*args)

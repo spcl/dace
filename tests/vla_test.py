@@ -22,13 +22,12 @@ state.add_nedge(tmp, B, dace.Memlet.simple('tmp', '0:N'))
 
 
 def test():
-    N.set(12)
     A = np.random.rand(12).astype(np.float32)
     B = np.random.rand(12).astype(np.float32)
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        sdfg(A=A, B=B, N=N)
+        sdfg(A=A, B=B, N=12)
 
         assert w
         assert any('Variable-length' in str(warn.message) for warn in w)

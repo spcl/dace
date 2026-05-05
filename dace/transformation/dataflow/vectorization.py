@@ -1,27 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
-from dace import data, dtypes, registry, symbolic, subsets
+from dace import data, dtypes, symbolic, subsets
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
 from dace.transformation.helpers import replicate_scope
 from dace.properties import Property, make_properties
-import itertools
 
 
 @make_properties
 class Vectorization(transformation.SingleStateTransformation):
     """ Implements the vectorization transformation.
 
-        Vectorization matches when all the input and output memlets of a 
+        Vectorization matches when all the input and output memlets of a
         tasklet inside a map access the inner-most loop variable in their last
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through " "parent SDFGs", dtype=bool, default=False)
+    propagate_parent = Property(desc="Propagate vector length through "
+                                "parent SDFGs", dtype=bool, default=False)
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,

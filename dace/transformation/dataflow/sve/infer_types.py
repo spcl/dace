@@ -3,23 +3,18 @@
     SVE Infer Types: This module is responsible for inferring connector types in the SDFG.
 """
 from typing import *
-from dace.sdfg.graph import MultiConnectorEdge, Graph, SubgraphView
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.nodes import Node, Tasklet
-import dace.dtypes
-import dace.sdfg.infer_types
-import dace.transformation.dataflow
-import dace.transformation.helpers
-import dace.codegen.targets.sve.util
-import dace.frontend.operations
+from dace.sdfg.nodes import Tasklet
 import dace.data as data
 import dace.dtypes as dtypes
-from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
+from dace.sdfg.type_inference import infer_types
 
 
 class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool], dtypes.typeclass]):
+
     def __init__(self):
         super().__init__(lambda: dtypes.typeclass(None))
 
@@ -33,9 +28,6 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet, inferr
     if any(inferred[(node, conn, True)].type is None for conn in node.in_connectors):
         raise TypeError('Cannot infer output connectors of tasklet "%s", '
                         'not all input connectors have types' % str(node))
-
-    # Avoid import loop
-    from dace.codegen.tools.type_inference import infer_types
 
     # Get symbols defined at beginning of node
     syms = state.symbols_defined_at(node)
@@ -136,7 +128,8 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node, inferr
     for e in state.out_edges(node):
         cname = e.src_conn
         if cname and inferred[(node, cname, False)].type is None:
-            raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
+            raise TypeError('Ambiguous or uninferable type in'
+                            ' connector "%s" of node "%s"' % (cname, node))
 
 
 def infer_connector_types(sdfg: SDFG,
@@ -169,7 +162,7 @@ def infer_connector_types(sdfg: SDFG,
         raise ValueError('No SDFG was provided')
 
     if state is None and graph is None:
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in dfs_topological_sort(state):
                 infer_node_connectors(sdfg, state, node, inferred)
 

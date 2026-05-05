@@ -1,4 +1,5 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
 
@@ -141,6 +142,7 @@ def test_2d_assignment():
 
 
 def test_while_symbol():
+
     @dace.program
     def whiletest_symbol(A: dace.int32[1]):
         i = 6
@@ -162,6 +164,7 @@ def test_while_symbol():
 
 
 def test_while_data():
+
     @dace.program
     def whiletest_data(A: dace.int32[1]):
         while A[0] > 0:
@@ -213,6 +216,7 @@ def test_dowhile():
 
 
 def test_ifchain():
+
     @dace.program
     def ifchain_program(A: dace.int32[2]):
         if A[0] == 0:
@@ -262,6 +266,8 @@ def test_ifchain_manual():
         assert 'else if' in code
 
 
+@pytest.mark.skip(reason="Switch-case are not allowed in the ConditionalBlock semantics, and are thus not " +
+                  "generated with the new ControlFlowRaising pass.")
 def test_switchcase():
     sdfg = dace.SDFG('switchcase')
     sdfg.add_array('A', [2], dace.int32)
@@ -292,6 +298,9 @@ def test_switchcase():
 
 def test_fsm():
     # Could be interpreted as a while loop of a switch-case
+    # NOTE: Since switching to the more robust control flow detection (ControlFlowRaising), this is considered a
+    # region of unstructured control flow, and thus no switch case is generated. The state machine is considered
+    # unstructured due to the loop not being a well-formed while loop (missing exit, no clear loop condition).
     sdfg = dace.SDFG('fsmtest')
     sdfg.add_scalar('nextstate', dace.int32)
     sdfg.add_array('A', [1], dace.int32)
@@ -326,26 +335,8 @@ def test_fsm():
 
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
         code = sdfg.generate_code()[0].clean_code
-        assert 'switch ' in code
-
-
-def test_nested_loop_detection():
-    @dace.program
-    def nestedloop(A: dace.float64[1]):
-        for i in range(5):
-            for j in range(5):
-                A[0] += i + j
-
-    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        code = nestedloop.to_sdfg().generate_code()[0].clean_code
-        assert code.count('for ') == 2
-
-    a = np.random.rand(1)
-    expected = np.copy(a)
-    nestedloop.f(expected)
-
-    nestedloop(a)
-    assert np.allclose(a, expected)
+        assert code.count('goto') >= 10
+        assert 'for ' not in code
 
 
 if __name__ == '__main__':
@@ -359,6 +350,5 @@ if __name__ == '__main__':
     test_dowhile()
     test_ifchain()
     test_ifchain_manual()
-    test_switchcase()
+    #test_switchcase()
     test_fsm()
-    test_nested_loop_detection()

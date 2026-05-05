@@ -71,8 +71,8 @@ def test_vector_type_cast():
 
 
 def test_vector_reduction():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets.
     """
     sdfg = dace.SDFG('vectorhadd')
@@ -97,7 +97,7 @@ def test_vector_reduction():
 
 
 def test_vector_to_vector_wcr():
-    """ 
+    """
     Tests write-conflicted memlets from vectors on vectors.
     """
     sdfg = dace.SDFG('vectoradd')
@@ -123,8 +123,8 @@ def test_vector_to_vector_wcr():
 
 
 def test_vector_reduction_atomic():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets, with atomics.
     """
     sdfg = dace.SDFG('vectorhadd_atomic')
@@ -148,8 +148,8 @@ def test_vector_reduction_atomic():
 
 @pytest.mark.gpu
 def test_vector_reduction_gpu():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets.
     """
     sdfg = dace.SDFG('vectorhadd_gpu')
@@ -157,7 +157,14 @@ def test_vector_reduction_gpu():
     sdfg.add_transient('gA', [1], float4, storage=dace.StorageType.GPU_Global)
     sdfg.add_transient('gB', [1], dace.float32, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('B', [1], dace.float32)
-    state = sdfg.add_state()
+
+    # Copy initial value of B (zero)
+    initstate = sdfg.add_state()
+    r = initstate.add_access('B')
+    w = initstate.add_access('gB')
+    initstate.add_nedge(r, w, dace.Memlet('gB'))
+
+    state = sdfg.add_state_after(initstate)
     r = state.add_access('gA')
     me, mx = state.add_map('kernel', dict(i='0:1'), dace.ScheduleType.GPU_Device)
     t1 = state.add_tasklet('something', {'a'}, {'b': float4}, 'b = a')
@@ -169,7 +176,7 @@ def test_vector_reduction_gpu():
     state.add_nedge(hr, r, dace.Memlet('gA'))
     state.add_nedge(w, hw, dace.Memlet('gB'))
 
-    assert '_atomic' not in sdfg.generate_code()[0].clean_code
+    assert '_atomic' in sdfg.generate_code()[1].clean_code
 
     A = np.random.rand(4).astype(np.float32)
     B = np.zeros([1], dtype=np.float32)
@@ -184,3 +191,4 @@ if __name__ == '__main__':
     test_vector_reduction()
     test_vector_to_vector_wcr()
     test_vector_reduction_atomic()
+    # test_vector_reduction_gpu()

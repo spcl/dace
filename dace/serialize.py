@@ -1,10 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import aenum
+from dataclasses import is_dataclass
+import enum
 import json
 import numpy as np
 import warnings
+from dace import attr_enum
 import dace.dtypes
 from dace import config
+from dace.utils import until
 
 
 class SerializableObject(object):
@@ -47,7 +50,7 @@ class NumpySerializer:
             return None
 
         try:
-            dtype_json = dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type].to_json()
+            dtype_json = dace.dtypes.dtype_to_typeclass(obj.dtype.type).to_json()
         except KeyError:
             dtype_json = str(obj.dtype)
 
@@ -65,15 +68,24 @@ _DACE_SERIALIZE_TYPES = {
     "DebugInfo": dace.dtypes.DebugInfo,
     "string": dace.dtypes.string,
     "bool_": dace.dtypes.bool,
+    "pyobject": dace.dtypes.pyobject,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }
-# Also register each of the basic types
-_DACE_SERIALIZE_TYPES.update({v.to_string(): v for v in dace.dtypes.DTYPE_TO_TYPECLASS.values()})
 
 
 def get_serializer(type_name):
-    return _DACE_SERIALIZE_TYPES[type_name]
+    type_name = until(type_name, '.')
+    if type_name in _DACE_SERIALIZE_TYPES:
+        return _DACE_SERIALIZE_TYPES[type_name]
+
+    # Also try each of the basic types
+    basic_dtypes = {v.to_string(): v for v in dace.dtypes.dtype_to_typeclass().values()}
+    if type_name in basic_dtypes:
+        return basic_dtypes[type_name]
+
+    raise KeyError(f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
+                   'Please implement serialization by decorating the class with ``@serializable``.')
 
 
 # Decorator for objects that should be serializable, but don't call
@@ -97,7 +109,25 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
-    elif isinstance(obj, aenum.Enum):
+    elif is_dataclass(obj):
+        # Serialize dataclass as a dictionary
+        retval = {"type": type(obj).__name__}
+        for field in obj.__dataclass_fields__.values():
+            retval[field.name] = to_json(getattr(obj, field.name))
+        return retval
+    elif isinstance(obj, attr_enum.ExtensibleAttributeEnum):
+        if obj._is_template:
+            # Store the full dataclass representation for templates
+            return {'type': f'{obj.__class__.__name__}.{obj._name_}'}
+        elif is_dataclass(obj._value_):
+            # Store the full dataclass representation for instances
+            retval = to_json(obj._value_)
+            retval['type'] = f'{obj.__class__.__name__}.{obj._name_}'
+            return retval
+        else:
+            # Store just the name of this key
+            return obj._name_
+    elif isinstance(obj, enum.Enum):
         # Store just the name of this key
         return obj._name_
     else:
@@ -109,7 +139,9 @@ def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
             # For enums, resolve using the type if known
-            if issubclass(known_type, aenum.Enum) and isinstance(obj, str):
+            if issubclass(known_type, enum.Enum) and isinstance(obj, str):
+                return known_type[obj]
+            if issubclass(known_type, attr_enum.ExtensibleAttributeEnum) and isinstance(obj, str):
                 return known_type[obj]
             # If we can, convert from string
             if isinstance(obj, str):
@@ -143,7 +175,16 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
+            serializer = get_serializer(t)
+            if is_dataclass(serializer):
+                # Special case for dataclasses
+                field_values = {}
+                for field in serializer.__dataclass_fields__.values():
+                    if field.name in obj:
+                        field_values[field.name] = from_json(obj[field.name], context, known_type=field.type)
+                deserialized = serializer(**field_values)
+            else:
+                deserialized = serializer.from_json(obj, context=context)
         except Exception as ex:
             if config.Config.get_bool('testing', 'deserialize_exception'):
                 raise
@@ -160,8 +201,11 @@ def loads(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dumps(*args, **kwargs):
-    return json.dumps(*args, default=to_json, indent=2, **kwargs)
+def dumps(*args, readable=False, **kwargs):
+    if readable:
+        return json.dumps(*args, default=to_json, indent=2, **kwargs)
+    else:
+        return json.dumps(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 
 def load(*args, context=None, **kwargs):
@@ -169,14 +213,20 @@ def load(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dump(*args, **kwargs):
-    return json.dump(*args, default=to_json, indent=2, **kwargs)
+def dump(*args, readable=False, **kwargs):
+    if readable:
+        return json.dump(*args, default=to_json, indent=2, **kwargs)
+    else:
+        return json.dump(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 
 def all_properties_to_json(object_with_properties):
+    save_all_fields = config.Config.get_bool('testing', 'serialize_all_fields')
     retdict = {}
     for x, v in object_with_properties.properties():
-        if x.optional and not x.optional_condition(object_with_properties):
+        if not save_all_fields and v == x.default:  # Skip default fields
+            continue
+        if not x.serialize_if(object_with_properties):
             continue
         retdict[x.attr_name] = x.to_json(v)
 

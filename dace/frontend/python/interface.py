@@ -2,8 +2,9 @@
 """ Python interface for DaCe functions. """
 
 import inspect
-from functools import wraps
-from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload
+from typing import (Any, Callable, Deque, Dict, Generator, Optional, TypeVar, Union, overload, Generic, Iterable,
+                    Iterator)
+from typing_extensions import Self
 
 from dace import dtypes
 from dace.dtypes import paramdec
@@ -26,6 +27,9 @@ def program(f: F) -> parser.DaceProgram:
 def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
             constant_functions=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
@@ -36,7 +40,12 @@ def program(f: F,
             *args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
+            distributed_compilation: bool = False,
             constant_functions=False,
+            use_explicit_cf=True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -46,17 +55,39 @@ def program(f: F,
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
+    :param distributed_compilation: Whether to compile the code from rank 0, and broadcast it to all the other ranks.
+                                    If False, every rank performs the compilation. In this case, make sure to check the ``cache`` configuration entry
+                                    such that no caching or clashes can happen between different MPI processes.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
+    :param use_explicit_cf: If True, makes use of explicit control flow constructs.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions)
+    return parser.DaceProgram(f,
+                              args,
+                              kwargs,
+                              auto_optimize,
+                              device,
+                              constant_functions,
+                              recreate_sdfg=recreate_sdfg,
+                              regenerate_code=regenerate_code,
+                              recompile=recompile,
+                              distributed_compilation=distributed_compilation,
+                              use_explicit_cf=use_explicit_cf)
 
 
 function = program
@@ -81,21 +112,32 @@ def method(f: F,
            *args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           recreate_sdfg: bool = True,
+           regenerate_code: bool = True,
+           recompile: bool = True,
            constant_functions=False,
            **kwargs) -> parser.DaceProgram:
-    """ 
-    Entry point to a data-centric program that is a method or  a ``classmethod``. 
+    """
+    Entry point to a data-centric program that is a method or  a ``classmethod``.
 
     :param f: The method to define as the entry point.
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
     :note: If arguments are defined with type hints, the program can be compiled
-           ahead-of-time with ``.compile()``.    
+           ahead-of-time with ``.compile()``.
     """
 
     # Create a wrapper class that can bind to the object instance
@@ -110,7 +152,16 @@ def method(f: F,
             objid = id(obj)
             if objid in self.wrapped:
                 return self.wrapped[objid]
-            prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=True)
+            prog = parser.DaceProgram(f,
+                                      args,
+                                      kwargs,
+                                      auto_optimize,
+                                      device,
+                                      constant_functions,
+                                      recreate_sdfg=recreate_sdfg,
+                                      regenerate_code=regenerate_code,
+                                      recompile=recompile,
+                                      method=True)
             prog.methodobj = obj
             self.wrapped[objid] = prog
             return prog
@@ -118,7 +169,16 @@ def method(f: F,
         def __call__(self, *call_args, **call_kwargs):
             # When called as-is, treat as an unbounded function (dace.program)
             if None not in self.wrapped:
-                prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=False)
+                prog = parser.DaceProgram(f,
+                                          args,
+                                          kwargs,
+                                          auto_optimize,
+                                          device,
+                                          constant_functions,
+                                          recreate_sdfg=recreate_sdfg,
+                                          regenerate_code=regenerate_code,
+                                          recompile=recompile,
+                                          method=False)
                 self.wrapped[None] = prog
             else:
                 prog = self.wrapped[None]
@@ -130,18 +190,20 @@ def method(f: F,
 
 # DaCe functions
 
-
 # Dataflow constructs
-class MapGenerator:
+_MapT = TypeVar('_MapT')
+
+
+class MapGenerator(Generic[_MapT], Iterable[_MapT]):
     """
     An SDFG map generator class that allows applying operators on it, used
     for syntactic sugar.
     """
 
-    def __init__(self, rng: Union[slice, Tuple[slice]]):
+    def __init__(self, rng: Union[slice, tuple[slice, ...]]):
         self.rng = rng
 
-    def __matmul__(self, schedule: dtypes.ScheduleType):
+    def __matmul__(self, schedule: dtypes.ScheduleType) -> Self:
         """
         Syntactic sugar for specifying the schedule of the map.
         This enables controlling the hardware scheduling of the map as follows:
@@ -154,16 +216,33 @@ class MapGenerator:
         # Ignored in Python mode
         return self
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_MapT]:
         return ndloop.ndrange(self.rng)
 
 
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
 
-    @classmethod
-    def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
-        """ 
+    # yapf: disable
+    # Type overloads for proper unpacking based on number of slices
+    @overload
+    def __getitem__(cls, rng: slice) -> MapGenerator[int]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice]) -> MapGenerator[tuple[int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice]) -> MapGenerator[tuple[int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, ...]) -> MapGenerator[tuple[int, ...]]: ...
+    # yapf: enable
+
+    def __getitem__(cls, rng: Union[slice, tuple[slice, ...]]) -> MapGenerator[Any]:
+        """
         Iterates over an N-dimensional region in parallel.
 
         :param rng: A slice or a tuple of multiple slices, representing the
@@ -175,7 +254,7 @@ class MapMetaclass(type):
 
 class map(metaclass=MapMetaclass):
     """ A Map is representation of parallel execution, containing
-        an integer set (Python range) for which its contents are run 
+        an integer set (Python range) for which its contents are run
         concurrently. Written in Python as a loop with the following
         syntax: `for i, j in dace.map[1:20, 0:N]:`.
     """
@@ -185,12 +264,12 @@ class map(metaclass=MapMetaclass):
 class consume:
 
     def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
-        """ 
+        """
         Consume is a scope, like ``Map``, that creates parallel execution.
         Unlike `Map`, it creates a producer-consumer relationship between an
         input stream and the contents. The contents are run by the given number
         of processing elements, who will try to pop elements from the input
-        stream until a given quiescence condition is reached. 
+        stream until a given quiescence condition is reached.
 
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
@@ -228,7 +307,7 @@ class TaskletMetaclass(type):
 
 
 class tasklet(metaclass=TaskletMetaclass):
-    """ 
+    """
     A general procedure that cannot access any memory apart from incoming
     and outgoing memlets. Memlets use the shift operator, an example of
     a tasklet is::
@@ -239,13 +318,14 @@ class tasklet(metaclass=TaskletMetaclass):
             b >> B[i, j]  # Memlet going out of the tasklet to B
 
 
-    The DaCe framework cannot analyze these tasklets for optimization. 
+    The DaCe framework cannot analyze these tasklets for optimization.
     """
 
-    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python):
+    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python, side_effects: bool = False):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
+        self.side_effects = side_effects
 
     def __enter__(self):
         if self.language != dtypes.Language.Python:
@@ -283,11 +363,36 @@ def nounroll(generator):
     yield from generator
 
 
+def inline(expression):
+    """
+    Explicitly annotates that an expression should be evaluated and inlined during parsing.
+
+    :param expression: The expression to evaluate.
+    :note: Only use with stateless and compile-time evaluateable expressions!
+    """
+    return expression
+
+
 def in_program() -> bool:
     """
     Returns True if in a DaCe program parsing context. This function can be used to test whether the current
     code runs inside the ``@dace.program`` parser.
-    
+
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False
+
+
+class named:
+    """
+    Creates a `NamedRegion` with the given label.
+    """
+
+    def __init__(self, name: Optional[str] = None):
+        self.name = name
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return True

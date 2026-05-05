@@ -27,9 +27,9 @@ def extmodtest(A: dace.float32[W, H], result: dace.float32[1]):
 
 
 def test():
-    W.set(12)
-    H.set(12)
-    A = np.random.rand(W.get(), H.get()).astype(np.float32)
+    W = 12
+    H = 12
+    A = np.random.rand(W, H).astype(np.float32)
     res = np.zeros([1], np.float32)
 
     extmodtest(A, res)

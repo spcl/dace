@@ -28,13 +28,13 @@ DaCe under the hood.
     GPU arrays that support the ``__cuda_array_interface__`` interface (e.g., PyTorch, Numba, CuPy) also
     work out of the box.
 
-Internally, DaCe creates a shared library (DLL/SO file) that can readily 
+Internally, DaCe creates a shared library (DLL/SO file) that can readily
 be used in any C ABI compatible language, such as C++ or FORTRAN (See :ref:`integration`).
 
 From here on out, you can optimize (:ref:`interactively <vscode>`, :ref:`programmatically <opt_sdfgapi>`, or
 :ref:`automatically <opt_auto>`), :ref:`instrument <profiling>`, and distribute
-your code. 
+your code.
 
 
-For more examples of how to use DaCe, see the `samples <https://github.com/spcl/dace/tree/master/samples>`_ and 
-`tutorials <https://github.com/spcl/dace/tree/master/tutorials>`_ folders on GitHub.
+For more examples of how to use DaCe, see the `samples <https://github.com/spcl/dace/tree/main/samples>`_ and
+`tutorials <https://github.com/spcl/dace/tree/main/tutorials>`_ folders on GitHub.

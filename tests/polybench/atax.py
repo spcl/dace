@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -30,9 +29,7 @@ sizes = [{
 args = [([M, N], datatype), ([N], datatype), ([N], datatype)]
 
 
-def init_array(A, x, y):
-    n = N.get()
-    m = M.get()
+def init_array(A, x, y, n, m):
     fn = datatype(n)
 
     for i in range(n):
@@ -42,8 +39,8 @@ def init_array(A, x, y):
             A[i, j] = datatype((i + j) % n) / (5 * m)
 
 
-@dace.program(datatype[M, N], datatype[N], datatype[N])
-def atax(A, x, y):
+@dace.program
+def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
     tmp = dace.define_local([M], dtype=datatype)
 
     @dace.map

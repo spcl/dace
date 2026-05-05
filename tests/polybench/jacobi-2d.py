@@ -34,8 +34,8 @@ args = [
 ]
 
 
-@dace.program(datatype[N, N], datatype[N, N])  #, dace.int32, dace.int32)
-def jacobi2d(A, B):  #, N, tsteps):
+@dace.program
+def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
     for t in range(tsteps):
 
         @dace.map
@@ -61,8 +61,7 @@ def jacobi2d(A, B):  #, N, tsteps):
             b = 0.2 * (a1 + a2 + a3 + a4 + a5)
 
 
-def init_array(A, B):  #, N, tsteps):
-    n = N.get()
+def init_array(A, B, n, tsteps):
     for i in range(n):
         for j in range(n):
             A[i, j] = datatype(i * (j + 2) + 2) / n
@@ -73,6 +72,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(0, 'A')], init_array, jacobi2d)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         jacobi2d(*args)

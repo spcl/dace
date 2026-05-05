@@ -5,6 +5,7 @@ from .ast_node import AST_Node
 
 
 class AST_ForLoop(AST_Node):
+
     def __init__(self, context, var, initializer, stmts):
         AST_Node.__init__(self, context)
         self.var = var

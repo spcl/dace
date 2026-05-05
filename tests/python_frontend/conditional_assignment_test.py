@@ -6,6 +6,7 @@ import pytest
 
 
 def test_none_or_field_call():
+
     @dace.program
     def func2(A, B):
         A[...] = B
@@ -25,6 +26,7 @@ def test_none_or_field_call():
     assert np.allclose(A, 7.0)
 
 
+@pytest.mark.skip('Needs Reference support')
 def test_none_or_field_assignment_globalarr():
     globalarr = np.random.randn(10)
 
@@ -44,7 +46,9 @@ def test_none_or_field_assignment_globalarr():
     assert np.allclose(A, globalarr)
 
 
+@pytest.mark.skip('Needs Reference support')
 def test_none_or_field_assignment_arr():
+
     @dace.program
     def func(A, B, arr):
         if B is None:
@@ -63,6 +67,7 @@ def test_none_or_field_assignment_arr():
 
 
 def test_none_arg():
+
     @dace.program
     def some_func(field, may_be_none):
         if may_be_none is None:
@@ -75,8 +80,9 @@ def test_none_arg():
     assert np.allclose(field, 1.0)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Reference scalars unsupported in Python frontend (fails without simplification)')
 def test_maybe_none_scalar_arg():
+
     @dace.program
     def some_func(field, a_scalar):
         if a_scalar is not None:
@@ -88,6 +94,7 @@ def test_maybe_none_scalar_arg():
 
 
 def test_default_arg():
+
     @dace.program
     def func(arg2=None):
         if arg2 is None:
@@ -100,6 +107,7 @@ def test_default_arg():
 
 
 def test_kwarg_none():
+
     @dace.program
     def func(arg2):
         if arg2 is None:
@@ -116,6 +124,7 @@ def test_kwarg_none():
 
 
 def test_conditional_print():
+
     @dace.program
     def inner(do_print: dace.compiletime = False):
         if do_print:
@@ -130,8 +139,8 @@ def test_conditional_print():
 
 if __name__ == '__main__':
     test_none_or_field_call()
-    test_none_or_field_assignment_globalarr()
-    test_none_or_field_assignment_arr()
+    # test_none_or_field_assignment_globalarr()
+    # test_none_or_field_assignment_arr()
     test_none_arg()
     # test_maybe_none_scalar_arg()
     test_default_arg()

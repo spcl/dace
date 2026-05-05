@@ -1,7 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
-from dace.data import _prod
-from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
@@ -24,8 +22,8 @@ class ExpandRedistribute(ExpandTransformation):
 
         inp_symbols = [symbolic.symbol(f"__inp_s{i}") for i in range(len(inp_buffer.shape))]
         out_symbols = [symbolic.symbol(f"__out_s{i}") for i in range(len(out_buffer.shape))]
-        inp_subset = subsets.Indices(inp_symbols)
-        out_subset = subsets.Indices(out_symbols)
+        inp_subset = subsets.Range.from_indices(inp_symbols)
+        out_subset = subsets.Range.from_indices(out_symbols)
         inp_offset = cpp.cpp_offset_expr(inp_buffer, inp_subset)
         out_offset = cpp.cpp_offset_expr(out_buffer, out_subset)
         print(inp_offset)
@@ -77,7 +75,7 @@ class ExpandRedistribute(ExpandTransformation):
             }}
             // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
             // fflush(stdout);
-            
+
         """
 
         tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)

@@ -4,25 +4,25 @@ import numpy as np
 import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
-from dace.data import Scalar
 
 
 # Constructs an SDFG with two consecutive tasklets
 def test_nested_map():
-    print('SDFG consecutive tasklet (nested) test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
     # Construct SDFG
     mysdfg = SDFG('ctasklet_nested_map')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [N], dp.int32)
-    B_ = state.add_array('B', [N], dp.int32)
+    A_ = state.add_access('A')
+    B_ = state.add_access('B')
 
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N/2'))
@@ -42,34 +42,36 @@ def test_nested_map():
     mysdfg.fill_scope_connectors()
     mysdfg.validate()
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
-    print("Difference:", diff)
+    diff = np.linalg.norm(10 * input - output) / n
     assert diff <= 1e-5
 
 
 def test_nested_sdfg():
-    print('SDFG consecutive tasklet (nested SDFG) test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
     # Construct outer SDFG
     mysdfg = SDFG('ctasklet_nested_sdfg')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [N], dp.int32)
-    B_ = state.add_array('B', [N], dp.int32)
+    A_ = state.add_access('A')
+    B_ = state.add_access('B')
 
     # Construct inner SDFG
     nsdfg = dp.SDFG('ctasklet_nested_sdfg_inner')
+    nsdfg.add_array('a', [N], dp.int32)
+    nsdfg.add_array('b', [N], dp.int32)
     nstate = nsdfg.add_state()
-    a = nstate.add_array('a', [N], dp.int32)
-    b = nstate.add_array('b', [N], dp.int32)
+    a = nstate.add_access('a')
+    b = nstate.add_access('b')
     map_entry, map_exit = nstate.add_map('mymap', dict(i='0:N/2'))
     tasklet = nstate.add_tasklet('mytasklet', {'aa'}, {'bb'}, 'bb = 5*aa')
     nstate.add_memlet_path(a, map_entry, tasklet, dst_conn='aa', memlet=Memlet('a[k*N/2+i]'))
@@ -79,23 +81,21 @@ def test_nested_sdfg():
 
     # Add outer edges
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     state.add_memlet_path(A_, omap_entry, nsdfg_node, dst_conn='a', memlet=Memlet('A[0:N]'))
     state.add_memlet_path(nsdfg_node, omap_exit, B_, src_conn='b', memlet=Memlet('B[0:N]'))
 
     mysdfg.validate()
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
-    print("Difference:", diff)
+    diff = np.linalg.norm(10 * input - output) / n
     assert diff <= 1e-5
 
     mysdfg.simplify()
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
-    print("Difference:", diff)
+    diff = np.linalg.norm(10 * input - output) / n
     assert diff <= 1e-5
 
 

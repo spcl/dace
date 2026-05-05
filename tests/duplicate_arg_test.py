@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import dace
 import numpy as np
 
@@ -9,6 +7,7 @@ N = dace.symbol('N')
 
 @dace.program
 def dot(A, B, out):
+
     @dace.map
     def product(i: _[0:N]):
         a << A[i]
@@ -19,8 +18,7 @@ def dot(A, B, out):
 
 def test_dot():
     n = 64
-    N.set(n)
-    A = dace.ndarray([N], dtype=dace.float32)
+    A = dace.ndarray([n], dtype=dace.float32)
     out_AA = dace.scalar(dace.float64)
     A[:] = np.random.rand(n).astype(dace.float32.type)
     out_AA[0] = dace.float64(0)

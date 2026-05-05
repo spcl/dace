@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -21,10 +20,7 @@ args = [
 outputs = [(1, 'B')]
 
 
-def init_array(A, B, alpha):
-    n = N.get()
-    m = M.get()
-
+def init_array(A, B, alpha, n, m):
     alpha[0] = datatype(1.5)
 
     for i in range(m):
@@ -35,10 +31,12 @@ def init_array(A, B, alpha):
             B[i, j] = datatype((n + (i - j)) % n) / n
 
 
-@dace.program(datatype[M, M], datatype[M, N], datatype[1])
-def trmm(A, B, alpha):
+@dace.program
+def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
+
     @dace.mapscope
     def compute(j: _[0:N]):
+
         @dace.mapscope
         def computecol(i: _[0:M]):
             tmp = dace.define_local_scalar(datatype)

@@ -1,8 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
-import numpy as np
 
 N = dace.symbol('N')
 
@@ -15,9 +13,7 @@ sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 args = [([N, N], datatype), ([N], datatype), ([N], datatype)]
 
 
-def init_array(L, x, b):
-    n = N.get()
-
+def init_array(L, x, b, n):
     x[:] = datatype(-999)
     for i in range(0, n, 1):
         b[i] = datatype(i)
@@ -28,8 +24,8 @@ def init_array(L, x, b):
             L[i, j] = datatype(0)
 
 
-@dace.program(datatype[N, N], datatype[N], datatype[N])
-def trisolv(L, x, b):
+@dace.program
+def trisolv(L: datatype[N, N], x: datatype[N], b: datatype[N]):
     for i in range(0, N, 1):
 
         @dace.tasklet

@@ -3,13 +3,12 @@
     AST to SVE: This module is responsible for converting an AST into SVE code.
 """
 
-from dace.frontend.python.wrappers import stream
 import dace
 import ast
 from dace.codegen import cppunparse
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from typing import IO, Tuple, Union
-from dace import registry, symbolic, dtypes
+from dace.sdfg import nodes, SDFG
+from typing import IO
+from dace import dtypes
 from dace.codegen.targets.sve import preprocess as preprocess
 from dace.codegen.targets.sve import util as util
 import dace.frontend.python.astutils as astutils
@@ -23,6 +22,7 @@ from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedT
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
+
     def __init__(self,
                  sdfg: SDFG,
                  dfg,
@@ -156,7 +156,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
                 # Expecting a vector: duplicate the scalar
-                if expect.type in [np.bool, np.bool_, bool]:
+                if expect.type in [np.bool_, bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
                     #self.write(f'svptrue_{suffix}()')
@@ -345,7 +345,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
             store_args = '{}, {}'.format(
                 self.pred_name,
-                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen._frame),
+                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
             )
 
             red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + '_x'

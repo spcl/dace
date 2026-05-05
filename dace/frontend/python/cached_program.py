@@ -3,11 +3,11 @@
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Optional, Set
 
 import dace
 from dace import config
-from dace import data as dt
+from dace import data as dt, hooks
 from dace.sdfg.sdfg import SDFG
 
 # Type hints
@@ -19,6 +19,7 @@ SpecifiedArgs = Set[str]
 
 # Adapted from https://stackoverflow.com/a/2437645/6489142
 class LimitedSizeDict(OrderedDict):
+
     def __init__(self, *args, **kwds):
         self.size_limit = kwds.pop("size_limit", None)
         OrderedDict.__init__(self, *args, **kwds)
@@ -41,12 +42,14 @@ def _make_hashable(obj):
     except TypeError:
         return repr(obj)
 
+
 def _make_sortable(obj):
     try:
         obj < obj
         return obj
     except TypeError:
         return repr(obj)
+
 
 @dataclass
 class ProgramCacheKey:
@@ -68,6 +71,7 @@ class ProgramCacheKey:
             tuple((k, str(v.to_json())) for k, v in sorted(closure_types.items())),
             tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
             tuple(sorted(_make_sortable(a) for a in specified_args)),
+            tuple(id(hook) for hook in hooks._SDFG_CALL_HOOKS),
         )
 
     def __hash__(self) -> int:
@@ -88,10 +92,11 @@ class ProgramCacheEntry:
 
 
 class DaceProgramCache:
+
     def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
-        """ 
+        """
         Initializes a DaCe program cache.
-        
+
         :param evaluate: A callback that can evaluate constants at call time.
         :param size: The cache size (if not given, uses the default value from
                      the configuration).

@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 # This module is derived from astunparse: https://github.com/simonpercivall/astunparse
 ##########################################################################
 ### astunparse LICENSES
@@ -69,22 +69,19 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from __future__ import print_function, unicode_literals
 from functools import lru_cache
 import inspect
-import six
 import sys
 import ast
 import numpy as np
-import os
-import tokenize
+import warnings
 
 import sympy
 import dace
 from numbers import Number
-from six import StringIO
+from io import StringIO
 from dace import dtypes
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -93,14 +90,6 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
-
-_py2c_typeconversion = {
-    "uint": dace.dtypes.typeclass(np.uint32),
-    "int": dace.dtypes.typeclass(int),
-    "float": dace.dtypes.typeclass(float),
-    "float64": dace.dtypes.typeclass(np.float64),
-    "str": dace.dtypes.pointer(dace.dtypes.int8)
-}
 
 
 def interleave(inter, f, seq, **kwargs):
@@ -120,6 +109,7 @@ def interleave(inter, f, seq, **kwargs):
 
 
 class LocalScheme(object):
+
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError('Abstract class')
 
@@ -131,6 +121,7 @@ class LocalScheme(object):
 
 
 class CPPLocals(LocalScheme):
+
     def __init__(self):
         # Maps local name to a 3-tuple of line number, scope (measured in indentation) and type
         self.locals = {}
@@ -163,6 +154,7 @@ class CPPUnparser:
     """Methods in this class recursively traverse an AST and
     output C++ source code for the abstract syntax; original formatting
     is disregarded. """
+
     def __init__(self,
                  tree,
                  depth,
@@ -209,7 +201,7 @@ class CPPUnparser:
 
     def write(self, text):
         """Append a piece of text to the current line"""
-        self.f.write(six.text_type(text))
+        self.f.write(str(text))
 
     def enter(self):
         """Print '{', and increase the indentation."""
@@ -325,13 +317,7 @@ class CPPUnparser:
                             raise RuntimeError(f"Failed to infer type of \"{target.id}\".")
 
                         self.locals.define(target.id, t.lineno, self._indent, inferred_type)
-                        if self.language == dace.dtypes.Language.OpenCL and (inferred_type is not None
-                                                                             and inferred_type.veclen > 1):
-                            # if the veclen is greater than one, this should be defined with a vector data type
-                            self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
-                                                      inferred_type.veclen))
-                        else:
-                            self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
                         self.locals.define(target.id, t.lineno, self._indent)
                         self.write("auto ")
@@ -536,7 +522,11 @@ class CPPUnparser:
             if result.find("b'") >= 0:
                 self.write(result)
             else:
-                self.write(result.replace('\'', '\"'))
+                towrite = result
+                if result.startswith("'"):
+                    towrite = result[1:-1].replace('"', '\\"')
+                    towrite = f'"{towrite}"'
+                self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
@@ -570,7 +560,7 @@ class CPPUnparser:
             self.write('/* async */ ')
 
         if getattr(t, "returns", False):
-            if isinstance(t.returns, ast.NameConstant):
+            if isinstance(t.returns, ast.Constant):
                 if t.returns.value is None:
                     self.write('void')
                 else:
@@ -718,22 +708,34 @@ class CPPUnparser:
         else:
             self.write(t.id)
 
-    def _NameConstant(self, t):
-        self.write(_py2c_nameconst[t.value])
-
     def _Repr(self, t):
         raise NotImplementedError('Invalid C++')
 
     def _Num(self, t):
-        repr_n = repr(t.n)
-        # For complex values, use DTYPE_TO_TYPECLASS dictionary
-        if isinstance(t.n, complex):
-            dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
+        t_n = t.value
+        repr_n = str(t_n)
+        # For complex values, use ``dtype_to_typeclass``
+        if isinstance(t_n, complex):
+            dtype = dtypes.dtype_to_typeclass(complex)
+            repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
-        if repr_n.endswith("j"):
-            self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
-        else:
-            self.write(repr_n.replace("inf", INFSTR))
+        # Handle large integer values
+        if isinstance(t_n, int):
+            bits = t_n.bit_length()
+            if bits == 32:  # Integer, potentially unsigned
+                if t_n >= 0:  # unsigned
+                    repr_n += 'U'
+                else:  # signed, 64-bit
+                    repr_n += 'LL'
+            elif 32 < bits <= 63:
+                repr_n += 'LL'
+            elif bits == 64 and t_n >= 0:
+                repr_n += 'ULL'
+            elif bits >= 64:
+                warnings.warn(f'Value wider than 64 bits encountered in expression ({t_n}), emitting as-is')
+
+        repr_n = repr_n.replace("inf", INFSTR)
+        self.write(repr_n)
 
     def _List(self, t):
         raise NotImplementedError('Invalid C++')
@@ -828,8 +830,16 @@ class CPPUnparser:
         self.write(")")
 
     unop = {"Invert": "~", "Not": "!", "UAdd": "+", "USub": "-"}
+    unop_lambda = {'Invert': (lambda x: ~x), 'Not': (lambda x: not x), 'UAdd': (lambda x: +x), 'USub': (lambda x: -x)}
 
     def _UnaryOp(self, t):
+        # Dispatch constants after applying the operation
+        if isinstance(t.operand, ast.Constant):
+            newval = self.unop_lambda[t.op.__class__.__name__](t.operand.value)
+            newnode = ast.Constant(value=newval)
+            self.dispatch(newnode)
+            return
+
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
         self.write(" ")
@@ -864,13 +874,13 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (ast.Num, ast.Constant, ast.UnaryOp)):
+            if isinstance(t.right, (ast.Constant, ast.UnaryOp)):
                 power = None
-                if isinstance(t.right, (ast.Num, ast.Constant)):
-                    power = t.right.n
+                if isinstance(t.right, ast.Constant):
+                    power = t.right.value
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, (ast.Num, ast.Constant)):
-                        power = -t.right.operand.n
+                    if isinstance(t.right.operand, ast.Constant):
+                        power = -(t.right.operand.value)
 
                 if power is not None and int(power) == power:
                     negative = power < 0
@@ -950,8 +960,9 @@ class CPPUnparser:
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
-        if (isinstance(t.value, (ast.Num, ast.Constant)) and isinstance(t.value.n, int)):
+        if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
             self.write(" ")
+
         if (isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
@@ -1005,11 +1016,6 @@ class CPPUnparser:
             else:
                 comma = True
             self.dispatch(e)
-        if sys.version_info[:2] < (3, 5):
-            if t.starargs:
-                raise NotImplementedError('Invalid C++')
-            if t.kwargs:
-                raise NotImplementedError('Invalid C++')
 
         self.write(")")
 
@@ -1132,7 +1138,11 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif isinstance(code, sympy.Basic):
         from dace import symbolic
-        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
+        return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
+                          expr_semicolon,
+                          defined_symbols=defined_symbols)
+    elif isinstance(code, int):
+        return str(code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1150,6 +1160,7 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
+
 
 @lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):

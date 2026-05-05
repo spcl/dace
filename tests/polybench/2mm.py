@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 try:
     import polybench
@@ -46,12 +45,7 @@ args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NL], datatype), ([NI, 
         ([1], datatype)]
 
 
-def init_array(A, B, C, D, alpha, beta):
-    ni = NI.get()
-    nj = NJ.get()
-    nk = NK.get()
-    nl = NL.get()
-
+def init_array(A, B, C, D, alpha, beta, ni, nj, nk, nl):
     alpha[0] = datatype(1.5)
     beta[0] = datatype(1.2)
 
@@ -69,8 +63,9 @@ def init_array(A, B, C, D, alpha, beta):
             D[i, j] = datatype(i * (j + 2) % nk) / nk
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NL], datatype[NI, NL], datatype[1], datatype[1])
-def k2mm(A, B, C, D, alpha, beta):
+@dace.program
+def k2mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NL], D: datatype[NI, NL], alpha: datatype[1],
+         beta: datatype[1]):
     tmp = dace.define_local([NI, NJ], dtype=datatype)
 
     @dace.map
@@ -106,6 +101,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(3, 'D')], init_array, k2mm)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         k2mm(*args)

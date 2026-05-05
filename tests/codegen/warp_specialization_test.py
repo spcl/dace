@@ -8,6 +8,7 @@ import numpy as np
 @pytest.mark.gpu
 @pytest.mark.parametrize('block_size', [None, '64,8,1'])
 def test_thread_specialization_noncontiguous_blocks(block_size):
+
     @dace.program
     def thread_specialization(A: dace.float64[128, 64]):
         for i in dace.map[0:128]:

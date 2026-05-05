@@ -1,21 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union
 
 import numpy as np
-from util import expand_maps, expand_reduce, fusion
 
 import dace
-import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.dataflow import ReduceExpansion
 from dace.transformation.subgraph import SubgraphFusion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
-N.set(20)
-M.set(30)
 
 
 # TRUE
@@ -86,12 +78,12 @@ def test_p1():
     sdfg.simplify()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
-    A = np.random.rand(M.get(), 2).astype(np.float64)
+    A = np.random.rand(30, 2).astype(np.float64)
     A1 = A.copy()
     A2 = A.copy()
 
     csdfg = sdfg.compile()
-    csdfg(A=A1, N=N, M=M)
+    csdfg(A=A1, N=20, M=30)
     del csdfg
 
     subgraph = SubgraphView(state, state.nodes())
@@ -101,7 +93,7 @@ def test_p1():
     sf.apply(sdfg)
 
     csdfg = sdfg.compile()
-    csdfg(A=A2, M=M)
+    csdfg(A=A2, M=30)
     del csdfg
 
     assert np.allclose(A1, A2)

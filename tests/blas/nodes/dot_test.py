@@ -9,12 +9,7 @@ import scipy
 import dace
 from dace.memlet import Memlet
 
-from dace.fpga_testing import xilinx_test, intel_fpga_test
 import dace.libraries.blas as blas
-
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
-from dace.config import set_temporary
 
 
 def pure_graph(implementation, dtype, veclen):
@@ -48,23 +43,9 @@ def pure_graph(implementation, dtype, veclen):
     return sdfg
 
 
-def fpga_graph(implementation, dtype, veclen):
-    sdfg = pure_graph(implementation, dtype, veclen)
-    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
-    return sdfg
-
-
 def run_test(target, size, vector_length):
     if target == "pure":
         sdfg = pure_graph("pure", dace.float32, vector_length)
-    elif target == "intel_fpga":
-        dace.Config.set("compiler", "fpga", "vendor", value="intel_fpga")
-        sdfg = fpga_graph("FPGA_Accumulate", dace.float32, vector_length)
-    elif target == "xilinx":
-        dace.Config.set("compiler", "fpga", "vendor", value="xilinx")
-        sdfg = fpga_graph("FPGA_PartialSums", dace.float32, vector_length)
     else:
         print(f"Unsupported target: {target}")
         exit(-1)
@@ -86,29 +67,14 @@ def run_test(target, size, vector_length):
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        raise ValueError("Unexpected result returned from dot product: " "got {}, expected {}".format(result[0], ref))
+        raise ValueError("Unexpected result returned from dot product: "
+                         "got {}, expected {}".format(result[0], ref))
 
     return sdfg
 
 
 def test_dot_pure():
-    return run_test("pure", 64, 1)
-
-
-@xilinx_test()
-def test_dot_xilinx():
-    return run_test("xilinx", 64, 16)
-
-
-@xilinx_test()
-def test_dot_xilinx_decoupled():
-    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        return run_test("xilinx", 64, 16)
-
-
-@intel_fpga_test()
-def test_dot_intel_fpga():
-    return run_test("intel_fpga", 64, 16)
+    assert isinstance(run_test("pure", 64, 1), dace.SDFG)
 
 
 if __name__ == "__main__":
@@ -119,4 +85,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     size = args.N
 
-    run_test(target, size, vector_length)
+    run_test(args.target, size, args.vector_length)

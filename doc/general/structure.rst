@@ -11,7 +11,7 @@ DaCe is divided into the following subfolders:
         * ``cli``: :doc:`../ide/cli` that can view, compile, and profile SDFGs
     * Intermediate representation:
         * ``sdfg``: The :ref:`sdfg-api`
-        
+
           * ``sdfg/graph.py``: General graph API for manipulation and traversal of nodes, edges, and their contents
           * ``sdfg/{nodes, scope, sdfg, state}.py``: Interfaces for specific SDFG components
           * ``sdfg/validation.py``: Functions that validate the correctness of SDFGs. See :ref:`sdfg-validation`
@@ -34,7 +34,7 @@ DaCe is divided into the following subfolders:
         * ``library.py``: Library interface
         * ``libraries``: Built-in libraries
     * Configuration
-        * ``config.py``: Configuration-related classes. See :ref:`config` 
+        * ``config.py``: Configuration-related classes. See :ref:`config`
         * ``config_schema.yml``: Configuration specification file (schema) with defaults and documentation
     * Miscellaneous
         * ``serialize.py`` and ``registry.py``: Functionality that supports serialization and extensibility. See :ref:`properties`

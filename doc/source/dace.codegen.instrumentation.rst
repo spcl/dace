@@ -4,10 +4,10 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
-dace.codegen.instrumentation.fpga module
-----------------------------------------
+dace.codegen.instrumentation.gpu_tx_markers module
+-----------------------------------------------
 
-.. automodule:: dace.codegen.instrumentation.fpga
+.. automodule:: dace.codegen.instrumentation.gpu_tx_markers
    :members:
    :undoc-members:
    :show-inheritance:

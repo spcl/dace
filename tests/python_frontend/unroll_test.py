@@ -19,6 +19,7 @@ def test_native_unroll():
 
 def test_dace_unroll():
     """ Tests that unrolling functionality works within DaCe programs. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -36,6 +37,7 @@ def test_dace_unroll():
 
 def test_dace_unroll_multistatement():
     """ Tests unrolling functionality with multiple statements. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -55,6 +57,7 @@ def test_dace_unroll_multistatement():
 
 def test_dace_unroll_break():
     """ Tests unrolling functionality with control flow statements. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -73,6 +76,7 @@ def test_dace_unroll_generator():
     Tests that dace does not unroll arbitrary generators by default, but does
     so if explicitly defined with dace.unroll.
     """
+
     def mygenerator():
         for i in range(5):
             yield i * i
@@ -99,6 +103,7 @@ def test_dace_unroll_generator():
 
 def test_auto_unroll_tuple():
     """ Tests that unrolling functionality works automatically on tuples. """
+
     @dace.program
     def tounroll(A: dace.float64[1], B: dace.float64[2], C: dace.float64[1]):
         for arr in (A, B[1], C, B[0]):
@@ -107,7 +112,8 @@ def test_auto_unroll_tuple():
     a = np.zeros([1])
     b = np.zeros([2])
     c = np.zeros([1])
-    tounroll(a, b, c)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, b, c)
     assert a[0] == 5
     assert b[0] == 5
     assert b[1] == 5
@@ -118,6 +124,7 @@ def test_auto_unroll_dictionary():
     """
     Tests that unrolling functionality works automatically on dictionaries.
     """
+
     @dace.program
     def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d:
@@ -125,7 +132,8 @@ def test_auto_unroll_dictionary():
 
     a = np.zeros([1])
     d = {1: 2, 3: 4}
-    tounroll(a, d)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, d)
     assert a[0] == 4
 
 
@@ -133,6 +141,7 @@ def test_auto_unroll_dictionary_method():
     """
     Tests that unrolling functionality works automatically on dict methods.
     """
+
     @dace.program
     def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d.values():
@@ -140,12 +149,14 @@ def test_auto_unroll_dictionary_method():
 
     a = np.zeros([1])
     d = {1: 2, 3: 4}
-    tounroll(a, d)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, d)
     assert a[0] == 6
 
 
 # Raise error if ndarray is the generator and dace.unroll was not specified
 def test_ndarray_generator():
+
     @dace.program
     def tounroll(A: dace.float64[1], values: dace.float64[5]):
         for val in values:
@@ -159,14 +170,64 @@ def test_ndarray_generator():
 
 
 def test_tuple_elements_enumerate():
+
     @dace.program
     def tounroll(A: dace.float64[3]):
         for i, val in enumerate([1, 2, 3]):
             A[i] += val
 
     a = np.zeros([3])
-    tounroll(a)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a)
     assert np.allclose(a, np.array([1, 2, 3]))
+
+
+def test_list_global_enumerate():
+    tracer_variables = ["vapor", "rain", "nope"]
+
+    @dace.program
+    def enumerate_parsing(
+            A,
+            tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    with pytest.warns(match='implicitly unrolled'):
+        enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
+
+
+def test_tuple_global_enumerate():
+    tracer_variables = ("vapor", "rain", "nope")
+
+    @dace.program
+    def enumerate_parsing(
+            A,
+            tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    with pytest.warns(match='implicitly unrolled'):
+        enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
 
 
 def test_tuple_elements_zip():
@@ -179,7 +240,8 @@ def test_tuple_elements_zip():
             A += 2 * a + b
 
     a = np.zeros([1])
-    tounroll(a)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a)
     assert np.allclose(a, (2 + 3 + 4) * 2 + (4 + 5 + 6))
 
 
@@ -213,8 +275,11 @@ def test_unroll_threshold(thres):
 
 
 def test_deepcopy():
+
     class Nocopy(SDFGConvertible):
+
         def __sdfg__(self, *args, **kwargs):
+
             @dace
             def bla(a: dace.float64[20]):
                 return a
@@ -244,6 +309,7 @@ def test_deepcopy():
 
 
 class Wrapper:
+
     def __init__(self) -> None:
         self._an_array = np.ones((12), np.float64)
 
@@ -267,12 +333,14 @@ def test_arrays_keys_closure():
         for arr in d.keys():
             d[arr].arr += 1
 
-    prog()
+    with pytest.warns(match='implicitly unrolled'):
+        prog()
     assert np.allclose(d['0a0'].arr, expected['0a0'])
     assert np.allclose(d['1b1'].arr, expected['1b1'])
 
 
 def test_arrays_keys_daceconstant():
+
     @dace.program
     def prog(d: dace.compiletime):
         for arr in d.keys():
@@ -281,7 +349,8 @@ def test_arrays_keys_daceconstant():
     dd = {'0a0': Wrapper(), '1b1': Wrapper()}
     expected = {'0a0': dd['0a0'].arr + 1, '1b1': dd['1b1'].arr + 1}
 
-    prog(dd)
+    with pytest.warns(match='implicitly unrolled'):
+        prog(dd)
     assert np.allclose(dd['0a0'].arr, expected['0a0'])
     assert np.allclose(dd['1b1'].arr, expected['1b1'])
 
@@ -295,12 +364,14 @@ def test_arrays_values():
         for arr in d.values():
             arr += 1
 
-    prog()
+    with pytest.warns(match='implicitly unrolled'):
+        prog()
     assert np.allclose(d[0], expected[0])
     assert np.allclose(d[1], expected[1])
 
 
 def test_objects():
+
     @dace.program
     def nested(arr, scal):
         arr[:] = arr[:] * scal
@@ -313,7 +384,8 @@ def test_objects():
     wrapped_arrays = {"0": Wrapper(), "1": Wrapper()}
     scal = 2
 
-    program(wrapped_arrays, scal)
+    with pytest.warns(match='implicitly unrolled'):
+        program(wrapped_arrays, scal)
 
 
 def test_nounroll():
