@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -1611,7 +1611,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                      inaccurate, requires ``tqdm``). If None, prints out
                      progress if over 5 seconds have passed. If False, never
                      shows progress bar.
-    :param multistate: Include
+    :param multistate: If True, include multi-state inlining.
     :return: The total number of SDFGs inlined.
     """
     # Avoid import loops
