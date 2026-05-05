@@ -53,8 +53,7 @@ If you use DaCe, cite us:
    setup/integration
    ide/cli
    general/glossary
-
-.. general/faq
+   general/faq
 
 .. toctree::
    :caption: Developer Guide
@@ -68,6 +67,11 @@ If you use DaCe, cite us:
    codegen/codegen
    extensions/extensions
    extensions/libraries
+   extensions/symbolic
+   extensions/frontend
+   extensions/sdfgconvertible
+   extensions/backend
+   extensions/instrumentation
    general/errors
 
 .. toctree::

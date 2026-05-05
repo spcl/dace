@@ -49,7 +49,5 @@ The following subsections provide more information on the different types of opt
     blas
     vscode
     gpu
-
-
-.. interactive
-.. guidelines
+    interactive
+    guidelines
