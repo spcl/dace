@@ -613,7 +613,7 @@ def test_create_nested_map_scope():
 def test_double_map_with_for_loop():
     stree = tn.ScheduleTreeRoot(
         name="tester",
-        containers={'A': data.Array(dace.float64, [20])},
+        containers={'A': data.Array(dace.float64, [60])},
         children=[
             tn.MapScope(
                 node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
