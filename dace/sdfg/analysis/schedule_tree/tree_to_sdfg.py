@@ -134,10 +134,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def _parent_sdfg_with_array(self, name: str, sdfg: SDFG) -> SDFG:
         """Find the closest parent SDFG containing an array with the given name."""
-        parent_sdfg = sdfg.parent.parent
+        parent_sdfg = sdfg.parent.parent_sdfg
         sdfg_counter = 1
         while name not in parent_sdfg.arrays and sdfg_counter < self._max_nested_sdfg:
-            parent_sdfg = parent_sdfg.parent.parent
+            parent_sdfg = parent_sdfg.parent.parent_sdfg
             assert isinstance(parent_sdfg, SDFG)
             sdfg_counter += 1
         assert sdfg_counter < self._max_nested_sdfg, f"Array '{name}' not found in any parent of SDFG '{sdfg.name}'."
