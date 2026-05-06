@@ -8,6 +8,12 @@ DaCe program. It is derived from an :ref:`SDFG <sdfg>` and represents the same c
 but in a form that resembles structured imperative code rather than a graph of states and
 dataflow multigraphs.
 
+.. warning::
+    The Schedule Tree representation is currently under development. Some of the tree node
+    types may change between versions, and conversion from schedule tree to SDFG is
+    experimental.
+
+
 A schedule tree is composed of nested ``ScheduleTreeScope`` blocks (loops, branches,
 maps, consume scopes, ...) and leaf ``ScheduleTreeNode`` statements (tasklets, copies,
 library calls, symbol assignments, views, reference sets, ...). The root of the entire
