@@ -8,6 +8,7 @@ from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
 import numpy as np
 import pytest
+from typing import List, Tuple
 
 
 @dataclass
@@ -26,7 +27,7 @@ def freefunction(A):
 
 
 def test_autodetect_function():
-    """ 
+    """
     Tests auto-detection of parsable free functions in the Python frontend.
     """
 
@@ -96,7 +97,8 @@ def test_function_that_needs_replacement():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError):
-            notworking(A)
+            with pytest.warns(match="Automatically creating callback"):
+                notworking(A)
 
 
 @pytest.mark.parametrize('typed_callbacks', (False, True))
@@ -114,9 +116,12 @@ def test_nested_autoparse(typed_callbacks):
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=typed_callbacks):
         if typed_callbacks:
             with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
-                notworking2(A)
+                with pytest.warns(match="Automatically creating callback"):
+                    notworking2(A)
         else:
-            result = notworking2(A)
+            with pytest.warns(match="Automatically creating callback"):
+                with pytest.warns(match="Cannot infer return type"):
+                    result = notworking2(A)
             assert result is True
 
 
@@ -135,7 +140,8 @@ def test_nested_recursion_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='nested_a'):
-            recursive_autoparse(A)
+            with pytest.warns(match="due to recursion"):
+                recursive_autoparse(A)
 
 
 def test_nested_recursion2_fail():
@@ -156,7 +162,8 @@ def test_nested_recursion2_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='nested_'):
-            recursive_autoparse(A)
+            with pytest.warns(match="due to recursion"):
+                recursive_autoparse(A)
 
 
 def test_nested_autoparse_dec_fail():
@@ -175,7 +182,8 @@ def test_nested_autoparse_dec_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='notworking_nested'):
-            notworking3(A)
+            with pytest.warns(match="Automatically creating callback"):
+                notworking3(A)
 
 
 def freefunction2(A):
@@ -183,7 +191,7 @@ def freefunction2(A):
 
 
 def test_autodetect_function_in_for():
-    """ 
+    """
     Tests auto-detection of parsable free functions in a for loop.
     """
 
@@ -203,7 +211,7 @@ def test_error_handling():
     class NotConvertible(SDFGConvertible):
 
         def __call__(self, a):
-            import numpy as np
+            import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
             print('A very pythonic method', a)
 
         def __sdfg__(self, *args, **kwargs):
@@ -243,7 +251,7 @@ def test_nested_class_error_handling():
 
         @not_convertible
         def __call__(self, a):
-            import numpy as np
+            import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
             print('A very pythonic method', a)
 
     A = np.random.rand(20)
@@ -276,6 +284,61 @@ def test_loop_unrolling():
     assert np.allclose(A, expected)
 
 
+def test_type_hints_in_nested_call():
+    """
+    Tests that type hints are correctly propagated to nested functions, ignoring
+    existing type hints if the nested function is not decorated.
+    """
+
+    def nested(a: int, b: List[float], c) -> Tuple[float, float]:
+        return np.sum(b) + a, c
+
+    @dace
+    def outer(a: dace.float64[20], result: dace.float64[2]):
+        ret1, ret2 = nested(5, a, 3.0)
+        result[0] = ret1
+        result[1] = ret2
+
+    A = np.random.rand(20)
+    res = np.zeros(2)
+    ref = np.copy(res)
+    ref[0] = np.sum(A) + 5
+    ref[1] = 3.0
+    outer(A, res)
+    assert np.allclose(res, ref)
+
+
+@pytest.mark.parametrize('decorated', (False, True))
+def test_explicit_type_hints_in_nested_call(decorated):
+    """
+    Tests that type hints are not ignored if the nested function is decorated.
+    """
+
+    if decorated:
+
+        @dace
+        def nested(a: dace.float64[20], b: dace.float64[16]):
+            b += a
+    else:
+        # This function is not decorated, so the type hints should be ignored
+        def nested(a: dace.float64[20], b: dace.float64[16]):
+            b += a
+
+    @dace
+    def outer(a: dace.float64[20]):
+        nested(a, a)
+
+    A = np.random.rand(20)
+    a_ref = A * 2
+
+    if decorated:
+        with pytest.raises(IndexError):
+            outer(A)
+    else:
+        outer(A)
+        assert np.allclose(A, a_ref)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -291,3 +354,6 @@ if __name__ == '__main__':
     test_error_handling()
     test_nested_class_error_handling()
     test_loop_unrolling()
+    test_type_hints_in_nested_call()
+    test_explicit_type_hints_in_nested_call(False)
+    test_explicit_type_hints_in_nested_call(True)

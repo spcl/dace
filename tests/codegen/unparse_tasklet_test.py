@@ -1,9 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 def test_integer_power():
+
     @dace.program
     def powint(A: dace.float64[20], B: dace.float64[20]):
         for i in dace.map[0:20]:
@@ -20,6 +22,7 @@ def test_integer_power():
 
 
 def test_integer_power_constant():
+
     @dace.program
     def powint(A: dace.float64[20]):
         for i in dace.map[0:20]:
@@ -35,6 +38,7 @@ def test_integer_power_constant():
 
 
 def test_equality():
+
     @dace.program
     def nested(a, b, c):
         pass
@@ -61,8 +65,44 @@ def test_pow_with_implicit_casting():
     assert ref.dtype == val.dtype
 
 
+@pytest.mark.gpu
+def test_tasklets_with_same_local_name():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [4], dace.float32, dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.ScheduleType.GPU_Device)
+    t1 = state.add_tasklet(
+        'sgn', {'a'}, {'b'}, '''
+mylocal: dace.float32
+if a > 0:
+    mylocal = 1
+else:
+    mylocal = -1
+b = mylocal
+    ''')
+    t2 = state.add_tasklet(
+        'sgn', {'a'}, {'b'}, '''
+mylocal: dace.float32
+if a > 0:
+    mylocal = 1
+else:
+    mylocal = -1
+b = mylocal
+    ''')
+
+    a = state.add_read('A')
+    b = state.add_write('A')
+    state.add_memlet_path(a, me, t1, dst_conn='a', memlet=dace.Memlet('A[0]'))
+    state.add_memlet_path(a, me, t2, dst_conn='a', memlet=dace.Memlet('A[1]'))
+    state.add_memlet_path(t1, mx, b, src_conn='b', memlet=dace.Memlet('A[2]'))
+    state.add_memlet_path(t2, mx, b, src_conn='b', memlet=dace.Memlet('A[3]'))
+
+    sdfg.compile()
+
+
 if __name__ == '__main__':
     test_integer_power()
     test_integer_power_constant()
     test_equality()
     test_pow_with_implicit_casting()
+    test_tasklets_with_same_local_name()

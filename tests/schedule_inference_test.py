@@ -4,6 +4,7 @@ from dace.sdfg import infer_types
 
 
 def test_schedule_inference_simple():
+
     @dace.program
     def nested_call(A: dace.float64[3, 3]):
         return A + 1

@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 
 try:
@@ -52,13 +51,7 @@ sizes = [{
 args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype), ([NM, NL], datatype), ([NI, NL], datatype)]
 
 
-def init_array(A, B, C, D, G):
-    ni = NI.get()
-    nj = NJ.get()
-    nk = NK.get()
-    nl = NL.get()
-    nm = NM.get()
-
+def init_array(A, B, C, D, G, ni, nj, nk, nl, nm):
     for i in range(ni):
         for j in range(nk):
             A[i, j] = datatype((i * j + 1) % ni) / (5 * ni)
@@ -73,8 +66,8 @@ def init_array(A, B, C, D, G):
             D[i, j] = datatype((i * (j + 2) + 2) % nk) / (5 * nk)
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NM], datatype[NM, NL], datatype[NI, NL])
-def k3mm(A, B, C, D, G):
+@dace.program
+def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datatype[NM, NL], G: datatype[NI, NL]):
     E = dace.define_local([NI, NJ], dtype=datatype)
     F = dace.define_local([NJ, NL], dtype=datatype)
 
@@ -104,6 +97,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         k3mm(*args)

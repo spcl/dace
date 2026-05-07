@@ -38,6 +38,7 @@ donothing = dace.symbol('donothing', dace.callback(None))
 
 @dace.program
 def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
+
     @dace.map(_[0:2])
     def index(i):
         a << A[i]
@@ -51,11 +52,8 @@ def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
 arrfunc = dace.symbol('arrfunc', dtype=dace.callback(None, dace.float64[M, N, O], dace.float64[M, N, O]))
 
 
-@dace.program(
-    dace.float64[M, N, O],
-    dace.float64[M, N, O],
-)
-def callback_with_arrays(out_arr, in_arr):
+@dace.program
+def callback_with_arrays(out_arr: dace.float64[M, N, O], in_arr: dace.float64[M, N, O]):
     with dace.tasklet:
         out << out_arr
         inp << in_arr

@@ -133,7 +133,7 @@
             result.x = a * b.x;                                      \
             result.y = a * b.y;                                      \
             return result;                                             \
-        }                                     
+        }
 
 #define DEFINE_EXTTYPE3(T, NAME)                                       \
     struct exttype_##T##_##3 : NAME##3 {                               \

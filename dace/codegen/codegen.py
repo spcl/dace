@@ -1,22 +1,23 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import os
-from typing import List, Set
+import json
+from typing import List
 
 import dace
 from dace import dtypes
 from dace import data
+from dace import config
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
+from dace.codegen import exceptions as exc
 from dace.config import Config
 from dace.sdfg import infer_types
 
-# Import CPU code generator. TODO: Remove when refactored
-from dace.codegen.targets import cpp, cpu
-
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
+from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -58,6 +59,7 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
+            from dace.codegen.targets import cpp
             dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
             allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
@@ -95,7 +97,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
-            frame.targets.add(disp.get_state_dispatcher(parent, node))
+            frame.targets.add(disp.get_state_dispatcher(node.sdfg, node))
         elif isinstance(node, dace.nodes.EntryNode):
             frame.targets.add(disp.get_scope_dispatcher(node.schedule))
         elif isinstance(node, dace.nodes.Node):
@@ -149,7 +151,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -157,7 +159,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
-    from dace.codegen.targets.target import TargetCodeGenerator  # Avoid import loop
+    from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness
     if validate:
@@ -165,6 +167,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
+        import difflib
         import filecmp
         import shutil
         import tempfile
@@ -172,12 +175,26 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
             sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
             sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
-            print('Testing SDFG serialization...')
-            if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
-                shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
-                shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
-                raise RuntimeError('SDFG serialization failed - files do not match')
 
+            if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
+                with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
+                    with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
+                        data1 = json.dumps(json.load(f1), indent=2).splitlines(keepends=True)
+                        data2 = json.dumps(json.load(f2), indent=2).splitlines(keepends=True)
+                        diff = difflib.unified_diff(data1,
+                                                    data2,
+                                                    fromfile='test.sdfg  (first save)',
+                                                    tofile='test2.sdfg (after roundtrip)')
+                diff = ''.join(diff)
+                shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
+                shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
+                raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
+
+    if config.Config.get_bool('optimizer', 'detect_control_flow'):
+        # NOTE: This should likely be done either earlier in the future, or changed entirely in modular codegen.
+        # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
+        # where explicit control flow was not used, continue to work as expected.
+        FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
@@ -194,8 +211,14 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
+    # Test for undefined symbols in SDFG arguments
+    if "?" in frame.arglist.keys():
+        raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
+                               "Please ensure all symbols are defined before generating code." % sdfg.name)
+
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
+    from dace.codegen.targets import cpu
     default_target = cpu.CPUCodeGen
     for k, v in TargetCodeGenerator.extensions().items():
         # If another target has already been registered as CPU, use it instead
@@ -204,9 +227,10 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update(
-        {v['name']: k(frame, sdfg)
-         for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets})
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+    })
 
     # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)

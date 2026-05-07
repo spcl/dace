@@ -3,12 +3,13 @@ import unittest
 import numpy as np
 import sympy as sp
 from dace.config import Config
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 from dace import dtypes
 import ast
 
 
 class TestTypeInference(unittest.TestCase):
+
     def testSimpleAssignment(self):
 
         config_data_types = Config.get('compiler', 'default_data_types')

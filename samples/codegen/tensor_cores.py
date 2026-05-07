@@ -13,22 +13,19 @@ from dace.sdfg import nodes
 
 # Code generator imports and helpers
 from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
 # Frontend imports and helpers
-from dace.frontend.common.op_repository import replaces
-from dace.frontend.python.newast import ProgramVisitor
 
 # Transformations
 from dace.transformation.interstate import GPUTransformSDFG
 
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.dispatcher import DefinedType
-from typing import Any, List
 
 # Other imports
 import itertools
@@ -42,10 +39,10 @@ _TC_STORAGE_TYPES = ['TensorCore_A', 'TensorCore_B', 'TensorCore_Accumulator']
 
 
 class TensorCoreCodegen(TargetCodeGenerator):
-    """ 
-    The code generator target for Tensor Core code. This class contains 
+    """
+    The code generator target for Tensor Core code. This class contains
     dispatchers for memlet paths from/to the tensor core storage locations.
-    
+
     To do so, the code generator must register itself with the SDFG code
     generator dispatcher (in `__init__`) for:
         1. Every allocation/deallocation of storage locations.
@@ -55,6 +52,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
     `{allocate, deallocate, initialize}_array` methods, whereas the copy
     dispatcher requires the `copy_memory` and `define_out_memlet` methods.
     """
+
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
@@ -74,9 +72,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
             self._dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
             self._dispatcher.register_copy_dispatcher(dst_storage, src_storage, None, self)
 
-    def allocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, node: nodes.AccessNode,
-                       nodedesc: dt.Array, function_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                       allocation_stream: CodeIOStream):
+    def allocate_array(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                       node: nodes.AccessNode, nodedesc: dt.Array, function_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
         # Make sure the codegen includes the appropriate header files
         _include_mma(sdfg)
 
@@ -90,23 +88,24 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Write a fragment based on the storage type
         if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
             ctype = 'wmma::fragment<wmma::accumulator, 16, 16, 16, float>'
-            declaration_stream.write(f'{ctype} {name};', sdfg, state_id, node)
+            declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
         else:
             ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
                 mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
-            declaration_stream.write(f'{ctype} {name};', sdfg, state_id, node)
-            
+            declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
+
         # Add the ctype to defined_vars so that the codegen can properly pass
         # fragments to functions as an object reference.
         self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
 
-    def deallocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, node: nodes.AccessNode,
-                         nodedesc: dt.Array, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def deallocate_array(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                         node: nodes.AccessNode, nodedesc: dt.Array, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream):
         pass  # Nothing to deallocate (wmma::fragment is a C++ object)
 
-    def copy_memory(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, src_node: nodes.Node,
-                    dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
-                    callsite_stream: CodeIOStream):
+    def copy_memory(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
+                    callsite_stream: CodeIOStream) -> None:
         # Obtain source and destination information, handle access<->tasklet
         # If copying from tensor core fragments to/from tasklets, we only need
         # to emit a reference, as the fragment contains the memory.
@@ -114,14 +113,14 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Tasklet -> Array
         if not src_desc:
             local_name = dfg.memlet_path(edge)[0].src_conn
-            callsite_stream.write('auto& %s = %s;' % (local_name, dst_node.data), sdfg, state_id, [src_node, dst_node])
+            callsite_stream.write('auto& %s = %s;' % (local_name, dst_node.data), cfg, state_id, [src_node, dst_node])
             return
 
         dst_desc = (dst_node.desc(sdfg) if isinstance(dst_node, nodes.AccessNode) else None)
         # Array -> Tasklet
         if not dst_desc:
             local_name = dfg.memlet_path(edge)[-1].dst_conn
-            callsite_stream.write('auto& %s = %s;' % (local_name, src_node.data), sdfg, state_id, [src_node, dst_node])
+            callsite_stream.write('auto& %s = %s;' % (local_name, src_node.data), cfg, state_id, [src_node, dst_node])
             return
 
         nontc_desc = (dst_desc if 'TensorCore' in src_desc.storage.name else src_desc)
@@ -133,7 +132,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Set non-tensor-core C++ expression based on memlet
         if edge.data.data == nontc_node.data:
-            other_expr = cpp_array_expr(sdfg, edge.data)
+            other_expr = cpp_array_expr(sdfg, edge.data, framecode=self._frame)
         elif edge.data.other_subset is not None:
             offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset)
             other_expr = '%s[%s]' % (nontc_node.data, offset_cppstr)
@@ -147,7 +146,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
             callsite_stream.write(
                 'wmma::load_matrix_sync({tc}, &{other}, '
                 '{stride});'.format(tc=dst_node.data, other=other_expr, stride=src_desc.strides[0 if row_major else 1]),
-                sdfg, state_id, [src_node, dst_node])
+                cfg, state_id, [src_node, dst_node])
         else:
             # Tensor Cores to GPU memory
             callsite_stream.write(
@@ -155,12 +154,12 @@ class TensorCoreCodegen(TargetCodeGenerator):
                 '{stride}, wmma::mem_{maj}_major);'.format(tc=src_node.data,
                                                            other=other_expr,
                                                            maj='row' if row_major else 'col',
-                                                           stride=dst_desc.strides[0 if row_major else 1]), sdfg,
+                                                           stride=dst_desc.strides[0 if row_major else 1]), cfg,
                 state_id, [src_node, dst_node])
 
-    def define_out_memlet(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, src_node: nodes.Node,
-                          dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
-                          callsite_stream: CodeIOStream):
+    def define_out_memlet(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge,
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         # Output memlets that are directed at WMMA fragments can use the "auto"
         # keyword for simplicity.
         callsite_stream.write(f'auto& {edge.src_conn} = {edge.data.data};')
@@ -175,8 +174,8 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
 
 def _include_mma(sdfg: dace.SDFG):
-    """ 
-    Add the Tensor Core includes into global code, if not already included. 
+    """
+    Add the Tensor Core includes into global code, if not already included.
     """
 
     global_code = '''
@@ -202,6 +201,7 @@ def frag_fill(frag, fill):
         """
         wmma::fill_fragment(out, val);
         """
+
 
 def wmma(a_frag, b_frag, c_frag):
     # We do the same here as we did with frag_fill. Since c_frag is used

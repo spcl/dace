@@ -2,8 +2,6 @@
 import dace
 import numpy as np
 
-import dace.transformation.helpers as xfh
-
 M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
@@ -82,7 +80,7 @@ print(report)
 #
 # Counter values are grouped by the SDFG element which defines the scope
 # of the intrumentation. Those elements are described as the triplet
-# (sdfg_id, state_id, node_id).
+# (cfg_id, state_id, node_id).
 
 measured_flops = 0
 flops_report = report.counters[(0, 0, -1)]["state_0_0_-1"]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"]

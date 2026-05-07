@@ -1,10 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.subgraph import SubgraphFusion
-from dace.sdfg.graph import SubgraphView
-import dace.transformation.subgraph.helpers as helpers
-from typing import List, Union
-import dace.sdfg.nodes as nodes
 import numpy as np
 from util import fusion
 
@@ -28,15 +23,15 @@ def sequential2(A: dace.float64[N], C: dace.float64[N]):
 
 
 def test_sequential():
-    N.set(1000)
+    N = 1000
 
     sdfg = sequential2.to_sdfg()
     state = sdfg.nodes()[0]
 
-    A = np.random.rand(N.get()).astype(np.float64)
-    B = np.random.rand(N.get()).astype(np.float64)
-    C1 = np.random.rand(N.get()).astype(np.float64)
-    C2 = np.random.rand(N.get()).astype(np.float64)
+    A = np.random.rand(N).astype(np.float64)
+    B = np.random.rand(N).astype(np.float64)
+    C1 = np.random.rand(N).astype(np.float64)
+    C2 = np.random.rand(N).astype(np.float64)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N)

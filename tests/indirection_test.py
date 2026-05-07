@@ -74,7 +74,7 @@ def test_multi_dimensional_indirection():
                 out = bla
 
     w = h = 5
-                
+
     A = np.ndarray([w * w])
     B = np.ndarray([w, h])
     x = np.ndarray([w, h], dtype=np.uint32)

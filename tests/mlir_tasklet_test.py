@@ -82,6 +82,7 @@ def test_mlir_tasklet_explicit_vec():
 
 @dace.program
 def mlir_tasklet_implicit(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -261,6 +262,7 @@ def test_mlir_tasklet_inference():
 
 @dace.program
 def mlir_tasklet_swapped(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         b << A[0]
@@ -292,6 +294,7 @@ def test_mlir_tasklet_swapped():
 
 @dace.program
 def mlir_tasklet_no_entry(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -305,6 +308,7 @@ def mlir_tasklet_no_entry(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
 
 @dace.program
 def mlir_tasklet_no_entry_generic(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -335,6 +339,7 @@ def test_mlir_tasklet_no_entry():
 
 @dace.program
 def mlir_tasklet_double_entry(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -371,6 +376,7 @@ def test_mlir_tasklet_double_entry():
 
 @dace.program
 def mlir_tasklet_double_return(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -388,6 +394,7 @@ def mlir_tasklet_double_return(A: dace.int32[3], B: dace.int32[2], C: dace.int32
 
 @dace.program
 def mlir_tasklet_double_return_generic(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -423,6 +430,7 @@ def test_mlir_tasklet_double_return():
 
 @dace.program
 def mlir_tasklet_llvm_dialect_opt(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -455,6 +463,7 @@ def test_mlir_tasklet_llvm_dialect():
 
 @dace.program
 def mlir_tasklet_float(A: dace.float32[3], B: dace.float32[2], C: dace.float32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -486,6 +495,7 @@ def test_mlir_tasklet_float():
 
 @dace.program
 def mlir_tasklet_recursion(A: dace.int32[2], B: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def fib():
         a << A[0]
@@ -531,6 +541,7 @@ def test_mlir_tasklet_recursion():
 
 @dace.program
 def mlir_tasklet_long_name(A: dace.int32[2], B: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -558,6 +569,7 @@ def test_mlir_tasklet_long_name():
 
 @dace.program
 def mlir_tasklet_no_input(A: dace.int32[1]):
+
     @dace.tasklet('MLIR')
     def add():
         c >> A[0]

@@ -7,25 +7,27 @@ W = dp.symbol('W')
 
 @dp.program
 def intarg(A, B, integer):
+
     @dp.map(_[0:W])
     def compute(i):
         a << A[i]
+        iarg << integer
         b >> B[i]
-        b = a * integer
+        b = a * iarg
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dp.ndarray([W])
     B = dp.ndarray([W])
 
-    A[:] = np.mgrid[0:W.get()]
+    A[:] = np.mgrid[0:W]
     B[:] = dp.float32(0.0)
 
     intarg(A, B, 5, W=W)
 
-    diff = np.linalg.norm(5 * A - B) / W.get()
+    diff = np.linalg.norm(5 * A - B) / W
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5

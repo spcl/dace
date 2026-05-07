@@ -123,4 +123,4 @@ nothing is given, the tool will time the entire execution of each program using 
 +---------------------------+--------------+-----------------------------------------------------------+
 
 For a more detailed guide on how to profile SDFGs and work with the resulting data, see :ref:`profiling` and
-`this tutorial <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb#Benchmarking-and-Instrumentation-API>`_.
+`this tutorial <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb#Benchmarking-and-Instrumentation-API>`_.

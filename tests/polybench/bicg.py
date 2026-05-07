@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -30,10 +29,7 @@ sizes = [{
 args = [([N, M], datatype), ([M], datatype), ([N], datatype), ([M], datatype), ([N], datatype)]
 
 
-def init_array(A, s, q, p, r):
-    n = N.get()
-    m = M.get()
-
+def init_array(A, s, q, p, r, n, m):
     for i in range(m):
         p[i] = datatype(i % m) / m
     for i in range(n):
@@ -42,8 +38,9 @@ def init_array(A, s, q, p, r):
             A[i, j] = datatype(i * (j + 1) % n) / n
 
 
-@dace.program(datatype[N, M], datatype[M], datatype[N], datatype[M], datatype[N])
-def bicg(A, s, q, p, r):
+@dace.program
+def bicg(A: datatype[N, M], s: datatype[M], q: datatype[N], p: datatype[M], r: datatype[N]):
+
     @dace.map
     def reset_s(i: _[0:M]):
         out >> s[i]

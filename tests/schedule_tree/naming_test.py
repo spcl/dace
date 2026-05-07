@@ -1,11 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 
 import pytest
-from typing import List
 
 
 def _irreducible_loop_to_loop():
@@ -18,11 +17,11 @@ def _irreducible_loop_to_loop():
     # Add a loop
     l1 = sdfg.add_state()
     l2 = sdfg.add_state_after(l1)
-    sdfg.add_loop(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
+    sdfg.add_loop_state_machine(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
 
     l3 = sdfg.add_state()
     l4 = sdfg.add_state_after(l3)
-    sdfg.add_loop(s2, l3, e, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
+    sdfg.add_loop_state_machine(s2, l3, e, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
 
     # Irreducible part
     sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
@@ -38,7 +37,7 @@ def _nested_irreducible_loops():
     nsdfg = _irreducible_loop_to_loop()
 
     l1 = sdfg.node(5)
-    l1.add_nested_sdfg(nsdfg, None, {}, {})
+    l1.add_nested_sdfg(nsdfg, {}, {})
     return sdfg
 
 
@@ -96,7 +95,7 @@ def test_clash_symbol_mapping(constprop):
     nstate2.add_edge(t, 'b', w, None, dace.Memlet('out[k]'))
 
     # Connect nested SDFG to parent SDFG with an offset memlet
-    nsdfg_node = state2.add_nested_sdfg(nsdfg, None, {}, {'out'}, {'N': 'M', 'M': 'N', 'k': 'k'})
+    nsdfg_node = state2.add_nested_sdfg(nsdfg, {}, {'out'}, {'N': 'M', 'M': 'N', 'k': 'k'})
     w = state2.add_write('A')
     state2.add_edge(nsdfg_node, 'out', w, None, dace.Memlet('A[100:200]'))
 
@@ -153,7 +152,7 @@ def test_edgecase_symbol_mapping():
     nsdfg.add_edge(nstate, nstate2, dace.InterstateEdge(assignments={'k': 'M + 1'}))
     nsdfg.add_edge(nstate2, nstate3, dace.InterstateEdge(assignments={'l': 'k'}))
 
-    state2.add_nested_sdfg(nsdfg, None, {}, {}, {'N': 'M', 'M': 'N', 'k': 'M + 1'})
+    state2.add_nested_sdfg(nsdfg, {}, {}, {'N': 'M', 'M': 'N', 'k': 'M + 1'})
 
     stree = as_schedule_tree(sdfg)
 
@@ -171,10 +170,10 @@ def test_edgecase_symbol_mapping():
 
 def _check_for_name_clashes(stree: tn.ScheduleTreeNode):
 
-    def _traverse(node: tn.ScheduleTreeScope, scopes: List[str]):
+    def _traverse(node: tn.ScheduleTreeScope, scopes: list[str]):
         for child in node.children:
-            if isinstance(child, tn.ForScope):
-                itervar = child.header.itervar
+            if isinstance(child, tn.LoopScope):
+                itervar = child.loop.loop.loop_variable
                 if itervar in scopes:
                     raise NameError('Nested scope redefines iteration variable')
                 _traverse(child, scopes + [itervar])

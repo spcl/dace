@@ -4,7 +4,7 @@ Passes and Pipelines
 Passes are an important part of compiler infrastructures, enabling efficient modification of a whole program.
 All modifications to an SDFG, including pattern-matching transformations, are performed as passes on the graph.
 
-Passes can be grouped together in Pipelines and depend on each other. The :class:`~dace.transformation.pass_pipeline.Pipeline` 
+Passes can be grouped together in Pipelines and depend on each other. The :class:`~dace.transformation.pass_pipeline.Pipeline`
 object, upon applying, will ensure dependencies are met and that passes do not run redundantly.
 
 See more information and examples in :ref:`available_passes`.
@@ -16,10 +16,10 @@ Passes
 
 A :class:`~dace.transformation.pass_pipeline.Pass` is an SDFG analysis or manipulation that registers as part of the
 SDFG history. Classes that extend Pass can be used for optimization purposes, to collect data on an entire SDFG,
-for cleanup, or other uses. 
+for cleanup, or other uses.
 
 A Pass is defined by one main method: :func:`~dace.transformation.pass_pipeline.Pass.apply_pass`. This method receives
-the SDFG to manipulate/analyze, as well as the previous Pipeline results (if run in the context of a pipeline). 
+the SDFG to manipulate/analyze, as well as the previous Pipeline results (if run in the context of a pipeline).
 
 .. note::
     The return value of a pass serves as a report of the work performed by the pass. A pass returns ``None``
@@ -47,7 +47,7 @@ An example of a simple pass that only traverses the graph and finds the number o
         def modifies(self) -> ppl.Modifies:
             # This is an analysis pass, so it does not modify anything
             return ppl.Modifies.Nothing
-        
+
         def should_reapply(self, modified: ppl.Modifies) -> bool:
             # We should rerun this pass if the state structure has changed
             return modified & ppl.Modifies.States
@@ -67,7 +67,7 @@ An example of a simple pass that only traverses the graph and finds the number o
                 result = sdfg.number_of_nodes()
 
             return result
-            
+
 
     # To use this pass, we create an object and give it the SDFG, as well as an empty
     # dictionary for previous pipeline results
@@ -136,5 +136,3 @@ Pipeline class (e.g., if pipeline order should be modified). For example:
     my_simplify = Pipeline([ScalarToSymbolPromotion(integers_only=False), ConstantPropagation()])
     results = my_simplify.apply_pass(sdfg, {})
     print('Promoted scalars:', results['ScalarToSymbolPromotion'])
-
-

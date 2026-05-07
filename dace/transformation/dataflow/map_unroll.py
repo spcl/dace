@@ -39,7 +39,6 @@ class MapUnroll(transformation.SingleStateTransformation):
             return False
         return True
 
-    
     def apply(self, state: SDFGState, sdfg: SDFG):
         from dace.transformation.dataflow import TrivialMapElimination
 
@@ -91,7 +90,7 @@ class MapUnroll(transformation.SingleStateTransformation):
                     # Set all the references
                     unrolled_nsdfg.parent = state
                     unrolled_nsdfg.parent_sdfg = sdfg
-                    unrolled_nsdfg.update_sdfg_list([])
+                    unrolled_nsdfg.update_cfg_list([])
                     unrolled_node.sdfg = unrolled_nsdfg
                     unrolled_nsdfg.parent_nsdfg_node = unrolled_node
                 else:
@@ -130,7 +129,7 @@ class MapUnroll(transformation.SingleStateTransformation):
 
         # If we added a bunch of new nested SDFGs, reset the internal list
         if len(nested_sdfgs) > 0:
-            sdfg.reset_sdfg_list()
+            sdfg.reset_cfg_list()
 
         # Remove local memories that were replicated
         for mem in local_memories:

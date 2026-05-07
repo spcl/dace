@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import dace
 import numpy as np
 
@@ -9,6 +7,7 @@ N = 12
 
 @dace.program
 def cr_complex(input, output):
+
     @dace.map(_[0:N])
     def tasklet(i):
         a << input[i]

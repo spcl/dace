@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import numpy as np
 
 import dace as dp
@@ -21,17 +20,19 @@ from dace.memlet import Memlet
 def test_dynamic_sdfg_with_math_functions():
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
+    n = 20
 
-    input = np.random.rand(N.get()).astype(np.float32)
-    output = dp.ndarray([N], dp.float32)
+    input = np.random.rand(n).astype(np.float32)
+    output = dp.ndarray([n], dp.float32)
     output[:] = dp.float32(0)
 
     # Construct SDFG
     mysdfg = SDFG('mymodexp')
+    mysdfg.add_array('A', [N], dp.float32)
+    mysdfg.add_array('B', [N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.float32)
-    B = state.add_array('B', [N], dp.float32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     # Easy way to add a tasklet
     tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'),
@@ -42,11 +43,10 @@ def test_dynamic_sdfg_with_math_functions():
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(map_exit, None, B, None, Memlet.simple(B, '0:N'))
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
     #mymodexp_prog(input, output)
 
-    diff = np.linalg.norm(np.exp(input) - output) / N.get()
-    print("Difference:", diff)
+    diff = np.linalg.norm(np.exp(input) - output) / n
     assert diff <= 1e-5
 
 

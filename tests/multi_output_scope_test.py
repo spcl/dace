@@ -7,6 +7,7 @@ W = dace.symbol('W')
 
 @dace.program
 def multi_output_scope(A, stats):
+
     @dace.map(_[0:W])
     def compute(i):
         inp << A[i]
@@ -18,18 +19,18 @@ def multi_output_scope(A, stats):
 
 
 def test():
-    W.set(120)
+    W = 120
 
     A = dace.ndarray([W])
     stats = dace.ndarray([2])
 
-    A[:] = np.random.normal(3.0, 5.0, W.get())
+    A[:] = np.random.normal(3.0, 5.0, W)
     stats[:] = 0.0
 
     multi_output_scope(A, stats, W=W)
 
-    mean = stats[0] / W.get()
-    variance = stats[1] / W.get() - mean * mean
+    mean = stats[0] / W
+    variance = stats[1] / W - mean * mean
     print("Mean: %f, Variance: %f" % (mean, variance))
 
     diff_mean = abs(mean - np.mean(A))

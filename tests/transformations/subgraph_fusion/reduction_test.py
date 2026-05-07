@@ -1,21 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union
 
 import numpy as np
 import pytest
-from util import expand_maps, expand_reduce, fusion
+from util import expand_reduce
 
 import dace
-import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
-from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import ReduceExpansion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
-N.set(20)
-M.set(30)
 
 
 @dace.program
@@ -53,21 +46,21 @@ def test_p1(in_transient, out_transient):
             reduce_node = node
 
     rexp = ReduceExpansion()
-    rexp.setup_match(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
+    rexp.setup_match(sdfg, sdfg.cfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
     assert rexp.can_be_applied(state, 0, sdfg) == True
 
-    A = np.random.rand(M.get(), N.get()).astype(np.float64)
-    B = np.random.rand(M.get(), N.get()).astype(np.float64)
-    C1 = np.zeros([N.get()], dtype=np.float64)
-    C2 = np.zeros([N.get()], dtype=np.float64)
+    A = np.random.rand(30, 20).astype(np.float64)
+    B = np.random.rand(30, 20).astype(np.float64)
+    C1 = np.zeros([20], dtype=np.float64)
+    C2 = np.zeros([20], dtype=np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C1, N=N, M=M)
+    csdfg(A=A, B=B, C=C1, N=20, M=30)
     del csdfg
 
     expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C2, N=N, M=M)
+    csdfg(A=A, B=B, C=C2, N=20, M=30)
     del csdfg
 
     assert np.linalg.norm(C1) > 0.01
@@ -82,18 +75,18 @@ def test_p2(in_transient, out_transient):
     sdfg = reduction_test_2.to_sdfg()
     sdfg.simplify()
     state = sdfg.nodes()[0]
-    A = np.random.rand(M.get(), N.get()).astype(np.float64)
-    B = np.random.rand(M.get(), N.get()).astype(np.float64)
-    C1 = np.zeros([N.get()], dtype=np.float64)
-    C2 = np.zeros([N.get()], dtype=np.float64)
+    A = np.random.rand(30, 20).astype(np.float64)
+    B = np.random.rand(30, 20).astype(np.float64)
+    C1 = np.zeros([20], dtype=np.float64)
+    C2 = np.zeros([20], dtype=np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C1, N=N, M=M)
+    csdfg(A=A, B=B, C=C1, N=20, M=30)
     del csdfg
 
     expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C2, N=N, M=M)
+    csdfg(A=A, B=B, C=C2, N=20, M=30)
 
     assert np.linalg.norm(C1) > 0.01
     assert np.allclose(C1, C2)

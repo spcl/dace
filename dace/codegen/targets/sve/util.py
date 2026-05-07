@@ -41,6 +41,7 @@ SVE_LEN = dace.symbol('__dace_sve_len')
 
 
 class NotSupportedError(Exception):
+
     def __init__(self, message):
         super().__init__(message)
 

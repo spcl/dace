@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 import numpy as np
@@ -15,9 +14,7 @@ sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype)]
 
 
-def init_array(A, b, x, y):
-    n = N.get()
-
+def init_array(A, b, x, y, n):
     x[:] = datatype(0)
     y[:] = datatype(0)
 
@@ -35,8 +32,8 @@ def init_array(A, b, x, y):
     A[:] = np.dot(A, np.transpose(A))
 
 
-@dace.program(datatype[N, N], datatype[N], datatype[N], datatype[N])
-def ludcmp(A, b, x, y):
+@dace.program
+def ludcmp(A: datatype[N, N], b: datatype[N], x: datatype[N], y: datatype[N]):
     w = dace.define_local([1], datatype)
 
     for i in range(0, N, 1):

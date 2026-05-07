@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
-import numpy as np
 import dace
 import polybench
 
@@ -16,10 +15,7 @@ sizes = [{M: 20, N: 30}, {M: 60, N: 180}, {M: 200, N: 240}, {M: 1000, N: 1200}, 
 args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 
 
-def init_array(A, R, Q):
-    m = M.get()
-    n = N.get()
-
+def init_array(A, R, Q, m, n):
     for i in range(0, m, 1):
         for j in range(0, n, 1):
             A[i, j] = ((datatype((i * j) % m) / m) * 100) + 10
@@ -29,8 +25,8 @@ def init_array(A, R, Q):
             R[i, j] = datatype(0)
 
 
-@dace.program(datatype[M, N], datatype[N, N], datatype[M, N])
-def gramschmidt(A, R, Q):
+@dace.program
+def gramschmidt(A: datatype[M, N], R: datatype[N, N], Q: datatype[M, N]):
 
     nrm = dace.define_local([1], datatype)
 

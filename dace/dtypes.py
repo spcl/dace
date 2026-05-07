@@ -1,82 +1,71 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
-from __future__ import print_function
 import ctypes
-import aenum
+import json
 import inspect
-import itertools
 import numpy
 import re
+from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
-from typing import Any
+from typing import Any, Dict, TYPE_CHECKING
+
 from dace.config import Config
-from dace.registry import extensible_enum, undefined_safe_enum
+
+from enum import auto, Enum
+from dace.attr_enum import ExtensibleAttributeEnum
+from dace.registry import undefined_safe_enum
 
 
 @undefined_safe_enum
-@extensible_enum
-class DeviceType(aenum.AutoNumberEnum):
-    CPU = ()  #: Multi-core CPU
-    GPU = ()  #: GPU (AMD or NVIDIA)
-    FPGA = ()  #: FPGA (Intel or Xilinx)
-    Snitch = ()  #: Compute Cluster (RISC-V)
+class DeviceType(ExtensibleAttributeEnum):
+    CPU = auto()  #: Multi-core CPU
+    GPU = auto()  #: GPU (AMD or NVIDIA)
+    Snitch = auto()  #: Compute Cluster (RISC-V)
 
 
 @undefined_safe_enum
-@extensible_enum
-class StorageType(aenum.AutoNumberEnum):
+class StorageType(ExtensibleAttributeEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  #: Scope-default storage location
-    Register = ()  #: Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  #: Host memory allocated on heap
-    CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: GPU global memory
-    GPU_Shared = ()  #: On-GPU shared memory
-    FPGA_Global = ()  #: Off-chip global memory (DRAM)
-    FPGA_Local = ()  #: On-chip memory (bulk storage)
-    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
-    SVE_Register = ()  #: SVE register
-    Snitch_TCDM = ()  #: Cluster-private memory
-    Snitch_L2 = ()  #: External memory
-    Snitch_SSR = ()  #: Memory accessed by SSR streamer
+    Default = auto()  #: Scope-default storage location
+    Register = auto()  #: Local data on registers, stack, or equivalent memory
+    CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = auto()  #: Host memory allocated on heap
+    CPU_ThreadLocal = auto()  #: Thread-local host memory
+    GPU_Global = auto()  #: GPU global memory
+    GPU_Shared = auto()  #: On-GPU shared memory
+    SVE_Register = auto()  #: SVE register
+    Snitch_TCDM = auto()  #: Cluster-private memory
+    Snitch_L2 = auto()  #: External memory
+    Snitch_SSR = auto()  #: Memory accessed by SSR streamer
 
 
-@undefined_safe_enum
-@extensible_enum
-class OMPScheduleType(aenum.AutoNumberEnum):
+class OMPScheduleType(Enum):
     """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
-    Default = ()  #: OpenMP library default
-    Static = ()  #: Static schedule
-    Dynamic = ()  #: Dynamic schedule
-    Guided = ()  #: Guided schedule
+    Default = auto()  #: OpenMP library default
+    Static = auto()  #: Static schedule
+    Dynamic = auto()  #: Dynamic schedule
+    Guided = auto()  #: Guided schedule
 
 
 @undefined_safe_enum
-@extensible_enum
-class ScheduleType(aenum.AutoNumberEnum):
+class ScheduleType(ExtensibleAttributeEnum):
     """ Available map schedule types in the SDFG. """
-    Default = ()  #: Scope-default parallel schedule
-    Sequential = ()  #: Sequential code (single-thread)
-    MPI = ()  #: MPI processes
-    CPU_Multicore = ()  #: OpenMP parallel for loop
-    CPU_Persistent = ()  #: OpenMP parallel region
-    Unrolled = ()  #: Unrolled code
-    SVE_Map = ()  #: Arm SVE
+    Default = auto()  #: Scope-default parallel schedule
+    Sequential = auto()  #: Sequential code (single-thread)
+    MPI = auto()  #: MPI processes
+    CPU_Multicore = auto()  #: OpenMP parallel for loop
+    CPU_Persistent = auto()  #: OpenMP parallel region
+    SVE_Map = auto()  #: Arm SVE
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
-    GPU_Device = ()  #: Kernel
-    GPU_ThreadBlock = ()  #: Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
-    GPU_Persistent = ()
-    FPGA_Device = ()
-    Snitch = ()
-    Snitch_Multicore = ()
-    FPGA_Multi_Pumped = ()  #: Used for double pumping
+    GPU_Device = auto()  #: Kernel
+    GPU_ThreadBlock = auto()  #: Thread-block code
+    GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
+    GPU_Persistent = auto()
+
+    Snitch = auto()
+    Snitch_Multicore = auto()
 
 
 # A subset of GPU schedule types
@@ -87,100 +76,91 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of CPU schedule types
+CPU_SCHEDULES = [
+    ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Persistent,
+]
+
 # A subset of on-GPU storage types
 GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
-# A subset of on-FPGA storage types
-FPGA_STORAGES = [
-    StorageType.FPGA_Local,
-    StorageType.FPGA_Registers,
-    StorageType.FPGA_ShiftRegister,
-]
 
-
-@undefined_safe_enum
-class ReductionType(aenum.AutoNumberEnum):
+class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  #: Defined by an arbitrary lambda function
-    Min = ()  #: Minimum value
-    Max = ()  #: Maximum value
-    Sum = ()  #: Sum
-    Product = ()  #: Product
-    Logical_And = ()  #: Logical AND (&&)
-    Bitwise_And = ()  #: Bitwise AND (&)
-    Logical_Or = ()  #: Logical OR (||)
-    Bitwise_Or = ()  #: Bitwise OR (|)
-    Logical_Xor = ()  #: Logical XOR (!=)
-    Bitwise_Xor = ()  #: Bitwise XOR (^)
-    Min_Location = ()  #: Minimum value and its location
-    Max_Location = ()  #: Maximum value and its location
-    Exchange = ()  #: Set new value, return old value
+    Custom = auto()  #: Defined by an arbitrary lambda function
+    Min = auto()  #: Minimum value
+    Max = auto()  #: Maximum value
+    Sum = auto()  #: Sum
+    Product = auto()  #: Product
+    Logical_And = auto()  #: Logical AND (&&)
+    Bitwise_And = auto()  #: Bitwise AND (&)
+    Logical_Or = auto()  #: Logical OR (||)
+    Bitwise_Or = auto()  #: Bitwise OR (|)
+    Logical_Xor = auto()  #: Logical XOR (!=)
+    Bitwise_Xor = auto()  #: Bitwise XOR (^)
+    Min_Location = auto()  #: Minimum value and its location
+    Max_Location = auto()  #: Maximum value and its location
+    Exchange = auto()  #: Set new value, return old value
 
     # Only supported in OpenMP
-    Sub = ()  #: Subtraction (only supported in OpenMP)
-    Div = ()  #: Division (only supported in OpenMP)
+    Sub = auto()  #: Subtraction (only supported in OpenMP)
+    Div = auto()  #: Division (only supported in OpenMP)
 
 
-@undefined_safe_enum
-@extensible_enum
-class AllocationLifetime(aenum.AutoNumberEnum):
+class AllocationLifetime(Enum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
-    State = ()  #: Allocated throughout the containing state
-    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  #: Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
-    External = ()  #: Allocated and managed outside the generated code
+    Scope = auto()  #: Allocated/Deallocated on innermost scope start/end
+    State = auto()  #: Allocated throughout the containing state
+    SDFG = auto()  #: Allocated throughout the innermost SDFG (possibly nested)
+    Global = auto()  #: Allocated throughout the entire program (outer SDFG)
+    Persistent = auto()  #: Allocated throughout multiple invocations (init/exit)
+    External = auto()  #: Allocated and managed outside the generated code
 
 
 @undefined_safe_enum
-@extensible_enum
-class Language(aenum.AutoNumberEnum):
+class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """
 
-    Python = ()
-    CPP = ()
-    OpenCL = ()
-    SystemVerilog = ()
-    MLIR = ()
+    Python = auto()
+    CPP = auto()
+    OpenCL = auto()
+    SystemVerilog = auto()
+    MLIR = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class InstrumentationType(aenum.AutoNumberEnum):
+class InstrumentationType(ExtensibleAttributeEnum):
     """ Types of instrumentation providers. """
 
-    No_Instrumentation = ()
-    Timer = ()
-    PAPI_Counters = ()
-    LIKWID_CPU = ()
-    LIKWID_GPU = ()
-    GPU_Events = ()
-    FPGA = ()
+    No_Instrumentation = auto()
+    Timer = auto()
+    PAPI_Counters = auto()
+    LIKWID_CPU = auto()
+    LIKWID_GPU = auto()
+    GPU_Events = auto()
+    GPU_TX_MARKERS = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class DataInstrumentationType(aenum.AutoNumberEnum):
+class DataInstrumentationType(ExtensibleAttributeEnum):
     """ Types of data container instrumentation providers. """
 
-    No_Instrumentation = ()
-    Save = ()
-    Restore = ()
+    No_Instrumentation = auto()
+    Save = auto()
+    Restore = auto()
 
 
-@undefined_safe_enum
-@extensible_enum
-class TilingType(aenum.AutoNumberEnum):
+class TilingType(Enum):
     """ Available tiling types in a `StripMining` transformation. """
 
-    Normal = ()
-    CeilRange = ()
-    NumberOfTiles = ()
+    Normal = auto()
+    CeilRange = auto()
+    NumberOfTiles = auto()
 
 
 # Maps from ScheduleType to default StorageType
@@ -191,12 +171,10 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
-    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
-    ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
@@ -209,14 +187,10 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
-    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
-    ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
-    ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
@@ -230,7 +204,6 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
     StorageType.GPU_Global: ScheduleType.GPU_Device,
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
-    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
 
@@ -242,63 +215,21 @@ _CTYPES = {
     complex: "dace::complex64",
     bool: "bool",
     numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
+    numpy.int8: "int8_t",
+    numpy.int16: "int16_t",
+    numpy.int32: "int32_t",
     numpy.intc: "int",
-    numpy.int64: "long long",
-    numpy.uint8: "unsigned char",
-    numpy.uint16: "unsigned short",
-    numpy.uint32: "unsigned int",
-    numpy.uintc: "unsigned int",
-    numpy.uint64: "unsigned long long",
+    numpy.int64: "int64_t",
+    numpy.uint8: "uint8_t",
+    numpy.uint16: "uint16_t",
+    numpy.uint32: "uint32_t",
+    numpy.uintc: "dace::uint",
+    numpy.uint64: "uint64_t",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
-}
-
-# Translation of types to OpenCL types
-_OCL_TYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.int64: "long",
-    numpy.uint8: "unsigned char",
-    numpy.uint16: "unsigned short",
-    numpy.uint32: "unsigned int",
-    numpy.uint64: "unsigned long",
-    numpy.uintc: "unsigned int",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
-}
-
-# Translation of types to OpenCL vector types
-_OCL_VECTOR_TYPES = {
-    numpy.int8: "char",
-    numpy.uint8: "uchar",
-    numpy.int16: "short",
-    numpy.uint16: "ushort",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.uint32: "uint",
-    numpy.uintc: "uint",
-    numpy.int64: "long",
-    numpy.uint64: "ulong",
-    numpy.float16: "half",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
 }
 
 # Translation of types to ctypes types
@@ -360,11 +291,11 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
-
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
                 else:
@@ -399,6 +330,12 @@ class typeclass(object):
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
+        elif wrapped_type is type(None):
+            wrapped_type = None
+        elif wrapped_type is Float:
+            wrapped_type = float
+        elif wrapped_type is Integer:
+            wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -442,10 +379,10 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other is not None and self.ctype == other.ctype
+        return other is not None and self.ctype == getattr(other, 'ctype', False)
 
     def __ne__(self, other):
-        return other is not None and self.ctype != other.ctype
+        return other is not None and self.ctype != getattr(other, 'ctype', False)
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
@@ -469,10 +406,6 @@ class typeclass(object):
     @property
     def veclen(self):
         return 1
-
-    @property
-    def ocltype(self):
-        return _OCL_TYPES[self.type]
 
     def as_arg(self, name):
         return self.ctype + ' ' + name
@@ -600,6 +533,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -635,6 +569,7 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -669,10 +604,6 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
-    @property
-    def ocltype(self):
-        return f"{self.base_type.ocltype}*"
-
 
 class vector(typeclass):
     """
@@ -680,6 +611,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -698,14 +630,6 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
-
-    @property
-    def ocltype(self):
-        if self.veclen > 1:
-            vectype = _OCL_VECTOR_TYPES[self.type]
-            return f"{vectype}{self.veclen}"
-        else:
-            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -733,10 +657,11 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
 
@@ -756,6 +681,8 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -766,6 +693,15 @@ class struct(typeclass):
         self.ctype_unaligned = name
         self.dtype = self
         self._parse_field_and_types(**fields_and_types)
+
+    @classmethod
+    def __class_getitem__(cls, args):
+        if not isinstance(args, tuple) or len(args) != 2:
+            raise ValueError("struct type must be subscripted with (name, {field: type, ...})")
+        name, fields_and_types = args
+        if not isinstance(fields_and_types, dict):
+            raise ValueError("struct type must be subscripted with (name, {field: type, ...})")
+        return struct(name, **fields_and_types)
 
     @property
     def fields(self):
@@ -784,8 +720,6 @@ class struct(typeclass):
     def from_json(json_obj, context=None):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
-
-        import dace.serialize  # Avoid import loop
 
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
@@ -821,8 +755,9 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        if self in _FFI_CTYPES:
-            return _FFI_CTYPES[self]
+        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(',', ':'))
+        if self_as_json in struct.STRUCT_CTYPES:
+            return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
@@ -836,9 +771,13 @@ class struct(typeclass):
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        struct_class = type(self.name or "NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
         # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
-        _FFI_CTYPES[self] = struct_class
+        struct.STRUCT_CTYPES[self_as_json] = struct_class
+
+        if hasattr(self, "__descriptor__"):
+            struct_class.__descriptor__ = self.__descriptor__
+
         return struct_class
 
     def as_numpy_dtype(self):
@@ -859,6 +798,7 @@ class pyobject(opaque):
     It cannot be used inside a DaCe program, but can be passed back to other Python callbacks.
     Use with caution, and ensure the value is not removed by the garbage collector or the program will crash.
     """
+
     def __init__(self):
         super().__init__('pyobject')
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
@@ -892,6 +832,7 @@ class compiletime:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
         raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
@@ -900,8 +841,7 @@ class compiletime:
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
-    import numpy as np
-    return np.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
+    return numpy.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
 def ptrtocupy(ptr, inner_ctype, shape):
@@ -914,6 +854,7 @@ class callback(typeclass):
     """
     Looks like ``dace.callback([None, <some_native_type>], *types)``
     """
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -941,7 +882,7 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = self.cfunc_return_type().as_ctypes()
+        return_ctype = self.cfunc_return_type().as_ctypes() if len(self.return_types) > 0 else None
         input_ctypes = []
 
         for some_arg in self.input_types:
@@ -965,7 +906,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1014,7 +955,7 @@ class callback(typeclass):
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments, refs):
+    def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
         from dace import data, symbolic
 
@@ -1023,6 +964,16 @@ class callback(typeclass):
             if tmp.startswith(chr(0xFFFF)):
                 return bytes(tmp[1:], 'utf-8')
             return tmp
+
+        def _pyobject_converter(arg: data.Data, a: int, *args):
+            try:
+                if argument_to_pyobject is not None and a in argument_to_pyobject:
+                    # Avoid views of the same object from using the original one
+                    if arg.is_equivalent(argument_to_pyobject[a][1]):
+                        return argument_to_pyobject[a][0]
+            except TypeError:  # Unhashable type
+                pass
+            return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
         ret_arraypos = []
@@ -1034,7 +985,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
+                inp_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1054,7 +1005,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                ret_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1071,7 +1022,7 @@ class callback(typeclass):
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
                     ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                    ret_converters.append(partial(_pyobject_converter, arg))
                 else:
                     ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -1113,7 +1064,8 @@ class callback(typeclass):
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 0:
-                    refs.append(ret)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(ret)  # Keep reference so that garbage collection does not free object
                     return ret_converters[0](ret, other_arguments)
                 elif len(list_of_outputs) == 1:
                     ret = [ret]
@@ -1121,7 +1073,8 @@ class callback(typeclass):
                     if v is not None:  # Was converted to an assignable pointer
                         v[:] = r
 
-                    refs.append(r)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(r)  # Keep reference so that garbage collection does not free object
                 return
             return orig_function(*list_of_other_inputs)
 
@@ -1202,76 +1155,96 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool_ = typeclass(numpy.bool_, 'bool')
-int8 = typeclass(numpy.int8)
-int16 = typeclass(numpy.int16)
-int32 = typeclass(numpy.int32)
-int64 = typeclass(numpy.int64)
-uint8 = typeclass(numpy.uint8)
-uint16 = typeclass(numpy.uint16)
-uint32 = typeclass(numpy.uint32)
-uint64 = typeclass(numpy.uint64)
-float16 = typeclass(numpy.float16)
-float32 = typeclass(numpy.float32)
-float64 = typeclass(numpy.float64)
-complex64 = typeclass(numpy.complex64)
-complex128 = typeclass(numpy.complex128)
-string = stringtype()
-MPI_Request = opaque('MPI_Request')
+if TYPE_CHECKING:
+    # Type stubs for type checkers
+    import numpy.typing as npt
+    from typing_extensions import Self
+
+    # yapf: disable
+    # Type stub base: NDArray that accepts symbolic shape subscripts like [M, N].
+    class _DaCeArray(npt.NDArray):
+        def __class_getitem__(cls, item: object) -> type[Self]: ...
+
+    # DaCe scalar types: when subscripted, behave as typed NDArrays
+    class bool_(_DaCeArray, npt.NDArray[numpy.bool_]): ...
+    class int8(_DaCeArray, npt.NDArray[numpy.int8]): ...
+    class int16(_DaCeArray, npt.NDArray[numpy.int16]): ...
+    class int32(_DaCeArray, npt.NDArray[numpy.int32]): ...
+    class int64(_DaCeArray, npt.NDArray[numpy.int64]): ...
+    class uintp(_DaCeArray, npt.NDArray[numpy.uintp]): ...
+    class uint8(_DaCeArray, npt.NDArray[numpy.uint8]): ...
+    class uint16(_DaCeArray, npt.NDArray[numpy.uint16]): ...
+    class uint32(_DaCeArray, npt.NDArray[numpy.uint32]): ...
+    class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
+    class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
+    class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
+    class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
+    class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
+    class complex128(_DaCeArray, npt.NDArray[numpy.complex128]): ...
+    class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
+    class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    # yapf: enable
+else:
+    # Runtime definitions
+    bool_ = typeclass(numpy.bool_, 'bool')
+    int8 = typeclass(numpy.int8)
+    int16 = typeclass(numpy.int16)
+    int32 = typeclass(numpy.int32)
+    int64 = typeclass(numpy.int64)
+    uintp = typeclass(numpy.uintp)
+    uint8 = typeclass(numpy.uint8)
+    uint16 = typeclass(numpy.uint16)
+    uint32 = typeclass(numpy.uint32)
+    uint64 = typeclass(numpy.uint64)
+    float16 = typeclass(numpy.float16)
+    float32 = typeclass(numpy.float32)
+    float64 = typeclass(numpy.float64)
+    complex64 = typeclass(numpy.complex64)
+    complex128 = typeclass(numpy.complex128)
+    string = stringtype()
+    MPI_Request = opaque('MPI_Request')
+
+_bool = bool
 
 
-@undefined_safe_enum
-@extensible_enum
-class Typeclasses(aenum.AutoNumberEnum):
-    bool = bool
-    bool_ = bool_
-    int8 = int8
-    int16 = int16
-    int32 = int32
-    int64 = int64
-    uint8 = uint8
-    uint16 = uint16
-    uint32 = uint32
-    uint64 = uint64
-    float16 = float16
-    float32 = float32
-    float64 = float64
-    complex64 = complex64
-    complex128 = complex128
+def dtype_to_typeclass(dtype=None):
+    DTYPE_TO_TYPECLASS = {
+        _bool: typeclass(_bool),
+        int: typeclass(int),
+        float: typeclass(float),
+        complex: typeclass(complex),
+        numpy.bool_: bool_,
+        numpy.int8: int8,
+        numpy.int16: int16,
+        numpy.int32: int32,
+        numpy.int64: int64,
+        numpy.intc: int32,
+        numpy.uint8: uint8,
+        numpy.uint16: uint16,
+        numpy.uint32: uint32,
+        numpy.uint64: uint64,
+        numpy.uintc: uint32,
+        numpy.float16: float16,
+        numpy.float32: float32,
+        numpy.float64: float64,
+        numpy.complex64: complex64,
+        numpy.complex128: complex128,
+        # FIXME
+        numpy.longlong: int64,
+        numpy.ulonglong: uint64
+    }
+    if dtype is None:
+        return DTYPE_TO_TYPECLASS
+    return DTYPE_TO_TYPECLASS[dtype]
 
-
-DTYPE_TO_TYPECLASS = {
-    bool: typeclass(bool),
-    int: typeclass(int),
-    float: typeclass(float),
-    complex: typeclass(complex),
-    numpy.bool_: bool_,
-    numpy.int8: int8,
-    numpy.int16: int16,
-    numpy.int32: int32,
-    numpy.int64: int64,
-    numpy.intc: int32,
-    numpy.uint8: uint8,
-    numpy.uint16: uint16,
-    numpy.uint32: uint32,
-    numpy.uint64: uint64,
-    numpy.uintc: uint32,
-    numpy.float16: float16,
-    numpy.float32: float32,
-    numpy.float64: float64,
-    numpy.complex64: complex64,
-    numpy.complex128: complex128,
-    # FIXME
-    numpy.longlong: int64,
-    numpy.ulonglong: uint64
-}
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
 bool = bool_
 
 TYPECLASS_TO_STRING = {
-    bool: "dace::bool",
+    bool: "dace::bool_",
     bool_: "dace::bool_",
     uint8: "dace::uint8",
     uint16: "dace::uint16",
@@ -1305,9 +1278,6 @@ _ALLOWED_MODULES = {
     "math": "dace::math::",
     "cmath": "dace::cmath::",
 }
-
-# Lists allowed modules and maps them to OpenCL
-_OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
 
 
 def ismodule(var):
@@ -1354,28 +1324,52 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
-    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
+
+    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None, file_index=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
+
+        if filename is not None and file_index is not None:
+            raise ValueError("Cannot specify both filename and file_index in DebugInfo")
+
         self.filename = filename
+        self.file_index = file_index
 
     # NOTE: Manually marking as serializable to avoid an import loop
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(type='DebugInfo',
-                    start_line=self.start_line,
-                    end_line=self.end_line,
-                    start_column=self.start_column,
-                    end_column=self.end_column,
-                    filename=self.filename)
+        result = {'type': 'DebugInfo'}
+        if self.start_line is not None:
+            result['start_line'] = self.start_line
+        if self.end_line is not None and self.end_line != self.start_line:
+            result['end_line'] = self.end_line
+        if self.start_column:
+            result['start_column'] = self.start_column
+        if self.end_column and self.end_column != self.start_column:
+            result['end_column'] = self.end_column
+        if self.file_index is not None:
+            result['file_index'] = self.file_index
+        elif self.filename:
+            result['filename'] = self.filename
+
+        return result
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
-                         json_obj['filename'])
+    def from_json(json_obj: dict[str, int | str], context=None):
+        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line', -1),
+                         json_obj.get('end_column', 0), json_obj.get('filename'), json_obj.get('file_index'))
+
+    def __deepcopy__(self, memo) -> 'DebugInfo':
+        """Performs a `deepcopy` of `self`.
+
+        Because all members of `self` are immutable this function is essentially a shallow copy.
+        """
+        new = object.__new__(DebugInfo)
+        new.__dict__.update(self.__dict__)
+        return new
 
 
 ######################################################
@@ -1397,6 +1391,7 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data
@@ -1430,8 +1425,10 @@ def validate_name(name):
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if namere.match(name) is None:
-        return False
+    tokens = name.split('.')
+    for token in tokens:
+        if namere.match(token) is None:
+            return False
     return True
 
 
@@ -1447,17 +1444,11 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Persistent,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal
-        ]
-    elif schedule in [ScheduleType.FPGA_Device]:
-        return storage in [
-            StorageType.FPGA_Local, StorageType.FPGA_Global, StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
-            StorageType.CPU_Pinned
         ]
     elif schedule == ScheduleType.Sequential:
         raise ValueError("Not well defined")
@@ -1468,7 +1459,6 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     Identifies whether a container of a storage type can be allocated in a
     specific schedule. Used to determine arguments to subgraphs by the
     innermost scope that a container can be allocated in. For example,
-    FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
     :param storage: The storage type of the data container to allocate.
@@ -1478,31 +1468,26 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
-
-    # FPGA-global memory
-    if storage is StorageType.FPGA_Global:
-        return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device,
-            ScheduleType.GPU_Default
-        ]
-
-    # FPGA-local memory
-    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
-        return schedule == ScheduleType.FPGA_Device
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent, ScheduleType.GPU_Default
+            ScheduleType.GPU_Persistent
         ]
 
     # The rest (Registers) can be allocated everywhere
@@ -1515,7 +1500,7 @@ def is_array(obj: Any) -> bool:
     ``__array_interface__`` or ``__cuda_array_interface__`` standards
     (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
     supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the array interface.
@@ -1529,6 +1514,8 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
+    if isinstance(obj, ctypes.Array):
+        return True
     if hasattr(obj, '__array_interface__'):
         return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
     if hasattr(obj, 'data_ptr'):
@@ -1536,15 +1523,17 @@ def is_array(obj: Any) -> bool:
             return hasattr(obj, 'shape') and len(obj.shape) > 0
         except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        return True
     return False
 
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the CUDA array interface.
@@ -1556,4 +1545,37 @@ def is_gpu_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return False
+
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
+            return True
+
     return False
+
+
+def array_interface_ptr(array: Any, storage: StorageType) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
+    array's allocated memory.
+
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
+    :return: A pointer to the base location of the allocated buffer.
+    """
+    if hasattr(array, 'data_ptr'):
+        return array.data_ptr()
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
+
+    if storage == StorageType.GPU_Global:
+        try:
+            return array.__cuda_array_interface__['data'][0]
+        except AttributeError:
+            # Special case for CuPy with HIP
+            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+                return array.data.ptr
+            raise
+
+    return array.__array_interface__['data'][0]

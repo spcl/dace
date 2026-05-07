@@ -1,14 +1,16 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar write shadowing analysis pass. """
 
 import pytest
-
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import ScalarWriteShadowScopes
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 
 
-def test_scalar_write_shadow_split():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_scalar_write_shadow_split(with_raising):
     """
     Test the scalar write shadow scopes pass with writes dominating reads across state.
     """
@@ -90,23 +92,23 @@ def test_scalar_write_shadow_split():
     sdfg.add_edge(loop_2_2, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     # Test the pass.
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
-        (loop_2_2, loop2_write_a), (loop_1_2, loop1_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
-        (loop_2_2, loop2_write_b), (loop_1_2, loop1_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_2, loop2_read_a), (loop_2_2, loop2_write_a), (loop_1_2, loop1_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_2, loop2_read_b), (loop_2_2, loop2_write_b), (loop_1_2, loop1_write_b)}
 
 
-def test_scalar_write_shadow_fused():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_scalar_write_shadow_fused(with_raising):
     """
     Test the scalar write shadow scopes pass with writes dominating reads in the same state.
     """
@@ -176,6 +178,9 @@ def test_scalar_write_shadow_fused():
     sdfg.add_edge(loop_2, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     # Test the pass.
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
@@ -186,7 +191,8 @@ def test_scalar_write_shadow_fused():
     assert results[0]['B'][None] == {(loop_1, b1_read), (loop_2, b2_read), (loop_1, b1_write), (loop_2, b2_write)}
 
 
-def test_scalar_write_shadow_interstate_self():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_scalar_write_shadow_interstate_self(with_raising):
     """
     Tests the scalar write shadow pass with interstate edge reads being shadowed by the state they're originating from.
     """
@@ -270,23 +276,23 @@ def test_scalar_write_shadow_interstate_self():
     sdfg.add_edge(loop_2_2, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     # Test the pass.
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp), (loop_1_1, tmp1_edge)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp), (loop_2_1, tmp2_edge)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
-        (loop_1_2, loop1_write_a), (loop_2_2, loop2_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
-        (loop_1_2, loop1_write_b), (loop_2_2, loop2_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_2, loop2_read_a), (loop_1_2, loop1_write_a), (loop_2_2, loop2_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_2, loop2_read_b), (loop_1_2, loop1_write_b), (loop_2_2, loop2_write_b)}
 
 
-def test_scalar_write_shadow_interstate_pred():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_scalar_write_shadow_interstate_pred(with_raising):
     """
     Tests the scalar write shadow pass with interstate edge reads being shadowed by a predecessor state.
     """
@@ -374,23 +380,23 @@ def test_scalar_write_shadow_interstate_pred():
     sdfg.add_edge(loop_2_3, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     # Test the pass.
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_3, loop1_read_tmp), (loop_1_2, tmp1_edge)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_3, loop2_read_tmp), (loop_2_2, tmp2_edge)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read), (loop_2_3, loop2_read_a),
-        (loop_1_3, loop1_write_a), (loop_2_3, loop2_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read), (loop_2_3, loop2_read_b),
-        (loop_1_3, loop1_write_b), (loop_2_3, loop2_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_3, loop2_read_a), (loop_1_3, loop1_write_a), (loop_2_3, loop2_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_3, loop2_read_b), (loop_1_3, loop1_write_b), (loop_2_3, loop2_write_b)}
 
 
-def test_loop_fake_shadow():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_loop_fake_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -432,13 +438,17 @@ def test_loop_fake_shadow():
     sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     ppl = Pipeline([ScalarWriteShadowScopes()])
     res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
     assert res[0]['A'][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access), (end, end_access)}
 
 
-def test_loop_fake_complex_shadow():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_loop_fake_complex_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -472,13 +482,17 @@ def test_loop_fake_complex_shadow():
     sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     ppl = Pipeline([ScalarWriteShadowScopes()])
     res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
     assert res[0]['A'][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access)}
 
 
-def test_loop_real_shadow():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_loop_real_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -514,6 +528,9 @@ def test_loop_real_shadow():
     sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     ppl = Pipeline([ScalarWriteShadowScopes()])
     res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
@@ -521,7 +538,8 @@ def test_loop_real_shadow():
     assert res[0]['A'][(loop2, loop2_access)] == {(loop2, loop2_access)}
 
 
-def test_dominationless_write_branch():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_dominationless_write_branch(with_raising):
     sdfg = dace.SDFG('dominationless_write_branch')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -558,6 +576,9 @@ def test_dominationless_write_branch():
     sdfg.add_edge(guard, merge, dace.InterstateEdge(condition='B[0] >= 10'))
     sdfg.add_edge(left, merge, dace.InterstateEdge())
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     ppl = Pipeline([ScalarWriteShadowScopes()])
     res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
@@ -566,11 +587,19 @@ def test_dominationless_write_branch():
 
 
 if __name__ == '__main__':
-    test_scalar_write_shadow_split()
-    test_scalar_write_shadow_fused()
-    test_scalar_write_shadow_interstate_self()
-    test_scalar_write_shadow_interstate_pred()
-    test_loop_fake_shadow()
-    test_loop_fake_complex_shadow()
-    test_loop_real_shadow()
-    test_dominationless_write_branch()
+    test_scalar_write_shadow_split(False)
+    test_scalar_write_shadow_fused(False)
+    test_scalar_write_shadow_interstate_self(False)
+    test_scalar_write_shadow_interstate_pred(False)
+    test_loop_fake_shadow(False)
+    test_loop_fake_complex_shadow(False)
+    test_loop_real_shadow(False)
+    test_dominationless_write_branch(False)
+    test_scalar_write_shadow_split(True)
+    test_scalar_write_shadow_fused(True)
+    test_scalar_write_shadow_interstate_self(True)
+    test_scalar_write_shadow_interstate_pred(True)
+    test_loop_fake_shadow(True)
+    test_loop_fake_complex_shadow(True)
+    test_loop_real_shadow(True)
+    test_dominationless_write_branch(True)

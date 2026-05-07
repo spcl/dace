@@ -20,7 +20,7 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     sdfg.add_array("C", shape=(N, ), dtype=dtype, transient=False)
     sdfg.add_array("B", shape=(M, ), dtype=dtype, transient=False)
 
-    state = sdfg.add_state("state", is_start_state=True)
+    state = sdfg.add_state("state", is_start_block=True)
     a_row_node = state.add_access("A_row")
     a_col_node = state.add_access("A_col")
     a_val_node = state.add_access("A_val")

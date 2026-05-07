@@ -1,11 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the symbol write scopes analysis pass. """
-
-import pytest
 
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import SymbolWriteScopes, SymbolScopeDict
+
 
 def test_loop_iter_symbol_reused_split():
     """
@@ -180,9 +179,8 @@ def test_loop_iter_symbol_reused_fused():
     loop_1_in_condition_edge = sdfg.add_edge(guard_1, loop_1_1, dace.InterstateEdge(condition='i < (N - 1)'))
     sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
     loop_1_inc_edge = sdfg.add_edge(loop_1_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    shared_cond_init_edge = sdfg.add_edge(
-        guard_1, guard_2, dace.InterstateEdge(condition='i >= (N - 1)', assignments={'i': 0})
-    )
+    shared_cond_init_edge = sdfg.add_edge(guard_1, guard_2,
+                                          dace.InterstateEdge(condition='i >= (N - 1)', assignments={'i': 0}))
 
     loop_2_in_condition_edge = sdfg.add_edge(guard_2, loop_2_1, dace.InterstateEdge(condition='i < (N - 1)'))
     sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
@@ -221,9 +219,8 @@ def test_branch_subscope():
     right_after = sdfg.add_state('right_after')
     merge_after = sdfg.add_state('merge_after')
     first_assign = sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 'A[0]'}))
-    combined_assign_cond = sdfg.add_edge(
-        guard_1, guard_2, dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
-    )
+    combined_assign_cond = sdfg.add_edge(guard_1, guard_2,
+                                         dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0'))
     right_cond = sdfg.add_edge(guard_1, right1_state, dace.InterstateEdge(condition='i <= 0'))
     left_2_cond = sdfg.add_edge(guard_2, left2_state, dace.InterstateEdge(condition='i <= 0'))
     right_2_cond = sdfg.add_edge(guard_2, right2_state, dace.InterstateEdge(condition='i > 0'))

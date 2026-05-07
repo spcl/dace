@@ -29,19 +29,19 @@ def local_inline(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dace.ndarray([W])
     B = dace.ndarray([W])
     C = dace.ndarray([W])
 
-    A[:] = np.mgrid[0:W.get()]
+    A[:] = np.mgrid[0:W]
     B[:] = 0.0
     C[:] = 0.0
 
     local_inline(A, B, C)
 
-    diff = np.linalg.norm((-(-A + 1) + 1) - C) / W.get()
+    diff = np.linalg.norm((-(-A + 1) + 1) - C) / W
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5

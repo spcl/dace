@@ -7,6 +7,7 @@ H = dp.symbol('H')
 
 @dp.program
 def transpose(input, output):
+
     @dp.map(_[0:H, 0:W])
     def compute(i, j):
         a << input[j, i]

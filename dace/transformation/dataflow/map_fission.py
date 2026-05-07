@@ -1,19 +1,21 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
-from dace.codegen import control_flow as cf
+from functools import reduce
+from dace import sdfg as sd, memlet as mm, subsets, data as dt
+from dace.properties import CodeBlock
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
+@transformation.explicit_cf_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
@@ -23,7 +25,7 @@ class MapFission(transformation.SingleStateTransformation):
         semantics after fission.
 
         There are two cases that match map fission:
-        
+
             1. A map with an arbitrary subgraph with more than one computational
                (i.e., non-access) node. The use of arrays connecting the
                computational nodes must be limited to the subgraph, and non
@@ -64,7 +66,7 @@ class MapFission(transformation.SingleStateTransformation):
         return ns
 
     @staticmethod
-    def _border_arrays(sdfg, parent, subgraph):
+    def _border_arrays(sdfg: sd.SDFG, parent, subgraph):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
@@ -122,12 +124,16 @@ class MapFission(transformation.SingleStateTransformation):
                 return False
 
             # Get NestedSDFG control flow components
-            cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
-            if len(cf_comp) == 1:
-                child = list(cf_comp.values())[0][1]
-                conditions = []
-                if isinstance(child, (cf.ForScope, cf.WhileScope, cf.IfScope)):
-                    conditions.append(child.condition if isinstance(child, (cf.ForScope, cf.IfScope)) else child.test)
+            nsdfg_node.sdfg.reset_cfg_list()
+            if len(nsdfg_node.sdfg.nodes()) == 1:
+                child = nsdfg_node.sdfg.nodes()[0]
+                conditions: List[CodeBlock] = []
+                if isinstance(child, LoopRegion):
+                    conditions.append(child.loop_condition)
+                elif isinstance(child, ConditionalBlock):
+                    for c, _ in child.branches:
+                        if c is not None:
+                            conditions.append(c)
                 for cond in conditions:
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
@@ -137,7 +143,30 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
-            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+            # Reject if any interstate edge inside the nested SDFG has an
+            # assignment that depends on the map iterator, either directly or
+            # through a nested-SDFG input connector whose incoming memlet
+            # subset references a map parameter. Such assignments cannot be
+            # safely hoisted out of the fissioned maps.
+            map_params = set(map_node.map.params)
+            inputs_dep_on_map = set()
+            for e in graph.out_edges(map_node):
+                if e.dst is self.nested_sdfg and e.dst_conn is not None and e.data.subset is not None:
+                    if any(str(s) in map_params for s in e.data.subset.free_symbols):
+                        inputs_dep_on_map.add(e.dst_conn)
+            for ise in nsdfg_node.sdfg.all_interstate_edges():
+                assign_free = set()
+                for expr in ise.data.assignments.values():
+                    try:
+                        assign_free.update(str(s) for s in pystr_to_symbolic(expr).free_symbols)
+                    except Exception:
+                        pass
+                if assign_free & map_params:
+                    return False
+                if assign_free & inputs_dep_on_map:
+                    return False
+
+            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
@@ -174,7 +203,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find all nodes not in subgraph
                 not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
                 not_subgraph.update(
-                    set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
+                    set(n.data for s in sdfg.states() if s != graph for n in s.nodes()
                         if isinstance(n, nodes.AccessNode)))
 
                 for _, component_out in components:
@@ -201,10 +230,17 @@ class MapFission(transformation.SingleStateTransformation):
             parent = nsdfg_node.sdfg
             parent_sdfg = parent.parent_sdfg
         modified_arrays = set()
+        scalar_like_arrays = set()
 
         # Get map information
         outer_map: nodes.Map = map_entry.map
+        # Border-transient extent equals the iteration count per dimension.
+        # Memlets that index border transients are normalized to
+        # `(p - iMin) / step` so the squeezed array remains in-bounds for
+        # strided maps. Symbolic steps are assumed non-negative.
         mapsize = outer_map.range.size()
+        squeezed_idx = [(pystr_to_symbolic(p) - iMin) / step
+                        for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)]
 
         # Add new symbols from outer map to nested SDFG
         # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
@@ -263,8 +299,9 @@ class MapFission(transformation.SingleStateTransformation):
                     eindex = path.index(edge)
                     edge_to_outer[edge] = path[eindex - 1]
                 else:
-                    # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data)
+                    outer_edge = next((e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data), None)
+                    if outer_edge is None:
+                        outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.src.data)
                     edge_to_outer[edge] = outer_edge
 
             for edge in external_edges_exit:
@@ -301,9 +338,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Add extra nodes in component boundaries
                 for edge in edges:
                     anode = state.add_access(name)
-                    sbs = subsets.Range.from_string(','.join(outer_map.params))
-                    # Offset memlet by map range begin (to fit the transient)
-                    sbs.offset([r[0] for r in outer_map.range], True)
+                    sbs = subsets.Range([(idx, idx, 1) for idx in squeezed_idx])
                     state.add_edge(edge.src, edge.src_conn, anode, None,
                                    mm.Memlet.simple(name, sbs, num_accesses=outer_map.range.num_elements()))
                     state.add_edge(anode, None, edge.dst, edge.dst_conn,
@@ -315,8 +350,7 @@ class MapFission(transformation.SingleStateTransformation):
             for component_in, component_out in components:
                 me, mx = state.add_map(outer_map.label + '_fission', [(p, '0:1') for p in outer_map.params],
                                        outer_map.schedule,
-                                       unroll=outer_map.unroll,
-                                       debuginfo=outer_map.debuginfo)
+                                       unroll=outer_map.unroll)
 
                 # Add dynamic input connectors
                 for conn in map_entry.in_connectors:
@@ -395,17 +429,33 @@ class MapFission(transformation.SingleStateTransformation):
                 if array in modified_arrays:
                     continue
                 desc = parent.arrays[array]
-                if isinstance(desc, dt.Scalar):  # Scalar needs to be augmented to an array
+                # Treat scalars and length-1 arrays as "scalar-like": their single
+                # degenerate dimension is replaced by the map dims rather than
+                # prepended, so the result is shape [extent] rather than
+                # [extent, 1] (which produces zero-stride aliasing).
+                scalar_like = (isinstance(desc, dt.Scalar)
+                               or (isinstance(desc, dt.Array) and len(desc.shape) == 1 and desc.shape[0] == 1))
+                if isinstance(desc, dt.Scalar):
                     desc = dt.Array(desc.dtype, desc.shape, desc.transient, desc.allow_conflicts, desc.storage,
                                     desc.location, desc.strides, desc.offset, False, desc.lifetime, 0, desc.debuginfo,
                                     desc.total_size, desc.start_offset)
                     parent.arrays[array] = desc
-                for sz in reversed(mapsize):
-                    desc.strides = [desc.total_size] + list(desc.strides)
-                    desc.total_size = desc.total_size * sz
 
-                desc.shape = mapsize + list(desc.shape)
-                desc.offset = [0] * len(mapsize) + list(desc.offset)
+                if scalar_like:
+                    desc.shape = list(mapsize)
+                    strides = [1] * len(mapsize)
+                    for i in range(len(mapsize) - 2, -1, -1):
+                        strides[i] = strides[i + 1] * mapsize[i + 1]
+                    desc.strides = strides
+                    desc.total_size = reduce(lambda a, b: a * b, mapsize, 1)
+                    desc.offset = [0] * len(mapsize)
+                    scalar_like_arrays.add(array)
+                else:
+                    for sz in reversed(mapsize):
+                        desc.strides = [desc.total_size] + list(desc.strides)
+                        desc.total_size = desc.total_size * sz
+                    desc.shape = list(mapsize) + list(desc.shape)
+                    desc.offset = [0] * len(mapsize) + list(desc.offset)
                 modified_arrays.add(array)
 
             # Fill scope connectors so that memlets can be tracked below
@@ -467,24 +517,26 @@ class MapFission(transformation.SingleStateTransformation):
             # NOTE: Memlet propagation should run to correct the outer edges
             for node in subgraph.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in arrays:
+                    is_scalar_like = node.data in scalar_like_arrays
                     for edge in state.all_edges(node):
                         for e in state.memlet_tree(edge):
                             # Prepend map dimensions to memlet
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
+                            map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:
                                 if e.data.subset:
-                                    e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0],
-                                                                    pystr_to_symbolic(d) - r[0], 1)
-                                                                   for d, r in zip(outer_map.params, outer_map.range)] +
-                                                                  e.data.subset.ranges)
+                                    if is_scalar_like:
+                                        e.data.subset = subsets.Range(map_ranges)
+                                    else:
+                                        e.data.subset = subsets.Range(map_ranges + e.data.subset.ranges)
                             else:
                                 if e.data.other_subset:
-                                    e.data.other_subset = subsets.Range(
-                                        [(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
-                                         for d, r in zip(outer_map.params, outer_map.range)] +
-                                        e.data.other_subset.ranges)
+                                    if is_scalar_like:
+                                        e.data.other_subset = subsets.Range(map_ranges)
+                                    else:
+                                        e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:

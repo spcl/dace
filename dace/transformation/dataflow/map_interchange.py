@@ -6,12 +6,11 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.sdfg.propagation import propagate_memlet
-from dace.properties import make_properties
 
 
 class MapInterchange(transformation.SingleStateTransformation):
     """ Implements the map-interchange transformation.
-    
+
         Map-interchange takes two nested maps and interchanges their position.
     """
 

@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
 
 import dace as dp
 from dace.sdfg import SDFG
@@ -8,11 +7,10 @@ from dace.memlet import Memlet
 
 # Constructs an SDFG with multiple tasklets manually and runs it
 def test():
-    print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int64)
+    n = 20
+    input = dp.ndarray([n], dp.int64)
     sum = dp.ndarray([1], dp.int64)
     product = dp.ndarray([1], dp.int64)
     input[:] = dp.int64(5)
@@ -21,10 +19,13 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('multiple_cr')
+    mysdfg.add_array('A', [N], dp.int64)
+    mysdfg.add_array('s', [1], dp.int64)
+    mysdfg.add_array('p', [1], dp.int64)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.int64)
-    s = state.add_array('s', [1], dp.int64)
-    p = state.add_array('p', [1], dp.int64)
+    A = state.add_access('A')
+    s = state.add_access('s')
+    p = state.add_access('p')
 
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
@@ -41,11 +42,10 @@ def test():
     state.add_edge(t2, 'b', map_exit, None, Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
-    mysdfg(A=input, s=sum, p=product, N=N)
+    mysdfg(A=input, s=sum, p=product, N=n)
 
     diff_sum = 5 * 20 - sum[0]
     diff_prod = 5**20 - product[0]
-    print("Difference:", diff_sum, '(sum)', diff_prod, '(product)')
     assert diff_sum <= 1e-5 and diff_prod <= 1e-5
 
 

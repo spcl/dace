@@ -1,23 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the Enuerator class """
 
-from dace.transformation.subgraph import SubgraphFusion, helpers
+from dace.transformation.subgraph import helpers
 from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
 import dace.sdfg.nodes as nodes
 
-from collections import deque, defaultdict, ChainMap
-from typing import Set, Union, List, Callable
+from collections import defaultdict
+from typing import Callable
 import itertools
-import warnings
 
 
 @make_properties
 class Enumerator:
     """
-    An abstract enumerator interface that is able to enumerate subgraphs 
+    An abstract enumerator interface that is able to enumerate subgraphs
     based on custom rules and criteria.
     """
     debug = Property(desc="Debug mode", default=False, dtype=bool)
@@ -57,8 +56,8 @@ class Enumerator:
     def calculate_topology(self, subgraph):
         """
         Calculates topology information of the graph.
-        self._adjacency_list: neighbors dict of outermost scope maps  
-        self._source_maps: outermost scope maps that have in_degree 0 in the subgraph / graph 
+        self._adjacency_list: neighbors dict of outermost scope maps
+        self._source_maps: outermost scope maps that have in_degree 0 in the subgraph / graph
         self._labels: assigns index according to topological ordering (1) + node ID (2) with priorities (1) and (2)
         """
         sdfg = self._sdfg

@@ -6,6 +6,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode
 
+
 @dace.library.expansion
 class ExpandAllgatherMPI(ExpandTransformation):
 

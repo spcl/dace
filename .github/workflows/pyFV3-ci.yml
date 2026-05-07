@@ -1,0 +1,96 @@
+name: NASA/NOAA pyFV3 repository build test
+
+on:
+  push:
+    branches: [ main, ci-fix, romanc/stree-v2 ]
+  pull_request:
+    branches: [ main, ci-fix, romanc/stree-v2 ]
+  merge_group:
+    branches: [ main, ci-fix, romanc/stree-v2 ]
+
+defaults:
+    run:
+      shell: bash
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    name: "Read test configuration"
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+     - name: Checkout to repository
+       uses: actions/checkout@v6
+     - name: Set matrix data
+       id: set-matrix
+       run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
+
+  build_and_validate_pyFV3:
+    runs-on: ubuntu-latest
+    needs: configure
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
+    name: "${{ matrix.module }} regression test"
+
+    steps:
+    - name: Checkout pyFV3
+      uses: actions/checkout@v6
+      with:
+        repository: 'NOAA-GFDL/pyFV3'
+        path: 'pyFV3'
+
+    - name: Checkout dace
+      uses: actions/checkout@v6
+      with:
+        path: 'dace'
+        submodules: 'recursive'
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v6
+      with:
+        python-version: 3.12
+
+    - name: Install OpenMPI
+      run: pip install openmpi
+
+    # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
+    - name: Install pyFV3 and dace
+      run: |
+        pip install ./pyFV3[ndsl,test]
+        pip install ./dace
+
+    - name: Print versions
+      run: |
+        gcc --version
+        python --version
+        pip --version
+        pip list
+
+    - name: Download data
+      # Skip "Riemann Solver on D-grid" (currently failing)
+      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
+      run: |
+        mkdir -p pyFV3/test_data
+        cd pyFV3/test_data
+        wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/${{ matrix.archive }}
+        tar -xzvf ${{ matrix.archive }}
+        cd ../..
+
+    - name: "Regression test: ${{ matrix.name }}"
+      # Skip "Riemann Solver on D-grid" (currently failing)
+      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
+      env:
+        FV3_DACEMODE: BuildAndRun
+        NDSL_LOGLEVEL: Debug
+      run: |
+        pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+            --backend=orch:dace:cpu:KIJ --which_modules=${{ matrix.module }} \
+            ${{ matrix.extra_args }} \
+            --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
+            ./pyFV3/tests/savepoint

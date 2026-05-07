@@ -43,11 +43,11 @@ def _sym2cpp(s, arrayexprs):
 
 
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
-    """ 
-    Converts an array of symbolic variables (or one) to C++ strings. 
-    
+    """
+    Converts an array of symbolic variables (or one) to C++ strings.
+
     :param s: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :return: C++-compilable expression or list thereof.
     """
@@ -171,3 +171,14 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                            'environment variable to point to the libraries.')
 
     return gpu_runtime.GPURuntime(backend, libpath)
+
+
+def platform_library_name(libname: str) -> str:
+    """ Get the filename of a library.
+
+        :param libname: the name of the library.
+        :return: the filename of the library.
+    """
+    prefix = config.Config.get('compiler', 'library_prefix')
+    suffix = config.Config.get('compiler', 'library_extension')
+    return f"{prefix}{libname}.{suffix}"

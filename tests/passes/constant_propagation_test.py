@@ -1,7 +1,8 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
@@ -69,7 +70,9 @@ def test_simple_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
     # Test tasklets
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
@@ -91,7 +94,9 @@ def test_cprop_inside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test tasklets
     i_found = 0
@@ -118,7 +123,10 @@ def test_cprop_outside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'j'}
+    assert 'j' in sdfg.symbols
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test memlet
     last_state = sdfg.sink_nodes()[0]
@@ -187,7 +195,9 @@ def test_complex_case():
     sdfg.add_edge(usei, merge, dace.InterstateEdge(assignments={'j': 'j+1'}))
     sdfg.add_edge(merge, last, dace.InterstateEdge('j >= 2'))
 
-    propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
+    propagated = {}
+    arrays = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+    ConstantPropagation()._collect_constants_for_region(sdfg, arrays, propagated, {}, {}, {})
     assert len(propagated[init]) == 0
     assert propagated[branch2]['i'] == '7'
     assert propagated[guard]['i'] is _UnknownValue
@@ -230,7 +240,7 @@ def test_recursive_cprop():
     sdfg.add_edge(a, b, dace.InterstateEdge(assignments=dict(i=1)))
 
     nsdfg = dace.SDFG('nested')
-    b.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping={'i': 'i + 1'})
+    b.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping={'i': 'i + 1'})
 
     nstate = nsdfg.add_state()
     t = nstate.add_tasklet('doprint', {}, {}, 'printf("%d\\n", i)')
@@ -352,19 +362,53 @@ def test_for_with_external_init():
     assert np.allclose(val1, ref)
 
 
+def test_for_with_conditional_assignment():
+    N = dace.symbol('N')
+
+    sdfg = dace.SDFG('for_with_conditional_assignment')
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_symbol('check', dace.bool)
+    sdfg.add_symbol('__tmp1', dace.bool)
+    sdfg.add_array('__return', {1}, dace.bool)
+    sdfg.add_array('in_arr', {N}, dace.bool)
+
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    condition = sdfg.add_state('condition')
+    if_branch = sdfg.add_state('if_branch')
+    else_branch = sdfg.add_state('else_branch')
+    out = sdfg.add_state('out')
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(None, {'i': '0', 'check': 'False'}))
+    sdfg.add_edge(guard, condition, dace.InterstateEdge('(i < N)', {'__tmp1': 'in_arr[i]'}))
+    sdfg.add_edge(condition, if_branch, dace.InterstateEdge('__tmp1'))
+    sdfg.add_edge(if_branch, else_branch, dace.InterstateEdge(None, {'check': 'False'}))
+    sdfg.add_edge(condition, else_branch, dace.InterstateEdge('(not __tmp1)', {'check': 'True'}))
+    sdfg.add_edge(else_branch, guard, dace.InterstateEdge(None, {'i': '(i + 1)'}))
+    sdfg.add_edge(guard, out, dace.InterstateEdge('(not (i < N))'))
+
+    a = out.add_write('__return')
+    t = out.add_tasklet('tasklet', {}, {'__out'}, '__out = check')
+    out.add_edge(t, '__out', a, None, dace.Memlet('__return[0]'))
+    sdfg.validate()
+
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert t.code.as_string == '__out = check'
+
+
 def test_for_with_external_init_nested():
 
     N = dace.symbol('N')
 
     sdfg = dace.SDFG('for_with_external_init_nested')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': 'N-1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    ninit = nsdfg.add_state('nested_init', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    ninit = nsdfg.add_state('nested_init', is_start_block=True)
     nguard = nsdfg.add_state('nested_guard')
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
@@ -378,7 +422,7 @@ def test_for_with_external_init_nested():
     nbody.add_edge(nt, '__out', na, None, dace.Memlet('inner_A[i]'))
 
     a = main.add_access('A')
-    t = main.add_nested_sdfg(nsdfg, None, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
+    t = main.add_nested_sdfg(nsdfg, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
     main.add_edge(t, 'inner_A', a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
 
     sdfg.validate()
@@ -403,13 +447,13 @@ def test_for_with_external_init_nested_start_with_guard():
 
     sdfg = dace.SDFG('for_with_external_init_nested_start_with_guard')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': '1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    nguard = nsdfg.add_state('nested_guard', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nguard = nsdfg.add_state('nested_guard', is_start_block=True)
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
     nsdfg.add_edge(nguard, nbody, dace.InterstateEdge(condition='i <= N'))
@@ -421,7 +465,7 @@ def test_for_with_external_init_nested_start_with_guard():
     nbody.add_edge(nt, '__out', na, None, dace.Memlet('inner_A[i-1]'))
 
     a = main.add_access('A')
-    t = main.add_nested_sdfg(nsdfg, None, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
+    t = main.add_nested_sdfg(nsdfg, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
     main.add_edge(t, 'inner_A', a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
 
     sdfg.validate()
@@ -434,6 +478,158 @@ def test_for_with_external_init_nested_start_with_guard():
     val1 = np.ndarray((10, ), dtype=np.int32)
     sdfg(A=val1, N=10)
     assert np.allclose(val1, ref)
+
+
+def test_skip_branch():
+    sdfg = dace.SDFG('skip_branch')
+    sdfg.add_symbol('k', dace.int32)
+    sdfg.add_array('__return', (1, ), dace.int32)
+    init = sdfg.add_state('init')
+    if_guard = sdfg.add_state('if_guard')
+    if_state = sdfg.add_state('if_state')
+    if_end = sdfg.add_state('if_end')
+    sdfg.add_edge(init, if_guard, dace.InterstateEdge(assignments=dict(j=0)))
+    sdfg.add_edge(if_guard, if_end, dace.InterstateEdge('k<0'))
+    sdfg.add_edge(if_guard, if_state, dace.InterstateEdge('not (k<0)', assignments=dict(j=1)))
+    sdfg.add_edge(if_state, if_end, dace.InterstateEdge())
+    ret_a = if_end.add_access('__return')
+    tasklet = if_end.add_tasklet('c1', {}, {'o1'}, 'o1 = j')
+    if_end.add_edge(tasklet, 'o1', ret_a, None, dace.Memlet('__return[0]'))
+
+    sdfg.validate()
+
+    rval_1 = sdfg(k=-1)
+    assert (rval_1[0] == 0)
+    rval_2 = sdfg(k=1)
+    assert (rval_2[0] == 1)
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    rval_1 = sdfg(k=-1)
+    assert (rval_1[0] == 0)
+    rval_2 = sdfg(k=1)
+    assert (rval_2[0] == 1)
+
+
+def test_dependency_change():
+    """
+    Tests a regression in constant propagation that stems from a variable's
+    dependency being set in the same edge where the pre-propagated symbol was
+    also a right-hand side expression. The original SDFG is semantically-sound,
+    but the propagated one may update ``t`` to be ``t + <modified irev>``
+    instead of the older ``irev``.
+    """
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('a', [1], dace.int64)
+    init = sdfg.add_state(is_start_block=True)
+    entry = sdfg.add_state('entry')
+    body = sdfg.add_state('body')
+    body2 = sdfg.add_state('body2')
+    exiting = sdfg.add_state('exiting')
+    latch = sdfg.add_state('latch')
+    final = sdfg.add_state('final')
+
+    sdfg.add_edge(init, entry, dace.InterstateEdge(assignments=dict(i='0', t='0', irev='2500')))
+    sdfg.add_edge(entry, body, dace.InterstateEdge())
+    sdfg.add_edge(
+        body, body2,
+        dace.InterstateEdge(assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'), ))
+    sdfg.add_edge(body2, exiting, dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
+    sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
+    sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(
+        irev='irev_next',
+        i='i_next',
+    )))
+    sdfg.add_edge(latch, body, dace.InterstateEdge(assignments=dict(t='t_next')))
+
+    t = body.add_tasklet('add', {'inp'}, {'out'}, 'out = inp + t')
+    body.add_edge(body.add_read('a'), None, t, 'inp', dace.Memlet('a[0]'))
+    body.add_edge(t, 'out', body.add_write('a'), None, dace.Memlet('a[0]'))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    # Python code equivalent of the above SDFG
+    ref = 0
+
+    i = 0
+    t = 0
+    irev = 2500
+    while True:
+        # body
+        ref += t
+
+        # exiting state
+        t_next = t + irev
+        irev_next = (irev + (-1))
+        i_next = i + 1
+        cont = (i_next == 2500)
+        if not cont:
+            irev = irev_next
+            i = i_next
+            #
+            t = t_next
+            continue
+        else:
+            break
+
+    a = np.zeros([1], np.int64)
+    sdfg(a=a)
+    assert a[0] == ref
+
+
+@pytest.mark.parametrize('extra_state', (False, True))
+def test_dependency_change_same_edge(extra_state):
+    """
+    Tests a regression in constant propagation that stems from a variable's
+    dependency being set in the same edge where the pre-propagated symbol was
+    also a right-hand side expression. In this case, ``i61`` is incorrectly
+    propagated to ``i60`` and ``i17`` is set to ``i61``, which is also updated
+    on the same inter-state edge.
+    """
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('a', [1], dace.int64)
+    sdfg.add_scalar('cont', dace.int64, transient=True)
+    init = sdfg.add_state()
+    entry = sdfg.add_state('entry')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    final = sdfg.add_state('final')
+
+    sdfg.add_edge(init, entry, dace.InterstateEdge(assignments=dict(i60='0')))
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+    sdfg.add_edge(body, final, dace.InterstateEdge('cont'))
+    sdfg.add_edge(body, latch, dace.InterstateEdge('not cont', dict(i60='i61')))
+    if not extra_state:
+        sdfg.add_edge(latch, body, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+    else:
+        # Test that the multi-value definition is not propagated to following edges
+        extra = sdfg.add_state('extra')
+        sdfg.add_edge(latch, extra, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+        sdfg.add_edge(extra, body, dace.InterstateEdge(assignments=dict(i18='i60 + i61')))
+
+    t = body.add_tasklet('add', {'inp'}, {'out', 'c'}, 'out = inp + i17; c = i61 == 10')
+    body.add_edge(body.add_read('a'), None, t, 'inp', dace.Memlet('a[0]'))
+    body.add_edge(t, 'out', body.add_write('a'), None, dace.Memlet('a[0]'))
+    body.add_edge(t, 'c', body.add_write('cont'), None, dace.Memlet('cont[0]'))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    sdfg.validate()
+
+    # Python code equivalent of the above SDFG
+    ref = 0
+    i60 = 0
+    for i60 in range(0, 10):
+        i17 = i60 * 12
+        ref += i17
+
+    a = np.zeros([1], np.int64)
+    sdfg(a=a)
+    assert a[0] == ref
 
 
 if __name__ == '__main__':
@@ -450,5 +646,10 @@ if __name__ == '__main__':
     test_allocation_varying(False)
     test_allocation_varying(True)
     test_for_with_external_init()
+    test_for_with_conditional_assignment()
     test_for_with_external_init_nested()
     test_for_with_external_init_nested_start_with_guard()
+    test_skip_branch()
+    test_dependency_change()
+    test_dependency_change_same_edge(False)
+    test_dependency_change_same_edge(True)

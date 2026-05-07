@@ -125,7 +125,8 @@ def expansion(exp):
     if not issubclass(exp, ExpandTransformation):
         raise TypeError("Library node expansion \"" + exp.__name__ + "\" must derive from ExpandTransformation")
     if not hasattr(exp, "environments"):
-        raise ValueError("Library node expansion must define environments " "(can be an empty list).")
+        raise ValueError("Library node expansion must define environments "
+                         "(can be an empty list).")
     for dep in exp.environments:
         if not hasattr(dep, "_dace_library_environment"):
             raise ValueError(str(dep) + " is not a DaCe library environment.")
@@ -135,6 +136,7 @@ def expansion(exp):
 
 def register_expansion(library_node: LibraryNode, expansion_name: str):
     """ Defines and registers an expansion. """
+
     def expander(exp: ExpandTransformation):
         result = expansion(exp)
         library_node.register_implementation(expansion_name, exp)

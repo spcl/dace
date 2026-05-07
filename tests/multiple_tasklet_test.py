@@ -11,17 +11,19 @@ def test():
     print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
     # Construct SDFG
     mysdfg = SDFG('multiple_tasklets')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.int32)
-    B = state.add_array('B', [N], dp.int32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N:2'))
 
@@ -38,10 +40,9 @@ def test():
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(map_exit, None, B, None, Memlet.simple(B, '0:N'))
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(5 * input - output) / N.get()
-    print("Difference:", diff)
+    diff = np.linalg.norm(5 * input - output) / n
     assert diff <= 1e-5
 
 

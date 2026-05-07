@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 from dace import dtypes, data
-from dace.data import Array
 from typing import Any, Dict, Tuple
 
 
@@ -24,9 +23,9 @@ def to_blastype(dtype):
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
-    """ 
-    Returns type metadata on a given dace dtype. 
-    
+    """
+    Returns type metadata on a given dace dtype.
+
     :return: A 3 tuple of (BLAS letter, CUDA C type, Name in dace runtime).
     """
 
@@ -181,7 +180,7 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         },
     }
 
-    if sAM == 1:
+    if sAM == 1 and sAK != 1:
         optA = 'm'
     elif sAK == 1:
         optA = 'k'

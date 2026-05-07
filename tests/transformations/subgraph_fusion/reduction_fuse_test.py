@@ -1,21 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union
 
 import numpy as np
 import pytest
 from util import expand_maps, expand_reduce, fusion
 
 import dace
-import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
-from dace.sdfg.graph import SubgraphView
-from dace.transformation.dataflow import ReduceExpansion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
-N.set(20)
-M.set(30)
 
 
 @dace.program
@@ -40,25 +32,25 @@ def test_p3(in_transient, out_transient):
     sdfg = reduction_test_3.to_sdfg()
     sdfg.simplify()
     state = sdfg.nodes()[0]
-    A = np.random.rand(M.get(), N.get()).astype(np.float64)
-    B = np.random.rand(M.get(), N.get()).astype(np.float64)
-    C1 = np.zeros([N.get()], dtype=np.float64)
-    C2 = np.zeros([N.get()], dtype=np.float64)
-    C3 = np.zeros([N.get()], dtype=np.float64)
+    A = np.random.rand(30, 20).astype(np.float64)
+    B = np.random.rand(30, 20).astype(np.float64)
+    C1 = np.zeros([20], dtype=np.float64)
+    C2 = np.zeros([20], dtype=np.float64)
+    C3 = np.zeros([20], dtype=np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C1, N=N, M=M)
+    csdfg(A=A, B=B, C=C1, N=20, M=30)
     del csdfg
 
     expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C2, N=N, M=M)
+    csdfg(A=A, B=B, C=C2, N=20, M=30)
     del csdfg
 
     expand_maps(sdfg, state)
     fusion(sdfg, state)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C3, N=N, M=M)
+    csdfg(A=A, B=B, C=C3, N=20, M=30)
     del csdfg
 
     assert np.linalg.norm(C1) > 0.01
@@ -67,6 +59,6 @@ def test_p3(in_transient, out_transient):
 
 
 if __name__ == "__main__":
-    test_p3()
-    test_p3(in_transient=True)
-    test_p3(out_transient=True)
+    test_p3(False, False)
+    test_p3(True, False)
+    test_p3(False, True)

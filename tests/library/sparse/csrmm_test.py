@@ -23,7 +23,7 @@ def make_sdfg(transB: bool, alpha: float, beta: float, implementation: str, dtyp
     else:
         sdfg.add_array("B", shape=(M, K), dtype=dtype, transient=False)
 
-    state = sdfg.add_state("state", is_start_state=True)
+    state = sdfg.add_state("state", is_start_block=True)
     a_row_node = state.add_access("A_row")
     a_col_node = state.add_access("A_col")
     a_val_node = state.add_access("A_val")

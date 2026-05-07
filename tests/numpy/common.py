@@ -1,22 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
 import inspect
 from copy import deepcopy as dc
 from collections import OrderedDict
+from typing import Callable
 
 import dace
 import numpy as np
+import pytest
 
 from numpy.random import default_rng
 
 rng = default_rng(42)
 
 
-def compare_numpy_output(non_zero=False,
+def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
+                         non_zero=False,
                          positive=False,
                          check_dtype=False,
                          validation_func=None,
                          casting=None,
-                         max_value=10):
+                         max_value=10,
+                         expect_div_by_zero=False) -> Callable[[Callable], Callable[[], None]]:
     """ Check that the `dace.program` func works identically to python
         (including errors).
 
@@ -27,6 +32,7 @@ def compare_numpy_output(non_zero=False,
         Note that this should be used *instead* of the `@dace.program`
         annotation, not along with it!
 
+        :param device: Selects the target device for test execution.
         :param non_zero: if `True`, replace `0` inputs with `1`.
         :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
                          sample from [-3, 3). Else, floats sample from
@@ -38,10 +44,13 @@ def compare_numpy_output(non_zero=False,
         :param casting: If set, then the reference output is computed on the
                         cast inputs.
         :param max_value: The maximum value allowed in the inputs.
+        :param expect_div_by_zero: If `True`, allows division by zero without raising an error.
     """
+
     def decorator(func):
+
         def test():
-            dp = dace.program(func)
+            dp = dace.program(device=device)(func)
 
             def get_rand_arr(ddesc):
                 if type(ddesc) is dace.dtypes.typeclass:
@@ -102,6 +111,9 @@ def compare_numpy_output(non_zero=False,
             # save exceptions
             dace_thrown, numpy_thrown = None, None
 
+            contextmgr = (pytest.warns(
+                match="divide by zero encountered") if expect_div_by_zero else contextlib.nullcontext())
+
             try:
                 if validation_func:
                     # Works only with 1D inputs of the same size!
@@ -110,18 +122,28 @@ def compare_numpy_output(non_zero=False,
                     for inp_args in zip(*reference_input):
                         reference_result.append(validation_func(*inp_args))
                 else:
-                    reference_result = func(**reference_input)
+                    with contextmgr:
+                        reference_result = func(**reference_input)
             except Exception as e:
                 numpy_thrown = e
 
             try:
-                dace_result = dp(**dace_input)
+                if device == dace.dtypes.DeviceType.GPU:
+                    sdfg = dp.to_sdfg()
+                    sdfg.apply_gpu_transformations()
+                    dace_result = sdfg(**dace_input)
+                else:
+                    dace_result = dp(**dace_input)
+
             except Exception as e:
                 dace_thrown = e
 
             if dace_thrown is not None or numpy_thrown is not None:
-                assert dace_thrown is not None and numpy_thrown is not None, "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
-                    type(dace_thrown), dace_thrown, type(numpy_thrown), numpy_thrown)
+                if dace_thrown is None or numpy_thrown is None:
+                    raise_from = dace_thrown if dace_thrown is not None else numpy_thrown
+                    raise AssertionError("dace threw {}: {}, but numpy threw {}: {}".format(
+                        type(dace_thrown).__name__, dace_thrown,
+                        type(numpy_thrown).__name__, numpy_thrown)) from raise_from
             else:
                 if not isinstance(reference_result, (tuple, list)):
                     reference_result = [reference_result]

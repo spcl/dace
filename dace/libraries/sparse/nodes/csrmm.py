@@ -4,11 +4,9 @@ from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
 
@@ -28,12 +26,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
+            type=dace.dtype_to_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
+        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
 def _get_csrmm_operands(node,
@@ -85,7 +83,7 @@ class ExpandCSRMMPure(ExpandTransformation):
         nsdfg = SDFG(node.label + "_nsdfg")
 
         operands = _get_csrmm_operands(node, state, sdfg)
-        nstate = nsdfg.add_state("state", is_start_state=True)
+        nstate = nsdfg.add_state("state", is_start_block=True)
         for name, desc in operands.items():
             desc = desc[1]
 
@@ -114,8 +112,10 @@ class ExpandCSRMMPure(ExpandTransformation):
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(shape_c)}, {},
+                'csrmm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
                 'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
         elif node.beta == 1.0:
@@ -136,9 +136,10 @@ class ExpandCSRMMPure(ExpandTransformation):
             nsdfg.add_datadesc('_cin', cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(cdesc.shape)},
-                {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                'csrmm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(cdesc.shape)
+                }, {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 f'_out = {node.beta} * _in',
                 {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 external_edges=True)

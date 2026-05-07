@@ -98,7 +98,7 @@ namespace dace
 
         DACE_HDFI int size() const { return _total_length; }
 
-        DACE_HDFI int index_value(const size_t range_value, 
+        DACE_HDFI int index_value(const size_t range_value,
                                   const size_t dimension) const {
             if (dimension == kDims - 1)
                 return std::get<0>(_ranges[dimension]) +

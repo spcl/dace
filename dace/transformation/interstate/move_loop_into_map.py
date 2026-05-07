@@ -1,17 +1,18 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Moves a loop around a map into the map """
 
 import copy
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 import dace.transformation.helpers as helpers
 import networkx as nx
 from dace.sdfg.scope import ScopeTree
-from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.properties import CodeBlock
-from dace.sdfg import nodes, propagation
+from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
+from dace.sdfg import nodes, propagation, utils as sdutil
 from dace.transformation import transformation
-from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from sympy import diff
 from typing import List, Set, Tuple
+
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
@@ -23,33 +24,34 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
-class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
+@transformation.explicit_cf_compatible
+class MoveLoopIntoMap(transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map
     """
 
+    loop = transformation.PatternNode(LoopRegion)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.loop)]
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Is this even a loop
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+        # If loop information cannot be determined, fail.
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        step = loop_analysis.get_loop_stride(self.loop)
+        itervar = self.loop.loop_variable
+        if start is None or end is None or step is None or itervar is None:
             return False
-
-        # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-        after: sd.SDFGState = self.exit_state
-
-        # Obtain iteration variable, range, and stride
-        loop_info = find_for_loop(sdfg, guard, body)
-        if not loop_info:
-            return False
-        itervar, (start, end, step), (_, body_end) = loop_info
 
         if step not in [-1, 1]:
             return False
 
         # Body must contain a single state
-        if body != body_end:
+        if len(self.loop.nodes()) != 1 or not isinstance(self.loop.nodes()[0], SDFGState):
             return False
+        body: SDFGState = self.loop.nodes()[0]
 
         # Body must have only a single connected component
         # NOTE: This is a strict check that can be potentially relaxed.
@@ -154,15 +156,9 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg: sd.SDFG):
-        # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-
-        # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
-
-        forward_loop = step > 0
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        body: sd.SDFGState = self.loop.nodes()[0]
+        itervar = self.loop.loop_variable
 
         for node in body.nodes():
             if isinstance(node, nodes.MapEntry):
@@ -173,46 +169,23 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
         nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
+        nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
-        new_before, new_guard, new_after = nsdfg.sdfg.add_loop(
-            before_state=None,
-            loop_state=nsdfg.sdfg.nodes()[0],
-            loop_end_state=None,
-            after_state=None,
-            loop_var=itervar,
-            initialize_expr=f'{start}',
-            condition_expr=f'{itervar} <= {end}' if forward_loop else f'{itervar} >= {end}',
-            increment_expr=f'{itervar} + {step}' if forward_loop else f'{itervar} - {abs(step)}')
+        inner_loop = LoopRegion(self.loop.label, self.loop.loop_condition, self.loop.loop_variable,
+                                self.loop.init_statement, self.loop.update_statement, self.loop.inverted, nsdfg,
+                                self.loop.update_before_condition)
+        inner_loop.add_node(nested_state, is_start_block=True)
+        nsdfg.sdfg.remove_node(nested_state)
+        nsdfg.sdfg.add_node(inner_loop, is_start_block=True)
 
-        # remove outer loop
-        before_guard_edge = nsdfg.sdfg.edges_between(new_before, new_guard)[0]
-        for e in nsdfg.sdfg.out_edges(new_guard):
-            if e.dst is new_after:
-                guard_after_edge = e
-            else:
-                guard_body_edge = e
+        graph.add_node(body, is_start_block=(graph.start_block is self.loop))
+        for ie in graph.in_edges(self.loop):
+            graph.add_edge(ie.src, body, ie.data)
+        for oe in graph.out_edges(self.loop):
+            graph.add_edge(body, oe.dst, oe.data)
+        graph.remove_node(self.loop)
 
-        for body_inedge in sdfg.in_edges(body):
-            if body_inedge.src is guard:
-                guard_body_edge.data.assignments.update(body_inedge.data.assignments)
-            sdfg.remove_edge(body_inedge)
-        for body_outedge in sdfg.out_edges(body):
-            sdfg.remove_edge(body_outedge)
-        for guard_inedge in sdfg.in_edges(guard):
-            before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
-            guard_inedge.data.assignments = {}
-            sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
-            sdfg.remove_edge(guard_inedge)
-        for guard_outedge in sdfg.out_edges(guard):
-            if guard_outedge.dst is body:
-                guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
-            else:
-                guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
-            guard_outedge.data.condition = CodeBlock("1")
-            sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
-            sdfg.remove_edge(guard_outedge)
-        sdfg.remove_node(guard)
         if itervar in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
@@ -251,9 +224,12 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             if helpers.is_symbol_unused(sdfg, s):
                 sdfg.remove_symbol(s)
 
+        sdfg.reset_cfg_list()
+
         from dace.transformation.interstate import RefineNestedAccess
         transformation = RefineNestedAccess()
-        transformation.setup_match(sdfg, 0, sdfg.node_id(body), {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
+        transformation.setup_match(sdfg, body.parent_graph.cfg_id, body.block_id,
+                                   {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
         transformation.apply(body, sdfg)
 
         # Second propagation for refined accesses.

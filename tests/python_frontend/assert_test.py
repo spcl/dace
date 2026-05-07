@@ -29,6 +29,7 @@ def test_static_assert_fail():
 
 
 def test_runtime_assert():
+
     @dace.program
     def prog_runtime(A: dace.float64[20]):
         assert A[0] >= 0

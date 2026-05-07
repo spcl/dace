@@ -15,19 +15,19 @@ def indirection(A: dace.float64[M], x: dace.int32[N]):
 
 
 def test_indirection():
-    M.set(100)
-    N.set(100)
+    M = 100
+    N = 100
 
-    x = np.ndarray((N.get(), ), dtype=np.int32)
-    for i in range(N.get()):
-        x[i] = N.get() - 1 - i
-    A = np.ndarray((M.get(), ), dtype=np.float64)
+    x = np.ndarray((N, ), dtype=np.int32)
+    for i in range(N):
+        x[i] = N - 1 - i
+    A = np.ndarray((M, ), dtype=np.float64)
 
     indirection(A, x)
 
-    npA = np.ndarray((M.get(), ), dtype=np.float64)
+    npA = np.ndarray((M, ), dtype=np.float64)
     npA[:] = 1.0
-    for j in range(1, N.get()):
+    for j in range(1, N):
         npA[x[j]] += npA[x[j - 1]]
 
     rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)

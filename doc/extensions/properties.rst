@@ -20,14 +20,14 @@ supported), and also offer *extra features* in addition to dataclass fields:
     * Integration of Property type and description with automatic documentation
     * ...and more (see :class:`~dace.properties.Property`)
 
-There are many property types in :mod:`dace.properties`, including :class:`~dace.properties.ListProperty`, 
+There are many property types in :mod:`dace.properties`, including :class:`~dace.properties.ListProperty`,
 :class:`~dace.properties.CodeProperty` (for code in arbitrary languages), :class:`~dace.properties.RangeProperty` (for
 subsets), :class:`~dace.properties.DictProperty`, and even :class:`~dace.properties.DataclassProperty` (that can convert
 arbitrary ``dataclass`` objects to properties).
 
 Ensuring that an object is serializable requires two actions:
 
-    * Decorating the class with :func:`dace.properties.make_properties`. This will wrap around the constructor and 
+    * Decorating the class with :func:`dace.properties.make_properties`. This will wrap around the constructor and
       field setters/getters, as well as register the object for deserialization.
     * Setting properties as field names
 
@@ -53,7 +53,7 @@ with some properties, it should be written as follows:
             if self.express:
                 ...
             ...
-    
+
     # Properties can also be used normally once a class is instantiated
     x = MyCustomXform()
     x.express = True
@@ -69,7 +69,7 @@ decorator directly, and implement your own ``to_json`` and ``from_json`` methods
 .. code-block:: python
 
     from dace.serialize import serializable
-    
+
     @serializable
     class MyClass:
         # ...
@@ -77,7 +77,7 @@ decorator directly, and implement your own ``to_json`` and ``from_json`` methods
             # Converts this object to a JSON-compatible object (e.g., dict, string, float)
             # Optionally receives a parent object
             return json_compatible_object
-        
+
         @classmethod
         def from_json(cls, json_obj, context=None):
             # Returns a class that matches the input JSON object. ``context`` contains the
@@ -109,7 +109,7 @@ built-in module to serialize arbitrary objects:
     class PickledProperty(properties.Property):
         """
         Custom Property type that uses ``pickle`` to save any data objects.
-        
+
         :warning: Pickled objects may not be transferrable across Python
                   interpreter versions.
         """
@@ -128,7 +128,7 @@ built-in module to serialize arbitrary objects:
             }
 
         @classmethod
-        def from_json(cls, json_obj: Dict[str, Any], 
+        def from_json(cls, json_obj: Dict[str, Any],
                       context: Optional[Dict[str, Any]] = None):
             """
             Converts the JSON object back to the original object. We can rely

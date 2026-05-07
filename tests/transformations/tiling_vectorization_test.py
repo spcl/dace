@@ -9,6 +9,7 @@ N = dace.symbol('N')
 
 @dace.program
 def multiply(X: dace.float64[N], Y: dace.float64[N], Z: dace.float64[N]):
+
     @dace.map(_[0:N])
     def mult(i):
         x << X[i]

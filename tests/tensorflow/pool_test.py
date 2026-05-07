@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+from importlib.util import find_spec
 
 
 @pytest.mark.tensorflow
 def test_pooling():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     size_in = [1, 112, 112, 3]
     # size_in = [4, 4, 4, 4]
     np.random.seed(0)
@@ -87,8 +88,5 @@ def test_pooling():
 
 
 if __name__ == '__main__':
-    try:
-        import tensorflow
+    if find_spec("tensorflow"):
         test_pooling()
-    except ImportError:
-        pass
