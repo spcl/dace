@@ -83,6 +83,121 @@ typically slower than vendor-tuned alternatives such as ``"MKL"``,
 ``"pure"`` expansion is recommended so that the node always has a working
 fallback regardless of the user's environment.
 
+.. _replacements:
+
+Registering a Library Call with the Python Frontend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Defining a library node makes the node available in the SDFG IR, but it does
+not by itself make the node callable from a ``@dace.program``. To bridge a
+Python-level call site (e.g., ``numpy.dot(a, b)``) to a library node, the
+Python frontend uses a *replacement registry* implemented in
+:mod:`dace.frontend.common.op_repository`. Each replacement is a Python
+function that receives an SDFG and a state and is responsible for adding
+nodes (typically a library node, but it can be any subgraph) into that state
+and returning the names of the data containers that hold the result. The
+frontend invokes these functions whenever it encounters a matching call,
+attribute access, operator, or NumPy ufunc in the user's program.
+
+Replacements live under :mod:`dace.frontend.python.replacements` (one module
+per category - ``pymath``, ``linalg``, ``mpi``, ``ufunc``, ``operators``,
+etc.) and are registered with one of the decorators exported from
+``dace.frontend.common.op_repository``:
+
+* :func:`@oprepo.replaces(qualname) <dace.frontend.common.op_repository.replaces>` -
+  replaces a free-standing function call. ``qualname`` is the
+  fully-qualified, pydoc-compliant name of the function being intercepted
+  (e.g., ``"numpy.dot"``, ``"math.exp"``, ``"dace.comm.Bcast"``). A single
+  replacement may be decorated multiple times to cover several aliases.
+* :func:`@oprepo.replaces_method(classname, method_name) <dace.frontend.common.op_repository.replaces_method>` -
+  replaces a method invocation on an object whose class name matches
+  ``classname`` (e.g., ``("Intracomm", "Bcast")`` for ``mpi4py``'s
+  ``Intracomm.Bcast``).
+* :func:`@oprepo.replaces_attribute(classname, attr_name) <dace.frontend.common.op_repository.replaces_attribute>` -
+  replaces an attribute access (e.g., ``ndarray.shape``).
+* :func:`@oprepo.replaces_operator(classname, optype, otherclass=None) <dace.frontend.common.op_repository.replaces_operator>` -
+  replaces a binary or unary operator (``optype`` is the corresponding
+  ``ast`` node name, such as ``"Add"``, ``"Mul"``, or ``"Eq"``) between
+  two DaCe data classes.
+* :func:`@oprepo.replaces_ufunc(name) <dace.frontend.common.op_repository.replaces_ufunc>` -
+  replaces a NumPy universal function or one of its methods (``"ufunc"``,
+  ``"reduce"``, ``"accumulate"``, ...).
+
+Every replacement function has the same general signature::
+
+    def my_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+                       *args, **kwargs) -> Union[str, Tuple[str, ...]]:
+        ...
+
+* ``pv`` is the active :class:`~dace.frontend.python.newast.ProgramVisitor`,
+  which can be queried for the current scope, the user-provided globals, and
+  utilities such as ``pv.get_target_name()`` for picking unique container
+  names.
+* ``sdfg`` and ``state`` are the SDFG and state that the call site is being
+  parsed into.
+* ``*args`` / ``**kwargs`` mirror the call-site arguments. Array arguments
+  are passed as the **string name** of an existing data container in
+  ``sdfg.arrays``; constants and shapes are passed as Python values or
+  symbolic expressions.
+* The return value is the name (or tuple of names) of the data container(s)
+  that hold the result. The frontend takes care of binding these to the
+  user's left-hand-side variable.
+
+A typical replacement does three things: validate inputs, allocate output
+containers, and wire a library node into the state. The example below is a
+condensed version of the ``numpy.dot`` replacement for the 1-D case
+(`see full implementation
+<https://github.com/spcl/dace/blob/main/dace/frontend/python/replacements/linalg.py>`_),
+which dispatches to the :class:`~dace.libraries.blas.nodes.dot.Dot` library
+node:
+
+.. code-block:: python
+
+    from dace.frontend.common import op_repository as oprepo
+    from dace.frontend.python.replacements.utils import ProgramVisitor
+    from dace import SDFG, SDFGState, Memlet
+    from dace.libraries.blas.nodes.dot import Dot
+
+    @oprepo.replaces('dace.dot')
+    @oprepo.replaces('numpy.dot')
+    def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+            op_a: str, op_b: str, op_out=None):
+        arr_a = sdfg.arrays[op_a]
+        arr_b = sdfg.arrays[op_b]
+
+        # Allocate a transient scalar to hold the result if not provided.
+        if op_out is None:
+            op_out, _ = sdfg.add_scalar(pv.get_target_name(), arr_a.dtype,
+                                        transient=True, find_new_name=True)
+        arr_out = sdfg.arrays[op_out]
+
+        # Insert the BLAS Dot library node and connect it to the inputs/outputs.
+        node = Dot('_Dot_')
+        state.add_node(node)
+        state.add_edge(state.add_read(op_a), None, node, '_x',
+                       Memlet.from_array(op_a, arr_a))
+        state.add_edge(state.add_read(op_b), None, node, '_y',
+                       Memlet.from_array(op_b, arr_b))
+        state.add_edge(node, '_result', state.add_write(op_out), None,
+                       Memlet.from_array(op_out, arr_out))
+
+        return op_out
+
+With this registration in place, both ``dace.dot(a, b)`` and ``numpy.dot(a, b)``
+inside a ``@dace.program`` body are lowered into a ``Dot`` library node. The
+choice of expansion (``"pure"``, ``"MKL"``, ``"cuBLAS"``, ...) is then made
+later, during SDFG simplification or compilation, exactly as described in the
+sections above.
+
+For a replacement to be picked up, its module must be imported during
+``dace`` initialization. The built-in replacement modules are wired up via
+``dace/frontend/python/replacements/__init__.py``; external replacements only
+need to be imported once (e.g., from your library's top-level ``__init__.py``)
+before the first ``@dace.program`` is parsed. See the
+:mod:`dace.frontend.python.replacements` package for many more concrete
+examples covering array creation, reductions, FFTs, MPI collectives, and
+linear algebra.
+
 Environments
 ------------
 
