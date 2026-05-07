@@ -10,7 +10,7 @@ import numpy
 import sympy
 from typing import Any, Dict, List, Optional, Set, Union
 
-from dace import symbolic
+from dace import dtypes, symbolic
 
 
 def _remove_outer_indentation(src: str):
