@@ -2201,7 +2201,8 @@ class SDFG(ControlFlowRegion):
                   parent_grid: str = None,
                   color: Sequence[Union[Integral, bool]] = None,
                   exact_grid: RankType = None,
-                  root: RankType = 0):
+                  root: RankType = 0,
+                  name: Optional[str] = None) -> str:
         """ Adds a process-grid to the process-grid descriptor store.
             For more details on process-grids, please read the documentation of the ProcessGrid class.
 
@@ -2210,6 +2211,7 @@ class SDFG(ControlFlowRegion):
             :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
             :param exact_grid: If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
             :param root: Root rank (used for collective communication).
+            :param name: Name hint of the new process-grid descriptor. If None, a name will be automatically generated.
             :return: Name of the new process-grid descriptor.
         """
 
@@ -2226,7 +2228,7 @@ class SDFG(ControlFlowRegion):
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
 
-        grid_name = self._find_new_name('__pgrid')
+        grid_name = self._find_new_name(name or '__pgrid')
         is_subgrid = (parent_grid is not None)
         if parent_grid and isinstance(parent_grid, str):
             parent_grid = self.process_grids[parent_grid]
@@ -2244,7 +2246,8 @@ class SDFG(ControlFlowRegion):
                      shape: ShapeType,
                      subshape: ShapeType,
                      pgrid: str = None,
-                     correspondence: Sequence[Integral] = None):
+                     correspondence: Sequence[Integral] = None,
+                     name: Optional[str] = None):
         """ Adds a sub-array to the sub-array descriptor store.
             For more details on sub-arrays, please read the documentation of the SubArray class.
 
@@ -2253,6 +2256,7 @@ class SDFG(ControlFlowRegion):
             :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
             :param pgrid: Process-grid used for collective scatter/gather operations.
             :param correspondence: Matching among array dimensions and process-grid dimensions.
+            :param name: Name hint of the new sub-array descriptor. If None, a name will be automatically generated.
             :return: Name of the new sub-array descriptor.
         """
 
@@ -2275,7 +2279,7 @@ class SDFG(ControlFlowRegion):
         subshape = newshape
 
         # No need to ensure unique test.
-        subarray_name = self._find_new_name('__subarray')
+        subarray_name = self._find_new_name(name or '__subarray')
 
         subarray = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
         self.add_datadesc(subarray_name, subarray)
@@ -2284,16 +2288,17 @@ class SDFG(ControlFlowRegion):
 
         return subarray_name
 
-    def add_rdistrarray(self, array_a: str, array_b: str):
+    def add_rdistrarray(self, array_a: str, array_b: str, name: Optional[str] = None) -> str:
         """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
             For more details on redistributions, please read the documentation of the RedistrArray class.
 
             :param array_a: Input sub-array descriptor.
             :param array_b: Output sub-array descriptor.
+            :param name: Name hint of the new redistribution descriptor. If None, a name will be automatically generated.
             :return: Name of the new redistribution descriptor.
         """
         # No need to ensure unique test.
-        name = self._find_new_name('__rdistrarray')
+        name = self._find_new_name(name or '__rdistrarray')
 
         rdistrarray = RedistrArray(name, array_a, array_b)
         self.add_datadesc(name, rdistrarray)

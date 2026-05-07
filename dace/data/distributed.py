@@ -64,7 +64,7 @@ class ProcessGrid(DistributedDescriptor):
     """
 
     name = Property(dtype=str, desc="The process-grid's name.")
-    is_subgrid = Property(dtype=bool, default=False, desc="If true, spanws sub-grids out of the parent process-grid.")
+    is_subgrid = Property(dtype=bool, default=False, desc="If true, spawns sub-grids out of the parent process-grid.")
     parent_grid = Property(dtype=str,
                            allow_none=True,
                            default=None,
