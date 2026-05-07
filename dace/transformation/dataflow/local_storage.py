@@ -99,7 +99,7 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
 
         to_data_mm = copy.deepcopy(invariant_memlet)
         from_data_mm = copy.deepcopy(invariant_memlet)
-        offset = subsets.Indices([r[0] for r in invariant_memlet.subset])
+        offset = subsets.Range.from_indices([r[0] for r in invariant_memlet.subset])
 
         # Reconnect, assuming one edge to the access node
         graph.remove_edge(original_edge)
@@ -123,6 +123,7 @@ class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
         data node between two scope entry nodes.
     """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b
@@ -139,6 +140,7 @@ class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient
         data node between two scope exit nodes.
     """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b

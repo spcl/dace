@@ -3,8 +3,8 @@ import dace
 import numpy as np
 
 
-@dace.program(dace.float64[20, 20])
-def inline_chain_test(A):
+@dace.program
+def inline_chain_test(A: dace.float64[20, 20]):
     tmp = dace.define_local([20, 20], dtype=dace.float64)
     tmp[:] = 0
 

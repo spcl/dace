@@ -1,18 +1,16 @@
-from enum import Enum, Flag
+from enum import Flag
 from networkx import DiGraph
 from dace.memlet import Memlet
-from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
-from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.graph import MultiConnectorEdge
 import dace
 from dace import SDFG, SDFGState
 import dace.sdfg.nodes as nodes
-from collections import defaultdict
 import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.dtypes as dtypes
 import dace.data as data
-from typing import *
 import dace.symbolic as symbolic
+from typing import Dict, Set, Tuple, Union, DefaultDict
 
 
 class VectorInferenceFlags(Flag):
@@ -21,6 +19,7 @@ class VectorInferenceFlags(Flag):
 
 
 class VectorInferenceException(Exception):
+
     def __init__(self, msg):
         super().__init__(msg)
 

@@ -1,7 +1,7 @@
-
 from abc import abstractmethod
 import copy
 import math
+from collections import namedtuple
 from typing import Any, List, Optional, Set, Tuple, Type
 
 from dace.frontend.fortran import ast_internal_classes
@@ -9,6 +9,7 @@ from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 
 FASTNode = Any
+
 
 class IntrinsicTransformation:
 
@@ -19,41 +20,175 @@ class IntrinsicTransformation:
 
     @staticmethod
     @abstractmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
+    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node,
+                line) -> ast_internal_classes.FNode:
         pass
 
     @staticmethod
     def has_transformation() -> bool:
         return False
 
-class SelectedKind(IntrinsicTransformation):
+
+class IntrinsicNodeTransformer(NodeTransformer):
+
+    def initialize(self, ast):
+        # We need to rerun the assignment because transformations could have created
+        # new AST nodes
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
+
+    @staticmethod
+    @abstractmethod
+    def func_name(self) -> str:
+        pass
+
+
+class DirectReplacement(IntrinsicTransformation):
+
+    Replacement = namedtuple("Replacement", "function")
+    Transformation = namedtuple("Transformation", "function")
+
+    class ASTTransformation(IntrinsicNodeTransformer):
+
+        def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
+
+            if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
+                return binop_node
+
+            node = binop_node.rval
+
+            name = node.name.name.split('__dace_')
+            if len(name) != 2 or name[1] not in DirectReplacement.FUNCTIONS:
+                return binop_node
+            func_name = name[1]
+
+            replacement_rule = DirectReplacement.FUNCTIONS[func_name]
+            if isinstance(replacement_rule, DirectReplacement.Transformation):
+
+                # FIXME: we do not have line number in binop?
+                binop_node.rval, input_type = replacement_rule.function(node, self.scope_vars, 0)  #binop_node.line)
+                print(binop_node, binop_node.lval, binop_node.rval)
+
+                # replace types of return variable - LHS of the binary operator
+                var = binop_node.lval
+                if isinstance(var.name, ast_internal_classes.Name_Node):
+                    name = var.name.name
+                else:
+                    name = var.name
+                var_decl = self.scope_vars.get_var(var.parent, name)
+                var.type = input_type
+                var_decl.type = input_type
+
+            return binop_node
+
+            #self.scope_vars.get_var(node.parent, arg.name).
+
+    def replace_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
+
+        if len(var.args) not in [1, 2]:
+            raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = scope_vars.get_var(var.parent, var.args[0].name)
+
+        # one arg to SIZE? compute the total number of elements
+        if len(var.args) == 1:
+
+            if len(var_decl.sizes) == 1:
+                return (var_decl.sizes[0], "INTEGER")
+
+            ret = ast_internal_classes.BinOp_Node(lval=var_decl.sizes[0], rval=None, op="*")
+            cur_node = ret
+            for i in range(1, len(var_decl.sizes) - 1):
+
+                cur_node.rval = ast_internal_classes.BinOp_Node(lval=var_decl.sizes[i], rval=None, op="*")
+                cur_node = cur_node.rval
+
+            cur_node.rval = var_decl.sizes[-1]
+            return (ret, "INTEGER")
+
+        # two arguments? We return number of elements in a given rank
+        rank = var.args[1]
+        # we do not support symbolic argument to DIM - it must be a literal
+        if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
+            raise NotImplementedError()
+        value = int(rank.value)
+        return (var_decl.sizes[value - 1], "INTEGER")
+
+    def replace_bit_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
+
+        if len(var.args) != 1:
+            raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = scope_vars.get_var(var.parent, var.args[0].name)
+
+        dace_type = fortrantypes2dacetypes[var_decl.type]
+        type_size = dace_type().itemsize * 8
+
+        return (ast_internal_classes.Int_Literal_Node(value=str(type_size)), "INTEGER")
+
+    def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line):
+        return ast_internal_classes.Int_Literal_Node(value=str(
+            math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
+                                                     line_number=line)
+
+    def replace_real_kind(args: ast_internal_classes.Arg_List_Node, line):
+        if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
+            return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
+        elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
+            return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
+        else:
+            return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
 
     FUNCTIONS = {
-        "SELECTED_INT_KIND": "__dace_selected_int_kind",
-        "SELECTED_REAL_KIND": "__dace_selected_real_kind",
+        "SELECTED_INT_KIND": Replacement(replace_int_kind),
+        "SELECTED_REAL_KIND": Replacement(replace_real_kind),
+        "BIT_SIZE": Transformation(replace_bit_size),
+        "SIZE": Transformation(replace_size)
     }
 
     @staticmethod
-    def replaced_name(func_name: str) -> str:
-        return SelectedKind.FUNCTIONS[func_name]
+    def temporary_functions():
+
+        # temporary functions created by us -> f becomes __dace_f
+        # We provide this to tell Fortran parser that these are function calls,
+        # not array accesses
+        funcs = list(DirectReplacement.FUNCTIONS.keys())
+        return [f'__dace_{f}' for f in funcs]
 
     @staticmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
+    def replacable_name(func_name: str) -> bool:
+        return func_name in DirectReplacement.FUNCTIONS
 
-        if func_name.name == "__dace_selected_int_kind":
-            return ast_internal_classes.Int_Literal_Node(value=str(
-                math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
-                                                         line_number=line)
-        # This selects the smallest kind that can hold the given number of digits (fp64,fp32 or fp16)
-        elif func_name.name == "__dace_selected_real_kind":
-            if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
-                return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-            elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
-                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
-            else:
-                return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
+    @staticmethod
+    def replace_name(func_name: str) -> str:
+        #return ast_internal_classes.Name_Node(name=DirectReplacement.FUNCTIONS[func_name][0])
+        return ast_internal_classes.Name_Node(name=f'__dace_{func_name}')
 
-        raise NotImplemented()
+    @staticmethod
+    def replacable(func_name: str) -> bool:
+        orig_name = func_name.split('__dace_')
+        if len(orig_name) > 1 and orig_name[1] in DirectReplacement.FUNCTIONS:
+            return isinstance(DirectReplacement.FUNCTIONS[orig_name[1]], DirectReplacement.Replacement)
+        return False
+
+    @staticmethod
+    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node,
+                line) -> ast_internal_classes.FNode:
+
+        # Here we already have __dace_func
+        fname = func_name.split('__dace_')[1]
+        return DirectReplacement.FUNCTIONS[fname].function(args, line)
+
+    def has_transformation(fname: str) -> bool:
+        return isinstance(DirectReplacement.FUNCTIONS[fname], DirectReplacement.Transformation)
+
+    @staticmethod
+    def get_transformation() -> IntrinsicNodeTransformer:
+        return DirectReplacement.ASTTransformation()
+
 
 class LoopBasedReplacement:
 
@@ -76,43 +211,43 @@ class LoopBasedReplacement:
     def has_transformation() -> bool:
         return True
 
-class LoopBasedReplacementVisitor(NodeVisitor):
 
+class LoopBasedReplacementVisitor(NodeVisitor):
     """
     Finds all intrinsic operations that have to be transformed to loops in the AST
     """
+
     def __init__(self, func_name: str):
         self._func_name = func_name
         self.nodes: List[ast_internal_classes.FNode] = []
+        self.calls: List[ast_internal_classes.FNode] = []
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
-
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
             if node.rval.name.name == self._func_name:
+                self.nodes.append(node)
+                self.calls.append(node.rval)
+        self.visit(node.lval)
+        self.visit(node.rval)
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        if node.name.name == self._func_name:
+            if node not in self.calls:
                 self.nodes.append(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         return
 
-class LoopBasedReplacementTransformation(NodeTransformer):
 
+class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
     """
     Transforms the AST by removing intrinsic call and replacing it with loops
     """
-    def __init__(self, ast):
+
+    def __init__(self):
         self.count = 0
-
-        # We need to rerun the assignment because transformations could have created
-        # new AST nodes
-        ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
-        self.scope_vars.visit(ast)
         self.rvals = []
-
-    @staticmethod
-    @abstractmethod
-    def func_name() -> str:
-        pass
 
     @abstractmethod
     def _initialize(self):
@@ -123,7 +258,8 @@ class LoopBasedReplacementTransformation(NodeTransformer):
         pass
 
     @abstractmethod
-    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
+                        new_func_body: List[ast_internal_classes.FNode]):
         pass
 
     @abstractmethod
@@ -152,7 +288,8 @@ class LoopBasedReplacementTransformation(NodeTransformer):
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
         pass
 
-    def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
+    def _parse_array(self, node: ast_internal_classes.Execution_Part_Node,
+                     arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
@@ -170,12 +307,10 @@ class LoopBasedReplacementTransformation(NodeTransformer):
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
             return arg
 
-    def _parse_binary_op(self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node) -> Tuple[
-            ast_internal_classes.Array_Subscript_Node,
-            Optional[ast_internal_classes.Array_Subscript_Node],
-            ast_internal_classes.BinOp_Node
-        ]:
-
+    def _parse_binary_op(
+        self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node
+    ) -> Tuple[ast_internal_classes.Array_Subscript_Node, Optional[ast_internal_classes.Array_Subscript_Node],
+               ast_internal_classes.BinOp_Node]:
         """
             Supports passing binary operations as an input to function.
             In both cases, we extract the arrays used, and return a brand
@@ -232,8 +367,8 @@ class LoopBasedReplacementTransformation(NodeTransformer):
 
         return (first_array, second_array, cond)
 
-    def _adjust_array_ranges(self, node: ast_internal_classes.FNode, array: ast_internal_classes.Array_Subscript_Node, loop_ranges_main: list, loop_ranges_array: list):
-
+    def _adjust_array_ranges(self, node: ast_internal_classes.FNode, array: ast_internal_classes.Array_Subscript_Node,
+                             loop_ranges_main: list, loop_ranges_array: list):
         """
             When given a binary operator with arrays as an argument to the intrinsic,
             one array will dictate loop range.
@@ -258,8 +393,7 @@ class LoopBasedReplacementTransformation(NodeTransformer):
                     lval=idx_var,
                     op="+",
                     rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
-                    line_number=node.line_number
-                )
+                    line_number=node.line_number)
                 array.indices[i] = new_index
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -336,17 +470,14 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             self.count = self.count + range_index
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
-class SumProduct(LoopBasedReplacementTransformation):
 
-    def __init__(self, ast):
-        super().__init__(ast)
+class SumProduct(LoopBasedReplacementTransformation):
 
     def _initialize(self):
         self.rvals = []
         self.argument_variable = None
 
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
-
         """
             For both SUM and PRODUCT, the result type depends on the input variable.
         """
@@ -367,15 +498,16 @@ class SumProduct(LoopBasedReplacementTransformation):
             else:
                 raise NotImplementedError("We do not support non-array arguments for SUM/PRODUCT")
 
-
-    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
+                        new_func_body: List[ast_internal_classes.FNode]):
 
         if len(self.rvals) != 1:
             raise NotImplementedError("Only one array can be summed")
 
         self.argument_variable = self.rvals[0]
 
-        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body,
+                              self.scope_vars, True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
@@ -383,26 +515,20 @@ class SumProduct(LoopBasedReplacementTransformation):
             lval=node.lval,
             op="=",
             rval=ast_internal_classes.Int_Literal_Node(value=self._result_init_value()),
-            line_number=node.line_number
-        )
+            line_number=node.line_number)
 
     def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
-        return ast_internal_classes.BinOp_Node(
-            lval=node.lval,
-            op="=",
-            rval=ast_internal_classes.BinOp_Node(
-                lval=node.lval,
-                op=self._result_update_op(),
-                rval=self.argument_variable,
-                line_number=node.line_number
-            ),
-            line_number=node.line_number
-        )
+        return ast_internal_classes.BinOp_Node(lval=node.lval,
+                                               op="=",
+                                               rval=ast_internal_classes.BinOp_Node(lval=node.lval,
+                                                                                    op=self._result_update_op(),
+                                                                                    rval=self.argument_variable,
+                                                                                    line_number=node.line_number),
+                                               line_number=node.line_number)
 
 
 class Sum(LoopBasedReplacement):
-
     """
         In this class, we implement the transformation for Fortran intrinsic SUM(:)
         We support two ways of invoking the function - by providing array name and array subscript.
@@ -414,9 +540,6 @@ class Sum(LoopBasedReplacement):
 
     class Transformation(SumProduct):
 
-        def __init__(self, ast):
-            super().__init__(ast)
-
         @staticmethod
         def func_name() -> str:
             return "__dace_sum"
@@ -427,8 +550,8 @@ class Sum(LoopBasedReplacement):
         def _result_update_op(self):
             return "+"
 
-class Product(LoopBasedReplacement):
 
+class Product(LoopBasedReplacement):
     """
         In this class, we implement the transformation for Fortran intrinsic PRODUCT(:)
         We support two ways of invoking the function - by providing array name and array subscript.
@@ -440,9 +563,6 @@ class Product(LoopBasedReplacement):
 
     class Transformation(SumProduct):
 
-        def __init__(self, ast):
-            super().__init__(ast)
-
         @staticmethod
         def func_name() -> str:
             return "__dace_product"
@@ -453,10 +573,8 @@ class Product(LoopBasedReplacement):
         def _result_update_op(self):
             return "*"
 
-class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
-    def __init__(self, ast):
-        super().__init__(ast)
+class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
     def _initialize(self):
         self.rvals = []
@@ -467,7 +585,6 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         self.cond = None
 
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
-
         """
             For all functions, the result type is INTEGER.
             Theoretically, we should return LOGICAL for ANY and ALL,
@@ -486,25 +603,26 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         array_node = self._parse_array(node, arg)
         if array_node is not None:
             self.first_array = array_node
-            self.cond = ast_internal_classes.BinOp_Node(
-                op="==",
-                rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                lval=self.first_array,
-                line_number=node.line_number
-            )
+            self.cond = ast_internal_classes.BinOp_Node(op="==",
+                                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                        lval=self.first_array,
+                                                        line_number=node.line_number)
         else:
             self.first_array, self.second_array, self.cond = self._parse_binary_op(node, arg)
 
-    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
+                        new_func_body: List[ast_internal_classes.FNode]):
 
         rangeslen_left = []
-        par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body,
+                              self.scope_vars, True)
         if self.second_array is None:
             return
 
         loop_ranges_right = []
         rangeslen_right = []
-        par_Decl_Range_Finder(self.second_array, loop_ranges_right, [], rangeslen_right, self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.second_array, loop_ranges_right, [], rangeslen_right, self.count, new_func_body,
+                              self.scope_vars, True)
 
         for left_len, right_len in zip(rangeslen_left, rangeslen_right):
             if left_len != right_len:
@@ -514,20 +632,16 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         # Thus, we only need to adjust the second array
         self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges_right)
 
-
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
         init_value = self._result_init_value()
 
-        return ast_internal_classes.BinOp_Node(
-            lval=node.lval,
-            op="=",
-            rval=ast_internal_classes.Int_Literal_Node(value=init_value),
-            line_number=node.line_number
-        )
+        return ast_internal_classes.BinOp_Node(lval=node.lval,
+                                               op="=",
+                                               rval=ast_internal_classes.Int_Literal_Node(value=init_value),
+                                               line_number=node.line_number)
 
     def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
-
         """
         For any, we check if the condition is true and then set the value to true
         For all, we check if the condition is NOT true and then set the value to false
@@ -543,15 +657,13 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
             #)
         ])
 
-        return ast_internal_classes.If_Stmt_Node(
-            cond=self._loop_condition(),
-            body=body_if,
-            body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
-            line_number=node.line_number
-        )
+        return ast_internal_classes.If_Stmt_Node(cond=self._loop_condition(),
+                                                 body=body_if,
+                                                 body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
+                                                 line_number=node.line_number)
+
 
 class Any(LoopBasedReplacement):
-
     """
         In this class, we implement the transformation for Fortran intrinsic ANY
         We support three ways of invoking the function - by providing array name, array subscript,
@@ -573,22 +685,18 @@ class Any(LoopBasedReplacement):
         For (2), we reuse the provided binary operation.
         When the condition is true, we set the value to true and exit.
     """
-    class Transformation(AnyAllCountTransformation):
 
-        def __init__(self, ast):
-            super().__init__(ast)
+    class Transformation(AnyAllCountTransformation):
 
         def _result_init_value(self):
             return "0"
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
 
-            return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
-                op="=",
-                rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                line_number=node.line_number
-            )
+            return ast_internal_classes.BinOp_Node(lval=copy.deepcopy(node.lval),
+                                                   op="=",
+                                                   rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                   line_number=node.line_number)
 
         def _loop_condition(self):
             return self.cond
@@ -597,43 +705,36 @@ class Any(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_any"
 
-class All(LoopBasedReplacement):
 
+class All(LoopBasedReplacement):
     """
         In this class, we implement the transformation for Fortran intrinsic ALL.
         The implementation is very similar to ANY.
         The main difference is that we initialize the partial result to 1,
         and set it to 0 if any of the evaluated conditions is false.
     """
-    class Transformation(AnyAllCountTransformation):
 
-        def __init__(self, ast):
-            super().__init__(ast)
+    class Transformation(AnyAllCountTransformation):
 
         def _result_init_value(self):
             return "1"
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
 
-            return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
-                op="=",
-                rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                line_number=node.line_number
-            )
+            return ast_internal_classes.BinOp_Node(lval=copy.deepcopy(node.lval),
+                                                   op="=",
+                                                   rval=ast_internal_classes.Int_Literal_Node(value="0"),
+                                                   line_number=node.line_number)
 
         def _loop_condition(self):
-            return ast_internal_classes.UnOp_Node(
-                op="not",
-                lval=self.cond
-            )
+            return ast_internal_classes.UnOp_Node(op="not", lval=self.cond)
 
         @staticmethod
         def func_name() -> str:
             return "__dace_all"
 
-class Count(LoopBasedReplacement):
 
+class Count(LoopBasedReplacement):
     """
         In this class, we implement the transformation for Fortran intrinsic COUNT.
         The implementation is very similar to ANY and ALL.
@@ -642,28 +743,22 @@ class Count(LoopBasedReplacement):
 
         We do not support the KIND argument.
     """
-    class Transformation(AnyAllCountTransformation):
 
-        def __init__(self, ast):
-            super().__init__(ast)
+    class Transformation(AnyAllCountTransformation):
 
         def _result_init_value(self):
             return "0"
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
 
-            update = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
-                op="+",
-                rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                line_number=node.line_number
-            )
-            return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
-                op="=",
-                rval=update,
-                line_number=node.line_number
-            )
+            update = ast_internal_classes.BinOp_Node(lval=copy.deepcopy(node.lval),
+                                                     op="+",
+                                                     rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                     line_number=node.line_number)
+            return ast_internal_classes.BinOp_Node(lval=copy.deepcopy(node.lval),
+                                                   op="=",
+                                                   rval=update,
+                                                   line_number=node.line_number)
 
         def _loop_condition(self):
             return self.cond
@@ -675,15 +770,11 @@ class Count(LoopBasedReplacement):
 
 class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
-    def __init__(self, ast):
-        super().__init__(ast)
-
     def _initialize(self):
         self.rvals = []
         self.argument_variable = None
 
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
-
         """
             For both MINVAL and MAXVAL, the result type depends on the input variable.
         """
@@ -705,56 +796,48 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
             else:
                 raise NotImplementedError("We do not support non-array arguments for MINVAL/MAXVAL")
 
-    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
+                        new_func_body: List[ast_internal_classes.FNode]):
 
         if len(self.rvals) != 1:
             raise NotImplementedError("Only one array can be summed")
 
         self.argument_variable = self.rvals[0]
 
-        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body,
+                              self.scope_vars, True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
-        return ast_internal_classes.BinOp_Node(
-            lval=node.lval,
-            op="=",
-            rval=self._result_init_value(self.argument_variable),
-            line_number=node.line_number
-        )
+        return ast_internal_classes.BinOp_Node(lval=node.lval,
+                                               op="=",
+                                               rval=self._result_init_value(self.argument_variable),
+                                               line_number=node.line_number)
 
     def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
-        cond = ast_internal_classes.BinOp_Node(
-            lval=self.argument_variable,
-            op=self._condition_op(),
-            rval=node.lval,
-            line_number=node.line_number
-        )
-        body_if = ast_internal_classes.BinOp_Node(
-            lval=node.lval,
-            op="=",
-            rval=self.argument_variable,
-            line_number=node.line_number
-        )
-        return ast_internal_classes.If_Stmt_Node(
-            cond=cond,
-            body=body_if,
-            body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
-            line_number=node.line_number
-        )
+        cond = ast_internal_classes.BinOp_Node(lval=self.argument_variable,
+                                               op=self._condition_op(),
+                                               rval=node.lval,
+                                               line_number=node.line_number)
+        body_if = ast_internal_classes.BinOp_Node(lval=node.lval,
+                                                  op="=",
+                                                  rval=self.argument_variable,
+                                                  line_number=node.line_number)
+        return ast_internal_classes.If_Stmt_Node(cond=cond,
+                                                 body=body_if,
+                                                 body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
+                                                 line_number=node.line_number)
+
 
 class MinVal(LoopBasedReplacement):
-
     """
         In this class, we implement the transformation for Fortran intrinsic MINVAL.
 
         We do not support the MASK and DIM argument.
     """
-    class Transformation(MinMaxValTransformation):
 
-        def __init__(self, ast):
-            super().__init__(ast)
+    class Transformation(MinMaxValTransformation):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
@@ -780,16 +863,13 @@ class MinVal(LoopBasedReplacement):
 
 
 class MaxVal(LoopBasedReplacement):
-
     """
         In this class, we implement the transformation for Fortran intrinsic MAXVAL.
 
         We do not support the MASK and DIM argument.
     """
-    class Transformation(MinMaxValTransformation):
 
-        def __init__(self, ast):
-            super().__init__(ast)
+    class Transformation(MinMaxValTransformation):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
@@ -813,12 +893,10 @@ class MaxVal(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_maxval"
 
+
 class Merge(LoopBasedReplacement):
 
     class Transformation(LoopBasedReplacementTransformation):
-
-        def __init__(self, ast):
-            super().__init__(ast)
 
         def _initialize(self):
             self.rvals = []
@@ -862,39 +940,42 @@ class Merge(LoopBasedReplacement):
             if array_node is not None:
 
                 self.mask_first_array = array_node
-                self.mask_cond = ast_internal_classes.BinOp_Node(
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    lval=self.mask_first_array,
-                    line_number=node.line_number
-                )
+                self.mask_cond = ast_internal_classes.BinOp_Node(op="==",
+                                                                 rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                                 lval=self.mask_first_array,
+                                                                 line_number=node.line_number)
 
             else:
 
                 self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
-        def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+        def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
+                            new_func_body: List[ast_internal_classes.FNode]):
 
             self.destination_array = self._parse_array(exec_node, node.lval)
 
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
-            par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+            par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body,
+                                  self.scope_vars, True)
 
             loop_ranges = []
-            par_Decl_Range_Finder(self.second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+            par_Decl_Range_Finder(self.second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars,
+                                  True)
             self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
 
             par_Decl_Range_Finder(self.destination_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
 
             if self.mask_first_array is not None:
                 loop_ranges = []
-                par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], [], self.count, new_func_body,
+                                      self.scope_vars, True)
                 self._adjust_array_ranges(node, self.mask_first_array, self.loop_ranges, loop_ranges)
 
             if self.mask_second_array is not None:
                 loop_ranges = []
-                par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], [], self.count, new_func_body,
+                                      self.scope_vars, True)
                 self._adjust_array_ranges(node, self.mask_second_array, self.loop_ranges, loop_ranges)
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
@@ -904,46 +985,254 @@ class Merge(LoopBasedReplacement):
             return None
 
         def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
-
             """
                 We check if the condition is true. If yes, then we write from the first array.
                 Otherwise, we copy data from the second array.
             """
 
-            copy_first = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(self.destination_array),
-                op="=",
-                rval=self.first_array,
-                line_number=node.line_number
-            )
+            copy_first = ast_internal_classes.BinOp_Node(lval=copy.deepcopy(self.destination_array),
+                                                         op="=",
+                                                         rval=self.first_array,
+                                                         line_number=node.line_number)
 
-            copy_second = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(self.destination_array),
-                op="=",
-                rval=self.second_array,
-                line_number=node.line_number
-            )
+            copy_second = ast_internal_classes.BinOp_Node(lval=copy.deepcopy(self.destination_array),
+                                                          op="=",
+                                                          rval=self.second_array,
+                                                          line_number=node.line_number)
 
-            body_if = ast_internal_classes.Execution_Part_Node(execution=[
-                copy_first
-            ])
+            body_if = ast_internal_classes.Execution_Part_Node(execution=[copy_first])
 
-            body_else = ast_internal_classes.Execution_Part_Node(execution=[
-                copy_second
-            ])
+            body_else = ast_internal_classes.Execution_Part_Node(execution=[copy_second])
 
-            return ast_internal_classes.If_Stmt_Node(
-                cond=self.mask_cond,
-                body=body_if,
-                body_else=body_else,
-                line_number=node.line_number
-            )
+            return ast_internal_classes.If_Stmt_Node(cond=self.mask_cond,
+                                                     body=body_if,
+                                                     body_else=body_else,
+                                                     line_number=node.line_number)
+
+
+class MathFunctions(IntrinsicTransformation):
+
+    MathTransformation = namedtuple("MathTransformation", "function return_type")
+    MathReplacement = namedtuple("MathReplacement", "function replacement_function return_type")
+
+    def generate_scale(arg: ast_internal_classes.Call_Expr_Node):
+
+        # SCALE(X, I) becomes: X * pow(RADIX(X), I)
+        # In our case, RADIX(X) is always 2
+        line = arg.line_number
+        x = arg.args[0]
+        i = arg.args[1]
+        const_two = ast_internal_classes.Int_Literal_Node(value="2")
+
+        # I and RADIX(X) are both integers
+        rval = ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="pow"),
+                                                   type="INTEGER",
+                                                   args=[const_two, i],
+                                                   line_number=line)
+
+        mult = ast_internal_classes.BinOp_Node(op="*", lval=x, rval=rval, line_number=line)
+
+        # pack it into parentheses, just to be sure
+        return ast_internal_classes.Parenthesis_Expr_Node(expr=mult)
+
+    def generate_aint(arg: ast_internal_classes.Call_Expr_Node):
+
+        # The call to AINT can contain a second KIND parameter
+        # We ignore it a the moment.
+        # However, to map into C's trunc, we need to drop it.
+        if len(arg.args) > 1:
+            del arg.args[1]
+
+        fname = arg.name.name.split('__dace_')[1]
+        if fname in "AINT":
+            arg.name = ast_internal_classes.Name_Node(name="trunc")
+        elif fname == "NINT":
+            arg.name = ast_internal_classes.Name_Node(name="iround")
+        elif fname == "ANINT":
+            arg.name = ast_internal_classes.Name_Node(name="round")
+        else:
+            raise NotImplementedError()
+
+        return arg
+
+    INTRINSIC_TO_DACE = {
+        "MIN": MathTransformation("min", "FIRST_ARG"),
+        "MAX": MathTransformation("max", "FIRST_ARG"),
+        "SQRT": MathTransformation("sqrt", "FIRST_ARG"),
+        "ABS": MathTransformation("abs", "FIRST_ARG"),
+        "EXP": MathTransformation("exp", "FIRST_ARG"),
+        # Documentation states that the return type of LOG is always REAL,
+        # but the kind is the same as of the first argument.
+        # However, we already replaced kind with types used in DaCe.
+        # Thus, a REAL that is really DOUBLE will be double in the first argument.
+        "LOG": MathTransformation("log", "FIRST_ARG"),
+        "MOD": {
+            "INTEGER": MathTransformation("Mod", "INTEGER"),
+            "REAL": MathTransformation("Mod_float", "REAL"),
+            "DOUBLE": MathTransformation("Mod_float", "DOUBLE")
+        },
+        "MODULO": {
+            "INTEGER": MathTransformation("Modulo", "INTEGER"),
+            "REAL": MathTransformation("Modulo_float", "REAL"),
+            "DOUBLE": MathTransformation("Modulo_float", "DOUBLE")
+        },
+        "FLOOR": {
+            "REAL": MathTransformation("floor", "INTEGER"),
+            "DOUBLE": MathTransformation("floor", "INTEGER")
+        },
+        "SCALE": MathReplacement(None, generate_scale, "FIRST_ARG"),
+        "EXPONENT": MathTransformation("frexp", "INTEGER"),
+        "INT": MathTransformation("int", "INTEGER"),
+        "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
+        "NINT": MathReplacement("iround", generate_aint, "INTEGER"),
+        "ANINT": MathReplacement("round", generate_aint, "FIRST_ARG"),
+        "REAL": MathTransformation("float", "REAL"),
+        "DBLE": MathTransformation("double", "DOUBLE"),
+        "SIN": MathTransformation("sin", "FIRST_ARG"),
+        "COS": MathTransformation("cos", "FIRST_ARG"),
+        "SINH": MathTransformation("sinh", "FIRST_ARG"),
+        "COSH": MathTransformation("cosh", "FIRST_ARG"),
+        "TANH": MathTransformation("tanh", "FIRST_ARG"),
+        "ASIN": MathTransformation("asin", "FIRST_ARG"),
+        "ACOS": MathTransformation("acos", "FIRST_ARG"),
+        "ATAN": MathTransformation("atan", "FIRST_ARG"),
+        "ATAN2": MathTransformation("atan2", "FIRST_ARG")
+    }
+
+    class TypeTransformer(IntrinsicNodeTransformer):
+
+        def func_type(self, node: ast_internal_classes.Call_Expr_Node):
+
+            # take the first arg
+            arg = node.args[0]
+            if isinstance(arg, ast_internal_classes.Real_Literal_Node):
+                return 'REAL'
+            elif isinstance(arg, ast_internal_classes.Int_Literal_Node):
+                return 'INTEGER'
+            elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
+                return arg.type
+            elif isinstance(arg, ast_internal_classes.Name_Node):
+                input_type = self.scope_vars.get_var(node.parent, arg.name)
+                return input_type.type
+            else:
+                input_type = self.scope_vars.get_var(node.parent, arg.name.name)
+                return input_type.type
+
+        def replace_call(self, old_call: ast_internal_classes.Call_Expr_Node, new_call: ast_internal_classes.FNode):
+
+            parent = old_call.parent
+
+            # We won't need it if the CallExtractor will properly support nested function calls.
+            # Then, all function calls should be a binary op: val = func()
+            if isinstance(parent, ast_internal_classes.BinOp_Node):
+                if parent.lval == old_call:
+                    parent.lval = new_call
+                else:
+                    parent.rval = new_call
+            elif isinstance(parent, ast_internal_classes.UnOp_Node):
+                parent.lval = new_call
+            elif isinstance(parent, ast_internal_classes.Parenthesis_Expr_Node):
+                parent.expr = new_call
+            elif isinstance(parent, ast_internal_classes.Call_Expr_Node):
+                for idx, arg in enumerate(parent.args):
+                    if arg == old_call:
+                        parent.args[idx] = new_call
+                        break
+            else:
+                raise NotImplementedError()
+
+        def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
+
+            if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
+                return binop_node
+
+            node = binop_node.rval
+
+            name = node.name.name.split('__dace_')
+            if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_TO_DACE:
+                return binop_node
+            func_name = name[1]
+
+            # Visit all children before we expand this call.
+            # We need that to properly get the type.
+            for arg in node.args:
+                self.visit(arg)
+
+            return_type = None
+            input_type = None
+            input_type = self.func_type(node)
+
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
+            if isinstance(replacement_rule, dict):
+                replacement_rule = replacement_rule[input_type]
+            if replacement_rule.return_type == "FIRST_ARG":
+                return_type = input_type
+            else:
+                return_type = replacement_rule.return_type
+
+            if isinstance(replacement_rule, MathFunctions.MathTransformation):
+                node.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+                node.type = return_type
+
+            else:
+                binop_node.rval = replacement_rule.replacement_function(node)
+
+            # replace types of return variable - LHS of the binary operator
+            var = binop_node.lval
+            name = None
+            if isinstance(var.name, ast_internal_classes.Name_Node):
+                name = var.name.name
+            else:
+                name = var.name
+            var_decl = self.scope_vars.get_var(var.parent, name)
+            var.type = input_type
+            var_decl.type = input_type
+
+            return binop_node
+
+    @staticmethod
+    def dace_functions():
+
+        # list of final dace functions which we create
+        funcs = list(MathFunctions.INTRINSIC_TO_DACE.values())
+        res = []
+        # flatten nested lists
+        for f in funcs:
+            if isinstance(f, dict):
+                res.extend([v.function for k, v in f.items() if v.function is not None])
+            else:
+                if f.function is not None:
+                    res.append(f.function)
+        return res
+
+    @staticmethod
+    def temporary_functions():
+
+        # temporary functions created by us -> f becomes __dace_f
+        # We provide this to tell Fortran parser that these are function calls,
+        # not array accesses
+        funcs = list(MathFunctions.INTRINSIC_TO_DACE.keys())
+        return [f'__dace_{f}' for f in funcs]
+
+    @staticmethod
+    def replacable(func_name: str) -> bool:
+        return func_name in MathFunctions.INTRINSIC_TO_DACE
+
+    @staticmethod
+    def replace(func_name: str) -> ast_internal_classes.FNode:
+        return ast_internal_classes.Name_Node(name=f'__dace_{func_name}')
+
+    def has_transformation() -> bool:
+        return True
+
+    @staticmethod
+    def get_transformation() -> TypeTransformer:
+        return MathFunctions.TypeTransformer()
+
 
 class FortranIntrinsics:
 
     IMPLEMENTATIONS_AST = {
-        "SELECTED_INT_KIND": SelectedKind,
-        "SELECTED_REAL_KIND": SelectedKind,
         "SUM": Sum,
         "PRODUCT": Product,
         "ANY": Any,
@@ -954,14 +1243,7 @@ class FortranIntrinsics:
         "MERGE": Merge
     }
 
-    DIRECT_REPLACEMENTS = {
-        "__dace_selected_int_kind": SelectedKind,
-        "__dace_selected_real_kind": SelectedKind
-    }
-
-    EXEMPTED_FROM_CALL_EXTRACTION = [
-        Merge
-    ]
+    EXEMPTED_FROM_CALL_EXTRACTION = [Merge]
 
     def __init__(self):
         self._transformations_to_run = set()
@@ -971,63 +1253,63 @@ class FortranIntrinsics:
 
     @staticmethod
     def function_names() -> List[str]:
-        return list(LoopBasedReplacement.INTRINSIC_TO_DACE.values())
+        # list of all functions that are created by initial transformation, before doing full replacement
+        # this prevents other parser components from replacing our function calls with array subscription nodes
+        return [
+            *list(LoopBasedReplacement.INTRINSIC_TO_DACE.values()), *MathFunctions.temporary_functions(),
+            *DirectReplacement.temporary_functions()
+        ]
+
+    @staticmethod
+    def retained_function_names() -> List[str]:
+        # list of all DaCe functions that we use after full parsing
+        return MathFunctions.dace_functions()
 
     @staticmethod
     def call_extraction_exemptions() -> List[str]:
-        return [func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+        return [
+            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+            #*MathFunctions.temporary_functions()
+        ]
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
         func_name = node.string
         replacements = {
-            "INT": "__dace_int",
-            "DBLE": "__dace_dble",
-            "SQRT": "sqrt",
-            "COSH": "cosh",
-            "ABS": "abs",
-            "MIN": "min",
-            "MAX": "max",
-            "EXP": "exp",
-            "EPSILON": "__dace_epsilon",
-            "TANH": "tanh",
             "SIGN": "__dace_sign",
-            "EXP": "exp"
         }
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
-        else:
+        elif DirectReplacement.replacable_name(func_name):
+            if DirectReplacement.has_transformation(func_name):
+                self._transformations_to_run.add(DirectReplacement.get_transformation())
+            return DirectReplacement.replace_name(func_name)
+        elif MathFunctions.replacable(func_name):
+            self._transformations_to_run.add(MathFunctions.get_transformation())
+            return MathFunctions.replace(func_name)
 
-            if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation)
+        if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
 
-            return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
+            if hasattr(self.IMPLEMENTATIONS_AST[func_name], "Transformation"):
+                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation())
+            else:
+                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].get_transformation(func_name))
 
-    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
+        return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
+
+    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node,
+                                   line):
 
         func_types = {
-            "__dace_int": "INT",
-            "__dace_dble": "DOUBLE",
-            "sqrt": "DOUBLE",
-            "cosh": "DOUBLE",
-            "abs": "DOUBLE",
-            "min": "DOUBLE",
-            "max": "DOUBLE",
-            "exp": "DOUBLE",
-            "__dace_epsilon": "DOUBLE",
-            "tanh": "DOUBLE",
             "__dace_sign": "DOUBLE",
         }
         if name.name in func_types:
             # FIXME: this will be progressively removed
             call_type = func_types[name.name]
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
-        elif name.name in self.DIRECT_REPLACEMENTS:
-            return self.DIRECT_REPLACEMENTS[name.name].replace(name, args, line)
+        elif DirectReplacement.replacable(name.name):
+            return DirectReplacement.replace(name.name, args, line)
         else:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
-            return ast_internal_classes.Call_Expr_Node(
-                name=name, type="VOID",
-                args=args.args, line_number=line
-            )
+            return ast_internal_classes.Call_Expr_Node(name=name, type="VOID", args=args.args, line_number=line)

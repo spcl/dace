@@ -9,6 +9,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+
 @dace.program
 def program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
@@ -45,8 +46,6 @@ def test_blockallreduce():
     print(np.linalg.norm(result1))
     print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)
-
-    print("PASS")
 
 
 if __name__ == '__main__':

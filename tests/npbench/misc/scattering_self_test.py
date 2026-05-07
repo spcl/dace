@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (dc.symbol(s, dc.int64)
                                        for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D'))
@@ -92,19 +88,8 @@ def run_scattering_self_test(device_type: dace.dtypes.DeviceType):
         sdfg = scattering_self_energies_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(neigh_idx, dH, G, D, Sigma, Nkz=Nkz, NE=NE, Nqz=Nqz, N3D=N3D, NA=NA, NB=NB, Norb=Norb, Nw=Nw)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = scattering_self_energies_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        from dace.libraries.blas import Gemm
-        Gemm.default_implementation = "FPGA1DSystolic"
-        sdfg.expand_library_nodes()
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(Nkz=Nkz, NE=NE, Nqz=Nqz, N3D=N3D, NA=NA, NB=NB, Norb=Norb, Nw=Nw))
-        sdfg(neigh_idx, dH, G, D, Sigma)
+    else:
+        raise ValueError(f'Unsupported device type: {device_type}')
 
     # Compute ground truth and validate
     ground_truth(neigh_idx, dH, G, D, Sigma_ref)
@@ -121,16 +106,10 @@ def test_gpu():
     run_scattering_self_test(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Compiler error")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_scattering_self_test(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -139,5 +118,3 @@ if __name__ == "__main__":
         run_scattering_self_test(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_scattering_self_test(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_scattering_self_test(dace.dtypes.DeviceType.FPGA)

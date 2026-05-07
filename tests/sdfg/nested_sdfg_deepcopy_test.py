@@ -2,7 +2,6 @@
 """ Tests deepcopying (nested) SDFGs. """
 import copy
 import dace
-import numpy as np
 
 
 def test_deepcopy_same_state():
@@ -11,7 +10,7 @@ def test_deepcopy_same_state():
     state = sdfg.add_state('state')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -29,7 +28,7 @@ def test_deepcopy_same_state_edge():
     state = sdfg.add_state('state')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -48,7 +47,7 @@ def test_deepcopy_diff_state():
     state_1 = sdfg.add_state('state_1')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state_0.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state_0.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -68,7 +67,7 @@ def test_deepcopy_diff_state_edge():
     state_1 = sdfg.add_state('state_1')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state_0.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state_0.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -87,7 +86,7 @@ def test_deepcopy_diff_sdfg():
     state_0 = sdfg_0.add_state('state_0')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state_0.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state_0.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -108,7 +107,7 @@ def test_deepcopy_diff_sdfg_edge():
     state_0 = sdfg_0.add_state('state_0')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state_0.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state_0.add_nested_sdfg(nsdfg, {}, {})
 
     copy_nsdfg = copy.deepcopy(nsdfg_node)
     assert copy_nsdfg.sdfg.parent_nsdfg_node is copy_nsdfg
@@ -131,7 +130,7 @@ def test_deepcopy_top_level():
     state = sdfg.add_state('state')
 
     nsdfg = dace.SDFG('nested')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {})
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_state = copy_sdfg.states()[0]

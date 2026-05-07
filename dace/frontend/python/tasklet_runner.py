@@ -1,29 +1,24 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-A Python runner for DaCe tasklets. Used to execute  ``with dace.tasklet`` 
+A Python runner for DaCe tasklets. Used to execute  ``with dace.tasklet``
 statements.
 """
 
 import ast
 import copy
 import inspect
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from dace import data, symbolic
-from dace.config import Config
-from dace.frontend.python import ndloop, wrappers
 from dace.frontend.python import astutils
-from dace.frontend.python.astutils import unparse, rname
-from dace.frontend.python.parser import DaceProgram
+from dace.frontend.python.astutils import rname
 
 
 def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
     """
     Returns the AST of the contents of the statement that called this function.
 
-    :param stack_depth: If ``frame`` is None, how many levels up to go in the 
-                        stack, default: 2 
+    :param stack_depth: If ``frame`` is None, how many levels up to go in the
+                        stack, default: 2
                         (with statement->``__enter__``->``get_tasklet_ast``).
     :param frame: An optional argument specifying the frame, in order to avoid
                   inspecting it twice.
@@ -50,7 +45,8 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
         if (getattr(node, 'lineno', -1) == caller.lineno and isinstance(node, ast.With)):
             return node
 
-    raise FileNotFoundError('Cannot recover "with" statement from calling ' 'function.')
+    raise FileNotFoundError('Cannot recover "with" statement from calling '
+                            'function.')
 
 
 def _copy_location(newnode, node):
@@ -58,11 +54,12 @@ def _copy_location(newnode, node):
 
 
 class TaskletRewriter(astutils.ExtNodeTransformer):
-    """ 
+    """
     Rewrites memlet expressions in tasklets such that the code can run in
     pure Python. This means placing all the reads before computations, writes
     after computations, handling write-conflict resolution, and dynamic memlets.
     """
+
     def __init__(self) -> None:
         super().__init__()
         # Used for incoming memlets
@@ -102,7 +99,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         return iftrue
 
     def _analyze_call(self, node: ast.Call) -> Tuple[bool, Optional[ast.Lambda]]:
-        """ 
+        """
         Analyze memlet expression if a function call (e.g.
         ``A(1, lambda a,b: a+b)[:]``).
 
@@ -227,7 +224,7 @@ def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: Dict[str, Any], lva
     """
     Transforms and runs a tasklet given by its AST, filename, global, and local
     variables.
-    
+
     :param tasklet_ast: AST of the "with dace.tasklet" statement.
     :param filename: A string representing the originating filename or code
                      snippet (IPython, Jupyter) of the tasklet, used for

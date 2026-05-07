@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 from dace import data
 
@@ -114,6 +115,7 @@ def test_is_a_copy():
 
 
 def test_needs_view():
+
     @dace.program
     def nested(q, i, j):
         q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 3:6]
@@ -132,6 +134,7 @@ def test_needs_view():
 
 
 def test_needs_copy():
+
     @dace.program
     def nested(q, i, j):
         q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 1:4]
@@ -151,6 +154,119 @@ def test_needs_copy():
     assert found_copy
 
 
+def _test_strided_copy_program(program, symbols=None):
+
+    src = np.ones(40, dtype=np.uint32)
+    dst = np.full(20, 3, dtype=np.uint32)
+    ref = np.full(20, 3, dtype=np.uint32)
+    ref[0:20:2] = src[0:40:4]
+
+    symbols = symbols or {}
+    base_sdfg = program.to_sdfg(simplify=False)
+    base_sdfg.validate()
+    base_sdfg(src=src, dst=dst, **symbols)
+    assert np.array_equal(dst, ref), f"Expected {ref}, got {dst}"
+
+    base_sdfg.simplify()
+    base_sdfg.validate()
+    dst = np.full(20, 3, dtype=np.uint32)  # Reset destination array
+    base_sdfg(src=src, dst=dst, **symbols)
+    assert np.array_equal(dst, ref), f"Expected {ref}, got {dst}"
+
+
+def test_strided_copy():
+
+    @dace.program
+    def strided_copy(dst: dace.uint32[20], src: dace.uint32[40]):
+        dst[0:20:2] = src[0:40:4]
+
+    _test_strided_copy_program(strided_copy)
+
+
+def test_strided_copy_symbolic_0():
+    N = dace.symbol('N')
+
+    @dace.program
+    def strided_copy_symbolic_0(dst: dace.uint32[N], src: dace.uint32[2 * N]):
+        dst[0:N:2] = src[0:2 * N:4]
+
+    _test_strided_copy_program(strided_copy_symbolic_0, symbols={'N': 20})
+
+
+def test_strided_copy_symbolic_1():
+    N = dace.symbol('N')
+
+    @dace.program
+    def strided_copy_symbolic_1(dst: dace.uint32[N], src: dace.uint32[2 * N]):
+        dst[0:N:2] = src[4 * N - 1:-1:-4]
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
+        # This should raise an error because of the negative stride in the source.
+        strided_copy_symbolic_1.to_sdfg(simplify=False)
+
+
+def test_strided_copy_symbolic_2():
+    N = dace.symbol('N')
+
+    @dace.program
+    def strided_copy_symbolic_2(dst: dace.uint32[20], src: dace.uint32[40]):
+        dst[0:20:N] = src[0:40:2 * N]
+
+    _test_strided_copy_program(strided_copy_symbolic_2, symbols={'N': 2})
+
+
+def test_strided_copy_symbolic_3():
+    M, N = (dace.symbol(s) for s in ('M', 'N'))
+
+    @dace.program
+    def strided_copy_symbolic_3(dst: dace.uint32[M], src: dace.uint32[2 * M]):
+        dst[0:M:N] = src[0:2 * M:2 * N]
+
+    _test_strided_copy_program(strided_copy_symbolic_3, symbols={'M': 20, 'N': 2})
+
+
+def test_strided_copy_map_0():
+
+    @dace.program
+    def strided_copy_map_0(dst: dace.uint32[20], src: dace.uint32[40]):
+        for i in dace.map[0:20:2]:
+            dst[i] = src[i * 2]
+
+    _test_strided_copy_program(strided_copy_map_0)
+
+
+def test_strided_copy_map_1():
+
+    @dace.program
+    def strided_copy_map_1(dst: dace.uint32[20], src: dace.uint32[40]):
+        for i in dace.map[0:2]:
+            dst[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+
+    _test_strided_copy_program(strided_copy_map_1)
+
+
+def test_strided_copy_map_symbolic_0():
+    M, N = (dace.symbol(s) for s in ('M', 'N'))
+
+    @dace.program
+    def strided_copy_map_symbolic_0(dst: dace.uint32[M], src: dace.uint32[2 * M]):
+        for i in dace.map[0:M:N]:
+            dst[i] = src[i * 2]
+
+    _test_strided_copy_program(strided_copy_map_symbolic_0, symbols={'M': 20, 'N': 2})
+
+
+def test_strided_copy_map_symbolic_1():
+    M, N = (dace.symbol(s) for s in ('M', 'N'))
+
+    @dace.program
+    def strided_copy_map_symbolic_1(dst: dace.uint32[2 * M], src: dace.uint32[4 * M]):
+        for i in dace.map[0:2]:
+            dst[i * M:(i + 1) * M:N] = src[i * 2 * M:(i + 1) * 2 * M:2 * N]
+
+    _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()
@@ -161,3 +277,13 @@ if __name__ == '__main__':
     test_is_a_copy()
     test_needs_view()
     test_needs_copy()
+
+    test_strided_copy()
+    test_strided_copy_symbolic_0()
+    test_strided_copy_symbolic_1()
+    test_strided_copy_symbolic_2()
+    test_strided_copy_symbolic_3()
+    test_strided_copy_map_0()
+    test_strided_copy_map_1()
+    test_strided_copy_map_symbolic_0()
+    test_strided_copy_map_symbolic_1()

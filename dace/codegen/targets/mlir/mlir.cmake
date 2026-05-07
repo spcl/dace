@@ -18,7 +18,7 @@ foreach(DACE_MLIR_SRC_FILE ${DACE_MLIR_SRC_FILES})
     DEPENDS ${DACE_MLIR_SRC_FILE}
     VERBATIM
   )
-  
+
   add_custom_command(
     OUTPUT ${DACE_MLIR_LLVM_FILE}
     COMMAND mlir-translate --mlir-to-llvmir ${DACE_MLIR_MLIR_FILE} > ${DACE_MLIR_LLVM_FILE}

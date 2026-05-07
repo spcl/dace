@@ -6,6 +6,7 @@ from .ast_node import AST_Node
 
 
 class AST_EndFunc(AST_Node):
+
     def __init__(self, context):
         AST_Node.__init__(self, context)
 
@@ -23,6 +24,7 @@ class AST_EndFunc(AST_Node):
 
 
 class AST_Function(AST_Node):
+
     def __init__(self, context, name, args, retvals):
         AST_Node.__init__(self, context)
         self.name = name
@@ -64,6 +66,7 @@ class AST_Function(AST_Node):
 
 
 class AST_Argument(AST_Node):
+
     def __init__(self, context, name, default=None):
         AST_Node.__init__(self, context)
         self.name = name
@@ -82,6 +85,7 @@ class AST_Argument(AST_Node):
 
 
 class AST_BuiltInFunCall(AST_Node):
+
     def __init__(self, context, funname, args):
         AST_Node.__init__(self, context)
         self.funname = funname

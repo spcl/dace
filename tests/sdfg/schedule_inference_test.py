@@ -95,10 +95,10 @@ def test_nested_storage():
     sdfg = top.to_sdfg(simplify=False)
 
     set_default_schedule_and_storage_types(sdfg, None)
-    for node, state in sdfg.all_nodes_recursive():
-        nsdfg = state.parent
-        if isinstance(node, dace.nodes.AccessNode):
-            assert node.desc(nsdfg).storage == dace.StorageType.CPU_Heap
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for dn in state.data_nodes():
+                assert dn.desc(sd).storage == dace.StorageType.CPU_Heap
 
 
 def test_nested_storage_equivalence():
@@ -114,13 +114,13 @@ def test_nested_storage_equivalence():
     sdfg = top.to_sdfg(simplify=False)
 
     set_default_schedule_and_storage_types(sdfg, None)
-    for node, state in sdfg.all_nodes_recursive():
-        nsdfg = state.parent
-        if isinstance(node, dace.nodes.AccessNode):
-            if state.out_degree(node) > 0:  # Check for a in external and internal scopes
-                assert node.desc(nsdfg).storage == dace.StorageType.CPU_Heap
-            elif state.in_degree(node) > 0:  # Check for b in external and internal scopes
-                assert node.desc(nsdfg).storage == dace.StorageType.CPU_Pinned
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for dn in state.data_nodes():
+                if state.out_degree(dn) > 0:  # Check for a in external and internal scopes
+                    assert dn.desc(sd).storage == dace.StorageType.CPU_Heap
+                elif state.in_degree(dn) > 0:  # Check for b in external and internal scopes
+                    assert dn.desc(sd).storage == dace.StorageType.CPU_Pinned
 
 
 def test_ambiguous_schedule():
@@ -171,7 +171,6 @@ if __name__ == '__main__':
     test_gpu_schedule_autodetect()
     test_gpu_schedule_scalar_autodetect()
     test_gpu_schedule_scalar_autodetect_2()
-    test_nested_kernel_computation()
     test_nested_map_in_loop_schedule()
     test_nested_storage()
     test_nested_storage_equivalence()

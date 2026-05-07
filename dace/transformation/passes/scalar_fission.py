@@ -1,13 +1,14 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
+@transformation.explicit_cf_compatible
 class ScalarFission(ppl.Pass):
     """
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.

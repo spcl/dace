@@ -30,5 +30,4 @@ private:
 
 }   // namespace blas
 
-}   // namespace 
-
+}   // namespace

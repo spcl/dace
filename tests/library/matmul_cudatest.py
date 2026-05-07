@@ -3,11 +3,9 @@ import dace
 from dace.config import set_temporary
 from dace.library import change_default
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import itertools
 import numpy as np
-import sys
 import pytest
 
 ###############################################################################
@@ -91,7 +89,8 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
     ref = np.dot(x, y)
 
     if dtype == dace.float16 and np.linalg.norm(z) == 0:
-        print('No computation performed, half-precision probably not ' 'supported, skipping test.')
+        print('No computation performed, half-precision probably not '
+              'supported, skipping test.')
         return
 
     diff = np.linalg.norm(ref - z)

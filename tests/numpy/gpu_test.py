@@ -3,7 +3,6 @@ import dace
 import pytest
 
 from common import compare_numpy_output
-
 """
 Test CUDA code generation for a subset of numpy-like functions on GPU target.
 

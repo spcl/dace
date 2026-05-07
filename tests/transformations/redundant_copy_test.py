@@ -1,12 +1,130 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
+import copy
+from typing import Tuple
 
 import dace
-from dace import nodes
+from dace import nodes, data as dace_data
 from dace.libraries.standard import Transpose
 from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
                                           RedundantArrayCopyingIn)
+
+from . import utility
+
+
+def test_reshaping_with_redundant_arrays():
+
+    def make_sdfg() -> Tuple[dace.SDFG, dace.nodes.AccessNode, dace.nodes.AccessNode, dace.nodes.AccessNode]:
+        sdfg = dace.SDFG("slicing_sdfg")
+        _, input_desc = sdfg.add_array(
+            "input",
+            shape=(6, 6, 6),
+            transient=False,
+            strides=None,
+            dtype=dace.float64,
+        )
+        _, a_desc = sdfg.add_array(
+            "a",
+            shape=(6, 6, 6),
+            transient=True,
+            strides=None,
+            dtype=dace.float64,
+        )
+        _, b_desc = sdfg.add_array(
+            "b",
+            shape=(36, 1, 6),
+            transient=True,
+            strides=None,
+            dtype=dace.float64,
+        )
+        _, output_desc = sdfg.add_array(
+            "output",
+            shape=(36, 1, 6),
+            transient=False,
+            strides=None,
+            dtype=dace.float64,
+        )
+        state = sdfg.add_state("state", is_start_block=True)
+        input_an = state.add_access("input")
+        a_an = state.add_access("a")
+        b_an = state.add_access("b")
+        output_an = state.add_access("output")
+
+        state.add_edge(
+            input_an,
+            None,
+            a_an,
+            None,
+            dace.Memlet.from_array("input", input_desc),
+        )
+        state.add_edge(a_an, None, b_an, None,
+                       dace.Memlet.simple(
+                           "a",
+                           subset_str="0:6, 0:6, 0:6",
+                           other_subset_str="0:36, 0, 0:6",
+                       ))
+        state.add_edge(
+            b_an,
+            None,
+            output_an,
+            None,
+            dace.Memlet.from_array("b", b_desc),
+        )
+        sdfg.validate()
+        assert state.number_of_nodes() == 4
+        assert len(sdfg.arrays) == 4
+        return sdfg, a_an, b_an, output_an
+
+    def apply_trafo(
+        sdfg: dace.SDFG,
+        in_array: dace.nodes.AccessNode,
+        out_array: dace.nodes.AccessNode,
+        will_not_apply: bool = False,
+        will_create_view: bool = False,
+    ) -> dace.SDFG:
+        trafo = RedundantArray()
+
+        candidate = {type(trafo).in_array: in_array, type(trafo).out_array: out_array}
+        state = sdfg.start_block
+        state_id = sdfg.node_id(state)
+        initial_arrays = len(sdfg.arrays)
+        initial_access_nodes = state.number_of_nodes()
+
+        trafo.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+        if trafo.can_be_applied(state, 0, sdfg):
+            ret = trafo.apply(state, sdfg)
+            if ret is not None:  # A view was created
+                if will_create_view:
+                    return sdfg
+                assert False, f"A view was created instead removing '{in_array.data}'."
+            sdfg.validate()
+            assert state.number_of_nodes() == initial_access_nodes - 1
+            assert len(sdfg.arrays) == initial_arrays - 1
+            assert in_array.data not in sdfg.arrays
+            return sdfg
+
+        if will_not_apply:
+            return sdfg
+        assert False, "Could not apply the transformation."
+
+    input_array = np.array(np.random.rand(6, 6, 6), dtype=np.float64, order='C')
+    ref = input_array.reshape((36, 1, 6)).copy()
+    output_step1 = np.zeros_like(ref)
+    output_step2 = np.zeros_like(ref)
+
+    # The Memlet between `a` and `b` is a reshaping Memlet, that are not handled.
+    sdfg, a_an, b_an, output_an = make_sdfg()
+    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an, will_create_view=True)
+
+    sdfg(input=input_array, output=output_step1)
+    assert np.all(ref == output_step1)
+
+    # The Memlet between `b` and `output` is not reshaping, and thus `b` should be removed.
+    sdfg = apply_trafo(sdfg, in_array=b_an, out_array=output_an)
+
+    sdfg(input=input_array, output=output_step2)
+    assert np.all(ref == output_step2)
 
 
 def test_out():
@@ -330,6 +448,87 @@ def test_invalid_redundant_array_strided(order):
     assert np.allclose(b, np.flip(a, 0).flatten(order=order))
 
 
+def _make_reshaping_not_zero_started_input_sdfg(
+    a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+    sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
+    state = sdfg.add_state(is_start_block=True)
+
+    a_shape = (10, 1, 2, 20) if a_has_larger_rank_than_b else (10, 20)
+    sdfg.add_array(
+        "a",
+        shape=a_shape,
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "b",
+        shape=(5, 1, 10),
+        dtype=dace.float64,
+        transient=True,
+    )
+    sdfg.add_array(
+        "c",
+        shape=(
+            10,
+            20,
+        ),
+        dtype=dace.float64,
+        transient=False,
+    )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    state.add_edge(
+        a, None, b, None,
+        dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
+        if a_has_larger_rank_than_b else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
+
+    _, me, _ = state.add_mapped_tasklet(
+        "comp",
+        map_ranges={
+            "__i": "5:10",
+            "__j": "3:13"
+        },
+        inputs={"__in": dace.Memlet("b[__i - 5, 0, __j - 3]")},
+        code="__out = __in + 1.3",
+        outputs={"__out": dace.Memlet("c[__i, __j]")},
+        external_edges=True,
+        input_nodes={b},
+        output_nodes={c},
+    )
+    sdfg.validate()
+
+    return sdfg, state, a, me
+
+
+@pytest.mark.parametrize("a_has_larger_rank_than_b", [True, False])
+def test_reshaping_not_zero_started_input(a_has_larger_rank_than_b: bool):
+    sdfg, state, a, me = _make_reshaping_not_zero_started_input_sdfg(a_has_larger_rank_than_b=a_has_larger_rank_than_b)
+
+    assert utility.count_nodes(state, nodes.AccessNode) == 3
+    assert utility.count_nodes(state, nodes.MapEntry) == 1
+
+    assert "b" in sdfg.arrays
+    assert not isinstance(sdfg.arrays["b"], dace_data.View)
+    b_original_strides = copy.deepcopy(sdfg.arrays["b"].strides)
+
+    ref, res = utility.make_sdfg_args(sdfg)
+    utility.compile_and_run_sdfg(sdfg, **ref)
+
+    nb_applies = sdfg.apply_transformations_repeated(RedundantSecondArray, validate=True, validate_all=True)
+    assert nb_applies == 1
+
+    assert utility.count_nodes(state, nodes.AccessNode) == 3
+    assert utility.count_nodes(state, nodes.MapEntry) == 1
+
+    assert "b" in sdfg.arrays
+    assert isinstance(sdfg.arrays["b"], dace_data.View)
+    assert len(sdfg.arrays["b"].strides) == len(b_original_strides)
+    assert not all(ob == cb for ob, cb in zip(b_original_strides, sdfg.arrays["b"].strides))
+
+    utility.compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[name], res[name]) for name in ref.keys())
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -345,3 +544,5 @@ if __name__ == '__main__':
     test_redundant_second_copy_isolated()
     test_invalid_redundant_array_strided('C')
     test_invalid_redundant_array_strided('F')
+    test_reshaping_not_zero_started_input(True)
+    test_reshaping_not_zero_started_input(False)

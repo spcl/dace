@@ -110,7 +110,7 @@ def test_write_before_nested_map_exit_2():
     assert len(state.edges_between(c_nodes[0], mx0)) == 1
     assert len(state.edges_between(mx0, c_nodes[0])) == 0
     sdfg(A=A, B=after_val)
-    assert np.allclose(after_val, ref) 
+    assert np.allclose(after_val, ref)
 
 
 if __name__ == '__main__':

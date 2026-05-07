@@ -18,7 +18,7 @@ def test_gpu_access_on_host_interstate_ok():
     state2 = nsdfg.add_state()
     nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='a[i]')))
 
-    nnode = state.add_nested_sdfg(nsdfg, None, {'a'}, {}, {'i': 'i'})
+    nnode = state.add_nested_sdfg(nsdfg, {'a'}, {}, {'i': 'i'})
     r = state.add_read('A')
     state.add_memlet_path(r, me, nnode, dst_conn='a', memlet=dace.Memlet('A[0:20]'))
     state.add_nedge(nnode, mx, dace.Memlet())
@@ -64,7 +64,7 @@ def test_gpu_access_on_device_interstate_edge_default():
     state2 = nsdfg.add_state()
     nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='A[4]')))
 
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A'}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A'}, {})
     state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:20]'))
     state.add_nedge(nsdfg_node, mx, dace.Memlet())
 

@@ -22,7 +22,7 @@ def test_inout_connector_validation_success():
     state = sdfg.add_state()
     read_b = state.add_access("B")
     write_b = state.add_access("B")
-    tasklet = state.add_nested_sdfg(nsdfg, sdfg, {"C"}, {"C"})
+    tasklet = state.add_nested_sdfg(nsdfg, {"C"}, {"C"})
     state.add_edge(read_b, None, tasklet, 'C', dace.Memlet.from_array('B', sdfg.arrays['B']))
     state.add_edge(tasklet, 'C', write_b, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
 
@@ -55,14 +55,14 @@ def test_inout_connector_validation_success_2():
     nstate = nsdfg_0.add_state()
     tasklet_0 = nstate.add_tasklet("tasklet_00", {}, {"__out"}, "__out = 3")
     write_b_0 = nstate.add_access("B")
-    tasklet_1 = nstate.add_nested_sdfg(nsdfg_1, nsdfg_0, {"C"}, {"C"})
+    tasklet_1 = nstate.add_nested_sdfg(nsdfg_1, {"C"}, {"C"})
     write_b_1 = nstate.add_access("B")
     nstate.add_edge(tasklet_0, '__out', write_b_0, None, dace.Memlet.from_array('B', nsdfg_0.arrays['B']))
     nstate.add_edge(write_b_0, None, tasklet_1, 'C', dace.Memlet.from_array('B', nsdfg_0.arrays['B']))
     nstate.add_edge(tasklet_1, 'C', write_b_1, None, dace.Memlet.from_array('B', nsdfg_0.arrays['B']))
 
     state = sdfg.add_state()
-    tasklet = state.add_nested_sdfg(nsdfg_0, sdfg, {}, {"B"})
+    tasklet = state.add_nested_sdfg(nsdfg_0, {}, {"B"})
     write_a = state.add_access("A")
     state.add_edge(tasklet, 'B', write_a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
 
@@ -95,7 +95,7 @@ def test_inout_connector_validation_fail():
     state = sdfg.add_state()
     read_a = state.add_access("A")
     write_b = state.add_access("B")
-    tasklet = state.add_nested_sdfg(nsdfg, sdfg, {"C"}, {"C"})
+    tasklet = state.add_nested_sdfg(nsdfg, {"C"}, {"C"})
     state.add_edge(read_a, None, tasklet, 'C', dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_edge(tasklet, 'C', write_b, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
 
@@ -136,7 +136,7 @@ def test_nested_sdfg_with_transient_connector():
 
     state = sdfg.add_state('s0')
     me, mx = state.add_map('mymap', dict(k='0:2'))
-    nsdfg = state.add_nested_sdfg(sub_sdfg, sdfg, {'sA'}, {'sC'})
+    nsdfg = state.add_nested_sdfg(sub_sdfg, {'sA'}, {'sC'})
     Ain = state.add_read('A')
     Aout = state.add_write('A')
 

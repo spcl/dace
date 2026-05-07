@@ -12,7 +12,7 @@ from dace.properties import make_properties, ListProperty
 @make_properties
 class MapDimShuffle(transformation.SingleStateTransformation):
     """ Implements the map-dim shuffle transformation.
-    
+
         MapDimShuffle takes a map and a list of params.
         It reorders the dimensions in the map such that it matches the list.
     """

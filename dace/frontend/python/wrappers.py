@@ -1,12 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Types and wrappers used in DaCe's Python frontend. """
-from __future__ import print_function
 import numpy
 import itertools
 from collections import deque
 from typing import Deque, Generic, Type, TypeVar
 
-from dace import dtypes, symbolic
+from dace import dtypes
 
 T = TypeVar('T')
 
@@ -22,6 +21,7 @@ stream: Type[Deque[T]] = deque
 
 class stream_array(Generic[T]):
     """ Stream array object in Python. """
+
     def __init__(self, dtype, shape):
         from dace import data
 

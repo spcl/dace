@@ -5,12 +5,11 @@
 import copy
 import collections
 
-from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import Property, make_properties
-from dace.config import Config
 
 
 def in_scope(graph, node, parent):
@@ -144,7 +143,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         else:
             cnode: nodes.LibraryNode = self.reduce
             # Change schedule
-            cnode.schedule = dtypes.ScheduleType.GPU_Default
+            cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = cnode
 
         # First, merge access nodes around map
@@ -162,7 +161,6 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         if isinstance(cnode, nodes.EntryNode):
             sdutil.consolidate_edges_scope(graph, cnode)
             sdutil.consolidate_edges_scope(graph, exit_node)
-
 
         # If nested graph is designated as sequential, transform schedules and
         # storage from Default to Sequential/Register
@@ -349,7 +347,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     newmemlet.data = node.data
 
                     if is_scalar:
-                        newmemlet.subset = sbs.Indices([0])
+                        newmemlet.subset = sbs.Range.from_indices([0])
                     else:
                         offset = []
                         lost_dims = []
@@ -376,7 +374,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
-                    for e in graph.bfs_edges(edge.dst, reverse=False):
+                    for e in graph.edge_bfs(edge.dst, reverse=False):
                         parent, _, _child, _, memlet = e
                         if parent != edge.dst and not in_scope(graph, parent, edge.dst):
                             break
@@ -391,7 +389,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                 else:
                                     continue
                         if is_scalar:
-                            memlet.subset = sbs.Indices([0])
+                            memlet.subset = sbs.Range.from_indices([0])
                         else:
                             newsubset = [None] * len(memlet.subset)
                             for ind, r in enumerate(memlet.subset):
@@ -426,7 +424,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     newmemlet.data = node.data
 
                     if is_scalar:
-                        newmemlet.subset = sbs.Indices([0])
+                        newmemlet.subset = sbs.Range.from_indices([0])
                     else:
                         offset = []
                         lost_dims = []
@@ -454,7 +452,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
                     end_node = graph.entry_node(edge.src)
-                    for e in graph.bfs_edges(edge.src, reverse=True):
+                    for e in graph.edge_bfs(edge.src, reverse=True):
                         parent, _, _child, _, memlet = e
                         if parent == end_node:
                             break
@@ -469,7 +467,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                 else:
                                     continue
                         if is_scalar:
-                            memlet.subset = sbs.Indices([0])
+                            memlet.subset = sbs.Range.from_indices([0])
                         else:
                             newsubset = [None] * len(memlet.subset)
                             for ind, r in enumerate(memlet.subset):

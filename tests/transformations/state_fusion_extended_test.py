@@ -1,4 +1,4 @@
-from dace import SDFG, InterstateEdge,Memlet
+from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
 from dace.transformation.interstate import StateFusionExtended
 
@@ -8,7 +8,7 @@ def test_extended_fusion():
     Test the extended state fusion transformation.
     It should fuse the two states into one and add a dependency between the two uses of tmp.
     """
-    sdfg=SDFG('extended_state_fusion_test')
+    sdfg = SDFG('extended_state_fusion_test')
     sdfg.add_array('A', [20, 20], dtypes.float64)
     sdfg.add_array('B', [20, 20], dtypes.float64)
     sdfg.add_array('C', [20, 20], dtypes.float64)
@@ -35,14 +35,14 @@ def test_extended_fusion():
 
     t1 = strt.add_tasklet('t1', {'a', 'b'}, {
         'c',
-    }, 'c[1,1] = a[1,1] + b[1,1]')
+    }, 'c = a + b')
     t2 = strt.add_tasklet('t2', {}, {
         'tmpa',
     }, 'tmpa=4')
 
     t3 = mid.add_tasklet('t3', {'d', 'e'}, {
         'f',
-    }, 'f[1,1] = e[1,1] + d[1,1]')
+    }, 'f = e + d')
     t4 = mid.add_tasklet('t4', {}, {
         'tmpa',
     }, 'tmpa=7')
@@ -58,7 +58,7 @@ def test_extended_fusion():
     mid.add_edge(t4, 'tmpa', acc2_tmp, None, Memlet.simple('tmp', '0'))
     sdfg.simplify()
     sdfg.apply_transformations_repeated(StateFusionExtended)
-    assert sdfg.number_of_nodes()==1
+    assert sdfg.number_of_nodes() == 1
 
 
 if __name__ == '__main__':

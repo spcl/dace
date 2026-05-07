@@ -8,11 +8,12 @@ from .map_collapse import MapCollapse
 from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
+from .map_fusion_vertical import MapFusionVertical
+from .map_fusion_horizontal import MapFusionHorizontal
 from .map_fusion import MapFusion
 from .map_fission import MapFission
 from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
-from .trivial_map_range_elimination import TrivialMapRangeElimination
 from .otf_map_fusion import OTFMapFusion
 
 # Data movement
@@ -39,7 +40,7 @@ from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCop
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
-from .wcr_conversion import AugAssignToWCR
+from .wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from .tasklet_fusion import TaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination
 
@@ -49,8 +50,6 @@ from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
 from .warp_tiling import WarpTiling
-from .bank_split import BankSplit
-from .hbm_transform import HbmTransform
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose

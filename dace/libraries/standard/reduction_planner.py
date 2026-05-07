@@ -4,7 +4,7 @@
 from dace.data import Array
 from typing import List
 import dataclasses
-from dace.frontend.python.replacements import Size
+from dace.frontend.python.replacements.utils import Size
 from sympy import Expr
 from dace import symbolic
 
@@ -125,7 +125,7 @@ def get_reduction_schedule(in_array: Array,
                            warp_size=32,
                            wide_load_bytes=16):
     """
-    Computes a data movement minimizing GPU reduction schedule depending on the input data shape and 
+    Computes a data movement minimizing GPU reduction schedule depending on the input data shape and
     the axes to reduce.
 
     :param in_array: DaCe array describing the input data
@@ -249,8 +249,8 @@ def get_reduction_schedule(in_array: Array,
             schedule.grid = [1]
 
         # 32 threads per block unless contiguous dimension too small
-        threads_per_block = shape[contiguous_dimension] if (
-            shape[contiguous_dimension] < warp_size) == True else warp_size
+        threads_per_block = shape[contiguous_dimension] if (shape[contiguous_dimension]
+                                                            < warp_size) == True else warp_size
         schedule.block = [threads_per_block]
 
         stride = warp_size * num_loaded_elements if schedule.vectorize else warp_size
@@ -267,7 +267,7 @@ def get_reduction_schedule(in_array: Array,
         # we are reducing a non-contiguous dimension
 
         schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
-        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32) # each block computes 32 output values
+        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32)  # each block computes 32 output values
         schedule.grid.append(grid_dim)
 
         schedule.block = [16, 32]  # we use 16 threads per output value (could be any value in {1, ... , 32})

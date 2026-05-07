@@ -54,6 +54,7 @@ def test_hooks():
 
 
 def test_profile():
+
     @dace.program
     def test1(A: dace.float64[20]):
         return A + 1

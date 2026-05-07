@@ -1,9 +1,10 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import BreakBlock, LoopRegion
 from dace.transformation.subgraph import GPUPersistentKernel
 import pytest
 
@@ -42,26 +43,27 @@ def _make_sdfg():
 
     # Adding states
     # init data
-    s_init = bfs.add_state('init')
+    s_init = bfs.add_state('init', is_start_block=True)
+
+    # main loop
+    bfs_loop = LoopRegion('bfs_loop', 'count1[0] > 0', inverted=True)
+    bfs.add_edge(s_init, bfs_loop, dace.InterstateEdge(assignments={'depth': '1'}))
 
     # copy of the states because we don't want to copy the data
-    s_reset1 = bfs.add_state('reset1')
-    s_update1 = bfs.add_state('update1')
+    s_reset1 = bfs_loop.add_state('reset1', is_start_block=True)
+    s_update1 = bfs_loop.add_state('update1')
+    s_reset2 = bfs_loop.add_state('reset2')
+    s_update2 = bfs_loop.add_state('update2')
+    break_block = BreakBlock('break')
+    bfs_loop.add_node(break_block)
+    s_loop_end = bfs_loop.add_state('loop_end')
 
-    s_reset2 = bfs.add_state('reset2')
-    s_update2 = bfs.add_state('update2')
+    bfs_loop.add_edge(s_reset1, s_update1, dace.InterstateEdge())
+    bfs_loop.add_edge(s_update1, s_reset2, dace.InterstateEdge('count2[0] > 0', assignments={'depth': 'depth + 1'}))
+    bfs_loop.add_edge(s_update1, break_block, dace.InterstateEdge('count2[0] <= 0'))
+    bfs_loop.add_edge(s_reset2, s_update2, dace.InterstateEdge(None))
 
-    # end state to make transformation work
-    s_end = bfs.add_state('end')
-
-    # Connecting states with appropriate conditions and depth updates
-    bfs.add_edge(s_init, s_reset1, dace.InterstateEdge(None, {'depth': '1'}))
-    bfs.add_edge(s_reset1, s_update1, dace.InterstateEdge(None))
-    bfs.add_edge(s_update1, s_reset2, dace.InterstateEdge('count2[0] > 0', {'depth': 'depth + 1'}))
-    bfs.add_edge(s_update1, s_end, dace.InterstateEdge('count2[0] <= 0'))
-    bfs.add_edge(s_reset2, s_update2, dace.InterstateEdge(None))
-    bfs.add_edge(s_update2, s_reset1, dace.InterstateEdge('count1[0] > 0', {'depth': 'depth + 1'}))
-    bfs.add_edge(s_update2, s_end, dace.InterstateEdge('count1[0] <= 0'))
+    bfs_loop.add_edge(s_update2, s_loop_end, dace.InterstateEdge(assignments={'depth': 'depth + 1'}))
 
     # =============================================================
     # State: init

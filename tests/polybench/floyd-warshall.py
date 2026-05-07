@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 try:
     import polybench
@@ -25,10 +24,12 @@ def init_array(path, n):
                 path[i, j] = datatype(999)
 
 
-@dace.program(datatype[N, N])
-def floyd_warshall(path):
+@dace.program
+def floyd_warshall(path: datatype[N, N]):
+
     @dace.mapscope
     def k_map(k: _[0:N]):
+
         @dace.map
         def ij_map(i: _[0:N], j: _[0:N]):
             ik_dist << path[i, k]

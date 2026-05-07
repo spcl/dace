@@ -39,7 +39,6 @@ class MapUnroll(transformation.SingleStateTransformation):
             return False
         return True
 
-    
     def apply(self, state: SDFGState, sdfg: SDFG):
         from dace.transformation.dataflow import TrivialMapElimination
 

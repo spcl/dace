@@ -52,7 +52,7 @@ def test_nested_sdfg_redefinition():
     sdfg = dace.SDFG('tester')
     nsdfg = dace.SDFG('nester')
     state = sdfg.add_state()
-    nnode = state.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping=dict(sym=0))
+    nnode = state.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping=dict(sym=0))
 
     nstate = nsdfg.add_state()
     nstate.add_tasklet('nothing', {}, {}, 'a = sym')

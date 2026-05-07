@@ -5,12 +5,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
-from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
+@transformation.explicit_cf_compatible
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.
@@ -25,7 +26,7 @@ class ReferenceToView(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessStates, ap.FindReferenceSources}
+        return {ap.FindAccessStates, ap.FindReferenceSources}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -37,7 +38,6 @@ class ReferenceToView(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
         reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
 
@@ -51,7 +51,7 @@ class ReferenceToView(ppl.Pass):
 
         refsets = self.find_refsets(candidates, access_states)
 
-        result: Set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states, reachable)
+        result: Set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states)
         if not result:
             return None
 
@@ -97,7 +97,6 @@ class ReferenceToView(ppl.Pass):
         reference_sources: Dict[str, Set[Memlet]],
         refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]],
         access_states: Dict[str, Set[SDFGState]],
-        reachable_states: Dict[SDFGState, Set[SDFGState]],
     ) -> Set[str]:
         """
         Returns a set of candidates for conversion to views.
@@ -128,21 +127,13 @@ class ReferenceToView(ppl.Pass):
                 if cand not in result:
                     break
 
-                # Otherwise, they are only inter-state or free symbols. Test all paths to uses in different states
-                # NOTE: This is an expensive check!
+                # Otherwise, they are only inter-state or free symbols. Check whether any such symbol may be
+                # reassigned on a path to another use, even across sibling control-flow regions.
                 for other_state in access_states[cand]:
-                    # Filter self and unreachable states
-                    if other_state is state or other_state not in reachable_states[state]:
+                    if other_state is state:
                         continue
-                    for path in sdfg.all_simple_paths(state, other_state, as_edges=True):
-                        for e in path:
-                            # The symbol was modified/reassigned in one of the paths, skip
-                            if fsyms & e.data.assignments.keys():
-                                result.remove(cand)
-                                break
-                        if cand not in result:
-                            break
-                    if cand not in result:
+                    if fsyms & modified_symbols_between(state, other_state):
+                        result.remove(cand)
                         break
 
         return result
@@ -165,21 +156,26 @@ class ReferenceToView(ppl.Pass):
                 affected_nodes = set()
                 for e in state.in_edges_by_connector(node, 'set'):
                     # This is a reference set edge. Consider scope and neighbors and remove set
-                    edges_to_remove.add(e)
-                    affected_nodes.add(e.src)
-                    affected_nodes.add(e.dst)
+                    if state.out_degree(e.dst) == 0:
+                        edges_to_remove.add(e)
+                        affected_nodes.add(e.src)
+                        affected_nodes.add(e.dst)
 
-                    # If source node does not have any other neighbors, it can be removed
-                    if all(ee is e or ee.data.is_empty() for ee in state.all_edges(e.src)):
-                        nodes_to_remove.add(e.src)
-                    # If set reference does not have any other neighbors, it can be removed
-                    if all(ee is e or ee.data.is_empty() for ee in state.all_edges(node)):
-                        nodes_to_remove.add(node)
+                        # If source node does not have any other neighbors, it can be removed
+                        if all(ee is e or ee.data.is_empty() for ee in state.all_edges(e.src)):
+                            nodes_to_remove.add(e.src)
+                        # If set reference does not have any other neighbors, it can be removed
+                        if all(ee is e or ee.data.is_empty() for ee in state.all_edges(node)):
+                            nodes_to_remove.add(node)
 
-                    # If in a scope, ensure reference node will not be disconnected
-                    scope = state.entry_node(node)
-                    if scope is not None and node not in nodes_to_remove:
-                        edges_to_add.append((scope, None, node, None, Memlet()))
+                        # If in a scope, ensure reference node will not be disconnected
+                        scope = state.entry_node(node)
+                        if scope is not None and node not in nodes_to_remove:
+                            edges_to_add.append((scope, None, node, None, Memlet()))
+                    else:  # Node has other neighbors, modify edge to become an empty memlet instead
+                        e.dst_conn = None
+                        e.dst.remove_in_connector('set')
+                        e.data = Memlet()
 
                 # Modify the state graph as necessary
                 for e in edges_to_remove:

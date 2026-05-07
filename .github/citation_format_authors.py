@@ -3,7 +3,7 @@
 Parse the authors file and print for CITATION.cff
 """
 with open("AUTHORS", "r") as f:
-  content = f.readlines()
+    content = f.readlines()
 
 for i, l in enumerate(content[4:]):
     if l == "\n":
@@ -18,5 +18,3 @@ for author in content[4:end_idx]:
     last_names = ' '.join(names[1:])
     text = f"- family-names: {last_names}\n  given-names: {first_name}"
     print(text)
-
-

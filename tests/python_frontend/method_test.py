@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests dace.program as class methods """
+import pytest
 import dace
 import numpy as np
-import sys
 import time
 
 
@@ -126,13 +126,12 @@ def test_static_withclass():
     assert np.allclose(MyTestClass.static_withclass(A), A + 3)
 
 
+@pytest.mark.skip(reason="Python 3.13 removed chained @classmethods, making this impossible for now")
 def test_classmethod():
-    # Only available in Python 3.9+
-    if sys.version_info >= (3, 9):
-        A = np.random.rand(20)
-        # Modify value first
-        MyTestClass.classvalue = 4
-        assert np.allclose(MyTestClass.clsmethod(A), A + 4)
+    A = np.random.rand(20)
+    # Modify value first
+    MyTestClass.classvalue = 4
+    assert np.allclose(MyTestClass.clsmethod(A), A + 4)
 
 
 def test_nested_methods():
@@ -258,7 +257,8 @@ def test_nested_callback_in_map():
     obj = A(B())
     old_time = time.time()
 
-    result = obj.tester()
+    with pytest.warns(match="Automatically creating callback"):
+        result = obj.tester()
 
     new_time = time.time()
 
@@ -282,7 +282,7 @@ if __name__ == '__main__':
     test_callable()
     test_static()
     test_static_withclass()
-    test_classmethod()
+    #test_classmethod()
     test_nested_methods()
     test_decorator()
     test_sdfgattr_method_jit()

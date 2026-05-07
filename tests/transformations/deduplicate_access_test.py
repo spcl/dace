@@ -51,7 +51,7 @@ def test_find_contiguous_subsets_nonsquare():
 
 
 def test_dedup_access_simple():
-    """ 
+    """
     Simple duplicate access.
     """
 
@@ -72,7 +72,7 @@ def test_dedup_access_simple():
                 inp1 << tmp1
                 inp2 << tmp2
                 out >> B[i, j]
-                B[i, j] = inp1 + inp2
+                out = inp1 + inp2
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     nodes_before = sdfg.node(0).number_of_nodes()
@@ -83,8 +83,8 @@ def test_dedup_access_simple():
 
 
 def test_dedup_access_plus():
-    """ 
-    A test where there is no gain by applying DeduplicateAccess, and so it 
+    """
+    A test where there is no gain by applying DeduplicateAccess, and so it
     should not be applied.
     """
 
@@ -115,7 +115,7 @@ def test_dedup_access_plus():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
+                out = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     ConsolidateEdges().apply_pass(sdfg, {})
@@ -123,7 +123,7 @@ def test_dedup_access_plus():
 
 
 def test_dedup_access_square():
-    """ 
+    """
     A test where a one square load can be performed once.
     """
 
@@ -146,7 +146,7 @@ def test_dedup_access_square():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = (inp[0] + inp[1] + inp[2]) / 12.0
+                out = (inp[0] + inp[1] + inp[2]) / 12.0
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     ConsolidateEdges().apply_pass(sdfg, {})
@@ -159,7 +159,7 @@ def test_dedup_access_square():
 
 
 def test_dedup_access_contiguous():
-    """ 
+    """
     A test where there is a non-square shape that, based on whether contiguity
     is prioritized, might give different results.
     Subset is:
@@ -169,7 +169,7 @@ def test_dedup_access_contiguous():
      ____|     |____  2
     |    |     |    | 1
     |    |     |    | 0 i
-    |____|     |____| 1 
+    |____|     |____| 1
          |_____|     2
     A square of size 5x5, with two 4x3 squares on each side
     """
@@ -193,7 +193,7 @@ def test_dedup_access_contiguous():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = (inp[0] + inp[1] + inp[2]) / 3.0
+                out = (inp[0] + inp[1] + inp[2]) / 3.0
 
     # j contiguous dimension
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)

@@ -4,11 +4,11 @@
 import unittest
 import sympy as sp
 import dace
-from collections import OrderedDict
 
 
 class PropertyTests(unittest.TestCase):
     """Implements unit tests for dace.sdfg.properties.Property class."""
+
     def test_indirect_properties(self):
 
         m = dace.sdfg.nodes.Map("test_map", ['i', 'j', 'k'],

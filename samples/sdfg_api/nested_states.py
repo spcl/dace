@@ -46,7 +46,7 @@ state = sdfg.add_state('s0')
 me, mx = state.add_map('mymap', dict(k='0:2'))
 # NOTE: The names of the inputs/outputs of the nested SDFG must match array
 #       names above (lines 30, 32)!
-nsdfg = state.add_nested_sdfg(sub_sdfg, sdfg, {'sA'}, {'sC'})
+nsdfg = state.add_nested_sdfg(sub_sdfg, {'sA'}, {'sC'})
 Ain = state.add_read('A')
 Aout = state.add_write('A')
 

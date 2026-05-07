@@ -20,7 +20,7 @@
 
 // Contains a complex-j class to support the native complex type in Python
 
-namespace dace 
+namespace dace
 {
     struct complexJ
     {

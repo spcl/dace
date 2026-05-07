@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -12,7 +12,6 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
@@ -21,10 +20,16 @@ from dace.transformation import transformation as pm
 # Helper methods #############################################################
 
 
+def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicType]) -> bool:
+    """Check if `subset` has the size given in `shape`."""
+    return subset.dims() == len(shape) and all((m == a) == True  # SymPy comparison
+                                               for m, a in zip(subset.size(), shape))
+
+
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset, ...]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -66,14 +71,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
@@ -97,14 +102,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
@@ -113,11 +118,134 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     return src_subset, dst_subset
 
 
-def find_dims_to_pop(a_size, b_size):
+def find_dims_to_pop(
+    a_size: Sequence[symbolic.SymbolicType],
+    b_size: Sequence[symbolic.SymbolicType],
+) -> List[int]:
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
+    an empty list is returned.
+    It is important that this function does not operates on the actual subsets but on their
+    sizes.
+
+    Returns:
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``.
+
+    Note:
+        This function is wrong. However, every attempt of fixing it resulted in breaking other
+        things in strange ways. The only solution would be to redo all transformations.
+        For example, consider the following cases:
+
+        - ``a_size := [3, 3], b_size := [9]`` in this case the function will return ``[0, 1]``, which
+            might be correct in some cases but not in other, depending on the strides of ``A``
+        - While the example above can make sense the following example,
+            ``a_size := [4, 4], b_size := [9]`` which also results in ``[0, 1]`` does not make sense
+            and is clearly wrong.
+        - If a size is listed multiple times, for example ``a_size := [1, 1, 5], b := [1, 5]`` then
+            the function will return ``[]`` although it should return ``[0]`` or ``[1]``.
+        - Furthermore, if not all dimensions could be matched then some unspecific value is
+            returned, for example ``a_size := [1, 3, 5], b_size := [1, 8]`` will return ``[1, 2]``.
+            Note that this in particular is not a real case scenario as it is clearly an error
+            in the subsets.
+
+        There is an improved version, ``find_dims_to_pop2()`` which has a better behaviour.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``.
+    """
     dims_to_pop = []
     for i, sz in enumerate(reversed(a_size)):
         if sz not in b_size:
             dims_to_pop.append(len(a_size) - 1 - i)
+    return dims_to_pop
+
+
+def find_dims_to_pop2(
+    a_size: Sequence[symbolic.SymbolicType],
+    b_size: Sequence[symbolic.SymbolicType],
+) -> Optional[List[int]]:
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
+    an empty list is returned. A base assumption is the function is that a View is not used to
+    modify the relative order of dimensions, i.e. only dummy dimensions are inserted at certain
+    locations.
+    It is important that this function does not operates on the actual subsets but on their
+    sizes.
+
+    This is an improved version of ``find_dims_to_pop()``.
+
+    Returns:
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``. In case the function failed to
+        associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
+        `None`.
+
+    Note:
+        This function behaves differently than ``find_dims_to_pop()`` in some cases. In most cases
+        the function ensures that a matching has been found. Keep in mind that the function
+        assumes that the relative ordering of dimensions is the same on the source and the
+        destination.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``. In case the function failed to
+             associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
+             ``None``.
+    """
+    if len(a_size) < len(b_size):
+        raise ValueError(
+            f"Expected that subset `A` has a larger rank ({len(a_size)} | {a_size}) than subset `B` ({len(b_size)} | {b_size})"
+        )
+    if len(a_size) == len(b_size):
+        # NOTE: We now check if there two subsets have the same size. The original version
+        #   "kind of" did that. For `a_size := [3, 4], b_size := [4, 3]` it would have returned
+        #   `[]` but for `a_size := [1, 4], b_size := [2, 4]` it would have returned `[]`, which
+        #   is a very questionable behaviour.
+        if all((a_sz == b_sz) == True for a_sz, b_sz in zip(a_size, b_size)):  # SymPy comparison
+            return []
+        return None
+
+    dims_to_pop = []
+    b_dim_to_check = 0
+    for dim_to_pop, a_sz in enumerate(a_size):
+        if b_dim_to_check == len(b_size):
+            # We have associated all dimensions of `b` thus we have to pop this dimension.
+            if (a_sz == 1) == False:  # SymPy comparison.
+                return None
+            dims_to_pop.append(dim_to_pop)
+            continue
+
+        b_sz = b_size[b_dim_to_check]
+        if (a_sz == b_sz) == True:  # SymPy comparison.
+            # They are the same, thus we do not have to pop the dimension, but we have
+            #  to advance the `B` pointer.
+            b_dim_to_check += 1
+        else:
+            # They are different thus we have to pop the dimension, but we do _not_
+            #  have to advance the `B` pointer, as we have to reuse it in the next
+            #  iteration again.
+            if (a_sz == 1) == False:  # SymPy comparison.
+                return None
+            dims_to_pop.append(dim_to_pop)
+
+    if b_dim_to_check != len(b_size):
+        # NOTE: It would be probably the best to generate an error here. The previous implementation
+        #   returned `dims_to_pop` which does not make sense, as it is incomplete. After some inspection
+        #   the best value in this case should be `None`.
+        return None
+    if len(a_size) - len(b_size) != len(dims_to_pop):
+        raise ValueError(f"Expected to pop {len(a_size) - len(b_size)} but only popped {len(dims_to_pop)}")
+
     return dims_to_pop
 
 
@@ -141,24 +269,15 @@ def pop_dims(subset, dims):
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
-    if isinstance(first, subsets.Indices):
-        subset = first.new_offset(second, negative=False)
-    else:
-        subset = first.compose(second)
+    subset = first.compose(second)
     if dims and popped and len(dims) == len(popped):
-        if isinstance(first, subsets.Indices):
-            indices = subset.Indices
-            for d, p in zip(reversed(dims), reversed(popped)):
-                indices.insert(d, p)
-            subset = subsets.Indices(indices)
-        else:
-            ranges = subset.ranges
-            tsizes = subset.tile_sizes
-            for d, (r, t) in zip(reversed(dims), reversed(popped)):
-                ranges.insert(d, r)
-                tsizes.insert(d, t)
-            subset = subsets.Range(ranges)
-            subset.tile_sizes = tsizes
+        ranges = subset.ranges
+        tsizes = subset.tile_sizes
+        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+            ranges.insert(d, r)
+            tsizes.insert(d, t)
+        subset = subsets.Range(ranges)
+        subset.tile_sizes = tsizes
     return subset
 
 
@@ -196,6 +315,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
+            return False
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
@@ -230,10 +353,10 @@ class RedundantArray(pm.SingleStateTransformation):
 
         if not permissive:
             # Make sure the memlet covers the removed array
-            subset = copy.deepcopy(e1.data.subset)
+            subset = copy.deepcopy(a1_subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -368,11 +491,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 return True
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == in_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if in_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 
@@ -449,15 +569,64 @@ class RedundantArray(pm.SingleStateTransformation):
             if in_array.data in sdfg.arrays:
                 del sdfg.arrays[in_array.data]
             return
+
+        # NOTE: This is probably wrong! Since we replace `in_array` with a View the view must
+        #   follow the strides of `out_array`, since `in_array` views the memory of `out_array`.
+        #   Furthermore, `RedundantSecondArray` makes a case distinction here, when it composes
+        #   the strides for the view which is not done here. However, there is the
+        #   `_is_reshaping_memlet()` function that should handle some cases.
         view_strides = in_desc.strides
         if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
             view_strides = [s for i, s in enumerate(out_desc.strides) if i not in b_dims_to_pop]
+
         sdfg.arrays[in_array.data] = data.ArrayView(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                                                     out_desc.storage, out_desc.location, view_strides, in_desc.offset,
                                                     out_desc.may_alias, dtypes.AllocationLifetime.Scope,
                                                     in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
+
+    def _is_reshaping_memlet(
+        self,
+        graph: SDFGState,
+        edge: graph.MultiConnectorEdge,
+    ) -> bool:
+        """Test if Memlet between `input_node` and `output_node` is reshaping.
+
+        A "reshaping Memlet" is a Memlet that changes the shape of a data container,
+        in the same way as `numpy.reshape()` does.
+
+        :param graph: The graph (SDFGState) in which the connection is.
+        :param edge: The edge between them.
+        """
+        # Reshaping can not be a reduction
+        if edge.data.wcr or edge.data.wcr_nonatomic:
+            return False
+
+        # Reshaping needs to access nodes.
+        src_node = edge.src
+        dst_node = edge.dst
+        if not all(isinstance(node, nodes.AccessNode) for node in (src_node, dst_node)):
+            return False
+
+        # Reshaping can only happen between arrays.
+        sdfg = graph.sdfg
+        src_desc = sdfg.arrays[src_node.data]
+        dst_desc = sdfg.arrays[dst_node.data]
+        if not all(isinstance(desc, data.Array) and not isinstance(desc, data.View) for desc in (src_desc, dst_desc)):
+            return False
+
+        # Reshaping implies that the shape is different.
+        if dst_desc.shape == src_desc.shape:
+            return False
+
+        # A reshaping Memlet must read the whole source array and write the whole destination array.
+        src_subset, dst_subset = _validate_subsets(edge, sdfg.arrays)
+        for subset, shape in zip([dst_subset, src_subset], [dst_desc.shape, src_desc.shape]):
+            if not _subset_has_shape(subset, shape):
+                return False
+
+        return True
 
     def apply(self, graph, sdfg):
         in_array = self.in_array
@@ -513,18 +682,29 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+            if isinstance(e.src, Reduce) or (isinstance(e.src, (nodes.NestedSDFG, nodes.LibraryNode))
                                              and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
         # 1. A reduce node is involved; or
-        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 2. A NestedSDFG or Library node is involved and the arrays have different dimensionality; or
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
-                m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            return in_array
+
+        # TODO: Fix me.
+        #  As described in [issue 1595](https://github.com/spcl/dace/issues/1595) the
+        #  transformation is unable to handle certain cases of reshaping Memlets
+        #  correctly and fixing this case has proven rather difficult. In a first
+        #  attempt the case of reshaping Memlets was forbidden (in the
+        #  `can_be_applied()` method), however, this caused other (useful) cases to
+        #  fail. For that reason such Memlets are transformed to Views.
+        #  This is a fix and it should be addressed.
+        if self._is_reshaping_memlet(graph=graph, edge=e1):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -550,6 +730,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            print(f"CREATED VIEW(2): {in_array}")
             return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -649,6 +830,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         if not out_desc.transient:
             return False
 
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
+            return False
+
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
@@ -656,6 +841,16 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         except (NotImplementedError, ValueError) as ex:
             warnings.warn(f'validate_subsets failed: {ex}')
             return False
+
+        if a_subset and b1_subset and a_subset.dims() != b1_subset.dims():
+            a_size = a_subset.size_exact()
+            b_size = b1_subset.size_exact()
+            if a_subset.dims() > b1_subset.dims():
+                if find_dims_to_pop2(a_size, b_size) is None:
+                    return False
+            else:
+                if find_dims_to_pop2(b_size, a_size) is None:
+                    return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
@@ -688,7 +883,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
             shape = [sz for sz in out_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -811,11 +1006,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == out_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if out_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 
@@ -892,13 +1084,13 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             a_size = a_subset.size_exact()
             b_size = b1_subset.size_exact()
             if a_subset.dims() > b1_subset.dims():
-                a_dims_to_pop = find_dims_to_pop(a_size, b_size)
+                a_dims_to_pop = find_dims_to_pop2(a_size, b_size)
                 aset, popped = pop_dims(a_subset, a_dims_to_pop)
             else:
-                b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+                b_dims_to_pop = find_dims_to_pop2(b_size, a_size)
 
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and any(m != a for m, a in zip(a_subset.size(), out_desc.shape)):
+        if a_subset and not _subset_has_shape(a_subset, out_desc.shape):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
@@ -923,9 +1115,38 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 if len(graph.all_edges(in_array)) == 0:
                     graph.remove_node(in_array)
                 return
-            view_strides = out_desc.strides
-            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
-                view_strides = [s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop]
+
+            # We now need to figuring out which stride we are using. Since we replace `out_array`
+            #  with a view, we must use the same strides for it as `in_array`. But depending on
+            #  the situation, we need to modify them a bit.
+            in_dim = len(in_desc.shape)
+            out_dim = len(out_desc.shape)
+            if in_dim < out_dim:
+                # `out_array` has more dimensions, we thus have to replace the some strides
+                #  in `out_array` with the ones from `in_array` the extra ones will remain.
+                assert len(b_dims_to_pop) == out_dim - in_dim
+                view_strides = []
+                in_index = 0
+                for out_index in range(out_dim):
+                    if out_index in b_dims_to_pop:
+                        # The dimension is additional, thus we use the original value.
+                        view_strides.append(out_desc.strides[out_index])
+                    else:
+                        view_strides.append(in_desc.strides[in_index])
+                        in_index += 1
+                assert in_index == in_dim
+                assert len(view_strides) == out_dim
+                view_strides = tuple(view_strides)
+            elif in_dim > out_dim:
+                # `in_array` has more dimensions, thus we can simply remove the ones that we
+                #  no longer need.
+                assert len(a_dims_to_pop) == in_dim - out_dim
+                view_strides = tuple(s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop)
+            else:
+                # The two have the same dimensionality, thus there is no modifications
+                assert in_dim == out_dim
+                view_strides = in_desc.strides
+
             sdfg.arrays[out_array.data] = data.ArrayView(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
                                                          in_desc.storage, in_desc.location, view_strides,
                                                          out_desc.offset, in_desc.may_alias,
@@ -1049,6 +1270,13 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if astrides != vstrides:
             return False
 
+        # If the destination node is an nsdfg and the view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.dst, nodes.NestedSDFG):
+                dst_conn = e.dst_conn
+                if dst_conn in e.dst.out_connectors:
+                    return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -1127,6 +1355,13 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         astrides = tuple(s for i, s in enumerate(out_desc.strides) if i in asqdims)
         if astrides != vstrides:
             return False
+
+        # If the source node is an nsdfg and the view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.src, nodes.NestedSDFG):
+                src_conn = e.src_conn
+                if src_conn in e.src.in_connectors:
+                    return False
 
         return True
 
@@ -1254,10 +1489,23 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(out_shape):
+            if not _subset_has_shape(tmp, out_shape):
                 return False
-            if any(m != a for m, a in zip(tmp.size(), out_shape)):
-                return False
+
+        if not permissive:
+            # Ensure the view is not an input to a library node, where it may change the behavior, and similarly is not
+            # being used to change the strides for a nested SDFG.
+            for e in graph.out_edges(out_array):
+                for sink in graph.memlet_tree(e).leaves():
+                    sink_node = sink.dst
+                    sink_conn = sink.dst_conn
+                    if isinstance(sink_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(sink_node, nodes.NestedSDFG):
+                        if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
+                            ndesc = sink_node.sdfg.arrays[sink_conn]
+                            if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
 
         return True
 
@@ -1392,10 +1640,23 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(in_shape):
+            if not _subset_has_shape(tmp, in_shape):
                 return False
-            if any(m != a for m, a in zip(tmp.size(), in_shape)):
-                return False
+
+        if not permissive:
+            # Ensure the view is not an output from a library node, where it may change the behavior, and similarly is
+            # not being used to change the strides for a nested SDFG.
+            for e in graph.in_edges(in_array):
+                for source in graph.memlet_tree(e).leaves():
+                    source_node = source.src
+                    source_conn = source.src_conn
+                    if isinstance(source_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(source_node, nodes.NestedSDFG):
+                        if source_conn in source_node.sdfg.arrays and isinstance(in_desc, data.ArrayView):
+                            ndesc = source_node.sdfg.arrays[source_conn]
+                            if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
+                                return False
 
         return True
 
@@ -1474,6 +1735,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Ensure view
         if not isinstance(desc, data.View):
+            return False
+        if isinstance(desc, data.StructureView):
             return False
 
         # Get viewed node and non-viewed edges
@@ -1612,7 +1875,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
     """ Moves intermediate writes insde a Map's subgraph outside the Map.
-    
+
     Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
     """
 

@@ -15,6 +15,5 @@ def test_interstate_multidim_access():
     sdfg.compile()
 
 
-
 if __name__ == '__main__':
     test_interstate_multidim_access()

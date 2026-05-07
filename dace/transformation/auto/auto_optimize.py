@@ -1,24 +1,23 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
 import dace
 import sympy
 from dace.sdfg import infer_types
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict
-import warnings
+from typing import Set, Tuple, Union, List, Dict, Callable
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
+from dace.transformation.passes import FullMapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
-from dace.transformation import helpers as xfh
+from dace.transformation import helpers as xfh, pass_pipeline as ppl
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -26,10 +25,7 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
-# FPGA AutoOpt
-from dace.transformation.auto import fpga as fpga_auto_opt
-
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
+GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
 
 
 def greedy_fuse(graph_or_subgraph: GraphViewType,
@@ -44,37 +40,53 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
     :param graph_or_subgraph: SDFG, SDFGState or Subgraph
-    :param validate_all: Validate SDFG or graph at each fusion step 
-    :param device: Device type to specialize for 
+    :param validate_all: Validate SDFG or graph at each fusion step
+    :param device: Device type to specialize for
     :param recursive: Fuse recursively within (fused and unfused) scopes
-    :param stencil: Perform stencil fusion instead of regular fusion 
+    :param stencil: Perform stencil fusion instead of regular fusion
     :param stencil_tile: StencilTiling Tile size, default if None
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
     """
     debugprint = config.Config.get_bool('debugprint')
-    if isinstance(graph_or_subgraph, SDFG):
-        # If we have an SDFG, recurse into graphs
-        graph_or_subgraph.simplify(validate_all=validate_all)
-        # MapFusion for trivial cases
-        graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+    if isinstance(graph_or_subgraph, ControlFlowRegion):
+        if isinstance(graph_or_subgraph, SDFG):
+            # If we have an SDFG, recurse into graphs
+            graph_or_subgraph.simplify(validate_all=validate_all)
+            # Apply MapFusionVertical for the more trivial cases
+            full_map_fusion_pass = FullMapFusion(
+                strict_dataflow=True,
+                validate_all=validate_all,
+            )
+            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
+            full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
+
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
-
-            greedy_fuse(graph,
-                        validate_all=validate_all,
-                        device=device,
-                        recursive=recursive,
-                        stencil=stencil,
-                        stencil_tile=stencil_tile,
-                        permutations_only=permutations_only,
-                        expand_reductions=expand_reductions)
+            if isinstance(graph, (SDFGState, ControlFlowRegion)):
+                greedy_fuse(graph,
+                            validate_all=validate_all,
+                            device=device,
+                            recursive=recursive,
+                            stencil=stencil,
+                            stencil_tile=stencil_tile,
+                            permutations_only=permutations_only,
+                            expand_reductions=expand_reductions)
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            # Apply MapFusionVertical for the more trivial cases.
+            #  For backwards compatibility we only perform vertical map fusion.
+            full_map_fusion_pass = FullMapFusion(
+                strict_dataflow=True,
+                validate_all=validate_all,
+                perform_horizontal_map_fusion=False,
+                perform_vertical_map_fusion=True,
+            )
+            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
+            full_map_fusion_pileline.apply_pass(sdfg, {})
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:
@@ -107,7 +119,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             fusion_condition.allow_tiling = False
             # expand reductions
             if expand_reductions:
-                for graph in sdfg.nodes():
+                for graph in sdfg.states():
                     for node in graph.nodes():
                         if isinstance(node, dace.libraries.standard.nodes.Reduce):
                             try:
@@ -190,12 +202,14 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     graph = graph_or_subgraph
     if isinstance(graph_or_subgraph, gr.SubgraphView):
         graph = graph_or_subgraph.graph
-    if isinstance(graph, SDFG):
-        for state in graph_or_subgraph.nodes():
-            tile_wcrs(state, validate_all)
+    if isinstance(graph, ControlFlowRegion):
+        for block in graph_or_subgraph.nodes():
+            if isinstance(block, SDFGState):
+                tile_wcrs(block, validate_all)
         return
+
     if not isinstance(graph, SDFGState):
-        raise TypeError('Graph must be a state, an SDFG, or a subgraph of either')
+        raise TypeError('Graph must be a state, an SDFG, a control flow region, or a subgraph of either')
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
@@ -323,7 +337,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
 
     # Returns the optimized library node implementations for the given target
     # device
-    if device is dtypes.DeviceType.GPU:
+    if device == dtypes.DeviceType.GPU:
         try:
             backend = get_gpu_backend()
         except RuntimeError:
@@ -335,10 +349,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:
             return ['GPUAuto', 'pure']
-
-    elif device is dtypes.DeviceType.FPGA:
-        return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
-    elif device is dtypes.DeviceType.CPU:
+    elif device == dtypes.DeviceType.CPU:
         result = []
 
         # BLAS calls
@@ -354,7 +365,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
-    Set all Default storage types that are constant sized and less than 
+    Set all Default storage types that are constant sized and less than
     the auto-tile size to the stack (as StorageType.Register).
 
     :param sdfg: The SDFG to operate on.
@@ -377,29 +388,38 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
-def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: List[str] = None):
+def set_fast_implementations(sdfg: SDFG,
+                             device: dtypes.DeviceType,
+                             blocklist: List[str] = None,
+                             find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> None:
     """
     Set fast library node implementations for the given device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
     :param blocklist: list of disallowed implementations.
+    :param find_fast_library_fn: function that returns the prioritized list of
+                                  implementations for the given device, which will take priority over
+                                  the built-in ``find_fast_library`` function.
     :note: Operates in-place on the given SDFG.
     """
-    if blocklist is None:
-        implementation_prio = find_fast_library(device)
-    else:
-        implementation_prio = [i for i in find_fast_library(device) if i not in blocklist]
+    implementation_prio = []
+    if find_fast_library_fn is not None:
+        implementation_prio.extend(find_fast_library_fn(device))
+    implementation_prio.extend(find_fast_library(device))
+
+    if blocklist is not None:
+        implementation_prio = [i for i in implementation_prio if i not in blocklist]
 
     # specialized nodes: pre-expand
     for current_sdfg in sdfg.all_sdfgs_recursive():
-        for state in current_sdfg.nodes():
+        for state in current_sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode):
                     if (node.default_implementation == 'specialize'
                             and (len(set(node.implementations)
                                      & set(implementation_prio))) == 0):
-                        node.expand(current_sdfg, state)
+                        node.expand(state)
 
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
@@ -440,12 +460,12 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
 def make_transients_persistent(sdfg: SDFG,
                                device: dtypes.DeviceType,
                                toplevel_only: bool = True) -> Dict[int, Set[str]]:
-    """ 
+    """
     Helper function to change several storage and scheduling properties
 
-        * Makes non-view array lifetimes persistent, with some restrictions depending on the device 
-        * Reset nonatomic WCR edges on GPU 
-        
+        * Makes non-view array lifetimes persistent, with some restrictions depending on the device
+        * Reset nonatomic WCR edges on GPU
+
     The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
     allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
     allocated in a persistent manner).
@@ -461,7 +481,7 @@ def make_transients_persistent(sdfg: SDFG,
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
 
-        for state in nsdfg.nodes():
+        for state in nsdfg.states():
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
                     continue
@@ -470,6 +490,10 @@ def make_transients_persistent(sdfg: SDFG,
                     not_persistent.add(dnode.data)
                     continue
                 desc = dnode.desc(nsdfg)
+                # Only convert what is not a member of a non-persistent struct.
+                if (dnode.root_data != dnode.data
+                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                    continue
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
                     not_persistent.add(dnode.data)
@@ -507,10 +531,9 @@ def make_transients_persistent(sdfg: SDFG,
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
-        for n, _ in sdfg.all_nodes_recursive():
-            if isinstance(n, SDFGState):
-                for edge in n.edges():
-                    edge.data.wcr_nonatomic = False
+        for state in sdfg.states():
+            for edge in state.edges():
+                edge.data.wcr_nonatomic = False
 
     return result
 
@@ -519,7 +542,7 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
     """ Changes the storage of the SDFG's input and output data to GPU global memory. """
 
     written_scalars = set()
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in state.data_nodes():
             desc = node.desc(sdfg)
             if isinstance(desc, dt.Scalar) and not desc.transient and state.in_degree(node) > 0:
@@ -537,11 +560,12 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False,
+                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
-        
+
         * Simplify
         * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion
@@ -558,6 +582,9 @@ def auto_optimize(sdfg: SDFG,
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
     :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+    :param find_fast_library_fn: Optional function that returns the prioritized list of
+                                 implementations for the given device, which will take priority over
+                                 the existing set of fast libraries found using auto-optimize.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -568,10 +595,9 @@ def auto_optimize(sdfg: SDFG,
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        for s in sdfg.cfg_list:
-            xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
@@ -591,7 +617,7 @@ def auto_optimize(sdfg: SDFG,
 
     # fuse subgraphs greedily
     sdfg.simplify()
-
+    sdfg.reset_cfg_list()
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
@@ -600,16 +626,6 @@ def auto_optimize(sdfg: SDFG,
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
-
-    if device == dtypes.DeviceType.FPGA:
-        # apply FPGA Transformations
-        sdfg.apply_fpga_transformations()
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # Set all library nodes to expand to fast library calls
-        set_fast_implementations(sdfg, device)
-        return sdfg
 
     # Tiled WCR and streams
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
@@ -625,7 +641,7 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+    set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
@@ -660,6 +676,8 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
+
+    sdfg.reset_cfg_list()
 
     # Validate at the end
     if validate or validate_all:

@@ -3,10 +3,76 @@
 import dace
 from dace.sdfg import validation
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.analysis import FindReferenceSources
+from dace.transformation.helpers import modified_symbols_between
+from dace.transformation.passes.analysis import ControlFlowBlockReachability, FindReferenceSources, StateReachability
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
+import networkx as nx
+
+
+def test_frontend_reference():
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+    mystruct = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
+        "arrA": dace.data.ArrayReference(dace.float32, (N, )),
+        "arrB": dace.data.ArrayReference(dace.float32, (N, )),
+    },
+                                   name="MyStruct")
+
+    @dace.program
+    def init_prog(mydat: mystruct, fill_value: int) -> None:
+        mydat.arrA = mydat.data[:, 2]
+        mydat.arrB = mydat.data[:, 0]
+
+        # loop over all arrays and initialize them with `fill_value`
+        for index in range(M):
+            mydat.data[:, index] = fill_value
+
+        # Initialize the two named ones by name
+        mydat.arrA[:] = fill_value + 1
+        mydat.arrB[:] = fill_value + 2
+
+    dat = np.zeros((10, 5), dtype=np.float32)
+    inp_struct = mystruct.dtype._typeclass.as_ctypes()(data=dat.__array_interface__['data'][0])
+
+    func = init_prog.compile()
+    func(mydat=inp_struct, fill_value=3, N=10, M=5)
+
+    assert np.allclose(dat[0, :], 5) and np.allclose(dat[1, :], 5)
+    assert np.allclose(dat[2, :], 3) and np.allclose(dat[3, :], 3)
+    assert np.allclose(dat[4, :], 4) and np.allclose(dat[5, :], 4)
+    assert np.allclose(dat[6, :], 3) and np.allclose(dat[7, :], 3)
+    assert np.allclose(dat[8, :], 3) and np.allclose(dat[9, :], 3)
+
+
+def test_type_annotation_reference():
+    N = dace.symbol('N')
+
+    @dace.program
+    def ref(A: dace.float64[N], B: dace.float64[N], T: dace.int32, out: dace.float64[N]):
+        ref1: dace.data.ArrayReference(A.dtype, A.shape) = A
+        ref2: dace.data.ArrayReference(A.dtype, A.shape) = B
+        if T <= 0:
+            out[:] = ref1[:] + 1
+        else:
+            out[:] = ref2[:] + 1
+
+    a = np.random.rand(20)
+    a_verif = a.copy()
+    b = np.random.rand(20)
+    b_verif = b.copy()
+    out = np.random.rand(20)
+    out_verif = out.copy()
+
+    ref(a, b, 1, out, N=20)
+    ref.f(a_verif, b_verif, 1, out_verif)
+    assert np.allclose(out, out_verif)
+
+    ref(a, b, -1, out, N=20)
+    ref.f(a_verif, b_verif, -1, out_verif)
+    assert np.allclose(out, out_verif)
 
 
 def test_unset_reference():
@@ -158,7 +224,7 @@ def _create_scoped_sdfg():
     inp = state.add_read('B')
     t = state.add_tasklet('doit', {'r'}, {'w'}, 'w = r + 1')
     out = state.add_write('A')
-    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> i'))
+    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> [i]'))
     state.add_edge(ref, None, t, 'r', dace.Memlet('ref[i]'))
     state.add_edge_pair(mx, t, out, internal_connector='w', internal_memlet=dace.Memlet('A[10, i]'))
 
@@ -249,7 +315,7 @@ def _create_loop_nonfree_symbols_sdfg():
     sdfg.add_loop(istate, state, after, 'i', '0', 'i < 20', 'i + 1')
 
     # Reference set inside loop
-    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> 0'))
+    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> [0]'))
 
     # Use outisde loop
     t = after.add_tasklet('setone', {}, {'out'}, 'out = 1')
@@ -271,7 +337,7 @@ def _create_loop_reference_internal_use():
     state = sdfg.add_state()
     after = sdfg.add_state()
     sdfg.add_edge(state, after, dace.InterstateEdge())
-    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=after)
+    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_block=after)
 
     # Reference set inside loop
     state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i]'))
@@ -298,11 +364,11 @@ def _create_loop_reference_nonfree_internal_use():
 
     # First loop
     state1 = sdfg.add_state()
-    sdfg.add_loop(istate, state1, between_loops, 'i', '0', 'i < 20', 'i + 1')
+    sdfg.add_loop(istate, state1, between_loops, 'i', '0', 'i < 20', 'i + 1', label='set_loop')
 
     # Second loop
     state2 = sdfg.add_state()
-    sdfg.add_loop(between_loops, state2, None, 'i', '0', 'i < 20', 'i + 1')
+    sdfg.add_loop(between_loops, state2, None, 'i', '0', 'i < 20', 'i + 1', label='use_loop')
 
     # Reference set inside first loop
     state1.add_edge(state1.add_read('A'), None, state1.add_write('ref'), 'set', dace.Memlet('A[i]'))
@@ -518,7 +584,7 @@ def test_reference_loop_nonfree():
     assert len(sources) == 1  # There is only one SDFG
     sources = sources[0]
     assert len(sources) == 1
-    assert sources['ref'] == {dace.Memlet('A[i] -> 0')}
+    assert sources['ref'] == {dace.Memlet('A[i] -> [0]')}
 
     # Test loop-to-map - should fail to apply
     from dace.transformation.interstate import LoopToMap
@@ -581,6 +647,29 @@ def test_reference_loop_nonfree_internal_use():
     assert np.allclose(ref, A)
 
 
+def test_reachability_across_sibling_loops():
+    sdfg = _create_loop_reference_nonfree_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+
+    block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
+    assert blocks['block_0'] in block_reach[blocks['block_1'].parent_graph.cfg_id][blocks['block_1']]
+    assert blocks['block_2'] in block_reach[blocks['block_1'].parent_graph.cfg_id][blocks['block_1']]
+
+    state_reach = StateReachability().apply_pass(sdfg, {})
+    assert blocks['block_0'] in state_reach[sdfg.cfg_id][blocks['block_1']]
+    assert blocks['block_2'] in state_reach[sdfg.cfg_id][blocks['block_1']]
+
+
+def test_modified_symbols_between_control_flow_blocks():
+    sdfg = _create_loop_reference_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+    assert modified_symbols_between(blocks['block_0'], blocks['block_1']) == set()
+
+    sdfg = _create_loop_reference_nonfree_internal_use()
+    blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
+    assert modified_symbols_between(blocks['block_1'], blocks['block_2']) == {'i'}
+
+
 @pytest.mark.parametrize(('array_outside_scope', 'depends_on_iterate'), ((False, True), (False, True)))
 def test_ref2view_refset_in_scope(array_outside_scope, depends_on_iterate):
     sdfg = dace.SDFG('reftest')
@@ -636,7 +725,54 @@ def test_ref2view_refset_in_scope(array_outside_scope, depends_on_iterate):
         assert np.allclose(B, ref)
 
 
+def test_ref2view_reconnection():
+    """
+    Tests a regression in which ReferenceToView disconnects an existing weakly-connected state
+    and thus creating a race condition.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [2], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    state = sdfg.add_state()
+    a2 = state.add_access('A')
+    ref = state.add_access('ref')
+    b = state.add_access('B')
+
+    t2 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    state.add_edge(ref, None, t2, 'inp', dace.Memlet('ref[0]'))
+    state.add_edge(t2, 'out', b, None, dace.Memlet('B[0]'))
+    state.add_edge(a2, None, ref, 'set', dace.Memlet('A[1]'))
+
+    t1 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    a1 = state.add_access('A')
+    state.add_edge(a1, None, t1, 'inp', dace.Memlet('A[1]'))
+    state.add_edge(t1, 'out', a2, None, dace.Memlet('A[1]'))
+
+    # Test correctness before pass
+    A = np.random.rand(2)
+    B = np.random.rand(1)
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+    # Test reference-to-view
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert result['ReferenceToView'] == {'ref'}
+
+    # Pass should not break order
+    assert len(list(nx.weakly_connected_components(state.nx))) == 1
+
+    # Test correctness after pass
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+
 if __name__ == '__main__':
+    test_frontend_reference()
+    test_type_annotation_reference()
     test_unset_reference()
     test_reference_branch()
     test_reference_sources_pass()
@@ -662,3 +798,5 @@ if __name__ == '__main__':
     test_ref2view_refset_in_scope(False, True)
     test_ref2view_refset_in_scope(True, False)
     test_ref2view_refset_in_scope(True, True)
+    test_ref2view_reconnection()
+    test_modified_symbols_between_control_flow_blocks()

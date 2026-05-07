@@ -4,6 +4,7 @@ import numpy as np
 
 
 def test_parsing_context():
+
     def func(a):
         if dace.in_program():
             a[:] = 1

@@ -1,24 +1,16 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
 import copy
-from collections import OrderedDict
 from io import StringIO
 import inspect
 import numbers
 import numpy
 import sympy
-import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
-from dace import dtypes, symbolic
-
-
-if sys.version_info >= (3, 8):
-    NumConstant = ast.Constant
-else:
-    NumConstant = ast.Num
+from dace import symbolic
 
 
 def _remove_outer_indentation(src: str):
@@ -69,13 +61,7 @@ def is_constant(node: ast.AST) -> bool:
     """
     Returns True iff the AST node is a constant value
     """
-    if sys.version_info >= (3, 8):
-        if isinstance(node, ast.Constant):
-            return True
-    else:
-        if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
-            return True
-    return False
+    return isinstance(node, ast.Constant)
 
 
 def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
@@ -89,14 +75,9 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
-    if sys.version_info < (3, 9) and isinstance(node, ast.Index):  # For compatibility
-        node = node.value
-    if sys.version_info >= (3, 8):
-        if isinstance(node, ast.Constant):
-            return node.value
-    else:
-        if isinstance(node, ast.Num):  # For compatibility
-            return node.n
+
+    if isinstance(node, ast.Constant):
+        return node.value
 
     # Replace internal constants with their values
     node = copy_tree(node)
@@ -120,8 +101,6 @@ def rname(node):
 
     if isinstance(node, str):
         return node
-    if sys.version_info < (3, 8) and isinstance(node, ast.Num):
-        return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
     if isinstance(node, ast.Constant):
@@ -163,7 +142,7 @@ def rname(node):
 def subscript_to_ast_slice(node, without_array=False):
     """ Converts an AST subscript to slice on the form
         (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
-        (name, None), implying the full range. 
+        (name, None), implying the full range.
 
         :param node: The AST node to convert.
         :param without_array: If True, returns only the slice. Otherwise,
@@ -180,16 +159,8 @@ def subscript_to_ast_slice(node, without_array=False):
     if not isinstance(node, ast.Subscript):
         raise TypeError('AST node is not a subscript')
 
-    # Python <3.9 compatibility
     result_slice = None
-    if sys.version_info < (3, 9) and isinstance(node.slice, ast.Index):
-        slc = node.slice.value
-        if not isinstance(slc, ast.Tuple):
-            result_slice = [slc]
-    elif sys.version_info < (3, 9) and isinstance(node.slice, ast.ExtSlice):
-        slc = tuple(node.slice.dims)
-    else:
-        slc = node.slice
+    slc = node.slice
 
     # Decode slice tuple
     if result_slice is None:
@@ -204,8 +175,6 @@ def subscript_to_ast_slice(node, without_array=False):
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif sys.version_info < (3, 9) and isinstance(s, ast.Index):  # Index (Python <3.9)
-                result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
 
@@ -218,7 +187,7 @@ def subscript_to_ast_slice(node, without_array=False):
 def subscript_to_ast_slice_recursive(node):
     """ Converts an AST subscript to a slice in a recursive manner into nested
         subscripts.
-        
+
         :see: subscript_to_ast_slice
     """
     result = []
@@ -230,14 +199,18 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
+
+    def _Constant(self, t):
+        # NOTE: This is needed since NumPy 2.0 to avoid unparsing NumPy scalars as calls, e.g. `numpy.int32(1)`
+        if isinstance(t.value, numbers.Number):
+            self.write(str(t.value))
+        else:
+            super()._Constant(t)
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
-        # Compatibility
-        if sys.version_info < (3, 9) and isinstance(t.slice, ast.Index):
-            slc = t.slice.value
-        else:
-            slc = t.slice
+        slc = t.slice
         # Get rid of the tuple parentheses in expressions like "A[(i, j)]""
         if isinstance(slc, ast.Tuple):
             for elt in slc.elts[:-1]:
@@ -263,7 +236,7 @@ def unparse(node):
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)
-    # Suport for string
+    # Support for string
     if isinstance(node, str):
         return node
 
@@ -296,7 +269,7 @@ def slice_to_subscript(arrname, range):
 
 
 def astrange_to_symrange(astrange, arrays, arrname=None):
-    """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
+    """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math
         range, using the obtained array sizes and resolved symbols. """
     if arrname is not None:
         arrdesc = arrays[arrname]
@@ -354,7 +327,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 
 
 def negate_expr(node):
-    """ Negates an AST expression by adding a `Not` AST node in front of it. 
+    """ Negates an AST expression by adding a `Not` AST node in front of it.
     """
 
     # Negation support for SymPy expressions
@@ -372,7 +345,8 @@ def negate_expr(node):
         node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects " "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects "
+                             "single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -384,6 +358,58 @@ def negate_expr(node):
     return ast.fix_missing_locations(newexpr)
 
 
+def and_expr(node_a, node_b):
+    """ Generates the logical AND of two AST expressions.
+    """
+    if type(node_a) is not type(node_b):
+        raise ValueError('Node types do not match')
+
+    # Support for SymPy expressions
+    if isinstance(node_a, sympy.Basic):
+        return sympy.And(node_a, node_b)
+    # Support for numerical constants
+    if isinstance(node_a, (numbers.Number, numpy.bool_)):
+        return str(node_a and node_b)
+    # Support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node_a, str):
+        return f'({node_a}) and ({node_b})'
+
+    from dace.properties import CodeBlock  # Avoid import loop
+    if isinstance(node_a, CodeBlock):
+        node_a = node_a.code
+        node_b = node_b.code
+
+    if hasattr(node_a, "__len__"):
+        if len(node_a) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
+        if len(node_b) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_b))
+        expr_a = node_a[0]
+        expr_b = node_b[0]
+    else:
+        expr_a = node_a
+        expr_b = node_b
+
+    if isinstance(expr_a, ast.Expr):
+        expr_a = expr_a.value
+    if isinstance(expr_b, ast.Expr):
+        expr_b = expr_b.value
+
+    if isinstance(expr_a, ast.BoolOp) and expr_a.op == ast.And:
+        # If the first expression is already a BoolOp, append the second expression
+        expr_a.values.append(copy_tree(expr_b))
+        return ast.fix_missing_locations(expr_a)
+    elif isinstance(expr_b, ast.BoolOp) and expr_b.op == ast.And:
+        # If the second expression is already a BoolOp, append the first expression
+        expr_b.values.insert(0, copy_tree(expr_a))
+        return ast.fix_missing_locations(expr_b)
+    else:
+        # Otherwise, create a new BoolOp with both expressions
+        newexpr = ast.Expr(value=ast.BoolOp(op=ast.And(), values=[copy_tree(expr_a), copy_tree(expr_b)]))
+        newexpr = ast.copy_location(newexpr, expr_a)
+        return ast.fix_missing_locations(newexpr)
+
+
 def copy_tree(node: ast.AST) -> ast.AST:
     """
     Copies an entire AST without copying the non-AST parts (e.g., constant values).
@@ -392,10 +418,8 @@ def copy_tree(node: ast.AST) -> ast.AST:
     :param node: The tree to copy.
     :return: The copied tree.
     """
+
     class Copier(ast.NodeTransformer):
-        def visit_Num(self, node):
-            # Ignore n
-            return ast.copy_location(ast.Num(n=node.n), node)
 
         def visit_Constant(self, node):
             # Ignore value
@@ -438,9 +462,10 @@ def copy_tree(node: ast.AST) -> ast.AST:
 class ExtNodeTransformer(ast.NodeTransformer):
     """ A `NodeTransformer` subclass that walks the abstract syntax tree and
         allows modification of nodes. As opposed to `NodeTransformer`,
-        this class is capable of traversing over top-level expressions in 
+        this class is capable of traversing over top-level expressions in
         bodies in order to discern DaCe statements from others.
     """
+
     def visit_TopLevel(self, node):
         visitor_name = "visit_TopLevel" + type(node).__name__
         if hasattr(self, visitor_name):
@@ -476,10 +501,11 @@ class ExtNodeTransformer(ast.NodeTransformer):
 
 
 class ExtNodeVisitor(ast.NodeVisitor):
-    """ A `NodeVisitor` subclass that walks the abstract syntax tree. 
-        As opposed to `NodeVisitor`, this class is capable of traversing over 
-        top-level expressions in bodies in order to discern DaCe statements 
+    """ A `NodeVisitor` subclass that walks the abstract syntax tree.
+        As opposed to `NodeVisitor`, this class is capable of traversing over
+        top-level expressions in bodies in order to discern DaCe statements
         from others. """
+
     def visit_TopLevel(self, node):
         visitor_name = "visit_TopLevel" + type(node).__name__
         if hasattr(self, visitor_name):
@@ -512,6 +538,7 @@ class NameFound(Exception):
 
 
 class ASTFindReplace(ast.NodeTransformer):
+
     def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
@@ -545,7 +572,38 @@ class ASTFindReplace(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class FindAssignment(ast.NodeVisitor):
+
+    assignments: Dict[str, str]
+    multiple: bool
+
+    def __init__(self):
+        self.assignments = {}
+        self.multiple = False
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        for tgt in node.targets:
+            if isinstance(tgt, ast.Name):
+                if tgt.id in self.assignments:
+                    self.multiple = True
+                self.assignments[tgt.id] = unparse(node.value)
+        return self.generic_visit(node)
+
+
+class ASTReplaceAssignmentRHS(ast.NodeVisitor):
+
+    repl_visitor: ASTFindReplace
+
+    def __init__(self, repl: Dict[str, str]):
+        self.repl_visitor = ASTFindReplace(repl)
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        self.repl_visitor.visit(node.value)
+        return self.generic_visit(node)
+
+
 class RemoveSubscripts(ast.NodeTransformer):
+
     def __init__(self, keywords: Set[str]):
         self.keywords = keywords
 
@@ -557,10 +615,11 @@ class RemoveSubscripts(ast.NodeTransformer):
 
 
 class TaskletFreeSymbolVisitor(ast.NodeVisitor):
-    """ 
+    """
     Simple Python AST visitor to find free symbols in a code, not including
     attributes and function calls.
     """
+
     def __init__(self, defined_syms):
         super().__init__()
         self.free_symbols = set()
@@ -591,12 +650,14 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
 
 
 class AnnotateTopLevel(ExtNodeTransformer):
+
     def visit_TopLevel(self, node):
         node.toplevel = True
         return super().visit_TopLevel(node)
 
 
 class ConstantExtractor(ast.NodeTransformer):
+
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.id = 0
@@ -608,18 +669,16 @@ class ConstantExtractor(ast.NodeTransformer):
             raise SyntaxError
         return self.generic_visit(node)
 
-    def visit_Constant(self, node):
-        return self.visit_Num(node)
-
-    def visit_Num(self, node: NumConstant):
+    def visit_Constant(self, node: ast.Constant):
         newname = f'__uu{self.id}'
-        self.gvars[newname] = node.value if sys.version_info >= (3, 8) else node.n
+        self.gvars[newname] = node.value
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
 
 
 class ASTHelperMixin:
     """ A mixin that adds useful helper functions for AST node transformers and visitors """
+
     def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
@@ -682,23 +741,15 @@ class ASTHelperMixin:
         return node
 
 
-def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
+def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.Constant:
     """
     Cross-Python-AST-version helper function that creates an AST constant node from a given value.
 
     :param value: The value to create a constant from.
     :param node: An optional node to copy the source location information from.
-    :return: An AST node (``ast.Constant`` after Python 3.8) that represents this value.
+    :return: An ``ast.Constant`` that represents this value.
     """
-    if sys.version_info >= (3, 8):
-        newnode = ast.Constant(value=value, kind='')
-    else:
-        if value is None:
-            newnode = ast.NameConstant(value=None)
-        elif isinstance(value, str):
-            newnode = ast.Str(s=value)
-        else:
-            newnode = ast.Num(n=value)
+    newnode = ast.Constant(value=value, kind='')
 
     if node is not None:
         newnode = ast.copy_location(newnode, node)
@@ -712,10 +763,8 @@ def escape_string(value: Union[bytes, str]):
     """
     if isinstance(value, bytes):
         return f"{chr(0xFFFF)}{value.decode('utf-8')}"
-    if sys.version_info >= (3, 0):
-        return value.encode("unicode_escape").decode("utf-8")
-    # Python 2.x
-    return value.encode('string_escape')
+
+    return value.encode("unicode_escape").decode("utf-8")
 
 
 def parse_function_arguments(node: ast.Call, argnames: List[str]) -> Dict[str, ast.AST]:

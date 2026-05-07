@@ -3,24 +3,21 @@
 
 from dace.transformation.estimator.enumeration import MapScoringEnumerator
 
-from dace.transformation.subgraph import SubgraphFusion, helpers
-from dace.properties import make_properties, Property
+from dace.transformation.subgraph import helpers
+from dace.properties import make_properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-import dace.sdfg.nodes as nodes
-
-from collections import deque, defaultdict, ChainMap
-from typing import Set, Union, List, Callable
+from typing import Callable
 import itertools
 
 
 @make_properties
 class BruteForceEnumerator(MapScoringEnumerator):
-    """ 
-    Enumerates all fusible map combinations in a 
-    brute-force way. Returns subgraphs or map sets 
-    and their respective scores, if a scoring function 
+    """
+    Enumerates all fusible map combinations in a
+    brute-force way. Returns subgraphs or map sets
+    and their respective scores, if a scoring function
     is defined.
     """
 
@@ -39,7 +36,7 @@ class BruteForceEnumerator(MapScoringEnumerator):
 
     def brute_force(self):
         """
-        Iterate over self.map_entries and yield all fusible 
+        Iterate over self.map_entries and yield all fusible
         combinations along with their score.
         """
         for i in range(2, len(self._map_entries) + 1):

@@ -10,13 +10,13 @@
         - Pointers are mixed with vectors or scalars
 """
 
-import dace
 import dace.dtypes as dtypes
 from dace.codegen.targets.sve import util as util
 import collections
 
 
 class IncompatibleTypeError(Exception):
+
     def __init__(self, message, types):
         super().__init__(f'{message}; given: {types}')
 

@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-import pytest
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+
 
 @dace.program
 def array_array(A: dace.int32[N], B: dace.int32[N]):

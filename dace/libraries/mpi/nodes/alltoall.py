@@ -80,5 +80,5 @@ class Alltoall(MPINode):
             if dst_conn == '_inbuffer':
                 dims = [str(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
-        
+
         return (inbuffer, in_count_str), (outbuffer, out_count_str)

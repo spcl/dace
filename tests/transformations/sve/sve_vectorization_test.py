@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.graph import NodeNotFoundError
 import dace
-import numpy as np
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
 import dace.dtypes as dtypes
@@ -23,6 +21,7 @@ def find_connector_by_name(sdfg: SDFG, name: str):
 
 
 def test_basic_stride():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -36,6 +35,7 @@ def test_basic_stride():
 
 
 def test_irregular_stride():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N * N]:
@@ -50,6 +50,7 @@ def test_irregular_stride():
 
 
 def test_diagonal_stride():
+
     @dace.program
     def program(A: dace.float32[N, N], B: dace.float32[N, N]):
         for i in dace.map[0:N]:
@@ -64,6 +65,7 @@ def test_diagonal_stride():
 
 
 def test_unsupported_type():
+
     @dace.program
     def program(A: dace.complex64[N], B: dace.complex64[N]):
         for i in dace.map[0:N]:
@@ -78,6 +80,7 @@ def test_unsupported_type():
 
 
 def test_supported_wcr():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.int32[1]):
         for i in dace.map[0:N]:
@@ -92,6 +95,7 @@ def test_supported_wcr():
 
 
 def test_first_level_vectorization():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i, j in dace.map[0:N, 0:N]:
@@ -111,8 +115,9 @@ def test_first_level_vectorization():
 
 
 def test_stream_push():
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         S_out = dace.define_stream(dace.float32, N)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -127,8 +132,9 @@ def test_stream_push():
 
 
 def test_stream_pop():
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         S_in = dace.define_stream(dace.float32, N)
         S_in << A
         for i in dace.map[0:N]:

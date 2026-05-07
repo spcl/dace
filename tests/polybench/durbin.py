@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -19,8 +18,8 @@ def init_array(r, y, n):
         r[i] = datatype(n + 1 - i)
 
 
-@dace.program(datatype[N], datatype[N])
-def durbin(r, y):
+@dace.program
+def durbin(r: datatype[N], y: datatype[N]):
 
     alpha = dace.define_local([1], datatype)
     beta = dace.define_local([1], datatype)

@@ -13,10 +13,9 @@ from dace.sdfg import nodes as nds
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace import data as dt
 from dace import dtypes
 from dace import symbolic, nodes
-from dace.properties import SymbolicProperty, make_properties, Property
+from dace.properties import SymbolicProperty, make_properties
 
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
 from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
@@ -159,7 +158,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             xform = InLocalStorage()
             xform._sdfg = sdfg
-            xform.state_id = sdfg.node_id(graph)
+            xform.state_id = graph.parent_graph.node_id(graph)
             xform.node_a = edge.src
             xform.node_b = edge.dst
             xform.array = intermediate_access_node.data
@@ -177,7 +176,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if edge.data.wcr is None:
                 xform = OutLocalStorage()
                 xform._sdfg = sdfg
-                xform.state_id = sdfg.node_id(graph)
+                xform.state_id = graph.parent_graph.node_id(graph)
                 xform.node_a = edge.src
                 xform.node_b = edge.dst
                 xform.array = intermediate_access_node.data
@@ -192,7 +191,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             else:
                 xform = AccumulateTransient()
                 xform._sdfg = sdfg
-                xform.state_id = sdfg.node_id(graph)
+                xform.state_id = graph.parent_graph.node_id(graph)
                 xform.map_exit = edge.src
                 xform.outer_map_exit = edge.dst
                 xform.array = intermediate_access_node.data
@@ -256,8 +255,8 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             first_accesses = tuple(first_memlet.subset.ranges)
             for second_accesses in consume_memlets[array]:
                 # Step 1: Infer index access of second map to new inputs with respect to original first map
-                mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses,
-                                             second_map_entry.map.params, second_accesses)
+                mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses, second_map_entry.map.params,
+                                             second_accesses)
 
                 # Step 2: Add Temporary buffer
                 tmp_name = sdfg.temp_data_name()
@@ -478,8 +477,11 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
         elif isinstance(node, nodes.NestedSDFG):
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
-                for nstate in nsdfg.nodes():
-                    for nnode in nstate.nodes():
-                        if isinstance(nnode, nodes.MapEntry):
-                            params = [s_ if p == s else p for p in nnode.map.params]
-                            nnode.map.params = params
+                for cfg in nsdfg.all_control_flow_regions():
+                    cfg.replace(s, s_)
+                    for nblock in cfg.nodes():
+                        if isinstance(nblock, SDFGState):
+                            for nnode in nblock.nodes():
+                                if isinstance(nnode, nodes.MapEntry):
+                                    params = [s_ if p == s else p for p in nnode.map.params]
+                                    nnode.map.params = params

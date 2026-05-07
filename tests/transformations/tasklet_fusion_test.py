@@ -2,7 +2,7 @@
 import numpy as np
 import dace
 from dace import dtypes
-from dace.transformation.dataflow import TaskletFusion, MapFusion
+from dace.transformation.dataflow import TaskletFusion, MapFusionVertical
 from dace.transformation.optimizer import Optimizer
 import pytest
 
@@ -103,7 +103,7 @@ def test_basic():
 
     sdfg = test_basic_tf.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations(MapFusion)
+    num_map_fusions = sdfg.apply_transformations(MapFusionVertical)
     assert (num_map_fusions == 1)
     num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
     assert (num_tasklet_fusions == 1)
@@ -123,7 +123,7 @@ def test_same_name():
 
     sdfg = test_same_name.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations_repeated(MapFusion)
+    num_map_fusions = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert (num_map_fusions == 2)
     num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
     assert (num_tasklet_fusions == 2)
@@ -143,7 +143,7 @@ def test_same_name_different_memlet():
 
     sdfg = test_same_name_different_memlet.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations_repeated(MapFusion)
+    num_map_fusions = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert (num_map_fusions == 2)
     num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
     assert (num_tasklet_fusions == 2)
@@ -246,7 +246,7 @@ def test_none_connector():
 
     sdfg = sdfg_none_connector.to_sdfg()
     sdfg.simplify()
-    applied = sdfg.apply_transformations_repeated(MapFusion)
+    applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert applied == 2
 
     map_entry = None
@@ -287,9 +287,37 @@ def test_intermediate_transients():
             applied = True
             break
 
-    assert applied
-    assert len([node for node in sdfg.start_state.data_nodes() if node.data == "tmp"]) == 1
-    assert "tmp" in sdfg.arrays
+    # tmp is used twice, so tasklet fusion should not apply
+    assert not applied
+
+
+def test_transient_in_different_state():
+
+    @dace.program
+    def sdfg_intermediate_transients(A: dace.float32[10], B: dace.float32[10]):
+        tmp = dace.define_local_scalar(dace.float32)
+
+        # Use tmp in different states to test removal of data
+        if B[0] < 0:
+            tmp = A[0] - 1
+            B[0] = tmp
+        else:
+            tmp = A[0] + 1
+            B[0] = tmp
+
+    sdfg = sdfg_intermediate_transients.to_sdfg(simplify=True)
+    assert len([node for state in sdfg.states() for node in state.data_nodes() if node.data == "tmp"]) == 2
+
+    xforms = Optimizer(sdfg=sdfg).get_pattern_matches(patterns=(TaskletFusion, ))
+    applied = False
+    for xform in xforms:
+        if xform.data.data == "tmp":
+            xform.apply(sdfg.start_state, sdfg)
+            applied = True
+            break
+
+    # tmp is used twice, so tasklet fusion should not apply
+    assert not applied
 
 
 if __name__ == '__main__':
@@ -304,3 +332,4 @@ if __name__ == '__main__':
     test_map_with_tasklets(language='CPP', with_data=True)
     test_none_connector()
     test_intermediate_transients()
+    test_transient_in_different_state()

@@ -15,7 +15,7 @@ TEST_TIMEOUT=10m
 
 RED='\033[0;31m'
 NC='\033[0m'
-        
+
 
 runtest() {
     yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/$1
@@ -47,7 +47,7 @@ runall() {
     runtest explicit/fibonacci.py $1
     runtest explicit/filter.py $1
     runtest explicit/histogram.py $1
-    runtest optimization/matmul.py $1  
+    runtest optimization/matmul.py $1
 }
 
 DACE_compiler_use_cache=0

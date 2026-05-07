@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-from functools import partial
 from itertools import chain, repeat
 
 from contextlib import contextmanager
@@ -72,13 +70,11 @@ class CompiledSDFGProfiler:
                     leave=self.tqdm_leave,
                 )
             except ImportError:
-                warnings.warn(
-                    'Cannot show profiling progress, missing optional dependency '
-                    'tqdm...\n\tTo see a live progress bar please install tqdm '
-                    '(`pip install tqdm`)\n\tTo disable this feature (and this '
-                    'warning) set `profiling_status` to false in the dace config '
-                    '(~/.dace.conf).'
-                )
+                warnings.warn('Cannot show profiling progress, missing optional dependency '
+                              'tqdm...\n\tTo see a live progress bar please install tqdm '
+                              '(`pip install tqdm`)\n\tTo disable this feature (and this '
+                              'warning) set `profiling_status` to false in the dace config '
+                              '(~/.dace.conf).')
                 print('\nProfiling...')
         else:
             print('\nProfiling...')
@@ -131,7 +127,7 @@ class CompiledSDFGProfiler:
 
 
 def detect_reduction_type(wcr_str, openmp=False):
-    """ Inspects a lambda function and tries to determine if it's one of the 
+    """ Inspects a lambda function and tries to determine if it's one of the
         built-in reductions that frameworks such as MPI can provide.
 
         :param wcr_str: A Python string representation of the lambda function.
@@ -260,7 +256,7 @@ def reduce(op, in_array, out_array=None, axis=None, identity=None):
 
 def elementwise(func, in_array, out_array=None):
     """ Applies a function to each element of the array
-    
+
         :param in_array: array to apply to.
         :param out_array: output array to write the result to. If `None`, a new array will be returned
         :param func: lambda function to apply to each element.

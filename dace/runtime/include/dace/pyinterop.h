@@ -6,7 +6,7 @@
 
 // Various classes to simplify interoperability with python in code converted to C++
 
-class range 
+class range
 {
 public:
     class iterator

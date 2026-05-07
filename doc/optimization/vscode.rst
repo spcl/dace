@@ -37,7 +37,7 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
 Fine-Grained Data Access and Reuse Analysis (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. warning:: 
+.. warning::
     This feature is still in development and is only available in certain pre-release versions of the VS Code
     extension at this time. This feature may consequently be subject to changes.
 
@@ -145,5 +145,5 @@ transformations |add-xform-by-folder-btn|. The latter recursively traverses the 
 for any Python source code files and attempts to load each one as a transformation.
 
 For more information on how to use and author data-centric transformations,
-see :ref:`transforming` and the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
+see :ref:`transforming` and the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb>`_
 tutorial.

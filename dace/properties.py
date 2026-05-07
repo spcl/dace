@@ -14,15 +14,17 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Integral, Number
-from typing import List, Set, Type, Union, TypeVar, Generic
+from numbers import Number
+from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.data import Data as dData
 
 T = TypeVar('T')
 
 ###############################################################################
 # External interface to guarantee correct usage
 ###############################################################################
-
 
 ###############################################################################
 # Property base implementation
@@ -54,15 +56,13 @@ class Property(Generic[T]):
             indirected=False,  # This property belongs to a different class
             category='General',
             desc="",
-            optional=False,
-            optional_condition=lambda _: True):
+            serialize_if=lambda _: True):  # By default serialize always
 
         self._getter = getter
         self._setter = setter
         self._dtype = dtype
         self._default = default
-        self._optional = optional
-        self._optional_condition = optional_condition
+        self._serialize_if = serialize_if
 
         if allow_none is False and default is None:
             try:
@@ -126,10 +126,16 @@ class Property(Generic[T]):
         self._category = category
         if desc is not None and len(desc) > 0:
             self.__doc__ = desc
-        elif self.dtype is not None:
-            self.__doc__ = "Object property of type %s" % self.dtype.__name__
         else:
-            self.__doc__ = "Object property of type %s" % type(self).__name__
+            try:
+                dtype = self.dtype
+                if dtype is not None:
+                    self.__doc__ = "Object property of type %s" % dtype.__name__
+                else:
+                    self.__doc__ = "Object property of type %s" % type(self).__name__
+            except (ImportError, AttributeError):
+                # Handle circular import case - defer docstring generation
+                self.__doc__ = "Object property of type %s" % type(self).__name__
 
     def __get__(self, obj, objtype=None) -> T:
         if obj is None:
@@ -203,12 +209,8 @@ class Property(Generic[T]):
         return self._dtype
 
     @property
-    def optional(self):
-        return self._optional
-
-    @property
-    def optional_condition(self):
-        return self._optional_condition
+    def serialize_if(self):
+        return self._serialize_if
 
     def typestring(self):
         typestr = ""
@@ -335,7 +337,7 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, name):
+            if hasattr(obj, '_' + name):
                 raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
@@ -534,7 +536,7 @@ class DictProperty(Property):
         The type of each element in the dictionary can be given as a type class,
         or as a function that converts an element to the wanted type (e.g.,
         `dace.symbolic.pystr_to_symbolic` for symbolic expressions).
-        
+
         :param key_type: The type of the keys in the dictionary.
         :param value_type: The type of the values in the dictionary.
         :param args: Other arguments (inherited from Property).
@@ -566,8 +568,10 @@ class DictProperty(Property):
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
-            val = {(k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
-                   for k, v in val.items()}
+            val = {
+                (k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
+                for k, v in val.items()
+            }
         super(DictProperty, self).__set__(obj, val)
 
     @staticmethod
@@ -715,7 +719,10 @@ class DebugInfoProperty(Property):
 
     def __init__(self, **kwargs):
         if 'default' not in kwargs:
-            kwargs['default'] = DebugInfo(0, 0, 0, 0)
+            if kwargs.get('allow_none', False):
+                kwargs['default'] = None
+            else:
+                kwargs['default'] = DebugInfo(None)
         super().__init__(dtype=DebugInfo, **kwargs)
 
     @property
@@ -778,7 +785,11 @@ class DebugInfoProperty(Property):
 
 
 class SetProperty(Property):
-    """Property for a set of elements of one type, e.g., connectors. """
+    """Property for a set of elements of one type, e.g., connectors.
+
+    Despite its name, the property models a `frozenset`, this means that the set can
+    not be modified in place. Instead a new value has to be assigned to the property.
+    """
 
     def __init__(
             self,
@@ -796,7 +807,7 @@ class SetProperty(Property):
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
                                           setter=setter,
-                                          dtype=set,
+                                          dtype=frozenset,
                                           default=default,
                                           from_json=from_json,
                                           to_json=to_json,
@@ -809,7 +820,13 @@ class SetProperty(Property):
 
     @property
     def dtype(self):
-        return set
+        # For full backwards compatibility we would need to return `set` however
+        #  this would break the implementation of `Property.__set__()`.
+        return frozenset
+
+    def typestring(self):
+        # For backwards compatibility we pretend to be a `set`.
+        return "set"
 
     @staticmethod
     def to_string(l):
@@ -827,28 +844,30 @@ class SetProperty(Property):
     def from_json(self, l, sdfg=None):
         if l is None:
             return None
-        return set(l)
+        return frozenset(l)
 
     def __get__(self, obj, objtype=None):
         val = super(SetProperty, self).__get__(obj, objtype)
         if val is None:
             return val
-        
-        # Copy to avoid changes in the set at callee to be reflected in
-        # the node directly
-        return set(val)
+
+        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
+        return val
 
     def __set__(self, obj, val):
         if val is None:
             return super(SetProperty, self).__set__(obj, val)
-        
+
         # Check for uniqueness
-        if len(val) != len(set(val)):
+        if isinstance(val, (frozenset, set)):
+            pass
+        elif len(val) != len(set(val)):
             dups = set([x for x in val if val.count(x) > 1])
             raise ValueError('Duplicates found in set: ' + str(dups))
-        # Cast to element type
+
+        # Cast to element type and ensure that it is a frozen set.
         try:
-            new_set = set(self._element_type(elem) for elem in val)
+            new_set = frozenset(self._element_type(elem) for elem in val)
         except (TypeError, ValueError):
             raise ValueError('Some elements could not be converted to %s' % (str(self._element_type)))
 
@@ -880,7 +899,7 @@ class LambdaProperty(Property):
         return LambdaProperty.to_string(obj)
 
     def from_json(self, s, sdfg=None):
-        if s == None: return None
+        if s is None: return None
         return LambdaProperty.from_string(s)
 
     def __set__(self, obj, val):
@@ -1090,7 +1109,8 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices) and not isinstance(val, sbs.SubsetUnion)):
+        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
+                and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
@@ -1258,6 +1278,8 @@ class ShapeProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, list):
             val = tuple(val)
+        if isinstance(val, tuple):
+            val = tuple(dace.symbolic.UndefinedSymbol() if v == '?' else v for v in val)
         super(ShapeProperty, self).__set__(obj, val)
 
 
@@ -1333,7 +1355,7 @@ class TypeClassProperty(Property):
 class NestedDataClassProperty(Property):
     """ Custom property type for nested data. """
 
-    def __get__(self, obj, objtype=None) -> 'Data':
+    def __get__(self, obj, objtype=None) -> 'dData':
         return super().__get__(obj, objtype)
 
     @property

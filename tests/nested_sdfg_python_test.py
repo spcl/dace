@@ -2,16 +2,16 @@
 import numpy as np
 
 import dace as dp
-from dace.sdfg import SDFG
-from dace.memlet import Memlet
 
 N = dp.symbol('N')
 
 
 @dp.program
 def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
+
     @dp.mapscope
     def elements(i: _[0:N], j: _[0:N]):
+
         @dp.tasklet
         def init():
             inp << A[i, j]

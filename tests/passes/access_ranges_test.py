@@ -2,7 +2,6 @@
 """ Tests the AccessRanges analysis pass. """
 import dace
 from dace.transformation.passes.analysis import AccessRanges
-import numpy as np
 
 N = dace.symbol('N')
 
@@ -47,7 +46,7 @@ def test_simple_ranges():
     # Construct read/write memlets
     memlet1 = dace.Memlet('A[0:N, 0:N]')
     memlet1._is_data_src = False
-    memlet2 = dace.Memlet('A[1:21, 1:21] -> 0:20, 0:20')
+    memlet2 = dace.Memlet('A[1:21, 1:21] -> [0:20, 0:20]')
     memlet2._is_data_src = False
     memlet3 = dace.Memlet('A[0, 0]')
     memlet4 = dace.Memlet('A[0, 0]')

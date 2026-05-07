@@ -3,22 +3,25 @@
 """
 
 import dace
-from dace import data, registry, symbolic
+from dace import symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 class MapToForLoop(transformation.SingleStateTransformation):
     """ Implements the Map to for-loop transformation.
 
-        Takes a map and enforces a sequential schedule by transforming it into
-        a state-machine of a for-loop. Creates a nested SDFG, if necessary.
+        Takes a map and enforces a sequential schedule by transforming it into a loop region. Creates a nested SDFG, if
+        necessary.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+
+    loop_region: Optional[LoopRegion] = None
 
     @staticmethod
     def annotates_memlets():
@@ -79,11 +82,14 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
-                                     '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                                     '%s + %s' % (loop_idx, replace_param(loop_step)))
-        # store as object fields for external access
-        self.before_state, self.guard, self.after_state = loop_result
+        loop_region = LoopRegion('loop_' + map_entry.map.label, '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+                                 loop_idx, '%s = %s' % (loop_idx, replace_param(loop_from)),
+                                 '%s = %s + %s' % (loop_idx, loop_idx, replace_param(loop_step)))
+        nsdfg.add_node(loop_region, is_start_block=True)
+        nsdfg.remove_node(nstate)
+        loop_region.add_node(nstate, is_start_block=True)
+        # store as object field for external access
+        self.loop_region = loop_region
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
@@ -103,5 +109,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         # create object field for external nsdfg access
         self.nsdfg = nsdfg
+
+        sdfg.reset_cfg_list()
+        # Ensure the SDFG is marked as containing CFG regions
+        sdfg.root_sdfg.using_explicit_control_flow = True
 
         return node, nstate

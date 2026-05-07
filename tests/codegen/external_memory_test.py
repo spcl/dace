@@ -30,13 +30,13 @@ def test_external_mem(symbolic):
     a = np.random.rand(20)
 
     if symbolic:
-        extra_args = dict(a=a, N=20)
+        extra_args = dict(N=20)
     else:
         extra_args = {}
 
     # Test workspace size
     csdfg = sdfg.compile()
-    csdfg.initialize(**extra_args)
+    csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes()
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
 

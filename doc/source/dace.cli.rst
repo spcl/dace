@@ -10,7 +10,7 @@ dace.cli.sdfgcc module
    :show-inheritance:
 
 dace.cli.sdfv module
----------------------
+--------------------
 
 .. automodule:: dace.cli.sdfv
    :members:
@@ -18,7 +18,7 @@ dace.cli.sdfv module
    :show-inheritance:
 
 dace.cli.daceprof module
-----------------------
+------------------------
 
 .. automodule:: dace.cli.daceprof
    :members:

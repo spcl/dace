@@ -23,7 +23,7 @@ def _cuda_helper():
 
     helper_code = f"""
     #include <dace/dace.h>
-    
+
     extern "C" {{
         DACE_EXPORTED int host_to_gpu(void* gpu, void* host, size_t size) {{
             auto result = {common.get_gpu_backend()}Memcpy(gpu, host, size, {common.get_gpu_backend()}MemcpyHostToDevice);
@@ -40,9 +40,10 @@ def _cuda_helper():
     compiler.generate_program_folder(None, [program, dummy_cuda_target], BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
 
-    checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"), "cuda_helper")
+    checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"))
 
     class CudaHelper:
+
         def __init__(self):
             self.dll = checker_dll
             checker_dll.load()
@@ -66,6 +67,7 @@ def _cuda_helper():
 
 @pytest.mark.gpu
 def test_preallocate_transients_in_state_struct(cuda_helper):
+
     @dace.program
     def persistent_transient(A: dace.float32[3, 3]):
         persistent_transient = dace.define_local([3, 5],

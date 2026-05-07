@@ -4,6 +4,7 @@ import numpy as np
 
 
 def test_output():
+
     @dace.program
     def elementwise(A: dace.float64[5, 3], B: dace.float64[5, 3]):
         dace.elementwise(lambda x: log(x), A, B)
@@ -18,6 +19,7 @@ def test_output():
 
 
 def test_output_none():
+
     @dace.program
     def elementise_none(A: dace.float64[5, 3], B: dace.float64[5, 3]):
         B[:] = dace.elementwise(lambda x: log(x), A)
@@ -32,6 +34,7 @@ def test_output_none():
 
 
 def test_cast():
+
     @dace.program
     def elementwise_cast(A: dace.float32[5, 3], B: dace.float64[5, 3]):
         dace.elementwise(lambda x: x, A, B)

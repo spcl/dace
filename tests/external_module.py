@@ -7,6 +7,7 @@ H = dace.symbol('H')
 
 @dace.program
 def transpose(input: dace.float32[W, H], output: dace.float32[H, W]):
+
     @dace.map(_[0:H, 0:W])
     def compute(i, j):
         a << input[j, i]

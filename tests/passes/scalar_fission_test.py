@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar fission pass. """
 
 import pytest
@@ -6,9 +6,12 @@ import pytest
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 
 
-def test_scalar_fission():
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_scalar_fission(with_raising):
     """
     Test the scalar fission pass.
     This heavily relies on the scalar write shadow scopes pass, which is tested separately.
@@ -95,6 +98,9 @@ def test_scalar_fission():
     sdfg.add_edge(loop_2_2, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     # Test the pass.
     pipeline = Pipeline([ScalarFission()])
     pipeline.apply_pass(sdfg, {})
@@ -107,7 +113,9 @@ def test_scalar_fission():
     assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
 
-def test_branch_subscopes_nofission():
+
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_branch_subscopes_nofission(with_raising):
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [2], dace.int32)
@@ -185,11 +193,16 @@ def test_branch_subscopes_nofission():
     right_after.add_edge(a10, None, t6, 'b', dace.Memlet('B[0]'))
     right_after.add_edge(t6, 'c', a11, None, dace.Memlet('C[0]'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C'}
 
-def test_branch_subscopes_fission():
+
+@pytest.mark.parametrize('with_raising', (False, True))
+def test_branch_subscopes_fission(with_raising):
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [2], dace.int32)
@@ -277,11 +290,18 @@ def test_branch_subscopes_fission():
     merge_1.add_edge(a13, None, t8, 'b', dace.Memlet('B[0]'))
     merge_1.add_edge(t8, 'c', a14, None, dace.Memlet('C[0]'))
 
+    if with_raising:
+        Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
+
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
 
+
 if __name__ == '__main__':
-    test_scalar_fission()
-    test_branch_subscopes_nofission()
-    test_branch_subscopes_fission()
+    test_scalar_fission(False)
+    test_branch_subscopes_nofission(False)
+    test_branch_subscopes_fission(False)
+    test_scalar_fission(True)
+    test_branch_subscopes_nofission(True)
+    test_branch_subscopes_fission(True)

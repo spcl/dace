@@ -20,7 +20,7 @@ class ExpandIsendMPI(ExpandTransformation):
 
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
-        
+
         comm = "MPI_COMM_WORLD"
         if node.grid:
             comm = f"__state->{node.grid}_comm"

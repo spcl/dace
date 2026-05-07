@@ -6,7 +6,7 @@ Core Python Language Support
    This section is a work in progress.  It may not reflect the capabilities provided in the latest version of DaCe.
 
 
-This document describes in detail which features of Python are supported by the Data-Centric Python-Frontend. 
+This document describes in detail which features of Python are supported by the Data-Centric Python-Frontend.
 The comparison is made against the `Python Language Reference <https://docs.python.org/3/reference>`_.
 
 2 Lexical Analysis
@@ -125,7 +125,7 @@ this is not supported.
 6.4 Await expression
 ^^^^^^^^^^^^^^^^^^^^
 
-Unsupported  
+Unsupported
 
 6.5 The power (**) operator
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

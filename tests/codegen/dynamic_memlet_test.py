@@ -38,7 +38,7 @@ def test_dynamic_memlets():
 
 
 def test_dynamic_memlets_subset():
-    """ 
+    """
     Tests dynamic memlet dereferencing when subset/pointer is used
     in tasklet connector.
     """

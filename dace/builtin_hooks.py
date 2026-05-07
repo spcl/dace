@@ -82,12 +82,12 @@ def profile(
 def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
                           with_attr: bool = True) -> Callable[[Any], bool]:
     """
-    Internal helper that makes a filtering function. 
-      
+    Internal helper that makes a filtering function.
+
       * If nothing is given, the filter always returns True.
       * If a string is given, performs wildcard matching.
       * If a callable is given, use predicate directly.
-    
+
 
     :param filter: The filter to use.
     :param with_attr: If True, uses the ``name`` attribute for testing strings.
@@ -96,7 +96,8 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
     if isinstance(filter, str):
         # If a string was given, construct predicate based on wildcard name matching
         if with_attr:
-            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter)
+            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter) if hasattr(elem, 'name') else fnmatch.fnmatch(
+                elem.label, filter)
         else:
             filter_func = lambda elem: fnmatch.fnmatch(elem, filter)
     elif callable(filter):
@@ -121,7 +122,7 @@ def instrument(itype: 'InstrumentationType',
 
     .. code-block:: python
 
-        with dace.instrument(dace.InstrumentationType.GPU_Events, 
+        with dace.instrument(dace.InstrumentationType.GPU_Events,
                              filter='*add??') as profiler:
             some_program(...)
             # ...
@@ -148,6 +149,7 @@ def instrument(itype: 'InstrumentationType',
     filter_func = _make_filter_function(filter)
 
     class Instrumenter:
+
         def __init__(self):
             self.reports: List[InstrumentationReport] = []
 
@@ -212,7 +214,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
 
         with dace.instrument_data(dace.DataInstrumentationType.Save, filter='a??'):
             result_ab = sample(a, b)
-        
+
         # Optionally, get the serialized data containers
         dreport = sdfg.get_instrumented_data()
         assert dreport.keys() == {'arr'}  # dreport['arr'] is now the internal ``arr``
@@ -220,7 +222,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
         # Reload latest instrumented data (can be customized if ``restore_from`` is given)
         with dace.instrument_data(dace.DataInstrumentationType.Restore, filter='a??'):
             result_cd = sample(c, d)  # where ``c, d`` are different from ``a, b``
-        
+
         assert numpy.allclose(result_ab, result_cd)
 
 
@@ -243,6 +245,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
     filter_func = _make_filter_function(filter, with_attr=False)
 
     class DataInstrumenter:
+
         @contextmanager
         def __call__(self, sdfg: 'SDFG'):
             for n, _ in sdfg.all_nodes_recursive():
@@ -269,6 +272,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
     if ditype == DataInstrumentationType.Restore:
         # Restore data into compiled SDFG
         class DataRestoreHook:
+
             @contextmanager
             def __call__(self, csdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
                 # Restore data from requested data report

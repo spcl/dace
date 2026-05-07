@@ -1,29 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ A single generator that creates an N-dimensional for loop in Python. """
 import itertools
-import numpy as np
-from typing import List, Tuple, Union
-
-# Python 3 compatibility for xrange
-try:
-    xxrange = xrange
-except NameError:
-    xxrange = range
+from typing import Tuple, Union
 
 
 def slicetoxrange(s):
     """ Helper function that turns a slice into a range (for iteration). """
     if isinstance(s, int):
-        return xxrange(s, s + 1)
+        return range(s, s + 1)
 
     ifnone = lambda a, b: b if a is None else a
 
-    return xxrange(ifnone(s.start, 0), s.stop, ifnone(s.step, 1))
+    return range(ifnone(s.start, 0), s.stop, ifnone(s.step, 1))
 
 
 def NDLoop(ndslice, internal_function, *args, **kwargs):
-    """ Wrapped generator that calls an internal function in an N-dimensional 
-        for-loop in Python. 
+    """ Wrapped generator that calls an internal function in an N-dimensional
+        for-loop in Python.
 
         :param ndslice: Slice or list of slices (``slice`` objects) to loop over.
         :param internal_function: Function to call in loop.
@@ -41,7 +34,7 @@ def NDLoop(ndslice, internal_function, *args, **kwargs):
 
 def ndrange(slice_list: Union[Tuple[slice], slice]):
     """ Generator that creates an N-dimensional for loop in Python.
-     
+
         :param slice_list: Slice or list of slices (as tuples or ``slice`` objects) to loop over.
         :return: N-dimensional loop index generator.
     """

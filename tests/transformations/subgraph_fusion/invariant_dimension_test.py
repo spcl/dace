@@ -2,17 +2,13 @@
 import dace
 from dace.transformation.subgraph import SubgraphFusion
 import dace.sdfg.utils as utils
-import dace.transformation.subgraph.helpers as helpers
-import dace.sdfg.nodes as nodes
 import dace.subsets as subsets
 import numpy as np
 
 import itertools
 
 from dace.sdfg.graph import SubgraphView
-from typing import Union, List
 
-import sys
 from util import fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
@@ -70,7 +66,7 @@ def fix_sdfg(sdfg, graph):
 
     # next up replace sdfg
     inner_sdfg = helper_sdfg.to_sdfg()
-    nnode = graph.add_nested_sdfg(inner_sdfg, sdfg, {'AA', 'BB', 'CC'}, {'CC'})
+    nnode = graph.add_nested_sdfg(inner_sdfg, {'AA', 'BB', 'CC'}, {'CC'})
     # redirect edges
     connectors = []
     for e in graph.in_edges(nested_original):

@@ -7,6 +7,7 @@ _OP_TO_STRING = {'+': 'plus', '-': 'minus', '*': 'emult', '/': 'ediv', '%': 'mod
 
 
 class AST_UnaryExpression(AST_Node):
+
     def __init__(self, context, arg, op, order):
         AST_Node.__init__(self, context)
         self.arg = arg
@@ -47,6 +48,7 @@ class AST_UnaryExpression(AST_Node):
 
 
 class AST_BinExpression(AST_Node):
+
     def __init__(self, context, lhs, rhs, op):
         AST_Node.__init__(self, context)
         self.lhs = lhs

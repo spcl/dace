@@ -7,6 +7,7 @@ W = dp.symbol('W')
 
 @dp.program
 def subarray(A, B):
+
     @dp.map(_[0:W])
     def subarrays(i):
         a << A[:, i, i, i]

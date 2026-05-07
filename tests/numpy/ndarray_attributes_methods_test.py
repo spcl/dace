@@ -28,6 +28,12 @@ def test_copy(A: dace.float32[M, N]):
 
 
 @compare_numpy_output()
+def test_lhs_flat(A: dace.float64[M, N]):
+    A.flat[150] = 5
+    return A
+
+
+@compare_numpy_output()
 def test_astype(A: dace.int32[M, N]):
     return A.astype(np.float32)
 
@@ -85,10 +91,14 @@ def test_max(A: dace.float32[M, N, N, M]):
     return A.max()
 
 
-# TODO: Need to debug `_argminmax`
-# @compare_numpy_output()
-# def test_argmax(A: dace.float32[M, N, N, M]):
-#     return A.argmax()
+@compare_numpy_output()
+def test_argmax(A: dace.float32[M, N, N, M]):
+    return A.argmax()
+
+
+@compare_numpy_output()
+def test_argmax_dim(A: dace.float32[M, N, N, M]):
+    return A.argmax(1)
 
 
 @compare_numpy_output()
@@ -97,13 +107,26 @@ def test_min(A: dace.float32[M, N, N, M]):
 
 
 @compare_numpy_output()
+def test_argmin(A: dace.float32[M, N, N, M]):
+    return A.argmin()
+
+
+@compare_numpy_output()
 def test_conj(A: dace.complex64[M, N, N, M]):
     return A.conj()
 
 
-@compare_numpy_output()
-def test_sum(A: dace.float32[M, N, N, M]):
-    return A.sum()
+def test_sum():
+
+    @dace.program
+    def testee(A: dace.float64[10, 20, 20, 10]):
+        return A.sum()
+
+    A = np.array(np.random.rand(10, 20, 20, 10) + 0.1, dtype=np.float64, copy=True)
+    ref = A.sum()
+    res = testee(A)
+    assert res.shape == (1, )  # DaCe can not return scalars
+    assert np.allclose(ref, res), f"Expected '{ref}' but got '{res[0]}'"
 
 
 @compare_numpy_output()
@@ -134,6 +157,7 @@ if __name__ == "__main__":
     test_real()
     test_imag()
     test_copy()
+    test_lhs_flat()
     test_astype()
     test_fill()
     test_fill2()
@@ -145,8 +169,10 @@ if __name__ == "__main__":
     test_flatten()
     test_ravel()
     test_max()
-    # test_argmax()
+    test_argmax()
+    test_argmax_dim()
     test_min()
+    test_argmin()
     test_conj()
     test_sum()
     test_mean()

@@ -1,10 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
-import argparse
 import dace
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import numpy as np
 import scipy
 import tests.codegen.sve.common as common
@@ -15,10 +10,13 @@ H = dace.symbol('H')
 nnz = dace.symbol('nnz')
 
 
-@dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
-def spmv(A_row, A_col, A_val, x, b):
+@dace.program
+def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W],
+         b: dace.float32[H]):
+
     @dace.mapscope(_[0:H])
     def compute_row(i):
+
         @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]
