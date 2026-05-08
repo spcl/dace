@@ -60,9 +60,15 @@ def test_distributed_descriptor_json_roundtrip():
     assert isinstance(loaded.arrays[pgrid], ProcessGrid)
     assert isinstance(loaded.arrays[subarray], SubArray)
     assert isinstance(loaded.arrays[redistr], RedistrArray)
+    assert loaded.arrays[pgrid].transient
+    assert loaded.arrays[subarray].transient
+    assert loaded.arrays[redistr].transient
     assert pgrid in loaded.process_grids
     assert subarray in loaded.subarrays
     assert redistr in loaded.rdistrarrays
+    assert pgrid not in loaded.arglist()
+    assert subarray not in loaded.arglist()
+    assert redistr not in loaded.arglist()
     assert not hasattr(loaded, '_pgrids')
     assert not hasattr(loaded, '_subarrays')
     assert not hasattr(loaded, '_rdistrarrays')

@@ -97,6 +97,7 @@ def _cart_sub(pv: ProgramVisitor,
 
     state.add_node(tasklet)
 
+    tasklet.add_in_connector('_parent_grid')
     rnode = state.add_read(parent_grid)
     state.add_edge(rnode, None, tasklet, '_parent_grid', Memlet(data=parent_grid))
 

@@ -28,6 +28,11 @@ class DistributedDescriptor(Data):
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         raise TypeError(f'{type(self).__name__} descriptors are not Python call arguments')
 
+    @property
+    def offset(self):
+        shp = getattr(self, 'shape', [])
+        return [0] * len(shp)
+
 
 def _symbols_from_shape(shape) -> Set[symbolic.SymbolicType]:
     result: Set[symbolic.SymbolicType] = set()
@@ -139,7 +144,7 @@ class ProcessGrid(DistributedDescriptor):
         ret = cls('tmp', False, [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.dtype = dtypes.opaque('MPI_Comm')
-        ret.transient = False
+        ret.transient = True
         # Check validity now
         ret.validate()
         return ret
@@ -295,7 +300,7 @@ class SubArray(DistributedDescriptor):
         # Create dummy object
         ret = cls('tmp', dtypes.int8, [], [], 'tmp', [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
-        ret.transient = False
+        ret.transient = True
         # Check validity now
         ret.validate()
         return ret
@@ -427,7 +432,7 @@ class RedistrArray(DistributedDescriptor):
         ret = cls('tmp', 'tmp', 'tmp')
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.dtype = dtypes.opaque('dace::comm::RedistrArray')
-        ret.transient = False
+        ret.transient = True
         # Check validity now
         ret.validate()
         return ret

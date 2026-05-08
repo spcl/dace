@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -15,8 +15,8 @@ class ExpandDummyMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          inputs={},
-                                          outputs={'__out'},
+                                          inputs=expanded_input_connectors(node, parent_state),
+                                          outputs=node.out_connectors,
                                           code='',
                                           state_fields=node.fields,
                                           side_effects=True)
