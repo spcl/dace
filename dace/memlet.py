@@ -4,7 +4,6 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
-import warnings
 
 import dace
 from dace.sdfg.graph import generate_element_id
@@ -48,7 +47,7 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code', allow_none=True)
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '

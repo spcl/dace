@@ -1,10 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.subgraph import SubgraphFusion
-from dace.sdfg.graph import SubgraphView
-import dace.transformation.subgraph.helpers as helpers
-from typing import List, Union
-import dace.sdfg.nodes as nodes
 import numpy as np
 from util import fusion
 

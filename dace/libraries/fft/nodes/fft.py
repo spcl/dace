@@ -2,7 +2,6 @@
 """
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
-import warnings
 
 from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
 from dace import transformation as xf

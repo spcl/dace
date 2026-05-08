@@ -5,7 +5,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
 import numpy
 
 import sympy.abc
@@ -1467,7 +1467,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 
 @lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
+def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
