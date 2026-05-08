@@ -992,6 +992,9 @@ class CPUCodeGen(TargetCodeGenerator):
             _, uconn, v, _, memlet = edge
             if skip_wcr and memlet.wcr is not None:
                 continue
+            if (memlet.data is not None and memlet.data in sdfg.arrays
+                    and isinstance(sdfg.arrays[memlet.data], data.DistributedDescriptor)):
+                continue
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst
 
