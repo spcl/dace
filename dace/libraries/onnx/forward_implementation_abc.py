@@ -8,7 +8,7 @@ for each ONNX operation, enabling:
 
 - Pure Python implementations for correctness
 - Optimized implementations for performance
-- Hardware-specific implementations (CPU, GPU, FPGA)
+- Hardware-specific implementations
 - Custom user-provided implementations
 
 The ONNXForward ABC provides:
@@ -102,4 +102,4 @@ class ONNXForward(abc.ABC):
 
 
 # Import op_implementations to trigger registration of all implementations
-import dace.libraries.onnx.op_implementations
+import dace.libraries.onnx.op_implementations  # noqa: F401

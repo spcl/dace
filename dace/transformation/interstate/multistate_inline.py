@@ -5,16 +5,16 @@ from copy import deepcopy as dc
 import itertools
 from typing import Dict, List
 
-from dace import Memlet, symbolic, dtypes, subsets
+from dace import Memlet, symbolic, subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg import utils as sdutil, infer_types
+from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
-from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
+from dace.sdfg.state import LoopRegion, ReturnBlock
 
 
 @make_properties
@@ -77,8 +77,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
-            return False
-        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
             return False
 
         # Not nested in scope
@@ -145,9 +143,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 has_return = True
         if has_return:
             sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
-
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         #######################################################
         # Collect and update top-level SDFG metadata

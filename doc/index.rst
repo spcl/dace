@@ -20,7 +20,7 @@ DaCe generates high-performance programs for:
 
  * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
  * NVIDIA GPUs and AMD GPUs (see :ref:`how to use HIP in DaCe <amd>`)
- * Xilinx and Intel FPGAs
+ * `Xilinx and Intel FPGAs <https://github.com/spcl/dace-fpga>`_
 
 
 
@@ -53,8 +53,7 @@ If you use DaCe, cite us:
    setup/integration
    ide/cli
    general/glossary
-
-.. general/faq
+   general/faq
 
 .. toctree::
    :caption: Developer Guide
@@ -64,9 +63,16 @@ If you use DaCe, cite us:
    general/debugging
    extensions/properties
    sdfg/transforming
+   sdfg/schedule_tree
    frontend/python
    codegen/codegen
    extensions/extensions
+   extensions/libraries
+   extensions/symbolic
+   extensions/frontend
+   extensions/sdfgconvertible
+   extensions/backend
+   extensions/instrumentation
    general/errors
 
 .. toctree::

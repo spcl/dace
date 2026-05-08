@@ -71,7 +71,7 @@ def test_keyword_and():
 @dace.program
 def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bool):
     with C as A:
-        from dace import symbolic
+        from dace import symbolic  # noqa: F401 (syntactic element that is part of the test)
         a = 5
         del a
         assert (C == True)

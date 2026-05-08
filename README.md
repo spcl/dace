@@ -1,6 +1,5 @@
 [![General Tests](https://github.com/spcl/dace/actions/workflows/general-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/general-ci.yml)
 [![GPU Tests](https://github.com/spcl/dace/actions/workflows/gpu-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/gpu-ci.yml)
-[![FPGA Tests](https://github.com/spcl/dace/actions/workflows/fpga-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/fpga-ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
 [![codecov](https://codecov.io/gh/spcl/dace/branch/main/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
@@ -13,7 +12,7 @@ _Decoupling domain science from performance optimization._
 
 DaCe is a [fast](https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb) parallel programming
 framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance
-**CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
+**CPU, GPU, and [FPGA](https://github.com/spcl/dace-fpga)** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
 uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate
 representation*: A transformable, interactive representation of code based on
 data movement.
@@ -27,7 +26,7 @@ of performance optimization, regardless of the application or the target process
 DaCe generates high-performance programs for:
  * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
  * NVIDIA GPUs and AMD GPUs (with HIP)
- * Xilinx and Intel FPGAs
+ * [Xilinx and Intel FPGAs](https://github.com/spcl/dace-fpga)
 
 DaCe can be written inline in Python and transformed in the command-line/Jupyter
 Notebooks or SDFGs can be interactively modified using our [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).

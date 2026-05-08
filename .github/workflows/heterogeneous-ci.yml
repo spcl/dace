@@ -23,7 +23,7 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, linux]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         submodules: 'recursive'
     - name: Install dependencies
@@ -48,7 +48,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "verilator or mkl or papi or datainstrument"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl or papi or datainstrument"
 
     - name: Run MPI tests
       run: |

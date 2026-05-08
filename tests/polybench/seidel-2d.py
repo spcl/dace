@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import polybench
-from absl import app, flags
 
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
@@ -29,8 +28,8 @@ sizes = [{
 args = [([N, N], datatype)]
 
 
-@dace.program(datatype[N, N], dace.int32)
-def seidel2d(A, tsteps):
+@dace.program
+def seidel2d(A: datatype[N, N], tsteps: dace.int32):
     for t in range(tsteps):
         for i in range(1, N - 1):
             for j in range(1, N - 1):

@@ -1,9 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
-import argparse
 import dace
-from dace import nodes
 import numpy as np
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
 from dace.transformation.interstate.state_fusion import StateFusion
@@ -13,8 +9,8 @@ N = dace.symbol('N')
 KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)
 
 
-@dace.program(dace.float32[N, N], dace.float32[N, N])
-def stencil3x3(A, B):
+@dace.program
+def stencil3x3(A: dace.float32[N, N], B: dace.float32[N, N]):
 
     @dace.map(_[1:N - 1, 1:N - 1])
     def a2b(y, x):

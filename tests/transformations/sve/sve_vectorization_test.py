@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.graph import NodeNotFoundError
 import dace
-import numpy as np
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
 import dace.dtypes as dtypes
@@ -118,8 +116,8 @@ def test_first_level_vectorization():
 
 def test_stream_push():
 
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         S_out = dace.define_stream(dace.float32, N)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -135,8 +133,8 @@ def test_stream_push():
 
 def test_stream_pop():
 
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         S_in = dace.define_stream(dace.float32, N)
         S_in << A
         for i in dace.map[0:N]:

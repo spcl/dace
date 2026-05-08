@@ -1,10 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
-import argparse
 import dace
 from dace.transformation.dataflow import MapTiling
-from dace.transformation.optimizer import SDFGOptimizer
 import numpy as np
 from scipy import ndimage
 

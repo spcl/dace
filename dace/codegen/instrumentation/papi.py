@@ -368,7 +368,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                 elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
                 else:
-                    # Any other type (FPGA, GPU) - not supported by PAPI.
+                    # Any other type (e.g., GPU) - not supported by PAPI.
                     x.map._can_be_supersection_start = False
 
             if (node.map._can_be_supersection_start and not dace.sdfg.is_parallel(dfg)):
@@ -451,7 +451,7 @@ class PAPIUtils(object):
     def available_counters() -> Dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
-        *nix based systems with ``grep`` and ``papi-tools`` installed.
+        posix based systems with ``grep`` and ``papi-tools`` installed.
 
         :return: A set of available PAPI counters in the form of a dictionary
                  mapping from counter name to the number of native hardware

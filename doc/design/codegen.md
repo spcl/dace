@@ -26,7 +26,7 @@ The current code generation system in DaCe follows this monolithic structure in 
 
 2. **Frame Code Generator Setup**
    - Create `DaCeCodeGenerator` instance
-   - Target instantiation (CPU, CUDA, FPGA, etc.)
+   - Target instantiation (CPU, GPU, etc.)
    - Code generation target querying (`_get_codegen_targets()`)
 
 3. **Target Preprocessing**
@@ -50,11 +50,9 @@ The current code generation system in DaCe follows this monolithic structure in 
 #### Target System:
 - **`targets/target.py`**: Base target interface
 - **`targets/cpu.py`**: CPU/OpenMP code generation
-- **`targets/cuda.py`**: CUDA/HIP GPU code generation
-- **`targets/fpga.py`**: FPGA code generation
+- **`targets/gpu.py`**: CUDA/HIP GPU code generation
 - **`targets/cpp.py`**: C++ utilities
 - **`targets/mpi.py`**: MPI parallelization
-- **`targets/rtl.py`**: RTL/SystemVerilog generation
 
 #### Specialized Systems:
 - **`targets/sve/`**: ARM SVE vectorization
@@ -157,7 +155,7 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 
 #### Target-Specific Preprocessing Passes
 - **Purpose**: Perform preprocessing modifications on the SDFG based on the code generators that will be used next
-- **Examples**: `FPGAPreprocessingPass` for FPGAs, `StreamAssignmentPass` for GPUs, `CopyToMap` for heterogeneous targets in general (see below)
+- **Examples**: `StreamAssignmentPass` for GPUs, `CopyToMap` for heterogeneous targets in general (see below)
 
 #### **LowerConsume**
 - **Purpose**: Convert Consume scopes into while loops or kernels, depending on the target (`LowerConsumeCPP`, `LowerConsumeGPU`)
@@ -178,7 +176,7 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 - **Input**: SDFG with targets identified
 - **Output**: SDFG with transformed copies
 - **Current Location**: `cuda.py` preprocessing, various target preprocessors
-- **Applies To**: GPU strided copies, FPGA transfers
+- **Applies To**: GPU strided copies
 
 #### **LowerTaskletLanguage**
 - **Purpose**: Convert Python/generic tasklets to tasklets in the target language (C++/CUDA/etc.)
@@ -218,7 +216,7 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 - **Input**: Split SDFGs with all previous analyses
 - **Output**: pipeline_results["code_objects"] = List[CodeObject] with complete code
 - **Current Location**: Combined from `DaCeCodeGenerator.generate_code()` and target-specific `get_generated_codeobjects()`
-- **Note**: This pass may call individual target code generators (CppCodeGen, GPUCodeGen, FPGACodeGen, etc.) to
+- **Note**: This pass may call individual target code generators (CppCodeGen, GPUCodeGen, etc.) to
             generate platform-specific code
 
 #### **GenerateHeaders**
@@ -251,9 +249,8 @@ class CodeGenerationPipeline(Pipeline):
             # Phase 2: Lowering
             LowerAllocations(),
             ConditionalPipeline([
-                (lambda r: 'cuda' in r.get('targets', []), CopyToMapPass()),
-                (lambda r: 'fpga' in r.get('targets', []), FPGAPreprocessingPass()),
-                (lambda r: 'cuda' in r.get('targets', []), LowerConsumeGPU()),
+                (lambda r: 'gpu' in r.get('targets', []), CopyToMapPass()),
+                (lambda r: 'gpu' in r.get('targets', []), LowerConsumeGPU()),
                 (lambda r: 'cpu' in r.get('targets', []), LowerConsumeCPP()),
             ]),
             LowerTaskletLanguage(),
@@ -310,7 +307,6 @@ dace/codegen/
 │   ├── __init__.py
 │   ├── analysis/           # Analysis passes
 │   │   ├── __init__.py
-│   │   ├── type_inference.py
 │   │   ├── metadata_collection.py
 │   │   └── allocation_analysis.py
 │   ├── transformation/     # Transformation passes
@@ -338,7 +334,6 @@ dace/codegen/
 │   ├── openmp.py          # OpenMP backend (split from cpu.py)
 │   ├── cpp.py             # Pure C++ backend (split from cpu.py and cpp.py)
 │   ├── gpu.py             # GPU backend (generalized from cuda.py)
-│   ├── fpga/              # FPGA backends
 │   └── specialized/       # Other specialized targets
 ├── runtime/               # Runtime interface (from compiled_sdfg.py)
 └── utils/                 # Utilities (dispatcher, codeobject, etc.)
@@ -382,10 +377,6 @@ TargetCodeGenerator (base)
 ├── GPUCodeGen (unified GPU backend)
 │   ├── CUDACodeGen (NVIDIA specifics)
 │   └── HIPCodeGen (AMD specifics)
-├── FPGACodeGen (FPGA base)
-│   ├── XilinxCodeGen
-│   ├── IntelFPGACodeGen
-|   └── RTLCodeGen
 └── MLIRCodeGen
 ```
 

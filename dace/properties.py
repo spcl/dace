@@ -14,8 +14,11 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Integral, Number
-from typing import List, Set, Type, Union, TypeVar, Generic
+from numbers import Number
+from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.data import Data as dData
 
 T = TypeVar('T')
 
@@ -716,7 +719,10 @@ class DebugInfoProperty(Property):
 
     def __init__(self, **kwargs):
         if 'default' not in kwargs:
-            kwargs['default'] = DebugInfo(0, 0, 0, 0)
+            if kwargs.get('allow_none', False):
+                kwargs['default'] = None
+            else:
+                kwargs['default'] = DebugInfo(None)
         super().__init__(dtype=DebugInfo, **kwargs)
 
     @property
@@ -893,7 +899,7 @@ class LambdaProperty(Property):
         return LambdaProperty.to_string(obj)
 
     def from_json(self, s, sdfg=None):
-        if s == None: return None
+        if s is None: return None
         return LambdaProperty.from_string(s)
 
     def __set__(self, obj, val):
@@ -1349,7 +1355,7 @@ class TypeClassProperty(Property):
 class NestedDataClassProperty(Property):
     """ Custom property type for nested data. """
 
-    def __get__(self, obj, objtype=None) -> 'Data':
+    def __get__(self, obj, objtype=None) -> 'dData':
         return super().__get__(obj, objtype)
 
     @property

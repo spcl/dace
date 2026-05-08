@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -28,8 +27,8 @@ def init_array(C, A, alpha, beta, n, m):
             C[i, j] = datatype((i * j + 2) % m) / m
 
 
-@dace.program(datatype[N, N], datatype[N, M], datatype[1], datatype[1])
-def syrk(C, A, alpha, beta):
+@dace.program
+def syrk(C: datatype[N, N], A: datatype[N, M], alpha: datatype[1], beta: datatype[1]):
 
     @dace.mapscope
     def mult_c_rows(i: _[0:N]):

@@ -1,15 +1,14 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
 import copy
-import os
 import warnings
 import networkx as nx
 import time
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -1612,7 +1611,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                      inaccurate, requires ``tqdm``). If None, prints out
                      progress if over 5 seconds have passed. If False, never
                      shows progress bar.
-    :param multistate: Include
+    :param multistate: If True, include multi-state inlining.
     :return: The total number of SDFGs inlined.
     """
     # Avoid import loops
@@ -1662,29 +1661,27 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str):
-    """
-    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfg" and a subfolder called
-    "build" with the shared object.
+def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
 
-    :param folder: Path to SDFG output folder.
-    :return: A callable CompiledSDFG object.
-    """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
-    suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(sdfg,
-                              csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+    warnings.warn(
+        'Used deprecated ``dace.sdfg.utils.load_precompiled_sdfg()`` function, use the one from ``dace.codegen.compiler`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+
+    return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
@@ -1701,7 +1698,7 @@ def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.Compil
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = load_precompiled_sdfg(folder)
+        func = sdfg_compiler.load_precompiled_sdfg(folder)
 
     comm.Barrier()
 
@@ -1883,31 +1880,6 @@ def traverse_sdfg_with_defined_symbols(
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    at_least_one_fpga_array = False
-    for n in data_nodes:
-        desc = n.desc(sdfg)
-        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            at_least_one_fpga_array = True
-        if isinstance(desc, dt.Scalar):
-            continue
-        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-
-    return at_least_one_fpga_array
-
-
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
 
@@ -1959,6 +1931,7 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
     out of a view, we need to compose the subset with the new view dimensions and new subset.
     The precondition to this method is that the array has unique strides (if not, the process fails).
     The process works in three steps, as follows:
+
         * First, The degenerate (shape=1) dimensions are removed from both the array and the view for consideration.
         * The mapping between non-degenerate dimensions is done from the view to the array based on the strides.
             Note that in a slice, the strides can be expanded or squeezed, but never reordered. This fact is used
@@ -1969,9 +1942,11 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
         * Third, the remainder of the dimensions of the original (non-view) data descriptor are considered
             "squeezed".
 
+
     For example, a scalar view ``A[i, j] -> v`` would return ``({}, [], [0, 1])``.
     Example 2: ``A[0:2, 3:5, i, j, 0:N] -> V[0:2, 0, 0:2, 0, 0:N, 0]`` would return
     ``({0: 0, 2: 1, 3: 2, 4: 4}, [1, 5], [3])``.
+
     :param vdesc: The data descriptor of the view.
     :param adesc: The data descriptor of the viewed data container.
     :return: A tuple of (mapping of view->array, expanded, squeezed) dimensions, or None if the process failed.
@@ -2767,7 +2742,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
                 expand_nodes(node.sdfg, predicate=predicate)
             elif isinstance(node, nd.LibraryNode):
                 if predicate(node):
-                    impl_name = node.expand(sdfg, state)
+                    impl_name = node.expand(state)
                     if config.Config.get_bool('debugprint'):
                         print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
                             str(node), impl_name))

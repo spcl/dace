@@ -5,9 +5,6 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -116,15 +113,6 @@ def run_hdiff(device_type: dace.dtypes.DeviceType):
         sdfg = hdiff_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(in_field, out_field, coeff, I=I, J=J, K=K)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = hdiff_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(I=I, J=J, K=K))
-        sdfg(in_field, out_field, coeff)
 
     # Compute ground truth and validate
     ground_truth(in_field, out_field_ref, coeff)
@@ -188,15 +176,10 @@ def test_autodiff():
     run_hdiff_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_hdiff(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -206,5 +189,3 @@ if __name__ == "__main__":
         run_hdiff_autodiff()
     elif target == "gpu":
         run_hdiff(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_hdiff(dace.dtypes.DeviceType.FPGA)

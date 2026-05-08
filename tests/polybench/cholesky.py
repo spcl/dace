@@ -27,8 +27,8 @@ def init_array(A, n):
     A[:] = np.dot(A, np.transpose(A))
 
 
-@dace.program(datatype[N, N])
-def cholesky(A):
+@dace.program
+def cholesky(A: datatype[N, N]):
     for i in range(0, N, 1):
         for j in range(0, i, 1):
 

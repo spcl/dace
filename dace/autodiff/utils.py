@@ -318,7 +318,7 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
     scalar = 0
     if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, arr.storage):
         cuda = False
-    elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, arr.storage):
+    elif dtypes.can_access(dtypes.ScheduleType.GPU_Device, arr.storage):
         cuda = True
     else:
         raise ValueError(f"Unsupported storage {arr.storage}")

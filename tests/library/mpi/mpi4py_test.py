@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import utils
-import dace.dtypes as dtypes
 import numpy as np
 import pytest
 
@@ -362,8 +361,7 @@ def test_alltoall():
     val = func(rank=rank)
     ref = mpi4py_alltoall.f(rank, size)
 
-    if (not np.allclose(val, ref)):
-        raise (ValueError("The received values are not what I expected."))
+    assert np.allclose(val, ref), "The received values are not what I expected."
 
 
 if __name__ == "__main__":

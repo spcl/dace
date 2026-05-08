@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Core data descriptor classes.
 
@@ -22,7 +22,6 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, serialize, symbolic
-from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              make_properties)
@@ -57,7 +56,7 @@ class Data:
                 if isinstance(v, Data):
                     v.transient = value
 
-    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
+    dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False, setter=_transient_setter)
     storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
@@ -873,9 +872,6 @@ class Stream(Data):
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
-
-    def size_string(self):
-        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s, cpp_mode=True)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1

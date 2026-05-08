@@ -12,7 +12,6 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
@@ -72,14 +71,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
@@ -103,14 +102,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
@@ -123,35 +122,42 @@ def find_dims_to_pop(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
 ) -> List[int]:
-    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
-    Essentially the function determines which dimensions from the subset `A` have to be removed
-    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
     an empty list is returned.
     It is important that this function does not operates on the actual subsets but on their
     sizes.
 
     Returns:
-        The function will return the list of dimensions that have to be removed in subset `A`
-        to bring it to the same dimensionality as subset `B`.
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``.
 
     Note:
         This function is wrong. However, every attempt of fixing it resulted in breaking other
         things in strange ways. The only solution would be to redo all transformations.
-        For example, let's consider the following cases:
-        - `a_size := [3, 3], b_size := [9]` in this case the function will return `[0, 1]`, which
-            might be correct in some cases but not in other, depending on the strides of `A`
+        For example, consider the following cases:
+
+        - ``a_size := [3, 3], b_size := [9]`` in this case the function will return ``[0, 1]``, which
+            might be correct in some cases but not in other, depending on the strides of ``A``
         - While the example above can make sense the following example,
-            `a_size := [4, 4], b_size := [9]` which also results in `[0, 1]` does not make sense
+            ``a_size := [4, 4], b_size := [9]`` which also results in ``[0, 1]`` does not make sense
             and is clearly wrong.
-        - If a size is listed multiple times, for example `a_size := [1, 1, 5], b := [1, 5]` then
-            the function will return `[]` although it should return `[0]` or `[1]`.
+        - If a size is listed multiple times, for example ``a_size := [1, 1, 5], b := [1, 5]`` then
+            the function will return ``[]`` although it should return ``[0]`` or ``[1]``.
         - Furthermore, if not all dimensions could be matched then some unspecific value is
-            returned, for example `a_size := [1, 3, 5], b_size := [1, 8]` will return `[1, 2]`.
+            returned, for example ``a_size := [1, 3, 5], b_size := [1, 8]`` will return ``[1, 2]``.
             Note that this in particular is not a real case scenario as it is clearly an error
             in the subsets.
 
-        There is an improved version, `find_dims_to_pop2()` which has a better behaviour.
+        There is an improved version, ``find_dims_to_pop2()`` which has a better behaviour.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``.
     """
     dims_to_pop = []
     for i, sz in enumerate(reversed(a_size)):
@@ -163,30 +169,38 @@ def find_dims_to_pop(
 def find_dims_to_pop2(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
-) -> List[int]:
-    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+) -> Optional[List[int]]:
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
-    Essentially the function determines which dimensions from the subset `A` have to be removed
-    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
     an empty list is returned. A base assumption is the function is that a View is not used to
     modify the relative order of dimensions, i.e. only dummy dimensions are inserted at certain
     locations.
     It is important that this function does not operates on the actual subsets but on their
     sizes.
 
-    This is an improved version of `find_dims_to_pop()`.
+    This is an improved version of ``find_dims_to_pop()``.
 
     Returns:
-        The function will return the list of dimensions that have to be removed in subset `A`
-        to bring it to the same dimensionality as subset `B`. In case the function failed to
-        associate all `B` dimensions to a corresponding `A` dimension the function returns
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``. In case the function failed to
+        associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
         `None`.
 
     Note:
-        This function behaves differently than `find_dims_to_pop()` in some cases. In most cases
+        This function behaves differently than ``find_dims_to_pop()`` in some cases. In most cases
         the function ensures that a matching has been found. Keep in mind that the function
         assumes that the relative ordering of dimensions is the same on the source and the
         destination.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``. In case the function failed to
+             associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
+             ``None``.
     """
     if len(a_size) < len(b_size):
         raise ValueError(
@@ -255,24 +269,15 @@ def pop_dims(subset, dims):
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
-    if isinstance(first, subsets.Indices):
-        subset = first.new_offset(second, negative=False)
-    else:
-        subset = first.compose(second)
+    subset = first.compose(second)
     if dims and popped and len(dims) == len(popped):
-        if isinstance(first, subsets.Indices):
-            indices = subset.Indices
-            for d, p in zip(reversed(dims), reversed(popped)):
-                indices.insert(d, p)
-            subset = subsets.Indices(indices)
-        else:
-            ranges = subset.ranges
-            tsizes = subset.tile_sizes
-            for d, (r, t) in zip(reversed(dims), reversed(popped)):
-                ranges.insert(d, r)
-                tsizes.insert(d, t)
-            subset = subsets.Range(ranges)
-            subset.tile_sizes = tsizes
+        ranges = subset.ranges
+        tsizes = subset.tile_sizes
+        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+            ranges.insert(d, r)
+            tsizes.insert(d, t)
+        subset = subsets.Range(ranges)
+        subset.tile_sizes = tsizes
     return subset
 
 

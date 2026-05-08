@@ -241,7 +241,7 @@ Typeclasses
 The typeclasses that can be used as element types for data containers are versatile, and can be used for performance
 and compatibility with other codes:
 
-    * Base types such as :pycode:`dace.uint8` (see :class:`~dace.dtypes.Typeclasses` for a full list)
+    * Base types such as :pycode:`dace.uint8` (see :class:`~dace.dtypes.typeclass` for a full list)
     * Native :class:`~dace.dtypes.vector` types (vectors of vectors also supported)
 
         * Example: :pycode:`dace.vector(dtype, vector_length)`
@@ -426,7 +426,7 @@ Calling SDFGs Directly
 ----------------------
 
 If you want to call SDFGs from a ``@dace.program`` you can do so directly. This is useful when you have a custom implementation
-or when you want to use another frontend (for example, in a :ref:`domain-specific language <dsl>`). Example:
+or when you want to use another frontend (for example, in a domain-specific language). Example:
 
 .. code-block:: python
 

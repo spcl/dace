@@ -5,7 +5,7 @@ from dace import nodes, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 
@@ -275,7 +275,6 @@ class GPUPersistentKernel(SubgraphTransformation):
             kernel_args_read,
             kernel_args_write,
         )
-        nested_sdfg.schedule = ScheduleType.GPU_Persistent
 
         # If no inputs or outputs were given, connect with an empty memlet
         if not kernel_args_read:
