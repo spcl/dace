@@ -1,15 +1,14 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 import pytest
 
 
 @pytest.mark.gpu
-def test_min_warps_per_eu():
-    B = 2
+def test_min_warps_per_eu() -> None:
 
     @dace.program
-    def prog(a: dace.float64[100, 20] @ dace.StorageType.GPU_Global):
+    def prog(a: dace.float64[100, 20] @ dace.StorageType.GPU_Global) -> None:
         for i, j in dace.map[0:100, 0:20] @ dace.ScheduleType.GPU_Device:
             a[i, j] = 1
 
