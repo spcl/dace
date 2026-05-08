@@ -1,11 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
-import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
 
 
 @dace.library.expansion
@@ -22,8 +21,9 @@ class ExpandIrecvMPI(ExpandTransformation):
             raise NotImplementedError
 
         comm = "MPI_COMM_WORLD"
-        if node.grid:
-            comm = f"__state->{node.grid}_comm"
+        grid = input_descriptor_name(node, parent_state, '_grid')
+        if grid:
+            comm = f"__state->{grid}_comm"
 
         code = ""
         if ddt is not None:
@@ -43,7 +43,7 @@ class ExpandIrecvMPI(ExpandTransformation):
             code += f"""// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          expanded_input_connectors(node, parent_state),
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
@@ -63,11 +63,8 @@ class Irecv(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.DataProperty(default=None)
-
-    def __init__(self, name, grid=None, *args, **kwargs):
+    def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer", "_request"}, **kwargs)
-        self.grid = grid
 
     def validate(self, sdfg, state):
         """

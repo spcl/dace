@@ -178,6 +178,7 @@ def _bcast(pv: ProgramVisitor,
         root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
         state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
     state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
     state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
@@ -253,6 +254,7 @@ def _Reduce(pv: ProgramVisitor,
         root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
         state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
     state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
     state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
@@ -273,6 +275,7 @@ def _alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inbuffer: str, o
     out_desc = sdfg.arrays[outbuffer]
     out_buffer = state.add_write(outbuffer)
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
     state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
     state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(out_buffer, out_desc))
@@ -320,6 +323,7 @@ def _allreduce(pv: ProgramVisitor,
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
     state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
     state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
@@ -599,6 +603,7 @@ def _isend(pv: ProgramVisitor,
         tag_mem = Memlet.simple(tag_name, '0')
 
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
 
     state.add_edge(buf_node, None, libnode, '_buffer', buf_mem)
@@ -820,6 +825,7 @@ def _irecv(pv: ProgramVisitor,
         tag_mem = Memlet.simple(tag_name, '0')
 
     if grid:
+        libnode.add_in_connector('_grid')
         state.add_edge(state.add_read(grid), None, libnode, '_grid', Memlet(data=grid))
 
     state.add_edge(libnode, '_buffer', buf_node, None, buf_mem)
@@ -1017,13 +1023,17 @@ def _block_scatter(pv: ProgramVisitor,
     outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
 
     if subarray_node is not None:
+        libnode.add_in_connector('_subarray')
         state.add_edge(subarray_node, None, libnode, '_subarray', Memlet(data=subarray_name))
     elif subarray_name:
+        libnode.add_in_connector('_subarray')
         state.add_edge(state.add_read(subarray_name), None, libnode, '_subarray', Memlet(data=subarray_name))
 
     if scatter_grid:
+        libnode.add_in_connector('_scatter_grid')
         state.add_edge(state.add_read(scatter_grid), None, libnode, '_scatter_grid', Memlet(data=scatter_grid))
     if bcast_grid:
+        libnode.add_in_connector('_bcast_grid')
         state.add_edge(state.add_read(bcast_grid), None, libnode, '_bcast_grid', Memlet(data=bcast_grid))
 
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
@@ -1079,13 +1089,17 @@ def _block_gather(pv: ProgramVisitor,
     outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
 
     if subarray_node is not None:
+        libnode.add_in_connector('_subarray')
         state.add_edge(subarray_node, None, libnode, '_subarray', Memlet(data=subarray_name))
     elif subarray_name:
+        libnode.add_in_connector('_subarray')
         state.add_edge(state.add_read(subarray_name), None, libnode, '_subarray', Memlet(data=subarray_name))
 
     if gather_grid:
+        libnode.add_in_connector('_gather_grid')
         state.add_edge(state.add_read(gather_grid), None, libnode, '_gather_grid', Memlet(data=gather_grid))
     if reduce_grid:
+        libnode.add_in_connector('_reduce_grid')
         state.add_edge(state.add_read(reduce_grid), None, libnode, '_reduce_grid', Memlet(data=reduce_grid))
 
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)

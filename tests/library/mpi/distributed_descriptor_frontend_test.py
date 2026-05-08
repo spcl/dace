@@ -7,6 +7,15 @@ from dace.libraries.mpi.nodes.dummy import Dummy
 from dace.libraries.mpi.nodes.bcast import Bcast
 
 
+def _incoming_descriptor_name(sdfg, node, connector):
+    states = [state for state in sdfg.states() if node in state.nodes()]
+    assert len(states) == 1
+
+    edges = list(states[0].in_edges_by_connector(node, connector))
+    assert len(edges) == 1
+    return edges[0].data.data
+
+
 @pytest.mark.mpi
 def test_create_cart_bcast_uses_process_grid_descriptor():
     MPI = pytest.importorskip('mpi4py.MPI')
@@ -29,7 +38,7 @@ def test_create_cart_bcast_uses_process_grid_descriptor():
 
     bcasts = [node for state in sdfg.states() for node in state.nodes() if isinstance(node, Bcast)]
     assert len(bcasts) == 1
-    assert bcasts[0].grid == pgrid_name
+    assert _incoming_descriptor_name(sdfg, bcasts[0], '_grid') == pgrid_name
 
 
 @pytest.mark.mpi
@@ -63,7 +72,7 @@ def test_create_cart_subgrid_bcast_uses_descriptor_name():
 
     bcasts = [node for state in sdfg.states() for node in state.nodes() if isinstance(node, Bcast)]
     assert len(bcasts) == 2
-    assert all(bcast.grid in process_grids for bcast in bcasts)
+    assert all(_incoming_descriptor_name(sdfg, bcast, '_grid') in process_grids for bcast in bcasts)
 
     sdfg.expand_library_nodes()
     tasklet_code = '\n'.join(node.code.as_string for state in sdfg.states() for node in state.nodes()
