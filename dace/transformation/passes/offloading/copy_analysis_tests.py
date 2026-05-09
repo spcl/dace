@@ -192,9 +192,7 @@ def pretty_print(gpu_set, cpu_set):
 
 
 def test(test, cpu_only, nested_arrays=set()):
-    
     sdfg = test.to_sdfg()
-
     all_a = set(sdfg.arrays.keys()) | nested_arrays
     
     # run analsis
@@ -216,7 +214,7 @@ def test(test, cpu_only, nested_arrays=set()):
     assert not empty, f"{"gpu set" if cpu_only else "cpu set"} was supposed to be empty but is {empty}"
     assert all_a == full, f"{"cpu set" if cpu_only else "gpu set"} was supposed contain all arrays but is missing {all_a - full}"
 
-"""
+
 test(condense_3d, True)
 print(f"condense_3d passed")
 
@@ -237,7 +235,7 @@ print(f"nested_matrix_gather_load_specialized passed")
 
 test(division_by_zero, False, {'__tmp_151_11_r', 'B_slice', '__tmp_154_12_w', '__tmp_152_12_w', '__tmp_152_19_r'})
 print(f"division_by_zero passed")
-"""
+
 
 
 

@@ -572,7 +572,7 @@ class OffloadToAccelerator(ppl.Pass):
         graph.remove_edge(edge)                                     # del original edge
     
 
-    def create_interstate_copy(self, sdfg, state1, state2, array_name, to_gpu:bool):
+    def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu:bool):
         assert state2 is not None, "state2 is None - but there is no use inserting a copy node without a successor state." # precondition
 
         # get name and storage location of new array based on to_gpu
@@ -597,7 +597,7 @@ class OffloadToAccelerator(ppl.Pass):
         a_copy_in = copy_state.add_access(array_name)
         a_gpu_copy_out = copy_state.add_access(new_name)
         copy_state.add_edge(a_copy_in, None, a_gpu_copy_out, None, dace.Memlet(f"{array_name} -> {new_name}"))
-
+        
         # rename the access of A -> A_gpu in the next state
         for node in state2.data_nodes(): # nodes
             if node.data == array_name:
@@ -608,14 +608,20 @@ class OffloadToAccelerator(ppl.Pass):
                 memlet = e.data
                 if memlet is not None and not memlet.is_empty() and memlet.data == array_name:
                     memlet.data = new_name
-            
+        
         # NOTE: map connector names are purely symbolic and are thus not changed here
 
+        # heuristic: set all other arrays used in state2 (used on GPU) to GPU
+        # Avoid CUDA IllegalCopy: Register <-> CPU_Heap / CPU_ThreadLocal inside GPU scopes
+        """
+        names = {n.data for n in state2.data_nodes() if n.data in sdfg.arrays and isinstance(sdfg.arrays[n.data], data.Array)}
+        for name in names:
+            sdfg.arrays[name].storage = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
+        
+        if to_gpu:
+            return set(), names
+        else:
+            return names, set()"""
+        
+            
 
-    # moving forward: 
-    # first, build and IR of the graph where each node stores it's gpu and cpu sets
-    # then, traverse that IR and insert copies everywhere
-
-    # 1) make the IR by hand for some simple examples
-    # 2) write the code that interprets the IR and see if it works
-    # 3) write the code that creates the IR based on an arbitrary graph
