@@ -28,7 +28,10 @@ from tests.passes.vectorization._harness import (
 )
 
 @pytest.mark.parametrize("trivial_if_demote_symbols", [(True, True), (True, False), (False, True), (False, False)])
-def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool]):
+def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool], request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
     trivial_if, demote_symbols = trivial_if_demote_symbols
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
     zsolqa = numpy.random.choice([0.001, 5.0], size=(C, 5, 5))
@@ -64,7 +67,8 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
-    vectorizer = VectorizeCPU(vector_width=8, fail_on_unvectorizable=True)
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
+    vectorizer = VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, **branch_kwargs)
     vectorizer.try_to_demote_symbols_in_nsdfgs = demote_symbols
     vectorizer.apply_pass(copy_sdfg, {})
     copy_sdfg.save("disjoint_chain_vectorized.sdfg")
@@ -75,7 +79,10 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def test_disjoint_chain_with_overlapping_region_fusion():
+def test_disjoint_chain_with_overlapping_region_fusion(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
     sdfg.name = f"disjoint_chain_split_two_rtt_val_4_2_with_overlapping_region_fusion"
     _N = 64
@@ -96,8 +103,9 @@ def test_disjoint_chain_with_overlapping_region_fusion():
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
     # Run SDFG version (with transformation)
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
     VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=True,
-                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+                 fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()
@@ -119,7 +127,10 @@ def test_disjoint_chain_with_overlapping_region_fusion():
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def test_disjoint_chain():
+def test_disjoint_chain(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
     sdfg.name = f"disjoint_chain"
     _N = 64
@@ -140,8 +151,9 @@ def test_disjoint_chain():
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
     # Run SDFG version (with transformation)
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
     VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False,
-                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+                 fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()

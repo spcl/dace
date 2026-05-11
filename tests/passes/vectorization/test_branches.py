@@ -75,7 +75,7 @@ def tasklets_in_if_two(
                 e[i, j] = (c[i, j] * f * a[i, j] * 2.0) - a[i, j]
 
 
-def test_division_by_zero_cpu():
+def test_division_by_zero_cpu(branch_mode):
     N = 256
     A = numpy.random.random((N, ))
     B = numpy.random.random((N, ))
@@ -93,10 +93,11 @@ def test_division_by_zero_cpu():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="division_by_zero",
+        branch_mode=branch_mode,
     )
 
 
-def test_unsupported_op():
+def test_unsupported_op(branch_mode):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
@@ -109,10 +110,11 @@ def test_unsupported_op():
                            vector_width=4,
                            skip_simplify={"ScalarToSymbolPromotion"},
                            save_sdfgs=True,
-                           sdfg_name="unsupported_op")
+                           sdfg_name="unsupported_op",
+                           branch_mode=branch_mode)
 
 
-def test_unsupported_op_two():
+def test_unsupported_op_two(branch_mode):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
@@ -124,10 +126,11 @@ def test_unsupported_op_two():
                            params={'N': 64},
                            vector_width=4,
                            save_sdfgs=True,
-                           sdfg_name="unsupported_op_two")
+                           sdfg_name="unsupported_op_two",
+                           branch_mode=branch_mode)
 
 
-def test_tasklets_in_if():
+def test_tasklets_in_if(branch_mode):
     _S = 64
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((_S, _S))
@@ -141,7 +144,8 @@ def test_tasklets_in_if():
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets_in_if.sdfg")
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_in_if_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -160,7 +164,11 @@ def test_tasklets_in_if():
                           atol=1e-12), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
 
 
-def test_tasklets_in_if_two():
+def test_tasklets_in_if_two(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
+                              "(KeyError: 'c_slice_times_f'), pending follow-up"))
     _S = 64
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((1, ))
@@ -191,7 +199,8 @@ def test_tasklets_in_if_two():
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets.sdfg")
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -241,7 +250,11 @@ def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: 
             A[i, j] = A[i, j] + B[i, j]
 
 
-def test_interstate_boolean_op_one():
+def test_interstate_boolean_op_one(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
+                              "(KeyError: 'A_slice_plus_B_slice'), pending follow-up"))
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -260,10 +273,15 @@ def test_interstate_boolean_op_one():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="interstate_boolean_op_one",
+        branch_mode=branch_mode,
     )
 
 
-def test_interstate_boolean_op_two():
+def test_interstate_boolean_op_two(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
+                              "(KeyError: 'A_slice_plus_B_slice'), pending follow-up"))
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -282,10 +300,15 @@ def test_interstate_boolean_op_two():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="interstate_boolean_op_two",
+        branch_mode=branch_mode,
     )
 
 
-def test_interstate_boolean_op_three():
+def test_interstate_boolean_op_three(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits the same arm-local temp routing bug "
+                              "(KeyError: 'A_slice_plus_B_slice') as the related op_one/op_two tests"))
     sdfg = interstate_boolean_op_one.to_sdfg()
     sdfg.name = "interstate_boolean_op_three"
     nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
@@ -296,12 +319,14 @@ def test_interstate_boolean_op_three():
     inner_sdfg.add_symbol("symsym", dace.int64)
     sdfg.validate()
     sdfg.save("interstate_boolean_op_three.sdfg")
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
     VectorizeCPU(vector_width=8,
                  fuse_overlapping_loads=True,
                  insert_copies=True,
                  apply_on_maps=None,
                  no_inline=False,
-                 fail_on_unvectorizable=True).apply_pass(sdfg, {})
+                 fail_on_unvectorizable=True,
+                 **branch_kwargs).apply_pass(sdfg, {})
     sdfg.validate()
     sdfg.save("interstate_boolean_op_three_vectorized.sdfg")
 
@@ -389,7 +414,11 @@ def huge_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3
             zsolqa[it_47] = zsolqa[it_47] + zdepos3
 
 
-def test_huge_sdfg_with_log_exp_div():
+def test_huge_sdfg_with_log_exp_div(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
+                              "(KeyError: 'ztp1_slice_minus_rtt'), pending follow-up"))
     """Generate test data for the loop body function"""
     eps_operator_type_for_log_and_div: str = "add"
     _N = 32
@@ -445,7 +474,8 @@ def test_huge_sdfg_with_log_exp_div():
 
     # Apply transformation
     copy_sdfg = copy.deepcopy(sdfg)
-    VectorizeCPU(vector_width=8, insert_copies=False).apply_pass(copy_sdfg, {})
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
+    VectorizeCPU(vector_width=8, insert_copies=False, **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}_vectorized"
     copy_sdfg.save(f"{copy_sdfg.name}.sdfg")
 
@@ -461,7 +491,11 @@ def test_huge_sdfg_with_log_exp_div():
         numpy.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
-def test_mid_sdfg_with_log_exp_div():
+def test_mid_sdfg_with_log_exp_div(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
+                              "(KeyError: 'ztp1_slice_minus_rtt'), pending follow-up"))
     """Generate test data for the loop body function"""
     eps_operator_type_for_log_and_div = "add"
     _N = 32
@@ -521,7 +555,8 @@ def test_mid_sdfg_with_log_exp_div():
     sdfg(**out_no_fuse)
 
     # Apply transformation
-    VectorizeCPU(vector_width=8, insert_copies=False).apply_pass(copy_sdfg, {})
+    branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
+    VectorizeCPU(vector_width=8, insert_copies=False, **branch_kwargs).apply_pass(copy_sdfg, {})
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in data.items()}
@@ -561,7 +596,11 @@ def cloud_fraction_update(
                 ZICEFRAC[jk, jl] = 0.0
 
 
-def test_cloud_fraction_update():
+def test_cloud_fraction_update(request, branch_mode):
+    if branch_mode == "merge":
+        request.applymarker(
+            pytest.mark.xfail(reason="merge mode hits a missing-symbols validation error "
+                              "after the interstate cond is lowered, pending follow-up"))
     # Example sizes
     klev = 16
     klon = 32
@@ -598,5 +637,6 @@ def test_cloud_fraction_update():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name=f"cloud_fraction_update",
+        branch_mode=branch_mode,
     )
 
