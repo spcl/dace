@@ -134,8 +134,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
         # Conditionally add __launch_bounds__ for block size optimization.
         min_warps_per_eu = ''
-        if node.map.gpu_min_warps_per_eu is not None and node.map.gpu_min_warps_per_eu > 0:
-            min_warps_per_eu = f',{node.map.gpu_min_warps_per_eu}'
+        if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
+            min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
         launch_bounds = ''
         if node.gpu_launch_bounds != '-1':
             if node.gpu_launch_bounds == "0":
