@@ -68,7 +68,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            cleanup=False,
                            from_sdfg=False,
                            no_inline=False,
-                           exact=None):
+                           exact=None,
+                           branch_mode: str = "fp_factor"):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -120,12 +121,20 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         filter_map = None
 
+    if branch_mode == "fp_factor":
+        branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
+    elif branch_mode == "merge":
+        branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
+    else:
+        raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
+
     VectorizeCPU(vector_width=vector_width,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
                  apply_on_maps=filter_map,
                  no_inline=no_inline,
-                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+                 fail_on_unvectorizable=True,
+                 **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()

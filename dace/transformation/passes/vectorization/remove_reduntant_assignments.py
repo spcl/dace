@@ -106,6 +106,11 @@ class RemoveRedundantAssignments(ppl.Pass):
                     self._apply(node.sdfg, potential_scalars)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        potential_scalars = pipeline_results[EliminateBranches.__name__][1]  # [0] is num_applied
+        # ``EliminateBranches`` populates ``potential_scalars`` (the symbols it
+        # collapsed into FP factors). When the pipeline runs the M3 branch
+        # normalization path instead, that pass is absent and the input is
+        # an empty set, no symbols are subject to redundant-assignment cleanup.
+        bre = pipeline_results.get(EliminateBranches.__name__)
+        potential_scalars = bre[1] if bre is not None else set()
         self._apply(sdfg, potential_scalars)
         sdfg.validate()

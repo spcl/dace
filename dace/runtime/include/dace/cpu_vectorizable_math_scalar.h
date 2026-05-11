@@ -288,3 +288,12 @@ inline void vector_ne_w_scalar(T* __restrict__ out, const T* __restrict__ a, con
         out[i] = (a[i] != constant) ? 1.0 : 0.0;
     }
 }
+
+template<typename T, int vector_width, typename CondT = bool>
+inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+                          const T* __restrict__ e) {
+    _dace_vectorize(vector_width)
+    for (int i = 0; i < vector_width; i++) {
+        out[i] = cond[i] ? t[i] : e[i];
+    }
+}

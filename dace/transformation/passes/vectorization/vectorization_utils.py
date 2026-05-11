@@ -1644,6 +1644,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     ttype: tutil.TaskletType = info.get("type")
     lhs, rhs1, rhs2 = info.get("lhs"), info.get("rhs1"), info.get("rhs2")
     c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
+    # Semantic operands for ``TERNARY_ARRAY`` (merge), populated only for that case.
+    cond_arg, then_arm, else_arm = info.get("cond"), info.get("then_arm"), info.get("else_arm")
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
 
@@ -1853,6 +1855,21 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                                                   language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+    elif ttype == tutil.TaskletType.TERNARY_ARRAY:
+        # ``_o = merge(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
+        # All three operands are arrays, the classifier carries them as
+        # semantic ``cond`` / ``then_arm`` / ``else_arm`` names.
+        out_edges = state.out_edges(node)
+        assert len(out_edges) == 1
+        out_data = state.sdfg.arrays[out_edges[0].data.data]
+        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[out_data.dtype]
+        code = templates[op].format(lhs=lhs,
+                                    cond=cond_arg,
+                                    then_arm=then_arm,
+                                    else_arm=else_arm,
+                                    vector_width=vw,
+                                    dtype=dtype_)
+        node.code = dace.properties.CodeBlock(code=code, language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         arr_name = rhs1 if rhs1 is not None else rhs2
         occurences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)

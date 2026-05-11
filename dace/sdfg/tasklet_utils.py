@@ -63,6 +63,7 @@ class TaskletType(Enum):
     UNARY_SCALAR = "unary_scalar"
     SCALAR_SCALAR = "scalar_scalar"
     SYMBOL_SYMBOL = "symbol_symbol"
+    TERNARY_ARRAY = "ternary_array"  # 3-input array merge, ``_o = merge(_c, _t, _e)``
 
 
 def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
@@ -570,6 +571,7 @@ _SUPPORTED = {
     'and',
     'or',
     'not',
+    'merge',
 }
 """Set of all supported operations including functions."""
 
@@ -864,7 +866,20 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
     assert code.language == dace.dtypes.Language.Python
     code_str: str = code.as_string
 
-    info_dict = {"type": None, "lhs": lhs, "rhs1": None, "rhs2": None, "constant1": None, "constant2": None, "op": None}
+    info_dict = {
+        "type": None,
+        "lhs": lhs,
+        "rhs1": None,
+        "rhs2": None,
+        "constant1": None,
+        "constant2": None,
+        "op": None,
+        # Semantic operands for ``TERNARY_ARRAY`` (merge). Populated only
+        # for that type, kept ``None`` for every other tasklet shape.
+        "cond": None,
+        "then_arm": None,
+        "else_arm": None,
+    }
 
     assert n_out == 1
 
@@ -984,6 +999,35 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         elif len(scalars) == 2:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
+    elif n_in == 3:
+        # The only 3-input tasklet shape this classifier knows about is the
+        # ``merge(cond, t, e)`` ternary blend that branch-normalization
+        # emits, ``_o = merge(_c, _t, _e)`` with all three inputs wired as
+        # connectors. Same TaskletType as a binary ARRAY_ARRAY op because
+        # all operands and the output are arrays, only the op count differs,
+        # and that is carried in ``op``. The cond connector name lives in
+        # ``constant1`` so emission can pick it up without extending the
+        # info_dict schema.
+        op = _extract_single_op(code_str)
+        if op != 'merge':
+            raise NotImplementedError(
+                f"classify_tasklet: only ``merge`` is supported as a 3-input tasklet shape, got {op!r}")
+        import ast as _ast
+        rhs_tree = _ast.parse(code_str.split(" = ")[-1].strip(), mode='eval').body
+        if not (isinstance(rhs_tree, _ast.Call) and len(rhs_tree.args) == 3):
+            raise NotImplementedError(f"classify_tasklet: merge call shape unexpected: {code_str!r}")
+        arg_names = [a.id for a in rhs_tree.args if isinstance(a, _ast.Name)]
+        if len(arg_names) != 3:
+            raise NotImplementedError(
+                f"classify_tasklet: merge args must be simple connector names, got {code_str!r}")
+        info_dict.update({
+            "type": TaskletType.TERNARY_ARRAY,
+            "cond": arg_names[0],
+            "then_arm": arg_names[1],
+            "else_arm": arg_names[2],
+            "op": "merge",
+        })
+        return info_dict
     elif n_in == 0:
         free_syms = _extract_non_connector_syms_from_tasklet(node, state)
         bound_syms = _extract_non_connector_bound_syms_from_tasklet(node.code.as_string)

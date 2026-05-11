@@ -206,14 +206,29 @@ class BranchNormalization(ppl.Pass):
                                dace.Memlet(expr=f"{tmp_name}[{subset}]"))
 
                 # Read the old value of ``arr`` so we can pass it as the
-                # else-branch of the merge.
+                # else-branch of the merge. Wire cond as a 3rd in-connector
+                # when it names an array in the SDFG so the vectorizer can
+                # consume it as a per-lane vector, fall back to a free
+                # symbol reference for symbol-based conditions.
                 old_an = state.add_access(arr_name)
-                merge_t = state.add_tasklet(
-                    name=f"bn_merge_{arr_name}",
-                    inputs={"_new", "_old"},
-                    outputs={"_o"},
-                    code=f"_o = merge({cond_text}, _new, _old)",
-                )
+                cond_is_array = cond_text in sdfg.arrays
+                if cond_is_array:
+                    merge_t = state.add_tasklet(
+                        name=f"bn_merge_{arr_name}",
+                        inputs={"_c", "_new", "_old"},
+                        outputs={"_o"},
+                        code="_o = merge(_c, _new, _old)",
+                    )
+                    cond_an = state.add_access(cond_text)
+                    cond_subset = "0" if sdfg.arrays[cond_text].total_size == 1 else subset
+                    state.add_edge(cond_an, None, merge_t, "_c", dace.Memlet(expr=f"{cond_text}[{cond_subset}]"))
+                else:
+                    merge_t = state.add_tasklet(
+                        name=f"bn_merge_{arr_name}",
+                        inputs={"_new", "_old"},
+                        outputs={"_o"},
+                        code=f"_o = merge({cond_text}, _new, _old)",
+                    )
                 state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[{subset}]"))
                 state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{subset}]"))
                 state.add_edge(merge_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{subset}]"))

@@ -13,6 +13,8 @@ from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import SameWriteSetIfElseToMergeCFG
+from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -30,7 +32,13 @@ class VectorizeCPU(ppl.Pipeline):
                  no_inline: bool = False,
                  fail_on_unvectorizable: bool = False,
                  eliminate_trivial_vector_map: bool = True,
-                 user_skip_nsdfg_arrays: Optional[Set[str]] = None):
+                 user_skip_nsdfg_arrays: Optional[Set[str]] = None,
+                 use_fp_factor: bool = True,
+                 branch_normalization: bool = False):
+        if use_fp_factor and branch_normalization:
+            raise ValueError(
+                "VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
+                "choose one branch-lowering strategy")
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
@@ -49,6 +57,7 @@ class VectorizeCPU(ppl.Pipeline):
                 "<=": "vector_le<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
                 "==": "vector_eq<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
                 "!=": "vector_ne<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+                "merge": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
                 # scalar variants type 1
                 "*c": "vector_mult_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
                 "+c": "vector_add_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
@@ -83,10 +92,30 @@ class VectorizeCPU(ppl.Pipeline):
             eliminate_trivial_vector_map=eliminate_trivial_vector_map,
             user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
         if not only_apply_vectorization_pass:
-            passes = [
-                EliminateBranches(),
-                RemoveRedundantAssignments(),
-                LowerInterstateConditionalAssignmentsToTasklets(),
+            # Pick the branch-lowering front of the pipeline. ``use_fp_factor``
+            # keeps today's behaviour, ``EliminateBranches`` collapses if/else
+            # to the FP-factor form ``a = c*x + (1-c)*y``. ``branch_normalization``
+            # opts into the new M3 pipeline, ``SameWriteSetIfElseToMergeCFG``
+            # rewrites same-write-set arms to a 3-CFG merge form, then
+            # ``BranchNormalization`` flattens the rest into merge tasklets.
+            # In merge mode, ``LowerInterstateConditionalAssignmentsToTasklets``
+            # runs before the M3 passes so the condition variable lives in a
+            # tasklet plus a transient array (the vectorizer can then drive
+            # it per-lane through the merge tasklet's ``_c`` connector).
+            if branch_normalization:
+                passes = [
+                    LowerInterstateConditionalAssignmentsToTasklets(),
+                    SameWriteSetIfElseToMergeCFG(),
+                    BranchNormalization(),
+                    RemoveRedundantAssignments(),
+                ]
+            else:
+                passes = [
+                    EliminateBranches(),
+                    RemoveRedundantAssignments(),
+                    LowerInterstateConditionalAssignmentsToTasklets(),
+                ]
+            passes += [
                 RemoveEmptyStates(),
                 RemoveFPTypeCasts(),
                 RemoveIntTypeCasts(),
