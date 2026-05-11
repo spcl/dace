@@ -32,10 +32,6 @@ jobs:
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
-        # OpenBLAS is required by the polybench/npbench CPU-reference SDFGs
-        # that compare against the GPU pipeline (e.g. cholesky2_test).
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libopenblas-dev
         python -m venv ~/.venv      # create venv so we can use pip
         source ~/.venv/bin/activate # activate venv
         python -m pip install --upgrade pip
