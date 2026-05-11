@@ -717,9 +717,9 @@ namespace dace
             return std::round(a);
         }
         template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T hypot(const T& a)
+        DACE_CONSTEXPR DACE_HDFI T hypot(const T& a, const T& b)
         {
-            return std::hypot(a);
+            return std::hypot(a, b);
         }
     }
 
