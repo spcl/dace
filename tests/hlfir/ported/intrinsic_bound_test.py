@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -154,7 +153,6 @@ END SUBROUTINE intrinsic_bound_test_function2
     assert np.allclose(res, [1, 1, 4, 7])
 
 
-@xfail("ALLOCATABLE + INTERFACE not yet lowered")
 def test_fortran_frontend_bound_allocatable_offsets(tmp_path):
     src = """
 MODULE intrinsic_bound_interfaces

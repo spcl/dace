@@ -474,6 +474,55 @@ std::string lowerIsPresent(mlir::Value operand) {
             }
         }
 
+        // Allocatable runtime shape: when the declare has no static
+        // shape (assumed-shape signature backing an allocatable), the
+        // shape lives on the embox emitted at the ALLOCATE site:
+        //   %alloc = fir.allocmem ... {uniq_name = "<decl>.alloc"}
+        //   %sh    = fir.shape_shift %lb0, %ext0, %lb1, %ext1, ...
+        //   %box   = fir.embox %alloc(%sh)
+        //   fir.store %box to <decl>#1
+        // ``LBOUND(arr, dim)`` / ``UBOUND(arr, dim)`` on an allocatable
+        // bound via ``allocate(arr(lo:hi))`` should resolve to the
+        // user-supplied bounds, not the Fortran-default ``1`` /
+        // synthetic ``<arr>_d<dim>`` symbol.  Walk the allocate site
+        // (single-allocate case only — multi-allocate would need
+        // per-access-site selection) and constant-fold the
+        // shape_shift operands.
+        auto resolveAllocShapeShift = [&]() -> fir::ShapeShiftOp {
+            auto *adef = arrayVal.getDefiningOp();
+            if (!adef) return {};
+            auto decl = mlir::dyn_cast<hlfir::DeclareOp>(adef);
+            if (!decl) return {};
+            // Inlined-callee allocatable aliases: the inner declare's
+            // memref points back at the outer (caller-scope) declare's
+            // result.  The ``fir.allocmem`` uniq_name is keyed on the
+            // outer's scope (``_QFouterEinput.alloc``), so walk through
+            // the alias chain before looking up.
+            if (auto outer = asAssumedShapeAlias(decl))
+                decl = outer;
+            std::string allocName = decl.getUniqName().str() + ".alloc";
+            auto mod = decl->getParentOfType<mlir::ModuleOp>();
+            if (!mod) return {};
+            fir::ShapeShiftOp out;
+            mod.walk([&](fir::AllocMemOp a) {
+                if (out) return;
+                auto un = a.getUniqName();
+                if (!un || un->str() != allocName) return;
+                for (auto *user : a->getUsers()) {
+                    auto eb = mlir::dyn_cast<fir::EmboxOp>(user);
+                    if (!eb) continue;
+                    auto sh = eb.getShape();
+                    if (!sh) continue;
+                    if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(
+                            sh.getDefiningOp())) {
+                        out = ss;
+                        break;
+                    }
+                }
+            });
+            return out;
+        };
+
         // Lower bound (#0):
         if (resIdx == 0) {
             if (shapeVal) {
@@ -486,6 +535,13 @@ std::string lowerIsPresent(mlir::Value operand) {
                         if (!s.empty() && s != "?") return s;
                     }
                 }
+            }
+            if (auto ss = resolveAllocShapeShift()) {
+                auto ops = ss->getOperands();
+                unsigned lbIdx = 2 * dim;
+                if (lbIdx < ops.size())
+                    if (auto c = traceConstInt(ops[lbIdx]))
+                        return std::to_string(*c);
             }
             return "1";
         }
@@ -508,6 +564,13 @@ std::string lowerIsPresent(mlir::Value operand) {
                         if (!s.empty() && s != "?") return s;
                     }
                 }
+            }
+            if (auto ss = resolveAllocShapeShift()) {
+                auto ops = ss->getOperands();
+                unsigned extIdx = 2 * dim + 1;
+                if (extIdx < ops.size())
+                    if (auto c = traceConstInt(ops[extIdx]))
+                        return std::to_string(*c);
             }
             // Assumed-shape (no declare shape) — the bridge synthesised
             // ``<arr>_d<dim>`` in extract_vars.  Same string convention.
