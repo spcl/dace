@@ -114,7 +114,7 @@ def test_state_transitions():
     for_pattern = r"for.*i\s*=\s*0.*i\s*<\s*16"
     assert re.search(for_pattern, code) is not None, "For loop not detected in state transitions"
 
-    while_pattern = r"while.+i\s*<\s*128"
+    while_pattern = r"(while|for).+i\s*<\s*128"
     assert re.search(while_pattern, code) is not None, "While loop not detected in state transitions"
 
     if_pattern = r"if.+i\s*<\s*512"

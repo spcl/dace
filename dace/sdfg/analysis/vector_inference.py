@@ -9,8 +9,8 @@ import dace.sdfg.nodes as nodes
 import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.dtypes as dtypes
 import dace.data as data
-from typing import *
 import dace.symbolic as symbolic
+from typing import Dict, Set, Tuple, Union, DefaultDict
 
 
 class VectorInferenceFlags(Flag):

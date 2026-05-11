@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
 from typing import Dict, List, Set
@@ -160,7 +160,7 @@ class StateFusion(transformation.MultiStateTransformation):
                     break
             # We keep looking for a potential match with a path that fail to find
             # a path to the second state to make sure we test memlet_intersections
-            # independant of the order of the access nodes in the lists
+            # independent of the order of the access nodes in the lists
             if fail:
                 break
 
