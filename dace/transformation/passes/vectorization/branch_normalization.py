@@ -108,8 +108,11 @@ class BranchNormalization(ppl.Pass):
         # The condition is dropped at this point, every write that used to be
         # guarded by it is rewritten in-place to ``merge(cond, new, old)`` so
         # the gating moves from control flow into dataflow.
+        # Arrays live on the local SDFG, not the outermost one passed to
+        # ``apply_pass``, when the ConditionalBlock is inside a NestedSDFG.
         cond_text = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
-        self._rewrite_writes_to_merge(sdfg, body_state, write_subsets, cond_text)
+        local_sdfg: dace.SDFG = cb.sdfg
+        self._rewrite_writes_to_merge(local_sdfg, body_state, write_subsets, cond_text)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
