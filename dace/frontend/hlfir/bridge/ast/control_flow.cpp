@@ -397,6 +397,12 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 /// tasklet, so they can't rely on memlet-wired connectors.
  std::string buildExprWithSubscripts(mlir::Value val, int d) {
     if (d > limits::kBuildExprDepth || !val) return "?";
+    // Output lands in an interstate-edge / ConditionalBlock condition,
+    // parsed by DaCe's symbolic engine which can't handle the
+    // ``dace.float32(...)`` precision wrap (treats ``dace`` as a free
+    // symbol).  Suppress the wrap for the duration of this walk; the
+    // f32-vs-f64 distinction doesn't change comparison outcomes.
+    SuppressFloatCastGuard floatCastGuard;
     auto *def = val.getDefiningOp();
     if (!def) return "?";
 

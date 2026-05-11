@@ -902,7 +902,30 @@ std::string lowerIsPresent(mlir::Value operand) {
             return std::string(cast) + "("
                  + buildExpr(conv.getValue(), d + 1) + ")";
         }
-        // Same family — transparent.
+        // Float → wider float (f32 → f64): wrap in an explicit
+        // ``dace.float32(...)`` BEFORE the widening so the inner
+        // expression's f32 arithmetic rounds at f32 precision.  In
+        // C++ codegen, ``static_cast<float>(double_val)`` rounds to
+        // the nearest f32, which matches Fortran's ``real(4)``
+        // semantics — ``5.5 + epsilon(1.0)`` evaluates to ``5.5``
+        // exactly because the epsilon is below f32's ulp at 5.5.
+        // Without this wrap the C++ promotes both operands to double
+        // and gives ``5.5 + 1.19e-7 = 5.5000001192...``.  Same-width
+        // converts (f64 → f64) stay transparent.
+        if (inIsFloat && outIsFloat) {
+            auto inW = mlir::cast<mlir::FloatType>(inT).getWidth();
+            auto outW = mlir::cast<mlir::FloatType>(outT).getWidth();
+            if (inW < outW && !kSuppressFloatCast) {
+                const char *cast = inW == 32 ? "dace.float32" : "dace.float64";
+                return std::string(cast) + "("
+                     + buildExpr(conv.getValue(), d + 1) + ")";
+            }
+            if (inW < outW)
+                return buildExpr(conv.getValue(), d + 1);
+        }
+        // Same width or float → narrower float (truncating cast) —
+        // transparent (the underlying expression already has the
+        // narrower type, or the narrowing is desired).
         return buildExpr(conv.getValue(), d + 1);
     }
 
@@ -1133,7 +1156,23 @@ std::string lowerIsPresent(mlir::Value operand) {
             // less truncates the mantissa and Flang-folded constants
             // (module ``parameter`` literals etc.) come out at f32
             // precision in tasklet code.
-            std::ostringstream o; o << std::setprecision(17) << f.getValueAsDouble(); return o.str();
+            std::ostringstream o;
+            o << std::setprecision(17) << f.getValueAsDouble();
+            std::string lit = o.str();
+            // Wrap f32-typed constants in ``dace.float32(...)`` so the
+            // C++ codegen emits ``static_cast<float>(literal)`` instead
+            // of a double literal.  Without this, DaCe upgrades every
+            // float constant to f64 and a Fortran ``real(4)`` chain
+            // like ``5.5 + epsilon(1.0)`` evaluates in double precision
+            // — producing ``5.5000001192...`` instead of the f32-rounded
+            // ``5.5``.  Pairs with the ``fir.convert f32→f64`` wrap so
+            // both the literal and the widening cast preserve the
+            // intended precision.
+            if (auto ft = mlir::dyn_cast<mlir::FloatType>(cst.getType())) {
+                if (ft.getWidth() == 32 && !kSuppressFloatCast)
+                    return "dace.float32(" + lit + ")";
+            }
+            return lit;
         }
         if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
             return std::to_string(i.getInt());

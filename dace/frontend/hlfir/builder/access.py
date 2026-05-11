@@ -43,6 +43,13 @@ def acc(builder, state, name: str):
     writes.  Without this, every tasklet in the same state would fabricate
     its own disconnected access node, so a later read could not see the
     value produced by an earlier write in the same state.
+
+    View-alias entries (Fortran storage-association reshape — see
+    ``extract_vars::view_source`` / ``view_subset``) get an additional
+    source→view linking memlet auto-installed the first time they're
+    accessed in a state.  The link tells DaCe codegen which slab of
+    the source array the view points at; subsequent reads / writes
+    of the view in the same state pass through to the source.
     """
     cache = getattr(state, '_hlfir_access', None)
     if cache is None:
@@ -52,6 +59,17 @@ def acc(builder, state, name: str):
     if node is None:
         node = state.add_access(name)
         cache[name] = node
+        v = builder.arrays.get(name)
+        if v is not None and getattr(v, 'role', '') == 'view_alias' \
+                and v.view_source and v.view_source in state.parent.arrays:
+            from dace import Memlet
+            src = v.view_source
+            src_subset = ", ".join(v.view_subset)
+            view_dims = [str(d) for d in state.parent.arrays[name].shape]
+            view_subset = ", ".join(f"0:{d}" for d in view_dims)
+            src_node = cache.get(src) or state.add_access(src)
+            cache.setdefault(src, src_node)
+            state.add_edge(src_node, None, node, None, Memlet(data=src, subset=src_subset, other_subset=view_subset))
     return node
 
 

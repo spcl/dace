@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -131,7 +130,6 @@ end subroutine main
     assert (a[1, 2] == 0)
 
 
-@xfail("nested call with array-slice arg — inliner leaves callee dummy as uninitialised transient")
 def test_fortran_frontend_memlet_in_map_test(tmp_path):
     """Tests that no assumption is made where the iteration variable is inside a memlet subset."""
     src = """

@@ -372,6 +372,12 @@ static std::string traceToGlobalSymbol(mlir::Value memref) {
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     std::vector<VarInfo> vars;
 
+    // Reset thread-local extractName-override map.  Pass 3's view-alias
+    // detection below populates it for inlined-callee declares whose
+    // short name collides with their view source's; without a clean
+    // reset the previous module's overrides would leak into this one.
+    clearManglingOverrides();
+
     // Pass 0: disambiguate inlined-callee locals.  Two callees with the
     // same local name (Fortran's auto-generated ``a`` for ``result(a)``,
     // for example) get inlined into a common parent and surface as two
@@ -458,6 +464,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             }
         }
     }
+
 
     // Pass 1: collect every hlfir.declare.  Skip assumed-shape alias
     // declares inserted by ``hlfir-inline-all`` — they share storage
@@ -845,6 +852,164 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (v.rank > 0)                             v.role = "array";
         else if (symbolNames.count(v.fortran_name)) v.role = "symbol";
         else                                        v.role = "scalar";
+
+        // View-alias detection.  Fortran storage-association reshape —
+        // ``call cb(d(:, :, 1))`` where ``cb`` declares ``dd(16)`` — has
+        // Flang emit:
+        //   %sec = hlfir.designate %d (1:4, 1:4, 1) shape <4,4>
+        //   %flat = fir.convert %sec : ref<4x4xf64> -> ref<16xf64>
+        //   %dd = hlfir.declare %flat ...
+        // After ``hlfir-inline-all`` splices the callee's body in,
+        // accesses to ``dd`` reach the bridge's AST walker with no
+        // memlet linking ``dd`` to ``d``, so writes are dropped.
+        // Detect the pattern here and surface the source + per-dim
+        // subset; ``descriptors.py`` then stages copy-in / copy-out
+        // states so writes round-trip through the alias.
+        if (v.role == "array") {
+            mlir::Value m = op.getMemref();
+            // Peel through:
+            //   * ``fir.convert``  — same-type rebox or shape-changing
+            //     reinterpret (Fortran storage-association reshape).
+            //   * ``fir.box_addr`` — extract a raw ref from a box.
+            //   * ``hlfir.copy_in`` — Flang's contiguous-buffer
+            //     materialisation when a non-contiguous section is
+            //     passed to a callee whose dummy is declared
+            //     contiguous.  Treating the buffer as a view of the
+            //     underlying section skips the copy and reverses
+            //     ``hlfir.copy_out`` automatically (writes propagate
+            //     through the view).
+            for (int i = 0; i < 8 && m; ++i) {
+                auto *def = m.getDefiningOp();
+                if (!def) break;
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))
+                    { m = cv.getValue(); continue; }
+                if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(def))
+                    { m = ba.getVal(); continue; }
+                if (auto cp = mlir::dyn_cast<hlfir::CopyInOp>(def))
+                    { m = cp.getVar(); continue; }
+                break;
+            }
+            if (auto *defOp = m.getDefiningOp()) {
+                if (auto sec = mlir::dyn_cast<hlfir::DesignateOp>(defOp)) {
+                    auto srcName = traceToDecl(sec.getMemref());
+                    auto triplets = sec.getIsTriplet();
+                    auto secIdx = sec.getIndices();
+                    if (!srcName.empty() && !triplets.empty()) {
+                        // Walk the section's per-dim spec.  For each
+                        // parent dim: triplet → 3 operands (lo, hi,
+                        // stride) collapsed to ``"lo-1:hi"`` DaCe form
+                        // (or ``"lo-1:hi:stride"`` if stride != 1 — the
+                        // non-contiguous slice variant Flang lowers
+                        // ``a(1:7:2)`` to);  scalar → 1 operand
+                        // collapsed to ``"k-1"``.  When a bound is a
+                        // runtime value (loop iter, dummy scalar, …)
+                        // fall back to a small symbol renderer so the
+                        // subset stays expressible.
+                        auto renderSym = [](mlir::Value v) -> std::string {
+                            for (int i = 0; i < 16 && v; ++i) {
+                                auto *d = v.getDefiningOp();
+                                if (!d) return "";
+                                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
+                                    { v = cv.getValue(); continue; }
+                                if (auto ld = mlir::dyn_cast<fir::LoadOp>(d)) {
+                                    auto n = traceToDecl(ld.getMemref());
+                                    return n;
+                                }
+                                if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(d)) {
+                                    if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                                        return std::to_string(ia.getInt());
+                                    return "";
+                                }
+                                return "";
+                            }
+                            return "";
+                        };
+                        auto renderBound = [&](mlir::Value v) -> std::string {
+                            if (auto c = traceConstInt(v)) return std::to_string(*c);
+                            return renderSym(v);
+                        };
+                        std::vector<std::string> subset;
+                        unsigned cursor = 0;
+                        for (unsigned d = 0; d < triplets.size(); ++d) {
+                            if (triplets[d] && cursor + 2 < secIdx.size()) {
+                                std::string lo = renderBound(secIdx[cursor]);
+                                std::string hi = renderBound(secIdx[cursor + 1]);
+                                std::string st = renderBound(secIdx[cursor + 2]);
+                                if (!lo.empty() && !hi.empty()) {
+                                    // DaCe subset uses ``lo-1:hi`` (0-based,
+                                    // inclusive upper).  Literal ``-1`` for
+                                    // constant lo; ``(lo)-1`` for symbolic.
+                                    std::string s;
+                                    if (auto c = traceConstInt(secIdx[cursor]))
+                                        s = std::to_string(*c - 1);
+                                    else
+                                        s = "(" + lo + ")-1";
+                                    s += ":" + hi;
+                                    if (!st.empty() && st != "1")
+                                        s += ":" + st;
+                                    subset.push_back(std::move(s));
+                                } else {
+                                    subset.push_back("0:?");
+                                }
+                                cursor += 3;
+                            } else if (!triplets[d] && cursor < secIdx.size()) {
+                                std::string k = renderBound(secIdx[cursor]);
+                                if (!k.empty()) {
+                                    if (auto c = traceConstInt(secIdx[cursor]))
+                                        subset.push_back(std::to_string(*c - 1));
+                                    else
+                                        subset.push_back("(" + k + ")-1");
+                                } else {
+                                    subset.push_back("?");
+                                }
+                                cursor += 1;
+                            }
+                        }
+                        // Only mark as view_alias when every dim's subset
+                        // resolved to a closed-form expression; bail on
+                        // ``?`` entries so we don't emit broken memlets.
+                        bool allOk = !subset.empty();
+                        for (auto &s : subset)
+                            if (s.find('?') != std::string::npos) { allOk = false; break; }
+                        if (allOk) {
+                            // If the resolved source name collides with
+                            // the alias's own ``fortran_name``, rename
+                            // the alias so SDFG keying doesn't self-loop.
+                            // This is the inlined-callee shape:
+                            // ``_QFmainEinp`` (caller arg) and
+                            // ``_QFinner_loopsEinp`` (inlined callee
+                            // dummy) both ``extractName`` to ``"inp"``;
+                            // the alias gets ``inner_loops_inp``
+                            // (callee-scope prefix) and the linking
+                            // edge wires correctly.  Register the
+                            // override on the thread-local map so the
+                            // subsequent AST extraction sees the same
+                            // renamed short name for every reference
+                            // to the inlined dummy.  Confined to the
+                            // view-alias path (allOk + traced srcName)
+                            // so unrelated inlined declares (optional
+                            // args, exact aliases) keep their names.
+                            if (srcName == v.fortran_name) {
+                                auto eP = v.mangled_name.rfind('E');
+                                auto fP = v.mangled_name.rfind('F', eP);
+                                if (eP != std::string::npos
+                                        && fP != std::string::npos
+                                        && fP + 1 < eP) {
+                                    std::string scope = v.mangled_name.substr(
+                                            fP + 1, eP - fP - 1);
+                                    std::string newName = scope + "_" + v.fortran_name;
+                                    setManglingOverride(v.mangled_name, newName);
+                                    v.fortran_name = newName;
+                                }
+                            }
+                            v.role = "view_alias";
+                            v.view_source = srcName;
+                            v.view_subset = std::move(subset);
+                        }
+                    }
+                }
+            }
+        }
 
         // OPTIONAL dummy → companion presence flag.  Fortran's
         // ``present(x)`` lowers to ``fir.is_present %x -> i1``, and the

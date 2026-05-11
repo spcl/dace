@@ -17,7 +17,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("module-contained derived-type array slice (conf%fraction(1,:)) not lowered")
 def test_fortran_frontend_type_array_slice(tmp_path):
     src = """
 module lib

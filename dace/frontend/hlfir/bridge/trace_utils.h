@@ -65,7 +65,27 @@ inline constexpr const char *kShapeHintAttr = "hlfir_bridge.shape_hint";
 
 /// Extract the short Fortran name from Flang's mangled unique name.
 ///   "_QFcompute_z_v_grad_wEnproma" → "nproma"
+///
+/// May consult a thread-local override map populated by ``extract_vars``
+/// for inlined-callee dummy-arg declares whose default short name would
+/// collide with a caller-scope declare (``_QFmainEinp`` vs
+/// ``_QFinner_loopsEinp`` both → ``inp``).  Without the override the
+/// view-alias edge that links the inlined dummy back to the caller's
+/// storage self-loops.
 std::string extractName(const std::string &mangled);
+
+/// Register ``mangled → shortName`` so subsequent ``extractName`` calls
+/// for that exact mangled name return ``shortName`` instead of the
+/// default ``E``-stripped tail.  Used by ``extract_vars`` to break
+/// short-name collisions between a caller declare and an inlined-
+/// callee dummy declare that aliases the caller's storage.  Per
+/// thread.
+void setManglingOverride(const std::string &mangled, const std::string &shortName);
+
+/// Drop every mangling-override binding.  Called at the start of each
+/// ``extractVariables`` / ``extractAST`` invocation so a previous
+/// module's overrides don't leak into the next one.
+void clearManglingOverrides();
 
 /// Trace an SSA value backwards to the hlfir.declare / fir.declare that
 /// introduced it.  Peels fir.convert → fir.load → arith.select transparently.

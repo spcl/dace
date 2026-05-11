@@ -99,6 +99,26 @@ struct NoSubscriptGuard {
     ~NoSubscriptGuard() { kBoolExprNoSubscripts = prev; }
 };
 
+/// When true, suppress the ``dace.float32(...)`` wrap around f32
+/// constants and f32→f64 converts.  Set inside ``buildBoolExpr`` /
+/// ``buildExprWithSubscripts`` -- the resulting string lands in an
+/// interstate-edge condition or ConditionalBlock guard, parsed by
+/// DaCe's symbolic engine which treats ``dace.float32`` as a free
+/// symbol reference (``dace``) followed by an attribute, blowing up
+/// with ``KeyError: 'dace'``.  Inside tasklet bodies the wrap is
+/// needed and harmless (Python tasklet parser understands the
+/// ``dace`` namespace); inside condition strings it isn't, and the
+/// f32-vs-f64 precision difference doesn't change comparison
+/// outcomes anyway.
+inline thread_local bool kSuppressFloatCast = false;
+
+/// RAII guard scoping ``kSuppressFloatCast = true``.
+struct SuppressFloatCastGuard {
+    bool prev;
+    SuppressFloatCastGuard() : prev(kSuppressFloatCast) { kSuppressFloatCast = true; }
+    ~SuppressFloatCastGuard() { kSuppressFloatCast = prev; }
+};
+
 // ============================================================================
 // Cross-file API
 // ============================================================================
@@ -140,6 +160,23 @@ std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
                                     unsigned dim,
                                     mlir::Value idx,
                                     int depth);
+
+/// Per-dim AccessInfo entry produced by ``expandDesignateChain``.
+struct DimEntry {
+    std::string var;   // identifier for AccessInfo::index_vars
+    std::string expr;  // 1-based expression for AccessInfo::index_exprs
+};
+
+/// Walk an innermost ``hlfir.designate``'s parent chain (through
+/// inlined declare aliases, ``fir.convert`` reshapes, and section
+/// parent designates) and produce a per-original-dim ``(var, expr)``
+/// list keyed to the underlying array's full rank.  Used by
+/// ``buildElementalAssign`` / ``buildAssignNode`` /
+/// ``buildElementalCountLibcall`` / ``buildElementalAnyAllReduce``
+/// so the access list always matches the underlying array even when
+/// the inner designate is a rank-reduced view.  See ``elementals.cpp``.
+std::pair<std::string, std::vector<DimEntry>>
+expandDesignateChain(hlfir::DesignateOp innermost);
 
 /// Resolve an SSA index to its source name when we're inside an
 /// elemental body (the elemental's block argument is a tracked synth

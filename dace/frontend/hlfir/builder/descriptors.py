@@ -135,17 +135,61 @@ def add_descriptors(builder, sdfg: SDFG):
         # free.
         return s if s in sdfg.symbols else None
 
+    view_aliases = []
     for v in builder.arrays.values():
         if _is_flang_internal(v.fortran_name):
             continue
         dims = [_dim(s) for s in shape_syms[v.fortran_name]]
-        sdfg.add_array(
-            v.fortran_name,
-            shape=dims,
-            dtype=dt(v.dtype),
-            transient=(v.intent == ''),
-            strides=_fortran_strides(dims) if len(dims) > 1 else None,
-        )
+        if v.role == 'view_alias':
+            # Pointer alias of ``v.view_source`` — no separate storage.
+            # ``sdfg.add_view`` registers a static reference that DaCe
+            # codegen lowers to a typed pointer into the source's
+            # buffer; per-state linking memlets (added by the ``acc``
+            # factory) tell DaCe which slice of the source the view
+            # covers.
+            #
+            # View strides are derived from the source array's Fortran
+            # column-major strides times each surviving section dim's
+            # triplet stride.  Example: source ``a(100, 10)`` has
+            # strides ``(1, 100)``; section ``a(:, 1:10:2)`` keeps both
+            # dims (full range on dim 0, stride-2 on dim 1) so the view
+            # has shape ``(100, 5)`` strides ``(1, 200)``.  Source dims
+            # collapsed to a scalar are dropped.  Section ``a(i, :)``
+            # has shape ``(10,)`` stride ``(100,)``.
+            src_v = builder.arrays.get(v.view_source)
+            src_dims = (shape_syms.get(v.view_source) if src_v is not None else None)
+            src_strides = (_fortran_strides([_dim(s) for s in src_dims]) if src_dims and len(src_dims) > 1 else None)
+            view_strides = []
+            if src_strides is not None and len(v.view_subset) == len(src_strides):
+                for src_d, sub in enumerate(v.view_subset):
+                    if ':' not in sub:
+                        continue  # scalar dim — drops out of the view
+                    parts = sub.split(':')
+                    sec_stride = int(parts[2]) if len(parts) >= 3 else 1
+                    view_strides.append(src_strides[src_d] * sec_stride)
+            # Only honour the derived strides if their length matches
+            # the view's rank.  ``view_reshape`` cases use a
+            # ``fir.convert`` to flatten the section (rank reduction
+            # beyond just scalar dims), so the per-surviving-section-
+            # dim stride list has more entries than the view has dims.
+            # In those cases the section is contiguous in storage and
+            # ``[1, ...]`` is correct.
+            if len(view_strides) != len(dims):
+                view_strides = [1] * len(dims) if len(dims) > 0 else None
+            sdfg.add_view(
+                v.fortran_name,
+                shape=dims,
+                dtype=dt(v.dtype),
+                strides=view_strides,
+            )
+        else:
+            sdfg.add_array(
+                v.fortran_name,
+                shape=dims,
+                dtype=dt(v.dtype),
+                transient=(v.intent == ''),
+                strides=_fortran_strides(dims) if len(dims) > 1 else None,
+            )
         # Declare an offset symbol per dim, sized from the SDFG array's
         # rank (not ``v.lower_bounds`` which may be shorter for some
         # synth shapes).  Unknown lower bounds default to ``1``.
@@ -156,6 +200,17 @@ def add_descriptors(builder, sdfg: SDFG):
                 sdfg.add_symbol(sym_name, dace.int64)
             lb = v.lower_bounds[d] if d < len(v.lower_bounds) else "1"
             builder.offset_values[sym_name] = _offset_value(lb)
+        if v.role == 'view_alias' and v.view_source:
+            view_aliases.append(v)
+
+    # Record view aliases on the builder; ``build()`` stages the
+    # source ↔ view-alias copy states (one copy-in at SDFG entry, one
+    # copy-out at SDFG exit) around the AST-emitted body.
+    builder._view_aliases = view_aliases
+    builder._view_shape_strs = {
+        v.fortran_name: [str(_dim(s)) for s in shape_syms[v.fortran_name]]
+        for v in view_aliases
+    }
 
     for v in builder.scalars.values():
         if _is_flang_internal(v.fortran_name):

@@ -229,12 +229,7 @@ std::string resolveExtent(mlir::Value shape, unsigned d) {
 ///     by ``buildDesignateIndexExpr`` against the parent's lo);
 ///   * scalar dim  → render the parent's scalar via ``buildIndexExpr``
 ///     and insert at the parent's dim position.
-struct DimEntry {
-    std::string var;   // identifier for the index_vars list
-    std::string expr;  // 1-based expression for the index_exprs list
-};
-
-static std::pair<std::string, std::vector<DimEntry>>
+std::pair<std::string, std::vector<DimEntry>>
 expandDesignateChain(hlfir::DesignateOp innermost) {
     std::vector<DimEntry> entries;
     auto inIdxs = innermost.getIndices();

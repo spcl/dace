@@ -40,7 +40,7 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 
-from dace import SDFG
+from dace import InterstateEdge, SDFG
 
 from build_bridge import hb
 
@@ -273,7 +273,13 @@ class SDFGBuilder:
         """Shared post-parse extraction: variables + AST + role split."""
         self.variables = self.module.get_variables()
         self.ast = self.module.get_ast()
-        self.arrays = {v.fortran_name: v for v in self.variables if v.role == "array"}
+        # ``view_alias`` participates in the array dictionary so the
+        # emitter routes accesses to it normally; ``add_descriptors``
+        # registers it via ``sdfg.add_view`` (pointer alias of its
+        # source array, no separate storage) and the ``acc`` factory
+        # adds a per-state linking memlet so DaCe codegen knows
+        # ``dd``'s reads/writes propagate to ``d``.
+        self.arrays = {v.fortran_name: v for v in self.variables if v.role in ("array", "view_alias")}
         self.symbols = {v.fortran_name: v for v in self.variables if v.role == "symbol"}
         self.scalars = {v.fortran_name: v for v in self.variables if v.role == "scalar"}
         # Per-axis offset symbols: ``offset_<arr>_d<i>`` is the SDFG
@@ -306,6 +312,12 @@ class SDFGBuilder:
         # ``add_descriptors``); the constant table just attaches the
         # initial-value tuple to it.
         self._register_constants(sdfg)
+        # Stage source → view-alias copy-in states ahead of the body
+        # so reads on the alias see live source data.  After the body
+        # we stage the reverse copy-out so writes propagate back.
+        # The pre state becomes the SDFG's start block; the post state
+        # is linked from the body's last state by edging through
+        # ``ctx.cur``.
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)

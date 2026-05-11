@@ -13,7 +13,27 @@
 
 namespace hlfir_bridge {
 
+// Disambiguation overrides for Fortran short-name collisions across
+// inlined scopes.  When ``hlfir-inline-all`` splices a callee's body
+// into the caller, both the caller's argument declare
+// (``_QFmainEinp``) and the callee's dummy declare
+// (``_QFinner_loopsEinp``) end up in one function with the same
+// trailing short name (``inp``).  Without disambiguation,
+// ``builder.arrays`` keys collide and view-alias linking edges
+// self-loop.  ``extract_vars`` populates this map with
+// ``mangled → unique_short_name`` for the colliding entries; every
+// subsequent ``extractName`` call resolves to the unique form.
+static thread_local std::unordered_map<std::string, std::string> kManglingOverride;
+
+void setManglingOverride(const std::string &mangled, const std::string &shortName) {
+    kManglingOverride[mangled] = shortName;
+}
+
+void clearManglingOverrides() { kManglingOverride.clear(); }
+
 std::string extractName(const std::string &m) {
+    auto it = kManglingOverride.find(m);
+    if (it != kManglingOverride.end()) return it->second;
     auto p = m.rfind('E');
     std::string name = p != std::string::npos ? m.substr(p + 1) : m;
     // Sanitize dots — flang emits compiler-generated globals like

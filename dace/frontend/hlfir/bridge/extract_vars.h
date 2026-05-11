@@ -39,6 +39,20 @@ struct VarInfo {
     /// (one per element) — the Python side narrows to the actual
     /// dtype on use.  Booleans surface as 0.0 / 1.0.
     std::vector<double> const_data;
+    /// For ``role == "view_alias"`` only.  ``view_source`` is the
+    /// underlying array's Fortran name; ``view_subset`` is one entry
+    /// per source-array dim in 0-based DaCe form — ``"0:4"`` for a
+    /// full range, ``"2"`` for a fixed scalar.  The alias surface is
+    /// a (possibly rank-changed) re-interpretation of ``view_source``
+    /// over the section indicated by ``view_subset``.  ``descriptors``
+    /// uses this to stage a copy-in at SDFG entry and a copy-out at
+    /// SDFG exit so writes propagate back through the alias.  Set
+    /// when Flang emits ``hlfir.declare %converted`` where the
+    /// memref ultimately threads through a ``fir.convert`` that
+    /// re-shapes a section designate's element type to a different
+    /// array shape (Fortran storage-association reshape).
+    std::string view_source;
+    std::vector<std::string> view_subset;
 };
 
 /// Walk the module and build one VarInfo per hlfir.declare.

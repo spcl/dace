@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -17,16 +16,6 @@ except OSError:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("Fortran storage-association reshape (passing a 2D section ``d(:,:,1)`` "
-       "to a callee declared ``dd(16)``).  Flang lowers the call to "
-       "``fir.convert %section : ref<4x4xf64> -> ref<16xf64>`` and the inlined "
-       "callee declares ``dd`` over the converted ref.  Bridge needs to "
-       "recognise this pattern and either: (a) register ``dd`` as a DaCe "
-       "View with strides / total_size matching the contiguous source slice "
-       "plus a linking memlet ``Memlet(data=d, subset=d[:,:,0], "
-       "other_subset=dd[:])`` per state, or (b) decompose the 1D index in "
-       "the AST walker into multi-dim source coords (``dd[k]`` → "
-       "``d[k%4, k//4, 0]`` for column-major).  Not yet implemented.")
 def test_fortran_frontend_view_reshape(tmp_path):
     src = """
 module lib1

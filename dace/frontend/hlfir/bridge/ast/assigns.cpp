@@ -316,20 +316,23 @@ ASTNode buildAssignNode(hlfir::AssignOp assign) {
     node.kind = "assign";
 
     // --- LHS ---
+    // For a designate destination, use ``expandDesignateChain`` so
+    // view-alias and section-parent chains (Fortran storage-association
+    // reshape, slice-into-multi-dim, etc.) decompose into the source
+    // array's full-rank coords.  The simple no-chain case still
+    // produces the same (target, indices) as the legacy code path.
     auto dest = assign.getOperand(1);
     if (auto dd = dest.getDefiningOp()) {
         if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(dd)) {
-            node.target = traceToDecl(dg.getMemref());
+            auto [arr, dims] = expandDesignateChain(dg);
+            node.target = arr.empty() ? traceToDecl(dg.getMemref()) : arr;
             node.target_is_array = true;
             AccessInfo wa;
             wa.array_name = node.target;
             wa.is_write = true;
-            unsigned di = 0;
-            for (auto idx : dg.getIndices()) {
-                auto n = resolveIndex(idx);
-                wa.index_vars.push_back(n.empty() ? "?" : n);
-                wa.index_exprs.push_back(buildDesignateIndexExpr(dg, di, idx, 0));
-                ++di;
+            for (auto &de : dims) {
+                wa.index_vars.push_back(de.var);
+                wa.index_exprs.push_back(de.expr);
             }
             node.accesses.push_back(std::move(wa));
         } else {
