@@ -1039,6 +1039,11 @@ class Map(object):
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    gpu_min_warps_per_eu = Property(dtype=int,
+                                    default=0,
+                                    desc="Minimum number of warps per execution unit for GPU kernel",
+                                    serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     gpu_maxnreg = Property(dtype=int,
                            default=0,
                            desc="Maximum number of registers per thread for GPU kernel",
@@ -1375,15 +1380,17 @@ class LibraryNode(CodeNode):
             node.
 
             This method supports two interfaces:
-            1. New interface: expand(state, implementation=None, **kwargs)
-            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
+
+                1. New interface: ``expand(state, implementation=None, **kwargs)``
+                2. Old interface: ``expand(sdfg, state, **kwargs)`` [for backward compatibility]
 
             :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
             :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
             :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
 
-            Examples:
+            Examples::
+
                 # New interface (recommended):
                 result = node.expand(state, 'pure')
 
