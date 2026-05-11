@@ -11,6 +11,7 @@
 #include "pi.h"
 #include "nan.h"
 #include "types.h"
+#include "merge.h"
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>

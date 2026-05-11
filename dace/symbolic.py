@@ -827,6 +827,24 @@ class IfExpr(sympy.Function):
             return False
 
 
+class merge(sympy.Function):
+    """Ternary blend: ``merge(c, a, b)`` returns ``a`` when ``c`` is truthy,
+    ``b`` otherwise. Lowered to a one-line C++ helper in
+    ``dace/runtime/include/dace/merge.h`` and recognized by the vectorizer's
+    emission utility to produce a SIMD blend (``vector_select``,
+    ``_mm512_mask_blend_pd``, ``svsel_*``). Folds eagerly when ``c`` is a
+    SymPy boolean literal, matching :class:`IfExpr`."""
+
+    nargs = 3
+
+    @classmethod
+    def eval(cls, c, a, b):
+        if c is sympy.true:
+            return a
+        if c is sympy.false:
+            return b
+
+
 class bitwise_and(sympy.Function):
     pass
 
@@ -1323,6 +1341,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
+        'merge': merge,
+        'Merge': merge,
         'Mod': sympy.Mod,
         'Attr': Attr,
         'id': sympy.Symbol('id'),

@@ -10,13 +10,10 @@ The skip is now exposed as a ``Vectorize.user_skip_nsdfg_arrays`` property
 test xpasses since that change landed.
 """
 import inspect
-import pytest
 
 from dace.transformation.passes.vectorization.vectorization_utils import add_copies_before_and_after_nsdfg
 
 
-@pytest.mark.xfail(reason="cloudsc array names previously hardcoded in skip set; replaced by the "
-                   "Vectorize.user_skip_nsdfg_arrays property (default empty) — kept as a tripwire")
 def test_no_cloudsc_array_names_in_helper_body():
     src = inspect.getsource(add_copies_before_and_after_nsdfg)
     for name in ("zqxfg", "zsolqb", "zsolqa"):

@@ -11,6 +11,72 @@ from sympy import Function
 import dace.sdfg.utils as sdutil
 
 
+def assert_connector_role_matches_edges(state: dace.SDFGState):
+    """Audit helper: every tasklet/nested-SDFG connector in ``state`` must
+    have its role (read vs. write) consistent with the edges actually
+    incident on it.
+
+    Concretely, for each ``Tasklet`` or ``NestedSDFG`` node in ``state``:
+        * every name in ``node.in_connectors`` has at least one incoming
+          edge landing on that connector (no orphan in-connectors);
+        * every name in ``node.out_connectors`` has at least one outgoing
+          edge leaving that connector (no orphan out-connectors);
+        * no connector name appears in *both* ``in_connectors`` and
+          ``out_connectors`` (a single name cannot play both roles);
+        * no edge lands on an in-connector going the wrong way, and no
+          edge leaves an out-connector going the wrong way.
+
+    Used by the upcoming branch-normalization passes (M3.1+) as an
+    end-of-pass invariant check. Detects the latent frontend bug where
+    chained ``if/elif/else`` reads were wired to write-side connectors
+    (the s441_v2 case) by catching the resulting "edge points outward
+    from an in-connector" anomaly.
+    """
+    for node in state.nodes():
+        if not isinstance(node, (dace.nodes.Tasklet, dace.nodes.NestedSDFG)):
+            continue
+
+        in_names = set(node.in_connectors.keys())
+        out_names = set(node.out_connectors.keys())
+
+        both = in_names & out_names
+        if both:
+            raise AssertionError(
+                f"Node {node.label!r} declares connector(s) {sorted(both)} as both input and output")
+
+        in_edges_per_conn = {n: 0 for n in in_names}
+        out_edges_per_conn = {n: 0 for n in out_names}
+
+        for e in state.in_edges(node):
+            if e.dst_conn is None:
+                continue
+            if e.dst_conn in out_names:
+                raise AssertionError(
+                    f"Node {node.label!r}: edge lands on out-connector {e.dst_conn!r} "
+                    f"(should land on an in-connector). Src: {e.src}")
+            if e.dst_conn not in in_names:
+                raise AssertionError(f"Node {node.label!r}: edge lands on unknown connector {e.dst_conn!r}")
+            in_edges_per_conn[e.dst_conn] += 1
+
+        for e in state.out_edges(node):
+            if e.src_conn is None:
+                continue
+            if e.src_conn in in_names:
+                raise AssertionError(
+                    f"Node {node.label!r}: edge leaves in-connector {e.src_conn!r} "
+                    f"(should leave from an out-connector). Dst: {e.dst}")
+            if e.src_conn not in out_names:
+                raise AssertionError(f"Node {node.label!r}: edge leaves unknown connector {e.src_conn!r}")
+            out_edges_per_conn[e.src_conn] += 1
+
+        for conn, count in in_edges_per_conn.items():
+            if count == 0:
+                raise AssertionError(f"Node {node.label!r}: in-connector {conn!r} has no incoming edge")
+        for conn, count in out_edges_per_conn.items():
+            if count == 0:
+                raise AssertionError(f"Node {node.label!r}: out-connector {conn!r} has no outgoing edge")
+
+
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
     """
     Deep-copies all nodes and edges from one SDFG state into another.
