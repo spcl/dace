@@ -514,6 +514,16 @@ namespace dace
         {
             return (T)std::exp(a);
         }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T exp2(const T& a)
+        {
+            return (T)std::exp2(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T expm1(const T& a)
+        {
+            return (T)std::expm1(a);
+        }
 
 #ifdef __CUDACC__
         template<typename T>
@@ -617,6 +627,11 @@ namespace dace
             return std::atan(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T atan2(const T& a)
+        {
+            return std::atan2(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T tanh(const T& a)
         {
             return std::tanh(a);
@@ -647,9 +662,24 @@ namespace dace
           return std::log10(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log1p(const T& a)
+        {
+            return std::log1p(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log2(const T& a)
+        {
+            return std::log2(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T fmod(const T& a)
         {
             return std::fmod(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T lgamma(const T& a)
+        {
+            return std::lgamma(a);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T tgamma(const T& a)
@@ -685,6 +715,11 @@ namespace dace
         DACE_CONSTEXPR DACE_HDFI T round(const T& a)
         {
             return std::round(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T hypot(const T& a)
+        {
+            return std::hypot(a);
         }
     }
 
