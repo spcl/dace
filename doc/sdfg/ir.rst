@@ -214,7 +214,7 @@ that pertain to how it will be mapped to hardware (and to the generated code): `
 **Storage location** refers to where the container will be allocated --- examples include :class:`~dace.dtypes.StorageType.CPU_Heap`
 for allocation using ``new[]`` and :class:`~dace.dtypes.StorageType.GPU_Global` for VRAM on the GPU (``{cuda,hip}Malloc``).
 The full built-in list can be found in the enumeration definition :class:`~dace.dtypes.StorageType`. The enumeration is
-user-extensible (see :ref:`enums`), so adding new entries is easy.
+user-extensible, so adding new entries is easy.
 
 **Allocation lifetime** refers to the allocation/deallocation scope of a data container. By default, :class:`~dace.dtypes.AllocationLifetime.Scope`
 is used, which specifies that the access nodes dictate the allocation lifetime --- the innermost common scope in which
@@ -313,9 +313,6 @@ dimensions:
   b = np.random.rand(20)
   example_with_undefined(a, b)
 
-
-.. note::
-  For more information about developing with symbolic expressions, read :ref:`symbolic`.
 
 .. _connectors:
 

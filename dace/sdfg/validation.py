@@ -482,7 +482,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            raise InvalidSDFGNodeError("Node validation failed: " + str(ex), sdfg, state_id, nid) from ex
+            raise InvalidSDFGNodeError(f"Node validation failed: {ex}", sdfg, state_id, nid) from ex
 
         # Isolated nodes
         ########################################

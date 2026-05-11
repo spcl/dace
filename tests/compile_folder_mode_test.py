@@ -54,9 +54,9 @@ def _load_and_run_sdfg(build_folder, sdfg):
     _run_sdfg(csdfg)
 
 
-def test_development_folder_version():
+def test_development_folder_mode():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_version', value="development")
+        Config.set('compiler', 'build_folder_mode', value="development")
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder)
         assert not build_folder.exists()
@@ -65,7 +65,7 @@ def test_development_folder_version():
         assert not_csdfg is None
 
     assert build_folder.exists()
-    assert sdfg_compiler.get_folder_version(build_folder) == "development"
+    assert sdfg_compiler.get_folder_mode(build_folder) == "development"
 
     expected_files = {
         "build": pathlib.Path.is_dir,
@@ -75,11 +75,11 @@ def test_development_folder_version():
         "sample": pathlib.Path.is_dir,
         "src": pathlib.Path.is_dir,
         "CACHEDIR.TAG": pathlib.Path.is_file,
+        "FOLDER_MODE": pathlib.Path.is_file,
         "dace.conf": pathlib.Path.is_file,
         "dace_files.csv": pathlib.Path.is_file,
         "dace_environments.csv": pathlib.Path.is_file,
         "program.sdfgz": pathlib.Path.is_file,
-        "VERSION": pathlib.Path.is_file,
     }
 
     for found_path in build_folder.iterdir():
@@ -90,17 +90,17 @@ def test_development_folder_version():
     # Now run it.
     _load_and_run_sdfg(build_folder, sdfg)
 
-    # Special case for development is that if there is no `VERSION` it is still development.
-    version_file = build_folder / "VERSION"
+    # Special case for development is that if there is no `FOLDER_MODE` it is still development.
+    version_file = build_folder / "FOLDER_MODE"
     assert version_file.exists()
     version_file.unlink()
     assert not version_file.exists()
-    assert sdfg_compiler.get_folder_version(build_folder) == "development"
+    assert sdfg_compiler.get_folder_mode(build_folder) == "development"
 
 
-def test_production_folder_version():
+def test_production_folder_mode():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_version', value="production")
+        Config.set('compiler', 'build_folder_mode', value="production")
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder)
         assert not build_folder.exists()
@@ -109,13 +109,14 @@ def test_production_folder_version():
         assert not_csdfg is None
 
     assert build_folder.exists()
-    assert sdfg_compiler.get_folder_version(build_folder) == "production"
+    assert sdfg_compiler.get_folder_mode(build_folder) == "production"
 
-    lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg.name, folder_version="production")
+    lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg.name, folder_mode="production")
     libstub_path = sdfg_compiler._get_stub_library_path(lib_path.name)
 
     expected_files = {
-        "VERSION": pathlib.Path.is_file,
+        "CACHEDIR.TAG": pathlib.Path.is_file,
+        "FOLDER_MODE": pathlib.Path.is_file,
         lib_path.name: pathlib.Path.is_file,
         libstub_path.name: pathlib.Path.is_file,
     }
@@ -128,17 +129,17 @@ def test_production_folder_version():
     # Now run it.
     _load_and_run_sdfg(build_folder, sdfg)
 
-    # If we delete the VERSION file we will get an error.
-    version_file = build_folder / "VERSION"
+    # If we delete the FOLDER_MODE file we will get an error.
+    version_file = build_folder / "FOLDER_MODE"
     assert version_file.exists()
     version_file.unlink()
     assert not version_file.exists()
 
     with pytest.raises(NotADirectoryError,
                        match=re.escape(f'``{build_folder}`` does not appear to be a valid build folder.')):
-        sdfg_compiler.get_folder_version(build_folder)
+        sdfg_compiler.get_folder_mode(build_folder)
 
-    assert sdfg_compiler.get_folder_version(build_folder, probe=True) is None
+    assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
 
 
 def _test_build_with_scheme_one_and_then_switch_impl(
@@ -146,7 +147,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
     version2: str,
 ) -> None:
     with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'build_folder_version', value=version1)
+        conf.set('compiler', 'build_folder_mode', value=version1)
 
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder).resolve()
@@ -155,11 +156,11 @@ def _test_build_with_scheme_one_and_then_switch_impl(
         csdfg1 = sdfg.compile()
 
     lib1_path = pathlib.Path(csdfg1.filename)
-    assert sdfg_compiler.get_folder_version(build_folder) == version1
+    assert sdfg_compiler.get_folder_mode(build_folder) == version1
     assert lib1_path.exists()
 
     with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'build_folder_version', value=version1)
+        conf.set('compiler', 'build_folder_mode', value=version1)
 
         # This is for ensuring that the code is actually regenerated.
         conf.set('compiler', 'use_cache', value=False)
@@ -170,7 +171,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
 
     lib2_path = pathlib.Path(csdfg2.filename)
 
-    assert sdfg_compiler.get_folder_version(build_folder) == version1
+    assert sdfg_compiler.get_folder_mode(build_folder) == version1
     assert csdfg1.sdfg.name != csdfg2.sdfg.name
     assert lib1_path != lib2_path
     assert lib1_path.exists()  # Still existing.
@@ -185,7 +186,8 @@ def _test_build_with_scheme_one_and_then_switch_impl(
         libstub2_path = sdfg_compiler._get_stub_library_path(lib2_path.name)
 
         expected_files = {
-            "VERSION": pathlib.Path.is_file,
+            "CACHEDIR.TAG": pathlib.Path.is_file,
+            "FOLDER_MODE": pathlib.Path.is_file,
             lib1_path.name: pathlib.Path.is_file,
             libstub1_path.name: pathlib.Path.is_file,
             lib2_path.name: pathlib.Path.is_file,
@@ -230,7 +232,7 @@ def test_already_loaded_and_comple_again():
 
 
 if __name__ == '__main__':
-    test_development_folder_version()
-    test_production_folder_version()
+    test_development_folder_mode()
+    test_production_folder_mode()
     test_already_loaded_and_comple_again()
     test_build_with_scheme_one_and_then_switch()

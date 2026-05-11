@@ -1731,6 +1731,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
         if node.gpu_maxnreg == 0:
             maxnreg_str = ''
+            gpu_min_warps_per_eu = ''
+            if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
+                gpu_min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
             # Set kernel launch bounds
             if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
@@ -1738,9 +1741,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if any(symbolic.issymbolic(b) for b in block_dims):
                     launch_bounds = ''
                 else:
-                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))}{gpu_min_warps_per_eu})'
             else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{gpu_min_warps_per_eu})'
         else:
             maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
             launch_bounds = ''

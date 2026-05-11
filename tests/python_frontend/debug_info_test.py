@@ -43,26 +43,13 @@ def test_using_default_lineinfo(state: SDFGState) -> None:
     assert read_A.debuginfo.filename == filename
     assert read_A.debuginfo.start_line == line
 
-    with pytest.deprecated_call():
-        read_B = state.add_read("B", None)
+    read_B = state.add_read("B", debuginfo=None)
     assert read_B.debuginfo is not None
     assert read_B.debuginfo.filename == filename
     assert read_B.debuginfo.start_line == line
-
-
-def test_passing_debug_info_warns(state: SDFGState) -> None:
-    with pytest.deprecated_call():
-        state.add_access("A", debuginfo=dtypes.DebugInfo(start_line=42))
-
-
-def test_passing_None_warns(state: SDFGState) -> None:
-    with pytest.deprecated_call():
-        state.add_access("A", debuginfo=None)
 
 
 if __name__ == "__main__":
     test_config_compiler_lineinfo_none()
     test_config_compiler_lineinfo_inspect()
     test_using_default_lineinfo()
-    test_passing_debug_info_warns()
-    test_passing_None_warns()

@@ -15,7 +15,7 @@ from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type
 import warnings
 
 import dace
-from dace.sdfg.graph import generate_element_id
+from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -23,7 +23,7 @@ from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion, LoopRegion
 from dace.sdfg.type_inference import infer_expr_type
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
-    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
 class NestedDict(dict):
@@ -414,7 +414,7 @@ class InterstateEdge(object):
     def label(self):
         assignments = ','.join(['%s=%s' % (k, v) for k, v in self.assignments.items()])
 
-        # Edge with assigment only (no condition)
+        # Edge with assignment only (no condition)
         if self.condition.as_string == '1':
             # Edge without conditions or assignments
             if len(self.assignments) == 0:
@@ -425,7 +425,7 @@ class InterstateEdge(object):
         if len(self.assignments) == 0:
             return self.condition.as_string
 
-        # Edges with assigments and conditions
+        # Edges with assignments and conditions
         return self.condition.as_string + '; ' + assignments
 
 
@@ -1203,7 +1203,7 @@ class SDFG(ControlFlowRegion):
 
     ##########################################
 
-    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeScope':
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeRoot':
         """
         Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
         the execution order of the SDFG.
@@ -1211,7 +1211,8 @@ class SDFG(ControlFlowRegion):
         etc.) or a ``ScheduleTreeScope`` block (map, for-loop, etc.) that contains other nodes.
 
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
-        erasing an empty if branch, or merging two consecutive for-loops.
+        erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the
+        ``as_sdfg`` method or the ``from_schedule_tree`` function in ``dace.sdfg.analysis.schedule_tree.tree_to_sdfg``.
 
         :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
                          not be usable after the conversion if ``in_place`` is True!
@@ -1780,10 +1781,6 @@ class SDFG(ControlFlowRegion):
         :param verbose: Be verbose, `False` by default.
         """
         from dace.cli.sdfv import view
-
-        # Ensure external nested SDFGs are loaded.
-        for _ in self.all_sdfgs_recursive(load_ext=True):
-            pass
 
         view(self, filename=filename, verbose=verbose)
 
@@ -2354,20 +2351,98 @@ class SDFG(ControlFlowRegion):
         self.append_exit_code(self._rdistrarrays[name].exit_code(self))
         return name
 
-    def add_loop(
+    def add_loop(self,
+                 before_block: ControlFlowBlock,
+                 loop_start_block: ControlFlowBlock,
+                 after_block: ControlFlowBlock,
+                 loop_var: str,
+                 initialize_expr: str,
+                 condition_expr: str,
+                 increment_expr: str,
+                 loop_end_block: Optional[ControlFlowBlock] = None,
+                 label: Optional[str] = None) -> LoopRegion:
+        """
+        Helper function that adds a looping control flow block around a
+        given block/state (or sequence of blocks, if ``loop_end_block`` is provided).
+
+        :param before_block: The block after which the loop should
+                             begin, or None if the loop is the first
+                             block (creates an empty block).
+        :param loop_start_block: The block that begins the loop. See also
+                                 ``loop_end_block`` if the loop is multi-block.
+        :param after_block: The block that should be invoked after
+                            the loop ends, or None if the program
+                            should terminate (creates an empty block).
+        :param loop_var: A name of a symbol to use for the loop variable.
+        :param initialize_expr: A string expression that is assigned
+                                to ``loop_var`` before the loop begins.
+                                If None, does not define an expression.
+        :param condition_expr: A string condition that occurs every
+                               loop iteration. If None, loops forever.
+        :param increment_expr: A string expression that is assigned to
+                               ``loop_var`` after every loop iteration.
+        :param loop_end_block: If the loop wraps multiple blocks, the block
+                               where the loop iteration ends. If None, sets
+                               the end block to ``loop_start_block`` as well.
+        :param label: An optional label for the loop region.
+        :return: The generated LoopRegion block.
+        """
+        label = self._ensure_unique_block_name(label or "loop")
+        loop_region = LoopRegion(label, condition_expr, loop_var,
+                                 f'{loop_var} = {initialize_expr}' if initialize_expr else None,
+                                 f'{loop_var} = {increment_expr}' if increment_expr else None)
+
+        # Capture subgraphview of loop body
+        if loop_start_block in self.nodes() or loop_start_block in self.states():
+            # Find all reachable blocks in loop body
+            if loop_end_block is None:
+                blocks = {loop_start_block}
+            else:
+                blocks = set(self.all_nodes_between(loop_start_block, loop_end_block))
+                blocks.add(loop_start_block)
+                blocks.add(loop_end_block)
+
+            subgraph = SubgraphView(self, blocks)
+            remove_subgraph = True
+        else:
+            subgraph = SubgraphView(self, [loop_start_block, loop_end_block] if loop_end_block else [loop_start_block])
+            remove_subgraph = False
+
+        # Readd subgraph to main SDFG with loop_region as parent
+        loop_region.add_node(loop_start_block, is_start_block=True)
+        loop_region.add_nodes_from(set(subgraph.nodes()) - {loop_start_block})
+        for e in subgraph.edges():
+            loop_region.add_edge(e.src, e.dst, e.data)
+
+        # Remove subgraph from main SDFG, if necessary
+        if remove_subgraph:
+            self.remove_nodes_from(blocks)
+
+        # Connect to graph
+        self.add_node(loop_region, is_start_block=(before_block is None))
+        if before_block is not None:
+            self.add_edge(before_block, loop_region, InterstateEdge())
+        if after_block is not None:
+            self.add_edge(loop_region, after_block, InterstateEdge())
+
+        return loop_region
+
+    def add_loop_state_machine(
         self,
-        before_state,
-        loop_state,
-        after_state,
+        before_state: SDFGState,
+        loop_state: SDFGState,
+        after_state: SDFGState,
         loop_var: str,
         initialize_expr: str,
         condition_expr: str,
         increment_expr: str,
-        loop_end_state=None,
+        loop_end_state: Optional[SDFGState] = None,
     ):
         """
         Helper function that adds a looping state machine around a
-        given state (or sequence of states).
+        given state (or sequence of states). It is recommended to use
+        ``add_loop`` instead of this function, unless creating a loop
+        state machine is explicitly requested.
 
         :param before_state: The state after which the loop should
                              begin, or None if the loop is the first
@@ -2397,9 +2472,6 @@ class SDFG(ControlFlowRegion):
                  ``after_state``).
         """
         from dace.frontend.python.astutils import negate_expr  # Avoid import loops
-
-        warnings.warn("SDFG.add_loop is deprecated and will be removed in a future release. Use LoopRegions instead.",
-                      DeprecationWarning)
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
@@ -2464,7 +2536,7 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self, folder_version: Optional[str] = None) -> bool:
+    def is_loaded(self, folder_mode: Optional[str] = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
         Returns `False` if the file does not exist.
@@ -2473,16 +2545,16 @@ class SDFG(ControlFlowRegion):
         from dace.codegen import compiled_sdfg as cs, compiler
 
         build_folder = self.build_folder
-        if folder_version is None:
-            folder_version = compiler.get_folder_version(build_folder, probe=True)
-        if folder_version is None:
-            folder_version = Config.get('compiler', 'build_folder_version')
+        if folder_mode is None:
+            folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+        if folder_mode is None:
+            folder_mode = Config.get('compiler', 'build_folder_mode')
 
         # Note here is kind of a "leak". The issue is that while the library is not
         #  loaded the stub library is loaded. However, it is never unloaded, because
         #  the `unload()` function is not called. This is technically not an issue
         #  as `ctypes` will do that at some later point.
-        binary_filename = compiler.get_binary_name(self.build_folder, self.name, folder_version=folder_version)
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name, folder_mode=folder_mode)
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
@@ -2503,16 +2575,16 @@ class SDFG(ControlFlowRegion):
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
-        # Get the folder version, but if the folder already exist, then use the `VERSION` file.
-        folder_version = compiler.get_folder_version(build_folder, probe=True)
-        if folder_version is None:
-            folder_version = Config.get('compiler', 'build_folder_version')
+        # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
+        folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+        if folder_mode is None:
+            folder_mode = Config.get('compiler', 'build_folder_mode')
 
         if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
             lib_path = compiler.get_binary_name(object_folder=build_folder,
                                                 sdfg_name=self.name,
-                                                folder_version=folder_version)
+                                                folder_mode=folder_mode)
             if lib_path.is_file():
                 if return_program_handle:
                     # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
@@ -2538,7 +2610,7 @@ class SDFG(ControlFlowRegion):
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
-            while sdfg.is_loaded(folder_version=folder_version):
+            while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name and Config.get_bool('debugprint'):
@@ -2562,7 +2634,7 @@ class SDFG(ControlFlowRegion):
             program_folder = compiler.generate_program_folder(sdfg,
                                                               program_objects,
                                                               build_folder,
-                                                              folder_version=folder_version)
+                                                              folder_mode=folder_mode)
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
@@ -2570,7 +2642,7 @@ class SDFG(ControlFlowRegion):
             sdfg = self
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_version=folder_version)
+        shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_mode=folder_mode)
 
         # If provided, save output to path or filename
         if output_file is not None:

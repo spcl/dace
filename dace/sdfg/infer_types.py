@@ -146,6 +146,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
     ``dtypes.DEFAULT_TOPLEVEL_SCHEDULE``.
     May raise ``InvalidSDFGNodeError`` if a default scope is ambiguous based on surrounding
     storage types.
+
     :param scope: The SDFG, state, or scope to infer.
     :param parent_schedules: A list of ScheduleType elements representing
                              an ordered list of schedules, from the global schedule
