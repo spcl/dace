@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
@@ -963,6 +963,285 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
         sdfg.remove_node(temp_exit_state)
 
 
+def _make_border_memlets(connectors, as_lists: bool = False):
+    """
+    Create the connector map used while aggregating nested border memlets.
+
+    The returned structure mirrors the nested-SDFG connector layout,
+    containing separate input and output connector dictionaries.
+
+    :param connectors: A mapping with ``in`` and ``out`` entries whose
+                       values are the connector collections to initialize.
+    :param as_lists: If True, initializes each connector entry with an empty
+                     list of candidate memlets. Otherwise, initializes each
+                     entry with ``None`` for incremental merged results.
+    :return: A dictionary of the form ``{'in': {...}, 'out': {...}}`` with
+             initialized connector entries.
+    """
+    border_memlets = {
+        'in': {},
+        'out': {},
+    }
+    for direction in border_memlets:
+        for connector in connectors[direction]:
+            border_memlets[direction][connector] = [] if as_lists else None
+    return border_memlets
+
+
+def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) -> None:
+    """
+    Collect state-local memlets attached to nested border (i.e., not internal) access nodes.
+
+    For nested SDFG inputs this inspects outgoing edges of the corresponding
+    access node, while for outputs it inspects incoming edges. The collected
+    memlets are left unpropagated so that the caller can later apply the
+    appropriate control-flow semantics.
+
+    :param state: The state whose access-node edges should be inspected.
+    :param border_memlets: A candidate memlet mapping, typically created with
+                           ``_make_border_memlets(..., as_lists=True)``, which
+                           is updated in place.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
+    for node in state.data_nodes():
+        for direction in border_memlets:
+            if node.label not in border_memlets[direction]:
+                continue
+
+            edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
+            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+
+
+def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
+    """
+    Append propagated child-region memlets to a candidate memlet map.
+
+    :param border_memlets: The candidate memlet mapping to append to. Each
+                           connector entry is expected to hold a list.
+    :param propagated_memlets: A propagated connector mapping whose non-None
+                               memlets should be appended as candidates.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
+    for direction in border_memlets:
+        for connector in border_memlets[direction]:
+            memlet = propagated_memlets[direction][connector]
+            if memlet is not None:
+                border_memlets[direction][connector].append(memlet)
+
+
+def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    """
+    Merge two border memlets using union aggregation semantics.
+
+    This merge rule sums volumes, unions subsets, and preserves dynamic
+    unbounded behavior. It is the default aggregation mode for states and
+    control-flow regions where all collected contributions conservatively count
+    toward the same border memlet.
+
+    :param existing: The accumulated border memlet so far, or None if no
+                     memlet has been accumulated yet.
+    :param incoming: The newly propagated memlet to merge into the result.
+    :param array: The array descriptor used to fall back to a full-array subset
+                  when subset unioning cannot preserve a more precise result.
+    :return: The merged memlet.
+    """
+    if incoming is None:
+        return existing
+    if existing is None:
+        return copy.deepcopy(incoming)
+
+    result = copy.deepcopy(existing)
+
+    if incoming.wcr is not None:
+        if result.wcr is not None and result.wcr != incoming.wcr:
+            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+        result.wcr = incoming.wcr
+
+    if result.dynamic and result.volume == 0:
+        pass
+    elif incoming.dynamic and incoming.volume == 0:
+        result.dynamic = True
+        result.volume = 0
+    else:
+        result.volume = simplify(result.volume + incoming.volume)
+        result.dynamic = (result.dynamic or incoming.dynamic)
+
+    if incoming.subset is not None:
+        if result.subset is not None:
+            if result.subset.dims() != incoming.subset.dims():
+                raise ValueError('Cannot merge subset ranges of unequal dimension!')
+            result.subset = subsets.union(result.subset, incoming.subset)
+            if result.subset is None:
+                result.subset = subsets.Range.from_array(array)
+        else:
+            result.subset = copy.deepcopy(incoming.subset)
+
+    return result
+
+
+def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+    """
+    Merge two border memlets using upper-bound conditional semantics.
+
+    Conditional regions may execute only one branch per traversal. Their
+    propagated subset is therefore the union of all branch subsets, while the
+    propagated volume is the maximum branch volume instead of the sum.
+
+    :param existing: The accumulated border memlet so far, or None if no
+                     memlet has been accumulated yet.
+    :param incoming: The newly propagated branch memlet to merge into the
+                     result.
+    :param array: The array descriptor used to fall back to a full-array subset
+                  when subset unioning cannot preserve a more precise result.
+    :return: The merged memlet that conservatively upper-bounds the branches.
+    """
+    if incoming is None:
+        return existing
+    if existing is None:
+        return copy.deepcopy(incoming)
+
+    result = copy.deepcopy(existing)
+
+    if incoming.wcr is not None:
+        if result.wcr is not None and result.wcr != incoming.wcr:
+            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+        result.wcr = incoming.wcr
+
+    if result.dynamic and result.volume == 0:
+        pass
+    elif incoming.dynamic and incoming.volume == 0:
+        result.dynamic = True
+        result.volume = 0
+    else:
+        result.volume = simplify(sympy.Max(result.volume, incoming.volume))
+        result.dynamic = (result.dynamic or incoming.dynamic)
+
+    if incoming.subset is not None:
+        if result.subset is not None:
+            if result.subset.dims() != incoming.subset.dims():
+                raise ValueError('Cannot merge subset ranges of unequal dimension!')
+            result.subset = subsets.union(result.subset, incoming.subset)
+            if result.subset is None:
+                result.subset = subsets.Range.from_array(array)
+        else:
+            result.subset = copy.deepcopy(incoming.subset)
+
+    return result
+
+
+def _propagate_border_memlet_candidates(candidates,
+                                        arrays,
+                                        direction: str,
+                                        connector: str,
+                                        params=None,
+                                        rng=None,
+                                        scale_by_range: bool = False) -> Memlet:
+    """
+    Propagate candidate memlets through a symbolic iteration range.
+
+    The helper collects all candidate memlets for a single connector, applies
+    subset propagation through the supplied symbolic range, and optionally keeps
+    or removes the usual range-size volume scaling.
+
+    :param candidates: A candidate memlet mapping whose connector entries hold
+                       lists of memlets.
+    :param arrays: The array descriptor mapping of the containing SDFG.
+    :param direction: Either ``in`` or ``out``, indicating which connector
+                      direction should be propagated.
+    :param connector: The connector name whose candidate memlets should be
+                      propagated.
+    :param params: Optional iteration variable names for the propagation range.
+                   If omitted together with ``rng``, a dummy singleton range is
+                   used.
+    :param rng: Optional symbolic iteration range to propagate through.
+    :param scale_by_range: If True, preserves the default ``propagate_subset``
+                           volume scaling by the size of ``rng``. If False,
+                           keeps only the sum of the candidate memlet volumes.
+    :return: The propagated memlet for the connector, or ``None`` if no candidate
+             memlets exist.
+    """
+    memlets = candidates[direction][connector]
+    if len(memlets) == 0:
+        return None
+
+    if params is None or rng is None:
+        params = ['__dace_dummy']
+        rng = subsets.Range([(0, 0, 1)])
+
+    array_name = next((memlet.data for memlet in memlets if memlet.data is not None), connector)
+    array = arrays[array_name]
+    propagated = propagate_subset(memlets, array, params, rng, use_dst=(direction == 'out'))
+
+    if any(memlet.dynamic and memlet.volume == 0 for memlet in memlets):
+        propagated.dynamic = True
+        propagated.volume = 0
+    elif not scale_by_range:
+        propagated.volume = simplify(sum(memlet.volume for memlet in memlets))
+        propagated.dynamic = any(memlet.dynamic for memlet in memlets)
+
+    propagated.other_subset = None
+    return propagated
+
+
+def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) -> None:
+    """
+    Propagate all connector-adjacent memlets contributed by one state.
+
+    State-local subsets are propagated through the state's symbolic ranges, and
+    the resulting memlets are then scaled according to the state's execution
+    metadata before being merged into the nested-SDFG border memlets.
+
+    :param state: The state whose connector-adjacent memlets should be
+                  propagated.
+    :param border_memlets: The accumulated border memlet mapping to update.
+    :param arrays: The array descriptor mapping used for propagation and merge
+                   fallback behavior.
+    :note: The ``border_memlets`` mapping is updated in-place.
+    """
+    candidates = _make_border_memlets(border_memlets, as_lists=True)
+    _collect_state_border_memlet_candidates(state, candidates)
+
+    params = []
+    ranges = []
+    for symbol in state.ranges:
+        params.append(symbol)
+        ranges.append(state.ranges[symbol][0])
+
+    if len(params) == 0 or len(ranges) == 0:
+        params = None
+        rng = None
+    else:
+        rng = subsets.Range(ranges)
+
+    for direction in border_memlets:
+        for connector in border_memlets[direction]:
+            propagated = _propagate_border_memlet_candidates(
+                candidates,
+                arrays,
+                direction,
+                connector,
+                params=params,
+                rng=rng,
+                scale_by_range=False,
+            )
+            if propagated is None:
+                continue
+
+            if propagated.dynamic and propagated.volume == 0:
+                pass
+            elif state.dynamic_executions and state.executions == 0:
+                propagated.dynamic = True
+                propagated.volume = 0
+            else:
+                propagated.volume = simplify(
+                    sum(memlet.volume for memlet in candidates[direction][connector]) * state.executions)
+                propagated.dynamic = propagated.dynamic or state.dynamic_executions
+
+            array_name = propagated.data if propagated.data is not None else connector
+            border_memlets[direction][connector] = _merge_border_memlet(border_memlets[direction][connector],
+                                                                        propagated, arrays[array_name])
+
+
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
     """
     Propagate memlets out of a nested sdfg.
@@ -974,109 +1253,27 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     """
     # We import late to avoid cyclic imports here.
     from dace.transformation.helpers import unsqueeze_memlet
+    from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
     # get propagated in the SDFG.
-    border_memlets = {
-        'in': {},
-        'out': {},
-    }
-    for connector in nsdfg_node.in_connectors:
-        border_memlets['in'][connector] = None
-    for connector in nsdfg_node.out_connectors:
-        border_memlets['out'][connector] = None
+    border_memlets = _make_border_memlets({
+        'in': nsdfg_node.in_connectors,
+        'out': nsdfg_node.out_connectors,
+    })
 
     sdfg = nsdfg_node.sdfg
     outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
 
-    # For each state, go through all access nodes corresponding to any in- or
-    # out-connectors to and from this SDFG. Given those access nodes, collect
-    # the corresponding memlets and use them to calculate the memlet volume and
-    # subset corresponding to the outside memlet attached to that connector.
-    # This is passed out via `border_memlets` and propagated along from there.
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            for direction in border_memlets:
-                if (node.label not in border_memlets[direction]):
-                    continue
-
-                memlet = border_memlets[direction][node.label]
-
-                # Collect the edges to/from this access node, depending on the
-                # direction the connector leads in.
-                edges = []
-                if direction == 'in':
-                    edges = state.out_edges(node)
-                elif direction == 'out':
-                    edges = state.in_edges(node)
-
-                # Collect all memlets belonging to this access node, and
-                # accumulate the total volume between them.
-                memlets = []
-                for edge in edges:
-                    inside_memlet = edge.data
-                    memlets.append(inside_memlet)
-
-                    if memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        memlet = Memlet(data=inside_memlet.data, volume=0)
-                        memlet._is_data_src = True
-                        border_memlets[direction][node.label] = memlet
-
-                    if inside_memlet.wcr is not None:
-                        if (memlet.wcr is not None and memlet.wcr != inside_memlet.wcr):
-                            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
-                        memlet.wcr = inside_memlet.wcr
-
-                    if memlet.dynamic and memlet.volume == 0:
-                        # Dynamic unbounded - this won't change.
-                        continue
-                    elif ((inside_memlet.dynamic and inside_memlet.volume == 0)
-                          or (state.dynamic_executions and state.executions == 0)):
-                        # At least one dynamic unbounded memlet means the sum
-                        # must be dynamic unbounded.
-                        memlet.dynamic = True
-                        memlet.volume = 0
-                    else:
-                        memlet.volume += (inside_memlet.volume * state.executions)
-                        memlet.dynamic = (memlet.dynamic or inside_memlet.dynamic or state.dynamic_executions)
-
-                # Given all of this access nodes' memlets, propagate the subset
-                # according to the state's variable ranges.
-                if len(memlets) > 0:
-                    params = []
-                    ranges = []
-                    for symbol in state.ranges:
-                        params.append(symbol)
-                        ranges.append(state.ranges[symbol][0])
-
-                    if len(params) == 0 or len(ranges) == 0:
-                        params = ['__dace_dummy']
-                        ranges = [(0, 0, 1)]
-
-                    # Propagate the subset based on the direction this memlet is
-                    # pointing. If we're accessing from an incoming connector,
-                    # propagate the source subset, if we're going to an outgoing
-                    # connector, propagate the destination subset.
-                    use_dst = False
-                    if direction == 'out':
-                        use_dst = True
-                    array = sdfg.arrays[node.label]
-                    subset = propagate_subset(memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
-
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if memlet.subset is not None:
-                        if memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                        else:
-                            memlet.subset = subsets.union(memlet.subset, subset)
-                            if memlet.subset is None:
-                                memlet.subset = subsets.Range.from_array(array)
-                    else:
-                        memlet.subset = subset
+    # Collect contributions from top-level CFG blocks. Plain states contribute
+    # directly, while control-flow regions aggregate their child blocks via
+    # their own propagate_memlets implementations.
+    for block in sdfg.nodes():
+        if isinstance(block, SDFGState):
+            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
+        elif isinstance(block, AbstractControlFlowRegion):
+            block.propagate_memlets(border_memlets)
 
     # Make sure any potential NSDFG symbol mapping is correctly reversed
     # when propagating out.
@@ -1427,7 +1624,12 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
+        return propagate_subset(aggdata,
+                                arr,
+                                mapnode.params,
+                                mapnode.range,
+                                defined_variables=defined_vars,
+                                use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1446,7 +1648,9 @@ def propagate_subset(memlets: List[Memlet],
                      arr: data.Data,
                      params: List[str],
                      rng: subsets.Subset,
+                     *,
                      defined_variables: Set[symbolic.SymbolicType] = None,
+                     undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the
         image of the memlet function applied on an integer set of, e.g., a
@@ -1459,8 +1663,12 @@ def propagate_subset(memlets: List[Memlet],
                     range to propagate with.
         :param defined_variables: A set of symbols defined that will remain the
                                   same throughout propagation. If None, assumes
-                                  that all symbols outside of `params` have been
-                                  defined.
+                                  that all symbols outside of ``params``, except
+                                  for ``undefined_variables``, have been defined.
+        :param undefined_variables: A set of symbols that are explicitly considered
+                                    as not defined throughout propagation, such as
+                                    locals. Their existence will trigger propagating
+                                    the entire memlet.
         :param use_dst: Whether to propagate the memlets' dst subset or use the
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
@@ -1474,6 +1682,13 @@ def propagate_subset(memlets: List[Memlet],
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
         defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+    else:
+        defined_variables = set(defined_variables)
+
+    if undefined_variables is not None:
+        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
+    else:
+        undefined_variables = set()
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1504,18 +1719,33 @@ def propagate_subset(memlets: List[Memlet],
                 tmp_subset = pattern.propagate(arr, [subset], rng)
                 break
         else:
-            # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
+            # No patterns found. Propagate the entire array whenever symbols are used.
             if Config.get_bool('debugprint'):
                 print(f'Cannot find appropriate memlet pattern to propagate {subset} through {rng}')
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
+            # free symbols list of the subset dimension or is undefined outside.
+            tmp_subset_rng = []
+            for s, ea in zip(subset, entire_array):
+                if isinstance(subset, subsets.Indices):
+                    fsyms = _freesyms(s)
+                    fsyms_str = set(map(str, fsyms))
+                    contains_params = len(fsyms_str & paramset) != 0
+                    contains_undefs = len(fsyms & undefined_variables) != 0
+                else:
+                    contains_params = False
+                    contains_undefs = False
+                    for sdim in s:
+                        fsyms = _freesyms(sdim)
+                        fsyms_str = set(map(str, fsyms))
+                        contains_params |= len(fsyms_str & paramset) != 0
+                        contains_undefs |= len(fsyms & undefined_variables) != 0
+                if contains_params or contains_undefs:
+                    tmp_subset_rng.append(ea)
+                else:
+                    tmp_subset_rng.append(s)
+            tmp_subset = subsets.Range(tmp_subset_rng)
 
         # Union edges as necessary
         if new_subset is None:

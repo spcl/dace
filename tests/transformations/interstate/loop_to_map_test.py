@@ -303,7 +303,7 @@ def test_need_for_tasklet():
     aname, _ = sdfg.add_array('A', (10, ), dace.int32)
     bname, _ = sdfg.add_array('B', (10, ), dace.int32)
     body = sdfg.add_state('body')
-    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    _, _, _ = sdfg.add_loop_state_machine(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='i', other_subset='9 - i'))
@@ -325,7 +325,7 @@ def test_need_for_transient():
     aname, _ = sdfg.add_array('A', (10, 10), dace.int32)
     bname, _ = sdfg.add_array('B', (10, 10), dace.int32)
     body = sdfg.add_state('body')
-    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    _, _, _ = sdfg.add_loop_state_machine(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='0:10, i', other_subset='0:10, 9 - i'))
@@ -390,7 +390,7 @@ def test_symbol_write_before_read():
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
-    sdfg.add_loop(init, body_start, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     # Internal loop structure
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
@@ -410,7 +410,7 @@ def test_symbol_array_mix(overwrite):
     body = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
 
@@ -438,7 +438,7 @@ def test_symbol_array_mix_2(parallel):
     body_start = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
 
@@ -463,7 +463,7 @@ def test_internal_symbol_used_outside(overwrite):
     body = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
-    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+    sdfg.add_loop_state_machine(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
 
     # Internal loop structure
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))

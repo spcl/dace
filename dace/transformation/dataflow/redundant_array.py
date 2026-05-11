@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Tuple, Sequence
+from typing import Dict, List, Optional, Tuple, Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -122,35 +122,42 @@ def find_dims_to_pop(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
 ) -> List[int]:
-    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
-    Essentially the function determines which dimensions from the subset `A` have to be removed
-    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
     an empty list is returned.
     It is important that this function does not operates on the actual subsets but on their
     sizes.
 
     Returns:
-        The function will return the list of dimensions that have to be removed in subset `A`
-        to bring it to the same dimensionality as subset `B`.
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``.
 
     Note:
         This function is wrong. However, every attempt of fixing it resulted in breaking other
         things in strange ways. The only solution would be to redo all transformations.
-        For example, let's consider the following cases:
-        - `a_size := [3, 3], b_size := [9]` in this case the function will return `[0, 1]`, which
-            might be correct in some cases but not in other, depending on the strides of `A`
+        For example, consider the following cases:
+
+        - ``a_size := [3, 3], b_size := [9]`` in this case the function will return ``[0, 1]``, which
+            might be correct in some cases but not in other, depending on the strides of ``A``
         - While the example above can make sense the following example,
-            `a_size := [4, 4], b_size := [9]` which also results in `[0, 1]` does not make sense
+            ``a_size := [4, 4], b_size := [9]`` which also results in ``[0, 1]`` does not make sense
             and is clearly wrong.
-        - If a size is listed multiple times, for example `a_size := [1, 1, 5], b := [1, 5]` then
-            the function will return `[]` although it should return `[0]` or `[1]`.
+        - If a size is listed multiple times, for example ``a_size := [1, 1, 5], b := [1, 5]`` then
+            the function will return ``[]`` although it should return ``[0]`` or ``[1]``.
         - Furthermore, if not all dimensions could be matched then some unspecific value is
-            returned, for example `a_size := [1, 3, 5], b_size := [1, 8]` will return `[1, 2]`.
+            returned, for example ``a_size := [1, 3, 5], b_size := [1, 8]`` will return ``[1, 2]``.
             Note that this in particular is not a real case scenario as it is clearly an error
             in the subsets.
 
-        There is an improved version, `find_dims_to_pop2()` which has a better behaviour.
+        There is an improved version, ``find_dims_to_pop2()`` which has a better behaviour.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``.
     """
     dims_to_pop = []
     for i, sz in enumerate(reversed(a_size)):
@@ -162,30 +169,38 @@ def find_dims_to_pop(
 def find_dims_to_pop2(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
-) -> List[int]:
-    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+) -> Optional[List[int]]:
+    """
+    Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
-    Essentially the function determines which dimensions from the subset `A` have to be removed
-    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    Essentially the function determines which dimensions from the subset ``A`` have to be removed
+    to get down to the dimensionality of subset ``B``. In case they have the same dimensionality
     an empty list is returned. A base assumption is the function is that a View is not used to
     modify the relative order of dimensions, i.e. only dummy dimensions are inserted at certain
     locations.
     It is important that this function does not operates on the actual subsets but on their
     sizes.
 
-    This is an improved version of `find_dims_to_pop()`.
+    This is an improved version of ``find_dims_to_pop()``.
 
     Returns:
-        The function will return the list of dimensions that have to be removed in subset `A`
-        to bring it to the same dimensionality as subset `B`. In case the function failed to
-        associate all `B` dimensions to a corresponding `A` dimension the function returns
+        The function will return the list of dimensions that have to be removed in subset ``A``
+        to bring it to the same dimensionality as subset ``B``. In case the function failed to
+        associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
         `None`.
 
     Note:
-        This function behaves differently than `find_dims_to_pop()` in some cases. In most cases
+        This function behaves differently than ``find_dims_to_pop()`` in some cases. In most cases
         the function ensures that a matching has been found. Keep in mind that the function
         assumes that the relative ordering of dimensions is the same on the source and the
         destination.
+
+    :param a_size: The size of the first subset.
+    :param b_size: The size of the second subset.
+    :return: The function will return the list of dimensions that have to be removed in subset ``A``
+             to bring it to the same dimensionality as subset ``B``. In case the function failed to
+             associate all ``B`` dimensions to a corresponding ``A`` dimension the function returns
+             ``None``.
     """
     if len(a_size) < len(b_size):
         raise ValueError(

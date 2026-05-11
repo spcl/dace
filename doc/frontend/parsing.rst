@@ -168,9 +168,9 @@ Example:
     :align: center
     :alt: Generated SDFG for-loop for the above Data-Centric Python program
 
-If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize
-:class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
+
+If the :class:`~dace.frontend.python.parser.DaceProgram` :attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize
+:class:`~dace.sdfg.state.LoopRegion` s instead of the explicit state machine depicted above.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -190,9 +190,7 @@ Parses `while <https://docs.python.org/3/library/ast.html#ast.While>`_ statement
     :align: center
     :alt: Generated SDFG while-loop for the above Data-Centric Python program
 
-If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize
-:class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
+If the :class:`~dace.frontend.python.parser.DaceProgram` :attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize :class:`~dace.sdfg.state.LoopRegion` s instead of the explicit state machine depicted above.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Break`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
