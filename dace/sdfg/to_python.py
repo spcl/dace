@@ -1627,3 +1627,47 @@ def _values_equal(a, b) -> bool:
         return a == b
     except Exception:
         return False
+
+
+# ----------------------------------------------------------------------
+# CLI entry point — ``python -m dace.sdfg.to_python <sdfg> [-o out.py]``
+# ----------------------------------------------------------------------
+
+
+def _main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m dace.sdfg.to_python",
+        description=(
+            "Emit a Python source file that reconstructs the given SDFG via "
+            "DaCe's imperative public API. The emitted file defines "
+            "``build_sdfg()`` and validates the rebuilt SDFG when run."
+        ),
+    )
+    parser.add_argument(
+        "sdfg_path",
+        help="Path to a .sdfg / .sdfgz file (DaCe's serialized SDFG format)",
+    )
+    parser.add_argument(
+        "-o", "--output",
+        help="Output Python file path (default: write to stdout)",
+    )
+    args = parser.parse_args()
+
+    sdfg = SDFG.from_file(args.sdfg_path)
+    source = sdfg_to_python(sdfg)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(source)
+        print(
+            f"Wrote {len(source.splitlines())} lines to {args.output}",
+            file=sys.stderr,
+        )
+    else:
+        sys.stdout.write(source)
+
+
+if __name__ == "__main__":
+    _main()
