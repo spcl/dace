@@ -59,6 +59,11 @@ class PythonEmitter:
         ")",
     )
 
+    # Minimum number of occurrences required before a helper is emitted.
+    # Below this, the pattern is left as a literal API call to keep the
+    # learning cost down for small SDFGs.
+    HELPER_THRESHOLD = 5
+
     def __init__(self, sdfg: SDFG):
         self.root = sdfg
         self._nested_factories: List[List[str]] = []
@@ -68,6 +73,9 @@ class PythonEmitter:
         self._taken_names: set = set()
         self._populator_counter: int = 0
         self._extra_imports: Dict[str, None] = {}
+        # Scan the SDFG up front and decide which compact helpers earn
+        # their keep. See _scan_helper_eligibility.
+        self._helpers_used: set = self._scan_helper_eligibility()
 
     def emit(self) -> str:
         body = self._emit_factory("build_sdfg", self.root)
@@ -79,6 +87,19 @@ class PythonEmitter:
             lines.append(extra)
         lines.append("")
         lines.append("")
+        # Compact helper kit — emitted only for patterns that recur often
+        # enough in this SDFG to earn their slot in the file. The set is
+        # decided up-front by ``_scan_helper_eligibility``.
+        if self._helpers_used:
+            lines.append("# === Compact helpers ===")
+            lines.append(
+                "# Stamped shortcuts for the most repetitive patterns in this SDFG."
+            )
+            for helper in _HELPER_ORDER:
+                if helper in self._helpers_used:
+                    lines.extend(_HELPER_DEFS[helper])
+                    lines.append("")
+            lines.append("")
         # Per-state populator helpers come first so the larger SDFG
         # factories below can reference them by name.
         for populator in self._state_populators:
@@ -96,6 +117,34 @@ class PythonEmitter:
         lines.append("    build_sdfg().validate()")
         lines.append("")
         return "\n".join(lines)
+
+    def _render_memlet(self, memlet) -> str:
+        """Memlet emission with optional helper-kit substitution.
+
+        When the ``scalar_memlet`` helper is enabled (used >= threshold), a
+        ``Memlet(data='X', subset='0')`` collapses to ``_S('X')``.
+        """
+        if "scalar_memlet" in self._helpers_used and _is_scalar_memlet(memlet):
+            return f"_S({_pyrepr(memlet.data)})"
+        return _emit_memlet(memlet)
+
+    def _scan_helper_eligibility(self) -> set:
+        """Walk the SDFG once and count how often each compact-helper pattern
+        appears. Helpers whose count clears ``HELPER_THRESHOLD`` are switched
+        on for the emit pass; the rest stay as literal API calls.
+        """
+        counts: Dict[str, int] = collections.Counter()
+        for sub_sdfg in self.root.all_sdfgs_recursive():
+            for state in sub_sdfg.all_states():
+                for node in state.nodes():
+                    if isinstance(node, nd.Tasklet):
+                        kind = _classify_tasklet(node)
+                        if kind is not None:
+                            counts[kind[0] + "_tasklet"] += 1
+                for edge in state.edges():
+                    if _is_scalar_memlet(edge.data):
+                        counts["scalar_memlet"] += 1
+        return {name for name, n in counts.items() if n >= self.HELPER_THRESHOLD}
 
     def _module_docstring(self) -> str:
         sdfg = self.root
@@ -641,7 +690,7 @@ class PythonEmitter:
             dst_conn = _pyrepr(edge.dst_conn) if edge.dst_conn is not None else "None"
             body.line(
                 f"state.add_edge({src_var}, {src_conn}, {dst_var}, "
-                f"{dst_conn}, {_emit_memlet(edge.data)})"
+                f"{dst_conn}, {self._render_memlet(edge.data)})"
             )
 
         self._var_for = outer_var_for
@@ -758,6 +807,26 @@ class PythonEmitter:
             return
 
         if isinstance(node, nd.Tasklet):
+            # Try the compact helper kit first — saves ~60% of the per-line
+            # noise on common stamped tasklets (binary ops, const assignments).
+            kind = _classify_tasklet(node)
+            if kind is not None:
+                helper_name = kind[0] + "_tasklet"
+                if helper_name in self._helpers_used:
+                    var = self._fresh(f"t_{_sanitize(node.label)}")
+                    if kind[0] == "const":
+                        buf.line(
+                            f"{var} = _const_tasklet({state_var}, "
+                            f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})"
+                        )
+                    else:  # binop
+                        buf.line(
+                            f"{var} = _binop_tasklet({state_var}, "
+                            f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})"
+                        )
+                    self._var_for[id(node)] = var
+                    return
+
             var = self._fresh(f"t_{_sanitize(node.label)}")
             args = [
                 _pyrepr(node.label),
@@ -1310,6 +1379,114 @@ def _emit_subset(subset) -> str:
     if subset is None:
         return "None"
     return _pyrepr(str(subset))
+
+
+# ----------------------------------------------------------------------
+# Compact helper kit: pattern recognition + helper definitions
+#
+# These detect the most common stamped patterns in DaCe codegen output
+# (binary-op tasklets, constant-assign tasklets, scalar memlets) so the
+# emitter can collapse them to short helper calls. Definitions of the
+# helpers themselves are emitted at the top of the generated file when
+# their pattern is used often enough.
+# ----------------------------------------------------------------------
+
+_BINOP_TASKLET_RE = re.compile(r'^__out = \(__in1 ([+\-*/%]) __in2\)$')
+_CONST_TASKLET_RE = re.compile(r'^__out = (.+)$')
+
+
+def _is_plain_tasklet(node) -> bool:
+    """True if a Tasklet has no extra-code / language overrides — i.e. it's
+    safe to compress with the helper kit."""
+    if node.code.language is not dtypes.Language.Python:
+        return False
+    if node.code_global and node.code_global.as_string:
+        return False
+    if node.code_init and node.code_init.as_string:
+        return False
+    if node.code_exit and node.code_exit.as_string:
+        return False
+    if node.side_effects is not None:
+        return False
+    if node.state_fields:
+        return False
+    return True
+
+
+def _classify_tasklet(node):
+    """Return a ``(kind, payload)`` tuple if ``node`` matches a stamped pattern
+    the helper kit can express, else ``None``.
+
+    * ``('const', expr)`` — no inputs, ``__out`` only, body ``__out = <expr>``
+      with no ``__in*`` references on the right.
+    * ``('binop', op)`` — ``__in1``/``__in2`` inputs, ``__out`` only, body
+      ``__out = (__in1 OP __in2)``.
+    """
+    if not _is_plain_tasklet(node):
+        return None
+    if not all(_is_void_dtype(v) for v in node.in_connectors.values()):
+        return None
+    if not all(_is_void_dtype(v) for v in node.out_connectors.values()):
+        return None
+
+    in_set = set(node.in_connectors.keys())
+    out_set = set(node.out_connectors.keys())
+    code = node.code.as_string.strip()
+
+    if not in_set and out_set == {"__out"}:
+        m = _CONST_TASKLET_RE.match(code)
+        if m and "__in" not in m.group(1):
+            return ("const", m.group(1))
+
+    if in_set == {"__in1", "__in2"} and out_set == {"__out"}:
+        m = _BINOP_TASKLET_RE.match(code)
+        if m:
+            return ("binop", m.group(1))
+
+    return None
+
+
+def _is_scalar_memlet(memlet) -> bool:
+    """True for ``Memlet(data='X', subset='0')`` with no other adornments —
+    the most common stamped memlet shape in real SDFGs."""
+    if memlet is None or memlet.is_empty():
+        return False
+    if memlet.data is None or memlet.subset is None:
+        return False
+    if memlet.other_subset is not None:
+        return False
+    if memlet.dynamic or memlet.wcr is not None:
+        return False
+    if memlet.wcr_nonatomic or memlet.allow_oob:
+        return False
+    return str(memlet.subset) == "0"
+
+
+# Emitted at the top of the generated file when the corresponding pattern
+# clears the helper-threshold. Order matches a logical reading order
+# (memlet shorthand first, then tasklet shortcuts).
+_HELPER_ORDER = ("scalar_memlet", "const_tasklet", "binop_tasklet")
+
+_HELPER_DEFS: Dict[str, List[str]] = {
+    "scalar_memlet": [
+        "def _S(data):",
+        "    \"\"\"Scalar memlet: ``Memlet(data=data, subset='0')``.\"\"\"",
+        "    return Memlet(data=data, subset='0')",
+    ],
+    "const_tasklet": [
+        "def _const_tasklet(state, name, expr):",
+        "    \"\"\"Tasklet with no inputs and ``__out = <expr>`` as its body.\"\"\"",
+        "    return state.add_tasklet(name, {}, {'__out'}, f'__out = {expr}')",
+    ],
+    "binop_tasklet": [
+        "def _binop_tasklet(state, name, op):",
+        "    \"\"\"Tasklet with two inputs and ``__out = (__in1 OP __in2)`` as its body.\"\"\"",
+        "    return state.add_tasklet(",
+        "        name, {'__in1', '__in2'}, {'__out'},",
+        "        f'__out = (__in1 {op} __in2)',",
+        "    )",
+    ],
+}
 
 
 def _emit_memlet(memlet) -> str:
