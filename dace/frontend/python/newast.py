@@ -2716,6 +2716,15 @@ class ProgramVisitor(ExtNodeVisitor):
         self.cfg_target.add_node(cond_block, ensure_unique_name=True)
         self._on_block_added(cond_block)
 
+        # Snapshot the per-element access map before either arm runs. Each
+        # branch must resolve reads of ``arr[idx]`` against the pre-if
+        # access nodes, otherwise an elif/else arm's read of an element
+        # that the if-arm has just written resolves to the if-arm's
+        # write-side access node, which is structurally invalid because
+        # the two arms live in different states inside different branch
+        # CFRs and only one of them actually runs at a time.
+        accesses_pre_if = dict(self.accesses)
+
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
         cond_block.add_branch(CodeBlock(cond), if_body)
 
@@ -2724,6 +2733,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
+            # Restore the pre-if access map so the else/elif arm sees the
+            # same element-read access nodes the if-arm started from. For
+            # chained ``elif``s, ``node.orelse`` is itself an ``ast.If``,
+            # which will recursively apply the same snapshot and restore.
+            self.accesses = dict(accesses_pre_if)
             else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
             cond_block.add_branch(None, else_body)
             # Visit recursively
