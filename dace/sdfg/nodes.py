@@ -1039,6 +1039,11 @@ class Map(object):
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    gpu_min_warps_per_eu = Property(dtype=int,
+                                    default=0,
+                                    desc="Minimum number of warps per execution unit for GPU kernel",
+                                    serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     gpu_maxnreg = Property(dtype=int,
                            default=0,
                            desc="Maximum number of registers per thread for GPU kernel",
