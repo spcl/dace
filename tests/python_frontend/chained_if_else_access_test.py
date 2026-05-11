@@ -64,9 +64,8 @@ def test_chained_if_else_read_edges_route_to_read_side_access_nodes():
             # access node, never a write-side one.
             if e.dst_conn == "__in1" and src_data.endswith("_w"):
                 misrouted.append((state_label, src_data))
-    assert not misrouted, (
-        f"elif/else arms read a[i] from a write-side access node "
-        f"(should be read-side): {misrouted}")
+    assert not misrouted, (f"elif/else arms read a[i] from a write-side access node "
+                           f"(should be read-side): {misrouted}")
 
 
 def test_chained_if_else_numerical_matches_python_reference():
