@@ -672,9 +672,9 @@ namespace dace
             return std::log2(a);
         }
         template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T fmod(const T& a)
+        DACE_CONSTEXPR DACE_HDFI T fmod(const T& a, const T& b)
         {
-            return std::fmod(a);
+            return std::fmod(a, b);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T lgamma(const T& a)
