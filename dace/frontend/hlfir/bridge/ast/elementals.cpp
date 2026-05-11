@@ -562,6 +562,106 @@ materialiseElementalToTransient(hlfir::ElementalOp elem,
     return {std::move(trName), std::move(nodes)};
 }
 
+/// Materialise an ``hlfir.elemental`` into a synthetic transient with
+/// the elemental's element dtype (NOT the int32 forced by
+/// ``materialiseElementalToTransient``).  Used by the
+/// libcall-over-elemental path (transpose / matmul / dot_product /
+/// etc. fed an inline elemental expression like
+/// ``transpose(1.0 - d)``): the bridge can't pass an unnamed
+/// ``hlfir.expr<...>`` to ``emit_library`` (which keys the source
+/// array on its SDFG name), so we stage the elemental into a transient
+/// the libcall reads from.
+///
+/// Returns ``{transient_name, AST_nodes}``.  ``AST_nodes`` is empty on
+/// any failure (caller should fall back to the original libcall and
+/// let downstream surface the error).
+std::pair<std::string, std::vector<ASTNode>>
+materialiseElementalForLibcall(hlfir::ElementalOp elem) {
+    auto &region = elem.getRegion();
+    if (region.empty()) return {{}, {}};
+    auto &block = region.front();
+    unsigned rank = block.getNumArguments();
+    auto shape = elem.getShape();
+    if (!shape) return {{}, {}};
+
+    std::string trName = "_libsrc_"
+                       + std::to_string(kSynthTransientCounter++);
+    std::string dtype = exprDtypeString(elem.getType());
+
+    ASTNode decl;
+    decl.kind = "declare_transient";
+    decl.target = trName;
+    decl.expr = dtype;
+    AccessInfo shape_info;
+    shape_info.array_name = trName;
+    for (unsigned i = 0; i < rank; ++i)
+        shape_info.index_exprs.push_back(resolveExtent(shape, i));
+    decl.accesses.push_back(std::move(shape_info));
+
+    std::vector<std::string> iter_names;
+    iter_names.reserve(rank);
+    for (unsigned i = 0; i < rank; ++i)
+        iter_names.push_back("li" + std::to_string(i));
+    unsigned pushed = 0;
+    for (unsigned i = 0; i < rank; ++i) {
+        indexStack().push_back({block.getArgument(i), iter_names[i]});
+        ++pushed;
+    }
+
+    ASTNode inner;
+    inner.kind = "assign";
+    inner.target = trName;
+    inner.target_is_array = true;
+    AccessInfo wa;
+    wa.array_name = trName;
+    wa.is_write = true;
+    for (unsigned i = 0; i < rank; ++i) {
+        wa.index_vars.push_back(iter_names[i]);
+        wa.index_exprs.push_back(iter_names[i]);
+    }
+    inner.accesses.push_back(std::move(wa));
+
+    mlir::Value yielded;
+    for (auto &op : block)
+        if (auto y = mlir::dyn_cast<hlfir::YieldElementOp>(op))
+            { yielded = y.getElementValue(); break; }
+    if (!yielded) {
+        for (unsigned i = 0; i < pushed; ++i) indexStack().pop_back();
+        return {{}, {}};
+    }
+
+    std::string body;
+    {
+        NoSubscriptGuard g;
+        body = buildExpr(yielded, 0);
+    }
+    if (body == "?") {
+        for (unsigned i = 0; i < pushed; ++i) indexStack().pop_back();
+        return {{}, {}};
+    }
+    inner.expr = body;
+    collectReadAccesses(yielded, inner.accesses, 0);
+
+    for (unsigned i = 0; i < pushed; ++i) indexStack().pop_back();
+
+    ASTNode current = inner;
+    for (int i = (int)rank - 1; i >= 0; --i) {
+        ASTNode wrap;
+        wrap.kind = "loop";
+        wrap.loop_iter = iter_names[i];
+        wrap.loop_lower = 1;
+        wrap.loop_bound = resolveExtent(shape, i);
+        wrap.children.push_back(current);
+        current = wrap;
+    }
+
+    std::vector<ASTNode> nodes;
+    nodes.reserve(2);
+    nodes.push_back(std::move(decl));
+    nodes.push_back(std::move(current));
+    return {std::move(trName), std::move(nodes)};
+}
+
 std::vector<ASTNode>
 buildElementalCountLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     auto [trName, nodes] = materialiseElementalToTransient(elem, "_count_mask_");

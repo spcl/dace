@@ -343,6 +343,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
         if (auto assign = mlir::dyn_cast<hlfir::AssignOp>(op)) {
             auto src = assign.getOperand(0);
             auto dst = assign.getOperand(1);
+            { auto *sop = src.getDefiningOp(); FILE *fd = fopen("/tmp/probes/dbg.log", "a"); if (fd) { fprintf(fd, "DEBUG ASSIGN src=%s\n", sop ? sop->getName().getStringRef().str().c_str() : "<null>"); fclose(fd); } }
 
             // Suppress per-element stores into a Flang-synthesised
             // ``.tmp.arrayctor`` heap buffer.  The final
@@ -617,7 +618,46 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                                 }
                             }
                         }
-                        nodes.push_back(buildLibCallNode(assign, sd, e.callee.str()));
+                        // Libcall-over-elemental fix-up.  When a
+                        // libcall operand is an inline ``hlfir.elemental``
+                        // (e.g. ``transpose(1.0 - d)``, or
+                        // ``transpose(d(firstcols(secondcols), :))``
+                        // where the gather chain produces an
+                        // ``hlfir.expr`` rather than a named array),
+                        // the bridge's source-name resolver returns
+                        // empty and the Python emitter fails at
+                        // ``ctx.sdfg.arrays['']``.  Pre-materialise
+                        // each elemental operand into a synthetic
+                        // ``_libsrc_<n>`` transient via a fill loop,
+                        // then patch the libcall's ``call_args`` to
+                        // point at the transient.  Excluded: the
+                        // ``hlfir.count`` path, handled above with
+                        // its own COUNT-specific transient.
+                        std::vector<std::string> elemSubst(sd->getNumOperands());
+                        bool needSubst = false;
+                        for (unsigned i = 0; i < sd->getNumOperands(); ++i) {
+                            auto opnd = sd->getOperand(i);
+                            auto *od = opnd.getDefiningOp();
+                            if (!od) continue;
+                            auto elem = mlir::dyn_cast<hlfir::ElementalOp>(od);
+                            if (!elem) continue;
+                            auto [trName, prelude] =
+                                materialiseElementalForLibcall(elem);
+                            if (trName.empty()) continue;
+                            for (auto &n : prelude)
+                                nodes.push_back(std::move(n));
+                            elemSubst[i] = std::move(trName);
+                            needSubst = true;
+                        }
+                        auto lib = buildLibCallNode(assign, sd, e.callee.str());
+                        if (needSubst) {
+                            for (unsigned i = 0;
+                                 i < elemSubst.size() && i < lib.call_args.size();
+                                 ++i)
+                                if (!elemSubst[i].empty())
+                                    lib.call_args[i] = elemSubst[i];
+                        }
+                        nodes.push_back(std::move(lib));
                         libMatched = true;
                         break;
                     }

@@ -294,6 +294,29 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                             lib.callee = callee;
                             for (auto operand : srcOp->getOperands()) {
                                 auto n = traceToDecl(operand);
+                                if (n.empty()) {
+                                    // Same fix shape as dispatch.cpp's
+                                    // libcall-over-elemental: when the
+                                    // operand is an inline
+                                    // ``hlfir.elemental`` (e.g.
+                                    // ``transpose(<inner gather>)``),
+                                    // ``traceToDecl`` returns "" because
+                                    // the elemental has no backing
+                                    // declare.  Materialise the elemental
+                                    // into a synthetic transient and pass
+                                    // its name as the libcall arg.
+                                    if (auto *od = operand.getDefiningOp())
+                                        if (auto inner_elem =
+                                                mlir::dyn_cast<hlfir::ElementalOp>(od)) {
+                                            auto [trName, mat_nodes] =
+                                                materialiseElementalForLibcall(inner_elem);
+                                            if (!trName.empty()) {
+                                                for (auto &mn : mat_nodes)
+                                                    preNodes.push_back(std::move(mn));
+                                                n = std::move(trName);
+                                            }
+                                        }
+                                }
                                 lib.call_args.push_back(n);
                             }
                             preNodes.push_back(std::move(lib));

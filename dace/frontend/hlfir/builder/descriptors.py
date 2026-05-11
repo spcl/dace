@@ -72,13 +72,23 @@ def add_descriptors(builder, sdfg: SDFG):
                 syms[dim] = f"{v.fortran_name}_d{dim}"
         shape_syms[v.fortran_name] = syms
 
+    # Closed-form extent expressions (``traceExtentExpr`` output for a
+    # dynamic gather-temp first dim, e.g. ``"max((endcol - startcol) +
+    # 1, 0)"``).  Detect by presence of arithmetic operators or
+    # parentheses -- a bare symbol/literal won't contain any of those.
+    def _is_expr(s: str) -> bool:
+        return any(c in s for c in '+-*/()')
+
     # Synthetic symbols for dims that stayed unresolved after passes.
     # Literal-integer dimensions (e.g. the "3" in ``edge_idx(nc, 3)``) stay
-    # as Python ints and do not need a symbol registration.
+    # as Python ints and do not need a symbol registration.  Expression
+    # strings (gather-temp dynamic extents) reference leaf symbols that
+    # are registered separately (via the Pass 2c triplet-bound
+    # promotion) -- skip the registration here.
     known = {v.fortran_name for v in builder.variables}
     for v in builder.arrays.values():
         for s in shape_syms[v.fortran_name]:
-            if s.lstrip('-').isdigit():
+            if s.lstrip('-').isdigit() or _is_expr(s):
                 continue
             if s not in known and s not in sdfg.symbols:
                 sdfg.add_symbol(s, dace.int64)
@@ -86,6 +96,8 @@ def add_descriptors(builder, sdfg: SDFG):
     def _dim(s: str):
         if s.lstrip('-').isdigit():
             return int(s)
+        if _is_expr(s):
+            return dace.symbolic.pystr_to_symbolic(s)
         return dace.symbol(s)
 
     def _fortran_strides(dims):

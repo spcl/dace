@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -215,7 +214,6 @@ end subroutine fun
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("noncontiguous + derived type with cols field not lowered")
 def test_fortran_frontend_noncontiguous_slices_2d_data_refs(tmp_path):
     src = """
 
@@ -325,7 +323,6 @@ end subroutine fun
     assert np.all(d[1, [0, 2, 4]] * 2 == d2)
 
 
-@xfail("nested noncontiguous + transpose ECRAD pattern not lowered")
 def test_fortran_frontend_noncontiguous_nested_ecrad(tmp_path):
     src = """
 

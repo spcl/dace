@@ -94,6 +94,48 @@ def test_linalg_ops_numerical(tmp_path):
     np.testing.assert_allclose(s_sdfg[0], s_ref[0], rtol=1e-12, atol=1e-12)
 
 
+_TRANSPOSE_OF_ELEMENTAL_SRC = """
+subroutine probe(d, res)
+  implicit none
+  double precision, intent(in)    :: d(16, 5)
+  double precision, intent(inout) :: res(5, 16)
+  res = transpose(1.0d0 - d)
+end subroutine probe
+"""
+
+
+def test_transpose_of_elemental(tmp_path):
+    """Regression: ``transpose(<inline elementwise expr>)`` — the
+    transpose's operand is an ``hlfir.expr`` produced by an inline
+    ``hlfir.elemental`` (here ``1.0d0 - d``), not a named array.  Without
+    the libcall-over-elemental materialise path, ``buildLibCallNode``'s
+    ``traceToDecl`` on the operand returns ``""``, ``emit_libcall``
+    looks up ``ctx.sdfg.arrays['']``, and the build raises
+    ``KeyError: ''``.
+
+    Triggers Phase 2's ``materialiseElementalForLibcall`` at the direct
+    libcall dispatch site (``dispatch.cpp``).  Pure isolation — no
+    gather, no triplet, so the test fails iff the elemental-source
+    materialise specifically regresses."""
+    if shutil.which("gfortran") is None:
+        pytest.skip("gfortran not available")
+    src_path = tmp_path / "transpose_of_elem.f90"
+    src_path.write_text(_TRANSPOSE_OF_ELEMENTAL_SRC)
+    mod = _f2py(src_path, tmp_path / "ref", "transpose_of_elem_ref")
+
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(_TRANSPOSE_OF_ELEMENTAL_SRC, sdfg_dir, name="probe", entry="_QPprobe").build()
+
+    rng = np.random.default_rng(7)
+    d = np.asfortranarray(rng.standard_normal((16, 5)))
+    res_ref = np.zeros((5, 16), order="F", dtype=np.float64)
+    res_sdfg = np.zeros((5, 16), order="F", dtype=np.float64)
+    mod.probe(d, res_ref)
+    sdfg(d=d, res=res_sdfg)
+    np.testing.assert_allclose(res_sdfg, res_ref, rtol=1e-12, atol=1e-12)
+
+
 def test_linalg_ops_structure(tmp_path):
     """The SDFG should carry two MatMul, one Transpose, and one Dot
     library node — one per intrinsic call."""

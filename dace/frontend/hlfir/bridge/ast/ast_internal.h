@@ -71,4 +71,11 @@ buildElementalAnyAllReduce(hlfir::AssignOp assign, hlfir::ElementalOp elem,
                            std::string_view wcr,
                            std::string_view identity);
 
+/// Materialise an ``hlfir.elemental`` into a synthetic transient with
+/// the elemental's element dtype (general libcall-over-elemental
+/// path).  Returns ``{transient_name, AST_nodes}`` on success; empty
+/// on failure.
+std::pair<std::string, std::vector<ASTNode>>
+materialiseElementalForLibcall(hlfir::ElementalOp elem);
+
 }  // namespace hlfir_bridge

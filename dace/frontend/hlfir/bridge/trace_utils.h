@@ -14,6 +14,7 @@
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include <llvm/ADT/SmallVector.h>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace hlfir_bridge {
@@ -118,6 +119,30 @@ void clearAllocAliases();
 /// Trace an SSA value to a compile-time integer constant through
 /// any number of fir.convert wrappings.  nullopt if not constant-foldable.
 std::optional<int64_t> traceConstInt(mlir::Value v);
+
+/// Render an integer-typed SSA value as a Python expression string of
+/// Fortran scalar names + literals + arithmetic operators.  Used by
+/// ``resolveShapeSyms`` to surface a dynamic gather-temp extent
+/// (``arith.select(cmpi sgt, addi(subi(load_ub, load_lb), 1), 0)``
+/// — Flang's clamped "ub - lb + 1") as e.g. ``"max((endcol - startcol)
+/// + 1, 0)"`` for use as a symbolic SDFG-array shape dim.  The leaf
+/// scalar names must be promoted to SDFG symbols separately (via
+/// ``symbolNames`` in extract_vars) for the resulting expression to
+/// resolve.
+///
+/// Returns the empty string on any pattern the helper doesn't
+/// recognise, so callers fall back to their existing ``"?"`` →
+/// synthetic-symbol path.
+std::string traceExtentExpr(mlir::Value v);
+
+/// Walk the same SSA chain ``traceExtentExpr`` recognises and append
+/// every leaf scalar-declare name encountered to ``out``.  Used by
+/// extract_vars Pass 2 to promote the scalars (``startcol``,
+/// ``endcol``, …) that appear in a gather-temp's shape extent
+/// expression -- without this, the leaves stay as length-1 Array
+/// scalars and the expression string from ``traceExtentExpr``
+/// references undeclared SDFG names.
+void collectExtentExprScalars(mlir::Value v, std::set<std::string> &out);
 
 /// Extract extent SSA values from a fir.shape or fir.shape_shift.
 /// Returns empty if the operand is neither (or is null).

@@ -147,6 +147,111 @@ std::optional<int64_t> traceConstInt(mlir::Value v) {
     return std::nullopt;
 }
 
+std::string traceExtentExpr(mlir::Value v) {
+    if (!v) return "";
+    auto *def = v.getDefiningOp();
+    if (!def) return "";
+
+    // Transparent peels.
+    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return traceExtentExpr(cv.getValue());
+
+    // Constant integer literal.
+    if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+        if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+            return std::to_string(ia.getInt());
+
+    // Load of a Fortran scalar -- render as its short name.  Loads of
+    // designate-of-array (``cols(1)``) aren't expected in extent
+    // chains for the canonical Flang ``ub - lb + 1`` shape, so we
+    // bail rather than mint a position symbol.
+    if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
+        auto mem = ld.getMemref();
+        auto *md = mem.getDefiningOp();
+        if (!md) return "";
+        if (mlir::isa<hlfir::DeclareOp>(md) || mlir::isa<fir::DeclareOp>(md)) {
+            return traceToDecl(mem);
+        }
+        return "";
+    }
+
+    // Flang's clamp wrapper for a Fortran triplet extent:
+    //   %cmp = arith.cmpi sgt, %ext, %c0
+    //   %r   = arith.select %cmp, %ext, %c0
+    // Render as ``max(<ext>, 0)``.
+    if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
+        auto *cdef = sel.getCondition().getDefiningOp();
+        auto cmp = cdef ? mlir::dyn_cast<mlir::arith::CmpIOp>(cdef) : nullptr;
+        bool falseIsZero = false;
+        if (auto *fdef = sel.getFalseValue().getDefiningOp())
+            if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(fdef))
+                if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+                    falseIsZero = (ia.getInt() == 0);
+        if (cmp && falseIsZero
+                && cmp.getPredicate() == mlir::arith::CmpIPredicate::sgt) {
+            auto innerExt = traceExtentExpr(sel.getTrueValue());
+            if (innerExt.empty()) return "";
+            return "max(" + innerExt + ", 0)";
+        }
+        return "";
+    }
+
+    // Binary integer arithmetic.  Render parenthesised so the result
+    // composes cleanly when nested.
+    auto nm = def->getName().getStringRef();
+    static const std::map<llvm::StringRef, std::string> bin = {
+        {"arith.addi",  " + "}, {"arith.subi",  " - "},
+        {"arith.muli",  " * "}, {"arith.divsi", " // "},
+        {"arith.divui", " // "},
+    };
+    if (auto it = bin.find(nm);
+            it != bin.end() && def->getNumOperands() == 2) {
+        auto l = traceExtentExpr(def->getOperand(0));
+        auto r = traceExtentExpr(def->getOperand(1));
+        if (l.empty() || r.empty()) return "";
+        return "(" + l + it->second + r + ")";
+    }
+
+    return "";
+}
+
+void collectExtentExprScalars(mlir::Value v, std::set<std::string> &out) {
+    if (!v) return;
+    auto *def = v.getDefiningOp();
+    if (!def) return;
+    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) {
+        collectExtentExprScalars(cv.getValue(), out);
+        return;
+    }
+    if (mlir::isa<mlir::arith::ConstantOp>(def))
+        return;
+    if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
+        auto mem = ld.getMemref();
+        if (auto *md = mem.getDefiningOp())
+            if (mlir::isa<hlfir::DeclareOp>(md) || mlir::isa<fir::DeclareOp>(md)) {
+                auto n = traceToDecl(mem);
+                if (!n.empty()) out.insert(n);
+            }
+        return;
+    }
+    if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
+        // Walk both branches; cmp condition leaves are already
+        // covered by the operands themselves.
+        collectExtentExprScalars(sel.getTrueValue(), out);
+        collectExtentExprScalars(sel.getFalseValue(), out);
+        return;
+    }
+    auto nm = def->getName().getStringRef();
+    if ((nm == "arith.addi" || nm == "arith.subi"
+         || nm == "arith.muli" || nm == "arith.divsi"
+         || nm == "arith.divui" || nm == "arith.cmpi")
+            && def->getNumOperands() == 2) {
+        collectExtentExprScalars(def->getOperand(0), out);
+        collectExtentExprScalars(def->getOperand(1), out);
+        return;
+    }
+}
+
 hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
     // Signature: memref produced by another ``hlfir.declare`` (possibly
     // behind ``fir.convert`` rebox ops).  This is precisely what Flang

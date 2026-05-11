@@ -74,6 +74,16 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
             syms.push_back(std::to_string(*c));
             return;
         }
+        // Dynamic gather-temp extent: ``hlfir-materialise-associates``
+        // creates a temp whose shape includes a triplet-derived extent
+        // (``arith.select(cmpi_sgt, addi(subi(load_ub, load_lb), 1),
+        // 0)``).  Render the SSA expression directly so the descriptor
+        // gets a closed-form shape over already-promoted scalar
+        // symbols, instead of the ``?`` → synthetic
+        // ``<arr>_d<i>`` fallback (which mints an unbound SDFG symbol
+        // and surfaces as a missing program-arg at runtime).
+        auto expr = traceExtentExpr(ext);
+        if (!expr.empty()) { syms.push_back(expr); return; }
         syms.push_back("?");
     };
     if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
@@ -562,9 +572,33 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     // ``DO jk = nflatlev, nlev`` recognises ``nflatlev`` as a symbol —
     // otherwise codegen generates an int*-vs-int64_t mismatch in the
     // loop initialiser.
-    for (auto &op : decls)
-        for (auto &s : resolveShapeSyms(op))
-            if (s != "?") symbolNames.insert(s);
+    for (auto &op : decls) {
+        for (auto &s : resolveShapeSyms(op)) {
+            if (s == "?") continue;
+            // Bare-name results (single declare name / integer literal)
+            // get inserted directly.  Expression-string results (from
+            // ``traceExtentExpr`` -- a dynamic gather-temp extent like
+            // ``"max((endcol - startcol) + 1, 0)"``) contain operators;
+            // insert the leaf scalar declares instead via the shape
+            // SSA walker below.
+            if (s.find_first_of("+-*/()") == std::string::npos)
+                symbolNames.insert(s);
+        }
+        // Walk the shape SSA chain directly to promote every scalar
+        // leaf referenced in a closed-form extent expression
+        // (``traceExtentExpr`` resolves these for the descriptor; the
+        // leaves must be SDFG symbols for the expression to compile).
+        if (auto shape = op.getShape()) {
+            if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
+                for (auto ext : sh.getExtents())
+                    collectExtentExprScalars(ext, symbolNames);
+            if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
+                auto ops = ss->getOperands();
+                for (unsigned i = 1; i < ops.size(); i += 2)
+                    collectExtentExprScalars(ops[i], symbolNames);
+            }
+        }
+    }
     module.walk([&](fir::DoLoopOp lp) {
         auto ub = traceToDecl(lp.getUpperBound());
         if (!ub.empty()) symbolNames.insert(ub);
@@ -598,9 +632,38 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     // _emit_assign, which is the state-change DaCe needs to keep the
     // index value live across loop iterations.
     module.walk([&](hlfir::DesignateOp dg) {
-        for (auto idx : dg.getIndices()) {
-            auto n = traceToDecl(idx);
-            if (!n.empty()) symbolNames.insert(n);
+        auto operands = dg.getIndices();
+        auto triplets = dg.getIsTriplet();
+        if (triplets.empty()) {
+            // Plain scalar-indices: walk every operand.
+            for (auto idx : operands) {
+                auto n = traceToDecl(idx);
+                if (!n.empty()) symbolNames.insert(n);
+            }
+            return;
+        }
+        // Triplet-aware walk: each true entry in ``triplets`` consumes
+        // three operands (lb, ub, step), each false entry consumes one
+        // (scalar index).  Promote the lb and ub of every triplet so
+        // Flang's ``ub - lb + 1`` extent expression on a gather temp's
+        // shape can resolve to a closed-form symbol expression in
+        // ``resolveShapeSyms`` / ``traceExtentExpr``.  The step is
+        // almost always literal-``1`` and harmless to skip.
+        unsigned cursor = 0;
+        for (unsigned d = 0; d < triplets.size(); ++d) {
+            if (triplets[d]) {
+                for (unsigned k = 0; k < 2 && cursor + k < operands.size(); ++k) {
+                    auto n = traceToDecl(operands[cursor + k]);
+                    if (!n.empty()) symbolNames.insert(n);
+                }
+                cursor += 3;
+            } else {
+                if (cursor < operands.size()) {
+                    auto n = traceToDecl(operands[cursor]);
+                    if (!n.empty()) symbolNames.insert(n);
+                }
+                cursor += 1;
+            }
         }
     });
 
