@@ -531,7 +531,7 @@ required:
                         description: >
                             If enabled, inserts default __syncthreads() tasklets during preprocessing
                             in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
-                            This is a simple safeguard for correctness—it may not be complete, but it
+                            This is a simple safeguard for correctness - it may not be complete, but it
                             does the job for basic SDFGs. Disable if you handle synchronization manually
                             or use other mechanisms like async copies or pipelines.
                         default: True
@@ -557,6 +557,7 @@ required:
                             stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
                             connector for gpu_streams[0].
                         default: gpu_streams,gpu_stream
+
             #############################################
             # MPI compiler
             mpi:
