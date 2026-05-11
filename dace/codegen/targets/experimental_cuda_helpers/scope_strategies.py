@@ -133,13 +133,16 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
         node = dfg_scope.source_nodes()[0]
 
         # Conditionally add __launch_bounds__ for block size optimization.
+        min_warps_per_eu = ''
+        if node.map.gpu_min_warps_per_eu is not None and node.map.gpu_min_warps_per_eu > 0:
+            min_warps_per_eu = f',{node.map.gpu_min_warps_per_eu}'
         launch_bounds = ''
         if node.gpu_launch_bounds != '-1':
             if node.gpu_launch_bounds == "0":
                 if not any(symbolic.issymbolic(b) for b in block_dims):
-                    launch_bounds = f'__launch_bounds__({product(block_dims)})'
+                    launch_bounds = f'__launch_bounds__({product(block_dims)}{min_warps_per_eu})'
             else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{min_warps_per_eu})'
 
         # Emit kernel function signature
         callsite_stream.write(f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ', cfg,
