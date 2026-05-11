@@ -856,8 +856,12 @@ class TaskletTransformer(ExtNodeTransformer):
                          new_name: str = None,
                          arr_type: data.Data = None):
 
-        if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
+        w_key = (name, rng, 'w')
+        # Skip the ``'w'`` entry when it was registered in a sibling arm
+        # of an enclosing if/elif/else. See ``ProgramVisitor.visit_If``.
+        hide = getattr(self.visitor, '_w_keys_to_hide_from_reads', set())
+        if w_key in self.accesses and w_key not in hide:
+            return self.accesses[w_key]
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')]
         elif name in self.variables:
@@ -1160,6 +1164,13 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
+        # Write-access keys (``(name, rng, 'w')``) that ``_add_read_access``
+        # must skip. Populated inside ``visit_If`` while visiting the
+        # ``orelse`` arm of an if/elif/else, so a read of ``arr[idx]`` in
+        # one branch does not pick up the write-side access node created
+        # by a sibling branch (the two arms live in different states under
+        # separate branch CFRs and only one of them actually runs).
+        self._w_keys_to_hide_from_reads: Set[Tuple[str, "dace.subsets.Subset", str]] = set()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
@@ -2719,6 +2730,15 @@ class ProgramVisitor(ExtNodeVisitor):
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
         cond_block.add_branch(CodeBlock(cond), if_body)
 
+        # Track which (name, rng, 'w') keys exist before the if-arm runs,
+        # so we can identify which writes are produced *by* the if-arm
+        # and hide them from the elif/else arm's reads. Writes themselves
+        # are not hidden, ``_add_write_access`` keeps using the shared
+        # entry so both arms write through the same access-node name and
+        # the NestedSDFG ends up with a single output connector per
+        # element, which is the contract downstream codegen relies on.
+        w_keys_before_if = {k for k in self.accesses if k[2] == 'w'}
+
         # Visit recursively
         self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
 
@@ -2726,8 +2746,18 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(node.orelse) > 0:
             else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
             cond_block.add_branch(None, else_body)
-            # Visit recursively
-            self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
+            # Writes added by the if-arm are sibling-arm writes from the
+            # else/elif's perspective, hide them from its reads. For
+            # chained ``elif`` the orelse is itself an ``ast.If`` whose
+            # recursive ``visit_If`` will layer its own hide-set on top.
+            w_keys_after_if = {k for k in self.accesses if k[2] == 'w'}
+            if_arm_new_w_keys = w_keys_after_if - w_keys_before_if
+            hide_snapshot = set(self._w_keys_to_hide_from_reads)
+            self._w_keys_to_hide_from_reads |= if_arm_new_w_keys
+            try:
+                self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
+            finally:
+                self._w_keys_to_hide_from_reads = hide_snapshot
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 
@@ -3382,8 +3412,11 @@ class ProgramVisitor(ExtNodeVisitor):
         elif name in self.variables:
             return (self.variables[name], None)
 
-        if (name, rng, 'w') in self.accesses:
-            new_name, new_rng = self.accesses[(name, rng, 'w')]
+        w_key = (name, rng, 'w')
+        # Skip the ``'w'`` entry when it was registered in a sibling arm
+        # of an enclosing if/elif/else. See ``visit_If``.
+        if w_key in self.accesses and w_key not in self._w_keys_to_hide_from_reads:
+            new_name, new_rng = self.accesses[w_key]
         elif (name, rng, 'r') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
