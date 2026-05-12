@@ -25,20 +25,10 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("Bridge gap: array read inside an arithmetic sub-expression of "
-       "an IF condition (``1.0 - ZA(i, j) < eps``) drops the subscript "
-       "on ``ZA``.  The interstate-edge assignment carries ``1 - za`` "
-       "(bare array name) → C++ codegen rejects ``int - double*``. "
-       "Fix lives in ``buildExprWithSubscripts`` / ``buildBoolExpr`` "
-       "in ``bridge/ast/control_flow.cpp`` — the arithmetic recursion "
-       "needs to call back into the subscript-aware leaf renderer for "
-       "every operand, not bottom out to ``buildExpr`` which strips "
-       "designate subscripts.")
 def test_fortran_frontend_if_arith_array_read(tmp_path):
     test_string = """
                     SUBROUTINE filter(za, zlcond2, out, klon, klev)

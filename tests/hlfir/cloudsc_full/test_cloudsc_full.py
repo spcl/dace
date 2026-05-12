@@ -48,22 +48,26 @@ _HERE = Path(__file__).resolve().parent
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-def _sdfg_call_args(sdfg, int_values: dict) -> dict:
-    """Route each integer arg in ``int_values`` to either a plain int
-    (if the SDFG classified it as a symbol or scalar) or a length-1
-    numpy array (if classified as a length-1 array).  Mirrors the
-    helper in ``cloudsc_loopnests/test_sdfg_equivalence.py``.
+def _sdfg_call_args(sdfg, scalar_values: dict) -> dict:
+    """Route each scalar arg in ``scalar_values`` to either a plain
+    Python scalar (if the SDFG classified it as a symbol or Scalar)
+    or a length-1 numpy array (if classified as a length-1 Array).
+    Per `feedback_scalar_io_convention` the bridge can register a
+    Fortran scalar dummy as either Scalar (intent(in)) or length-1
+    Array (intent(inout)/(out)) — this helper picks the binding the
+    SDFG actually expects.  Handles both int and float scalars.
     """
     from dace.data import Scalar
 
     arglist = sdfg.arglist()
     out = {}
-    for k, v in int_values.items():
+    for k, v in scalar_values.items():
         desc = arglist.get(k)
         if desc is None or isinstance(desc, Scalar):
             out[k] = v
         else:
-            out[k] = np.array([v], dtype=np.int32)
+            dtype = np.float64 if isinstance(v, float) else np.int32
+            out[k] = np.array([v], dtype=dtype)
     return out
 
 
@@ -135,7 +139,10 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(rng)
-    outputs_ref = get_outputs(rng)
+    # Lowercase output keys at construction so the SDFG-side call (which
+    # passes lowercase kwargs) writes through the same dict entries the
+    # per-output comparison loop below looks up by name.lower().
+    outputs_ref = {k.lower(): v for k, v in get_outputs(rng).items()}
     outputs_sdfg = {k: v.copy(order="F") for k, v in outputs_ref.items()}
 
     # Fortran-side call: gfortran-compiled CLOUDSCOUTER.  f2py
@@ -146,12 +153,13 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
     all_kwargs = {**_lower_keys(inputs), **_lower_keys(outputs_ref)}
     _f2py_ref.cloudscouter(**{k: v for k, v in all_kwargs.items() if k in accepted})
 
-    # SDFG-side call: same kwargs, plus the int-arg routing that
-    # handles symbol-vs-length-1-array classification.
-    int_kwargs = {k.lower(): int(v) for k, v in inputs.items() if isinstance(v, (int, np.integer))}
-    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, (int, np.integer))}
+    # SDFG-side call: same kwargs, plus the scalar-arg routing that
+    # handles Scalar-vs-length-1-Array classification for both int
+    # and float scalars (per feedback_scalar_io_convention).
+    scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, (int, float, np.integer, np.floating))}
+    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, (int, float, np.integer, np.floating))}
     sdfg_kwargs.update(_lower_keys(outputs_sdfg))
-    sdfg_kwargs.update(_sdfg_call_args(sdfg, int_kwargs))
+    sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
     sdfg(**sdfg_kwargs)
 
     # Per-output numerical check.  Start strict (rtol=1e-12,

@@ -431,10 +431,39 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
     if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
         return buildExprWithSubscripts(conv.getValue(), d + 1);
+    // ``hlfir.no_reassoc`` is Fortran's reassociation-blocker wrapper
+    // Flang inserts around expressions whose order the standard says
+    // must be preserved (parenthesised expressions like
+    // ``(1.0 - ZA(JL, JK))``).  It's pure structural metadata — peel
+    // through so the inner subf / load / designate chain stays
+    // subscript-aware.  Without this peel, the bridge bottoms out to
+    // ``buildExpr`` and emits bare ``za`` (no subscript) in the cond,
+    // which C++ codegen then renders as ``int - double*``.
+    auto _nm = def->getName().getStringRef();
+    if (_nm == "hlfir.no_reassoc" && def->getNumOperands() == 1)
+        return buildExprWithSubscripts(def->getOperand(0), d + 1);
 
-    // fir.load of hlfir.designate: emit 0-based subscripts.
+    // fir.load of hlfir.designate: emit 0-based subscripts.  Peel
+    // through any ``fir.convert`` (kind coercion, ref-shape rebox)
+    // between the load and the designate — without this peel a chain
+    // like ``%2 = fir.convert %designate ; %v = fir.load %2`` falls
+    // out of the designate branch and ends up bottoming out to
+    // ``buildExpr``, which strips the subscript and leaves a bare
+    // array name in the interstate-edge / cond expression.  cloudsc
+    // line 2140 (``(1.0 - ZA(JL, JK)) < ZEPSEC``) hits this through
+    // the arith.subf -> load -> convert -> designate chain Flang
+    // emits for the per-element load.
     if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
-        auto mem = ld.getMemref();
+        mlir::Value mem = ld.getMemref();
+        for (int i = 0; i < 8 && mem; ++i) {
+            auto *md = mem.getDefiningOp();
+            if (!md) break;
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(md)) {
+                mem = cv.getValue();
+                continue;
+            }
+            break;
+        }
         if (auto md = mem.getDefiningOp())
             if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(md)) {
                 auto arr = traceToDecl(dg.getMemref());
