@@ -38,6 +38,26 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
     return new_subset
 
 
+def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: Set, free_syms: Set, helper_name: str) -> None:
+    """Raise if a subset rewrite introduced new free symbols into the SDFG.
+
+    Both ``repl_subset_to_use_laneid_offset`` and
+    ``repl_subset_to_use_with_int_offset`` check that the rewrite has
+    not produced free symbols that did not exist in the SDFG before; an
+    invalid SDFG with un-bound symbols is the silent-corruption failure
+    mode this guard catches. The two callers pass their own
+    ``helper_name`` for the error message so the trace points at the
+    real callsite.
+    """
+    newly_free = sdfg.free_symbols - prev_sdfg_free_syms
+    for free_sym in free_syms:
+        if str(free_sym) in newly_free:
+            raise Exception(
+                f"`{helper_name}` has introduced new free symbols (this will cause problems as the new "
+                f"symbols should not be free). This will result an invalid SDFG, either call with "
+                f"`add_missing_symbols=True` or fix this issue")
+
+
 def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,
                                      vector_map_param: str) -> dace.subsets.Range:
     """
@@ -88,12 +108,7 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
                 sdfg.add_symbol(offset_symbol_name, stype)
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
-
-    for free_sym in free_syms:
-        if str(free_sym) in sdfg.free_symbols - prev_sdfg_free_syms:
-            raise Exception(
-                "`repl_subset_to_use_laneid_offset` has introduced new free symbols (this will cause problems as the new symbols should not be free). This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue"
-            )
+    _assert_no_new_free_symbols(sdfg, prev_sdfg_free_syms, free_syms, "repl_subset_to_use_laneid_offset")
     return new_subset
 
 
@@ -123,13 +138,7 @@ def repl_subset_to_use_with_int_offset(sdfg: dace.SDFG, subset: dace.subsets.Ran
         new_range_list.append((nb, ne, ns))
 
     new_subset = dace.subsets.Range(new_range_list)
-
-    for free_sym in free_syms:
-        if str(free_sym) in sdfg.free_symbols - prev_sdfg_free_syms:
-            raise Exception(
-                "`repl_subset_to_use_with_int_offset` has introduced new free symbols (this will cause problems as the new symbols should not be free). This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue"
-            )
-
+    _assert_no_new_free_symbols(sdfg, prev_sdfg_free_syms, free_syms, "repl_subset_to_use_with_int_offset")
     return new_subset
 
 

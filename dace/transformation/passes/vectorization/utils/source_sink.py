@@ -157,20 +157,19 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
 
 
 def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
-                                            inner_state: dace.SDFGState, source_node: dace.nodes.AccessNode,
+                                            source_node: dace.nodes.AccessNode,
                                             sink_node: dace.nodes.AccessNode):
     """
     Checks if a transient accumulator is initialized to zero and used in an in-place reduction pattern.
-    `nsdfg` is the parent nsdfg node and the state is where the nsdfg resides in.
+    ``nsdfg`` is the parent NSDFG node and ``state`` is where the NSDFG resides in.
 
-    It traverses the nsdfg node backwards using the find a zero-assignment to the accumulator.
-    The accumulator is the `source_node.data`. For it to be an accumulator source and sink needs to be the
-    same too.
+    It traverses backwards from the source access node in the parent state to find a
+    zero-assignment to the accumulator. The accumulator is ``source_node.data``. For it
+    to be an accumulator the source and sink data must be the same.
 
     Args:
         state: The parent SDFG state.
         nsdfg: The NestedSDFG node.
-        inner_state: Inner state of the NestedSDFG.
         source_node: Source access node feeding the accumulator.
         sink_node: Sink access node consuming the accumulator.
 
@@ -348,10 +347,15 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     from dace.transformation.passes.vectorization.utils.subsets import replace_all_access_subsets
 
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
-    is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
-        state, nsdfg, scalar_source_nodes[0][0], scalar_source_nodes[0][1], node_path[-1])
     source_data = scalar_source_nodes[0][1].data
-    sink_data = node_path[-1].data if node_path else ""
+    # ``node_path`` is populated by ``only_one_flop_after_source``'s BFS;
+    # if the source has no outgoing dataflow we'd have nothing to lift,
+    # so bail out rather than IndexError on ``node_path[1]`` / [-1].
+    if len(node_path) < 2:
+        return False, source_data, ""
+    is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
+        state, nsdfg, scalar_source_nodes[0][1], node_path[-1])
+    sink_data = node_path[-1].data
     op = tutil._extract_single_op(node_path[1].code.as_string)
     if num_flops <= 1 and is_inout_accumulator:
         replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)

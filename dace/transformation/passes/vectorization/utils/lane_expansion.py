@@ -125,7 +125,6 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
         edges_to_check += sink_state.parent_graph.in_edges(edge.src)
 
     return None
-    #raise Exception("Symbol assignment not found")
 
 
 def _all_atoms(expr, ignored=()):

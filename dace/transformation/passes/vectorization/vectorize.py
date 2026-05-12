@@ -163,7 +163,7 @@ class Vectorize(ppl.Pass):
             modified_nodes = set()
             modified_edges = set()
 
-        self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
+        self._extend_memlets(state, new_inner_map, modified_edges)
         # Special case, // 2 (or integer dividing the thing nicely) access -> need to multiplex elements to be able to vectorize
         new_modified_nodes, new_modified_edges = detect_halve_index(state,
                                                                     new_inner_map,
@@ -888,7 +888,6 @@ class Vectorize(ppl.Pass):
     def _extend_memlets(self,
                         state: SDFGState,
                         map_entry: dace.nodes.MapEntry,
-                        modified_nodes: Set[dace.nodes.Node] = set(),
                         modified_edges: Set[Edge[Memlet]] = set()):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         assert not any({
@@ -963,10 +962,7 @@ class Vectorize(ppl.Pass):
                     subset=dace.subsets.Range(new_range_list),
                 )
 
-            if memlet.other_subset is not None:
-                raise NotImplementedError(
-                    f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
-                    f"(edge {edge}, state {state.label})")
+            self._assert_no_other_subset(memlet, edge, state)
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
@@ -1023,13 +1019,8 @@ class Vectorize(ppl.Pass):
 
             assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
 
-            new_memlet = dace.memlet.Memlet(
-                data=new_dataname,
-                subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
-                                            dace.symbolic.SymExpr(1))]),
-            )
             state.remove_edge(edge)
-            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, self._vector_memlet(new_dataname))
 
     def _iterate_on_path_from_map_entry_to_exit(self, state: SDFGState, map_exit: dace.nodes.MapExit,
                                                 data_in_edge: Edge[Memlet], dataname: str, new_dataname: str):
@@ -1049,18 +1040,11 @@ class Vectorize(ppl.Pass):
                 continue
 
             memlet: dace.memlet.Memlet = edge.data
-            if memlet.other_subset is not None:
-                raise NotImplementedError(
-                    f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
-                    f"(edge {edge}, state {state.label})")
+            self._assert_no_other_subset(memlet, edge, state)
 
-            new_memlet = dace.memlet.Memlet(
-                data=new_dataname,
-                subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
-                                            dace.symbolic.SymExpr(1))]),
-            )
             state.remove_edge(edge)
-            edge = state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+            edge = state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
+                                  self._vector_memlet(new_dataname))
 
             if isinstance(edge.dst, dace.nodes.MapEntry):
                 new_edges = {
@@ -1105,18 +1089,10 @@ class Vectorize(ppl.Pass):
                     continue
 
                 memlet: dace.memlet.Memlet = edge.data
-                if memlet.other_subset is not None:
-                    raise NotImplementedError(
-                        f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
-                        f"(edge {edge}, state {state.label})")
+                self._assert_no_other_subset(memlet, edge, state)
 
-                new_memlet = dace.memlet.Memlet(
-                    data=new_dataname,
-                    subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
-                                                dace.symbolic.SymExpr(1))]),
-                )
                 state.remove_edge(edge)
-                state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+                state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, self._vector_memlet(new_dataname))
 
             if edges_to_check is not None:
                 source_node = edges_to_check[0].src
@@ -1179,6 +1155,30 @@ class Vectorize(ppl.Pass):
             i += 1
         self._used_names.add(candidate2)
         return candidate2
+
+    def _vector_memlet(self, new_dataname: str) -> dace.memlet.Memlet:
+        """Build a ``new_dataname[0:vector_width]`` (step 1) memlet — the
+        single-source builder used by every memlet-rewrite helper here."""
+        return dace.memlet.Memlet(
+            data=new_dataname,
+            subset=dace.subsets.Range([(dace.symbolic.SymExpr(0),
+                                        dace.symbolic.SymExpr(self.vector_width) - 1,
+                                        dace.symbolic.SymExpr(1))]),
+        )
+
+    @staticmethod
+    def _assert_no_other_subset(memlet: dace.memlet.Memlet, edge: Edge[Memlet], state: SDFGState) -> None:
+        """Raise ``NotImplementedError`` if ``memlet.other_subset`` is set.
+
+        Vectorization does not support ``other_subset`` on memlets; fail
+        loudly rather than silently producing wrong code. The single
+        message format keeps the three callsites that previously inlined
+        this check in sync.
+        """
+        if memlet.other_subset is not None:
+            raise NotImplementedError(
+                f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
+                f"(edge {edge}, state {state.label})")
 
     def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int,
                               vectorizable_arrays: Dict[str, bool]):
