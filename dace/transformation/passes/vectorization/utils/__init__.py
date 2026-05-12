@@ -9,6 +9,7 @@ concern and added one slice at a time. The legacy
 migration; once every consumer is migrated the legacy file is deleted
 (see plan slice S7).
 """
+from .name_schemes import LaneIdScheme  # noqa: F401
 from .layout import assert_strides_are_packed_C_or_packed_Fortran  # noqa: F401
 from .queries import (  # noqa: F401
     collect_accesses_to_array_name, collect_all_memlets_to_dataname, collect_non_unit_stride_accesses_in_map,

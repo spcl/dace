@@ -43,7 +43,7 @@ import dace.sdfg.utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import DaceSympyPrinter
 
-from dace.transformation.passes.vectorization.vectorization_utils import LaneIdScheme
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,

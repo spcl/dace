@@ -12,45 +12,10 @@ import dace.sdfg.tasklet_utils as tutil
 from dace.symbolic import DaceSympyPrinter
 
 
-class LaneIdScheme:
-    """Centralised lane-id naming for the vectorization passes.
-
-    The vectorization pipeline expands a single symbol used inside a vector tile into
-    one symbol per lane, named ``<base>_laneid_<i>``. This class is the single owner
-    of that scheme — every place in the codebase that constructs or inspects such a
-    name must go through ``LaneIdScheme.make`` / ``LaneIdScheme.parse`` /
-    ``LaneIdScheme.is_laneid`` instead of raw string concatenation or regex.
-
-    Centralising the scheme is what makes the lane-expansion passes idempotent: a
-    symbol that already encodes its lane in its name (parses non-trivially) is
-    treated as fixed, never re-expanded into ``<base>_laneid_<i>_laneid_<j>``.
-    """
-
-    SUFFIX = "_laneid_"
-    _PARSE_RE = re.compile(r"^(.*)_laneid_(\d+)$")
-
-    @staticmethod
-    def make(base: str, lane: int) -> str:
-        """Build the lane-encoded name ``<base>_laneid_<lane>``."""
-        return f"{base}{LaneIdScheme.SUFFIX}{lane}"
-
-    @staticmethod
-    def parse(name: str) -> Optional[Tuple[str, int]]:
-        """Return ``(base, lane)`` if ``name`` ends with ``_laneid_<digits>``, else ``None``.
-
-        For nested forms like ``foo_laneid_3_laneid_0`` the *trailing* lane is peeled
-        once: the result is ``("foo_laneid_3", 0)``. Callers that want the original
-        un-encoded base must call ``parse`` repeatedly until it returns ``None``.
-        """
-        m = LaneIdScheme._PARSE_RE.match(name)
-        if m is None:
-            return None
-        return m.group(1), int(m.group(2))
-
-    @staticmethod
-    def is_laneid(name: str) -> bool:
-        """True iff ``name`` matches the ``<base>_laneid_<digits>`` pattern."""
-        return LaneIdScheme.parse(name) is not None
+# ``LaneIdScheme`` moved to ``utils.name_schemes`` (S6d-a). Re-exported
+# below so callers that did ``from …vectorization_utils import LaneIdScheme``
+# keep working until S7 migrates every consumer to named imports.
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme  # noqa: E402, F401
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
