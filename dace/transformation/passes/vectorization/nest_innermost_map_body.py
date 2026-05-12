@@ -8,7 +8,7 @@ nested SDFG, attach mask connectors, etc.).
 
 Reuses:
 - ``map_consists_of_single_nsdfg_or_no_nsdfg`` and
-  ``get_single_nsdfg_inside_map`` from ``vectorization_utils`` for the
+  ``get_single_nsdfg_inside_map`` from ``utils.map_predicates`` for the
   shape check.
 - ``dace.transformation.helpers.nest_state_subgraph`` for the actual
   in-place wrapping.

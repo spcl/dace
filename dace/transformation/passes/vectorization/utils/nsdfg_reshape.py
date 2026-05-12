@@ -8,16 +8,11 @@ inner SDFG's array descriptor must match the slice shape. DaCe collapses
 length-1 dims at the boundary by convention, so the inner shape is
 typically a strict subset of the outer dims.
 
-Each helper here is a pure relocation of the corresponding function
-from ``vectorization_utils.py``. Defensive checks (the validation
-``assert`` inside ``check_nsdfg_connector_array_shapes_match``, the
-``original.shape`` rebuild contract inside
-``fix_nsdfg_connector_array_shapes_mismatch``) are kept as-is per the
-locked policy.
-
-``prepare_vectorized_array``, ``process_in_edges``, ``process_out_edges``,
-``add_copies_before_and_after_nsdfg``, and ``find_copy_in_state`` are
-larger and migrate in follow-up slices (S4b, S4c).
+Defensive checks (the validation ``assert`` inside
+``check_nsdfg_connector_array_shapes_match``, the ``original.shape``
+rebuild contract inside ``fix_nsdfg_connector_array_shapes_mismatch``)
+are intentional — loud failures are preferred over silent shape
+corruption at the NSDFG boundary.
 """
 import copy
 from typing import Dict, Set
