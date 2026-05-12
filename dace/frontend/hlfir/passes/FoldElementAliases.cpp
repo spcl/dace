@@ -79,14 +79,51 @@ struct FoldElementAliasesPass
             auto designate = mlir::dyn_cast<hlfir::DesignateOp>(mrd);
             if (!designate) return;
 
-            // Confirm the designate's base is another declare — without
-            // that anchor we don't have a "real" outer storage to point
-            // uses at.  (Designates nested inside designates would be
-            // handled transitively as each outer round erases another
-            // layer.)
+            // Confirm the designate's base ultimately resolves to a
+            // declare — without that anchor we don't have a "real"
+            // outer storage to point uses at.  (Designates nested
+            // inside designates would be handled transitively as each
+            // outer round erases another layer.)
+            //
+            // ELEMENTAL / scalar-arg inlining over a section slice
+            // adds wrapper layers: Flang section-designates the
+            // caller's slice (and may embox / rebox / convert it on
+            // top) before passing to the inlined dummy.  Walk through
+            // hlfir.designate (section slices) and fir.embox /
+            // fir.rebox / fir.convert (box wrappers) between the
+            // element designate and the underlying declare so the
+            // fold also applies to:
+            //
+            //     %slice = hlfir.designate %parent#0 (%lo:%hi:%step)
+            //     %elem  = hlfir.designate %slice (%loop_iv) -> ref<scalar>
+            //     %alias = hlfir.declare %elem ...
+            //
+            // We only need to confirm a declare exists at the chain
+            // root — the replacement target stays the element
+            // designate ``memref``, regardless of intermediate hops.
             auto *base = designate.getMemref().getDefiningOp();
-            if (!base) return;
-            if (!mlir::isa<hlfir::DeclareOp>(base)) return;
+            for (int hop = 0; hop < 8 && base; ++hop) {
+                if (mlir::isa<hlfir::DeclareOp>(base)) break;
+                if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(base)) {
+                    base = dg.getMemref().getDefiningOp();
+                    continue;
+                }
+                if (auto eb = mlir::dyn_cast<fir::EmboxOp>(base)) {
+                    base = eb.getMemref().getDefiningOp();
+                    continue;
+                }
+                if (auto rb = mlir::dyn_cast<fir::ReboxOp>(base)) {
+                    base = rb.getBox().getDefiningOp();
+                    continue;
+                }
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(base)) {
+                    base = cv.getValue().getDefiningOp();
+                    continue;
+                }
+                base = nullptr;
+                break;
+            }
+            if (!base || !mlir::isa<hlfir::DeclareOp>(base)) return;
 
             decl.getResult(0).replaceAllUsesWith(memref);
             decl.getResult(1).replaceAllUsesWith(memref);

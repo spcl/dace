@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -132,7 +131,6 @@ END SUBROUTINE
     assert np.allclose(val, arg3)
 
 
-@xfail("CLASS(...) polymorphic dummy + section-slice arguments not lowered")
 def test_fortran_frontend_elemental_ecrad_range(tmp_path):
     src = """
 MODULE test_interface
