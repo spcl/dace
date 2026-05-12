@@ -355,8 +355,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._in_device_code = restore_in_device_code
 
     def _declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
-                                           state_id: int, function_stream: CodeIOStream,
-                                           callsite_stream: CodeIOStream):
+                                           state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -549,8 +548,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         return args
 
     def _generate_NestedSDFG(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                             node: nodes.NestedSDFG, function_stream: CodeIOStream,
-                             callsite_stream: CodeIOStream):
+                             node: nodes.NestedSDFG, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         old_schedule = self._toplevel_schedule
         nested_schedule = get_node_schedule(sdfg, dfg, node)
         if nested_schedule != dtypes.ScheduleType.Default:
