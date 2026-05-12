@@ -537,6 +537,41 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
              + leafExpr(cmp.getRhs(), d + 1) + ")";
     }
     if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def)) {
+        // ALLOCATED(arr) idiom: ``cmpi ne, convert(box_addr(load %decl)), 0``.
+        // Render as ``<decl>_allocated`` (the bridge-synthesised
+        // tracker symbol) instead of decomposing the cmp into
+        // ``<lhs> != <rhs>`` where the LHS resolves to ``?``.
+        // Same recognition as buildExpr's path in expressions.cpp;
+        // duplicated here because boolean contexts decompose before
+        // the LHS gets a whole-shape pattern match.
+        if (cmp.getPredicate() == mlir::arith::CmpIPredicate::ne) {
+            bool rhsZero = false;
+            if (auto c = traceConstInt(cmp.getRhs()))
+                rhsZero = (*c == 0);
+            if (rhsZero) {
+                mlir::Value cur = cmp.getLhs();
+                for (int i = 0; i < limits::kConvertChainDepth && cur; ++i) {
+                    auto *cd = cur.getDefiningOp();
+                    if (!cd) break;
+                    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(cd))
+                        { cur = cv.getValue(); continue; }
+                    break;
+                }
+                if (cur) {
+                    if (auto *cd = cur.getDefiningOp()) {
+                        if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(cd)) {
+                            auto src = ba.getVal();
+                            if (auto *sd = src.getDefiningOp())
+                                if (auto ld = mlir::dyn_cast<fir::LoadOp>(sd))
+                                    src = ld.getMemref();
+                            auto arrName = traceToDecl(src);
+                            if (!arrName.empty())
+                                return arrName + "_allocated";
+                        }
+                    }
+                }
+            }
+        }
         auto pred = cmpiPredStr(cmp.getPredicate());
         if (pred.empty()) return "?";
         return "(" + leafExpr(cmp.getLhs(), d + 1) + " " + pred + " "

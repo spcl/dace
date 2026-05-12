@@ -5,12 +5,10 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("Fortran OOP not lowered")
 def test_fortran_frontend_class(tmp_path):
     src = """
 module lib

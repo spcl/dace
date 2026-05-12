@@ -286,6 +286,20 @@ hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
             mr = eb.getMemref();
             continue;
         }
+        // Inlined-callee aliases on CLASS-allocatable / box-typed
+        // dummies: the alias's memref comes from a ``fir.load`` of the
+        // caller's box-slot declare, possibly preceded by ``fir.rebox``
+        // peels (CLASS<heap<T>> → CLASS<T>).  Walking through both is
+        // what catches monomorphic CLASS subroutine dummies as
+        // aliases of their caller-side allocatable.
+        if (auto ld = mlir::dyn_cast<fir::LoadOp>(d)) {
+            mr = ld.getMemref();
+            continue;
+        }
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d)) {
+            mr = rb.getBox();
+            continue;
+        }
         break;
     }
     return {};

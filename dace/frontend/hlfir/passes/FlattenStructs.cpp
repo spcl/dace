@@ -1079,6 +1079,20 @@ traceAliasPrefixToDecl(hlfir::DeclareOp other, hlfir::DeclareOp decl) {
             mr = eb.getMemref();
             continue;
         }
+        // Inlined-callee alias declares: the alias's memref is a
+        // ``fir.load`` of the parent declare's address (possibly
+        // through one or more ``fir.rebox`` reshapes for CLASS<heap<T>>
+        // → CLASS<T> peels in OOP code, or POINTER box reshapes).
+        // Walking through both is the minimum to recognise these as
+        // aliases of the parent.
+        if (auto ld = mlir::dyn_cast<fir::LoadOp>(d)) {
+            mr = ld.getMemref();
+            continue;
+        }
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d)) {
+            mr = rb.getBox();
+            continue;
+        }
         if (auto dg = mlir::dyn_cast<hlfir::DesignateOp>(d)) {
             mlir::StringAttr compAttr;
             for (auto nm : {"component_name", "component"})
@@ -1144,15 +1158,30 @@ static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
                 break;
             }
         if (hasDesignateUser) return;
-        hlfir::DesignateOp cur = dg;
-        for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
-            auto memref = cur.getMemref();
-            if (equivalentRoots.contains(memref)) {
+        // Walk the memref chain back to an equivalent root.  Peel
+        // through ``hlfir.designate`` (intermediate component / index
+        // selects), ``fir.load`` (loaded box from an allocatable /
+        // pointer declare slot), ``fir.rebox`` (class<heap<T>> →
+        // class<T> and similar peels), and ``fir.convert``.  The
+        // load + rebox peels are what catch direct-access reads on
+        // a CLASS-allocatable in main scope:
+        //   ``%load = fir.load %decl#0`` then
+        //   ``%dg = hlfir.designate %load{"<field>"}``.
+        // Without those peels, %dg's memref (the load result) is
+        // not an equivalent root and the chain stays un-rewritten.
+        mlir::Value v = dg.getMemref();
+        for (int i = 0; i < kFlattenMaxDepth && v; ++i) {
+            if (equivalentRoots.contains(v)) {
                 chainLeaves.push_back(dg);
                 return;
             }
-            cur = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
-                memref.getDefiningOp());
+            auto *def = v.getDefiningOp();
+            if (!def) break;
+            if (auto dg2 = mlir::dyn_cast<hlfir::DesignateOp>(def)) { v = dg2.getMemref(); continue; }
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(def))         { v = ld.getMemref(); continue; }
+            if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def))        { v = rb.getBox(); continue; }
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))      { v = cv.getValue(); continue; }
+            break;
         }
     });
     for (auto dg : chainLeaves)
