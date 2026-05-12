@@ -379,9 +379,11 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         except SyntaxError:
             return None
         names = sorted({n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)})
-        # Only a compound when there is more than one symbol to combine;
-        # the single-symbol case is already covered by the direct lift.
-        if len(names) < 2:
+        # The direct lift already handles the bare-name case
+        # (``cond_text`` literally equals one symbol). Anything that has
+        # zero names (a pure constant) can't be lifted here; let the
+        # caller bake it inline.
+        if not names or cond_text in names:
             return None
 
         # Recurse, every name must resolve to an array (no partial lifts).
@@ -463,8 +465,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 del sdfg.parent_nsdfg_node.symbol_mapping[cond_sym]
 
         try:
-            rhs_sym = dace.symbolic.SymExpr(rhs)
-            free_vars = {str(s) for s in rhs_sym.free_symbols}
+            free_vars = symbolic.free_symbols_and_functions(rhs)
         except Exception:
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
@@ -491,8 +492,8 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # structurally so identifier overlaps (``arr`` vs ``arr10``) cannot
         # corrupt the result.
         in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
-        cleaned_rhs, _ = symbolic.replace_array_accesses_with_connectors(rhs, in_conn_names,
-                                                                          set(sdfg.arrays.keys()))
+        cleaned_rhs, extracted_subsets = symbolic.replace_array_accesses_with_connectors(
+            rhs, in_conn_names, set(sdfg.arrays.keys()))
 
         out_conn = f"_out_{cond_name}"
         t = state.add_tasklet(name=f"lift_cond_{cond_sym}",
@@ -501,8 +502,16 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                               code=f"{out_conn} = ({cleaned_rhs})")
         for arr, conn in in_conn_names.items():
             an = state.add_access(arr)
-            arr_total = sdfg.arrays[arr].total_size
-            arr_subset = "0" if arr_total == 1 else subset_str
+            # Prefer the subset the RHS itself wrote (``arr[i, j]`` → ``[i, j]``);
+            # only fall back to ``[0]`` for shape-1 scalars and ``subset_str`` for
+            # bare references where the RHS gave us no per-array subset.
+            captured = extracted_subsets.get(arr)
+            if captured:
+                arr_subset = captured.strip("[]")
+            elif sdfg.arrays[arr].total_size == 1:
+                arr_subset = "0"
+            else:
+                arr_subset = subset_str
             state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else subset_str

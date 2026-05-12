@@ -182,9 +182,7 @@ def test_snippet_from_cloudsc_one(branch_mode):
     )
 
 
-def test_snippet_from_cloudsc_four(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_snippet_from_cloudsc_four(branch_mode):
     sdfg = _get_cloudsc_snippet_four()
     sdfg.name = f"cloudsc_snippet_four"
     sdfg.validate()

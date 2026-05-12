@@ -28,10 +28,7 @@ from tests.passes.vectorization._harness import (
 )
 
 @pytest.mark.parametrize("trivial_if_demote_symbols", [(True, True), (True, False), (False, True), (False, False)])
-def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool], request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool], branch_mode):
     trivial_if, demote_symbols = trivial_if_demote_symbols
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
     zsolqa = numpy.random.choice([0.001, 5.0], size=(C, 5, 5))
@@ -79,10 +76,7 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def test_disjoint_chain_with_overlapping_region_fusion(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_disjoint_chain_with_overlapping_region_fusion(branch_mode):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
     sdfg.name = f"disjoint_chain_split_two_rtt_val_4_2_with_overlapping_region_fusion"
     _N = 64
@@ -127,10 +121,7 @@ def test_disjoint_chain_with_overlapping_region_fusion(request, branch_mode):
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def test_disjoint_chain(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_disjoint_chain(branch_mode):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
     sdfg.name = f"disjoint_chain"
     _N = 64

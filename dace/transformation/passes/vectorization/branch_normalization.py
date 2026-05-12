@@ -248,14 +248,24 @@ class BranchNormalization(ppl.Pass):
         w1 = self._collect_write_subsets(s1)
         if w0 is None or w1 is None:
             return False
-        shared = set(w0) & set(w1)
-        if shared:
-            # Same-write-set case is M3.1b's job; if it reached here, M3.1b
-            # didn't match (different subsets on the same array, etc.).
+        # Same-array writes are only a real conflict when the element
+        # subsets actually intersect. Element-disjoint writes (typical
+        # cloudsc shape, e.g. ``zsolqa[i,a]`` vs ``zsolqa[i,b]``) split
+        # cleanly into ``if c: ...`` and ``if not c: ...``; each arm
+        # gates its own subset via the next normalization cycle.
+        # ``dace.subsets.intersects`` returns True / False / None; we
+        # treat the indeterminate ``None`` as a conservative conflict.
+        truly_overlapping = []
+        for name in set(w0) & set(w1):
+            if dace.subsets.intersects(w0[name], w1[name]) is not False:
+                truly_overlapping.append(name)
+        if truly_overlapping:
+            # Same-element-write case is M3.1b's job; if it reached here,
+            # M3.1b didn't match.
             raise NotImplementedError(
                 f"BranchNormalization: two-arm ConditionalBlock {cb.label!r} has overlapping "
-                f"write sets {sorted(shared)} that M3.1b did not normalize; this pass cannot "
-                f"flatten it without dropping or duplicating writes")
+                f"write subsets {sorted(truly_overlapping)} that M3.1b did not normalize; this pass "
+                f"cannot flatten it without dropping or duplicating writes")
 
         # Split into two single-arm conditionals. The else-body becomes a new
         # ``if not cond0: body1`` block sequentially after ``cb`` (now holding
@@ -313,39 +323,59 @@ class BranchNormalization(ppl.Pass):
         any_subset_str = str(next(iter(write_subsets.values())))
         cond_array_name = resolver._resolve_cond_to_array(sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
 
-        for arr_name, subset in list(write_subsets.items()):
-            # Find the unique write access node for this array in this state.
+        for arr_name in list(write_subsets.keys()):
+            # Find every write access node for this array in this state.
+            # Each write may target a different element subset (cloudsc-style
+            # chained writes like ``arr[0,3,it]`` then ``arr[3,0,it]``); the
+            # captured ``write_subsets`` dict only carries one entry per array
+            # name, so per-write we read the actual subset from each write's
+            # own in-edge memlet.
             writes = [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == arr_name]
             for write_an in writes:
                 in_edges = list(state.in_edges(write_an))
                 if not in_edges:
                     continue
-                # We expect exactly one incoming edge for element writes.
                 if len(in_edges) != 1:
                     raise NotImplementedError(
                         f"BranchNormalization: write to {arr_name!r} has {len(in_edges)} in-edges; "
                         f"only single-edge writes are supported in this slice")
                 in_edge = in_edges[0]
+                write_subset = in_edge.data.subset
 
-                # Build a transient ``__bn_<arr>_new`` to hold the computed value.
+                # Build a 1-element scratch transient ``__bn_<arr>_new`` to
+                # hold the computed value for this single element write.
                 tmp_name, _ = sdfg.add_array(name=f"__bn_{arr_name}_new",
-                                             shape=sdfg.arrays[arr_name].shape,
+                                             shape=(1, ),
                                              dtype=sdfg.arrays[arr_name].dtype,
                                              storage=dace.dtypes.StorageType.Register,
                                              transient=True,
                                              find_new_name=True)
                 tmp_an = state.add_access(tmp_name)
 
+                # The "old value" for the merge must be the value ``arr_name``
+                # held BEFORE the tasklet that wrote ``write_an`` ran. For
+                # cloudsc-style chained RMW patterns (``arr[s] = expr + arr[s]``)
+                # that is exactly the access node the tasklet was reading from
+                # via its own in-edge at the same subset; for non-RMW writes
+                # (no read of ``arr`` at this subset by the same tasklet) a
+                # fresh access node falls back to pre-state. Locate the chained
+                # source BEFORE redirecting the tasklet's out-edge so we can
+                # inspect the tasklet's read pattern.
+                writer_tasklet = in_edge.src
+                old_an = None
+                if isinstance(writer_tasklet, dace.nodes.Tasklet):
+                    for re_ in state.in_edges(writer_tasklet):
+                        if (isinstance(re_.src, dace.nodes.AccessNode) and re_.src.data == arr_name
+                                and re_.data.subset is not None and str(re_.data.subset) == str(in_edge.data.subset)):
+                            old_an = re_.src
+                            break
+                if old_an is None:
+                    old_an = state.add_access(arr_name)
+
                 # Redirect the existing in-edge to write to the temp instead.
                 state.remove_edge(in_edge)
                 state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None,
-                               dace.Memlet(expr=f"{tmp_name}[{subset}]"))
-
-                # Read the old value of ``arr`` so we can pass it as the
-                # else-branch of the merge. ``cond_array_name`` was resolved
-                # once above so we get a fresh access node per merge tasklet
-                # but reuse the single lifted bool transient.
-                old_an = state.add_access(arr_name)
+                               dace.Memlet(expr=f"{tmp_name}[0]"))
                 if cond_array_name is not None:
                     cond_access = state.add_access(cond_array_name)
                     merge_t = state.add_tasklet(
@@ -354,7 +384,7 @@ class BranchNormalization(ppl.Pass):
                         outputs={"_o"},
                         code="_o = merge(_c, _new, _old)",
                     )
-                    cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else subset
+                    cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
                     state.add_edge(cond_access, None, merge_t, "_c",
                                    dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
                 else:
@@ -364,6 +394,6 @@ class BranchNormalization(ppl.Pass):
                         outputs={"_o"},
                         code=f"_o = merge({cond_text}, _new, _old)",
                     )
-                state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[{subset}]"))
-                state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{subset}]"))
-                state.add_edge(merge_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{subset}]"))
+                state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
+                state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+                state.add_edge(merge_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
