@@ -380,6 +380,7 @@ class SDFGBuilder:
         # downstream codegen drift check).
         self._run_post_gen_passes(sdfg)
         self._attach_frozen_signature(sdfg)
+        sdfg.validate()
         return sdfg
 
     def _register_constants(self, sdfg: SDFG) -> None:
