@@ -346,7 +346,7 @@ def test_single_memset_library_node():
     state = sdfg.add_state("memset_state")
 
     b = state.add_access("B")
-    ms = MemsetLibraryNode(name="memset_B", inputs=set(), outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME})
+    ms = MemsetLibraryNode(name="memset_B")
     state.add_node(ms)
     state.add_edge(ms, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 

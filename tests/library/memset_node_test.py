@@ -22,7 +22,7 @@ def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME})
+    libnode = MemsetLibraryNode(name="memset1")
     if implementation is not None:
         libnode.implementation = implementation
 
@@ -45,7 +45,7 @@ def _get_multi_dim_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="copy2", inputs={}, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME})
+    libnode = MemsetLibraryNode(name="copy2")
     if implementation is not None:
         libnode.implementation = implementation
 

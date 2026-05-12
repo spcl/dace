@@ -88,13 +88,15 @@ class AddThreadBlockMaps(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class InvalidateAndInferConnectorTypes(ppl.Pass):
-    """Reset stale Array-vs-Scalar connector typings on NestedSDFGs (some
-    are spawned by library expansion with construction-time typing that
-    no longer matches the inner descriptor) and re-infer per sub-SDFG.
+class ReinferConnectorTypes(ppl.Pass):
+    """Re-derive NestedSDFG connector types from their inner descriptors.
 
-    ``infer_connector_types`` only walks top-level states, so we iterate
-    every nested SDFG explicitly.
+    Earlier passes mutate descriptors (e.g. ``PromoteGPUScalarsToArrays``
+    widens a ``Scalar`` into a length-1 ``Array``); connectors typed at
+    construction time still carry the old scalar dtype and the codegen
+    emits ``T name`` while the body indexes ``name[0]`` — compile error.
+    Clear those connector annotations on every NestedSDFG (recursively),
+    then re-infer them so they become pointer-typed.
     """
 
     def depends_on(self):

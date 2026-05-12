@@ -297,6 +297,23 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if begin_subset is None and exit_subset is None and copy_length is None:
                 continue
 
+            # Skip when the parent SDFG has arrays whose names would
+            # collide with the new libnode's published connector names
+            # (validator rejects connector-vs-array-name collisions).
+            # Most common cause: the surrounding SDFG is a CopyLibraryNode
+            # expansion wrapper whose parameter arrays are exactly those
+            # names — re-lifting inside it would recreate the clash that
+            # motivated the original libnode connector rename.
+            clashes = ({CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME}
+                       & set(state.sdfg.arrays))
+            if clashes:
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memcpy lift in map {map_entry.map.label}: parent SDFG "
+                        f"already has arrays {clashes} which would clash with the new "
+                        f"CopyLibraryNode's connectors.", UserWarning)
+                continue
+
             in_edges = state.in_edges(map_entry)
 
             if src_access_node not in state.nodes():
@@ -316,8 +333,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                            dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
             state.add_edge(tasklet, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, new_dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=new_dst_access_node.data))
-            tasklet.add_in_connector(CopyLibraryNode.INPUT_CONNECTOR_NAME)
-            tasklet.add_out_connector(CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
             for ie in in_edges:
                 if not ie.dst_conn.startswith("IN_"):
                     _an = state.add_access(ie.data.data)
@@ -364,10 +379,20 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         "could not be determined or is non-contiguous.", UserWarning)
                 continue
 
+            # Same connector-vs-array-name clash guard as the memcpy
+            # path above (see comment there).
+            if MemsetLibraryNode.OUTPUT_CONNECTOR_NAME in state.sdfg.arrays:
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memset lift in map {map_entry.map.label}: parent SDFG "
+                        f"already has an array named "
+                        f"`{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}` which would clash "
+                        f"with the new MemsetLibraryNode's connector.", UserWarning)
+                continue
+
             in_edges = state.in_edges(map_entry)
 
             tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
-            tasklet.add_out_connector(MemsetLibraryNode.OUTPUT_CONNECTOR_NAME)
             state.add_node(tasklet)
             self.rmid += 1
             state.add_edge(tasklet, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access_node, None,

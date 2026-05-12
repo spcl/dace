@@ -187,7 +187,10 @@ class MemsetLibraryNode(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
 
     def __init__(self, name: str, *args, **kwargs):
-        super().__init__(name, *args, **kwargs)
+        super().__init__(name,
+                         *args,
+                         outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME},
+                         **kwargs)
 
     def validate(
             self, sdfg: dace.SDFG,
