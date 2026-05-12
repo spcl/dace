@@ -1054,19 +1054,36 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                             return traceExtentExpr(v);
                         };
                         std::vector<std::string> subset;
+                        // Parallel walk: build ``view_dim_map`` alongside
+                        // ``subset``.  dim_map[d] is either ``"_d<N>"``
+                        // (surviving triplet dim with N = 0-based dummy-
+                        // dim index) or a 0-based scalar index expression
+                        // (dropped scalar dim).  ``is_trivial_section``
+                        // tracks whether the section is just a name +
+                        // index-suffix alias (every triplet has lo=1,
+                        // stride=1) — for those we route accesses through
+                        // the source array instead of registering a view.
+                        std::vector<std::string> dim_map;
+                        bool is_trivial_section = !triplets.empty();
+                        unsigned surviving = 0;
                         unsigned cursor = 0;
                         for (unsigned d = 0; d < triplets.size(); ++d) {
                             if (triplets[d] && cursor + 2 < secIdx.size()) {
                                 std::string lo = renderBound(secIdx[cursor]);
                                 std::string hi = renderBound(secIdx[cursor + 1]);
                                 std::string st = renderBound(secIdx[cursor + 2]);
+                                auto loC = traceConstInt(secIdx[cursor]);
+                                auto stC = traceConstInt(secIdx[cursor + 2]);
+                                bool is_full = (loC && *loC == 1)
+                                            && (stC && *stC == 1);
+                                if (!is_full) is_trivial_section = false;
                                 if (!lo.empty() && !hi.empty()) {
                                     // DaCe subset uses ``lo-1:hi`` (0-based,
                                     // inclusive upper).  Literal ``-1`` for
                                     // constant lo; ``(lo)-1`` for symbolic.
                                     std::string s;
-                                    if (auto c = traceConstInt(secIdx[cursor]))
-                                        s = std::to_string(*c - 1);
+                                    if (loC)
+                                        s = std::to_string(*loC - 1);
                                     else
                                         s = "(" + lo + ")-1";
                                     s += ":" + hi;
@@ -1075,17 +1092,30 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                                     subset.push_back(std::move(s));
                                 } else {
                                     subset.push_back("0:?");
+                                    is_trivial_section = false;
                                 }
+                                dim_map.push_back("_d" + std::to_string(surviving++));
                                 cursor += 3;
                             } else if (!triplets[d] && cursor < secIdx.size()) {
                                 std::string k = renderBound(secIdx[cursor]);
                                 if (!k.empty()) {
+                                    // ``subset`` stays in 0-based DaCe
+                                    // form for the view_alias path
+                                    // ("(k)-1" / literal-minus-one).
+                                    std::string zero_based;
                                     if (auto c = traceConstInt(secIdx[cursor]))
-                                        subset.push_back(std::to_string(*c - 1));
+                                        zero_based = std::to_string(*c - 1);
                                     else
-                                        subset.push_back("(" + k + ")-1");
+                                        zero_based = "(" + k + ")-1";
+                                    subset.push_back(zero_based);
+                                    // ``dim_map`` stays 1-based — it's
+                                    // spliced into index_exprs which
+                                    // build_memlet_index offsets uniformly.
+                                    dim_map.push_back(k);
                                 } else {
                                     subset.push_back("?");
+                                    dim_map.push_back("");
+                                    is_trivial_section = false;
                                 }
                                 cursor += 1;
                             }
@@ -1127,9 +1157,29 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                                     v.fortran_name = newName;
                                 }
                             }
-                            v.role = "view_alias";
                             v.view_source = srcName;
-                            v.view_subset = std::move(subset);
+                            // A trivial section is also a "rank-
+                            // preserving" alias: the dummy's rank must
+                            // match the count of surviving triplet
+                            // dims.  Storage-association reshape
+                            // (``call sub(d(:, :, 1))`` with callee
+                            // ``dd(16)``) has dummy rank 1 but two
+                            // surviving triplets — that's an actual
+                            // shape change Flang inserts a
+                            // ``fir.convert`` to re-shape, and needs
+                            // the view_alias path's stride remapping.
+                            bool rank_matches = ((int)surviving == v.rank);
+                            if (is_trivial_section && rank_matches) {
+                                // Trivial section: name + index suffix
+                                // alias.  No SDFG view registration —
+                                // every dummy access rewrites to a
+                                // source-array memlet via dim_map.
+                                v.role = "section_alias";
+                                v.view_dim_map = std::move(dim_map);
+                            } else {
+                                v.role = "view_alias";
+                                v.view_subset = std::move(subset);
+                            }
                         }
                     }
                 }

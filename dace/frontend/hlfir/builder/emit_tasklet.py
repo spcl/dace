@@ -21,7 +21,8 @@ import re
 
 from dace import Memlet
 
-from dace.frontend.hlfir.builder.access import acc, build_memlet_index, get_access, indirect_host, rename_iters
+from dace.frontend.hlfir.builder.access import (acc, build_memlet_index, get_access, indirect_host, rename_iters,
+                                                resolve_section_alias)
 
 
 def _ensure_view_writeback_link(builder, state, write_node, target: str):
@@ -170,8 +171,12 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
         for (k_nm, _), (ac, conn) in unique_accesses.items():
             if k_nm != nm:
                 continue
-            ix = build_memlet_index(builder, nm, ac, iter_map, indirect_syms)
-            state.add_edge(r, None, t, conn, Memlet(f"{nm}[{ix}]"))
+            # Section-alias dummies route through the source array with
+            # indices spliced via ``view_dim_map``; the dummy itself has
+            # no SDFG descriptor.
+            eff_nm, eff_ac = resolve_section_alias(builder, nm, ac)
+            ix = build_memlet_index(builder, eff_nm, eff_ac, iter_map, indirect_syms)
+            state.add_edge(r, None, t, conn, Memlet(f"{eff_nm}[{ix}]"))
 
     for sc in sorted(r_scl):
         r = acc(builder, state, sc)
@@ -203,26 +208,36 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
     # Otherwise — pure write-only update over the latest sink — reuse
     # the cached access node.  Multiple in-edges to one node are legal;
     # sharing keeps the data-flow graph connected.
+    # For section-alias targets, the write retargets to the source
+    # array — the dummy has no SDFG descriptor.  Read-side reads also
+    # route through the source name, so cache / self-update bookkeeping
+    # must use the source name.
+    v_target = builder.arrays.get(target)
+    eff_target = target
+    if v_target is not None and getattr(v_target, 'role', '') == 'section_alias':
+        eff_target = v_target.view_source
     cache = getattr(state, '_hlfir_access', None)
-    is_self_update = (target in r_scl) or (target in reads_by_name)
+    is_self_update = (target in r_scl) or (target in reads_by_name) \
+                  or (eff_target in reads_by_name)
     cached_has_readers = False
-    if cache is not None and target in cache:
-        cached_has_readers = state.out_degree(cache[target]) > 0
+    if cache is not None and eff_target in cache:
+        cached_has_readers = state.out_degree(cache[eff_target]) > 0
     if is_self_update or cached_has_readers:
-        w = state.add_access(target)
+        w = state.add_access(eff_target)
         if cache is not None:
-            cache[target] = w
-        _ensure_view_writeback_link(builder, state, w, target)
+            cache[eff_target] = w
+        _ensure_view_writeback_link(builder, state, w, eff_target)
     else:
-        w = acc(builder, state, target)
+        w = acc(builder, state, eff_target)
 
     if target in builder.scalars:
         # Scalar target: no buildable index, subset is always element 0.
         state.add_edge(t, f"_out_{target}", w, None, Memlet(data=target, subset="0"))
     else:
         ac = get_access(accesses, target, is_read=False)
-        ix = build_memlet_index(builder, target, ac, iter_map, indirect_syms)
-        state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{target}[{ix}]"))
+        eff_nm, eff_ac = resolve_section_alias(builder, target, ac)
+        ix = build_memlet_index(builder, eff_nm, eff_ac, iter_map, indirect_syms)
+        state.add_edge(t, f"_out_{target}", w, None, Memlet(f"{eff_nm}[{ix}]"))
 
 
 def emit_scalar_assign(builder, state, target: str, value: str):

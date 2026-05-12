@@ -151,6 +151,12 @@ def add_descriptors(builder, sdfg: SDFG):
     for v in builder.arrays.values():
         if _is_flang_internal(v.fortran_name):
             continue
+        if v.role == 'section_alias':
+            # Trivial section slice — no SDFG descriptor, no offset
+            # symbols.  Accesses through the inlined-body dummy rewrite
+            # to source-array memlets via ``view_dim_map`` in
+            # ``access.py`` / ``emit_tasklet.py``.
+            continue
         dims = [_dim(s) for s in shape_syms[v.fortran_name]]
         if v.role == 'view_alias':
             # Pointer alias of ``v.view_source`` — no separate storage.

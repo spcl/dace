@@ -287,7 +287,7 @@ class SDFGBuilder:
         # source array, no separate storage) and the ``acc`` factory
         # adds a per-state linking memlet so DaCe codegen knows
         # ``dd``'s reads/writes propagate to ``d``.
-        self.arrays = {v.fortran_name: v for v in self.variables if v.role in ("array", "view_alias")}
+        self.arrays = {v.fortran_name: v for v in self.variables if v.role in ("array", "view_alias", "section_alias")}
         self.symbols = {v.fortran_name: v for v in self.variables if v.role == "symbol"}
         self.scalars = {v.fortran_name: v for v in self.variables if v.role == "scalar"}
         # Per-axis offset symbols: ``offset_<arr>_d<i>`` is the SDFG

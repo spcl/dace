@@ -53,6 +53,18 @@ struct VarInfo {
     /// array shape (Fortran storage-association reshape).
     std::string view_source;
     std::vector<std::string> view_subset;
+    /// For ``role == "section_alias"`` only.  One entry per source-array
+    /// dim; surviving dims are placeholders ``"_d<N>"`` (N = 0-based
+    /// dummy-dim index), dropped scalar dims hold a 0-based DaCe-form
+    /// index expression (``"(k)-1"`` for symbolic, ``"<int>"`` for
+    /// constant).  The Python builder splices the inlined-body's
+    /// dummy index_exprs into the placeholders to produce a full
+    /// source-array memlet — no separate SDFG view is registered.
+    /// Set only when the section is structurally trivial (every triplet
+    /// has lo=1, stride=1), so the alias is just a name + index suffix.
+    /// Non-trivial sections (strided / sub-range) stay on the
+    /// ``view_alias`` path.
+    std::vector<std::string> view_dim_map;
 };
 
 /// Walk the module and build one VarInfo per hlfir.declare.

@@ -24,6 +24,83 @@ from dace.frontend.hlfir.builder.descriptors import auto_declare_synth
 from dace.frontend.hlfir.builder.emit_tasklet import assign_reads_array, emit_tasklet
 
 
+def _anchor_views_referenced_in_expr(builder, expr: str, region, pre, sdfg):
+    """Ensure every ``view_alias`` array referenced (by name) in ``expr``
+    has at least one real AccessNode in a state upstream of the
+    interstate edge that will carry ``expr``.
+
+    DaCe's framecode scans interstate-edge free_symbols and synthesises
+    a bare ``AccessNode`` if the symbol is an array name with no real
+    node yet — which then trips ``allocate_view -> get_view_edge ->
+    state.in_edges`` because the synthetic node isn't in any state.
+    The anchor state's call to ``acc()`` registers the view's
+    ``src -> view`` linking memlet, so framecode finds a real instance
+    first in topological order.
+
+    Section-alias dummies are excluded — they have no SDFG descriptor
+    and ``expr`` should have already been rewritten through
+    ``_rewrite_section_aliases_in_expr`` before this runs.
+
+    Returns the (possibly updated) ``pre`` state to chain off.
+    """
+    if not isinstance(expr, str):
+        return pre
+    from dace.frontend.hlfir.builder.access import acc
+    view_aliases = {nm for nm, v in builder.arrays.items() if getattr(v, 'role', '') == 'view_alias'}
+    if not view_aliases:
+        return pre
+    referenced = [nm for nm in view_aliases if re.search(rf'\b{re.escape(nm)}\b', expr)]
+    if not referenced:
+        return pre
+    anchor = region.add_state(f"view_anchor_{builder.nid()}")
+    region.add_edge(pre, anchor, InterstateEdge())
+    for nm in referenced:
+        acc(builder, anchor, nm)
+    return anchor
+
+
+def _rewrite_section_aliases_in_expr(builder, expr: str) -> str:
+    """Rewrite ``dummy[i, j]`` to ``source[i, j, k_const]`` for every
+    section_alias dummy referenced in ``expr``.
+
+    Used by emit_cond / emit_loop when condition / bound expressions
+    get lifted onto interstate-edge assignments — the dummy itself has
+    no SDFG descriptor, so a bare ``dummy`` symbol in the edge's free
+    symbols would trip ``sdfg.arglist`` (KeyError) and DaCe's
+    allocation-lifetime tracker.
+
+    The input subscripts are 0-based DaCe-form (built by
+    ``buildExprWithSubscripts`` as ``(idx) - 1``); ``view_dim_map``'s
+    scalar slots are 1-based Fortran-form, so we subtract 1 when
+    splicing them in.
+    """
+    if not isinstance(expr, str) or '[' not in expr:
+        return expr
+    section_dummies = {nm for nm, v in builder.arrays.items() if getattr(v, 'role', '') == 'section_alias'}
+    if not section_dummies:
+        return expr
+    matches = list(find_array_subscripts(expr, builder.arrays))
+    if not matches:
+        return expr
+    out = expr
+    for start, end, arr, parts in reversed(matches):
+        if arr not in section_dummies:
+            continue
+        v = builder.arrays[arr]
+        new_parts = []
+        for slot in v.view_dim_map:
+            if slot.startswith('_d'):
+                try:
+                    d_idx = int(slot[2:])
+                except ValueError:
+                    d_idx = len(new_parts)
+                new_parts.append(parts[d_idx] if d_idx < len(parts) else '0')
+            else:
+                new_parts.append(f"({slot}) - 1")
+        out = out[:start] + f"{v.view_source}[{', '.join(new_parts)}]" + out[end:]
+    return out
+
+
 def emit_assign(builder, ctx: '_Ctx', n, region):
     """Scalar or symbol assignment.
 
@@ -428,6 +505,12 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
     pre = ctx.cur
 
     cond = n.condition if n.condition and n.condition != "?" else "True"
+    # Section-alias dummies (trivial section slices) have no SDFG
+    # descriptor — rewrite ``dummy[i, j]`` references in the condition
+    # to ``source[i, j, k_const]`` via the view_dim_map.  Without this,
+    # the interstate-edge assignment carries the dummy name as a free
+    # symbol and ``sdfg.arglist`` raises a KeyError when scanning.
+    cond = _rewrite_section_aliases_in_expr(builder, cond)
     # Scalar OUTPUTS land as size-1 Arrays on the SDFG signature, so
     # referring to a bare name in a branch condition would pick up the
     # array pointer.  Subscript each one to read element 0.  Scalar
@@ -446,6 +529,10 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
         sym = f"if_cond_{builder.nid()}"
         if sym not in ctx.sdfg.symbols:
             ctx.sdfg.add_symbol(sym, dace.int64)
+        # If the condition references any view_alias array, anchor it
+        # in a state upstream of the interstate-edge assignment so
+        # DaCe's framecode finds a real AccessNode first.
+        pre = _anchor_views_referenced_in_expr(builder, cond, region, pre, ctx.sdfg)
         nxt = region.add_state(f"pre_{sym}")
         region.add_edge(pre, nxt, InterstateEdge(assignments={sym: cond}))
         pre = nxt

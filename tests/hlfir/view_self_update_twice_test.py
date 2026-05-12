@@ -29,7 +29,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
@@ -79,18 +78,6 @@ def test_fortran_frontend_view_self_update_twice(tmp_path):
     assert np.allclose(t, 111.0)
 
 
-@xfail("Bridge gap: `emit_cond` lifts the IF condition to an "
-       "interstate-edge ASSIGNMENT (``if_cond_N: x[(i)-1, (j)-1] > 0.5``) "
-       "for a view-aliased array `x`.  ``x`` ends up in the edge's "
-       "free_symbols; DaCe's framecode tracks the view's first usage at "
-       "that edge, synthesises a bare AccessNode(x) that isn't in any "
-       "state, and ``cpu.allocate_view -> get_view_edge`` raises "
-       "KeyError.  Proper fix per the user's direction: avoid generating "
-       "the trivial t->x view in the first place — when the section "
-       "slice is a full-range block of the parent with only trailing "
-       "scalar dims (``parent(:, :, k)``), rewrite inlined-body accesses "
-       "to ``parent(i, j, k)`` directly instead of registering a view "
-       "alias.  Repro at ``/tmp/view_if_condition_problem.sdfgz``.")
 def test_fortran_frontend_view_self_update_twice_in_if(tmp_path):
     """Same back-to-back self-updates, this time wrapped in an IF
     — exactly the cloudsc lines 1364-1385 shape."""

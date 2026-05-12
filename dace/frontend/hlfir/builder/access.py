@@ -38,6 +38,51 @@ def _next_indirection_gid() -> int:
     return gid
 
 
+def resolve_section_alias(builder, array_name: str, access):
+    """If ``array_name`` is a ``section_alias`` dummy (trivial section
+    slice — full-range triplets + scalar drops only), return
+    ``(source_name, spliced_access)`` where ``spliced_access`` carries
+    the source's full index list (the dummy's ``index_exprs`` spliced
+    into the dim-map placeholders).  Otherwise return
+    ``(array_name, access)`` unchanged.
+
+    The bridge records ``view_dim_map`` as one entry per source-array
+    dim: ``"_d<N>"`` for surviving (triplet) dims with N = 0-based
+    dummy-dim index, or a 1-based scalar expression for dropped dims.
+    Splicing yields a Fortran-1-based index list that
+    ``build_memlet_index`` then offsets uniformly.
+    """
+    v = builder.arrays.get(array_name)
+    if v is None or getattr(v, 'role', '') != 'section_alias':
+        return array_name, access
+    src = v.view_source
+    if access is None:
+        return src, access
+    from types import SimpleNamespace
+    dummy_exprs = list(getattr(access, 'index_exprs', None) or [])
+    dummy_vars = list(getattr(access, 'index_vars', None) or [])
+    new_exprs, new_vars = [], []
+    for slot in v.view_dim_map:
+        if slot.startswith('_d'):
+            try:
+                d_idx = int(slot[2:])
+            except ValueError:
+                d_idx = len(new_exprs)
+            new_exprs.append(dummy_exprs[d_idx] if d_idx < len(dummy_exprs) else '')
+            new_vars.append(dummy_vars[d_idx] if d_idx < len(dummy_vars) else '')
+        else:
+            new_exprs.append(slot)
+            new_vars.append('')
+    spliced = SimpleNamespace(
+        array_name=src,
+        is_read=getattr(access, 'is_read', False),
+        is_write=getattr(access, 'is_write', False),
+        index_exprs=new_exprs,
+        index_vars=new_vars,
+    )
+    return src, spliced
+
+
 def acc(builder, state, name: str):
     """Single access node for ``name`` in ``state``, reused across reads /
     writes.  Without this, every tasklet in the same state would fabricate
@@ -51,6 +96,13 @@ def acc(builder, state, name: str):
     the source array the view points at; subsequent reads / writes
     of the view in the same state pass through to the source.
     """
+    # Trivial section-slice dummies (``role == 'section_alias'``) have
+    # no SDFG descriptor — every access routes through the source array
+    # with indices spliced via ``view_dim_map``.  Redirect the access-
+    # node lookup to the source.
+    v_alias = builder.arrays.get(name)
+    if v_alias is not None and getattr(v_alias, 'role', '') == 'section_alias':
+        return acc(builder, state, v_alias.view_source)
     cache = getattr(state, '_hlfir_access', None)
     if cache is None:
         cache = {}
