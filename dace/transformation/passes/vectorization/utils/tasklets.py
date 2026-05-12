@@ -162,11 +162,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             return s
 
     def _is_number(s: str):
-        try:
-            float(s)
-            return True
-        except ValueError:
-            return False
+        # Reuse the same float-parse predicate ``_str_to_float_or_str`` uses;
+        # ``_str_to_float_or_str(s) != s`` is True iff ``float(s)`` parsed.
+        return s is not None and _str_to_float_or_str(s) != s
 
     def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
         """
