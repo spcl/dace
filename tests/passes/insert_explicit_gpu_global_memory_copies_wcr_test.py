@@ -82,25 +82,29 @@ def test_wcr_np_sum_small_n_auto_staging():
 
 @pytest.mark.gpu
 @pytest.mark.xfail(
-    reason="auto_optimize sequentializes the reduce map for N < its tile "
-    "threshold (here N=64) but leaves the input array as GPU_Global. The "
-    "resulting Sequential (host) tasklet then reads GPU memory, and the "
-    "SDFG validator rejects the edge with 'Data container <X> is stored "
-    "as GPU_Global but accessed on host'. The auto-staging sibling above "
-    "dodges this by leaving storage implicit; the explicit-storage form "
-    "needs a proper fix in auto_optimize (or the validator).",
+    reason="``total[0] = np.sum(A)`` with both arrays annotated as GPU_Global "
+    "exposes a Python-frontend issue: the parser decomposes the scalar "
+    "assignment into (reduce libnode → temporary) + (host-side scalar copy "
+    "into total). The host-side copy state (``call_X`` containing ``assign_X_4 "
+    "-> total``) writes to GPU_Global memory from host code; the validator "
+    "aborts with 'Data container ``total`` is stored as GPU_Global but "
+    "accessed on host'. The auto-staging sibling above dodges this by leaving "
+    "storage implicit (the runtime auto-stages host arrays to GPU). A proper "
+    "fix needs the frontend to route scalar assignment to a GPU target through "
+    "a CopyLibraryNode / device-side kernel, not a host tasklet.",
     strict=True,
 )
 def test_wcr_np_sum_small_n_explicit_gpu_storage_threshold_bug():
     """Natural ``total[0] = np.sum(A)`` over a 64-element input with
     explicit ``GPU_Global`` annotations on both parameters. Expected:
     ``auto_optimize`` GPU-fies the SDFG, the Reduce libnode lowers via
-    WCR atomics, the kernel runs, ``total`` matches ``cupy.sum(A)``.
+    WCR atomics, the host runs the compiled kernel, ``total`` matches
+    ``cupy.sum(A)``.
 
-    Actual: ``auto_optimize`` decides ``N=64`` is below its tile
-    threshold and sequentializes the reduce map, but does not propagate
-    that schedule decision to the storage layer. The Sequential (host)
-    tasklet then reads ``GPU_Global`` data and the validator aborts."""
+    Actual: the Python frontend's ``total[0] = ...`` lowering emits a
+    host tasklet that writes directly to the GPU_Global ``total`` —
+    the validator rejects the host-on-device-data edge. See the xfail
+    reason above for the remediation path."""
     from dace.dtypes import DeviceType
     from dace.transformation.auto.auto_optimize import auto_optimize
 
