@@ -341,22 +341,26 @@ class BranchNormalization(ppl.Pass):
                                dace.Memlet(expr=f"{tmp_name}[{subset}]"))
 
                 # Read the old value of ``arr`` so we can pass it as the
-                # else-branch of the merge. Wire cond as a 3rd in-connector
-                # when it names an array in the SDFG so the vectorizer can
-                # consume it as a per-lane vector, fall back to a free
-                # symbol reference for symbol-based conditions.
+                # else-branch of the merge. Reuse M3.1b's cond resolver so
+                # the same three-stage recipe (direct array / single
+                # interstate symbol / compound expression over multiple
+                # symbols) drives the ``_c`` connector wiring here too.
+                from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
+                    SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
                 old_an = state.add_access(arr_name)
-                cond_is_array = cond_text in sdfg.arrays
-                if cond_is_array:
+                cond_resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(
+                    sdfg, state, cond_text, str(subset))
+                if cond_resolved is not None:
+                    cond_array_name, cond_access = cond_resolved
                     merge_t = state.add_tasklet(
                         name=f"bn_merge_{arr_name}",
                         inputs={"_c", "_new", "_old"},
                         outputs={"_o"},
                         code="_o = merge(_c, _new, _old)",
                     )
-                    cond_an = state.add_access(cond_text)
-                    cond_subset = "0" if sdfg.arrays[cond_text].total_size == 1 else subset
-                    state.add_edge(cond_an, None, merge_t, "_c", dace.Memlet(expr=f"{cond_text}[{cond_subset}]"))
+                    cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else subset
+                    state.add_edge(cond_access, None, merge_t, "_c",
+                                   dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
                 else:
                     merge_t = state.add_tasklet(
                         name=f"bn_merge_{arr_name}",

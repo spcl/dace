@@ -262,14 +262,98 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
     def _resolve_cond_to_array(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
                                subset_str: str):
         """Resolve ``cond_text`` to an ``(array_name, access_node)`` tuple
-        usable as the ``_c`` source of the merge tasklet. Returns ``None``
-        when no lift is possible, the merge tasklet then keeps the cond
-        as a free-symbol reference inside its code.
+        usable as the ``_c`` source of the merge tasklet. Tries three
+        recipes in order, falls back to ``None`` so the merge tasklet
+        keeps the cond as free-symbol text:
+
+        1. ``cond_text`` already names an SDFG array.
+        2. ``cond_text`` is a single symbol that an interstate edge sets;
+           lift that assignment into a comparison tasklet.
+        3. ``cond_text`` is a compound expression (`(c1 or c2)`, etc.)
+           over several such symbols; lift each name recursively and emit
+           one combine tasklet over the lifted transients.
         """
         cond_text = cond_text.strip()
         if cond_text in sdfg.arrays:
             return cond_text, state.add_access(cond_text)
-        return self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str)
+        direct = self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str)
+        if direct is not None:
+            return direct
+        return self._lift_compound_cond_to_tasklet(sdfg, state, cond_text, subset_str)
+
+    def _lift_compound_cond_to_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
+                                       subset_str: str):
+        """Handle the case where ``cond_text`` is a Python boolean
+        expression over multiple symbols, each set by an interstate-edge
+        assignment, e.g. ``(__tmp0 or __tmp1)``. Recursively lifts each
+        constituent name and then emits a single combine tasklet whose
+        body is the original ``cond_text`` with each name swapped for
+        its in-connector."""
+        import ast as _ast
+        import re as _re
+        # By the time we see ``cond_text``, upstream simplification may
+        # have rewritten the Python boolean operators into their C++
+        # equivalents (``||``, ``&&``, ``!``). Normalise back so the AST
+        # parser can handle the expression; the substituted form is what
+        # the emitted tasklet body uses too.
+        py_text = _re.sub(r"\|\|", " or ", cond_text)
+        py_text = _re.sub(r"&&", " and ", py_text)
+        py_text = _re.sub(r"!\s*\(", "not (", py_text)
+        try:
+            tree = _ast.parse(py_text, mode="eval").body
+        except SyntaxError:
+            return None
+        names = sorted({n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)})
+        # Only a compound when there is more than one symbol to combine;
+        # the single-symbol case is already covered by the direct lift.
+        if len(names) < 2:
+            return None
+
+        # Recurse, every name must resolve to an array (no partial lifts).
+        lifted = {}
+        for name in names:
+            resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str)
+            if resolved is None:
+                return None
+            lifted[name] = resolved
+
+        # Pick the shape from any lifted transient; they all describe the
+        # same per-lane bool result.
+        any_arr = next(iter(lifted.values()))[0]
+        shape = sdfg.arrays[any_arr].shape
+
+        cond_name, _ = sdfg.add_array(name="_cond_compound",
+                                      shape=shape,
+                                      dtype=dace.bool_,
+                                      storage=dace.dtypes.StorageType.Register,
+                                      transient=True,
+                                      find_new_name=True)
+
+        # Substitute each lifted name in the Python-normalised expression
+        # with its in-connector. Word-boundary regex avoids touching names
+        # that happen to be substrings of others.
+        in_conn_names = {}
+        cleaned = py_text
+        for i, name in enumerate(names):
+            conn = f"_c_{i}"
+            in_conn_names[name] = conn
+            cleaned = _re.sub(rf"\b{_re.escape(name)}\b", conn, cleaned)
+
+        out_conn = f"_out_{cond_name}"
+        t = state.add_tasklet(name=f"combine_cond_{cond_name}",
+                              inputs=set(in_conn_names.values()),
+                              outputs={out_conn},
+                              code=f"{out_conn} = ({cleaned})")
+        for name, conn in in_conn_names.items():
+            lifted_name, lifted_access = lifted[name]
+            lifted_total = sdfg.arrays[lifted_name].total_size
+            lifted_subset = "0" if lifted_total == 1 else subset_str
+            state.add_edge(lifted_access, None, t, conn, dace.Memlet(expr=f"{lifted_name}[{lifted_subset}]"))
+
+        cond_access = state.add_access(cond_name)
+        cond_subset = "0" if shape == (1, ) else subset_str
+        state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
+        return cond_name, cond_access
 
     def _lift_interstate_cond_to_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_sym: str,
                                           subset_str: str):

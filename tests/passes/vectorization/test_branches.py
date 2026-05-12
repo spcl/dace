@@ -246,11 +246,7 @@ def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: 
             A[i, j] = A[i, j] + B[i, j]
 
 
-def test_interstate_boolean_op_one(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
-                              "(KeyError: 'A_slice_plus_B_slice'), pending follow-up"))
+def test_interstate_boolean_op_one(branch_mode):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -273,11 +269,7 @@ def test_interstate_boolean_op_one(request, branch_mode):
     )
 
 
-def test_interstate_boolean_op_two(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
-                              "(KeyError: 'A_slice_plus_B_slice'), pending follow-up"))
+def test_interstate_boolean_op_two(branch_mode):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -303,8 +295,15 @@ def test_interstate_boolean_op_two(request, branch_mode):
 def test_interstate_boolean_op_three(request, branch_mode):
     if branch_mode == "merge":
         request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits the same arm-local temp routing bug "
-                              "(KeyError: 'A_slice_plus_B_slice') as the related op_one/op_two tests"))
+            pytest.mark.xfail(reason=(
+                "op_three adds an extra interstate edge AFTER the ConditionalBlock that reassigns "
+                "symsym = __tmp0 or __tmp1, so __tmp0/__tmp1 have a downstream consumer in "
+                "addition to the cb's branch condition. M3.1b's compound-cond lift currently "
+                "deletes the upstream __tmp0/__tmp1 assignments after rerouting them into "
+                "comparison tasklets; that leaves the downstream symsym = ... edge referencing "
+                "symbols whose definitions are gone, and the SDFG validator flags 'Missing "
+                "symbols on nested SDFG'. Fix is use-count tracking before deleting the upstream "
+                "assignment, only delete when the symbol has no other consumer.")))
     sdfg = interstate_boolean_op_one.to_sdfg()
     sdfg.name = "interstate_boolean_op_three"
     nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
