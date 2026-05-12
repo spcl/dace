@@ -307,6 +307,45 @@ END SUBROUTINE triple
     np.testing.assert_allclose(out, out_ref, rtol=1e-12, atol=1e-12)
 
 
+def test_nested_max_with_shared_load(tmp_path):
+    """``MAX(RCOVPMIN, ZCOVPTOT(jl) - MAX(0.0, ZCOVPTOT(jl) - ZA(jl, jk)))``
+    Cloudsc line 2844 shape — nested MAX where the SAME load
+    ``ZCOVPTOT(jl)`` appears in the OUTER MAX's subtraction operand AND
+    in the INNER MAX's first sub-arg.  Probes whether collectReads's
+    cmp-skip handles nested cmp+select chains.
+    """
+    src = """
+SUBROUTINE nested_max(zcov, za, klon, klev, rcovpmin)
+integer, intent(in) :: klon, klev
+double precision, intent(inout) :: zcov(klon)
+double precision, intent(in) :: za(klon, klev)
+double precision, intent(in) :: rcovpmin
+integer jl, jk
+DO jk = 1, klev
+    DO jl = 1, klon
+        zcov(jl) = MAX(rcovpmin, zcov(jl) - MAX(0.0d0, zcov(jl) - za(jl, jk)))
+    ENDDO
+ENDDO
+END SUBROUTINE nested_max
+"""
+    ref, sdfg = _build_and_run(tmp_path, src=src, name='nested_max', entry='_QPnested_max', fortran_call=None)
+    rng = np.random.default_rng(7)
+    klon, klev = 1, 5
+    zcov_in = np.asfortranarray(rng.random(klon))
+    za = np.asfortranarray(rng.random((klon, klev)))
+    rcovpmin = 0.2
+
+    zcov_ref = zcov_in.copy()
+    ref.nested_max(zcov_ref, za, rcovpmin)
+
+    zcov = zcov_in.copy()
+    from dace.data import Scalar
+    rcov_arg = rcovpmin if isinstance(sdfg.arglist().get('rcovpmin'), Scalar) else np.array([rcovpmin],
+                                                                                            dtype=np.float64)
+    sdfg(zcov=zcov, za=za, klon=klon, klev=klev, rcovpmin=rcov_arg)
+    np.testing.assert_allclose(zcov, zcov_ref, rtol=1e-12, atol=1e-12)
+
+
 def test_max_neighbor_pairs(tmp_path):
     """``MAX(a(i-1), a(i))`` — shared loads with potentially-swapped
     cmp operand order for stride-2 indexing.
