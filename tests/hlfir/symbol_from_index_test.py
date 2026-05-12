@@ -8,7 +8,6 @@ scalar" like ``ix`` in a ``b(i) = a(ix); ix = ix + 1`` pattern does not.
 """
 from __future__ import annotations
 
-import ctypes
 import shutil
 import subprocess
 import sys
@@ -18,11 +17,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 

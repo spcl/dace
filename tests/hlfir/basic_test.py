@@ -9,17 +9,10 @@ equivalent, which is sufficient for these arithmetic-only kernels (no
 structs, no intrinsics).  The structural assertions are kept as a
 guard against silent-regressions in the SDFG shape on top of the
 numerical check."""
-import ctypes
-
 import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 

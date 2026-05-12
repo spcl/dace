@@ -15,17 +15,11 @@ pins that behaviour and stays green after this change.
 """
 from __future__ import annotations
 
-import ctypes
 from pathlib import Path
 
 import pytest
 
 from _util import build_sdfg, have_flang
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 

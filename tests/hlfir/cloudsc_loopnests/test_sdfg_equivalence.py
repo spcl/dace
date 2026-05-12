@@ -74,22 +74,6 @@ def _sdfg_call_args(sdfg, int_values: dict) -> dict:
     return out
 
 
-def _preload_gomp():
-    """DaCe-compiled SOs dynamically resolve ``omp_get_max_threads``;
-    dlopen libgomp with RTLD_GLOBAL so later ctypes.CDLL loads find
-    the symbol.  Past process-launch LD_PRELOAD can't help."""
-    import ctypes
-    for cand in ("libgomp.so.1", "/usr/lib/x86_64-linux-gnu/libgomp.so.1", "/usr/lib64/libgomp.so.1"):
-        try:
-            ctypes.CDLL(cand, mode=ctypes.RTLD_GLOBAL)
-            return
-        except OSError:
-            continue
-
-
-_preload_gomp()
-
-
 def test_cloudsc_lu_solver_sdfg_matches_f2py(tmp_path: Path):
     """LU forward-substitute + back-substitute for the microphysics
     species block.  Pure linear-algebra inner triple-nested loop with

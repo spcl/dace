@@ -6,17 +6,10 @@ lowering is not yet implemented), so the verbatim port targets the
 ``while_test_function`` subroutine."""
 from __future__ import annotations
 
-import ctypes
-
 import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 

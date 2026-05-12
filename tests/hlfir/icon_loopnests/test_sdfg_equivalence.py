@@ -84,22 +84,6 @@ def _sdfg_from_flat(flat_src: str, tmp: Path, name: str):
     return build_sdfg(flat_src, tmp, name=name, pipeline="hlfir-propagate-shapes").build()
 
 
-def _preload_gomp():
-    """DaCe-compiled SOs dynamically resolve ``omp_get_max_threads`` —
-    dlopen libgomp with RTLD_GLOBAL so later ctypes.CDLL calls on the
-    DaCe stub find the symbol.  LD_PRELOAD can't help here because
-    we're past process-launch."""
-    import ctypes
-    for cand in ("libgomp.so.1", "/usr/lib/x86_64-linux-gnu/libgomp.so.1", "/usr/lib64/libgomp.so.1"):
-        try:
-            ctypes.CDLL(cand, mode=ctypes.RTLD_GLOBAL)
-            return
-        except OSError:
-            continue
-
-
-_preload_gomp()
-
 # ---------------------------------------------------------------------------
 # Loopnest 2 — direct stencil, partial vertical
 # ---------------------------------------------------------------------------

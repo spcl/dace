@@ -11,7 +11,6 @@ wrappers, etc.) wait until the matching HLFIR lowerings land.
 """
 from __future__ import annotations
 
-import ctypes
 import sys
 from pathlib import Path
 
@@ -19,12 +18,6 @@ import numpy as np
 import pytest
 
 from _util import have_flang
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
-
 # The HLFIR fortran_parser module lives next to hlfir_to_sdfg; make sure
 # it's importable from tests.
 _HLFIR_DIR = Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"

@@ -27,14 +27,6 @@ import pytest
 
 from _util import build_sdfg, have_flang
 
-# DaCe-generated libraries pull in OpenMP symbols; preload libgomp so the
-# dacestub loader can resolve omp_get_max_threads et al. at dlopen time.
-import ctypes
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
-
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 
 _HERE = Path(__file__).resolve().parent

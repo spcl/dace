@@ -22,18 +22,12 @@ are the focused unit-test for the emit handlers themselves.
 """
 from __future__ import annotations
 
-import ctypes
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pytest
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 _HLFIR_DIR = Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"
 if str(_HLFIR_DIR) not in sys.path:

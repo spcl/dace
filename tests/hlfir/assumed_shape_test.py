@@ -28,7 +28,6 @@ These tests guard that behaviour end to end:
 """
 from __future__ import annotations
 
-import ctypes
 import shutil
 import subprocess
 import sys
@@ -41,11 +40,6 @@ from _util import have_flang
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"))
 from hlfir_to_sdfg import SDFGBuilder  # noqa: E402
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
