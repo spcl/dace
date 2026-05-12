@@ -99,36 +99,22 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
     indirect_arrays = {indirect_host(expr) for expr in indirect_syms}
     r_arr -= indirect_arrays
 
-    # One AccessInfo per occurrence, in the order buildExpr produced.
+    # One AccessInfo per textual occurrence, in the order buildExpr
+    # produced.  We mint ONE connector + ONE memlet per occurrence —
+    # even when two occurrences read the same array element.  Sharing
+    # connectors (dedup) used to misalign textual-occurrence-to-access
+    # mapping when the bridge's accesses list and the textual expr
+    # disagree on count (e.g., the MIN/MAX cmp+select pattern), so
+    # the simpler 1:1 mapping is the contract now.
     reads_by_name = {}
     for ac in accesses:
         if ac.is_read and ac.array_name in r_arr:
             reads_by_name.setdefault(ac.array_name, []).append(ac)
 
-    # Dedup: two reads of the same array at the same index_exprs share
-    # one input connector + one memlet, since DaCe codegen would otherwise
-    # produce ``B = A[i] * A[i] * A[i]`` with three identical connectors
-    # all loading the same scalar.  ``conn_per_occ[nm][k]`` gives the
-    # connector for the k-th occurrence of ``nm`` in the RHS, and
-    # ``unique_accesses[(nm, key)]`` records the AccessInfo + connector
-    # name for each distinct (array, index) pair.
-    unique_accesses = {}  # (nm, idx_tuple) -> (AccessInfo, connector_name)
-    conn_per_occ = {}  # nm -> [connector_name per occurrence]
-    for nm, acs in reads_by_name.items():
-        conn_per_occ[nm] = []
-        for ac in acs:
-            key = (nm, tuple(ac.index_exprs or ()))
-            entry = unique_accesses.get(key)
-            if entry is None:
-                conn = f"_in_{nm}_{sum(1 for k in unique_accesses if k[0] == nm)}"
-                unique_accesses[key] = (ac, conn)
-            else:
-                conn = entry[1]
-            conn_per_occ[nm].append(conn)
-
     # Rewrite the RHS, replacing the Nth occurrence of each array name
-    # with the connector for its (array, index) key.  Longest-first
-    # guards against partial matches between related names.
+    # (and consuming its balanced ``[...]`` subscript) with
+    # ``_in_<name>_<N>``.  Scalars get a single bare-name connector
+    # ``_in_<name>`` since they don't carry a subscript.
     occ = {nm: 0 for nm in r_arr}
     sorted_tokens = sorted(r_arr | r_scl, key=len, reverse=True)
 
@@ -139,7 +125,7 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
                 continue
             # Array references in the bridge-emitted RHS come with their
             # subscript: ``zsolqa[(i)-1, (j)-1, (k)-1]``.  Replace the
-            # whole ``name[...]`` group with the keyed connector — the
+            # whole ``name[...]`` group with the connector — the
             # connector's memlet already targets that one element, so
             # leaving the subscript on it would surface as DaCe's
             # "Subscript ... contains an invalid number of dimensions"
@@ -147,7 +133,6 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
             # ``re`` can't.
             new_chunks = []
             cursor = 0
-            i = 0
             pat = re.compile(rf'\b{re.escape(nm)}\b')
             for m in pat.finditer(code):
                 start = m.start()
@@ -170,15 +155,16 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
                 new_chunks.append(code[cursor:start])
                 n = occ[nm]
                 occ[nm] += 1
-                new_chunks.append(conn_per_occ[nm][n])
+                new_chunks.append(f"_in_{nm}_{n}")
                 cursor = end
             new_chunks.append(code[cursor:])
             code = ''.join(new_chunks)
         return code
 
     in_c = {f"_in_{sc}" for sc in r_scl}
-    for _, conn in unique_accesses.values():
-        in_c.add(conn)
+    for nm, acs in reads_by_name.items():
+        for i in range(len(acs)):
+            in_c.add(f"_in_{nm}_{i}")
     out_c = {f"_out_{target}"}
 
     # Apply iter_map rename to bare symbol references in the RHS BEFORE
@@ -196,17 +182,14 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
 
     for nm in sorted(reads_by_name):
         r = acc(builder, state, nm)
-        # One edge per UNIQUE (array, index_exprs) — the dedup pass
-        # already combined identical accesses into one connector.
-        for (k_nm, _), (ac, conn) in unique_accesses.items():
-            if k_nm != nm:
-                continue
-            # Section-alias dummies route through the source array with
-            # indices spliced via ``view_dim_map``; the dummy itself has
-            # no SDFG descriptor.
+        # One edge per textual occurrence (1:1 with connector names).
+        # Section-alias dummies route through the source array with
+        # indices spliced via ``view_dim_map``; the dummy itself has
+        # no SDFG descriptor.
+        for i, ac in enumerate(reads_by_name[nm]):
             eff_nm, eff_ac = resolve_section_alias(builder, nm, ac)
             ix = build_memlet_index(builder, eff_nm, eff_ac, iter_map, indirect_syms)
-            state.add_edge(r, None, t, conn, Memlet(f"{eff_nm}[{ix}]"))
+            state.add_edge(r, None, t, f"_in_{nm}_{i}", Memlet(f"{eff_nm}[{ix}]"))
 
     for sc in sorted(r_scl):
         r = acc(builder, state, sc)

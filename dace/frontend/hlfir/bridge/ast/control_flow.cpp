@@ -482,6 +482,28 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
             }
     }
 
+    // Unary math intrinsics — recurse so the inner array reference
+    // keeps its subscript.  Without this, ``ABS(a(i)) > eps`` in an
+    // IF condition gets lifted to an interstate-edge expression that
+    // C++ renders as ``abs(a) > eps`` (bare array pointer), which
+    // fails to compile.  Handles the math.* and complex.* ops Flang
+    // emits for Fortran's intrinsic library.
+    static const std::map<llvm::StringRef, std::string> unary_intrinsics = {
+        {"math.absf", "abs"}, {"math.absi", "abs"},
+        {"math.sqrt", "sqrt"}, {"math.exp", "exp"}, {"math.exp2", "exp2"},
+        {"math.log", "log"}, {"math.log2", "log2"}, {"math.log10", "log10"},
+        {"math.sin", "sin"}, {"math.cos", "cos"}, {"math.tan", "tan"},
+        {"math.asin", "asin"}, {"math.acos", "acos"}, {"math.atan", "atan"},
+        {"math.sinh", "sinh"}, {"math.cosh", "cosh"}, {"math.tanh", "tanh"},
+        {"math.floor", "floor"}, {"math.ceil", "ceil"}, {"math.round", "round"},
+        {"math.trunc", "trunc"},
+    };
+    auto unm = def->getName().getStringRef();
+    if (auto it = unary_intrinsics.find(unm);
+            it != unary_intrinsics.end() && def->getNumOperands() == 1)
+        return it->second + "("
+             + buildExprWithSubscripts(def->getOperand(0), d + 1) + ")";
+
     // Binary arith — recurse through the subscript-aware builder.
     static const std::map<llvm::StringRef, std::string> bin_ops = {
         {"arith.mulf", " * "}, {"arith.addf", " + "},

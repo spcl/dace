@@ -45,7 +45,12 @@ def test_dedup_same_index_three_times(tmp_path):
     t = _tasklet_for(sdfg, '_in_a')
     assert t is not None, "couldn't find the cube tasklet"
     in_conns = [c for c in t.in_connectors if c.startswith('_in_a')]
-    assert len(in_conns) == 1, f"expected one _in_a* connector, got {in_conns}"
+    # Contract: one connector per textual occurrence (no dedup).  Sharing
+    # connectors used to misalign textual-occurrence-to-access mapping
+    # when the bridge's access list and the textual expression
+    # disagreed on count (e.g., the MIN/MAX cmp+select pattern), so the
+    # bridge emits N connectors for ``A(i) * A(i) * A(i)``.
+    assert len(in_conns) == 3, f"expected three _in_a* connectors, got {in_conns}"
 
     a = np.arange(1, 6, dtype=np.float64)
     b = np.zeros(5, dtype=np.float64)
