@@ -262,7 +262,7 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: i
             e.src.code = dace.properties.CodeBlock(ncode_str)
 
 
-def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str):
+def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str, tree: bool = False):
     """
     Adds a reduction tasklet to reduce a vectorized array into a scalar before its use.
 
@@ -270,12 +270,21 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
         state: The SDFG state.
         name: Array to reduce.
         vector_width: Number of vector elements.
-        op: Reduction operation (e.g., "+", "*").
+        op: Reduction operation (e.g., "+", "*", "max", "min").
+        tree: When True, emit the log-depth tree form
+            (``((a + b) + (c + d)) + ...``) instead of the linear chain.
+            Default ``False`` matches the historical chain shape. The
+            chain and tree forms are not bit-exact for non-associative
+            ops (FP ``+``/``*``); pick ``tree=True`` only when the
+            caller is OK with reassociation.
     """
-    # TODO: Reduction can be optimized (e.g. logarithmic depth or checking of vector templates have a reduction op)
-
     # Any time a tasklet reads name[0:vector_width] then we need to reduce it before
     # In a reduction tasklet
+    from dace.transformation.passes.vectorization.utils.reductions import (
+        emit_chain_reduction,
+        emit_tree_reduction,
+    )
+    emit = emit_tree_reduction if tree else emit_chain_reduction
     for edge in state.edges():
         dst = edge.dst
         src = edge.src
@@ -288,16 +297,7 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                                   lifetime=arr.lifetime)
             an = state.add_access(name + "_scl")
             an.setzero = True
-            lanes = [f"_in[{i}]" for i in range(vector_width)]
-            if op in {"max", "min"}:
-                # ``max``/``min`` are not infix; emit nested function calls
-                # so the chain is well-formed Python regardless of width.
-                expr = lanes[0]
-                for lane in lanes[1:]:
-                    expr = f"{op}({expr}, {lane})"
-                reduction_code = f"_out = {expr}"
-            else:
-                reduction_code = "_out =" + f" {op} ".join(lanes)
+            reduction_code = f"_out = {emit('_in', vector_width, op)}"
             t = state.add_tasklet(name=f"scalarize_{name}", inputs={"_in"}, outputs={"_out"}, code=reduction_code)
             t.add_in_connector("_in")
             t.add_out_connector("_out")
