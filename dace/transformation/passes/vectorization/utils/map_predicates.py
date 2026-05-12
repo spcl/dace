@@ -350,12 +350,11 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
             does not appear in a memlet subset expression.
         AssertionError: If internal consistency assumptions about map nesting fail.
     """
-    # ``find_state_of_nsdfg_node`` still lives in ``vectorization_utils.py`` and
-    # migrates in slice S4 (``utils/nsdfg_reshape.py``). Imported lazily here to
-    # avoid the obvious import cycle (``vectorization_utils`` re-exports from
-    # this module, and this module would otherwise import from
-    # ``vectorization_utils`` at module load time).
-    from dace.transformation.passes.vectorization.vectorization_utils import find_state_of_nsdfg_node
+    # Imported lazily to avoid the import cycle:
+    # ``utils/__init__.py`` imports ``map_predicates`` AND ``nsdfg_reshape``,
+    # and pulling ``nsdfg_reshape`` in at this module's load time confuses
+    # the partial-load ordering.
+    from dace.transformation.passes.vectorization.utils.nsdfg_reshape import find_state_of_nsdfg_node
     checked_map_entries = set()
     for state in sdfg.all_states():
         for node in state.nodes():

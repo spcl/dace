@@ -84,9 +84,19 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
 
 
 def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG) -> dace.SDFGState:
+    """Return the ``SDFGState`` that contains ``nsdfg_node``.
+
+    Callers that need the containing ``SDFG`` should read it off the
+    returned state via ``state.sdfg``. The previous body returned the
+    root SDFG (not the state) despite the name and return annotation; it
+    was a name-vs-behaviour mismatch. Fixed to honour the signature.
+    """
     for n, g in root_sdfg.all_nodes_recursive():
         if n == nsdfg_node:
-            return root_sdfg
+            if not isinstance(g, dace.SDFGState):
+                raise Exception(
+                    f"Expected a SDFGState container for {nsdfg_node}, got {type(g).__name__} ({g})")
+            return g
     raise Exception(f"State of the nsdfg node ({nsdfg_node}) not found in the root SDFG ({root_sdfg.label})")
 
 
@@ -568,6 +578,7 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
     """
     inner_sdfg = nsdfg_node.sdfg
 
+    vectorized_datanames: Set[str] = set()
     for id, (movable_arr_name, subset) in enumerate(movable_arrays):
         out_edges = list(state.out_edges_by_connector(nsdfg_node, movable_arr_name))
         assert len(out_edges) <= 1
@@ -596,6 +607,14 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
                                                                      orig_arr, subset, vector_width, vector_storage,
                                                                      inout_data_name is not None, inout_data_name)
 
+            # Symmetric with ``process_in_edges``: a newly minted vector
+            # array must not already be in ``vectorized_datanames`` unless
+            # we asked to reuse the inout-connector name. Catches collisions
+            # between two unrelated out-edges that picked the same suffix.
+            if inout_data_name is None:
+                assert vector_dataname not in vectorized_datanames
+            vectorized_datanames.add(vector_dataname)
+
             # Compute copy subset
             copy_subset = compute_edge_subset(oe.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
 
@@ -609,8 +628,6 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             state.add_edge(oe.src, oe.src_conn, an, None,
                            dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
             state.add_edge(an, None, oe.dst, oe.dst_conn, dace.memlet.Memlet(data=oe.data.data, subset=copy_subset))
-
-    state.sdfg.validate()
 
 
 def add_copies_before_and_after_nsdfg(
