@@ -70,6 +70,16 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
             raise ValueError(f"{type(self).__name__}: stream scheduling must run on the root SDFG. "
                              f"Got nested SDFG '{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). "
                              "Nested SDFGs share the root's decisions; do not invoke the strategy on them.")
+        # Self-idempotency: if a caller pre-wired streams (typically via
+        # ``GPUStreamPipeline`` before invoking ``compile()``, which then
+        # runs ``GPUCodegenPreprocessPipeline`` and reaches this strategy
+        # again as a pipeline step) the SDFG already has its ``gpu_streams``
+        # array and every consumer is connected. Re-wiring would corrupt
+        # the chains; return the cached assignment dict so downstream
+        # passes still see the same assignment.
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_lowering_applied
+        if is_gpu_lowering_applied(sdfg):
+            return getattr(sdfg, '_gpu_stream_assignments', {})
 
         assignments = self.assign_streams(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1

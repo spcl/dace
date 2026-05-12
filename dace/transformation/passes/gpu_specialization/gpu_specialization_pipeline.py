@@ -105,26 +105,44 @@ class GPUCodegenPreprocessPipeline(Pipeline):
     2. :class:`PromoteGPUScalarsToArrays` — promote scalars the kernel
        writes into length-1 Arrays (rule 1) and any other Scalar that
        cannot live on the GPU as a Scalar (rule 2).
-    3. :class:`GPUStreamPipeline` — schedule streams, wire ``__stream``
-       connectors on libnodes, emit sync tasklets. (Currently runs
-       **before** library expansion; future iteration will move it
-       after.)
-    4. :class:`ExpandLibraryNodes` — wraps
-       ``sdfg.expand_library_nodes(recursive=True)`` as a Pass.
-    5. :class:`GPUPostExpansionPipeline` — reconnect internal GPU
-       consumers of expansion-spawned NestedSDFGs to the inherited
-       ``stream`` connector and lift ``GPU_Shared`` transients out of
-       inner NestedSDFGs.
-    6. :class:`AddThreadBlockMaps` — tile every ``GPU_Device`` map with
+    3. :class:`AssignmentAndCopyKernelToMemsetAndMemcpy` — recognise
+       in-kernel pure copies / zero-fills and lift them to
+       ``CopyLibraryNode`` / ``MemsetLibraryNode`` so they lower to
+       ``cudaMemcpyAsync`` / ``cudaMemsetAsync`` instead of a no-op
+       kernel launch.
+    4. :class:`InsertExplicitGPUGlobalMemoryCopies` — hoist transient
+       ``GPU_Global`` arrays out of kernel scopes; demote small literal-
+       shape kernel-internal transients to ``Register`` storage when
+       safe; then lift implicit ``AccessNode → AccessNode`` and
+       map-staging edges into explicit ``CopyLibraryNode`` instances.
+    5. :class:`ExpandLibraryNodes` — wraps
+       ``sdfg.expand_library_nodes(recursive=True)`` as a Pass; re-runs
+       ``set_default_schedule_and_storage_types`` on the post-expansion
+       SDFG so freshly-spawned NSDFGs don't ship with
+       ``ScheduleType.Default`` Maps.
+    6. :class:`NaiveGPUStreamScheduler` — schedule streams, allocate
+       ``gpu_streams`` on the top SDFG, wire ``__stream`` connectors on
+       every GPU consumer (kernels, libnodes, runtime tasklets), and
+       emit ``cudaStreamSynchronize`` tasklets at cross-stream and host
+       boundaries. Runs on the *post-expansion* SDFG so it sees real
+       kernels + runtime tasklets, not opaque libnodes.
+    7. :class:`LiftSharedOutOfNestedSDFG` — promote every transient
+       ``GPU_Shared`` array inside a NestedSDFG up to the SDFG that
+       owns the enclosing ``GPU_Device`` map, so the framecode walker
+       emits ``__shared__ T name[N]`` into the kernel function body.
+    8. :class:`AddThreadBlockMaps` — tile every ``GPU_Device`` map with
        an inner ``GPU_ThreadBlock``; computes the
        ``(grid, block)`` dimensions for codegen. Returns
        ``{'kernel_dimensions_map': …, 'tb_inserted_kernels': …}`` — the
-       codegen target reads it from ``pipeline_results``.
-    7. :class:`ReinferConnectorTypes` — re-derive NestedSDFG connector
-       types from their (now-mutated) inner descriptors.
-    8. ``DefaultSharedMemorySync`` (conditional) — auto-insert
-       ``__syncthreads``. Pulled in via ``apply_pass`` callsite (uses a
-       config flag) rather than via ``Pipeline`` membership.
+       codegen target reads it from ``pipeline_results``. Runs late so
+       the kernel-internal transient hoist (step 4) sees user-authored
+       kernel shapes rather than post-tile shapes.
+    9. :class:`ReinferConnectorTypes` — re-derive NestedSDFG connector
+       types from their (now-mutated) inner descriptors. Earlier passes
+       (especially step 2's Scalar → length-1 Array widening) leave
+       connector type annotations referring to the pre-mutation
+       descriptors; without this fixup the codegen emits the wrong
+       pointer-vs-value signatures.
     """
 
     def __init__(self):
@@ -137,17 +155,27 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
-        # Order: recognise trivial in-kernel pure copies / zero-fills and
-        # lift them to libnodes first (so they lower to cudaMemcpyAsync /
-        # cudaMemsetAsync instead of a no-op kernel launch). Must run
-        # before any pass that adds dynamic-input connectors to maps
-        # (notably the stream scheduler), since
-        # ``AssignmentAndCopyKernelToMemsetAndMemcpy`` propagates the
-        # original map's dynamic-input edges onto the new libnode and
-        # would clash with a later-added ``__stream``. Then lift
-        # remaining implicit copies; expand libnodes; stream-schedule on
-        # the post-expansion SDFG; lift Shared transients out of NSDFGs;
-        # tile late; refresh connector types.
+        # Order constraints:
+        #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` runs before
+        #     the stream scheduler. It carries the original map's
+        #     dynamic-input edges onto the new libnode; if a
+        #     ``__stream`` connector has already been wired, the lift
+        #     would clash with it.
+        #   * ``NaiveGPUStreamScheduler`` runs *after*
+        #     ``ExpandLibraryNodes``. The scheduler walks real kernel
+        #     ``MapEntry`` / runtime-call ``Tasklet`` nodes; libnodes
+        #     are opaque to it and would be missed.
+        #   * ``AddThreadBlockMaps`` runs after the kernel-internal
+        #     transient hoist (inside
+        #     ``InsertExplicitGPUGlobalMemoryCopies``). Tiling first
+        #     introduces an inner-map range like ``Min(N-1, b_i+31) -
+        #     b_i + 1`` whose ``b_i`` outer-loop symbol then leaks into
+        #     host-side ``cudaMalloc`` size expressions for any
+        #     transient lifted out of the kernel.
+        #   * ``ReinferConnectorTypes`` runs last. Earlier passes
+        #     mutate descriptors out from under NestedSDFG connectors;
+        #     re-deriving connector types makes the codegen emit the
+        #     right pointer-vs-value signatures.
         super().__init__([
             InferDefaultSchedulesAndStorages(),
             PromoteGPUScalarsToArrays(),
@@ -157,9 +185,5 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             NaiveGPUStreamScheduler(),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
-            # Earlier passes (especially scalar→array promotion and
-            # libnode expansion) mutate descriptors out from under
-            # NestedSDFG connectors; re-derive connector types so the
-            # codegen emits the right pointer-vs-value signatures.
             ReinferConnectorTypes(),
         ])
