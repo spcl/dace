@@ -155,6 +155,19 @@ struct RebindInfo {
     std::string innerMemberName;        // The inner record's field name.
     hlfir::DeclareOp storageDecl;       // The backing storage declare.
     hlfir::DesignateOp sliceOp;         // Designate of the slice (may be null).
+    // When the rebind store is inside a ``fir.do_loop`` whose induction
+    // variable feeds ``elemIdx``, this rebind is a "wildcard" — it
+    // symbolically establishes the equivalence
+    //   ``parent%member(<I>)%inner === storage(<slice with I substituted>)``
+    // for ANY value of ``I``.  Access sites with a runtime elemIdx
+    // (not a constant, not the same SSA as any rebind's elemIdx) match
+    // the wildcard rebind and substitute their own elemIdx for the
+    // loop iter in the slice.
+    bool isLoopIter = false;
+    mlir::Value loopIterStorage;        // The alloca / declare that the
+                                        // loop counter writes into; used
+                                        // to identify slice scalars that
+                                        // reference the iter.
 };
 
 // ---------------------------------------------------------------------------
@@ -337,6 +350,31 @@ parseEmboxSource(mlir::Value emboxVal) {
 // Phase 2 — Rebind tracking
 // ---------------------------------------------------------------------------
 
+/// Walk a value back through ``fir.convert`` / ``fir.load`` peels and
+/// return the underlying ``hlfir.declare`` (or ``fir.alloca``) memref
+/// if the chain bottoms out at one, else null.  Used to identify when
+/// an SSA value is "the loop counter alloca" so a rebind inside a
+/// ``fir.do_loop`` can be recognised as a wildcard rebind.
+static mlir::Value traceToCounterAlloca(mlir::Value v) {
+    for (int i = 0; i < limits::kConvertChainDepth && v; ++i) {
+        auto *def = v.getDefiningOp();
+        if (!def) return {};
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { v = cv.getValue(); continue; }
+        if (auto ld = mlir::dyn_cast<fir::LoadOp>(def))     { return ld.getMemref(); }
+        return {};
+    }
+    return {};
+}
+
+/// True iff ``op`` has a ``fir.do_loop`` ancestor anywhere up the
+/// region tree.
+static fir::DoLoopOp findEnclosingDoLoop(mlir::Operation *op) {
+    for (auto *p = op->getParentOp(); p; p = p->getParentOp())
+        if (auto dl = mlir::dyn_cast<fir::DoLoopOp>(p))
+            return dl;
+    return {};
+}
+
 /// Walk a function and collect every rebind store targeting an
 /// inner-pointer-member of ``target.parent``'s alloc-array-of-records.
 static void collectRebinds(mlir::func::FuncOp func,
@@ -362,6 +400,20 @@ static void collectRebinds(mlir::func::FuncOp func,
         info.innerMemberName = destDg.getComponentAttr().str();
         info.storageDecl = storageDecl;
         info.sliceOp = sliceDg;
+
+        // Detect loop-iter rebind: store is inside a ``fir.do_loop``
+        // AND the elemIdx traces back through ``convert/load`` to a
+        // counter alloca that is itself written by the loop's iter
+        // arg.  When this holds, the rebind is a TEMPLATE valid for
+        // any element index.
+        if (auto dl = findEnclosingDoLoop(store)) {
+            (void)dl;  // The loop op itself isn't needed; only the
+                       // counter alloca that ``elemIdx`` loads from.
+            if (auto counter = traceToCounterAlloca(em.elemIdx)) {
+                info.isLoopIter = true;
+                info.loopIterStorage = counter;
+            }
+        }
         out.push_back(std::move(info));
     });
 }
@@ -389,13 +441,27 @@ static RebindInfo *findRebind(
         if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
             if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
                 needed = ia.getInt();
-    if (!needed) return nullptr;
+    if (needed) {
+        for (auto &r : rebinds) {
+            if (r.innerMemberName != innerMemberName.str()) continue;
+            if (auto *def = r.elemIdx.getDefiningOp())
+                if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+                    if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                        if (ia.getInt() == *needed) return &r;
+        }
+    }
+    // Wildcard (loop-iter template) fallback — symbolic match.
+    //
+    // When a rebind is inside a ``fir.do_loop`` whose iter feeds the
+    // rebind's elemIdx, the rebind establishes a symbolic template
+    // ``parent%member(<I>)%inner === storage(<slice with I substituted>)``
+    // for any element index ``I``.  Match on inner_member name alone
+    // and let ``buildLiftedAccess`` substitute the access's elemIdx
+    // into the slice's loop-iter-referencing scalar slots.
     for (auto &r : rebinds) {
+        if (!r.isLoopIter) continue;
         if (r.innerMemberName != innerMemberName.str()) continue;
-        if (auto *def = r.elemIdx.getDefiningOp())
-            if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
-                if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
-                    if (ia.getInt() == *needed) return &r;
+        return &r;
     }
     return nullptr;
 }
@@ -428,12 +494,37 @@ static RebindInfo *findRebind(
 /// through verbatim from the slice.
 static mlir::Value buildLiftedAccess(mlir::OpBuilder &b,
                                      hlfir::DesignateOp accessDg,
-                                     RebindInfo &rebind) {
+                                     RebindInfo &rebind,
+                                     mlir::Value accessElemIdx) {
     auto loc = accessDg.getLoc();
     b.setInsertionPoint(accessDg);
 
     auto accessIdxs = accessDg.getIndices();
     llvm::SmallVector<mlir::Value, 6> newIdxs;
+
+    // For a wildcard (loop-iter) rebind, the slice's scalar slot that
+    // references the loop counter alloca gets substituted with the
+    // access-site element index.  Helper: given a slice scalar value,
+    // walk through ``fir.convert`` / ``fir.load`` to see if it traces
+    // to the same counter alloca recorded on the rebind.  If yes,
+    // return the access elemIdx (with a type-matching ``fir.convert``
+    // if the slice slot's i64-ness disagrees with the access elemIdx).
+    auto substIfLoopIter = [&](mlir::Value sliceScalar) -> mlir::Value {
+        if (!rebind.isLoopIter) return sliceScalar;
+        if (!rebind.loopIterStorage) return sliceScalar;
+        if (auto traced = traceToCounterAlloca(sliceScalar)) {
+            if (traced == rebind.loopIterStorage) {
+                // Type-match: if the slice scalar is i64 and the access
+                // elemIdx is i32 (or vice versa), insert a convert.
+                if (accessElemIdx.getType() != sliceScalar.getType()) {
+                    return b.create<fir::ConvertOp>(
+                        loc, sliceScalar.getType(), accessElemIdx).getResult();
+                }
+                return accessElemIdx;
+            }
+        }
+        return sliceScalar;
+    };
 
     if (rebind.sliceOp) {
         auto sliceIdxs = rebind.sliceOp.getIndices();
@@ -448,8 +539,10 @@ static mlir::Value buildLiftedAccess(mlir::OpBuilder &b,
                 newIdxs.push_back(accessIdxs[accessCursor++]);
                 cursor += 3;
             } else {
-                // Scalar — pass through from the slice.
-                newIdxs.push_back(sliceIdxs[cursor]);
+                // Scalar — pass through from the slice, unless this is
+                // a wildcard rebind and the scalar references the loop
+                // counter (in which case substitute access elemIdx).
+                newIdxs.push_back(substIfLoopIter(sliceIdxs[cursor]));
                 cursor += 1;
             }
         }
@@ -490,7 +583,12 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
     bool changed = false;
     mlir::OpBuilder b(func.getContext());
 
-    llvm::SmallVector<std::pair<hlfir::DesignateOp, RebindInfo *>, 8> jobs;
+    struct Job {
+        hlfir::DesignateOp accessDg;
+        RebindInfo *rebind;
+        mlir::Value accessElemIdx;
+    };
+    llvm::SmallVector<Job, 8> jobs;
 
     func.walk([&](hlfir::DesignateOp accessDg) {
         // Element-access designate: no component, has indices.
@@ -512,14 +610,15 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
                                    innerDg.getComponentAttr().str());
         if (!r) return;
 
-        jobs.push_back({accessDg, r});
+        jobs.push_back({accessDg, r, em.elemIdx});
     });
 
-    for (auto &[accessDg, r] : jobs) {
-        auto newVal = buildLiftedAccess(b, accessDg, *r);
+    for (auto &job : jobs) {
+        auto newVal = buildLiftedAccess(b, job.accessDg, *job.rebind,
+                                        job.accessElemIdx);
         if (!newVal) continue;
-        accessDg.getResult().replaceAllUsesWith(newVal);
-        accessDg.erase();
+        job.accessDg.getResult().replaceAllUsesWith(newVal);
+        job.accessDg.erase();
         changed = true;
     }
     return changed;

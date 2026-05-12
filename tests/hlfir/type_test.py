@@ -731,14 +731,6 @@ end subroutine kernel
     np.testing.assert_allclose(d_ref, [val, val * 2.0], rtol=0, atol=0)
 
 
-@xfail("LiftAllocArrayOfRecords runtime-index case not yet handled.  "
-       "Rebinds inside `do n = 1, N; p%items(n)%w => storage(..., n); end do` "
-       "establish a symbolic equivalence `p%items(<idx>)%w === "
-       "storage(..., <idx>)` for any idx, but the current pass matches "
-       "rebind sites by SSA-value or constant only.  Closing this needs "
-       "loop-iter substitution in findRebind: when the rebind sits inside "
-       "a do-loop, treat the iter as a wildcard that gets replaced by the "
-       "access-site element index.  See plan / TODO.")
 def test_lift_alloc_array_of_records_icon_pattern(tmp_path):
     """ICON-derived test for the LiftAllocArrayOfRecords pre-pass.
 
