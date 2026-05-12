@@ -1308,10 +1308,10 @@ def cpp_typed_literal(value, dtype):
     :return: C++ literal string such as ``'1ULL'`` or ``'1.5f'``, or
              ``None`` if the dtype should be emitted via an explicit cast.
     """
-    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype)
-    if suffix is None:
+    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype, '')
+    if not suffix:
         return None
-    if numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating):
+    if dtype == float32:
         return f'{float(value)}{suffix}'
     return f'{int(value)}{suffix}'
 
