@@ -135,6 +135,19 @@ class InsertExplicitCopies(ppl.Pass):
     - ``AccessNode -> MapExits -> AccessNode`` (stage-out)
     """
 
+    # Storages whose copies CopyLibraryNode can lower. Other storages
+    # (e.g. TensorCore_*, FPGA_*, Snitch_*) belong to custom codegen
+    # targets that handle copies via their own ``copy_memory`` hook.
+    _STANDARD_STORAGES = frozenset({
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_Pinned,
+        dtypes.StorageType.CPU_ThreadLocal,
+        dtypes.StorageType.GPU_Global,
+        dtypes.StorageType.GPU_Shared,
+    })
+
     src_locations = properties.SetProperty(
         element_type=dtypes.StorageType,
         default=set(),
@@ -297,6 +310,22 @@ class InsertExplicitCopies(ppl.Pass):
             # legacy CUDA codegen already follows in `_compute_cudastreams`
             # ("Skip views").
             if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
+                continue
+
+            # CopyLibraryNode expansion assumes both endpoints are Array
+            # descriptors (it queries shape/strides). Stream (queue) and any
+            # other non-Array data class don't satisfy that — leave the
+            # natural memlet for the codegen's stream/custom paths.
+            if not isinstance(src_desc, dace.data.Array) or not isinstance(dst_desc, dace.data.Array):
+                continue
+
+            # Custom-target storages (e.g. TensorCore_A/B/Accumulator from
+            # the tensor_cores sample) are handled by their own
+            # ``TargetCodeGenerator.copy_memory`` hook via wmma intrinsics.
+            # Lifting them into a CopyLibraryNode emits scalar tasklet
+            # assignments that don't compile against opaque fragment types.
+            if (src_desc.storage not in self._STANDARD_STORAGES
+                    or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
             if not self._storage_allowed(src_desc.storage, dst_desc.storage):
