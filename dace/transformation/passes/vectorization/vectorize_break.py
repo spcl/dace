@@ -3,7 +3,8 @@ import ast
 import copy
 from typing import Any, Dict
 from dace import SDFG, InterstateEdge, properties
-from dace.sdfg.state import BreakBlock, ControlFlowRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.eliminate_branches import EliminateBranches

@@ -5,6 +5,8 @@ import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from dace import SDFG, Memlet, SDFGState, properties, transformation
 from dace import typeclass
+import dace.sdfg.construction_utils as cutil
+from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.nodes import CodeNode
 from dace.sdfg.sdfg import InterstateEdge
