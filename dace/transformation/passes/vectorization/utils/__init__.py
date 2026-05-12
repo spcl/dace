@@ -17,3 +17,12 @@ from .queries import (  # noqa: F401
     parse_int_or_default,
     to_ints,
 )
+from .code_rewrite import (  # noqa: F401
+    FuncToSubscript,
+    convert_nonstandard_calls,
+    drop_dims,
+    drop_dims_from_str,
+    extract_bracket_contents,
+    offset_symbol_in_expression,
+    use_laneid_symbol_in_expression,
+)
