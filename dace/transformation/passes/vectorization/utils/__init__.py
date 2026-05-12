@@ -37,6 +37,18 @@ from .source_sink import (  # noqa: F401
     get_array_source_nodes, get_scalar_sink_nodes, get_scalar_source_nodes, input_is_zero_and_transient_accumulator,
     move_out_reduction, only_one_flop_after_source, reduce_before_use,
 )
+from .subsets import (  # noqa: F401
+    expand_memlet_expression,
+    offset_memlets,
+    repl_subset,
+    repl_subset_to_use_laneid_offset,
+    repl_subset_to_use_with_int_offset,
+    replace_all_access_subsets,
+    replace_memlet_expression,
+    squeeze_memlets_of_packed_arrays,
+    try_clean_other_subset_going_out_from_map_entry,
+    use_previous_subsets,
+)
 from .lane_expansion import (  # noqa: F401
     _all_atoms, assert_symbols_in_parent_map_symbols, expand_interstate_assignments_to_lanes, find_symbol_assignment,
     resolve_missing_laneid_symbols, try_demoting_vectorizable_symbols,
