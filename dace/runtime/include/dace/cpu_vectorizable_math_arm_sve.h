@@ -1483,3 +1483,11 @@ inline void vector_ne_w_scalar(T* __restrict__ out,
 
 #endif
 }
+
+template<typename T, int vector_width, typename CondT = bool>
+inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+                          const T* __restrict__ e)
+{
+    for (int i = 0; i < vector_width; ++i)
+        out[i] = cond[i] ? t[i] : e[i];
+}
