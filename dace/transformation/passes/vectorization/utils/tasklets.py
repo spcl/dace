@@ -15,6 +15,7 @@ emission.
 """
 import copy
 import re
+from dataclasses import dataclass
 from typing import Dict, Set, Tuple, Union
 
 import dace
@@ -121,6 +122,171 @@ def _is_number(s: str) -> bool:
     return s is not None and _str_to_float_or_str(s) != s
 
 
+@dataclass
+class EmitCtx:
+    """Per-tasklet emission state shared by every per-``TaskletType`` emitter.
+
+    Bundles the eight variables that ``_generate_code`` and the per-type
+    emitters used to read from the enclosing closure of
+    ``instantiate_tasklet_from_info``. Explicit container, no inheritance —
+    just a flat dataclass so the helpers move to module level without
+    losing access to anything they need.
+    """
+    state: dace.SDFGState
+    node: dace.nodes.Tasklet
+    templates: Dict[str, str]
+    vector_dtype: typeclass
+    vector_width: int
+    vector_map_param: str
+    is_commutative: bool
+    fallbackcode_due_to_types: bool
+
+
+def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> str:
+    """
+    Generate the C++ vectorized code string using templates or fallbacks.
+
+    Handles:
+    - Array-array, array-scalar, scalar-array
+    - Commutative and non-commutative ops
+    - Single constant + array/scalar (or array/scalar + constant)
+    - Fallback loops if operator not supported (hope compiler will do it)
+    """
+
+    # Get out edge and its dtype
+    out_edges = ctx.state.out_edges(ctx.node)
+    assert len(out_edges) == 1
+    out_edge = out_edges[0]
+
+    if out_edge.data.data is None:
+        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[ctx.vector_dtype]
+    else:
+        data_dtype = ctx.state.sdfg.arrays[out_edge.data.data].dtype
+        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[data_dtype]
+
+    rhs_left = rhs1_ if rhs1_ is not None else const1_
+    rhs_right = rhs2_ if rhs2_ is not None else const2_
+
+    vw = ctx.vector_width
+    templates = ctx.templates
+
+    # Multiple dtypes involved - fallback code should be used
+    if not ctx.fallbackcode_due_to_types:
+        # Use template if available
+        if op_ in templates:
+            # One array + optional constant
+            if rhs1_ is None or rhs2_ is None:
+                rhs = rhs1_ if rhs1_ is not None else rhs2_
+                constant = const1_ if const1_ is not None else const2_
+                if constant is None:
+                    # Single array or repeated array case
+                    if ctx.is_commutative:
+                        return templates[op_].format(rhs1=rhs,
+                                                     rhs2=rhs,
+                                                     lhs=lhs_,
+                                                     op=op_,
+                                                     vector_width=vw,
+                                                     dtype=dtype_)
+                    return templates[op_].format(rhs1=rhs,
+                                                 rhs2=rhs,
+                                                 lhs=lhs_,
+                                                 op=op_,
+                                                 vector_width=vw,
+                                                 dtype=dtype_)
+                else:
+                    # Single array + constant
+                    cop_ = None
+                    if ctx.is_commutative or op_ == "=":
+                        cop_ = op_ + "c"
+                    elif constant == const1_:
+                        cop_ = "c" + op_
+                    else:
+                        assert constant == const2_
+                        cop_ = op_ + "c"
+                    # Maybe this constant version is not implemented in templates
+                    if cop_ in templates:
+                        return templates[cop_].format(rhs1=rhs,
+                                                      constant=_str_to_float_or_str(constant),
+                                                      lhs=lhs_,
+                                                      op=op_,
+                                                      vector_width=vw,
+                                                      dtype=dtype_)
+
+            else:
+                # Two arrays
+                return templates[op_].format(rhs1=rhs1_,
+                                             rhs2=rhs2_,
+                                             lhs=lhs_,
+                                             op=op_,
+                                             vector_width=vw,
+                                             dtype=dtype_)
+
+    # Fallback: unsupported operator
+    comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
+    code_lines = [f"_dace_vectorize({ctx.vector_width})"]
+    code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
+
+    # Determine operand order
+    lhs_expr = lhs_ + "[_vi]"
+    rhs_left = rhs1_ if rhs1_ is not None else const1_
+    rhs_right = rhs2_ if rhs2_ is not None else const2_
+
+    if rhs_left is None or rhs_right is None:
+        if op_ not in UNARY_OPERATORS and op_ in BINARY_OPERATORS:
+            raise Exception(
+                f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op_}"
+            )
+
+    if rhs_left is None or rhs_right is None:
+        rhs = rhs_left if rhs_left is not None else rhs_right
+        const = const1_ if const1_ is not None else const2_
+        if op_ in UNARY_OPERATORS:
+            if rhs_left == const:
+                code_lines.append(f"{lhs_expr} = {op_}{rhs}{comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
+        elif op_ == "=":
+            if rhs_left == const1_:
+                code_lines.append(f"{lhs_expr} = {rhs};")
+            else:
+                code_lines.append(f"{lhs_expr} = {rhs}[_vi];")
+        else:
+            if rhs_left == const:
+                code_lines.append(f"{lhs_expr} = {op_}({rhs}){comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
+    else:
+        if op_ in BINARY_OPERATORS:
+            if rhs_left == const1_:
+                code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
+            elif rhs_right == const2_:
+                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}[_vi]){comparison_suffix};")
+        else:
+            if rhs_left == const1_:
+                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
+            elif rhs_right == const2_:
+                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right})){comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right}[_vi])){comparison_suffix};")
+
+    code_lines.append("}")
+    return "\n".join(code_lines)
+
+
+def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> None:
+    """Set ``ctx.node.code`` from the template-or-fallback dispatcher.
+
+    The dropped ``ttype`` parameter was unused; callers no longer pass it.
+    """
+    ctx.node.code = dace.properties.CodeBlock(
+        code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_),
+                            _str_to_float_or_str(const2_), lhs_, op_),
+        language=dace.Language.CPP,
+    )
+
+
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
     """
@@ -166,140 +332,14 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     fallbackcode_due_to_types = len(all_dtypes) != 1
 
-    def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
-        """
-        Generate the C++ vectorized code string using templates or fallbacks.
-
-        Handles:
-        - Array-array, array-scalar, scalar-array
-        - Commutative and non-commutative ops
-        - Single constant + array/scalar (or array/scalar + constant)
-        - Fallback loops if operator not supported (hope compiler will do it)
-        """
-
-        # Get out edge and its dtype
-        out_edges = state.out_edges(node)
-        assert len(out_edges) == 1
-        out_edge = out_edges[0]
-
-        if out_edge.data.data is None:
-            dtype_ = dace.dtypes.TYPECLASS_TO_STRING[vector_dtype]
-        else:
-            data_dtype = state.sdfg.arrays[out_edge.data.data].dtype
-            dtype_ = dace.dtypes.TYPECLASS_TO_STRING[data_dtype]
-
-        rhs_left = rhs1_ if rhs1_ is not None else const1_
-        rhs_right = rhs2_ if rhs2_ is not None else const2_
-
-        # Multiple dtypes involved - fallback code should be used
-        if not fallbackcode_due_to_types:
-            # Use template if available
-            if op_ in templates:
-                # One array + optional constant
-                if rhs1_ is None or rhs2_ is None:
-                    rhs = rhs1_ if rhs1_ is not None else rhs2_
-                    constant = const1_ if const1_ is not None else const2_
-                    if constant is None:
-                        # Single array or repeated array case
-                        if is_commutative:
-                            return templates[op_].format(rhs1=rhs,
-                                                         rhs2=rhs,
-                                                         lhs=lhs_,
-                                                         op=op_,
-                                                         vector_width=vw,
-                                                         dtype=dtype_)
-                        return templates[op_].format(rhs1=rhs,
-                                                     rhs2=rhs,
-                                                     lhs=lhs_,
-                                                     op=op_,
-                                                     vector_width=vw,
-                                                     dtype=dtype_)
-                    else:
-                        # Single array + constant
-                        cop_ = None
-                        if is_commutative or op_ == "=":
-                            cop_ = op_ + "c"
-                        elif constant == const1_:
-                            cop_ = "c" + op_
-                        else:
-                            assert constant == const2_
-                            cop_ = op_ + "c"
-                        # Maybe this constant version is not implemented in templates
-                        if cop_ in templates:
-                            return templates[cop_].format(rhs1=rhs,
-                                                          constant=_str_to_float_or_str(constant),
-                                                          lhs=lhs_,
-                                                          op=op_,
-                                                          vector_width=vw,
-                                                          dtype=dtype_)
-
-                else:
-                    # Two arrays
-                    return templates[op_].format(rhs1=rhs1_,
-                                                 rhs2=rhs2_,
-                                                 lhs=lhs_,
-                                                 op=op_,
-                                                 vector_width=vw,
-                                                 dtype=dtype_)
-
-        # Fallback: unsupported operator
-        comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
-        code_lines = [f"_dace_vectorize({vector_width})"]
-        code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
-
-        # Determine operand order
-        lhs_expr = lhs_ + "[_vi]"
-        rhs_left = rhs1_ if rhs1_ is not None else const1_
-        rhs_right = rhs2_ if rhs2_ is not None else const2_
-
-        if rhs_left is None or rhs_right is None:
-            if op not in UNARY_OPERATORS and op in BINARY_OPERATORS:
-                raise Exception(
-                    f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
-                )
-
-        if rhs_left is None or rhs_right is None:
-            rhs = rhs_left if rhs_left is not None else rhs_right
-            const = const1_ if const1_ is not None else const2_
-            if op_ in UNARY_OPERATORS:
-                if rhs_left == const:
-                    code_lines.append(f"{lhs_expr} = {op_}{rhs}{comparison_suffix};")
-                else:
-                    code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
-            elif op_ == "=":
-                if rhs_left == const1_:
-                    code_lines.append(f"{lhs_expr} = {rhs};")
-                else:
-                    code_lines.append(f"{lhs_expr} = {rhs}[_vi];")
-            else:
-                if rhs_left == const:
-                    code_lines.append(f"{lhs_expr} = {op_}({rhs}){comparison_suffix};")
-                else:
-                    code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
-        else:
-            if op_ in BINARY_OPERATORS:
-                if rhs_left == const1_:
-                    code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
-                elif rhs_right == const2_:
-                    code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
-                else:
-                    code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}[_vi]){comparison_suffix};")
-            else:
-                if rhs_left == const1_:
-                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
-                elif rhs_right == const2_:
-                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right})){comparison_suffix};")
-                else:
-                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right}[_vi])){comparison_suffix};")
-
-        code_lines.append("}")
-        return "\n".join(code_lines)
-
-    def _set_template(rhs1_, rhs2_, const1_, const2_, lhs_, op_, ttype):
-        """Helper to set tasklet code from template/fallback."""
-        node.code = dace.properties.CodeBlock(code=_generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_),
-                                                                  _str_to_float_or_str(const2_), lhs_, op_),
-                                              language=dace.Language.CPP)
+    ctx = EmitCtx(state=state,
+                  node=node,
+                  templates=templates,
+                  vector_dtype=vector_dtype,
+                  vector_width=vw,
+                  vector_map_param=vector_map_param,
+                  is_commutative=is_commutative,
+                  fallbackcode_due_to_types=fallbackcode_due_to_types)
 
     # Cast python boolean to C++ compatible string
     if c1 == "False":
@@ -313,7 +353,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype)
+        _set_template(ctx, rhs1, rhs2, c1, c2, lhs, "=")
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
         val = None
         if c1 is not None:
@@ -335,13 +375,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         # It is either a symbol or a constant
         if _is_number(str(c1)):
-            _set_template(None, None, c1, None, lhs, "=", ttype)
+            _set_template(ctx, None, None, c1, None, lhs, "=")
         else:
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
                                                                   for i in range(vw)]) + "\n",
                                                   language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
-        _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+        _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype == tutil.TaskletType.TERNARY_ARRAY:
         # ``_o = merge(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
         # All three operands are arrays, the classifier carries them as
@@ -363,23 +403,23 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         assert occurrences == 1
         if op == "-":
             # Implement (-A) as (0 - A)
-            _set_template(None, arr_name, "0.0", None, lhs, op, tutil.TaskletType.ARRAY_SYMBOL)
+            _set_template(ctx, None, arr_name, "0.0", None, lhs, op)
         elif op == "+":
             raise Exception("Unary + operator is not supported")
         else:
-            _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype in {
             tutil.TaskletType.SCALAR_ARRAY,
     }:
         # The tasklet-info treads scalars as arrays and only symbols as constants
         # For the vector-code scalar is the same as a constant
-        _set_template(None, rhs2, rhs1, None, lhs, op, ttype)
+        _set_template(ctx, None, rhs2, rhs1, None, lhs, op)
     elif ttype in {
             tutil.TaskletType.ARRAY_SCALAR,
     }:
         # The tasklet-info treads scalars as arrays and only symbols as constants
         # For the vector-code scalar is the same as a constant
-        _set_template(rhs1, None, None, rhs2, lhs, op, ttype)
+        _set_template(ctx, rhs1, None, None, rhs2, lhs, op)
     elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
         code_lines = []
         symbols = state.symbols_defined_at(node)
