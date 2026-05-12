@@ -72,7 +72,6 @@ def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
         if isinstance(n, dace.nodes.Tasklet):
             code_before = copy.deepcopy(n.code.as_string)
             tutil.tasklet_replace_code(n, repldict, py_only=False, use_sym_expr=False)
-            #print("Repldict:", repldict, "\nCode Before:", code_before, "\nCode After:", n.code.as_string)
         if isinstance(n, dace.nodes.NestedSDFG):
             for k, v in repldict.items():
                 if k in n.symbol_mapping:

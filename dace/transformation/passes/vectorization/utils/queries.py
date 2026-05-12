@@ -192,7 +192,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
 
     all_accesses_to_arrays = collect_accesses_to_array_name(sdfg)
-    #print(all_accesses_to_arrays)
 
     for state in sdfg.all_states():
         for edge in state.edges():
@@ -211,8 +210,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 
             # Evaluate the expression (b == e)
             access_expr = b  # use b since b==e
-            #print(access_expr, type(access_expr))
-            #print(isinstance(access_expr, (dace.symbolic.SymExpr, dace.symbolic.symbol, sympy.Expr)))
             if isinstance(access_expr, (dace.symbolic.SymExpr, sympy.Expr)):
                 # Check for multipliers
                 # If map_param appears multiplied in the expression, it is strided
@@ -260,20 +257,15 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         scalars = {str(s)
                                    for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars
                         # If scalar is invariant it should be ok?
-                        #print("Invariant", invariant_scalars)
-                        #print("Non-invariant scalars",
                         #      {s
                         #       for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars)
                         if len(funcs) != 0 or len(scalars) != 0:
-                            #print(f"Indirect access detected: ({funcs}, {scalars}) for {arr_name}, is not vectorizable")
                             array_is_vectorizable[arr_name] = False
 
             # Go through non unit stride dimensions in case it those dimensions have unstructuredness
             for i, (b, e, s) in enumerate(access_subset):
-                #print(i, ",", (b,e,s), "|", access_subset)
                 if i == stride_one_dim:
                     continue
-                #print(b, type(b),)
                 free_syms = set()
                 if hasattr(b, "free_syms"):
                     free_syms = {str(s) for s in b.free_syms}
@@ -281,10 +273,8 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                     free_syms = {str(s) for s in b.free_symbols}
 
                 if free_syms != set():
-                    #print(free_syms)
                     for free_sym in free_syms:
                         # Accessing map param is ok
-                        #print("FS", free_syms)
                         if str(free_sym) == map_param:
                             continue
                         else:
@@ -309,7 +299,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             }
                             all_atoms = _all_atoms(assignment_expr, ignored)
                             all_atoms_str = {str(s) for s in all_atoms}
-                            #print(all_atoms_str)
 
                             # Map parameter appears in inddirect access, array is not vectorizable
                             if map_param in all_atoms_str:

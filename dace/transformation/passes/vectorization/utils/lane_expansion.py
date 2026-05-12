@@ -176,7 +176,6 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
     parent_map_entry = state.scope_dict()[nsdfg_node]
     assert parent_map_entry is not None and isinstance(parent_map_entry, dace.nodes.MapEntry)
     vectorized_param = vector_map_param
-    #print(vector_map_param)
 
     for edge in inner_sdfg.all_interstate_edges():
         new_assignments = dict()
@@ -278,7 +277,6 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
     for sym, sym_assignments in assigned_symbols.items():
         # Check that the access is to arrays and map param is involved
         all_function_args = set()
-        #print(sym_assignments)
         for sym_assignment in sym_assignments:
             sym_assign_expr = dace.symbolic.SymExpr(sym_assignment)
             # Collect all array accesses (they are functions that are present in the sdfg)
@@ -287,15 +285,12 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
             atoms = (sym_assign_expr.atoms(sympy.Function) | sym_assign_expr.atoms(And) | sym_assign_expr.atoms(Or))
             funcs = {(getattr(a, "func", type(a)).__name__, a)
                      for a in atoms if hasattr(a, "func") and callable(a.func)}
-            #print(funcs)
             for fname, f in funcs:
-                #print(f"Check function: {fname} ({str(fname) in inner_sdfg.arrays})")
                 if fname in inner_sdfg.arrays:
                     for arg in f.args:
                         all_function_args = all_function_args.union({str(s) for s in arg.free_symbols})
 
         # If all function args are s
-        #print(f"{sym} <-(depends)- {all_function_args}")
         # if the depend set has no arrays or scalars we can do it
         data_in_dependence_set = {d for d in all_function_args if d in inner_sdfg.arrays}
         if len(data_in_dependence_set) == 0:
@@ -366,7 +361,6 @@ def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
     """
     # Find missing symbols
     missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
-    #print(missing_symbols)
 
     # Determine which of the missing symbols correspond to parent map symbols
     map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)

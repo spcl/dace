@@ -621,14 +621,10 @@ class Vectorize(ppl.Pass):
                         # A -[j]> B becomes now
                         # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
                         for i in range(self.vector_width):
-                            #print(edge.data.data, edge.data.subset, i, symbols_to_offset, edge.data.subset.free_symbols)
                             new_subset = repl_subset_to_use_with_int_offset(sdfg=state.sdfg,
                                                                             symbols_to_offset=symbols_to_offset,
                                                                             subset=copy.deepcopy(edge.data.subset),
                                                                             int_offset=i)
-                            #print(edge.data.subset)
-                            #print(new_subset)
-                            #print(symbols_to_offset)
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
@@ -719,14 +715,10 @@ class Vectorize(ppl.Pass):
                         # A -[j]> B becomes now
                         # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
                         for i in range(self.vector_width):
-                            #print(edge.data.data, edge.data.subset, i, symbols_to_offset, edge.data.subset.free_symbols)
                             new_subset = repl_subset_to_use_with_int_offset(sdfg=state.sdfg,
                                                                             symbols_to_offset=symbols_to_offset,
                                                                             subset=copy.deepcopy(edge.data.subset),
                                                                             int_offset=i)
-                            #print(edge.data.subset)
-                            #print(new_subset)
-                            #print(symbols_to_offset)
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
