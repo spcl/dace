@@ -1,109 +1,132 @@
 # GPU Specialization Pipeline
 
-The `gpu_specialization` pipeline transforms a DaCe SDFG with GPU storage
+`GPUCodegenPreprocessPipeline` transforms a DaCe SDFG with GPU storage
 annotations into a form ready for `ExperimentalCUDACodeGen`. It runs as
-part of the codegen's `preprocess` step, after `InferDefaultSchedulesAndStorages`
-and `PromoteGPUScalarsToArrays` have settled storage / schedule defaults.
+part of the codegen target's `preprocess` step.
 
 ## Pipeline order
 
 ```
-GPUSpecializationPipeline:
-  1. InsertExplicitGPUGlobalMemoryCopies
-  2. NaiveGPUStreamScheduler
-  3. InsertGPUStreams
-  4. ConnectGPUStreamsToNodes
-  5. InsertGPUStreamSyncTasklets
-
-(then expand_library_nodes(recursive=True) and:)
-  6. ReconnectWithinExpandedSDFGs
+GPUCodegenPreprocessPipeline:
+  1. InferDefaultSchedulesAndStorages
+  2. PromoteGPUScalarsToArrays
+  3. AssignmentAndCopyKernelToMemsetAndMemcpy
+  4. InsertExplicitGPUGlobalMemoryCopies
+  5. ExpandLibraryNodes
+  6. NaiveGPUStreamScheduler
   7. LiftSharedOutOfNestedSDFG
+  8. AddThreadBlockMaps
+  9. ReinferConnectorTypes
 ```
+
+Each step depends on the invariants its predecessors establish. Stream
+scheduling sees the post-expansion SDFG (real kernels + runtime
+tasklets, not opaque libnodes). The orphan-pass rewrite of trivial
+in-kernel copies/zero-fills (#3) must run before any pass that adds
+dynamic `__stream` connectors, because it would otherwise propagate
+them onto the libnodes it creates and clash with the stream scheduler.
 
 ## What each pass does and why
 
-### 1. `InsertExplicitGPUGlobalMemoryCopies`
-Lifts every implicit `AccessNode → AccessNode` (and map-staging) edge that
-touches GPU memory into an explicit `CopyLibraryNode`. The codegen
-otherwise infers copies from edge topology, which mixes data-movement
-semantics into edge endpoints; making copies first-class library nodes
-keeps the rest of the pipeline simple — every copy has a place to attach
-a stream, and codegen has one expansion path per copy class. Also fails
-loudly if any `GPU_Global → GPU_Global` copy is found inside a kernel
-scope (those need `MoveTransientOutOfKernel` first).
+### 1. `InferDefaultSchedulesAndStorages`
+Resolves every `ScheduleType.Default` / `StorageType.Default` to a
+concrete value based on enclosing scopes. The rest of the pipeline
+assumes every descriptor and map has a determined storage/schedule.
 
-### 2. `NaiveGPUStreamScheduler`
-Analyzes the SDFG and assigns a stream id to every node that needs one
-(GPU kernel `MapEntry`, copy/memset library nodes targeting GPU memory).
-Pure analysis: returns a `Dict[Node, int]` for downstream passes. Naive
-because it doesn't try to overlap independent components — that's a
-follow-up optimization.
+### 2. `PromoteGPUScalarsToArrays`
+Widens `Scalar` descriptors that can't live on the GPU as Scalars
+into length-1 `Array` descriptors (e.g. a kernel-written Scalar
+becomes `Array((1,), GPU_Global)`). After this pass every "GPU
+scalar" is an `Array((1,), …)`.
 
-### 3. `InsertGPUStreams`
-Materializes the `gpu_streams` transient on the top SDFG and threads it
-through every nested SDFG that needs it, adding an in-connector and
-data-flow path to each NestedSDFG node. Skips NestedSDFGs that execute
-as device code (transitively inside a `GPU_Device` map) — those run
-inside a kernel and cannot host-issue stream-bound calls.
+### 3. `AssignmentAndCopyKernelToMemsetAndMemcpy`
+Recognises trivial in-kernel patterns — `B[i, j] = A[i, j]` and
+`B[i, j] = 0` — and lifts them to `CopyLibraryNode` /
+`MemsetLibraryNode`. The libnodes lower to `cudaMemcpyAsync` /
+`cudaMemsetAsync` rather than launching a no-op kernel. Carries a
+clash guard: skips when the surrounding SDFG has arrays named like
+the libnode's connectors (avoids re-triggering the libnode-connector
+rename clash inside expansion-wrapper SDFGs).
 
-`gpu_streams`'s presence on the top SDFG is also the **idempotency
-signal** for the whole pipeline (`is_gpu_lowering_applied`).
+### 4. `InsertExplicitGPUGlobalMemoryCopies`
+Hoists transient GPU_Global arrays out of kernel scopes (the codegen
+has no in-kernel allocator path) via `MoveArrayOutOfKernel`. Demotes
+small literal-shape kernel-internal transients to per-thread
+`Register` storage instead of lifting, gated on three conditions: no
+external consumers, no incoming WCR memlet (atomic accumulator), and
+`prod(shape)` ≤ `register_demotion_max_elements` (default 64).
+Finally lifts every implicit `AccessNode → AccessNode` (and
+map-staging) edge into an explicit `CopyLibraryNode`.
 
-### 4. `ConnectGPUStreamsToNodes`
-For each scheduled node and each stream id, builds the per-stream chain
-of `gpu_streams[i]` AccessNodes that wires kernels and library nodes
-together. Same device-level skip as `InsertGPUStreams`. Sequential map
-chains use `IN_stream` / `OUT_stream` pass-through connectors so stream
-state crosses scope boundaries cleanly.
+Fails loudly if any `GPU_Global → GPU_Global` direct copy still sits
+inside a kernel scope after the hoist — those need manual
+restructuring.
 
-### 5. `InsertGPUStreamSyncTasklets`
-Identifies cross-stream and cross-device synchronization points (GPU →
-host, host → GPU, kernel → memcpy on a different stream, etc.) and
-inserts `cudaStreamSynchronize` tasklets there. The pass picks the
-narrowest sync point that preserves correctness, so independent streams
-keep their concurrency.
+### 5. `ExpandLibraryNodes`
+Recursively expands every remaining `LibraryNode`. Re-runs
+`set_default_schedule_and_storage_types` after expansion so NSDFGs
+spawned by the expansion don't ship with `ScheduleType.Default` Maps
+inside (the codegen dispatcher rejects those).
 
-### 6. `ReconnectWithinExpandedSDFGs`
-Runs after `expand_library_nodes(recursive=True)`. Library-node
-expansions (`CopyLibraryNode`, `MemsetLibraryNode`, cuBLAS, etc.) often
-spawn a NestedSDFG that inherits a single `stream` connector. This pass
-walks the inherited body and wires every internal GPU consumer to that
-one bound stream — no fresh `gpu_streams` array threaded into already-bound
-bodies.
+### 6. `NaiveGPUStreamScheduler`
+Computes a WCC partition over GPU-relevant nodes, assigns each
+component a stream id, allocates the `gpu_streams` transient on the
+top SDFG, wires `__stream` connectors on every GPU consumer
+(kernels, libnodes, runtime tasklets), and emits
+`cudaStreamSynchronize` tasklets at cross-stream / host boundaries.
+Runs on the post-expansion SDFG.
+
+The stream-scheduling strategy is included directly (not via the
+single-pass `GPUStreamPipeline` wrapper). Reason: `Pipeline` is
+decorated as a `@dataclass` and is therefore unhashable, so it can't
+be a child of another `Pipeline`. Strategies extend `Pass` and are
+hashable.
 
 ### 7. `LiftSharedOutOfNestedSDFG`
 Promotes every `transient GPU_Shared` array that lives inside a
-NestedSDFG up into the SDFG that owns the enclosing `GPU_Device` map.
-The lifted descriptor lives at the kernel scope, accessed from inside
-the NestedSDFG via a connector. This makes the framecode allocation
-walker emit `__shared__ T name[N]` directly into the kernel function
-body (the only place `__shared__` is valid) — without it, the walker
-mis-routes the declaration to a stream that never reaches any kernel.
+NestedSDFG up into the SDFG that owns the enclosing `GPU_Device`
+map. The lifted descriptor lives at the kernel scope, accessed from
+inside the NestedSDFG via a connector. This makes the framecode
+allocation walker emit `__shared__ T name[N]` directly into the
+kernel function body (the only place `__shared__` is valid) —
+without it, the walker mis-routes the declaration to a stream that
+never reaches any kernel.
+
+### 8. `AddThreadBlockMaps`
+Tiles every `GPU_Device` map that doesn't already have an inner
+`GPU_ThreadBlock` map. Computes the `(grid, block)` dimensions for
+codegen and stashes them in `pipeline_results['AddThreadBlockMaps']`
+under `kernel_dimensions_map` / `tb_inserted_kernels`. The codegen
+target reads them back. Runs late so the kernel-internal transient
+hoist (#4) sees user-authored kernel shapes — tiling earlier would
+introduce inner-map ranges like `Min(N - 1, b_i + 31) - b_i + 1`
+whose `b_i` outer-loop symbol then leaks into host-side `cudaMalloc`
+size expressions for any transient lifted out of the kernel.
+
+### 9. `ReinferConnectorTypes`
+Re-derives NestedSDFG connector types from their (now-mutated) inner
+descriptors. Earlier passes — especially #2 widening Scalar →
+length-1 Array — invalidate connector type annotations that were
+correct at construction time. Without this fixup the codegen emits
+the wrong pointer-vs-value signatures.
 
 ## Idempotency
 
-`GPUSpecializationPipeline` checks `is_gpu_lowering_applied(sdfg)` (i.e.
-`gpu_streams` ∈ `sdfg.arrays`) and short-circuits on a re-run. The
-preprocess always runs end-to-end so codegen-side state (kernel
-dimensions, stream manager, per-kernel arglists) is set up regardless,
-but the SDFG-modifying passes don't double-apply — re-application would
-double-add stream connectors and corrupt the per-stream chains, causing
-runtime memory faults.
+`GPUStreamPipeline` checks `is_gpu_lowering_applied(sdfg)` (i.e.
+`gpu_streams ∈ sdfg.arrays`) and rejects re-application. The WCC
+partition is graph-shape dependent; re-running the scheduler on an
+already-wired SDFG would corrupt the chains. Nested SDFGs share the
+root's decisions, so calling the pipeline on a non-root SDFG raises.
 
-## Names reserved by this pipeline
+## Reserved names
 
-* `gpu_streams` — the stream array. **Enforced**: `SDFG.add_datadesc`
-  rejects user-driven additions with this name. The pipeline itself adds
-  it via `add_datadesc(..., _internal_pipeline_use=True)`.
-* `__stream_<id>` — per-kernel stream connector prefix on `MapEntry` nodes
-  (added by `ConnectGPUStreamsToNodes`).
-* `stream` — single-stream connector on `CopyLibraryNode` /
-  `MemsetLibraryNode`.
-
-The canonical list lives in
-`helpers/gpu_helpers.py:RESERVED_GPU_PIPELINE_NAMES` and is mirrored
-inline in `dace/sdfg/sdfg.py:SDFG._RESERVED_PIPELINE_NAMES` to avoid a
-circular import.
+* `gpu_streams` — the stream array on the top SDFG. Allocated by the
+  stream-scheduling strategy.
+* `__stream_<id>` — per-stream connector on a fused sync tasklet,
+  one in-edge per stream id touched in the state.
+* `__stream` — single-stream connector on `CopyLibraryNode`,
+  `MemsetLibraryNode`, kernel `MapEntry`, and pre-expanded runtime
+  tasklets.
 
 ## Host vs. device-level rule
 
@@ -114,74 +137,34 @@ device code (`__device__` / `DACE_DFI`) — `cudaMemcpyAsync` /
 be issued from a `__device__` function, so streams are never threaded
 into kernel-nested NestedSDFGs.
 
-The check (`helpers/gpu_helpers.py:is_inside_gpu_device_kernel`) walks
-`parent_nsdfg_node` / `parent_sdfg` directly via
-`innermost_enclosing_map`. It does **not** walk data-flow predecessors —
+The check (`helpers/gpu_helpers.py:is_inside_gpu_device_kernel`)
+walks `parent_nsdfg_node` / `parent_sdfg` directly via
+`innermost_enclosing_map`. It does not walk data-flow predecessors —
 a downstream consumer of a kernel's output is at sibling scope, not
 "inside" it.
 
-## Scope-membership lookups
-
-The shared helpers in `gpu_helpers.py` invalidate `state.scope_dict()`'s
-cache before every traversal. Reason: pipeline passes that add nodes
-(stream AccessNodes, sync tasklets) can leave the cache stale relative
-to the new topology. The walkers downstream that key on scope
-membership (allocation routing in framecode, the stream-skip rule
-above) need fresh data.
-
-## Idempotency
-
-`GPUSpecializationPipeline.apply_pass` checks
-`is_gpu_lowering_applied(sdfg)` and short-circuits on a re-run. The
-signal is the presence of `gpu_streams` on the top SDFG — created by
-`InsertGPUStreams` (the only pass that introduces it) and stable across
-the rest of the pipeline.
-
-`ExperimentalCUDACodeGen.preprocess` always runs end-to-end because
-codegen-side state (kernel dimensions, stream manager, per-kernel
-arglists, statestruct entry) must be set up regardless of whether the
-SDFG was already lowered. The SDFG-modifying part — the
-`GPUSpecializationPipeline` invocation — is the part guarded by the
-idempotency check.
-
-When this matters: callers that pre-apply the pipeline before
-`compile()` (e.g. test scaffolds that compose their own pipeline). A
-naive re-application would double-add `gpu_streams`, double-thread
-NestedSDFG connectors, and corrupt the per-stream chains; the runtime
-manifestation is a segfault during kernel launch sequencing.
-
 ## Failure modes the pipeline catches
 
-`InsertExplicitGPUGlobalMemoryCopies` raises if it finds a
-`GPU_Global → GPU_Global` direct copy whose endpoints sit inside a
-kernel scope. Such patterns mean a transient leaked into the kernel
-body and need `MoveTransientOutOfKernel` (in
-`dace/transformation/passes/move_array_out_of_kernel.py`) to hoist
-them out before this pipeline runs.
-
-The error message names the offenders so the caller can diagnose which
-transients need hoisting.
+`InsertExplicitGPUGlobalMemoryCopies` raises if it finds a transient
+`GPU_Global → GPU_Global` copy whose endpoints sit inside a kernel
+scope after its hoist phase. Such patterns mean a transient could
+not be lifted (typically because of cross-kernel reuse) — the error
+names the offenders so the caller can diagnose which transients need
+manual restructuring.
 
 ## Adding a new pass
 
-1. Decide whether it touches the SDFG state. If yes, place it in the
-   pipeline order above (the existing passes assume the invariants
-   established by their predecessors); if no, it can run independently.
+1. Decide where it goes in the pipeline order. Each pass establishes
+   invariants the next one assumes; insert with care.
 
-2. Make it idempotent. The pipeline-level guard handles re-runs of the
-   *whole* pipeline, but a pass added later in `preprocess` (after
-   `expand_library_nodes` / `ReconnectWithinExpandedSDFGs`) needs its
-   own re-application story — typically by checking a structural
-   invariant the pass itself establishes (e.g.
-   `LiftSharedOutOfNestedSDFG` checks whether the inner SDFG's Shared
-   transients are still `transient=True`).
+2. If the new pass touches connector types, dynamic inputs, or
+   schedule, decide whether it must run before #5 (post-expansion
+   passes see a different graph) and #6 (after stream scheduling,
+   adding any `__stream` connector is fragile).
 
-3. If the pass needs scope membership, use
-   `helpers/gpu_helpers.py`'s `enclosing_map_chain` /
-   `innermost_enclosing_map` / `is_inside_gpu_device_kernel`. They
-   invalidate `scope_dict` first.
+3. If the pass adds a reserved name, document it in the "Reserved
+   names" section above.
 
-4. If the pass introduces a reserved name, add it to
-   `RESERVED_GPU_PIPELINE_NAMES` and the inline mirror in
-   `SDFG._RESERVED_PIPELINE_NAMES`, and use `_internal_pipeline_use=True`
-   when calling `add_datadesc`.
+4. If the pass needs scope membership, use
+   `helpers/gpu_helpers.py` (`enclosing_map_chain`,
+   `innermost_enclosing_map`, `is_inside_gpu_device_kernel`).

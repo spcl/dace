@@ -290,29 +290,3 @@ def read_stream_assignments_from_wired_sdfg(sdfg: SDFG):
     return assignments
 
 
-def validate_stream_indices_within_bounds(sdfg: SDFG):
-    """Raise if any wired ``gpu_streams[<i>]`` memlet refers to ``i`` outside
-    ``[0, len(gpu_streams))``. Caught here so the codegen never emits an
-    out-of-bounds access into ``__state->gpu_context->streams``."""
-    if not is_gpu_lowering_applied(sdfg):
-        return
-    stream_array = get_gpu_stream_array_name()
-    num = int(sdfg.arrays[stream_array].shape[0])
-    offenders = []
-    for node, parent_sdfg, state in find_inner_gpu_consumers(sdfg):
-        for edge in state.in_edges(node):
-            if not edge.dst_conn or not is_stream_typed_connector(node, edge.dst_conn):
-                continue
-            if edge.data is None or edge.data.data != stream_array or edge.data.subset is None:
-                continue
-            try:
-                stream_id = int(edge.data.subset[0][0])
-            except (TypeError, ValueError, IndexError):
-                continue
-            if stream_id >= num or stream_id < 0:
-                offenders.append(f"  - {type(node).__name__} (state '{state.label}'): "
-                                 f"gpu_streams[{stream_id}] out of bounds (gpu_streams has length {num})")
-    if offenders:
-        raise ValueError("Stream-index validation failed: a consumer references a stream id outside "
-                         f"[0, {num}). Re-run the GPU stream pipeline or expand the gpu_streams "
-                         "array. Offenders:\n" + "\n".join(offenders))
