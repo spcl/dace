@@ -61,7 +61,8 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
     if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
         in_conn = next(iter(node.in_connectors.keys()))
         out_conn = next(iter(node.out_connectors.keys()))
-        return (node.code.as_string == f"{out_conn} = {in_conn}" or node.code.as_string == f"{out_conn} = {in_conn};")
+        body = node.code.as_string.strip().rstrip(";").rstrip()
+        return body == f"{out_conn} = {in_conn}"
     return False
 
 
@@ -470,7 +471,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
         inc = next(iter(src.in_connectors))
         outc = next(iter(src.out_connectors))
 
-    assert src.code.as_string == f"{outc} = {inc}", f"{src.code.as_string} != {inc} = {outc}"
+    assert src.code.as_string == f"{outc} = {inc}", f"{src.code.as_string} != {outc} = {inc}"
 
     src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
     touched_nodes.add(src)

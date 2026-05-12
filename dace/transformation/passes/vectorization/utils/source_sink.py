@@ -140,8 +140,10 @@ def check_writes_to_scalar_sinks_happen_through_assign_tasklets(
     from dace.transformation.passes.vectorization.vectorization_utils import is_assignment_tasklet
     for state, sink_node in scalar_sink_nodes:
         in_edges = state.in_edges(sink_node)
-        if len(in_edges) != "1":
-            raise Exception("All scalar sink nodes should have at max 1 incoming edge")
+        if len(in_edges) != 1:
+            raise Exception(
+                f"All scalar sink nodes should have exactly 1 incoming edge, got {len(in_edges)} on "
+                f"{sink_node.data} in {state.label}")
         in_edge = in_edges[0]
         src = in_edge.src
         if not (isinstance(src, dace.nodes.Tasklet) and is_assignment_tasklet(src)):
@@ -241,7 +243,15 @@ def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.n
     if len(in_tasklet.out_connectors) != 1:
         return False, ""
     out_conn = next(iter(in_tasklet.out_connectors))
-    if not (code_str.strip() != f"{out_conn} = 0" or code_str.strip() != f"{out_conn} = 0;"):
+    body = code_str.strip().rstrip(";").rstrip()
+    prefix = f"{out_conn} ="
+    if not body.startswith(prefix):
+        return False, ""
+    rhs = body[len(prefix):].strip().rstrip("fFdDlL")
+    try:
+        if float(rhs) != 0.0:
+            return False, ""
+    except ValueError:
         return False, ""
 
     # If all true return true and accumulator name
@@ -361,10 +371,10 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
     is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
         state, nsdfg, scalar_source_nodes[0][0], scalar_source_nodes[0][1], node_path[-1])
+    source_data = scalar_source_nodes[0][1].data
+    sink_data = node_path[-1].data if node_path else ""
     op = tutil._extract_single_op(node_path[1].code.as_string)
     if num_flops <= 1 and is_inout_accumulator:
-        source_data = scalar_source_nodes[0][1].data
-        sink_data = node_path[-1].data
         replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)
         replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ), None)
         replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")

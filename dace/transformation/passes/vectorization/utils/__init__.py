@@ -58,6 +58,14 @@ from .source_sink import (  # noqa: F401
     only_one_flop_after_source,
     reduce_before_use,
 )
+from .lane_expansion import (  # noqa: F401
+    _all_atoms,
+    assert_symbols_in_parent_map_symbols,
+    expand_interstate_assignments_to_lanes,
+    find_symbol_assignment,
+    resolve_missing_laneid_symbols,
+    try_demoting_vectorizable_symbols,
+)
 from .map_predicates import (  # noqa: F401
     assert_last_dim_of_maps_are_contigous_accesses,
     assert_maps_consist_of_single_nsdfg_or_no_nsdfg,
