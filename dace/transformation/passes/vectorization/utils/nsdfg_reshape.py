@@ -865,7 +865,7 @@ def add_copies_before_and_after_nsdfg(
                 v_access.setzero = True
                 vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet = copy_in_state.add_tasklet(
-                    name="_AssignT1",
+                    name="_unmovable_copy_in",
                     inputs={"_in"},
                     outputs={"_out"},
                     code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
@@ -886,7 +886,7 @@ def add_copies_before_and_after_nsdfg(
                 v_access2.setzero = True
                 vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet2 = copy_out_state.add_tasklet(
-                    name="_AssignT2",
+                    name="_unmovable_copy_out",
                     inputs={"_in"},
                     outputs={"_out"},
                     code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
