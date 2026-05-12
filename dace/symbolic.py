@@ -252,9 +252,8 @@ class TypedConstant(sympy.AtomicExpr):
     Examples
     --------
     >>> from dace import symbolic, int16
-    >>> expr = symbolic.symbol('N') + symbolic.TypedConstant(2, int16)
-    >>> symbolic.serialize_symbolic(expr)
-    '$N + 2i16'
+    >>> symbolic.serialize_symbolic(symbolic.TypedConstant(2, int16))
+    '2i16'
     """
 
     is_number = True

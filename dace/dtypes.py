@@ -1301,6 +1301,13 @@ def literal_suffix_to_typeclass(suffix):
 
 
 def cpp_typed_literal(value, dtype):
+    """Format a typed constant as a native C++ literal when possible.
+
+    :param value: Constant value to emit.
+    :param dtype: DaCe typeclass of the constant.
+    :return: C++ literal string such as ``'1ULL'`` or ``'1.5f'``, or
+             ``None`` if the dtype should be emitted via an explicit cast.
+    """
     suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype)
     if suffix is None:
         return None
