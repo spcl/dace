@@ -292,18 +292,7 @@ def test_interstate_boolean_op_two(branch_mode):
     )
 
 
-def test_interstate_boolean_op_three(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason=(
-                "op_three adds an extra interstate edge AFTER the ConditionalBlock that reassigns "
-                "symsym = __tmp0 or __tmp1, so __tmp0/__tmp1 have a downstream consumer in "
-                "addition to the cb's branch condition. M3.1b's compound-cond lift currently "
-                "deletes the upstream __tmp0/__tmp1 assignments after rerouting them into "
-                "comparison tasklets; that leaves the downstream symsym = ... edge referencing "
-                "symbols whose definitions are gone, and the SDFG validator flags 'Missing "
-                "symbols on nested SDFG'. Fix is use-count tracking before deleting the upstream "
-                "assignment, only delete when the symbol has no other consumer.")))
+def test_interstate_boolean_op_three(branch_mode):
     sdfg = interstate_boolean_op_one.to_sdfg()
     sdfg.name = "interstate_boolean_op_three"
     nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()

@@ -244,7 +244,7 @@ class BranchNormalization(ppl.Pass):
         escaping = compute_arm_escape_writes(local_sdfg, cb).get(0, set())
         merge_subsets = {arr: sub for arr, sub in write_subsets.items() if arr in escaping}
         if merge_subsets:
-            self._rewrite_writes_to_merge(local_sdfg, body_state, merge_subsets, cond_text)
+            self._rewrite_writes_to_merge(local_sdfg, body_state, merge_subsets, cond_text, skip_cb=cb)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
@@ -308,7 +308,8 @@ class BranchNormalization(ppl.Pass):
                 out[n.data] = e.data.subset
         return out
 
-    def _rewrite_writes_to_merge(self, sdfg: dace.SDFG, state: dace.SDFGState, write_subsets: dict, cond_text: str):
+    def _rewrite_writes_to_merge(self, sdfg: dace.SDFG, state: dace.SDFGState, write_subsets: dict, cond_text: str,
+                                 *, skip_cb=None):
         """For each access-node write in ``state``, redirect through a merge
         tasklet so the post-condition write becomes
         ``arr = merge(cond, expr, arr)``."""
@@ -349,7 +350,7 @@ class BranchNormalization(ppl.Pass):
                     SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
                 old_an = state.add_access(arr_name)
                 cond_resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(
-                    sdfg, state, cond_text, str(subset))
+                    sdfg, state, cond_text, str(subset), skip_cb=skip_cb)
                 if cond_resolved is not None:
                     cond_array_name, cond_access = cond_resolved
                     merge_t = state.add_tasklet(

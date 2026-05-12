@@ -22,7 +22,9 @@ import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-    SameWriteSetIfElseToMergeCFG, )
+    SameWriteSetIfElseToMergeCFG,
+    _symbol_has_external_consumer,
+)
 
 # This pass emits ``merge(...)`` tasklets which need ``dace/merge.h``.
 os.environ.setdefault("DACE_compiler_cpu_args", "")
@@ -168,3 +170,80 @@ def test_pass_is_idempotent_after_first_run():
     second = SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, {})
     assert first == 1
     assert second is None
+
+
+# ---------------------------------------------------------------------------
+# Use-count gating, _symbol_has_external_consumer
+# ---------------------------------------------------------------------------
+
+
+def _build_sdfg_with_cb_only(sym_name: str):
+    """Skeleton: entry -> cb (cond=sym_name) -> exit, where sym_name is
+    assigned on the entry->cb interstate edge. The cb cond is the *only*
+    consumer of sym_name."""
+    sdfg = dace.SDFG(f"only_{sym_name}")
+    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
+    sdfg.add_symbol(sym_name, dace.bool_)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    exit_state = sdfg.add_state("exit")
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge(assignments={sym_name: "True"}))
+    sdfg.add_edge(cb, exit_state, dace.InterstateEdge())
+    body = ControlFlowRegion("then_body", sdfg=sdfg)
+    body.add_state("body_state", is_start_block=True)
+    cb.add_branch(CodeBlock(sym_name), body)
+    defining = next(e for e in sdfg.edges() if sym_name in (e.data.assignments or {}))
+    return sdfg, cb, defining
+
+
+def test_symbol_has_external_consumer_when_only_cb_uses_it():
+    """Only consumer is the cb's own branch condition (which the pass is
+    about to rewrite away). With ``skip_cb=cb`` the helper sees no
+    external consumer."""
+    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is False
+
+
+def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
+    """A second interstate edge after the cb assigns ``out_sym = flag``,
+    that second use counts as external."""
+    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg.add_symbol("out_sym", dace.bool_)
+    after = sdfg.add_state("after_cb")
+    exit_state = next(s for s in sdfg.states() if s.label == "exit")
+    for e in list(sdfg.out_edges(cb)):
+        sdfg.remove_edge(e)
+    sdfg.add_edge(cb, after, dace.InterstateEdge(assignments={"out_sym": "flag"}))
+    sdfg.add_edge(after, exit_state, dace.InterstateEdge())
+    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+
+
+def test_symbol_has_external_consumer_when_sibling_cb_condition_reads_it():
+    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sibling = ConditionalBlock("cb_sibling")
+    sdfg.add_node(sibling)
+    sibling.add_branch(CodeBlock("flag"), ControlFlowRegion("sib_body", sdfg=sdfg))
+    sibling.branches[0][1].add_state("sib_state", is_start_block=True)
+    exit_state = next(s for s in sdfg.states() if s.label == "exit")
+    for e in list(sdfg.out_edges(cb)):
+        sdfg.remove_edge(e)
+    sdfg.add_edge(cb, sibling, dace.InterstateEdge())
+    sdfg.add_edge(sibling, exit_state, dace.InterstateEdge())
+    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+
+
+def test_symbol_has_external_consumer_when_tasklet_body_reads_it():
+    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    exit_state = next(s for s in sdfg.states() if s.label == "exit")
+    exit_state.add_tasklet("uses_flag", set(), set(), "x = flag")
+    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+
+
+def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
+    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    exit_state = next(s for s in sdfg.states() if s.label == "exit")
+    for e in list(sdfg.out_edges(cb)):
+        sdfg.remove_edge(e)
+    sdfg.add_edge(cb, exit_state, dace.InterstateEdge(condition=CodeBlock("flag")))
+    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
