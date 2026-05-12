@@ -35,7 +35,7 @@ except OSError:
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
-_LOOPNESTS_DIR = Path(__file__).parent / "qe_loopnests"
+_LOOPNESTS_DIR = Path(__file__).parent
 
 
 def _src(name: str) -> str:
