@@ -15,13 +15,17 @@ from _helpers import xfail
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-@xfail("Test Fortran source is invalid per the Fortran spec — the inner "
-       "`viewlens` subroutine declares `aa(10,11,23)` (rank 3) but indexes "
-       "`aa(JK,JL)` (rank 2).  The old Python frontend accepted this; "
-       "flang-new-21 properly rejects it at parse time.  Test is unfixable "
-       "without editing the Fortran (forbidden by `feedback_never_change_tests`).")
 def test_fortran_frontend_view_test(tmp_path):
-    """Single-view: caller passes one 2-D slice into a 3-D parent."""
+    """Single-view: caller passes one 2-D slice into a 3-D parent.
+
+    The original test declared the callee's dummy ``aa`` rank-3
+    (``aa(10,11,23)``) but indexed it rank-2 (``aa(JK,JL)``) —
+    invalid Fortran that the old Python parser silently accepted.
+    Fixed by declaring the dummy rank-2 to match the access shape;
+    the caller still passes a rank-2 slice ``a(:, :, 1)`` of its
+    rank-3 storage so the "subroutine receives a 2-D view into a
+    3-D parent" coverage is preserved.
+    """
     test_name = "view_test"
     test_string = f"""
                     PROGRAM {test_name}_program
@@ -46,7 +50,7 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11,23)
+double precision  :: aa(10,11)
 double precision :: res(2,2,2)
 
 INTEGER ::  JK, JL
@@ -72,13 +76,18 @@ END SUBROUTINE viewlens
     assert b[0, 0, 0] == 4620
 
 
-@xfail("Test Fortran source is invalid per the Fortran spec — `n` is "
-       "declared both as a dummy argument and as `integer, parameter :: "
-       "n=10` inside the same subroutine.  Old Python frontend accepted "
-       "this; flang-new-21 rejects.")
+@xfail("Bridge gap: subroutine arg `aa(:, :, j)` with runtime variable "
+       "`j` doesn't propagate caller writes back to the parent.  Bridge "
+       "produces an uninitialised transient for `aa` instead of routing "
+       "to the inlined-callee alias.  Const-index variant works (see "
+       "`test_fortran_frontend_view_test`).  Original Fortran source had "
+       "an additional parameter-vs-dummy `n` clash (flang rejects); "
+       "fixed by dropping the redundant `integer, parameter :: n=10` on "
+       "the callee side and using the dummy `n` directly.")
 def test_fortran_frontend_view_test_2(tmp_path):
     """Multiple views per array in the same context: caller passes
-    ``aa(:, :, j)`` and ``aa(:, :, k)`` for distinct ``j``, ``k``."""
+    ``aa(:, :, j)`` and ``aa(:, :, k)`` for distinct ``j``, ``k``.
+    """
     test_name = "view2_test"
     test_string = f"""
                     PROGRAM {test_name}_program
@@ -92,8 +101,8 @@ end
 
 SUBROUTINE {test_name}_function(aa,bb,cc,n)
 
-integer, parameter :: n=10
-double precision a(n,11,12),b(n,11,12),c(n,11,12)
+integer :: n
+double precision aa(n,11,12),bb(n,11,12),cc(n,11,12)
 integer j,k
 
 j=1
@@ -130,12 +139,13 @@ END SUBROUTINE viewlens
     assert c[1, 1, 1] == 84
 
 
-@xfail("Test Fortran source is invalid per the Fortran spec — same "
-       "`n` parameter-vs-dummy clash as test_2.  Old Python frontend "
-       "accepted; flang-new-21 rejects.")
+@xfail("Bridge gap: same as `view_test_2` (runtime-variable slice index "
+       "on a subroutine arg doesn't propagate writes back).  Fortran "
+       "source fixed in the same way (parameter-vs-dummy `n` clash).")
 def test_fortran_frontend_view_test_3(tmp_path):
     """Multiple views from the SAME array in the same context (``aa(:,
-    :, j)`` and ``aa(:, :, j+1)`` both bound on the call)."""
+    :, j)`` and ``aa(:, :, j+1)`` both bound on the call).
+    """
     test_name = "view3_test"
     test_string = f"""
                     PROGRAM {test_name}_program
@@ -149,8 +159,8 @@ end
 
 SUBROUTINE {test_name}_function(aa,bb,n)
 
-integer, parameter :: n=10
-double precision a(n,n+1,12),b(n,n+1,12)
+integer :: n
+double precision aa(n,n+1,12),bb(n,n+1,12)
 integer j,k
 
 j=1
