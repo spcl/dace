@@ -541,137 +541,77 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
     return touched_nodes, touched_edges
 
 
-def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet],
-                                       vector_storage_type: dace.dtypes.StorageType,
-                                       vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
+def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
+                                    vector_storage_type: dace.dtypes.StorageType, vector_width: int,
+                                    *, direction: str) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
     """
-    Insert a vector assignment tasklet after the source node of an edge.
+    Splice a ``vector_copy`` tasklet + transient vector access node onto ``edge``.
 
-    This function transforms:
-        src --[memlet]--> dst
-    Into:
-        src --[memlet]--> copy_tasklet --> access_node[vector] --[memlet2]--> dst
+    direction="from_src" (after the source):
+        src --[edge]--> dst
+        becomes
+        src --[edge]--> tasklet --> vec_access --> dst
 
-    The tasklet performs a vector_copy operation, and a new transient vector array
-    is created with the specified storage type and length.
+    direction="to_dst" (before the destination):
+        src --[edge]--> dst
+        becomes
+        src --> vec_access --> tasklet --[edge]--> dst
 
-    Args:
-        state: The SDFG state containing the edge
-        edge: The edge to transform
-        vector_storage_type: Storage type for the new vector array (e.g., Register, FPGA_Local)
-        vector_width: Length of the vector array
-
-    Returns:
-        A tuple of three new edges: (src->tasklet, tasklet->access, access->dst)
-
-    Side effects:
-        - Removes the original edge
-        - Creates a new transient vector array if it doesn't exist
-        - Adds a tasklet, access node, and three new edges
+    Returns the three new edges in source-to-destination order so callers see
+    the same shape regardless of direction.
     """
-    src = edge.src
-    src_conn = edge.src_conn
-    dst = edge.dst
-    dst_conn = edge.dst_conn
+    assert direction in ("from_src", "to_dst"), direction
+    src, src_conn = edge.src, edge.src_conn
+    dst, dst_conn = edge.dst, edge.dst_conn
 
-    # Create or reuse vector array
     vector_dataname = VecNameScheme.make(edge.data.data)
     if vector_dataname not in state.sdfg.arrays:
         orig_arr = state.sdfg.arrays[edge.data.data]
-        arr_name, arr = state.sdfg.add_array(name=vector_dataname,
-                                             shape=(vector_width, ),
-                                             dtype=orig_arr.dtype,
-                                             location=orig_arr.location,
-                                             transient=True,
-                                             find_new_name=False,
-                                             storage=vector_storage_type)
-        vector_data = arr
+        _, vector_data = state.sdfg.add_array(name=vector_dataname,
+                                              shape=(vector_width, ),
+                                              dtype=orig_arr.dtype,
+                                              location=orig_arr.location,
+                                              transient=True,
+                                              find_new_name=False,
+                                              storage=vector_storage_type)
     else:
         vector_data = state.sdfg.arrays[vector_dataname]
 
-    # Create assignment tasklet
+    tasklet_name = "_assign_vector_from_src" if direction == "from_src" else "_assign_vector_to_dst"
     t = state.add_tasklet(
-        name="_assign_vector_from_src",
+        name=tasklet_name,
         inputs={"_in"},
         outputs={"_out"},
         code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
         language=dace.dtypes.Language.CPP)
 
-    # Create access node and edges
     an = state.add_access(vector_dataname)
     an.setzero = True
-    e1 = state.add_edge(src, src_conn, t, "_in", copy.deepcopy(edge.data))
-    e2 = state.add_edge(t, "_out", an, None, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
-    e3 = state.add_edge(an, None, dst, dst_conn, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
-    state.remove_edge(edge)
 
+    def _new_vec_memlet():
+        return dace.memlet.Memlet.from_array(vector_dataname, vector_data)
+
+    if direction == "from_src":
+        e1 = state.add_edge(src, src_conn, t, "_in", copy.deepcopy(edge.data))
+        e2 = state.add_edge(t, "_out", an, None, _new_vec_memlet())
+        e3 = state.add_edge(an, None, dst, dst_conn, _new_vec_memlet())
+    else:
+        e1 = state.add_edge(src, src_conn, an, None, _new_vec_memlet())
+        e2 = state.add_edge(an, None, t, "_in", _new_vec_memlet())
+        e3 = state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(edge.data))
+    state.remove_edge(edge)
     return (e1, e2, e3)
+
+
+def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet],
+                                       vector_storage_type: dace.dtypes.StorageType,
+                                       vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
+    """Splice ``vector_copy`` after the source: src --> tasklet --> vec --> dst."""
+    return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="from_src")
 
 
 def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
                                      vector_storage_type: dace.dtypes.StorageType,
                                      vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """
-    Insert a vector assignment tasklet before the destination node of an edge.
-
-
-    This function transforms:
-        src --[memlet]--> dst
-    Into:
-        src --[memlet2]--> access_node[vector] --[memlet2]--> copy_tasklet --[memlet]--> dst
-
-
-    The tasklet performs a vector_copy operation, and a new transient vector array
-    is created with the specified storage type and length.
-
-    Args:
-        state: The SDFG state containing the edge
-        edge: The edge to transform
-        vector_storage_type: Storage type for the new vector array
-        vector_width: Length of the vector array
-
-    Returns:
-        A tuple of three new edges: (src->access, access->tasklet, tasklet->dst)
-
-    Side effects:
-        - Removes the original edge
-        - Creates a new transient vector array if it doesn't exist
-        - Adds a tasklet, access node, and three new edges
-    """
-    src = edge.src
-    src_conn = edge.src_conn
-    dst = edge.dst
-    dst_conn = edge.dst_conn
-
-    # Create or reuse vector array
-    vector_dataname = VecNameScheme.make(edge.data.data)
-    if vector_dataname not in state.sdfg.arrays:
-        orig_arr = state.sdfg.arrays[edge.data.data]
-        _, arr = state.sdfg.add_array(name=vector_dataname,
-                                      shape=(vector_width, ),
-                                      dtype=orig_arr.dtype,
-                                      location=orig_arr.location,
-                                      transient=True,
-                                      find_new_name=False,
-                                      storage=vector_storage_type)
-        vector_data = arr
-    else:
-        vector_data = state.sdfg.arrays[vector_dataname]
-
-    # Create assignment tasklet
-    t = state.add_tasklet(
-        name="_assign_vector_to_dst",
-        inputs={"_in"},
-        outputs={"_out"},
-        code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
-        language=dace.dtypes.Language.CPP)
-
-    # Create access node and edges
-    an = state.add_access(vector_dataname)
-    an.setzero = True
-    e1 = state.add_edge(src, src_conn, an, None, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
-    e2 = state.add_edge(an, None, t, "_in", dace.memlet.Memlet.from_array(vector_dataname, vector_data))
-    e3 = state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(edge.data))
-    state.remove_edge(edge)
-
-    return (e1, e2, e3)
+    """Splice ``vector_copy`` before the destination: src --> vec --> tasklet --> dst."""
+    return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="to_dst")

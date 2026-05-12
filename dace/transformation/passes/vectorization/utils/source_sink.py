@@ -20,104 +20,76 @@ import dace
 import dace.sdfg.tasklet_utils as tutil
 
 
+def _is_scalar_or_shape_one(arr: dace.data.Data) -> bool:
+    """Scalar nodes for our purposes: Scalar descriptors or Array of shape (1,)."""
+    return isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, ))
+
+
+def _get_boundary_nodes(sdfg: dace.SDFG, *, side: str, kind: str, non_transient_only: bool,
+                        skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    """
+    Single classifier for the four ``get_{scalar,array}_{source,sink}_nodes`` helpers.
+
+    Args:
+        sdfg: SDFG to inspect.
+        side: ``"source"`` (in_degree == 0) or ``"sink"`` (out_degree == 0).
+        kind: ``"scalar"`` (Scalar or shape-(1,) Array) or ``"array"`` (Array with
+            shape != (1,)).
+        non_transient_only: If True, drop transient access nodes.
+        skip: data names to exclude.
+    """
+    assert side in ("source", "sink"), side
+    assert kind in ("scalar", "array"), kind
+    result: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = []
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, dace.nodes.AccessNode):
+                continue
+            degree = state.in_degree(node) if side == "source" else state.out_degree(node)
+            if degree != 0:
+                continue
+            arr = state.sdfg.arrays[node.data]
+            if kind == "scalar":
+                if not _is_scalar_or_shape_one(arr):
+                    continue
+            else:
+                if not (isinstance(arr, dace.data.Array) and arr.shape != (1, )):
+                    continue
+            if non_transient_only and arr.transient:
+                continue
+            if node.data in skip:
+                continue
+            result.append((state, node))
+    return result
+
+
 def get_scalar_source_nodes(
     sdfg: dace.SDFG, non_transient_only: bool,
     skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """
-    Returns source nodes (in-degree 0 access nodes) for scalars (or shape-1 arrays) with no incoming edges.
-
-    Args:
-        sdfg: The SDFG to inspect.
-        non_transient_only: If True, include only non-transient scalars.
-
-    Returns:
-        List of tuples (state, AccessNode).
-    """
-
-    source_nodes = list()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
-                arr = state.sdfg.arrays[node.data]
-                if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, )):
-                    if non_transient_only is False or arr.transient is False:
-                        if node.data not in skip:
-                            source_nodes.append((state, node))
-    return source_nodes
+    """Returns source nodes (in-degree 0) for scalars or shape-(1,) arrays."""
+    return _get_boundary_nodes(sdfg, side="source", kind="scalar",
+                               non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_source_nodes(sdfg: dace.SDFG,
                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """
-    Returns source nodes for arrays with more than one element (shape != (1,)) and no incoming edges.
-
-    Args:
-        sdfg: The SDFG to inspect.
-        non_transient_only: If True, include only non-transient arrays.
-
-    Returns:
-        List of tuples (state, AccessNode).
-    """
-
-    source_nodes = list()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
-                arr = state.sdfg.arrays[node.data]
-                if (isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != [
-                        1,
-                ])):
-                    if non_transient_only is False or arr.transient is False:
-                        source_nodes.append((state, node))
-    return source_nodes
+    """Returns source nodes for arrays with shape != (1,)."""
+    return _get_boundary_nodes(sdfg, side="source", kind="array",
+                               non_transient_only=non_transient_only, skip=set())
 
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG, non_transient_only: bool,
                           skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """
-    Returns sink nodes for scalars (or shape-1 arrays) with no outgoing edges.
-
-    Args:
-        sdfg: The SDFG to inspect.
-        non_transient_only: If True, include only non-transient scalars.
-
-    Returns:
-        List of tuples (state, AccessNode).
-    """
-
-    sink_nodes = list()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if (isinstance(node, dace.nodes.AccessNode) and state.out_degree(node) == 0):
-                arr = state.sdfg.arrays[node.data]
-                if isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ):
-                    if non_transient_only is False or arr.transient is False:
-                        if node.data not in skip:
-                            sink_nodes.append((state, node))
-    return sink_nodes
+    """Returns sink nodes (out-degree 0) for scalars or shape-(1,) arrays."""
+    return _get_boundary_nodes(sdfg, side="sink", kind="scalar",
+                               non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_sink_nodes(sdfg: dace.SDFG,
                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """
-    Returns sink nodes for arrays with shape > 1 and no outgoing edges.
-
-    Args:
-        sdfg: The SDFG to inspect.
-        non_transient_only: If True, include only non-transient arrays.
-
-    Returns:
-        List of tuples (state, AccessNode).
-    """
-    sink_nodes = list()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if (isinstance(node, dace.nodes.AccessNode) and state.out_degree(node) == 0):
-                arr = state.sdfg.arrays[node.data]
-                if isinstance(arr, dace.data.Array) and arr.shape != (1, ):
-                    if non_transient_only is False or arr.transient is False:
-                        sink_nodes.append((state, node))
-    return sink_nodes
+    """Returns sink nodes for arrays with shape != (1,)."""
+    return _get_boundary_nodes(sdfg, side="sink", kind="array",
+                               non_transient_only=non_transient_only, skip=set())
 
 
 def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
