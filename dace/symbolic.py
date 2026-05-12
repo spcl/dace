@@ -1600,6 +1600,8 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
         return TypedConstant(value.value, dtype=dtype)
     if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):
         return TypedConstant(value, dtype=dtype)
+    # Non-constant composite expressions are preserved as explicit casts so they
+    # can round-trip even when no constant/symbol dtype rewrite is possible.
     return sympy.Function(f'dace.{dtype.to_string()}')(value)
 
 
@@ -1660,6 +1662,9 @@ def deserialize_symbolic(expr) -> SymbolicType:
     if expr == '?':
         return UndefinedSymbol()
 
+    # Symbols are rewritten first because typed-literal replacement introduces
+    # helper calls, and keeping the substitutions one-way avoids reparsing the
+    # generated helper identifiers.
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
