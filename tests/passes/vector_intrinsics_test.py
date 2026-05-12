@@ -114,7 +114,6 @@ def run_vectorization_test(
     vector_width=8,
     simplify=True,
     skip_simplify=None,
-    save_sdfgs=False,
     sdfg_name=None,
     apply_loop_to_map=True,
     exact=None,
@@ -137,17 +136,11 @@ def run_vectorization_test(
         sdfg.apply_transformations_repeated(LoopToMap())
         sdfg.simplify()
 
-    if save_sdfgs and sdfg_name:
-        sdfg.save(f"{sdfg_name}.sdfg")
-
     # === Build vectorized copy ===
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = (sdfg_name or sdfg.name) + "_vec"
 
     apply_vectorization_pass(vsdfg, vector_width=vector_width)
-
-    if save_sdfgs and sdfg_name:
-        vsdfg.save(f"{sdfg_name}_vec.sdfg")
 
     # === Execute both ===
     compile_and_run(sdfg, arr_orig, params)
@@ -496,7 +489,6 @@ def test_intrinsic(func: DaceProgram, config: List[Dict[str, str]]):
         dace_func=func,
         arrays=arrays,
         params={},
-        save_sdfgs=True,
         sdfg_name=f"{func.name}_{cfg_label}",
         apply_loop_to_map=True,
         simplify=True,

@@ -91,7 +91,6 @@ def test_nested_sdfg():
                                'offset2': -1
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="nested_tasklets")
 
 
@@ -107,7 +106,6 @@ def test_no_maps():
                            },
                            params={'N': _N},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="no_maps")
 
 
@@ -181,7 +179,6 @@ def test_overlapping_access():
                                'S': _S,
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="overlapping_access")
 
 
@@ -197,7 +194,6 @@ def test_overlapping_access_same_src_and_dst():
                                'S': _S,
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="overlapping_access_same_src_and_dst")
 
 
@@ -215,7 +211,6 @@ def test_overlapping_access_same_src_and_dst_in_nestedsdfg(run_id):
                                "js": 0,
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=f"overlapping_access_same_src_and_dst_in_nestedsdfg_runid_{run_id}")
 
 
@@ -285,7 +280,6 @@ def test_map_inside_nested_map(opt_parameters):
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,

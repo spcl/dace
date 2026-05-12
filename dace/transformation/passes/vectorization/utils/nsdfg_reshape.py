@@ -20,13 +20,12 @@ locked policy.
 larger and migrate in follow-up slices (S4b, S4c).
 """
 import copy
-from typing import Dict, List, Set
+from typing import Dict, Set
 
 import dace
 from dace import SDFGState
 
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
-
 
 # Suffix used for the per-NSDFG vector-array name allocated by
 # ``prepare_vectorized_array``. Single module-level constant rather than a
@@ -68,10 +67,7 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
     data_map = scope_dict[vector_map]
 
     # Simplify-keyed mapping: data-map ``begin`` -> data-map ``end``.
-    d_simplified_begin_to_end = {
-        dace.symbolic.simplify(begin): end
-        for begin, end, _ in data_map.map.range
-    }
+    d_simplified_begin_to_end = {dace.symbolic.simplify(begin): end for begin, end, _ in data_map.map.range}
 
     param_max_ranges = {}
     for v_param, (v_begin, _, _) in zip(vector_map.map.params, vector_map.map.range):
@@ -94,8 +90,7 @@ def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.Nested
     for n, g in root_sdfg.all_nodes_recursive():
         if n == nsdfg_node:
             if not isinstance(g, dace.SDFGState):
-                raise Exception(
-                    f"Expected a SDFGState container for {nsdfg_node}, got {type(g).__name__} ({g})")
+                raise Exception(f"Expected a SDFGState container for {nsdfg_node}, got {type(g).__name__} ({g})")
             return g
     raise Exception(f"State of the nsdfg node ({nsdfg_node}) not found in the root SDFG ({root_sdfg.label})")
 
@@ -476,9 +471,8 @@ def prepare_vectorized_array(state: dace.SDFGState,
             for _inner_state, inner_edge in walk_memlets_of(inner_sdfg, inner_arr_name):
                 inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
 
-    assert inner_offset == 0, (
-        f"prepare_vectorized_array contract: inner_offset must remain 0 (the multi-dim path "
-        f"rewrites memlets in-place via walk_memlets_of); got {inner_offset}")
+    assert inner_offset == 0, (f"prepare_vectorized_array contract: inner_offset must remain 0 (the multi-dim path "
+                               f"rewrites memlets in-place via walk_memlets_of); got {inner_offset}")
     return vector_dataname, inner_offset
 
 
@@ -991,10 +985,9 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
         nodes_to_check.append(oe.dst)
         syms_available = syms_available.union({str(s) for s in oe.data.assignments.keys()})
 
-    raise RuntimeError(
-        f"find_copy_in_state: no state in {inner_sdfg.label} defines every symbol in "
-        f"{free_syms} (have only {syms_available}); the array {name!r} must already exist "
-        f"by the time some state has all its defining symbols in scope")
+    raise RuntimeError(f"find_copy_in_state: no state in {inner_sdfg.label} defines every symbol in "
+                       f"{free_syms} (have only {syms_available}); the array {name!r} must already exist "
+                       f"by the time some state has all its defining symbols in scope")
 
 
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):

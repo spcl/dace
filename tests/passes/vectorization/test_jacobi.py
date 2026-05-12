@@ -33,7 +33,6 @@ def test_jacobi2d():
                                'tsteps': 5,
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="jacobi2d")
 
 
@@ -54,7 +53,6 @@ def test_jacobi2d_with_filter_map():
                                'tsteps': 5,
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="jacobi2d_with_filter_map",
                            filter_map=1)
 
@@ -74,7 +72,6 @@ def test_jacobi2d_with_fuse_overlapping_loads():
                                                             'tsteps': 5,
                                                         },
                                                         vector_width=8,
-                                                        save_sdfgs=True,
                                                         sdfg_name="jacobi2d_with_fuse_overlapping_loads",
                                                         fuse_overlapping_loads=True,
                                                         insert_copies=True)
@@ -117,7 +114,6 @@ def test_jacobi2d_with_parameters(param_tuple):
             'tsteps': 5,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name=f"jacobi2d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
         fuse_overlapping_loads=fuse_overlapping_loads,
         insert_copies=insert_copies)

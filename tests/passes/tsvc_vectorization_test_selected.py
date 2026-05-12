@@ -19,7 +19,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            vector_width=8,
                            simplify=True,
                            skip_simplify=None,
-                           save_sdfgs=False,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
@@ -47,8 +46,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         sdfg.apply_transformations_repeated(LoopToMap())
         sdfg.simplify()
 
-    if save_sdfgs and sdfg_name:
-        sdfg.save(f"{sdfg_name}.sdfg")
     c_sdfg = sdfg.compile()
 
     # Vectorized SDFG
@@ -92,8 +89,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
-    if save_sdfgs and sdfg_name:
-        copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
     c_copy_sdfg = copy_sdfg.compile()
 
     # Run both
@@ -141,7 +136,6 @@ def test_s317():
     run_vectorization_test(dace_func=dace_s317,
                            arrays={"q": q},
                            params={"LEN_1D": 64},
-                           save_sdfgs=True,
                            sdfg_name="dace_s317",
                            apply_loop_to_map=True)
 
@@ -184,7 +178,6 @@ def test_s491():
             "ip": ip
         },
         params={"LEN_1D": LEN_1D_val},
-        save_sdfgs=True,
         sdfg_name="dace_s491",
         apply_loop_to_map=True,
     )
@@ -213,7 +206,6 @@ def test_s293():
         dace_func=dace_s293,
         arrays={"a": a},
         params={"LEN_1D": LEN_1D_val},  # or your iteration count
-        save_sdfgs=True,
         sdfg_name="dace_s293",
         apply_loop_to_map=True,
     )
@@ -240,7 +232,6 @@ def test_s3251():
             "e": e
         },
         params={"LEN_1D": LEN_1D_val},
-        save_sdfgs=True,
         sdfg_name="dace_s3251",
         apply_loop_to_map=True,
     )
@@ -283,9 +274,7 @@ def test_s441():
     sdfg = dace_s441.to_sdfg()
     eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    if len(branches) > 0:
-        sdfg.save("branch_elimination_failed_s441.sdfg")
-        assert False
+    assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441"
 
     # Run DaCe test harness (your helper function)
     run_vectorization_test(
@@ -300,7 +289,6 @@ def test_s441():
             "LEN_1D": LEN_1D_val,
             "ITERATIONS": 1
         },
-        save_sdfgs=True,
         sdfg_name="dace_s441",
         apply_loop_to_map=True,
     )
@@ -320,9 +308,7 @@ def test_s441_v2():
     sdfg = dace_s441_v2.to_sdfg()
     eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    if len(branches) > 0:
-        sdfg.save("branch_elimination_failed_s441_v2.sdfg")
-        assert False
+    assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441_v2"
 
     # Run DaCe test harness (your helper function)
     run_vectorization_test(
@@ -334,7 +320,6 @@ def test_s441_v2():
             "d": d
         },
         params={"LEN_1D": LEN_1D_val},
-        save_sdfgs=True,
         sdfg_name="dace_s441_v2",
         apply_loop_to_map=True,
     )

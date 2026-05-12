@@ -34,7 +34,6 @@ def test_unstructured_access_pattern(layout: str):
             "klev": klev_val,
         },
         vector_width=8,
-        save_sdfgs=True,
         from_sdfg=True,
         sdfg_name=f"unstructured_access_pattern_layout_{layout.lower()}",
     )

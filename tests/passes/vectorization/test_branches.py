@@ -79,7 +79,6 @@ def test_division_by_zero_cpu(branch_mode):
             "c": 8.9
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="division_by_zero",
         branch_mode=branch_mode,
     )
@@ -97,7 +96,6 @@ def test_unsupported_op(branch_mode):
                            params={'N': 64},
                            vector_width=4,
                            skip_simplify={"ScalarToSymbolPromotion"},
-                           save_sdfgs=True,
                            sdfg_name="unsupported_op",
                            branch_mode=branch_mode)
 
@@ -113,7 +111,6 @@ def test_unsupported_op_two(branch_mode):
                            },
                            params={'N': 64},
                            vector_width=4,
-                           save_sdfgs=True,
                            sdfg_name="unsupported_op_two",
                            branch_mode=branch_mode)
 
@@ -247,7 +244,6 @@ def test_interstate_boolean_op_one(branch_mode):
             'c0': c0,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="interstate_boolean_op_one",
         branch_mode=branch_mode,
     )
@@ -270,7 +266,6 @@ def test_interstate_boolean_op_two(branch_mode):
             'c0': c0,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="interstate_boolean_op_two",
         branch_mode=branch_mode,
     )
@@ -587,7 +582,6 @@ def test_cloud_fraction_update(branch_mode):
             "NCLDQI": ncldqi
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name=f"cloud_fraction_update",
         branch_mode=branch_mode,
     )

@@ -22,7 +22,6 @@ def test_dependency_edge_to_unary_symbol():
             'klon': N,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="dependency_edge_to_unary_symbol",
         from_sdfg=True,
         no_inline=True,

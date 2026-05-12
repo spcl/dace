@@ -157,7 +157,6 @@ def test_vecscale_unit_stride():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vecscale_unit_stride",
     )
 
@@ -179,7 +178,6 @@ def test_gather_load():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="gather_load",
     )
 
@@ -200,7 +198,6 @@ def test_gather_load_matrix_specialized():
         },
         params={},
         vector_width=32,
-        save_sdfgs=True,
         sdfg_name="gather_load_matrix_specialized",
     )
 
@@ -220,7 +217,6 @@ def test_strided_load_stride_2():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_2",
     )
 
@@ -242,7 +238,6 @@ def test_strided_load_stride_ssym():
             "ssym": _ssym
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_ssym",
     )
 
@@ -262,7 +257,6 @@ def test_strided_load_stride_3():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_3",
     )
 
@@ -282,7 +276,6 @@ def test_strided_load_stride_4():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         insert_copies=False,
         sdfg_name="strided_load_stride_4",
     )
@@ -303,7 +296,6 @@ def test_strided_load_stride_5():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_5",
     )
 
@@ -323,7 +315,6 @@ def test_strided_load_stride_6():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         insert_copies=True,
         fuse_overlapping_loads=True,
         sdfg_name="strided_load_stride_6",
@@ -345,7 +336,6 @@ def test_strided_load_stride_7():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_7",
     )
 
@@ -365,7 +355,6 @@ def test_strided_load_stride_8():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_8",
     )
 
@@ -385,7 +374,6 @@ def test_strided_load_stride_16():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_load_stride_16",
     )
 
@@ -407,7 +395,6 @@ def test_scatter_store():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="scatter_store",
     )
 
@@ -427,7 +414,6 @@ def test_strided_store_stride_2():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_2",
     )
 
@@ -449,7 +435,6 @@ def test_strided_store_stride_ssym():
             "ssym": _ssym
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_ssym",
     )
 
@@ -469,7 +454,6 @@ def test_strided_store_stride_3():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         insert_copies=True,
         fuse_overlapping_loads=True,
         sdfg_name="strided_store_stride_3",
@@ -491,7 +475,6 @@ def test_strided_store_stride_4():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_4",
     )
 
@@ -511,7 +494,6 @@ def test_strided_store_stride_5():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_5",
     )
 
@@ -531,7 +513,6 @@ def test_strided_store_stride_6():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_6",
     )
 
@@ -551,7 +532,6 @@ def test_strided_store_stride_7():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_7",
     )
 
@@ -571,7 +551,6 @@ def test_strided_store_stride_8():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_8",
     )
 
@@ -591,7 +570,6 @@ def test_strided_store_stride_16():
             "scale": 1.5
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_16",
     )
 
@@ -613,7 +591,6 @@ def test_strided_store_stride_ssym():
             "ssym": _ssym
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="strided_store_stride_ssym",
     )
 
@@ -649,7 +626,6 @@ def test_nested_matrix_gather_load():
             "scale": 2.0
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="nested_matrix_gather_load",
     )
 
@@ -672,6 +648,5 @@ def test_nested_matrix_gather_load_specialized():
             "Y": Y_val,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="nested_matrix_gather_load_specialized",
     )

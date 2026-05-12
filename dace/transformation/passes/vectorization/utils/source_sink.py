@@ -120,8 +120,9 @@ def get_array_sink_nodes(sdfg: dace.SDFG,
     return sink_nodes
 
 
-def check_writes_to_scalar_sinks_happen_through_assign_tasklets(
-        sdfg: dace.SDFG, scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]):
+def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
+                                                                scalar_sink_nodes: List[Tuple[dace.SDFGState,
+                                                                                              dace.nodes.AccessNode]]):
     """
     Ensures all writes to scalar sink nodes occur through simple assignment tasklets.
     Assignments can also occur through AccessNode -Edge-> AccessNode where `other_subset` is not none.
@@ -141,9 +142,8 @@ def check_writes_to_scalar_sinks_happen_through_assign_tasklets(
     for state, sink_node in scalar_sink_nodes:
         in_edges = state.in_edges(sink_node)
         if len(in_edges) != 1:
-            raise Exception(
-                f"All scalar sink nodes should have exactly 1 incoming edge, got {len(in_edges)} on "
-                f"{sink_node.data} in {state.label}")
+            raise Exception(f"All scalar sink nodes should have exactly 1 incoming edge, got {len(in_edges)} on "
+                            f"{sink_node.data} in {state.label}")
         in_edge = in_edges[0]
         src = in_edge.src
         if not (isinstance(src, dace.nodes.Tasklet) and is_assignment_tasklet(src)):
@@ -326,10 +326,7 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                 reduction_code = f"_out = {expr}"
             else:
                 reduction_code = "_out =" + f" {op} ".join(lanes)
-            t = state.add_tasklet(name=f"scalarize_{name}",
-                                  inputs={"_in"},
-                                  outputs={"_out"},
-                                  code=reduction_code)
+            t = state.add_tasklet(name=f"scalarize_{name}", inputs={"_in"}, outputs={"_out"}, code=reduction_code)
             t.add_in_connector("_in")
             t.add_out_connector("_out")
             state.add_edge(src, None, t, "_in", copy.deepcopy(edge.data))

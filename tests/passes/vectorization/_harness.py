@@ -50,7 +50,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            vector_width=8,
                            simplify=True,
                            skip_simplify=None,
-                           save_sdfgs=False,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
@@ -74,8 +73,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         sdfg: dace.SDFG = dace_func
 
-    if save_sdfgs and sdfg_name:
-        sdfg.save(f"{sdfg_name}.sdfg")
     c_sdfg = sdfg.compile()
 
     # Vectorized SDFG

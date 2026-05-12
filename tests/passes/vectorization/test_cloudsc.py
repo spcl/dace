@@ -76,7 +76,6 @@ def test_snippet_from_cloudsc_two(branch_mode):
                                'N': _S
                            },
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="cloudsc_snippet_two",
                            branch_mode=branch_mode)
 
@@ -108,7 +107,6 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode):
                                                  'N': _S
                                              },
                                              vector_width=8,
-                                             save_sdfgs=True,
                                              fuse_overlapping_loads=True,
                                              sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
                                              branch_mode=branch_mode)
@@ -159,7 +157,6 @@ def test_snippet_from_cloudsc_one(branch_mode):
             'klev': klev,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="cloudsc_snippet_one",
         cleanup=True,
         branch_mode=branch_mode,
@@ -204,7 +201,6 @@ def test_snippet_from_cloudsc_four(branch_mode):
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
@@ -257,7 +253,6 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode):
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
@@ -310,7 +305,6 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
@@ -364,7 +358,6 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
@@ -418,7 +411,6 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
@@ -473,7 +465,6 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode)
                            arrays=arrays,
                            params=scalars,
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,

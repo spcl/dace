@@ -144,7 +144,6 @@ def test_memset_4d():
             'N': N,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="memset_4d",
     )
 
@@ -162,7 +161,6 @@ def test_v_const_subs_4d():
             'N': N,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="v_const_subs_4d",
     )
 
@@ -181,7 +179,6 @@ def test_v_const_subs_4d_indirect_access():
             'c': 0,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="v_const_subs_4d_indirect_access",
     )
 
@@ -226,7 +223,6 @@ def test_max_with_constant():
             'c': c
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="max_with_constant",
     )
 
@@ -246,7 +242,6 @@ def test_max_with_constant_reversed_order():
             'c': c
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="max_with_constant_reversed_order",
     )
 
@@ -264,7 +259,6 @@ def test_vsubs_cpu():
         },
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vsubs_one",
     )
 
@@ -279,7 +273,6 @@ def test_memset():
                            },
                            params={'N': N},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="memset",
                            exact=0.0)
 
@@ -294,7 +287,6 @@ def test_memset_with_fuse_and_copyin_enabled():
                            },
                            params={'N': N},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
                            fuse_overlapping_loads=True,
                            insert_copies=True,
@@ -311,7 +303,6 @@ def test_nested_memset_with_fuse_and_copyin_enabled():
                            },
                            params={'N': N},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
                            fuse_overlapping_loads=True,
                            insert_copies=True,
@@ -330,7 +321,6 @@ def test_vexp_cpu():
         },
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vexp_one",
     )
 
@@ -348,7 +338,6 @@ def test_vsubs_two_cpu():
         },
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vsubs_two",
     )
 
@@ -362,7 +351,6 @@ def test_v_const_subs_cpu():
         arrays={'A': A},
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="v_const_subs_one",
     )
 
@@ -377,7 +365,6 @@ def test_v_const_subs_two_cpu():
         params={'N': N},
         vector_width=8,
         sdfg_name="v_const_subs_two",
-        save_sdfgs=True,
     )
 
 
@@ -394,7 +381,6 @@ def test_simple_cpu():
         params={'N': 64},
         vector_width=4,
         sdfg_name="simple_cpu",
-        save_sdfgs=True,
     )
 
 
@@ -432,7 +418,6 @@ def test_vadd_with_unary_scalar_cpu():
             'c': c
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vadd_with_unary_scalar_cpu",
     )
 
@@ -450,7 +435,6 @@ def test_vabs():
             'N': N,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vabs",
     )
 
@@ -468,7 +452,6 @@ def test_unary_symbol():
             'N': N,
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="unary_symbol",
     )
 
@@ -492,7 +475,6 @@ def test_vadd_with_scalar_scalar_cpu():
             'c2': c2
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vadd_with_scalar_scalar_cpu",
     )
 
@@ -510,7 +492,6 @@ def test_vadd_int():
         },
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vadd_int",
     )
 
@@ -528,7 +509,6 @@ def test_vadd_with_different_types():
         },
         params={'N': N},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vadd_with_different_types",
     )
 
@@ -552,7 +532,6 @@ def test_vadd_with_scalars_int():
             'c2': c2
         },
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name="vadd_int_with_scalars",
     )
 
@@ -593,7 +572,6 @@ def test_log():
         },
         params={"S": _S},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name=f"test_log",
         from_sdfg=True,
     )
@@ -617,7 +595,6 @@ def test_exp():
         },
         params={"S": _S},
         vector_width=8,
-        save_sdfgs=True,
         sdfg_name=f"test_exp",
         from_sdfg=True,
     )
@@ -641,7 +618,6 @@ def test_pow():
                            },
                            params={"S": _S},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=f"test_pow",
                            from_sdfg=True)
 
@@ -666,6 +642,5 @@ def test_s000():
                            },
                            params={"S": _S},
                            vector_width=8,
-                           save_sdfgs=True,
                            sdfg_name=f"s000",
                            from_sdfg=False)

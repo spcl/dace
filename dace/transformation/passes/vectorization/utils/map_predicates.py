@@ -90,7 +90,10 @@ def has_only_states_or_single_block_with_break_only(sdfg: dace.SDFG) -> bool:
         and isinstance(ifb.branches[0][1].nodes()[0], BreakBlock)
         for ifb in ifs
     })
-    non_ifs_non_states = {n for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)}
+    non_ifs_non_states = {
+        n
+        for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)
+    }
     return (all({isinstance(n, dace.SDFGState)
                  for n in sdfg.nodes()}) or (all_ifs_are_only_break and len(non_ifs_non_states) == 0))
 
