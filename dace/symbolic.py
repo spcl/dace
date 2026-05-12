@@ -1413,9 +1413,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _python_bool(value):
-        if value == sympy.true:
+        if value is sympy.true:
             return True
-        if value == sympy.false:
+        if value is sympy.false:
             return False
         return value
 
