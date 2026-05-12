@@ -1222,6 +1222,19 @@ std::string lowerIsPresent(mlir::Value operand) {
             std::ostringstream o;
             o << std::setprecision(17) << f.getValueAsDouble();
             std::string lit = o.str();
+            // ``ostringstream`` drops the decimal point for integer-valued
+            // doubles (e.g. ``0.0`` → ``"0"``).  That makes the C++ code
+            // emit a plain ``int`` literal in a float context, so
+            // ``max(0.0, double_expr)`` becomes ``max(0, expr)`` and
+            // compiler-side overload resolution can pick the wrong ``max``.
+            // Force a trailing ``.0`` so the literal is unambiguously
+            // floating-point.
+            if (lit.find('.') == std::string::npos
+                    && lit.find('e') == std::string::npos
+                    && lit.find('E') == std::string::npos
+                    && lit.find("nan") == std::string::npos
+                    && lit.find("inf") == std::string::npos)
+                lit += ".0";
             // Wrap f32-typed constants in ``dace.float32(...)`` so the
             // C++ codegen emits ``static_cast<float>(literal)`` instead
             // of a double literal.  Without this, DaCe upgrades every
