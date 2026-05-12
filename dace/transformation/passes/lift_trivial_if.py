@@ -33,50 +33,38 @@ class LiftTrivialIf(ppl.Pass):
             for n, _ in sdfg.all_nodes_recursive()
             if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
         }
-        all_labels = set()
-
-        def _find_new_name(cfg: ControlFlowRegion) -> str:
-            candidate_label = cfg.label
-            i = 0
-            while candidate_label in all_labels:
-                candidate_label = cfg.label + "_" + str(i)
-                i += 1
-            if candidate_label in all_labels:
-                assert False
-            all_labels.add(candidate_label)
-            return candidate_label
-
+        all_labels: Set[str] = set()
         for n in all_blocks:
-            new_label = _find_new_name(n)
+            new_label = dace.utils.find_new_name(n.label, all_labels)
+            all_labels.add(new_label)
             n.label = new_label
 
     def _trivial_cond_check(self, code: CodeBlock, val: bool):
         if code.language != dace.dtypes.Language.Python:
             return False
+
+        # Primary: pystr_to_symbolic already handles Python and/or/not and
+        # comparison operators, matching how DeadStateElimination evaluates
+        # branch conditions.
         try:
-
-            def _token_replace_dict(string_to_check: str, dict) -> str:
-                # Split while keeping delimiters
-                tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-                # Replace tokens that exactly match src
-                tokens = [dict[token.strip()] if token.strip() in dict else token.strip() for token in tokens]
-
-                return " ".join(tokens).strip()
-
-            symbolic_expr = dace.symbolic.SymExpr(
-                _token_replace_dict(code.as_string, {
-                    "True": "1",
-                    "and": " * ",
-                    "or": "+",
-                    "False": "0"
-                }))
-            symbolic_expr = symbolic_expr.simplify()
-            pystring = pycode(symbolic_expr)
-            result = symbolic.evaluate(expr=dace.symbolic.SymExpr(pystring), symbols=dict())
+            expr = symbolic.pystr_to_symbolic(code.as_string)
+            result = symbolic.evaluate(expr, symbols={})
             return bool(result) is val
-        except Exception as e:
-            print(e)
+        except Exception:
+            pass
+
+        # Fallback: Fortran-frontend SDFGs produce nested comparisons like
+        # `(a == 1) == 0` that sympy refuses to compare against an int.
+        # Rewrite boolean ops/literals to arithmetic over 0/1 and let
+        # SymExpr.simplify reduce it.
+        try:
+            tokens = re.split(r'(\s+|[()\[\]])', code.as_string)
+            replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
+            rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+            simplified = dace.symbolic.SymExpr(rewritten).simplify()
+            result = symbolic.evaluate(dace.symbolic.SymExpr(pycode(simplified)), symbols={})
+            return bool(result) is val
+        except Exception:
             return False
 
     def _trivially_true(self, code: CodeBlock):
@@ -135,12 +123,9 @@ class LiftTrivialIf(ppl.Pass):
         # We might now have trivial control flow blocks at top level, apply in fixpoint
         rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
         local_rmed_count = rmed_count
-        graph.sdfg.validate()
         while local_rmed_count > 0:
             local_rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
             rmed_count += local_rmed_count
-
-        graph.sdfg.validate()
 
         # Now go one one more level in the node list
         for node in graph.all_control_flow_blocks():

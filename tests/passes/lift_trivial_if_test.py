@@ -196,6 +196,28 @@ def test_cfg_is_a_middle_node():
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
+# Fortran frontends emit conditions of the form ``(x == y) == 0/1`` (a
+# comparison of a comparison to an integer). Regression net for the
+# pystr_to_symbolic path: if these ever stop folding to True/False the
+# pass would silently miss real trivial-if cases in Fortran SDFGs.
+@pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(2 == 2) == 1", "(0 == 1) == 0"])
+def test_fortran_style_nested_comparison_true(condition: str):
+    sdfg = _get_sdfg(condition)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
+
+def test_simplify_pipeline_includes_lift_trivial_if():
+    from dace.transformation.passes.simplify import SimplifyPass
+    sdfg = _get_sdfg("True")
+    sdfg.validate()
+    SimplifyPass().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
+
 if __name__ == "__main__":
     for c in always_true:
         test_single_condition(c)
@@ -212,3 +234,4 @@ if __name__ == "__main__":
         test_if_else_cond_is_trivially_false(c)
 
     test_cfg_is_a_middle_node()
+    test_simplify_pipeline_includes_lift_trivial_if()
