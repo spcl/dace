@@ -23,7 +23,7 @@ from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
 from dace.transformation.passes.vectorization.split_map_for_vector_remainder import (
     SplitMapForVectorRemainder, )
-from dace.transformation.passes.vectorization.vectorization_utils import (
+from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )

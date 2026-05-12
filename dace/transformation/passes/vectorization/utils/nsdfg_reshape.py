@@ -677,12 +677,11 @@ def add_copies_before_and_after_nsdfg(
         - Saves intermediate SDFG to "b.sdfg" for debugging
         - Calls process_in_edges and process_out_edges (which must be defined elsewhere)
     """
-    # ``collect_all_memlets_to_dataname`` lives in ``utils.queries`` (S1b) and
-    # ``sift_access_node_up`` is still in ``vectorization_utils.py`` (migrates in
-    # a later slice). Both are imported lazily to keep this module's top-level
-    # import surface narrow.
+    # ``collect_all_memlets_to_dataname`` lives in ``utils.queries`` (S1b);
+    # imported lazily to keep this module's top-level import surface narrow.
+    # ``sift_access_node_up`` is defined in this module (moved in S6d-d) —
+    # used directly without re-import.
     from dace.transformation.passes.vectorization.utils.queries import collect_all_memlets_to_dataname
-    from dace.transformation.passes.vectorization.vectorization_utils import sift_access_node_up
 
     # Fix offset bug here, test_snippet_from_cloudsc_three -> incorrect offests
     # Collect all arrays that are accessed in the nested SDFG

@@ -14,7 +14,7 @@ Expected to xfail until the planned pass-through-subsets redesign deletes
 """
 import pytest
 import dace
-from dace.transformation.passes.vectorization.vectorization_utils import fix_nsdfg_connector_array_shapes_mismatch
+from dace.transformation.passes.vectorization.utils.nsdfg_reshape import fix_nsdfg_connector_array_shapes_mismatch
 
 
 @pytest.mark.xfail(reason="fix_nsdfg_connector_array_shapes_mismatch silently rebuilds with collapsed_full "

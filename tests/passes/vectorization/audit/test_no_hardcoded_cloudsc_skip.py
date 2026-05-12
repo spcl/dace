@@ -11,7 +11,7 @@ test xpasses since that change landed.
 """
 import inspect
 
-from dace.transformation.passes.vectorization.vectorization_utils import add_copies_before_and_after_nsdfg
+from dace.transformation.passes.vectorization.utils.nsdfg_reshape import add_copies_before_and_after_nsdfg
 
 
 def test_no_cloudsc_array_names_in_helper_body():

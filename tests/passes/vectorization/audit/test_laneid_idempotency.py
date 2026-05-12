@@ -12,10 +12,8 @@ doubly-encoded names. The current implementation uses ``LaneIdScheme.parse``
 plus an explicit side-set check on free symbols, so the second call is a no-op.
 """
 import dace
-from dace.transformation.passes.vectorization.vectorization_utils import (
-    LaneIdScheme,
-    expand_interstate_assignments_to_lanes,
-)
+from dace.transformation.passes.vectorization.utils.lane_expansion import expand_interstate_assignments_to_lanes
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
 def _build_minimal_sdfg_for_idempotency():

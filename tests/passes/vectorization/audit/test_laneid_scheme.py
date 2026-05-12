@@ -9,7 +9,7 @@ vectorization pipeline. Covers the cases that previously bit
   the regex hack the pass used to carry could not classify these reliably.
 - Boundary cases (empty base, non-digit suffix, no suffix at all).
 """
-from dace.transformation.passes.vectorization.vectorization_utils import LaneIdScheme
+from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
 def test_make_roundtrip():

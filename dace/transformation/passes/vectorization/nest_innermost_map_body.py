@@ -20,7 +20,7 @@ from dace import properties
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import nest_state_subgraph
-from dace.transformation.passes.vectorization.vectorization_utils import (
+from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )

@@ -188,7 +188,7 @@ def if_add(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 # You can assume there is only 1 nested SDFG node within the map for the analysis
 # Like, either 1 nsdfg node and no other nodes, or only non-nsdfg nodes
-# You can use: dace/sdfg/transformation/passes/vectorization/vectorization_utils:: map_consists_of_single_nsdfg_or_no_nsdfg
+# You can use: dace.transformation.passes.vectorization.utils.map_predicates::map_consists_of_single_nsdfg_or_no_nsdfg
 # You can copy paste the function for now, after the pass is working we need to slowly PR these functions, we can do it together
 
 # Then in the end it should look like this where you have 3 lib nodes to generate a mask and for the operations of each branch

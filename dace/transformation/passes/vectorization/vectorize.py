@@ -15,7 +15,7 @@ from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern im
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.transformation.passes.vectorization.vectorization_utils import *
+from dace.transformation.passes.vectorization.utils import *
 import dace.sdfg.tasklet_utils as tutil
 
 

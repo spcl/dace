@@ -29,7 +29,7 @@ import dace
 from dace import properties, symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
-from dace.transformation.passes.vectorization.vectorization_utils import is_innermost_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 
 
 @properties.make_properties

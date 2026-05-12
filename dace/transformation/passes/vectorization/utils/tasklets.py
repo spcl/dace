@@ -459,9 +459,9 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
     Returns:
         A tuple of sets: touched nodes and touched edges created during duplication.
     """
-    # ``repl_subset_to_use_laneid_offset`` still lives in ``vectorization_utils.py``
-    # (migrates in S6d with the subset/repl helpers). Imported lazily.
-    from dace.transformation.passes.vectorization.vectorization_utils import repl_subset_to_use_laneid_offset
+    # ``repl_subset_to_use_laneid_offset`` lives in ``utils.subsets`` (S6d-b).
+    # Imported lazily to keep this module's top-level import surface narrow.
+    from dace.transformation.passes.vectorization.utils.subsets import repl_subset_to_use_laneid_offset
 
     touched_nodes = set()
     touched_edges = set()

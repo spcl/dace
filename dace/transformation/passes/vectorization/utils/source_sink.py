@@ -135,10 +135,10 @@ def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
     Raises:
         Exception if a scalar sink write is not via an assignment tasklet.
     """
-    # ``is_assignment_tasklet`` migrates to ``utils.tasklets`` in S6;
-    # imported lazily here to keep the call chain working through the
-    # re-export shim until then.
-    from dace.transformation.passes.vectorization.vectorization_utils import is_assignment_tasklet
+    # ``is_assignment_tasklet`` lives in ``utils.tasklets`` (S6b);
+    # imported lazily here to avoid a circular import at module load
+    # time (tasklets imports re from this module's siblings).
+    from dace.transformation.passes.vectorization.utils.tasklets import is_assignment_tasklet
     for state, sink_node in scalar_sink_nodes:
         in_edges = state.in_edges(sink_node)
         if len(in_edges) != 1:
@@ -162,7 +162,7 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
     Returns:
         Tuple (bool, List of nodes) indicating if the condition holds and the nodes checked.
     """
-    from dace.transformation.passes.vectorization.vectorization_utils import is_assignment_tasklet
+    from dace.transformation.passes.vectorization.utils.tasklets import is_assignment_tasklet
 
     nodes_to_check = [node]
     visited = set()
@@ -369,13 +369,11 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
         - The reduction operation is extracted automatically from the first tasklet after the source.
 
     """
-    # ``replace_arrays_with_new_shape`` and ``replace_all_access_subsets``
-    # still live in ``vectorization_utils.py`` (migrate in S6); imported
-    # lazily to keep the call chain working through the re-export shim.
-    from dace.transformation.passes.vectorization.vectorization_utils import (
-        replace_all_access_subsets,
-        replace_arrays_with_new_shape,
-    )
+    # ``replace_arrays_with_new_shape`` lives in ``utils.arrays`` (S6a)
+    # and ``replace_all_access_subsets`` in ``utils.subsets`` (S6d-b);
+    # imported lazily to avoid module-load-time cycles.
+    from dace.transformation.passes.vectorization.utils.arrays import replace_arrays_with_new_shape
+    from dace.transformation.passes.vectorization.utils.subsets import replace_all_access_subsets
 
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
     is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(

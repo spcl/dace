@@ -16,7 +16,7 @@ from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
 from dace.transformation.passes.vectorization.split_map_for_vector_remainder import (
     SplitMapForVectorRemainder, )
-from dace.transformation.passes.vectorization.vectorization_utils import is_innermost_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 
 N = dace.symbol("N")
 

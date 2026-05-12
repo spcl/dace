@@ -16,7 +16,7 @@ Expected to xfail until the planned pass-through-subsets redesign deletes
 reshape and this test should xpass.
 """
 import dace
-from dace.transformation.passes.vectorization.vectorization_utils import prepare_vectorized_array
+from dace.transformation.passes.vectorization.utils.nsdfg_reshape import prepare_vectorized_array
 
 
 def test_prepare_vectorized_array_updates_inner_2d_access():

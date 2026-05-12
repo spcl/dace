@@ -30,7 +30,7 @@ import dace
 from dace import properties
 from dace.data import add_mask
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.vectorization_utils import (
+from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )

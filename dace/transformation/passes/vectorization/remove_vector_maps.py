@@ -3,7 +3,7 @@ from typing import Any, Dict
 from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.vectorization.vectorization_utils import *
+from dace.transformation.passes.vectorization.utils import *
 
 
 @properties.make_properties
