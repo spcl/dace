@@ -3,10 +3,10 @@
     nodes. """
 
 import inspect
-from six import StringIO
+from io import StringIO
 from dace.config import Config
 from dace.sdfg.graph import NodeNotFoundError
-from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion
 
 
 class CodeIOStream(StringIO):

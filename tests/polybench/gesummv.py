@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 import polybench
 
@@ -28,8 +27,9 @@ def init_array(A, B, tmp, x, y, alpha, beta, n):
             B[i, j] = datatype((i * j + 2) % n) / n
 
 
-@dace.program(datatype[N, N], datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[1], datatype[1])
-def gesummv(A, B, tmp, x, y, alpha, beta):
+@dace.program
+def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[N], y: datatype[N], alpha: datatype[1],
+            beta: datatype[1]):
 
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):

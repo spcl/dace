@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import dace
 
 try:
@@ -67,8 +66,8 @@ def init_array(A, B, C, D, G, ni, nj, nk, nl, nm):
             D[i, j] = datatype((i * (j + 2) + 2) % nk) / (5 * nk)
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NM], datatype[NM, NL], datatype[NI, NL])
-def k3mm(A, B, C, D, G):
+@dace.program
+def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datatype[NM, NL], G: datatype[NI, NL]):
     E = dace.define_local([NI, NJ], dtype=datatype)
     F = dace.define_local([NJ, NL], dtype=datatype)
 

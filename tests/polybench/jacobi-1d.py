@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import polybench
-from absl import app, flags
 
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
@@ -29,8 +28,8 @@ sizes = [{
 args = [([N], datatype), ([N], datatype)]  #, N, tsteps]
 
 
-@dace.program(datatype[N], datatype[N])  #, dace.int32, dace.int32)
-def jacobi1d(A, B):  #, N, tsteps):
+@dace.program
+def jacobi1d(A: datatype[N], B: datatype[N]):  #, N, tsteps):
     for t in range(tsteps):
 
         @dace.map

@@ -51,8 +51,8 @@ def init_array(imgIn, imgOut, w, h):
             imgIn[i, j] = datatype((313 * i + 991 * j) % 65536) / 65535.0
 
 
-@dace.program(datatype[W, H], datatype[W, H])
-def deriche(imgIn, imgOut):
+@dace.program
+def deriche(imgIn: datatype[W, H], imgOut: datatype[W, H]):
     y1 = dace.define_local([W, H], dtype=datatype)
     y2 = dace.define_local([W, H], dtype=datatype)
     ym1 = dace.define_local([1], datatype)

@@ -9,12 +9,11 @@ import functools
 import itertools
 import math
 import numbers
-import sys
 import warnings
 
 import sympy as sp
-from six import StringIO
-from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
+from io import StringIO
+from typing import IO, TYPE_CHECKING, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -23,10 +22,9 @@ from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
-from dace.frontend import operations
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, utils, propagation
+from dace.sdfg import nodes, graph as gr, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -81,7 +79,7 @@ def copy_expr(
         if offset is None:
             s = None
         elif not isinstance(offset, subsets.Subset):
-            s = subsets.Indices(offset)
+            s = subsets.Range.from_indices(offset)
         else:
             s = offset
         o = None
@@ -529,7 +527,7 @@ def cpp_array_expr(sdfg,
                    framecode: Optional['DaCeCodeGenerator'] = None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
-    s = subset if relative_offset else subsets.Indices(offset)
+    s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
@@ -578,7 +576,7 @@ def cpp_ptr_expr(sdfg,
                  codegen: 'TargetCodeGenerator' = None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
-    s = subset if relative_offset else subsets.Indices(offset)
+    s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
     desc = sdfg.arrays[memlet.data]
     if isinstance(indices, str):

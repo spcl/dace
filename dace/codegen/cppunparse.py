@@ -69,10 +69,8 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from __future__ import print_function, unicode_literals
 from functools import lru_cache
 import inspect
-import six
 import sys
 import ast
 import numpy as np
@@ -81,7 +79,7 @@ import warnings
 import sympy
 import dace
 from numbers import Number
-from six import StringIO
+from io import StringIO
 from dace import dtypes
 from dace.sdfg import type_inference
 
@@ -203,7 +201,7 @@ class CPPUnparser:
 
     def write(self, text):
         """Append a piece of text to the current line"""
-        self.f.write(six.text_type(text))
+        self.f.write(str(text))
 
     def enter(self):
         """Print '{', and increase the indentation."""

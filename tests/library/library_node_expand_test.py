@@ -6,7 +6,7 @@ import sys
 import os
 import numpy as np
 import copy
-from dace import SDFGState, SDFG, library, dtypes
+from dace import SDFGState, SDFG, library
 from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path
@@ -87,7 +87,8 @@ def test_old_library_node_expand_interface():
     sdfg, state, addnode = create_test_sdfg()
 
     # Test with old interface
-    result = addnode.expand(sdfg, state)
+    with pytest.warns(DeprecationWarning, match=r"The expand\(sdfg, state\) interface is deprecated"):
+        result = addnode.expand(sdfg, state)
     assert result == 'pure'
 
 

@@ -404,7 +404,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
         from dace.codegen.prettycode import CodeIOStream
-        from dace.codegen.targets.cpp import unparse_cr_split, cpp_array_expr
+        from dace.codegen.targets.cpp import unparse_cr_split
 
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
@@ -872,7 +872,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sub_expansion = ExpandReduceCUDABlock()
         sub_expansion.setup_match(sdfg, state.parent_graph.cfg_id, state_id, {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
-        #return reduce_node.expand(sdfg, state)
+        #return reduce_node.expand(state)
 
 
 @dace.library.expansion

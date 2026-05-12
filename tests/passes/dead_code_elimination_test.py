@@ -380,7 +380,8 @@ def test_dce_callback():
     def dce_cb(a: dace.float64[20]):
         callback(a)
 
-    sdfg = dce_cb.to_sdfg()
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = dce_cb.to_sdfg()
     num_tasklets_before = len([n for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)])
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     num_tasklets_after = len([n for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)])

@@ -257,7 +257,8 @@ def test_nested_callback_in_map():
     obj = A(B())
     old_time = time.time()
 
-    result = obj.tester()
+    with pytest.warns(match="Automatically creating callback"):
+        result = obj.tester()
 
     new_time = time.time()
 

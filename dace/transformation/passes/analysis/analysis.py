@@ -85,9 +85,13 @@ class ControlFlowBlockReachability(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def _region_closure(self, region: ControlFlowRegion,
-                        block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]) -> Set[SDFGState]:
-        closure: Set[SDFGState] = set()
+    def _region_closure(
+        self,
+        region: ControlFlowRegion,
+        block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]],
+        cached_closures: dict[int, Set[ControlFlowBlock]],
+    ) -> Set[ControlFlowBlock]:
+        closure: Set[ControlFlowBlock] = set()
         if isinstance(region, LoopRegion):
             # Any point inside the loop may reach any other point inside the loop again.
             # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
@@ -103,7 +107,10 @@ class ControlFlowBlockReachability(ppl.Pass):
         # Walk up the parent tree.
         pivot = region.parent_graph
         while pivot and not isinstance(pivot, SDFG):
-            closure.update(self._region_closure(pivot, block_reach))
+            graph_id = id(pivot)
+            if graph_id not in cached_closures:
+                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures)
+            closure.update(cached_closures[graph_id])
             pivot = pivot.parent_graph
         return closure
 
@@ -112,6 +119,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
+        top_sdfg.reset_cfg_list()
+
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
@@ -132,6 +141,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             return single_level_reachable
 
         reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = {}
+        cached_closures: dict[int, Set[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
@@ -141,7 +151,11 @@ class ControlFlowBlockReachability(ppl.Pass):
                             result[block].update(reached.all_control_flow_blocks())
                         result[block].add(reached)
                     if block.parent_graph is not sdfg:
-                        result[block].update(self._region_closure(block.parent_graph, single_level_reachable))
+                        graph_id = id(block.parent_graph)
+                        if graph_id not in cached_closures:
+                            cached_closures[graph_id] = self._region_closure(block.parent_graph, single_level_reachable,
+                                                                             cached_closures)
+                        result[block].update(cached_closures[graph_id])
                 reachable[cfg.cfg_id] = result
         return reachable
 

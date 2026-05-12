@@ -40,15 +40,15 @@ def test_recreate_sdfg():
     a = np.random.rand(10)
     assert np.allclose(a + 1, very_unique_program_321(a))
 
-    assert os.path.exists(os.path.join(build_folder, 'program.sdfg'))
-    sdfg = dace.SDFG.from_file(os.path.join(build_folder, 'program.sdfg'))
+    assert os.path.exists(os.path.join(build_folder, 'program.sdfgz'))
+    sdfg = dace.SDFG.from_file(os.path.join(build_folder, 'program.sdfgz'))
 
     # Replace the SDFG with the one we just created
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
             node.code.as_string = re.sub(r'\b1\b', '2', node.code.as_string)
 
-    sdfg.save(os.path.join(build_folder, 'program.sdfg'))
+    sdfg.save(os.path.join(build_folder, 'program.sdfgz'), compress=True)
 
     # Now run the same program again, but this time with the SDFG already created
     @dace.program(recreate_sdfg=False)
