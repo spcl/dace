@@ -24,6 +24,36 @@ from dace import Memlet
 from dace.frontend.hlfir.builder.access import acc, build_memlet_index, get_access, indirect_host, rename_iters
 
 
+def _ensure_view_writeback_link(builder, state, write_node, target: str):
+    """When the Phase I self-update split creates a fresh access node
+    for the write side of a view alias, the view's required source
+    linking memlet (added by ``acc()`` on the read side) is missing
+    on this new node — DaCe's ``get_view_edge`` returns None and
+    validation fails.  Mirror the link in the writeback direction
+    (view -> source) so the write node is also a recognised view edge.
+
+    The writeback target needs a FRESH source access node, not the
+    cached one — reusing the cached node (which already has an
+    out-edge to the read-side view) would form a cycle
+    ``src -> view_read -> tasklet -> view_write -> src`` in the
+    state's DAG.
+    """
+    v = builder.arrays.get(target)
+    if v is None or getattr(v, 'role', '') != 'view_alias':
+        return
+    if not v.view_source or v.view_source not in state.parent.arrays:
+        return
+    src = v.view_source
+    src_subset = ", ".join(v.view_subset)
+    view_dims = [str(d) for d in state.parent.arrays[target].shape]
+    view_subset = ", ".join(f"0:{d}" for d in view_dims)
+    src_node = state.add_access(src)
+    cache = getattr(state, '_hlfir_access', None)
+    if cache is not None:
+        cache[src] = src_node
+    state.add_edge(write_node, None, src_node, None, Memlet(data=src, subset=src_subset, other_subset=view_subset))
+
+
 def assign_reads_array(assign_node, arrays: dict) -> bool:
     """True iff any ``accesses`` entry on ``assign_node`` is a read against
     an array descriptor.  Used to promote a nominally-scalar assign
@@ -150,6 +180,7 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
         w = state.add_access(target)
         if cache is not None:
             cache[target] = w
+        _ensure_view_writeback_link(builder, state, w, target)
     else:
         w = acc(builder, state, target)
 
@@ -205,6 +236,7 @@ def emit_scalar_assign(builder, state, target: str, value: str):
         a = state.add_access(target)
         if cache is not None:
             cache[target] = a
+        _ensure_view_writeback_link(builder, state, a, target)
     else:
         a = acc(builder, state, target)
     state.add_edge(t, '_out', a, None, Memlet(data=target, subset='0'))

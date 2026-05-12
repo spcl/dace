@@ -476,6 +476,60 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     }
 
 
+    // Pass 0b: disambiguate multi-callsite duplicates of the same
+    // inlined callee, but ONLY when the inlined dummy is backed by a
+    // section-slice memref chain (``fir.convert`` of ``fir.box_addr``
+    // of ``hlfir.designate``).  Whole-array pass-through aliases trace
+    // through the convert chain back to the caller's own declare /
+    // block-arg, and the bridge's downstream alias chain handles
+    // per-callsite disambiguation correctly without renaming those.
+    // Section-slice aliases instead get a fresh box-of-the-slice per
+    // call site, so the bridge's view_subset / view_source machinery
+    // needs distinct VarInfo entries to keep per-site slice
+    // information from collapsing.
+    {
+        auto leadsToDesignate = [](mlir::Value v) -> bool {
+            for (int i = 0; i < 8 && v; ++i) {
+                auto *d = v.getDefiningOp();
+                if (!d) return false;
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
+                    { v = cv.getValue(); continue; }
+                if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(d))
+                    { v = ba.getVal(); continue; }
+                if (mlir::isa<hlfir::DesignateOp>(d))
+                    return true;
+                return false;
+            }
+            return false;
+        };
+        llvm::StringMap<llvm::SmallVector<hlfir::DeclareOp, 4>> byUniq;
+        module.walk([&](hlfir::DeclareOp op) {
+            auto *fn = op->getParentOfType<mlir::func::FuncOp>().getOperation();
+            if (auto f = mlir::dyn_cast_or_null<mlir::func::FuncOp>(fn))
+                if (f.isPrivate()) return;
+            if (!op.getDummyScope()) return;
+            if (!leadsToDesignate(op.getMemref())) return;
+            byUniq[op.getUniqName()].push_back(op);
+        });
+        for (auto &kv : byUniq) {
+            auto &group = kv.second;
+            if (group.size() < 2) continue;
+            llvm::SmallPtrSet<mlir::Operation *, 4> scopes;
+            for (auto op : group)
+                if (auto ds = op.getDummyScope().getDefiningOp())
+                    scopes.insert(ds);
+            if (scopes.size() < 2) continue;
+            unsigned idx = 0;
+            for (auto op : group) {
+                auto un = op.getUniqName().str();
+                std::string newUniq = un + "_call" + std::to_string(idx++);
+                op->setAttr("uniq_name",
+                            mlir::StringAttr::get(op.getContext(), newUniq));
+            }
+        }
+    }
+
+
     // Pass 1: collect every hlfir.declare.  Skip assumed-shape alias
     // declares inserted by ``hlfir-inline-all`` — they share storage
     // with the caller's outer declare, and downstream SDFG emission
@@ -989,7 +1043,15 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                         };
                         auto renderBound = [&](mlir::Value v) -> std::string {
                             if (auto c = traceConstInt(v)) return std::to_string(*c);
-                            return renderSym(v);
+                            auto s = renderSym(v);
+                            if (!s.empty()) return s;
+                            // Runtime triplet upper bound that goes through
+                            // Flang's ``max(ext, 0)`` clamp (assumed-shape /
+                            // explicit-shape with a dummy extent).
+                            // ``traceExtentExpr`` already recognises this
+                            // shape and renders to the underlying dummy
+                            // scalar's short name.
+                            return traceExtentExpr(v);
                         };
                         std::vector<std::string> subset;
                         unsigned cursor = 0;

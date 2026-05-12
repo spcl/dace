@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
@@ -76,14 +75,6 @@ END SUBROUTINE viewlens
     assert b[0, 0, 0] == 4620
 
 
-@xfail("Bridge gap: subroutine arg `aa(:, :, j)` with runtime variable "
-       "`j` doesn't propagate caller writes back to the parent.  Bridge "
-       "produces an uninitialised transient for `aa` instead of routing "
-       "to the inlined-callee alias.  Const-index variant works (see "
-       "`test_fortran_frontend_view_test`).  Original Fortran source had "
-       "an additional parameter-vs-dummy `n` clash (flang rejects); "
-       "fixed by dropping the redundant `integer, parameter :: n=10` on "
-       "the callee side and using the dummy `n` directly.")
 def test_fortran_frontend_view_test_2(tmp_path):
     """Multiple views per array in the same context: caller passes
     ``aa(:, :, j)`` and ``aa(:, :, k)`` for distinct ``j``, ``k``.
@@ -139,9 +130,6 @@ END SUBROUTINE viewlens
     assert c[1, 1, 1] == 84
 
 
-@xfail("Bridge gap: same as `view_test_2` (runtime-variable slice index "
-       "on a subroutine arg doesn't propagate writes back).  Fortran "
-       "source fixed in the same way (parameter-vs-dummy `n` clash).")
 def test_fortran_frontend_view_test_3(tmp_path):
     """Multiple views from the SAME array in the same context (``aa(:,
     :, j)`` and ``aa(:, :, j+1)`` both bound on the call).
