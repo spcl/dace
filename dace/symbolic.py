@@ -1456,17 +1456,17 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         return _SerializedSymbolicParser._negate(a)
 
     _binops = {
-        ast.Add: _binop_add.__func__,
-        ast.Sub: _binop_sub.__func__,
-        ast.Mult: _binop_mul.__func__,
-        ast.Div: _binop_div.__func__,
-        ast.Pow: _binop_pow.__func__,
-        ast.Mod: _binop_mod.__func__,
+        ast.Add: _binop_add,
+        ast.Sub: _binop_sub,
+        ast.Mult: _binop_mul,
+        ast.Div: _binop_div,
+        ast.Pow: _binop_pow,
+        ast.Mod: _binop_mod,
         ast.FloorDiv: lambda a, b: int_floor(a, b),
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,
-        ast.USub: _unary_minus.__func__,
+        ast.USub: _unary_minus,
         ast.Not: lambda a: sympy.Not(a),
         ast.Invert: lambda a: bitwise_invert(a),
     }
