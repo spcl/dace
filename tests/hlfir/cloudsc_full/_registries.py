@@ -555,8 +555,14 @@ def get_inputs(rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]
             dtype = np.float64
         if issubclass(dtype, Integral) or dtype is np.bool_:
             if dtype is np.bool_:
-                method = lambda s, d: rng.integers(0, 2, s, d)
-                dtype = np.int32
+                # Generate ints in {0, 1} then cast to np.bool_ — keep the
+                # 1-byte boolean storage so the bridge's ``bool *`` SDFG
+                # signature reads each element correctly.  Casting to
+                # np.int32 here used to leave the 4-byte int32 array
+                # under a ``bool *`` pointer; the SDFG then read byte
+                # offsets 0..3 of one int32 as 4 separate "booleans",
+                # which corrupted ``LDCUM`` and similar LOGICAL inputs.
+                method = lambda s, d: rng.integers(0, 2, s, np.int32).astype(np.bool_)
             else:
                 method = lambda s, d: rng.integers(0, 10, s, d)
         else:
