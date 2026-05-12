@@ -69,6 +69,47 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             edges.append(oe)
         return edges
 
+    @staticmethod
+    def _subset_param_order(subset, map_params: List[str]) -> List[str]:
+        """Per-dimension list of which map parameter (if any) the subset uses
+        in that dimension. Dimensions that don't reference any map param drop
+        out. Used to compare in vs. out access orderings — see
+        ``_in_out_subsets_are_pure_copy``.
+        """
+        param_set = set(map_params)
+        order = []
+        for (b, e, _s) in subset:
+            # Treat a [b, e] dim as using a map param iff exactly one map
+            # param appears anywhere in `b` or `e`. Per-iteration accesses
+            # encode as (p, p, 1); broadcast slices may encode wider but
+            # still reference a single param.
+            free = set()
+            for expr in (b, e):
+                free |= {str(s) for s in dace.symbolic.symlist(expr).keys()} & param_set
+            if len(free) == 1:
+                order.append(next(iter(free)))
+        return order
+
+    def _in_out_subsets_are_pure_copy(self, in_subset, out_subset, map_params: List[str]) -> bool:
+        """Reject permutations (e.g. transpose) but accept broadcasts.
+
+        The tasklet body ``_out = _in`` is identical for a pure copy
+        (``A[i,j] -> B[i,j]``), a broadcast (``A[j] -> B[i,j]``) and a
+        transpose (``A[i,j] -> B[j,i]``). The first two are safe to
+        lower to ``cudaMemcpyAsync``; the third is not.
+
+        Distinguish by looking at the ordering of map parameters in the
+        in- vs. out-subsets. Any map parameter that appears in *both*
+        subsets must appear in the *same relative order*. Transpose
+        swaps it; copy and broadcast preserve it.
+        """
+        in_order = self._subset_param_order(in_subset, map_params)
+        out_order = self._subset_param_order(out_subset, map_params)
+        shared = set(in_order) & set(out_order)
+        if not shared:
+            return True
+        return [p for p in in_order if p in shared] == [p for p in out_order if p in shared]
+
     def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry,
                                  is_memset: bool) -> List[List[MultiConnectorEdge]]:
         """
@@ -121,6 +162,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     continue
                 in_conn = next(iter(tasklet.in_connectors))
                 if tasklet.code.as_string != f"{out_conn} = {in_conn}{suffix}":
+                    continue
+                # Reject permutations (e.g. transpose) — the tasklet body
+                # ``_out = _in`` is identical for copy and transpose, so
+                # without this check we'd silently lower a transpose to
+                # ``cudaMemcpyAsync``. See ``_in_out_subsets_are_pure_copy``.
+                if not self._in_out_subsets_are_pure_copy(path_candidate[0].data.subset,
+                                                         path_candidate[1].data.subset, node.map.params):
                     continue
                 paths.append([ie] + path_candidate + [oe])
 

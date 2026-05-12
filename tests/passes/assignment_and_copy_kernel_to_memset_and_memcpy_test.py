@@ -723,5 +723,30 @@ def test_nested_memcpy_with_dimension_change_and_strides(expansion_type, xp, ful
             assert xp.allclose(B_IN[0:DIM_SIZE, j], A_IN), f"{j}: {B_IN[0:DIM_SIZE, j] - A_IN}"
 
 
+def test_transpose_map_is_not_lifted_to_memcpy():
+    """Pin: a map whose tasklet body is `_out = _in` but whose in/out
+    memlet subsets permute the map indices is a *transpose*, not a
+    pure copy. The pass must leave it alone — lifting it to a
+    ``CopyLibraryNode`` (which lowers to ``cudaMemcpyAsync``) would
+    silently turn a transpose into a flat memcpy and produce wrong
+    output. Regressed in ``test_persistent_gpu_transpose_regression``.
+    """
+    sdfg = dace.SDFG("transpose_pin")
+    sdfg.add_array("A", [5, 3], dace.float64)
+    sdfg.add_array("AT", [3, 5], dace.float64)
+    state = sdfg.add_state("main")
+    a = state.add_access("A")
+    at = state.add_access("AT")
+    me, mx = state.add_map("transpose_map", {"i": "0:5", "j": "0:3"})
+    t = state.add_tasklet("tr", {"_in"}, {"_out"}, "_out = _in")
+    state.add_memlet_path(a, me, t, dst_conn="_in", memlet=dace.Memlet("A[i, j]"))
+    state.add_memlet_path(t, mx, at, src_conn="_out", memlet=dace.Memlet("AT[j, i]"))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0, (
+        "Transpose pattern (in subset [i, j], out subset [j, i]) was incorrectly "
+        "lifted to a CopyLibraryNode — the pass treats permutation as pure copy.")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
