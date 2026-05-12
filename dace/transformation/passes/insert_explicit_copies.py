@@ -312,11 +312,14 @@ class InsertExplicitCopies(ppl.Pass):
             if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
                 continue
 
-            # CopyLibraryNode expansion assumes both endpoints are Array
-            # descriptors (it queries shape/strides). Stream (queue) and any
-            # other non-Array data class don't satisfy that — leave the
-            # natural memlet for the codegen's stream/custom paths.
-            if not isinstance(src_desc, dace.data.Array) or not isinstance(dst_desc, dace.data.Array):
+            # CopyLibraryNode expansion queries ``shape`` / ``strides`` /
+            # ``is_packed_fortran_strides`` on both endpoints. ``Array`` and
+            # ``Scalar`` both satisfy that contract (Scalar reports ``shape
+            # = (1,)``, ``strides = [1]``). ``Stream`` (queue) and other
+            # non-shape data classes do not — leave the natural memlet for
+            # the codegen's stream / custom paths.
+            if not isinstance(src_desc, (dace.data.Array, dace.data.Scalar)) \
+                    or not isinstance(dst_desc, (dace.data.Array, dace.data.Scalar)):
                 continue
 
             # Custom-target storages (e.g. TensorCore_A/B/Accumulator from
