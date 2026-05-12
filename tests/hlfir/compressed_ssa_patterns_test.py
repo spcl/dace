@@ -346,6 +346,98 @@ END SUBROUTINE nested_max
     np.testing.assert_allclose(zcov, zcov_ref, rtol=1e-12, atol=1e-12)
 
 
+def test_complex_division(tmp_path):
+    """Complex division: ``z = a / b`` on COMPLEX(KIND=8) operands.
+    Flang lowers to ``__divdc3(re_a, im_a, re_b, im_b)`` via fir.call.
+    The bridge pattern-matches that shape (expressions.cpp:870-885)
+    and emits ``(a / b)`` — 2 textual operands.  But the SSA tree
+    has 4 ``fir.extract_value`` ops walking the same 2 complex
+    loads, so collectReads could over-count.
+    """
+    src = """
+SUBROUTINE complex_div(a, b, c, n)
+integer, intent(in) :: n
+complex(kind=8), intent(in) :: a(n), b(n)
+complex(kind=8), intent(out) :: c(n)
+integer i
+DO i = 1, n
+    c(i) = a(i) / b(i)
+ENDDO
+END SUBROUTINE complex_div
+"""
+    ref, sdfg = _build_and_run(tmp_path, src=src, name='complex_div', entry='_QPcomplex_div', fortran_call=None)
+    rng = np.random.default_rng(7)
+    n = 5
+    a = (rng.random(n) + 1j * rng.random(n)).astype(np.complex128)
+    b = (rng.random(n) + 1j * rng.random(n) + 0.5).astype(np.complex128)  # avoid /0
+    c_ref = ref.complex_div(a=a, b=b)
+    c = np.zeros(n, dtype=np.complex128)
+    sdfg(a=a, b=b, c=c, n=n)
+    np.testing.assert_allclose(c, c_ref, rtol=1e-12, atol=1e-12)
+
+
+def test_subexpr_cse_repeated_product(tmp_path):
+    """``(a(i) + b(i)) * (a(i) + b(i))`` — same sub-expression
+    textually twice.  Flang's CSE may share the inner ``addf`` SSA
+    value across both ``mulf`` operands, while the textual emission
+    still has 2 occurrences of ``a(i)`` and ``b(i)`` (one per
+    sub-expression).  The 1:1 contract must hold: 2 textual + 2
+    AccessInfos per name.
+    """
+    src = """
+SUBROUTINE sq_sum(a, b, out, n)
+integer, intent(in) :: n
+double precision, intent(in) :: a(n), b(n)
+double precision, intent(out) :: out(n)
+integer i
+DO i = 1, n
+    out(i) = (a(i) + b(i)) * (a(i) + b(i))
+ENDDO
+END SUBROUTINE sq_sum
+"""
+    ref, sdfg = _build_and_run(tmp_path, src=src, name='sq_sum', entry='_QPsq_sum', fortran_call=None)
+    rng = np.random.default_rng(7)
+    n = 5
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    out_ref = ref.sq_sum(a=a, b=b)
+    out = np.zeros(n)
+    sdfg(a=a, b=b, out=out, n=n)
+    np.testing.assert_allclose(out, out_ref, rtol=1e-12, atol=1e-12)
+
+
+def test_merge_intrinsic(tmp_path):
+    """Fortran ``MERGE(t, f, mask)`` lowers to ``arith.select`` with
+    a non-cmp condition (bare i1 mask, not the cmpf/cmpi predicate
+    shape the bridge's MIN/MAX pattern-matches).  buildExpr falls
+    through to the generic ternary ``(t if cond else f)`` rendering.
+    cond's text comes from buildBoolExpr — its array refs should
+    match collectReads visits exactly.
+    """
+    src = """
+SUBROUTINE merge_arrays(a, b, mask, out, n)
+integer, intent(in) :: n
+double precision, intent(in) :: a(n), b(n)
+logical, intent(in) :: mask(n)
+double precision, intent(out) :: out(n)
+integer i
+DO i = 1, n
+    out(i) = MERGE(a(i), b(i), mask(i))
+ENDDO
+END SUBROUTINE merge_arrays
+"""
+    ref, sdfg = _build_and_run(tmp_path, src=src, name='merge_arrays', entry='_QPmerge_arrays', fortran_call=None)
+    rng = np.random.default_rng(7)
+    n = 8
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    mask = rng.integers(0, 2, n).astype(np.bool_)
+    out_ref = ref.merge_arrays(a=a, b=b, mask=mask)
+    out = np.zeros(n)
+    sdfg(a=a, b=b, mask=mask, out=out, n=n)
+    np.testing.assert_allclose(out, out_ref, rtol=1e-12, atol=1e-12)
+
+
 def test_max_neighbor_pairs(tmp_path):
     """``MAX(a(i-1), a(i))`` — shared loads with potentially-swapped
     cmp operand order for stride-2 indexing.
