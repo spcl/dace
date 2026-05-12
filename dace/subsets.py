@@ -280,7 +280,44 @@ def _simplified_str(val):
     try:
         return str(int(val))
     except TypeError:
-        return str(val)
+        pass
+
+    if isinstance(val, sp.Basic) and len(val.free_symbols) == 0:
+        try:
+            typed_constants = {tc: tc.value for tc in val.atoms(symbolic.TypedConstant)}
+            numeric_val = val.xreplace(typed_constants) if typed_constants else val
+            if getattr(numeric_val, 'is_integer', False):
+                return str(int(numeric_val))
+        except (TypeError, ValueError):
+            pass
+
+    return str(val)
+
+
+def _constant_int_value(val):
+    val = _expr(val)
+    try:
+        return int(val)
+    except TypeError:
+        pass
+
+    if isinstance(val, sp.Basic) and len(val.free_symbols) == 0:
+        try:
+            typed_constants = {tc: tc.value for tc in val.atoms(symbolic.TypedConstant)}
+            numeric_val = val.xreplace(typed_constants) if typed_constants else val
+            if getattr(numeric_val, 'is_integer', False):
+                return int(numeric_val)
+        except (TypeError, ValueError):
+            pass
+
+    return None
+
+
+def _equals_int(val, expected):
+    intval = _constant_int_value(val)
+    if intval is not None:
+        return intval == expected
+    return val == expected
 
 
 def _expr(val):
@@ -580,19 +617,19 @@ class Range(Subset):
         if isinstance(d, tuple):
             dres = _simplified_str(d[0])
             if d[1] is not None:
-                if d[1] - d[0] != 0:
+                if not _equals_int(d[1] - d[0], 0):
                     off = 1
                     if d[2] is not None and (d[2] < 0) == True:
                         off = -1
-                    dres += ':' + _simplified_str(d[1] + off)
-            if d[2] != 1:
+                    dres += ':' + _simplified_str(symbolic.simplify(d[1] + off))
+            if not _equals_int(d[2], 1):
                 if d[1] is None:
                     dres += ':'
                 dres += ':' + _simplified_str(d[2])
-            if t != 1:
-                if d[1] is None and d[2] == 1:
+            if not _equals_int(t, 1):
+                if d[1] is None and _equals_int(d[2], 1):
                     dres += '::'
-                elif d[2] == 1:
+                elif _equals_int(d[2], 1):
                     dres += ':'
                 dres += ':' + _simplified_str(t)
             return dres
