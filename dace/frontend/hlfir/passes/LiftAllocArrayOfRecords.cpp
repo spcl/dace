@@ -85,6 +85,7 @@
 // ============================================================================
 
 #include "passes/Passes.h"
+#include "bridge/trace_utils.h"  // limits::kAliasMemrefWalkDepth
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
@@ -180,7 +181,7 @@ static void discoverLiftTargets(mlir::func::FuncOp func,
 
         mlir::Value mr = dg.getMemref();
         hlfir::DeclareOp parentDecl;
-        for (int hops = 0; hops < 8 && mr; ++hops) {
+        for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && mr; ++hops) {
             auto *def = mr.getDefiningOp();
             if (!def) break;
             if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(def)) {
@@ -228,6 +229,17 @@ static ElemMatch matchElementSelect(mlir::Value v,
                                     hlfir::DeclareOp parent,
                                     llvm::StringRef memberName) {
     ElemMatch r{};
+    // Peel through any intermediate ``hlfir.declare`` aliases — inlined
+    // callees materialise these on per-element selections (e.g. the
+    // inlined ``stuff`` alias declare between ``designate(elem_idx)``
+    // and ``designate{"<inner>"}``).
+    for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && v; ++hops) {
+        auto *vd = v.getDefiningOp();
+        if (!vd) return r;
+        auto aliasDecl = mlir::dyn_cast<hlfir::DeclareOp>(vd);
+        if (!aliasDecl) break;
+        v = aliasDecl.getMemref();
+    }
     auto *def = v.getDefiningOp();
     if (!def) return r;
     auto elemDg = mlir::dyn_cast<hlfir::DesignateOp>(def);
@@ -240,7 +252,7 @@ static ElemMatch matchElementSelect(mlir::Value v,
 
     // The memref must trace back to load(designate %parent{"<member>"}).
     mlir::Value mr = elemDg.getMemref();
-    for (int hops = 0; hops < 6 && mr; ++hops) {
+    for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && mr; ++hops) {
         auto *mdef = mr.getDefiningOp();
         if (!mdef) return r;
         if (auto ld = mlir::dyn_cast<fir::LoadOp>(mdef)) {
@@ -306,7 +318,7 @@ parseEmboxSource(mlir::Value emboxVal) {
     if (auto sliceDg = mlir::dyn_cast<hlfir::DesignateOp>(srcDef)) {
         // Walk the slice's memref back to the storage declare.
         mlir::Value mr = sliceDg.getMemref();
-        for (int hops = 0; hops < 6 && mr; ++hops) {
+        for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && mr; ++hops) {
             auto *mdef = mr.getDefiningOp();
             if (!mdef) break;
             if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(mdef))
@@ -514,6 +526,151 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3b — alias-without-rebind redirection
+// ---------------------------------------------------------------------------
+//
+// Some test patterns (notably ``type_arg`` with callee inlining) have
+// NO explicit rebind in scope — the user calls a subroutine that takes
+// the inner pointer-array as an assumed-shape dummy.  After
+// ``hlfir-inline-all``, Flang materialises an alias declare on the
+// loaded pointer box (``%my_arr = hlfir.declare (fir.rebox (fir.load
+// %w_field)))``).  That alias is what the bridge already registers
+// as a top-level variable.
+//
+// But Flang also emits a SECOND access through the bare designate
+// chain (the original Fortran-source-author's read in main).  That
+// chain doesn't go through the inlined alias — it walks the
+// ``designate{member} → load → designate(idx) → designate{inner_member}
+// → load → designate(access_indices)`` shape directly.  ``traceToDecl``
+// on its terminal element returns the OUTER struct's name (``p_prog``)
+// instead of the inlined alias's name (``my_arr``), and the bridge
+// emits an access against ``p_prog`` which isn't a registered array.
+//
+// Fix: walk the function for inlined-callee alias declares whose
+// memref chain matches ``rebox?(load(designate(elemSelect, member)))``
+// on a known (parent, member) target.  Record
+// ``(parent, member, elemIdx_const, inner_member) → alias_decl``.
+// Then walk for access chains matching the same shape but ending
+// at the bare ``fir.load`` (no alias declare).  Rewrite the terminal
+// designate to use the alias declare's result instead.
+
+struct AliasInfo {
+    hlfir::DeclareOp aliasDecl;       // The inlined-callee alias declare.
+    mlir::Value elemIdx;               // The element index value.
+    std::string innerMemberName;        // The inner member name.
+};
+
+/// Walk a function and find every inlined-callee alias declare whose
+/// memref chain matches the (parent, member) target.
+static void collectAliases(mlir::func::FuncOp func,
+                           LiftTarget &target,
+                           llvm::SmallVectorImpl<AliasInfo> &out) {
+    func.walk([&](hlfir::DeclareOp decl) {
+        if (decl == target.parent) return;
+        // The alias's memref must peel back through rebox / load to
+        // an inner-member designate chain.
+        mlir::Value mr = decl.getMemref();
+        for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && mr; ++hops) {
+            auto *mdef = mr.getDefiningOp();
+            if (!mdef) return;
+            if (auto rb = mlir::dyn_cast<fir::ReboxOp>(mdef))   { mr = rb.getBox(); continue; }
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(mdef)) { mr = cv.getValue(); continue; }
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(mdef)) {
+                // Got the load — the load's memref is an inner-member
+                // designate.
+                auto innerDg = matchInnerMember(ld.getMemref());
+                if (!innerDg) return;
+                auto em = matchElementSelect(innerDg.getMemref(),
+                                             target.parent, target.memberName);
+                if (!em.elemDg) return;
+                AliasInfo info;
+                info.aliasDecl = decl;
+                info.elemIdx = em.elemIdx;
+                info.innerMemberName = innerDg.getComponentAttr().str();
+                out.push_back(std::move(info));
+                return;
+            }
+            return;
+        }
+    });
+}
+
+/// Find an alias matching ``(elemIdx, innerMemberName)``, using the
+/// same SSA-value-or-constant matching as ``findRebind``.
+static AliasInfo *findAlias(llvm::SmallVectorImpl<AliasInfo> &aliases,
+                            mlir::Value elemIdx,
+                            llvm::StringRef innerMemberName) {
+    for (auto &a : aliases) {
+        if (a.innerMemberName != innerMemberName.str()) continue;
+        if (a.elemIdx == elemIdx) return &a;
+    }
+    std::optional<int64_t> needed;
+    if (auto *def = elemIdx.getDefiningOp())
+        if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+            if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                needed = ia.getInt();
+    if (!needed) return nullptr;
+    for (auto &a : aliases) {
+        if (a.innerMemberName != innerMemberName.str()) continue;
+        if (auto *def = a.elemIdx.getDefiningOp())
+            if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+                if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                    if (ia.getInt() == *needed) return &a;
+    }
+    return nullptr;
+}
+
+/// Walk the function for direct-chain accesses that match an alias's
+/// shape but use the bare load chain instead of the alias declare.
+/// Rewrite each one to use the alias's result.
+static bool redirectAccessesToAliases(mlir::func::FuncOp func,
+                                      LiftTarget &target,
+                                      llvm::SmallVectorImpl<AliasInfo> &aliases) {
+    if (aliases.empty()) return false;
+    bool changed = false;
+    mlir::OpBuilder b(func.getContext());
+
+    llvm::SmallVector<std::pair<hlfir::DesignateOp, AliasInfo *>, 8> jobs;
+    func.walk([&](hlfir::DesignateOp accessDg) {
+        // Element access: no component, has indices.
+        if (accessDg.getComponentAttr()) return;
+        if (accessDg.getIndices().empty()) return;
+        // Memref must be a load of inner-member designate.
+        auto *mdef = accessDg.getMemref().getDefiningOp();
+        auto ld = mlir::dyn_cast_or_null<fir::LoadOp>(mdef);
+        if (!ld) return;
+        auto innerDg = matchInnerMember(ld.getMemref());
+        if (!innerDg) return;
+        auto em = matchElementSelect(innerDg.getMemref(),
+                                     target.parent, target.memberName);
+        if (!em.elemDg) return;
+        // Find matching alias.
+        AliasInfo *a = findAlias(aliases, em.elemIdx,
+                                 innerDg.getComponentAttr().str());
+        if (!a) return;
+        // Skip if this access is already rooted at the alias.
+        if (em.elemDg == nullptr) return;  // guard for null
+        jobs.push_back({accessDg, a});
+    });
+
+    for (auto &[accessDg, a] : jobs) {
+        // Build replacement: ``hlfir.designate %alias (accessIdxs...)``.
+        b.setInsertionPoint(accessDg);
+        llvm::SmallVector<mlir::Value, 4> idxs(accessDg.getIndices().begin(),
+                                               accessDg.getIndices().end());
+        auto newDg = b.create<hlfir::DesignateOp>(
+            accessDg.getLoc(),
+            accessDg.getResult().getType(),
+            a->aliasDecl.getResult(0),
+            mlir::ValueRange{idxs});
+        accessDg.getResult().replaceAllUsesWith(newDg.getResult());
+        accessDg.erase();
+        changed = true;
+    }
+    return changed;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4 — Cleanup
 // ---------------------------------------------------------------------------
 
@@ -542,7 +699,7 @@ static void cleanup(mlir::func::FuncOp func,
             && name != "_FortranAAllocatableSetBounds") return;
         if (call.getNumOperands() == 0) return;
         mlir::Value arg = call.getOperand(0);
-        for (int hops = 0; hops < 4 && arg; ++hops) {
+        for (int hops = 0; hops < limits::kAliasMemrefWalkDepth && arg; ++hops) {
             auto *def = arg.getDefiningOp();
             if (!def) break;
             if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { arg = cv.getValue(); continue; }
@@ -587,9 +744,20 @@ struct LiftAllocArrayOfRecordsPass
             for (auto &t : targets) {
                 llvm::SmallVector<RebindInfo, 4> rebinds;
                 collectRebinds(func, t, rebinds);
-                if (rebinds.empty()) continue;
-                rewriteAccesses(func, t, rebinds);
-                cleanup(func, t, rebinds);
+                if (!rebinds.empty()) {
+                    rewriteAccesses(func, t, rebinds);
+                    cleanup(func, t, rebinds);
+                    continue;
+                }
+                // No explicit rebind in scope — fall back to alias
+                // redirection.  This handles the callee-inlining case
+                // where Flang materialises an alias declare on the
+                // loaded pointer-array; redirect direct-chain accesses
+                // to that alias.
+                llvm::SmallVector<AliasInfo, 4> aliases;
+                collectAliases(func, t, aliases);
+                if (!aliases.empty())
+                    redirectAccessesToAliases(func, t, aliases);
             }
         });
     }

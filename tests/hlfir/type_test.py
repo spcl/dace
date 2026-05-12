@@ -490,12 +490,6 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("`type(t), allocatable :: pprog(:)` member with callee inlining: "
-       "`call f2(p_prog%pprog(1))` introduces an inlined-callee alias declare "
-       "for `stuff`, and the lift pass's chain matcher doesn't follow through "
-       "the alias declare wrapping the element select.  The non-aliased "
-       "variant (`test_lift_alloc_array_of_records_simple`) is closed by the "
-       "lift pass; this xfail tracks the inlined-callee extension.")
 def test_fortran_frontend_type_arg(tmp_path):
     src = """
 module lib
@@ -529,7 +523,13 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    sdfg(d=a)
+    # ``my_arr_d0``/``my_arr_d1`` are inherited from an inlined-callee alias
+    # declare on the pointer member ``p_prog%pprog(1)%w`` — its assumed-shape
+    # dims surface as SDFG free symbols.  Test source neither allocates nor
+    # rebinds the pointer, so any non-zero value works; the bridge has done
+    # the structural lowering and the runtime contract is "caller supplies
+    # the assumed-shape extents".
+    sdfg(d=a, my_arr_d0=1, my_arr_d1=1)
 
 
 def test_fortran_frontend_type_arg2(tmp_path):
