@@ -128,7 +128,7 @@ def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_plain_integer_roundtrip_remains_sympy_integer():
+def test_plain_integer_roundtrip_converts_to_sympy_integer():
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(sympy.Integer(10)))
 
     assert restored == 10
