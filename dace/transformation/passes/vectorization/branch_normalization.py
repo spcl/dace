@@ -24,7 +24,8 @@ processed, and ``assert_connector_role_matches_edges`` passes on every
 emitted state.
 """
 import copy
-from typing import Optional
+import re
+from typing import Dict, Optional, Set
 
 import dace
 from dace import properties
@@ -35,6 +36,138 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+
+
+# Same token splitter shape used by ``construction_utils._tokens`` for
+# the equivalent walk over interstate-edge expressions. Kept module-local
+# so the analysis is self-contained.
+_INTERSTATE_TOKEN_RE = re.compile(r"[()\[\]\s,+\-*/%<>!=&|^~?:]+")
+
+
+def _tokenize_interstate_expr(text: str) -> Set[str]:
+    return {s.strip() for s in _INTERSTATE_TOKEN_RE.split(text) if s.strip()}
+
+
+def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
+    """Returns the per-arm set of array names whose write must be rerouted
+    to a private arm-local transient before the arm bodies can run
+    unconditionally.
+
+    A write to ``arr`` inside arm ``i`` escapes (so it needs rerouting)
+    iff any of:
+
+    1. ``arr`` is non-transient (visible to callers of the SDFG that owns
+       ``cb``).
+    2. ``arr`` is read somewhere outside the subtree rooted at ``cb``,
+       computed by skipping every state inside ``cb`` while walking
+       ``state.read_and_write_sets()`` over the rest of the SDFG, plus
+       tokenizing interstate-edge conditions and assignment RHSs whose
+       endpoints lie outside ``cb``.
+    3. ``arr`` is read by *another* arm of ``cb``, since every arm runs
+       unconditionally post-rewrite and one arm's read would otherwise
+       see another arm's just-written value.
+
+    Returns ``{arm_index: {arr_name, ...}}``. Arms with no escaping
+    writes get an empty set entry. The redirect plan that drives the
+    actual rewrite is one private transient per ``(arm_index, arr)``
+    pair.
+    """
+    # Resolve to the SDFG that physically owns ``cb`` (it may be inside a
+    # NestedSDFG). Arrays referenced from cb's arms live in this SDFG.
+    local_sdfg: dace.SDFG = cb.sdfg
+
+    # Collect arm bodies and the SDFGStates inside each, in order.
+    arm_bodies = [body for _, body in cb.branches]
+    arm_states: Dict[int, Set[dace.SDFGState]] = {}
+    for i, body in enumerate(arm_bodies):
+        if not isinstance(body, ControlFlowRegion):
+            arm_states[i] = set()
+            continue
+        states_in_arm = {n for n in body.all_control_flow_blocks() if isinstance(n, dace.SDFGState)}
+        arm_states[i] = states_in_arm
+
+    inside_states: Set[dace.SDFGState] = set()
+    for s in arm_states.values():
+        inside_states |= s
+
+    # ---- Outside-read set (rule 2). ----
+    outside_reads: Set[str] = set()
+    for state in local_sdfg.all_states():
+        if state in inside_states:
+            continue
+        read_set, _ = state.read_and_write_sets()
+        outside_reads |= read_set
+
+    # Walk every interstate edge whose endpoints both lie outside cb's
+    # subtree. ``read_and_write_sets`` does not cover conditions or
+    # assignment RHS expressions, so we tokenise them and intersect
+    # against the SDFG's array names.
+    array_names = set(local_sdfg.arrays.keys())
+    for cfg in local_sdfg.all_control_flow_regions(recursive=True):
+        for e in cfg.edges():
+            src_in = e.src in inside_states
+            dst_in = e.dst in inside_states
+            if src_in and dst_in:
+                continue
+            assigns = getattr(e.data, "assignments", None) or {}
+            for v in assigns.values():
+                outside_reads |= (_tokenize_interstate_expr(str(v)) & array_names)
+            cond = e.data.condition.as_string if e.data.condition is not None else ""
+            if cond:
+                outside_reads |= (_tokenize_interstate_expr(cond) & array_names)
+
+    # ConditionalBlock branch conditions live on the block itself, not on
+    # interstate edges. The condition of ``cb`` and its sibling cond
+    # blocks may reference transients too; rule 2 only cares about
+    # conditions *outside* cb.
+    from dace.sdfg.state import ConditionalBlock as _CB  # local alias
+    for region in local_sdfg.all_control_flow_blocks():
+        if not isinstance(region, _CB) or region is cb:
+            continue
+        for c, _ in region.branches:
+            if c is None:
+                continue
+            text = c.as_string if isinstance(c, CodeBlock) else str(c)
+            outside_reads |= (_tokenize_interstate_expr(text) & array_names)
+
+    # ---- Per-arm read sets for rule 3. ----
+    arm_reads: Dict[int, Set[str]] = {}
+    for i, body in enumerate(arm_bodies):
+        reads: Set[str] = set()
+        if isinstance(body, ControlFlowRegion):
+            for state in arm_states[i]:
+                r, _ = state.read_and_write_sets()
+                reads |= r
+        arm_reads[i] = reads
+
+    # ---- Classify per-arm writes. ----
+    result: Dict[int, Set[str]] = {}
+    for i, body in enumerate(arm_bodies):
+        escaping: Set[str] = set()
+        if not isinstance(body, ControlFlowRegion):
+            result[i] = escaping
+            continue
+        # Collect this arm's writes via state.read_and_write_sets.
+        writes_in_arm: Set[str] = set()
+        for state in arm_states[i]:
+            _, w = state.read_and_write_sets()
+            writes_in_arm |= w
+
+        other_arms_reads = set()
+        for j in range(len(arm_bodies)):
+            if j == i:
+                continue
+            other_arms_reads |= arm_reads[j]
+
+        for arr in writes_in_arm:
+            if arr not in local_sdfg.arrays:
+                continue
+            desc = local_sdfg.arrays[arr]
+            non_transient = not getattr(desc, "transient", False)
+            if non_transient or arr in outside_reads or arr in other_arms_reads:
+                escaping.add(arr)
+        result[i] = escaping
+    return result
 
 
 @properties.make_properties
@@ -104,15 +237,14 @@ class BranchNormalization(ppl.Pass):
         if write_subsets is None:
             return False
 
-        # Lift the body up, replacing the conditional with the body's contents.
-        # The condition is dropped at this point, every write that used to be
-        # guarded by it is rewritten in-place to ``merge(cond, new, old)`` so
-        # the gating moves from control flow into dataflow.
-        # Arrays live on the local SDFG, not the outermost one passed to
-        # ``apply_pass``, when the ConditionalBlock is inside a NestedSDFG.
+        # Only writes flagged by the escape analysis get the merge rewrite;
+        # arm-internal scratch stays inline because nothing outside sees it.
         cond_text = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
         local_sdfg: dace.SDFG = cb.sdfg
-        self._rewrite_writes_to_merge(local_sdfg, body_state, write_subsets, cond_text)
+        escaping = compute_arm_escape_writes(local_sdfg, cb).get(0, set())
+        merge_subsets = {arr: sub for arr, sub in write_subsets.items() if arr in escaping}
+        if merge_subsets:
+            self._rewrite_writes_to_merge(local_sdfg, body_state, merge_subsets, cond_text)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True

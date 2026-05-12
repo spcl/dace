@@ -125,51 +125,66 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         (cond_block, then_body), (_, else_body) = cb.branches
         then_state: dace.SDFGState = then_body.nodes()[0]
         else_state: dace.SDFGState = else_body.nodes()[0]
-        # Only shared writes get the 3-CFG merge treatment. Arm-local writes
-        # (e.g., per-binop intermediates the frontend emits) are cloned as-is
-        # into the compute-then/compute-else states and stay arm-local.
-        write_subsets = self._shared_writes(then_state, else_state)
-
-        # The ConditionalBlock can live inside a NestedSDFG, and the arrays it
-        # references live on that inner SDFG, not the outermost one passed to
-        # ``apply_pass``. Resolve to the immediate enclosing SDFG.
+        # ``cb`` may live inside a NestedSDFG; arrays referenced from its arms
+        # live on the immediate enclosing SDFG, not the outermost ``sdfg``.
         local_sdfg: dace.SDFG = cb.sdfg
 
-        # Allocate per-arm temporaries (one per shared write target), sized
-        # to the parent array. Element-write semantics make this safe.
-        temp_then = {}
-        temp_else = {}
-        for arr_name in write_subsets:
+        # Per-arm escape set drives temp allocation and the clone-redirect.
+        # An arm-local intermediate that nothing outside reads stays inline.
+        from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
+            compute_arm_escape_writes,
+        )
+        escape_plan = compute_arm_escape_writes(local_sdfg, cb)
+        all_escapes = escape_plan.get(0, set()) | escape_plan.get(1, set())
+        if not all_escapes:
+            return
+
+        # We need the writing arm's subset to size the merge memlet, and we
+        # only allocate ``_<arm>_<arr>`` for arms that actually write ``arr``;
+        # the other arm's merge operand is the pre-cb value of ``arr``.
+        then_writes = self._collect_write_subsets(then_state)
+        else_writes = self._collect_write_subsets(else_state)
+
+        def _alloc(prefix: str, arr_name: str) -> str:
             base = local_sdfg.arrays[arr_name]
-            n_then, _ = local_sdfg.add_array(name=f"_then_{arr_name}",
-                                             shape=base.shape,
-                                             dtype=base.dtype,
-                                             storage=dace.dtypes.StorageType.Register,
-                                             transient=True,
-                                             find_new_name=True)
-            n_else, _ = local_sdfg.add_array(name=f"_else_{arr_name}",
-                                             shape=base.shape,
-                                             dtype=base.dtype,
-                                             storage=dace.dtypes.StorageType.Register,
-                                             transient=True,
-                                             find_new_name=True)
-            temp_then[arr_name] = n_then
-            temp_else[arr_name] = n_else
+            name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
+                                           shape=base.shape,
+                                           dtype=base.dtype,
+                                           storage=dace.dtypes.StorageType.Register,
+                                           transient=True,
+                                           find_new_name=True)
+            return name
+
+        temp_then = {arr: _alloc("_then", arr) for arr in sorted(all_escapes) if arr in then_writes}
+        temp_else = {arr: _alloc("_else", arr) for arr in sorted(all_escapes) if arr in else_writes}
+
+        # Subset per target: arms must agree when both write it (an
+        # element-write convention M3.1b already enforces upstream).
+        write_subsets = {}
+        for arr in all_escapes:
+            t, e = then_writes.get(arr), else_writes.get(arr)
+            if t is not None and e is not None and str(t) != str(e):
+                raise NotImplementedError(
+                    f"SameWriteSetIfElseToMergeCFG: arms write {arr!r} with different subsets ({t} vs {e})")
+            write_subsets[arr] = t if t is not None else e
 
         # New 3-CFG states in the parent graph.
         ct_state = parent.add_state(f"compute_then_{cb.label}")
         ce_state = parent.add_state(f"compute_else_{cb.label}")
         am_state = parent.add_state(f"apply_merge_{cb.label}")
 
-        # Clone bodies and redirect writes.
+        # Clone bodies redirecting only the per-arm escape writes.
         self._clone_with_redirect(then_state, ct_state, temp_then)
         self._clone_with_redirect(else_state, ce_state, temp_else)
 
-        # Emit per-write merge tasklets in apply_merge state.
+        # Merge tasklets. A non-writing arm contributes the pre-cb value
+        # (read the original ``arr``, which is intact because the writing
+        # arm now targets its private temp).
         cond_text = cond_block.as_string if isinstance(cond_block, CodeBlock) else str(cond_block)
-        for arr_name, subset in write_subsets.items():
-            self._emit_merge_tasklet(local_sdfg, am_state, arr_name, subset, temp_then[arr_name], temp_else[arr_name],
-                                     cond_text)
+        for arr, subset in write_subsets.items():
+            then_op = temp_then.get(arr, arr)
+            else_op = temp_else.get(arr, arr)
+            self._emit_merge_tasklet(local_sdfg, am_state, arr, subset, then_op, else_op, cond_text)
 
         # Stitch in/out edges of the ConditionalBlock onto ct_state -> ce_state
         # -> am_state, then drop the original block.

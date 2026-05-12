@@ -164,11 +164,7 @@ def test_tasklets_in_if(branch_mode):
                           atol=1e-12), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
 
 
-def test_tasklets_in_if_two(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
-                              "(KeyError: 'c_slice_times_f'), pending follow-up"))
+def test_tasklets_in_if_two(branch_mode):
     _S = 64
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((1, ))
