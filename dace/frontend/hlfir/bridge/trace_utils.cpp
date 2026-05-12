@@ -184,7 +184,11 @@ std::string traceExtentExpr(mlir::Value v) {
     // Flang's clamp wrapper for a Fortran triplet extent:
     //   %cmp = arith.cmpi sgt, %ext, %c0
     //   %r   = arith.select %cmp, %ext, %c0
-    // Render as ``max(<ext>, 0)``.
+    // Array extents are non-negative by construction in valid Fortran,
+    // so the clamp is dead defensive code at runtime.  Drop the wrap
+    // and return the underlying extent expression directly — keeps
+    // SDFG shapes and view subsets readable (``klon`` not
+    // ``max(klon, 0)``) and lets sympy fold downstream arithmetic.
     if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
         auto *cdef = sel.getCondition().getDefiningOp();
         auto cmp = cdef ? mlir::dyn_cast<mlir::arith::CmpIOp>(cdef) : nullptr;
@@ -195,9 +199,7 @@ std::string traceExtentExpr(mlir::Value v) {
                     falseIsZero = (ia.getInt() == 0);
         if (cmp && falseIsZero
                 && cmp.getPredicate() == mlir::arith::CmpIPredicate::sgt) {
-            auto innerExt = traceExtentExpr(sel.getTrueValue());
-            if (innerExt.empty()) return "";
-            return "max(" + innerExt + ", 0)";
+            return traceExtentExpr(sel.getTrueValue());
         }
         return "";
     }

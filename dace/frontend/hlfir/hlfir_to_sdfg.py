@@ -57,6 +57,6 @@ if __name__ == "__main__":
                         print(f"{p}  Data: {n.data}")
 
     show_region(sdfg)
-    out = sys.argv[2] if len(sys.argv) > 2 else f"{sdfg.name}.sdfg"
-    sdfg.save(out)
+    out = sys.argv[2] if len(sys.argv) > 2 else f"{sdfg.name}.sdfgz"
+    sdfg.save(out, compress=True)
     print(f"\nSaved: {out}")

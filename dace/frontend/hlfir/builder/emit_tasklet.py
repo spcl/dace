@@ -32,11 +32,18 @@ def _ensure_view_writeback_link(builder, state, write_node, target: str):
     validation fails.  Mirror the link in the writeback direction
     (view -> source) so the write node is also a recognised view edge.
 
-    The writeback target needs a FRESH source access node, not the
-    cached one — reusing the cached node (which already has an
-    out-edge to the read-side view) would form a cycle
-    ``src -> view_read -> tasklet -> view_write -> src`` in the
-    state's DAG.
+    Two extra structural rules to keep ``get_view_edge`` happy:
+
+    * Use a FRESH source access node for the writeback (not the
+      cached one), otherwise ``src -> view_read -> tasklet ->
+      view_write -> src`` forms a cycle on the source.
+    * Drop ``target`` from the per-state cache after adding the
+      writeback.  Subsequent reads in the same state then mint a new
+      read-side view (with its own ``src -> view`` linking) instead
+      of pulling through this write-side node — leaving the write
+      node with the clean ``in=1 (tasklet) / out=1 (writeback)``
+      shape ``get_view_edge`` recognises, and the read-side with the
+      clean ``in=1 (linking) / out=N (tasklets)`` shape.
     """
     v = builder.arrays.get(target)
     if v is None or getattr(v, 'role', '') != 'view_alias':
@@ -51,6 +58,7 @@ def _ensure_view_writeback_link(builder, state, write_node, target: str):
     cache = getattr(state, '_hlfir_access', None)
     if cache is not None:
         cache[src] = src_node
+        cache.pop(target, None)
     state.add_edge(write_node, None, src_node, None, Memlet(data=src, subset=src_subset, other_subset=view_subset))
 
 
@@ -96,9 +104,30 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
         if ac.is_read and ac.array_name in r_arr:
             reads_by_name.setdefault(ac.array_name, []).append(ac)
 
+    # Dedup: two reads of the same array at the same index_exprs share
+    # one input connector + one memlet, since DaCe codegen would otherwise
+    # produce ``B = A[i] * A[i] * A[i]`` with three identical connectors
+    # all loading the same scalar.  ``conn_per_occ[nm][k]`` gives the
+    # connector for the k-th occurrence of ``nm`` in the RHS, and
+    # ``unique_accesses[(nm, key)]`` records the AccessInfo + connector
+    # name for each distinct (array, index) pair.
+    unique_accesses = {}  # (nm, idx_tuple) -> (AccessInfo, connector_name)
+    conn_per_occ = {}  # nm -> [connector_name per occurrence]
+    for nm, acs in reads_by_name.items():
+        conn_per_occ[nm] = []
+        for ac in acs:
+            key = (nm, tuple(ac.index_exprs or ()))
+            entry = unique_accesses.get(key)
+            if entry is None:
+                conn = f"_in_{nm}_{sum(1 for k in unique_accesses if k[0] == nm)}"
+                unique_accesses[key] = (ac, conn)
+            else:
+                conn = entry[1]
+            conn_per_occ[nm].append(conn)
+
     # Rewrite the RHS, replacing the Nth occurrence of each array name
-    # with `_in_<name>_<N>`.  Longest-first guards against partial
-    # matches between related names.
+    # with the connector for its (array, index) key.  Longest-first
+    # guards against partial matches between related names.
     occ = {nm: 0 for nm in r_arr}
     sorted_tokens = sorted(r_arr | r_scl, key=len, reverse=True)
 
@@ -111,15 +140,14 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
             def sub(_m, _nm=nm):
                 n = occ[_nm]
                 occ[_nm] += 1
-                return f"_in_{_nm}_{n}"
+                return conn_per_occ[_nm][n]
 
             code = re.sub(rf'\b{re.escape(nm)}\b', sub, code)
         return code
 
     in_c = {f"_in_{sc}" for sc in r_scl}
-    for nm, acs in reads_by_name.items():
-        for i in range(len(acs)):
-            in_c.add(f"_in_{nm}_{i}")
+    for _, conn in unique_accesses.values():
+        in_c.add(conn)
     out_c = {f"_out_{target}"}
 
     # Apply iter_map rename to bare symbol references in the RHS BEFORE
@@ -137,9 +165,13 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
 
     for nm in sorted(reads_by_name):
         r = acc(builder, state, nm)
-        for i, ac in enumerate(reads_by_name[nm]):
+        # One edge per UNIQUE (array, index_exprs) — the dedup pass
+        # already combined identical accesses into one connector.
+        for (k_nm, _), (ac, conn) in unique_accesses.items():
+            if k_nm != nm:
+                continue
             ix = build_memlet_index(builder, nm, ac, iter_map, indirect_syms)
-            state.add_edge(r, None, t, f"_in_{nm}_{i}", Memlet(f"{nm}[{ix}]"))
+            state.add_edge(r, None, t, conn, Memlet(f"{nm}[{ix}]"))
 
     for sc in sorted(r_scl):
         r = acc(builder, state, sc)

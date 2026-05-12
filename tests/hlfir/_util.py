@@ -167,8 +167,8 @@ class _TestBuilder:
             sdfg.name = f"{sdfg.name}{self._suffix}"
         if self._dump_dir is not None:
             self._dump_dir.mkdir(parents=True, exist_ok=True)
-            out_path = self._dump_dir / f"{self._name}{self._suffix}.sdfg"
-            sdfg.save(str(out_path))
+            out_path = self._dump_dir / f"{self._name}{self._suffix}.sdfgz"
+            sdfg.save(str(out_path), compress=True)
         return sdfg
 
 
