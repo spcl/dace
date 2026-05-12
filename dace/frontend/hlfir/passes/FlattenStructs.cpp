@@ -197,6 +197,8 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -477,14 +479,62 @@ static constexpr int kFlattenMaxDepth = 12;
 ///     ``p_prog%pprog(i)%w(j, k)`` (where ``pprog: type(t)(10)``
 ///     is an array-of-struct member) to flatten to a 3D companion
 ///     ``p_prog_pprog_w`` of shape ``(10, 5, 5)``.
+/// Recognise a pointer/allocatable-to-record member (``type(t),
+/// pointer :: p`` / ``type(t), allocatable :: p`` with scalar
+/// pointee).  Used only by ``collectFlatLeaves``'s cycle handling
+/// — the bridge cannot navigate through such a pointer to its
+/// pointee (would require concrete pointer-aliasing analysis), but
+/// it can safely IGNORE the field when the user code never reads
+/// through it.  Returns the pointed-to RecordType when matched,
+/// null otherwise.
+static fir::RecordType pointerToRecordMember(mlir::Type t) {
+    auto box = mlir::dyn_cast<fir::BoxType>(t);
+    if (!box) return {};
+    mlir::Type inner;
+    if (auto h = mlir::dyn_cast<fir::HeapType>(box.getEleTy()))
+        inner = h.getEleTy();
+    else if (auto p = mlir::dyn_cast<fir::PointerType>(box.getEleTy()))
+        inner = p.getEleTy();
+    else
+        return {};
+    return mlir::dyn_cast<fir::RecordType>(inner);
+}
+
 static bool collectFlatLeaves(fir::RecordType rec,
                               llvm::SmallVectorImpl<std::string> &prefix,
                               llvm::SmallVectorImpl<int64_t> &outerDims,
                               llvm::SmallVectorImpl<FlatLeaf> &out,
+                              llvm::SmallPtrSetImpl<mlir::Type> &visited,
                               int depth = 0) {
     if (depth > kFlattenMaxDepth) return false;
+    // Mark this record as in-progress so a downstream pointer member
+    // whose pointee re-enters the same type (mutual recursion: ``type a_t
+    // { type(b_t), pointer :: b }; type b_t { type(a_t) :: a }``) is
+    // recognised as a parent pointer rather than infinite-recursed
+    // through.  Pointers to records that close a cycle through any
+    // ancestor are treated as opaque — no leaf emitted, no failure
+    // raised.  Code that actually navigates through such a pointer
+    // (``s%b%a%w``) is out of scope for this admission path; the user
+    // contract is that the pointer is either unused or points back to
+    // the parent instance.
+    visited.insert(rec);
+    auto guard = llvm::make_scope_exit([&]() { visited.erase(rec); });
     for (auto &pair : rec.getTypeList()) {
         prefix.push_back(pair.first);
+        // ``type(T), pointer :: f`` / ``type(T), allocatable :: f`` is
+        // opaque to the leaf walker — we don't have a flat
+        // representation for "all the records reachable through this
+        // pointer".  Skip silently rather than fail the whole
+        // flatten; downstream the only code paths that navigate
+        // through such a pointer are the cycle-collapse rewrite (the
+        // user-contract case ``s%b%a%w === s%w``) or genuine multi-
+        // instance pointer chases (out of scope per the parent-
+        // pointer contract).  Either way, the flat leaf set is what
+        // matters here, and the pointer doesn't contribute one.
+        if (pointerToRecordMember(pair.second)) {
+            prefix.pop_back();
+            continue;
+        }
         // Admit allocatable/pointer scalars alongside the regular flat
         // shapes — ``replaceStructArgNested``'s BoxType leaf branch
         // already produces the right declare for either rank.
@@ -522,7 +572,8 @@ static bool collectFlatLeaves(fir::RecordType rec,
             }
             out.push_back(std::move(leaf));
         } else if (auto innerRec = mlir::dyn_cast<fir::RecordType>(pair.second)) {
-            if (!collectFlatLeaves(innerRec, prefix, outerDims, out, depth + 1)) {
+            if (!collectFlatLeaves(innerRec, prefix, outerDims, out, visited,
+                                   depth + 1)) {
                 prefix.pop_back();
                 return false;
             }
@@ -547,7 +598,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
             }
             for (auto d : theseDims) outerDims.push_back(d);
             bool ok = collectFlatLeaves(innerRec, prefix, outerDims, out,
-                                        depth + 1);
+                                        visited, depth + 1);
             for (size_t i = 0; i < theseDims.size(); ++i) outerDims.pop_back();
             if (!ok) {
                 prefix.pop_back();
@@ -574,7 +625,20 @@ static bool collectFlatLeaves(fir::RecordType rec,
                               llvm::SmallVectorImpl<FlatLeaf> &out,
                               int depth = 0) {
     llvm::SmallVector<int64_t, 4> outerDims;
-    return collectFlatLeaves(rec, prefix, outerDims, out, depth);
+    llvm::SmallPtrSet<mlir::Type, 4> visited;
+    return collectFlatLeaves(rec, prefix, outerDims, out, visited, depth);
+}
+
+/// Entry point that threads a caller-provided ``outerDims`` (used by
+/// ``splitLocal`` / the AoS-allocatable pre-flatten check to seed the
+/// outer record's array extents).
+static bool collectFlatLeaves(fir::RecordType rec,
+                              llvm::SmallVectorImpl<std::string> &prefix,
+                              llvm::SmallVectorImpl<int64_t> &outerDims,
+                              llvm::SmallVectorImpl<FlatLeaf> &out,
+                              int depth = 0) {
+    llvm::SmallPtrSet<mlir::Type, 4> visited;
+    return collectFlatLeaves(rec, prefix, outerDims, out, visited, depth);
 }
 
 /// Detect a "jagged" scalar-struct: every member is a 1-D array of the same

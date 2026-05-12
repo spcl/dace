@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from _util import build_sdfg, have_flang
+from _util import build_sdfg, f2py_compile, have_flang
 from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
@@ -227,7 +227,6 @@ end subroutine internal_function
     assert (a[2, 0] == 42)
 
 
-@xfail("circular type definitions (a_t referencing b_t pointer) not lowered")
 def test_fortran_frontend_circular_type(tmp_path):
     src = """
 module lib
@@ -269,6 +268,81 @@ end subroutine main
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
+
+@xfail("parent-pointer round-trip (s%b%a%w === s%w) not collapsed — needs a "
+       "CollapseParentPointer pre-pass that rewrites the designate chain "
+       "before FlattenStructs.  Structural-candidacy detection: `a_t.b: "
+       "pointer<b_t>` is a candidate because b_t's embedded-field closure "
+       "contains a_t (via b_t.a).  The rewrite matches chain prefix "
+       "`<root>%b%a` (pointer-chase + named back-ref) and re-anchors at "
+       "<root>.  See project_circular_type_plan.md.")
+def test_fortran_frontend_circular_type_parent_pointer_chase(tmp_path):
+    """End-to-end correctness for the parent-pointer round-trip.
+
+    Contract the (deferred) rewrite would enforce: ``s%b%a === s`` —
+    the pointer-chase through ``b`` followed by the embedded
+    back-reference ``a`` returns to the same ``a_t`` instance.  Under
+    that contract, ``s%b%a%w(...) === s%w(...)``.
+
+    Numerical check: compare the SDFG's output to a gfortran/f2py-
+    compiled reference of the same Fortran source on multiple writes
+    + reads through the parent-pointer chain.  Xfails today at SDFG
+    build (no rewrite pass); when the rewrite lands, both paths
+    succeed and the assertion catches semantic regressions in the
+    rewrite itself.
+    """
+    src = """
+subroutine kernel(d, x, y, z)
+  implicit none
+  type a_t
+    real :: w(5, 5, 5)
+    type(b_t), pointer :: b
+  end type a_t
+  type b_t
+    type(a_t), pointer :: a
+    integer :: x
+  end type b_t
+
+  real, intent(in)    :: x, y, z
+  real, intent(inout) :: d(3)
+  type(a_t), target :: s
+  type(b_t), target :: bb
+
+  s%b => bb
+  bb%a => s
+
+  ! Write three distinct values into s%w at distinct positions.
+  s%w(1, 1, 1) = x
+  s%w(2, 1, 1) = y
+  s%w(1, 2, 1) = z
+
+  ! Read them back through the parent-pointer round-trip.  Under
+  ! the contract s%b%a === s, these must equal the writes above.
+  d(1) = s%b%a%w(1, 1, 1)
+  d(2) = s%b%a%w(2, 1, 1)
+  d(3) = s%b%a%w(1, 2, 1)
+end subroutine kernel
+"""
+    # SDFG via HLFIR bridge — xfails today at build (no rewrite pass).
+    sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
+
+    # f2py reference — always builds; serves as the oracle once the
+    # bridge clears the rewrite.
+    ref = f2py_compile(src, tmp_path / "ref", "parent_pointer_ref")
+
+    rng = np.random.default_rng(0)
+    x, y, z = (np.float32(rng.standard_normal()) for _ in range(3))
+
+    d_sdfg = np.zeros(3, dtype=np.float32)
+    d_ref = np.zeros(3, dtype=np.float32)
+
+    sdfg(d=d_sdfg, x=x, y=y, z=z)
+    ref.kernel(d_ref, x, y, z)
+
+    np.testing.assert_allclose(d_sdfg, d_ref, rtol=0, atol=0)
+    # Sanity: contract requires d to carry the inputs back verbatim.
+    np.testing.assert_allclose(d_ref, [x, y, z], rtol=0, atol=0)
 
 
 def test_fortran_frontend_type_in_call(tmp_path):
@@ -415,11 +489,13 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("allocatable-array-of-records struct member (`type(t), allocatable :: "
-       "pprog(:)`) not flattened — `collectFlatLeaves` bails on the "
-       "`box<heap<seq<? x record>>>` shape; needs alloc-array-of-records "
-       "support (Phase 5c-A style, but for nested records with their own "
-       "pointer/allocatable members).")
+@xfail("`type(t), allocatable :: pprog(:)` member — `collectFlatLeaves` bails "
+       "on `box<heap<seq<? x record>>>`.  Closing this requires recognising "
+       "the inlined-callee element-alias declare that wraps "
+       "`hlfir.designate %pprog_box (%idx)` and routing it through the "
+       "existing nested-struct flatten as if it were a local `simple_type`.  "
+       "Full design in `project_alloc_array_of_records_todo.md` (Option B, "
+       "~150 LoC).  Real-world pattern: ICON `p_patch%pprog(jg)`.")
 def test_fortran_frontend_type_arg(tmp_path):
     src = """
 module lib
