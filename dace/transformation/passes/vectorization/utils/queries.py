@@ -4,13 +4,10 @@ Read-only query helpers used by the vectorization pipeline.
 
 These helpers do not mutate the SDFG; they extract access subsets,
 map-parameter relationships, or scalar conversions used by the
-emission and prep passes. ``collect_vectorizable_arrays`` is not in
-this module yet — it depends on ``_all_atoms`` and
-``find_symbol_assignment`` from the lane-expansion module that
-migrates in a later slice; it will move once those land here.
+emission and prep passes.
 """
 import typing
-from typing import Dict, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import sympy
 
@@ -319,3 +316,31 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                                 array_is_vectorizable[arr_name] = False
 
     return array_is_vectorizable
+
+
+def collect_element_write_subsets(state: dace.SDFGState) -> Optional[Dict[str, dace.subsets.Range]]:
+    """Return ``{arr_name: subset}`` for every element-wise write in ``state``.
+
+    A write is element-wise iff its memlet subset has
+    ``num_elements_exact() == 1``. Returns ``None`` if any in-edge to an
+    AccessNode in ``state`` violates that — both M3.1
+    (``SameWriteSetIfElseToMergeCFG``) and M3.2 (``BranchNormalization``)
+    skip the rewrite when this happens.
+
+    Multiple writes to the same array within ``state`` keep only the
+    last subset seen (matches the existing behaviour of both callers).
+    """
+    out: Dict[str, dace.subsets.Range] = {}
+    for n in state.nodes():
+        if not isinstance(n, dace.nodes.AccessNode):
+            continue
+        for e in state.in_edges(n):
+            if e.data.data is None:
+                continue
+            try:
+                if e.data.subset.num_elements_exact() != 1:
+                    return None
+            except Exception:
+                return None
+            out[n.data] = e.data.subset
+    return out

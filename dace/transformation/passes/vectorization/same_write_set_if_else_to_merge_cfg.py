@@ -159,26 +159,24 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return bool(shared)
 
     def _collect_write_subsets(self, state: dace.SDFGState):
-        """Return ``{arr_name: subset}`` for every write. Each write must be a
-        single element (matches the restriction documented in the module
-        docstring)."""
-        out = {}
-        for n in state.nodes():
-            if not isinstance(n, dace.nodes.AccessNode):
-                continue
-            for e in state.in_edges(n):
-                if e.data.data is None:
-                    continue
-                if e.data.subset.num_elements_exact() != 1:
-                    raise NotImplementedError(
-                        f"SameWriteSetIfElseToMergeCFG: non-element write subset {e.data.subset} on {n.data}")
-                out[n.data] = e.data.subset
+        """Return ``{arr_name: subset}`` for every element-wise write.
+
+        Raises ``NotImplementedError`` if any write is not element-wise —
+        the merge-CFG rewrite cannot soundly produce per-element merge
+        tasklets in that case. ``_shared_writes`` swallows this raise
+        and returns ``{}``.
+        """
+        from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
+        out = collect_element_write_subsets(state)
+        if out is None:
+            raise NotImplementedError(
+                f"SameWriteSetIfElseToMergeCFG: non-element write subset found in state {state.label}")
         return out
 
     def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict:
         """Return ``{arr_name: subset}`` for arrays written in both arms with
-        identical subsets. Returns an empty dict if no shared write target
-        has a matching subset (caller treats that as a non-match)."""
+        identical subsets. Returns an empty dict if either arm has any
+        non-element-wise write (caller treats that as a non-match)."""
         try:
             w0 = self._collect_write_subsets(s0)
             w1 = self._collect_write_subsets(s1)

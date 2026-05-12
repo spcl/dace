@@ -289,22 +289,13 @@ class BranchNormalization(ppl.Pass):
         return True
 
     def _collect_write_subsets(self, state: dace.SDFGState):
-        """Return ``{arr_name: subset}`` for every element-write in ``state``.
-        Returns ``None`` if any write violates the element-wise restriction."""
-        out = {}
-        for n in state.nodes():
-            if not isinstance(n, dace.nodes.AccessNode):
-                continue
-            for e in state.in_edges(n):
-                if e.data.data is None:
-                    continue
-                try:
-                    if e.data.subset.num_elements_exact() != 1:
-                        return None
-                except Exception:
-                    return None
-                out[n.data] = e.data.subset
-        return out
+        """Thin wrapper around the shared helper.
+
+        See :func:`dace.transformation.passes.vectorization.utils.queries.collect_element_write_subsets`
+        for semantics.
+        """
+        from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
+        return collect_element_write_subsets(state)
 
     def _rewrite_writes_to_merge(self,
                                  sdfg: dace.SDFG,
