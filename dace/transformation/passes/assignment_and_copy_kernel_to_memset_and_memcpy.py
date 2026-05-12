@@ -351,10 +351,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # See the matching guard in ``remove_memset_from_kernel``.
             entry_in_conn = memcpy_path[0].dst_conn
             exit_in_conn = memcpy_path[2].dst_conn
-            shared_entry = entry_in_conn is not None and len(list(
-                state.in_edges_by_connector(map_entry, entry_in_conn))) > 1
-            shared_exit = exit_in_conn is not None and len(list(
-                state.in_edges_by_connector(map_exit, exit_in_conn))) > 1
+            shared_entry = entry_in_conn is not None and len(list(state.in_edges_by_connector(map_entry,
+                                                                                              entry_in_conn))) > 1
+            shared_exit = exit_in_conn is not None and len(list(state.in_edges_by_connector(map_exit,
+                                                                                            exit_in_conn))) > 1
             if shared_entry or shared_exit:
                 if verbose:
                     warnings.warn(
@@ -455,14 +455,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # ``AccessNode(y2)``). Lifting one would sever the shared
             # ``map_exit → AccessNode`` edge that the other still needs.
             shared_dst_conn = memset_path[1].dst_conn
-            if shared_dst_conn is not None and len(list(state.in_edges_by_connector(
-                    map_exit, shared_dst_conn))) > 1:
+            if shared_dst_conn is not None and len(list(state.in_edges_by_connector(map_exit, shared_dst_conn))) > 1:
                 if verbose:
                     warnings.warn(
                         f"Skipping memset lift in map {map_entry.map.label}: "
                         f"map_exit connector `{shared_dst_conn}` is shared with "
-                        f"other tasklets — lifting would break their data paths.",
-                        UserWarning)
+                        f"other tasklets — lifting would break their data paths.", UserWarning)
                 continue
 
             # Same connector-vs-array-name clash guard as the memcpy
