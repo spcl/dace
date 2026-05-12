@@ -1,14 +1,21 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""Ported from f2dace/dev:tests/fortran/sum_to_loop_offset_test.py.
+
+Exercises the old frontend's offset-normalisation path for SUM
+reductions over array slices.  Under the HLFIR bridge, the same
+expressions are lowered as SUM intrinsic calls with the access
+chain's offsets handled by the standard memlet machinery.
+"""
+from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from dace.frontend.fortran import fortran_parser
+from _util import build_sdfg, have_flang
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-def test_fortran_frontend_sum2loop_1d_without_offset():
-    """
-    Tests that the generated array map correctly handles offsets.
-    """
+def test_fortran_frontend_sum2loop_1d_without_offset(tmp_path):
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
@@ -27,12 +34,7 @@ def test_fortran_frontend_sum2loop_1d_without_offset():
 
                     END SUBROUTINE index_test_function
                     """
-
-    # Now test to verify it executes correctly with no offset normalization
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = build_sdfg(test_string, tmp_path, name='index_offset_test', entry='_QPindex_test_function').build()
 
     size = 7
     d = np.full([size], 0, order="F", dtype=np.float64)
@@ -45,10 +47,7 @@ def test_fortran_frontend_sum2loop_1d_without_offset():
     assert res[2] == (2 + size - 1) * (size - 2) / 2
 
 
-def test_fortran_frontend_sum2loop_1d_offset():
-    """
-    Tests that the generated array map correctly handles offsets.
-    """
+def test_fortran_frontend_sum2loop_1d_offset(tmp_path):
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
@@ -67,12 +66,7 @@ def test_fortran_frontend_sum2loop_1d_offset():
 
                     END SUBROUTINE index_test_function
                     """
-
-    # Now test to verify it executes correctly with no offset normalization
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = build_sdfg(test_string, tmp_path, name='index_offset_test', entry='_QPindex_test_function').build()
 
     size = 5
     d = np.full([size], 0, order="F", dtype=np.float64)
@@ -85,10 +79,7 @@ def test_fortran_frontend_sum2loop_1d_offset():
     assert res[2] == (2 + size - 1) * (size - 2) / 2
 
 
-def test_fortran_frontend_arr2loop_2d():
-    """
-    Tests that the generated array map correctly handles offsets.
-    """
+def test_fortran_frontend_arr2loop_2d(tmp_path):
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
@@ -108,12 +99,7 @@ def test_fortran_frontend_arr2loop_2d():
 
                     END SUBROUTINE index_test_function
                     """
-
-    # Now test to verify it executes correctly with no offset normalization
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = build_sdfg(test_string, tmp_path, name='index_offset_test', entry='_QPindex_test_function').build()
 
     sizes = [5, 3]
     d = np.full(sizes, 42, order="F", dtype=np.float64)
@@ -130,10 +116,7 @@ def test_fortran_frontend_arr2loop_2d():
     assert res[3] == 45
 
 
-def test_fortran_frontend_arr2loop_2d_offset():
-    """
-    Tests that the generated array map correctly handles offsets.
-    """
+def test_fortran_frontend_arr2loop_2d_offset(tmp_path):
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
@@ -152,12 +135,7 @@ def test_fortran_frontend_arr2loop_2d_offset():
 
                     END SUBROUTINE index_test_function
                     """
-
-    # Now test to verify it executes correctly with no offset normalization
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = build_sdfg(test_string, tmp_path, name='index_offset_test', entry='_QPindex_test_function').build()
 
     sizes = [5, 4]
     d = np.full(sizes, 42, order="F", dtype=np.float64)
@@ -171,11 +149,3 @@ def test_fortran_frontend_arr2loop_2d_offset():
     assert res[0] == 190
     assert res[1] == 190
     assert res[2] == 57
-
-
-if __name__ == "__main__":
-
-    test_fortran_frontend_sum2loop_1d_without_offset()
-    test_fortran_frontend_sum2loop_1d_offset()
-    test_fortran_frontend_arr2loop_2d()
-    test_fortran_frontend_arr2loop_2d_offset()

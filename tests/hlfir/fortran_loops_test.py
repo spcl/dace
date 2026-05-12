@@ -1,12 +1,15 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+"""Ported from f2dace/dev:tests/fortran/fortran_loops_test.py."""
+from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from dace.frontend.fortran import fortran_parser
+from _util import build_sdfg, have_flang
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-def test_fortran_frontend_loop_region_basic_loop():
-    test_name = "loop_test"
+def test_fortran_frontend_loop_region_basic_loop(tmp_path):
     test_string = """
     PROGRAM loop_test_program
         implicit none
@@ -30,7 +33,7 @@ def test_fortran_frontend_loop_region_basic_loop():
         ENDDO
     end SUBROUTINE loop_test_function
     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, use_explicit_cf=True)
+    sdfg = build_sdfg(test_string, tmp_path, name='loop_test', entry='_QPloop_test_function').build()
 
     a_test = np.full([10, 10], 2, order="F", dtype=np.float64)
     b_test = np.full([10, 10], 3, order="F", dtype=np.float64)
@@ -38,9 +41,4 @@ def test_fortran_frontend_loop_region_basic_loop():
     sdfg(a=a_test, b=b_test, c=c_test)
 
     validate = np.full([10, 10], 5, order="F", dtype=np.float64)
-
     assert np.allclose(c_test, validate)
-
-
-if __name__ == '__main__':
-    test_fortran_frontend_loop_region_basic_loop()

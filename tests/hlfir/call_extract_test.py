@@ -1,11 +1,15 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""Ported from f2dace/dev:tests/fortran/call_extract_test.py."""
+from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from dace.frontend.fortran import fortran_parser
+from _util import build_sdfg, have_flang
+
+pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 
-def test_fortran_frontend_call_extract():
+def test_fortran_frontend_call_extract(tmp_path):
     test_string = """
                     PROGRAM intrinsic_call_extract
                     implicit none
@@ -24,16 +28,12 @@ def test_fortran_frontend_call_extract():
                     END SUBROUTINE intrinsic_call_extract_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = build_sdfg(test_string,
+                      tmp_path,
+                      name='intrinsic_call_extract',
+                      entry='_QPintrinsic_call_extract_test_function').build()
 
-    input = np.full([2], 42, order="F", dtype=np.float32)
+    inp = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
-    sdfg(d=input, res=res)
-    assert np.allclose(res, [np.sqrt(np.exp(input[0])), np.sqrt(np.exp(input[0])) - 1])
-
-
-if __name__ == "__main__":
-
-    test_fortran_frontend_call_extract()
+    sdfg(d=inp, res=res)
+    assert np.allclose(res, [np.sqrt(np.exp(inp[0])), np.sqrt(np.exp(inp[0])) - 1])
