@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
@@ -67,7 +66,6 @@ end subroutine main
     assert np.allclose(d, [42, 5.5, 42, 42])
 
 
-@xfail("POINTER not lowered")
 def test_fortran_frontend_nested_array_access_pointer_args_2(tmp_path):
     src = """
 subroutine main(d, test, indices)
@@ -91,5 +89,17 @@ end subroutine main
     d = np.full([4], 42, order="F", dtype=np.float64)
     test = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     indices = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
-    sdfg(d=d, test=test, indices=indices)
+    # ``test`` collides with sympy's ``LazyFunction`` attribute; the bridge
+    # renames it to ``program_test`` on the SDFG side (commit 52bf266f7
+    # documents the contract).  Pass through the renamed SDFG-side name
+    # here; the binding wrapper (when used) restores ``test`` on the
+    # Python wrapper via ``builder.dace_name_map``.
+    #
+    # The dim symbols ``indices_d0`` / ``indices_d1`` / ``test_d0`` /
+    # ``test_d1`` (but not the d2 of each, which only appears in shape)
+    # are surfaced as free SDFG kwargs because the bridge's column-major
+    # stride expressions ``(1, d0, d0*d1)`` reference them outside any
+    # array-shape binding context.  Pass the runtime shape values
+    # explicitly so DaCe's signature is satisfied.
+    sdfg(d=d, program_test=test, indices=indices, indices_d0=3, indices_d1=4, test_d0=3, test_d1=4)
     assert np.allclose(d, [42, 5.5, 42, 42])
