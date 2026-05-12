@@ -501,6 +501,10 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
+
+    def _assumption_is_true(value: Any) -> bool:
+        return value is True or value == True
+
     kwargs = {}
     if expr.dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
@@ -509,7 +513,7 @@ def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
-        if value == True and default_assumptions.get(key) != True:
+        if _assumption_is_true(value) and not _assumption_is_true(default_assumptions.get(key)):
             kwargs[key] = value
     return kwargs
 

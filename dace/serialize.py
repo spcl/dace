@@ -236,13 +236,13 @@ def all_properties_to_json(object_with_properties):
                     is_default = np.all(is_default)
                 if is_default:
                     continue
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
             try:
                 if x.to_json(v) == x.to_json(x.default):  # Skip default fields after normalization
                     continue
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
 
         if not x.serialize_if(object_with_properties):
