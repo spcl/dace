@@ -402,8 +402,8 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
         for node in state.nodes():
             if isinstance(node, CopyLibraryNode):
-                in_e = [e for e in state.in_edges(node) if e.dst_conn == '_cpy_in']
-                out_e = [e for e in state.out_edges(node) if e.src_conn == '_cpy_out']
+                in_e = [e for e in state.in_edges(node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
+                out_e = [e for e in state.out_edges(node) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
                 if not in_e or not out_e:
                     continue
                 src = sdfg.arrays.get(in_e[0].data.data)

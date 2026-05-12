@@ -373,8 +373,8 @@ class InsertExplicitCopies(ppl.Pass):
 
             state.remove_edge(edge)
             state.add_node(libnode)
-            state.add_edge(src_node, None, libnode, "_cpy_in", in_memlet)
-            state.add_edge(libnode, "_cpy_out", dst_node, None, out_memlet)
+            state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
+            state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
             count += 1
 
         return count

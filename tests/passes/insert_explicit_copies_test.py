@@ -433,8 +433,8 @@ def test_insert_self_copy_subset_is_dst_side():
     copies = [n for n in st.nodes() if isinstance(n, CopyLibraryNode)]
     assert len(copies) == 1
     cn = copies[0]
-    in_e = [e for e in st.in_edges(cn) if e.dst_conn == "_cpy_in"][0]
-    out_e = [e for e in st.out_edges(cn) if e.src_conn == "_cpy_out"][0]
+    in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
+    out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
 
     # The destination side (column 4) must be on the `_out` edge; the source
     # side (column 3) on the `_in` edge.
@@ -451,7 +451,7 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
     assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
     cn = copies[0]
     parent = next(p for n, p in sdfg.all_nodes_recursive() if n is cn)
-    out_e = [e for e in parent.out_edges(cn) if e.src_conn == "_cpy_out"][0]
+    out_e = [e for e in parent.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
     assert out_e.data.data == dst_name
     assert str(out_e.data.subset) == ', '.join(
         f"0:{s}" for s in dst_shape), (f"dst memlet subset should span full {dst_shape}, got {out_e.data.subset}")

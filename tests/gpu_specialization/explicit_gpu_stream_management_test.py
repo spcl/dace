@@ -317,8 +317,8 @@ def test_single_copy_library_node():
     b = state.add_access("B")
     cp = CopyLibraryNode(name="copy_A_to_B")
     state.add_node(cp)
-    state.add_edge(a, None, cp, "_cpy_in", dace.Memlet("A[0:128]"))
-    state.add_edge(cp, "_cpy_out", b, None, dace.Memlet("B[0:128]"))
+    state.add_edge(a, None, cp, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("A[0:128]"))
+    state.add_edge(cp, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
     Pipeline([
         NaiveGPUStreamScheduler(),
@@ -346,9 +346,9 @@ def test_single_memset_library_node():
     state = sdfg.add_state("memset_state")
 
     b = state.add_access("B")
-    ms = MemsetLibraryNode(name="memset_B", inputs=set(), outputs={"_mset_out"})
+    ms = MemsetLibraryNode(name="memset_B", inputs=set(), outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME})
     state.add_node(ms)
-    state.add_edge(ms, "_mset_out", b, None, dace.Memlet("B[0:128]"))
+    state.add_edge(ms, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
     Pipeline([
         NaiveGPUStreamScheduler(),

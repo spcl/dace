@@ -18,6 +18,11 @@ from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dyn
                                             _add_stream_descriptor, extract_stream_and_dynamic_inputs, wire_stream_to as
                                             _wire_stream_to)
 
+# Outer connector name this libnode publishes. Republished as
+# ``MemsetLibraryNode.OUTPUT_CONNECTOR_NAME`` so external consumers
+# reference a class constant instead of a string.
+_OUTPUT_CONNECTOR_NAME = "_mset_out"
+
 
 def _make_memset_skeleton(
     node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
@@ -58,12 +63,13 @@ def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFG
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
     has_stream = stream_input is not None
     stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
-    code = f"cudaMemsetAsync(_mset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});"
+    code = (f"cudaMemsetAsync({_OUTPUT_CONNECTOR_NAME}, 0, "
+            f"{sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});")
 
     in_conns = {_STREAM_CONN: dace.dtypes.gpuStream_t} if has_stream else {}
     return nodes.Tasklet(node.name,
                          inputs=in_conns,
-                         outputs={"_mset_out": dace.dtypes.pointer(out.dtype)},
+                         outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -75,11 +81,11 @@ def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGS
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
-    code = f"memset(_mset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
+    code = f"memset({_OUTPUT_CONNECTOR_NAME}, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));"
 
     return nodes.Tasklet(node.name,
                          inputs={},
-                         outputs={"_mset_out": dace.dtypes.pointer(out.dtype)},
+                         outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -175,15 +181,21 @@ class MemsetLibraryNode(nodes.LibraryNode):
     implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'Auto'
 
+    # Connector name this libnode publishes. External consumers (tests,
+    # other passes) must reference this constant instead of the string
+    # literal so a future rename is a single-line change.
+    OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
+
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
 
     def validate(
             self, sdfg: dace.SDFG,
             state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict, Optional[dace.data.Data]]:
-        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == "_mset_out"]
+        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
-            raise ValueError(f"{type(self).__name__} expects exactly one `_out` output edge.")
+            raise ValueError(f"{type(self).__name__} expects exactly one "
+                             f"`{_OUTPUT_CONNECTOR_NAME}` output edge.")
 
         oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]

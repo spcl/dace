@@ -48,10 +48,10 @@ def _build_h2d_d2h_pre_expanded_sdfg():
     d2h = CopyLibraryNode(name='copy_d2h')
     d2h.implementation = 'MemcpyCUDA1D'
     state.add_node(d2h)
-    state.add_edge(a, None, h2d, '_cpy_in', dace.Memlet('host_in[0:16]'))
-    state.add_edge(h2d, '_cpy_out', d, None, dace.Memlet('dev[0:16]'))
-    state.add_edge(d, None, d2h, '_cpy_in', dace.Memlet('dev[0:16]'))
-    state.add_edge(d2h, '_cpy_out', b, None, dace.Memlet('host_out[0:16]'))
+    state.add_edge(a, None, h2d, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet('host_in[0:16]'))
+    state.add_edge(h2d, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, d, None, dace.Memlet('dev[0:16]'))
+    state.add_edge(d, None, d2h, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet('dev[0:16]'))
+    state.add_edge(d2h, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet('host_out[0:16]'))
 
     sdfg.expand_library_nodes()
     return sdfg
