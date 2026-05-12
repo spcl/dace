@@ -342,6 +342,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if begin_subset is None and exit_subset is None and copy_length is None:
                 continue
 
+            if self._is_single_element_copy(copy_length):
+                continue
+
             # Skip when the parent SDFG has arrays whose names would
             # collide with the new libnode's published connector names
             # (validator rejects connector-vs-array-name collisions).
@@ -424,6 +427,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         "could not be determined or is non-contiguous.", UserWarning)
                 continue
 
+            if self._is_single_element_copy(copy_length):
+                continue
+
             # Same connector-vs-array-name clash guard as the memcpy
             # path above (see comment there).
             if MemsetLibraryNode.OUTPUT_CONNECTOR_NAME in state.sdfg.arrays:
@@ -489,6 +495,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         for n in state.nodes():
             if (state.degree(n) == 0):
                 state.remove_node(n)
+
+    @staticmethod
+    def _is_single_element_copy(copy_length) -> bool:
+        """True iff the lift would write a single element.
+
+        A one-element memset / memcpy can't be lifted: the pure expansion
+        of ``MemsetLibraryNode`` / ``CopyLibraryNode`` collapses every
+        singleton dim (``_make_memset_skeleton``'s ``keep`` filter at
+        ``memset_node.py:33``), which leaves the resulting mapped
+        tasklet with an empty map shape. Downstream ``propagate_memlet``
+        then hits a ``None`` subset and raises ``TypeError: object of
+        type 'NoneType' has no len()``. There's no perf reason to lift
+        a one-element transfer either — the original tasklet is fine.
+        """
+        try:
+            return int(dace.symbolic.simplify(copy_length)) == 1
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _is_nested_in_gpu_scope(state: dace.SDFGState, node: dace.nodes.MapEntry) -> bool:

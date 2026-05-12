@@ -781,5 +781,45 @@ def test_inkernel_memset_is_not_lifted():
         "device code. The pass should skip maps nested in any GPU scope.")
 
 
+def test_single_element_memset_is_not_lifted():
+    """Pin: a memset over a single-element array must NOT be lifted.
+
+    The pure expansion of ``MemsetLibraryNode`` collapses every singleton
+    dim (``_make_memset_skeleton``'s ``keep`` filter); a 1-element memset
+    therefore lifts to a mapped tasklet with an empty map, which downstream
+    ``propagate_memlet`` rejects with ``TypeError: object of type 'NoneType'
+    has no len()``. Skip the lift entirely.
+    """
+
+    @dace.program
+    def single_element_zero(A: dace.float64[1]):
+        for i in dace.map[0:1]:
+            A[i] = 0
+
+    sdfg = single_element_zero.to_sdfg(simplify=True)
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 0, (
+        "A single-element memset was lifted to a MemsetLibraryNode; the pure "
+        "expansion would collapse to an empty map and crash propagation.")
+
+
+def test_single_element_memcpy_is_not_lifted():
+    """Pin: a memcpy over a single element must NOT be lifted (same family
+    as ``test_single_element_memset_is_not_lifted`` — singleton-collapse in
+    ``CopyLibraryNode``'s pure expansion produces a degenerate map).
+    """
+
+    @dace.program
+    def single_element_copy(A: dace.float64[1], B: dace.float64[1]):
+        for i in dace.map[0:1]:
+            B[i] = A[i]
+
+    sdfg = single_element_copy.to_sdfg(simplify=True)
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0, (
+        "A single-element memcpy was lifted to a CopyLibraryNode; the pure "
+        "expansion would collapse to an empty map and crash propagation.")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
