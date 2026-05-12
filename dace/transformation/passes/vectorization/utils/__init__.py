@@ -24,3 +24,4 @@ from .code_rewrite import (  # noqa: F401
     offset_symbol_in_expression,
     use_laneid_symbol_in_expression,
 )
+from .iteration import walk_memlets_of  # noqa: F401

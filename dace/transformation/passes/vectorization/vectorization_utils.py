@@ -840,13 +840,11 @@ def prepare_vectorized_array(state: dace.SDFGState,
         # post-collapses length-1 dims which would silently turn the
         # vector-lane memlet into a 0-D ``arr[]`` access.
         if not (reuse_name_if_existing is True and use_name is not None):
+            from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
             surviving_offsets = [(b, b, 1) for (b, e, s), keep in zip(subset, keep_mask) if keep]
             offset_range = dace.subsets.Range(surviving_offsets)
-            for inner_state in inner_sdfg.all_states():
-                for inner_edge in inner_state.edges():
-                    if inner_edge.data.data is None or inner_edge.data.data != inner_arr_name:
-                        continue
-                    inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
+            for _inner_state, inner_edge in walk_memlets_of(inner_sdfg, inner_arr_name):
+                inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
 
     return vector_dataname, inner_offset
 
@@ -999,14 +997,12 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
 
 
 def offset_memlets(sdfg: dace.SDFG, dataname: str, offsets: List[dace.symbolic.SymExpr]):
-    for state in sdfg.all_states():
-        for edge in state.edges():
-            if edge.data.data is not None and edge.data.data == dataname:
-                #print(edge.data.subset)
-                subset = edge.data.subset.offset_new(dace.subsets.Range(offsets), negative=True)
-                # If subset is not one dimensional we need to collapse 0 accesses
-                collapsed_subset_list = [(b, e, s) for (b, e, s) in subset if (e + 1 - b) // s != 1]
-                edge.data.subset = dace.subsets.Range(collapsed_subset_list)
+    from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
+    for _state, edge in walk_memlets_of(sdfg, dataname):
+        subset = edge.data.subset.offset_new(dace.subsets.Range(offsets), negative=True)
+        # If subset is not one dimensional we need to collapse 0 accesses
+        collapsed_subset_list = [(b, e, s) for (b, e, s) in subset if (e + 1 - b) // s != 1]
+        edge.data.subset = dace.subsets.Range(collapsed_subset_list)
 
 
 def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict[str, dace.data.Data]:
