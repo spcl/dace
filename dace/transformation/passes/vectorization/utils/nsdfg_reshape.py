@@ -721,7 +721,14 @@ def add_copies_before_and_after_nsdfg(
                 if dataname not in skip:
                     unmovable_arrays[dataname] = set(memlets)
 
-    # Better analysis for this might be necessary (to make sure write happens through multiple laneid_* symbols)
+    # Unstructured-load heuristic: producers of unstructured-loads
+    # (the existing ``_generate_loads_to_packed_storage`` path) always
+    # emit exactly ``vector_width`` distinct memlets per data name, so
+    # we recognise the shape by count. False-positive risk: any unrelated
+    # data with the same memlet count would be misclassified — the proper
+    # fix is for the producer to mark its access nodes with an
+    # ``is_unstructured_load`` sentinel and have us read that here instead
+    # of pattern-matching by count.
     unstructured_load_arrays = set()
     for dataname, memlets in dataname_to_subsets.items():
         if len(memlets) == vector_width:
@@ -973,12 +980,16 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
         cur_node = node_to_check
 
         if all({free_sym in syms_available for free_sym in free_syms}):
-            # Add a state after cur_node
-            # Check next node
-            if cur_node.label.startswith("copy_in"):
+            # If this state was created by a prior call to
+            # ``find_copy_in_state`` (marked via the side attribute below),
+            # reuse it — the array name gets appended to its label so the
+            # SDFG dump shows every reuse hit.
+            if getattr(cur_node, "_vec_copy_in_state", False):
                 cur_node.label += f"_{name}"
                 return cur_node
-            return inner_sdfg.add_state_before(cur_node, f"copy_in_{name}")
+            new_state = inner_sdfg.add_state_before(cur_node, f"copy_in_{name}")
+            new_state._vec_copy_in_state = True
+            return new_state
 
         assert len(inner_sdfg.out_edges(cur_node)) <= 1
         oe = inner_sdfg.out_edges(cur_node).pop()
