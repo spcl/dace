@@ -21,14 +21,13 @@ into the sympy round-trip.
 """
 import ast
 import re
-from typing import Tuple
-
-import sympy
+from typing import Optional, Set, Tuple
 
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace import SDFGState
+from dace.symbolic import DaceSympyPrinter
 
 
 def extract_bracket_contents(expr: str, name: str):
@@ -266,7 +265,10 @@ def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
         interstate_edge.data.assignments = new_assignments
 
 
-def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
+def offset_symbol_in_expression(expr_str: str,
+                                symbol_to_offset: str,
+                                offset: int,
+                                arrays: Optional[Set[str]] = None) -> str:
     """
     Returns a new expression string where a specified symbol is incremented by a given offset.
 
@@ -274,10 +276,12 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
         expr_str (str): The original expression as a string.
         symbol_to_offset (str): The symbol within the expression to offset.
         offset (int): The integer value to add to the symbol.
-
-    Returns:
-        str: A new expression string with the symbol offset.
-             If the symbol is not found in the expression, returns the original expression string unchanged.
+        arrays: Names of arrays in scope; passed to ``DaceSympyPrinter`` so
+            that any array read inside ``expr_str`` round-trips as
+            ``arr[idx]`` instead of ``arr(idx)``. Callers that have an
+            SDFG in scope should pass ``set(sdfg.arrays.keys())``.
+            Defaults to the empty set — same output as ``sympy.pycode``
+            for scalar-only inputs.
     """
     if "Eq(" in expr_str:
         raise Exception(expr_str)
@@ -291,13 +295,14 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
         return expr_str
     offsetted_expr = f"({sym_to_change} + {offset})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
-    return sympy.pycode(offset_expr)
+    return DaceSympyPrinter(arrays if arrays is not None else set()).doprint(offset_expr)
 
 
 def use_laneid_symbol_in_expression(expr_str: str,
                                     symbol_to_offset: str,
                                     offset: int,
-                                    vector_map_param: str = None) -> str:
+                                    vector_map_param: str = None,
+                                    arrays: Optional[Set[str]] = None) -> str:
     """
     Returns a new expression string where a specified symbol is replaced with laneid-ed version
     `sym1` -> `sym1_laneid_{offset}`
@@ -326,7 +331,10 @@ def use_laneid_symbol_in_expression(expr_str: str,
     else:
         offsetted_expr = f"({sym_to_change}_laneid_{offset})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
-    return sympy.pycode(offset_expr)
+    # See ``offset_symbol_in_expression`` for the ``arrays`` argument
+    # rationale (callers with an SDFG in scope pass its array names so
+    # array reads print as ``arr[idx]``).
+    return DaceSympyPrinter(arrays if arrays is not None else set()).doprint(offset_expr)
 
 
 # ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``

@@ -1613,7 +1613,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         for i in range(vw):
             expr = f"({l_op} {op} {r_op})"
             if str(c) in symbols:
-                expr = offset_symbol_in_expression(expr, vector_map_param, i)
+                expr = offset_symbol_in_expression(expr, vector_map_param, i,
+                                                   arrays=set(state.sdfg.arrays.keys()))
             else:
                 if l_op == c:
                     expr = f"({l_op} {op} {r_op})"
@@ -1645,7 +1646,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([
-                f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param)}"
+                f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param, arrays=set(state.sdfg.arrays.keys()))}"
                 for i in range(vw)
             ]) + "\n",
                                                   language=dace.Language.Python)
