@@ -345,6 +345,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if self._is_single_element_copy(copy_length):
                 continue
 
+            # Skip when either passthrough connector (entry-side IN_X or
+            # exit-side IN_X) is shared by other tasklets — lifting would
+            # sever the shared edge that the other tasklets still need.
+            # See the matching guard in ``remove_memset_from_kernel``.
+            entry_in_conn = memcpy_path[0].dst_conn
+            exit_in_conn = memcpy_path[2].dst_conn
+            shared_entry = entry_in_conn is not None and len(list(
+                state.in_edges_by_connector(map_entry, entry_in_conn))) > 1
+            shared_exit = exit_in_conn is not None and len(list(
+                state.in_edges_by_connector(map_exit, exit_in_conn))) > 1
+            if shared_entry or shared_exit:
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memcpy lift in map {map_entry.map.label}: "
+                        f"passthrough connector(s) shared with other tasklets — "
+                        f"lifting would break their data paths.", UserWarning)
+                continue
+
             # Skip when the parent SDFG has arrays whose names would
             # collide with the new libnode's published connector names
             # (validator rejects connector-vs-array-name collisions).
@@ -428,6 +446,23 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             if self._is_single_element_copy(copy_length):
+                continue
+
+            # Skip when the tasklet→map_exit edge's IN_X passthrough is
+            # shared by other tasklets writing the same array (e.g. a
+            # boundary memset and a per-thread compute both feeding
+            # ``MapExit.IN_y2`` whose ``OUT_y2`` aggregates into a single
+            # ``AccessNode(y2)``). Lifting one would sever the shared
+            # ``map_exit → AccessNode`` edge that the other still needs.
+            shared_dst_conn = memset_path[1].dst_conn
+            if shared_dst_conn is not None and len(list(state.in_edges_by_connector(
+                    map_exit, shared_dst_conn))) > 1:
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memset lift in map {map_entry.map.label}: "
+                        f"map_exit connector `{shared_dst_conn}` is shared with "
+                        f"other tasklets — lifting would break their data paths.",
+                        UserWarning)
                 continue
 
             # Same connector-vs-array-name clash guard as the memcpy

@@ -821,5 +821,45 @@ def test_single_element_memcpy_is_not_lifted():
         "expansion would collapse to an empty map and crash propagation.")
 
 
+def test_shared_passthrough_connector_blocks_lift():
+    """Pin: when a map_exit's IN_X passthrough is fed by *both* a memset
+    tasklet and a compute tasklet (e.g. a boundary write and a per-thread
+    compute write to the same array), the pass must NOT lift the memset.
+    Lifting would sever the shared ``MapExit OUT_X -> AccessNode`` edge
+    that aggregates both writes; the compute tasklet's data path would be
+    destroyed and downstream MapTiling would observe an OUT_X with no
+    IN_X (and vice-versa). Surfaced by deriche; the validator rejects the
+    post-tile state with ``No match for output connector OUT_y2`` or its
+    counterpart.
+    """
+    sdfg = dace.SDFG("shared_passthrough_pin")
+    sdfg.add_array("A", [10], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state("main")
+    a = state.add_access("A")
+    me, mx = state.add_map("kernel", {"i": "0:10"}, schedule=dace.ScheduleType.GPU_Device)
+    # Two tasklets sharing the SAME ``MapExit.IN_A`` passthrough — like
+    # the deriche pattern where a boundary memset and a per-thread
+    # compute both write to a single aggregate ``MapExit OUT_A -> A``
+    # edge. ``add_memlet_path`` auto-renames conflicting connectors, so
+    # build the shared-connector topology with explicit ``add_edge`` /
+    # ``add_in_connector``.
+    t_zero = state.add_tasklet("zero", set(), {"_out"}, "_out = 0")
+    t_compute = state.add_tasklet("compute", set(), {"_out"}, "_out = 3.14")
+    state.add_nedge(me, t_zero, dace.Memlet())
+    state.add_nedge(me, t_compute, dace.Memlet())
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(t_zero, "_out", mx, "IN_A", dace.Memlet("A[i]"))
+    state.add_edge(t_compute, "_out", mx, "IN_A", dace.Memlet("A[i]"))
+    state.add_edge(mx, "OUT_A", a, None, dace.Memlet("A[0:10]"))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 0, (
+        "Memset over a shared MapExit passthrough connector was lifted to a "
+        "MemsetLibraryNode; this severs the compute tasklet's data path.")
+    # SDFG should still be valid (no orphan connectors / edges left behind).
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
