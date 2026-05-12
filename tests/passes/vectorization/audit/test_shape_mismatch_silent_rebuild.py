@@ -18,8 +18,8 @@ from dace.transformation.passes.vectorization.vectorization_utils import fix_nsd
 
 
 @pytest.mark.xfail(reason="fix_nsdfg_connector_array_shapes_mismatch silently rebuilds with collapsed_full "
-                   "on a no-match input instead of raising; planned to be deleted by the pass-through-"
-                   "subsets redesign")
+                   "on a no-match input; cloudsc-class callers legitimately rely on this rebuild path. "
+                   "Planned to be deleted by the pass-through-subsets redesign.")
 def test_shape_mismatch_should_raise_not_silently_rebuild():
     # Inner SDFG with a connector whose shape doesn't match the parent memlet's subset
     # under any of the 4 expected interpretations.

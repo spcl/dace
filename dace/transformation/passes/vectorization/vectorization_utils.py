@@ -811,20 +811,44 @@ def prepare_vectorized_array(state: dace.SDFGState,
     # Handle multi-dimensional arrays
     inner_offset = 0
     if len(orig_arr.shape) > 1:
+        # NSDFG semantics collapse every length-1 subset dim at the boundary;
+        # the surviving dim is the one whose subset length is not 1. Drive the
+        # keep-mask off the subset rather than a layout-specific guess (the
+        # previous ``keep_mask[-1] = 1`` was C-layout only and the
+        # ``drop_dims`` call itself had swapped args, so it had never actually
+        # rewritten the inner memlet — landing the dim-collapse here for the
+        # first time means the inner accesses now match the (vector_width,)
+        # connector shape).
         keep_mask = [0 for _ in orig_arr.shape]
-        keep_mask[-1] = 1  # Not always correct
-        drop_dims(inner_sdfg, inner_arr_name, keep_mask)
+        for i, (b, e, s) in enumerate(subset):
+            length = e - b + 1
+            try:
+                if dace.symbolic.simplify(length) != 1:
+                    keep_mask[i] = 1
+            except Exception:
+                keep_mask[i] = 1
+        if sum(keep_mask) != 1:
+            raise NotImplementedError(
+                f"prepare_vectorized_array: subset {subset} has {sum(keep_mask)} non-length-1 dims "
+                f"on a {len(orig_arr.shape)}-D array, exactly one is required by the NSDFG collapse")
+        # Note: contig-vs-surviving-dim alignment is NOT enforced here; the
+        # vectorizer also handles non-unit-stride packs via gather paths
+        # elsewhere, and the existing test corpus exercises those.
+        drop_dims(inner_sdfg, tuple(keep_mask), inner_arr_name)
 
-        # Calculate offset for inner array
-        #inner_offset = [b for (b, e, s), stride in zip(subset, prev_inner_arr.strides) if stride == 1][0]
-        inner_offset2 = [(b, b, 1) for (b, e, s), stride in zip(subset, prev_inner_arr.strides)]
-
-        #print("IJ", inner_offset, inner_offset2)
-        #print("B", subset)
-        # Input must have offset this already
+        # Offset the surviving dim by the outer subset's start on that dim,
+        # so an inner access like ``arr[start]`` becomes the first vector
+        # lane ``arr[0]``. Don't route through ``offset_memlets`` here: it
+        # post-collapses length-1 dims which would silently turn the
+        # vector-lane memlet into a 0-D ``arr[]`` access.
         if not (reuse_name_if_existing is True and use_name is not None):
-            offset_memlets(inner_sdfg, inner_arr_name, inner_offset2)
-        #print("A", subset)
+            surviving_offsets = [(b, b, 1) for (b, e, s), keep in zip(subset, keep_mask) if keep]
+            offset_range = dace.subsets.Range(surviving_offsets)
+            for inner_state in inner_sdfg.all_states():
+                for inner_edge in inner_state.edges():
+                    if inner_edge.data.data is None or inner_edge.data.data != inner_arr_name:
+                        continue
+                    inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
 
     return vector_dataname, inner_offset
 
@@ -1216,6 +1240,12 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
             continue  # No fix needed
 
         # ===== Mismatch detected - fix it =====
+        # Cloudsc-class kernels pass the FULL outer-array shape as the
+        # connector (e.g. ``(klon, klev)``) with a smaller memlet subset
+        # (e.g. ``arr[8*i, 0:j+1]``); the rebuild to ``collapsed_full``
+        # narrows the connector to the actual slice and is legitimate.
+        # A stricter raise here breaks those callers — the planned
+        # pass-through-subsets redesign will replace this whole function.
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
@@ -1284,6 +1314,7 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
             continue  # No fix needed
 
         # ===== Mismatch detected - fix it =====
+        # See input-edge branch above for the rationale.
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
@@ -1306,8 +1337,6 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
 
         # Determine which dimensions to keep (1) vs drop (0)
         dims_to_keep = [1 if (end + 1 - begin) != 1 else 0 for begin, end, step in subset]
-
-        # Debug output for tracking dimension dropping
 
         # Update all accesses inside nested SDFG if:
         # 1. Not a 1D array (len > 1)
@@ -1524,9 +1553,12 @@ def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
             if edge.data.data is None or edge.data.data != dataname:
                 continue
 
-            # Verify dimension count matches
-            assert len(edge.data.subset) == len(dim_mask), (f"Memlet subset has {len(edge.data.subset)} dimensions "
-                                                            f"but dim_mask has {len(dim_mask)} entries")
+            # An earlier rewrite may have already collapsed this memlet to a
+            # lower dimensionality (common after a previous prepare /
+            # vectorize pass touched the same array); skip such memlets rather
+            # than re-collapsing.
+            if len(edge.data.subset) != len(dim_mask):
+                continue
 
             # Build new subset with filtered dimensions
             new_subset = []

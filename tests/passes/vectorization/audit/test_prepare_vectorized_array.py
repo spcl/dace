@@ -20,8 +20,6 @@ import dace
 from dace.transformation.passes.vectorization.vectorization_utils import prepare_vectorized_array
 
 
-@pytest.mark.xfail(reason="prepare_vectorized_array calls drop_dims with swapped arg order and hardcodes "
-                   "keep_mask[-1]=1; planned to be eliminated by the pass-through-subsets redesign")
 def test_prepare_vectorized_array_updates_inner_2d_access():
     """A 2D connector with an inner 2D access should become a 1D connector with a 1D access."""
     # Inner SDFG: a single state with a 2D access node copying to a sink scalar.
