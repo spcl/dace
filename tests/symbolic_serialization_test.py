@@ -135,5 +135,17 @@ def test_plain_integer_roundtrip_converts_to_sympy_integer():
     assert isinstance(restored, sympy.Integer)
 
 
+def test_plain_sympy_integer_serializes_without_typed_suffix():
+    assert symbolic.serialize_symbolic(sympy.Integer(42)) == '42'
+
+
+@pytest.mark.parametrize('value', [-7, 2**80])
+def test_plain_python_integer_deserialization_uses_sympy_integer(value):
+    restored = symbolic.deserialize_symbolic(value)
+
+    assert restored == value
+    assert isinstance(restored, sympy.Integer)
+
+
 if __name__ == '__main__':
     pytest.main([__file__])
