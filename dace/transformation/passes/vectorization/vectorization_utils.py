@@ -1030,48 +1030,12 @@ def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) 
     return tdict
 
 
-def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str, None]:
-    """
-    Verify that all arrays in an SDFG are packed in consistent C or Fortran order.
-
-    Each array must have a unit stride in either the first or last dimension for auto-vectorization.
-    The function determines whether the layout is consistently Fortran (F) or
-    C-style (C). One-dimensional arrays are allowed in both and default to 'F'.
-
-    Args:
-        sdfg (dace.SDFG): The SDFG whose arrays are checked.
-
-    Returns:
-        str | None: "C" or "F" indicating the stride ordering, or None if no arrays are found.
-
-    Raises:
-        AssertionError: If an array lacks a unit stride in both first and last dimension.
-        ValueError: If arrays have mixed C and Fortran stride ordering.
-    """
-    stride_type = None
-    has_one_d_arrays = False
-    current_type = None
-    for arr_name, desc in sdfg.arrays.items():
-        if not isinstance(desc, dace.data.Array):
-            continue
-
-        has_unit_stride = desc.strides[0] == 1 or desc.strides[-1] == 1
-        assert has_unit_stride, f"Array {arr_name} needs unit stride in first or last dimension: {desc.strides}"
-
-        if len(desc.shape) == 1:
-            has_one_d_arrays = True
-        else:
-            current_type = "F" if desc.strides[0] == 1 else "C"
-
-        if stride_type is None:
-            stride_type = current_type
-        elif stride_type != current_type:
-            raise ValueError("All arrays must have consistent stride ordering (all F or all C)")
-
-    if has_one_d_arrays and stride_type is None:
-        stride_type = "F"
-
-    return stride_type
+# ``assert_strides_are_packed_C_or_packed_Fortran`` lives in ``utils.layout``
+# (split slice S1a). Re-exported below for backward compatibility — wildcard
+# importers (``vectorize.py``, ``vectorize_break.py``, ``remove_vector_maps.py``)
+# and named importers (tests) keep resolving the symbol from this module.
+from dace.transformation.passes.vectorization.utils.layout import (  # noqa: E402, F401
+    assert_strides_are_packed_C_or_packed_Fortran, )
 
 
 def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG) -> dace.SDFGState:
