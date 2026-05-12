@@ -5,9 +5,7 @@ import copy
 import pytest
 import numpy as np
 from dace import Union
-from dace.sdfg.state import ConditionalBlock
-from dace.transformation.interstate import LoopToMap, branch_elimination
-from dace.transformation.passes import eliminate_branches
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 import ctypes
 import subprocess
@@ -207,10 +205,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            cleanup=False,
                            from_sdfg=False,
                            no_inline=False,
-                           exact=None,
-                           apply_loop_to_map=False,
-                           break_vectorize=False,
-                           split_all_branches=False):
+                           exact=None):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -225,11 +220,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         sdfg: dace.SDFG = dace_func
 
-    assert apply_loop_to_map is True
-    if apply_loop_to_map:
-        sdfg.apply_transformations_repeated(LoopToMap)
-        sdfg.simplify()
-        InlineSDFGs().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.simplify()
+    InlineSDFGs().apply_pass(sdfg, {})
 
     if save_sdfgs and sdfg_name:
         sdfg.save(f"{sdfg_name}.sdfg")
@@ -239,13 +232,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     copy_sdfg: dace.SDFG = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
     copy_sdfg.instrument = dace.dtypes.InstrumentationType.Timer
-
-    if split_all_branches:
-        cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-        for cblock in cblocks:
-            xform = branch_elimination.BranchElimination()
-            xform.conditional = cblock
-            xform._split_branches(parent_graph=cblock.parent_graph, if_block=cblock)
 
     if cleanup:
         for e, g in copy_sdfg.all_edges_recursive():
@@ -297,10 +283,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         filter_map = None
 
     pass_info = dict()
-    # VectorizeBreak removed (legacy break-vectorization path dropped); the
-    # ``break_vectorize`` parameter is now a no-op kept only for call-site
-    # compatibility with the s481/s482 tests, which compile through the
-    # scalar path and are not in the default sweep recipe.
     VectorizeCPU(vector_width=vector_width,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
@@ -382,15 +364,12 @@ def initialise_arrays():
 
 
 def _run_template(func, arrays, params, sdfg_name: str):
-    sdfg: dace.SDFG = func.to_sdfg()
-    eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
     run_vectorization_test(
         dace_func=func,
         arrays=arrays,
         params=params,
         save_sdfgs=SAVE_SDFGS,
         sdfg_name=sdfg_name,
-        apply_loop_to_map=True,
     )
 
 
@@ -2192,7 +2171,7 @@ def test_s000():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s000",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2219,7 +2198,7 @@ def test_s111():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s111",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2250,7 +2229,7 @@ def test_s1111():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1111",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2277,7 +2256,7 @@ def test_s112():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s112",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2304,7 +2283,7 @@ def test_s1112():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1112",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2332,7 +2311,7 @@ def test_s113():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s113",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2360,7 +2339,7 @@ def test_s1113():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1113",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2388,7 +2367,7 @@ def test_s114():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s114",
-        apply_loop_to_map=True,
+
     )
 
     return aa
@@ -2416,7 +2395,7 @@ def test_s115():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s115",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2446,7 +2425,7 @@ def test_s1115():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1115",
-        apply_loop_to_map=True,
+
     )
 
     return aa
@@ -2475,7 +2454,7 @@ def test_s116():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s116",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2502,7 +2481,7 @@ def test_s118():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s118",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2529,7 +2508,7 @@ def test_s119():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s119",
-        apply_loop_to_map=True,
+
     )
 
     return aa
@@ -2556,7 +2535,7 @@ def test_s121():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s121",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2595,7 +2574,7 @@ def test_s122():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s122",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2637,7 +2616,7 @@ def test_s123():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s123",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2679,7 +2658,7 @@ def test_s124():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s124",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2718,7 +2697,7 @@ def test_s125():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s125",
-        apply_loop_to_map=True,
+
     )
 
     return flat_2d_array
@@ -2754,7 +2733,7 @@ def test_s126():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s126",
-        apply_loop_to_map=True,
+
     )
 
     return flat_2d_array
@@ -2796,7 +2775,7 @@ def test_s127():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s127",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2827,7 +2806,7 @@ def test_s128():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s128",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2854,7 +2833,7 @@ def test_s131():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s131",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2883,7 +2862,7 @@ def test_s132():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s132",
-        apply_loop_to_map=True,
+
     )
 
     return aa
@@ -2910,7 +2889,7 @@ def test_s151():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s151",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2952,7 +2931,7 @@ def test_s152():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s152",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -2994,7 +2973,7 @@ def test_s161():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s161",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3034,9 +3013,7 @@ def test_s1161():
                                "ITERATIONS": ITERATIONS_val
                            },
                            save_sdfgs=SAVE_SDFGS,
-                           sdfg_name="dace_s1161",
-                           apply_loop_to_map=True,
-                           split_all_branches=True)
+                           sdfg_name="dace_s1161")
 
     return a
 
@@ -3074,7 +3051,7 @@ def test_s162():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s162",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3103,7 +3080,7 @@ def test_s171():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s171",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3142,7 +3119,7 @@ def test_s172():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s172",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3169,7 +3146,7 @@ def test_s173():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s173",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3198,7 +3175,7 @@ def test_s174():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s174",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3227,7 +3204,7 @@ def test_s175():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s175",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3256,7 +3233,7 @@ def test_s176():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s176",
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3298,7 +3275,7 @@ def test_s211():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s211",
-        apply_loop_to_map=True,
+
     )
 
     return a, b
@@ -3329,7 +3306,7 @@ def test_s212():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s212",
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -3359,7 +3336,7 @@ def test_s1213():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1213",
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -3389,7 +3366,7 @@ def test_s221():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s221",
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -3415,7 +3392,7 @@ def test_s1221():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1221",
-        apply_loop_to_map=True,
+
     )
     return b
 
@@ -3445,7 +3422,7 @@ def test_s222():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s222",
-        apply_loop_to_map=True,
+
     )
     return a, e
 
@@ -3471,7 +3448,7 @@ def test_s231():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s231",
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -3497,7 +3474,7 @@ def test_s232():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s232",
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -3525,7 +3502,7 @@ def test_s1232():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s1232",
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -3553,7 +3530,7 @@ def test_s233():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s233",
-        apply_loop_to_map=True,
+
     )
     return aa, bb
 
@@ -3581,7 +3558,7 @@ def test_s2233():
         },
         save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s2233",
-        apply_loop_to_map=True,
+
     )
     return aa, bb
 
@@ -3622,7 +3599,7 @@ def test_s235():
         },
         sdfg_name="dace_s235",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, aa
 
@@ -3652,7 +3629,7 @@ def test_s241():
         },
         sdfg_name="dace_s241",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -3693,7 +3670,7 @@ def test_s243():
         },
         sdfg_name="dace_s243",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -3724,7 +3701,7 @@ def test_s244():
         },
         sdfg_name="dace_s244",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
 
     return a
@@ -3767,7 +3744,7 @@ def test_s1244():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s1244",
-        apply_loop_to_map=True,
+
     )
     return a, d
 
@@ -3811,7 +3788,7 @@ def test_s2244():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s2244",
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -3852,7 +3829,7 @@ def test_s251():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s251",
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -3896,7 +3873,7 @@ def test_s3251():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s3251",
-        apply_loop_to_map=True,
+
     )
     return a, b, d
 
@@ -3937,7 +3914,7 @@ def test_s253():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s253",
-        apply_loop_to_map=True,
+
     )
     return a, c
 
@@ -3972,7 +3949,7 @@ def test_s254():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s254",
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4013,7 +3990,7 @@ def test_s242():
             "ITERATIONS": ITERS,
         },
         sdfg_name="dace_s242",
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4054,7 +4031,7 @@ def test_s1251():
         },
         sdfg_name="dace_s1251",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -4095,7 +4072,7 @@ def test_s2251():
         },
         sdfg_name="dace_s2251",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -4123,7 +4100,7 @@ def test_s252():
         },
         sdfg_name="dace_s252",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4149,7 +4126,7 @@ def test_s255():
         },
         sdfg_name="dace_s255",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4187,7 +4164,7 @@ def test_s256():
         },
         sdfg_name="dace_s256",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, aa
 
@@ -4215,7 +4192,7 @@ def test_s257():
         },
         sdfg_name="dace_s257",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, aa
 
@@ -4259,7 +4236,7 @@ def test_s258():
         },
         sdfg_name="dace_s258",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b, e
 
@@ -4289,7 +4266,7 @@ def test_s261():
         },
         sdfg_name="dace_s261",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, c
 
@@ -4317,7 +4294,7 @@ def test_s271():
         },
         sdfg_name="dace_s271",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4360,7 +4337,7 @@ def test_s272():
         },
         sdfg_name="dace_s272",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -4401,7 +4378,7 @@ def test_s273():
         },
         sdfg_name="dace_s273",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b, c
 
@@ -4442,7 +4419,7 @@ def test_s274():
         },
         sdfg_name="dace_s274",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -4468,7 +4445,7 @@ def test_s275():
             "ITERATIONS": ITERS
         },
         sdfg_name="dace_s275",
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -4493,7 +4470,7 @@ def s2102():
         },
         sdfg_name="dace_s2102",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
 
 
@@ -4517,7 +4494,7 @@ def s2111():
         },
         sdfg_name="dace_s2111",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
 
 
@@ -4567,7 +4544,7 @@ def s2275():
         },
         sdfg_name="dace_s2275",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, aa
 
@@ -4609,7 +4586,7 @@ def s276():
         },
         sdfg_name="dace_s276",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4654,7 +4631,7 @@ def s277():
         },
         sdfg_name="dace_s277",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -4699,7 +4676,7 @@ def s278():
         },
         sdfg_name="dace_s278",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b, c
 
@@ -4744,7 +4721,7 @@ def s279():
         },
         sdfg_name="dace_s279",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b, c
 
@@ -4789,7 +4766,7 @@ def s1279():
         },
         sdfg_name="dace_s1279",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return c
 
@@ -4837,7 +4814,7 @@ def s2710():
         },
         sdfg_name="dace_s2710",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b, c
 
@@ -4876,7 +4853,7 @@ def s2711():
         },
         sdfg_name="dace_s2711",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4915,7 +4892,7 @@ def s2712():
         },
         sdfg_name="dace_s2712",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4947,7 +4924,7 @@ def s312():
         },
         sdfg_name="dace_s312",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -4984,7 +4961,7 @@ def s313():
         },
         sdfg_name="dace_s313",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5011,7 +4988,7 @@ def s314():
         },
         sdfg_name="dace_s314",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5038,7 +5015,7 @@ def s315():
         },
         sdfg_name="dace_s315",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5065,7 +5042,7 @@ def s316():
         },
         sdfg_name="dace_s316",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5092,7 +5069,7 @@ def s317():
         },
         sdfg_name="dace_s317",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return q
 
@@ -5122,7 +5099,7 @@ def s318():
         },
         sdfg_name="dace_s318",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5165,7 +5142,7 @@ def s319():
         },
         sdfg_name="dace_s319",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -5192,7 +5169,7 @@ def test_s3110():
         },
         sdfg_name="dace_s3110",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -5219,7 +5196,7 @@ def test_s13110():
         },
         sdfg_name="dace_s13110",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -5246,7 +5223,7 @@ def test_s3111():
         },
         sdfg_name="dace_s3111",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5282,7 +5259,7 @@ def test_s3112():
         },
         sdfg_name="dace_s3112",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return b
 
@@ -5311,7 +5288,7 @@ def test_s3113():
         },
         sdfg_name="dace_s3113",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5347,7 +5324,7 @@ def test_s321():
         },
         sdfg_name="dace_s321",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5386,7 +5363,7 @@ def test_s322():
         },
         sdfg_name="dace_s322",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5431,7 +5408,7 @@ def test_s323():
         },
         sdfg_name="dace_s323",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -5460,7 +5437,7 @@ def test_s331():
         },
         sdfg_name="dace_s331",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5496,7 +5473,7 @@ def test_s341():
         },
         sdfg_name="dace_s341",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5532,7 +5509,7 @@ def test_s342():
         },
         sdfg_name="dace_s342",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5571,7 +5548,7 @@ def test_s343():
         },
         sdfg_name="dace_s343",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return flat
 
@@ -5610,7 +5587,7 @@ def test_s351():
         },
         sdfg_name="dace_s351",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5649,7 +5626,7 @@ def test_s1351():
         },
         sdfg_name="dace_s1351",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5688,7 +5665,7 @@ def test_s352():
         },
         sdfg_name="dace_s352",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a, b
 
@@ -5730,7 +5707,7 @@ def test_s353():
         },
         sdfg_name="dace_s353",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5769,7 +5746,7 @@ def vdotr():
         },
         sdfg_name="dace_vdotr",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5817,7 +5794,7 @@ def vbor():
         },
         sdfg_name="dace_vbor",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return x
 
@@ -5856,7 +5833,7 @@ def s281():
         },
         sdfg_name="s281",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5905,7 +5882,7 @@ def s1281():
         },
         sdfg_name="s1281",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5946,7 +5923,7 @@ def test_s291():
         },
         sdfg_name="s291",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -5982,7 +5959,7 @@ def test_s292():
         },
         sdfg_name="s292",
         save_sdfgs=True,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6015,7 +5992,7 @@ def test_s293():
         },
         sdfg_name="s293",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6055,7 +6032,7 @@ def test_s2101():
         },
         sdfg_name="s2101",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return aa
 
@@ -6091,7 +6068,7 @@ def test_s311():
         },
         sdfg_name="s311",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6131,7 +6108,7 @@ def test_s1421():
         },
         sdfg_name="dace_s1421",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return b
 
@@ -6170,7 +6147,7 @@ def test_s4112():
         },
         sdfg_name="dace_s4112",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6212,7 +6189,7 @@ def test_s4113():
         },
         sdfg_name="dace_s4113",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6260,7 +6237,7 @@ def test_s4114():
         },
         sdfg_name="dace_s4114",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6302,7 +6279,7 @@ def test_s4115():
         },
         sdfg_name="dace_s4115",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return sum_out
 
@@ -6353,7 +6330,7 @@ def test_s4116():
         },
         sdfg_name="dace_s4116",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return sum_out
 
@@ -6395,7 +6372,7 @@ def test_s4117():
         },
         sdfg_name="dace_s4117",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6434,7 +6411,7 @@ def test_s4121():
         },
         sdfg_name="dace_s4121",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6470,7 +6447,7 @@ def test_s422():
         },
         sdfg_name="dace_s422",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return flat
 
@@ -6509,7 +6486,7 @@ def test_s424():
         },
         sdfg_name="dace_s424",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return xx
 
@@ -6545,7 +6522,7 @@ def test_s431():
         },
         sdfg_name="dace_s431",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6587,7 +6564,7 @@ def test_s441():
         },
         sdfg_name="dace_s441",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6635,7 +6612,7 @@ def test_s442():
         },
         sdfg_name="dace_s442",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6677,7 +6654,7 @@ def test_s443():
         },
         sdfg_name="dace_s443",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6716,7 +6693,7 @@ def test_s451():
         },
         sdfg_name="dace_s451",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6755,7 +6732,7 @@ def test_s452():
         },
         sdfg_name="dace_s452",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6791,7 +6768,7 @@ def test_s453():
         },
         sdfg_name="dace_s453",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -6836,7 +6813,7 @@ def test_s471():
         },
         sdfg_name="dace_s471",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return x
 
@@ -6881,9 +6858,7 @@ def test_s481():
                                "ITERATIONS": ITERS
                            },
                            sdfg_name="dace_s481",
-                           save_sdfgs=SAVE_SDFGS,
-                           apply_loop_to_map=True,
-                           break_vectorize=True)
+                           save_sdfgs=SAVE_SDFGS)
     return a
 
 
@@ -6921,9 +6896,7 @@ def test_s482():
                                "ITERATIONS": ITERS
                            },
                            sdfg_name="dace_s482",
-                           save_sdfgs=SAVE_SDFGS,
-                           apply_loop_to_map=True,
-                           break_vectorize=True)
+                           save_sdfgs=SAVE_SDFGS)
     return a
 
 
@@ -6967,7 +6940,7 @@ def test_s491():
         },
         sdfg_name="dace_s491",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
     return a
 
@@ -7000,7 +6973,7 @@ def test_s31111():
         },
         sdfg_name="dace_s31111",
         save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
+
     )
 
     # Return the (unchanged) array for consistency

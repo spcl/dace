@@ -132,6 +132,13 @@ class VectorizeCPU(ppl.Pipeline):
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]
+        # TODO: ``fuse_overlapping_loads`` is one of the optional optimisation
+        # knobs the pipeline exposes (alongside ``lower_to_intrinsics``,
+        # ``insert_copies``, ``try_to_demote_symbols_in_nsdfgs``, etc.). The
+        # plan should record these as opt-in optimisation passes the user can
+        # enable per-call; they default ``False`` to keep the baseline
+        # pipeline minimal. A future slice should collect them under a
+        # dedicated ``optimisations`` group / preset for ergonomics.
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())
         # Lower the scalar ``assign_<i>`` fans the vectorizer leaves around
