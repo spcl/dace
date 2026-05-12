@@ -1420,8 +1420,17 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         return value
 
     @staticmethod
+    def _requires_preserved_structure(expr):
+        if isinstance(expr, (TypedConstant, SymExpr)):
+            return True
+        return isinstance(expr, sympy.Basic) and bool(expr.atoms(TypedConstant))
+
+    @staticmethod
     def _binop_add(a, b):
-        return sympy.Add(a, b, evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Add(a, b, evaluate=False)
+        return a + b
 
     @staticmethod
     def _negate(a):
@@ -1429,27 +1438,44 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return TypedConstant(-a.value, dtype=a.dtype)
         if isinstance(a, (sympy.Integer, sympy.Float)):
             return -a
+        if not _SerializedSymbolicParser._requires_preserved_structure(a):
+            return -a
         return sympy.Mul(sympy.S.NegativeOne, a, evaluate=False)
 
     @staticmethod
     def _binop_sub(a, b):
-        return sympy.Add(a, _SerializedSymbolicParser._negate(b), evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Add(a, _SerializedSymbolicParser._negate(b), evaluate=False)
+        return a - b
 
     @staticmethod
     def _binop_mul(a, b):
-        return sympy.Mul(a, b, evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Mul(a, b, evaluate=False)
+        return a * b
 
     @staticmethod
     def _binop_div(a, b):
-        return sympy.Mul(a, sympy.Pow(b, -1, evaluate=False), evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Mul(a, sympy.Pow(b, -1, evaluate=False), evaluate=False)
+        return a / b
 
     @staticmethod
     def _binop_pow(a, b):
-        return sympy.Pow(a, b, evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Pow(a, b, evaluate=False)
+        return a**b
 
     @staticmethod
     def _binop_mod(a, b):
-        return sympy.Mod(a, b, evaluate=False)
+        if (_SerializedSymbolicParser._requires_preserved_structure(a)
+                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+            return sympy.Mod(a, b, evaluate=False)
+        return sympy.Mod(a, b)
 
     @staticmethod
     def _unary_minus(a):
