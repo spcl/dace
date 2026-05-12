@@ -324,8 +324,7 @@ class InsertExplicitCopies(ppl.Pass):
             # ``TargetCodeGenerator.copy_memory`` hook via wmma intrinsics.
             # Lifting them into a CopyLibraryNode emits scalar tasklet
             # assignments that don't compile against opaque fragment types.
-            if (src_desc.storage not in self._STANDARD_STORAGES
-                    or dst_desc.storage not in self._STANDARD_STORAGES):
+            if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
             if not self._storage_allowed(src_desc.storage, dst_desc.storage):
