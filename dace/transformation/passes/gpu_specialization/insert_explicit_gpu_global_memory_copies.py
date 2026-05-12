@@ -21,20 +21,30 @@ from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopi
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
 
-def _is_true_scalar(desc) -> bool:
-    """Return True if every dimension of ``desc.shape`` is the literal
-    integer ``1`` (e.g. ``(1,)``, ``(1, 1)``, ``(1, 1, 1)``)."""
+def _is_register_demotable(desc, max_elements: int) -> bool:
+    """Return True if ``desc`` is safe AND worth demoting to per-thread
+    ``Register`` storage:
+
+    * Every shape dim is a concrete positive integer (no symbols). A
+      symbol would leak into host-side ``cudaMalloc`` size expressions
+      if the transient were lifted instead — that's the failure mode
+      this gate avoids — and the GPU has no way to size a per-thread
+      array on the device.
+    * The product of shape dims is ``<= max_elements``. Larger arrays
+      fall through to ``MoveArrayOutOfKernel`` (one shared global
+      allocation indexed by the kernel iteration) rather than burning
+      a per-thread register-or-local-memory slab.
+    """
+    total = 1
     try:
         for dim in desc.shape:
-            if isinstance(dim, int):
-                if dim != 1:
-                    return False
-            elif hasattr(dim, 'is_Integer') and dim.is_Integer:
-                if int(dim) != 1:
-                    return False
+            if isinstance(dim, int) and dim > 0:
+                total *= dim
+            elif hasattr(dim, 'is_Integer') and dim.is_Integer and int(dim) > 0:
+                total *= int(dim)
             else:
                 return False
-        return True
+        return total <= max_elements
     except Exception:
         return False
 
@@ -67,6 +77,18 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     transient GPU_Global copy still survives inside the kernel after the
     hoist, the post-hoist guard raises with the offender list."""
 
+    register_demotion_max_elements = properties.Property(
+        dtype=int,
+        default=64,
+        desc="Max ``prod(shape)`` for a literal-shape kernel-internal "
+        "transient to be demoted from GPU_Global to per-thread Register "
+        "storage. Larger transients fall through to MoveArrayOutOfKernel.",
+    )
+
+    def __init__(self, register_demotion_max_elements: int = 64):
+        super().__init__()
+        self.register_demotion_max_elements = register_demotion_max_elements
+
     def depends_on(self):
         return set()
 
@@ -86,8 +108,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         InsertExplicitCopies().apply_pass(sdfg, pipeline_results)
         return {}
 
-    @staticmethod
-    def _hoist_transient_gpu_global_out_of_kernels(sdfg: SDFG) -> None:
+    def _hoist_transient_gpu_global_out_of_kernels(self, sdfg: SDFG) -> None:
         """Run ``MoveArrayOutOfKernel`` for every transient GPU_Global array
         defined inside a ``GPU_Device`` map.
 
@@ -133,15 +154,19 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             to_hoist.add((data_name, desc, kernel_entry))
 
         for data_name, desc, kernel_entry in to_hoist:
-            # If the transient is a true scalar (every dim literal 1)
-            # AND has no incoming WCR memlet (which would indicate a
-            # cross-thread atomic accumulator that must stay shared),
-            # demote it to Register instead of lifting. A per-thread
-            # scalar should never have been GPU_Global; lifting it
-            # stretches the shape by the kernel's iteration range and
-            # leaks block-index symbols into host-side ``cudaMalloc``
-            # size expressions.
-            if _is_true_scalar(desc) and not _has_wcr_incoming(sdfg, data_name):
+            # Demote to per-thread Register storage if the transient is
+            # safe to make thread-local:
+            #   * literal shape with ``prod(shape) <=
+            #     register_demotion_max_elements`` (a symbolic dim would
+            #     leak into host-side ``cudaMalloc`` size expressions on
+            #     the lift path, which is the failure mode this gate
+            #     avoids);
+            #   * no incoming WCR memlet (a cross-thread atomic
+            #     accumulator must stay shared — per-thread registers
+            #     would silently drop the accumulation).
+            # Anything else falls through to ``MoveArrayOutOfKernel``.
+            if (_is_register_demotable(desc, self.register_demotion_max_elements)
+                    and not _has_wcr_incoming(sdfg, data_name)):
                 desc.storage = dtypes.StorageType.Register
                 continue
             warnings.warn(f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel "
