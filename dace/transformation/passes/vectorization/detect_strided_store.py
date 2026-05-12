@@ -7,6 +7,7 @@ from typing import Any, Dict
 from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme
 
 
 def sort_tasklets_by_number(tasklets):
@@ -105,7 +106,7 @@ strided_store_double(_in, _out, {vector_length}, {stride});
         found_gathers = 0
         for state in sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data.endswith("_packed"):
+                if isinstance(node, nodes.AccessNode) and PackedNameScheme.is_packed(node.data):
                     # If all inputs are tasklets of "_assign_X then we have a scatter store"
                     oes = {oe for oe in state.out_edges(node)}
                     dsts = {oe.dst for oe in oes}

@@ -369,8 +369,8 @@ class Vectorize(ppl.Pass):
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
         non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]
-        non_vectorizable_array_infos = {(arr_name + "_packed", (self.vector_width, ), self.vector_input_storage,
-                                         arr.dtype)
+        non_vectorizable_array_infos = {(PackedNameScheme.make(arr_name), (self.vector_width, ),
+                                         self.vector_input_storage, arr.dtype)
                                         for arr_name, arr in non_vectorizable_array_descs}
         if self.try_to_demote_symbols_in_nsdfgs:
             for k in demoted_scalars:

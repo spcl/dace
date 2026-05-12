@@ -28,6 +28,7 @@ from dace.transformation.passes.vectorization.utils.code_rewrite import (
     offset_symbol_in_expression,
     use_laneid_symbol_in_expression,
 )
+from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
 
 
 def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict:
@@ -498,14 +499,15 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
 
     src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
     touched_nodes.add(src)
-    packed_access = state.add_access(f"{node.data}_packed")
+    packed_dataname = PackedNameScheme.make(node.data)
+    packed_access = state.add_access(packed_dataname)
     packed_access.setzero = True
     touched_nodes.add(packed_access)
     state.remove_edge(ie)
     touched_edges.add(ie)
-    if f"{node.data}_packed" not in state.sdfg.arrays:
+    if packed_dataname not in state.sdfg.arrays:
         dst_arr = state.sdfg.arrays[node.data]
-        state.sdfg.add_array(name=f"{node.data}_packed",
+        state.sdfg.add_array(name=packed_dataname,
                              shape=(vector_width, ),
                              storage=dst_arr.storage,
                              dtype=dst_arr.dtype,
@@ -518,7 +520,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
                              alignment=dst_arr.alignment,
                              may_alias=False)
     e = state.add_edge(ie.src, ie.src_conn, packed_access, None,
-                       dace.memlet.Memlet(f"{node.data}_packed[0:{vector_width}]"))
+                       dace.memlet.Memlet(f"{packed_dataname}[0:{vector_width}]"))
     touched_edges.add(e)
 
     for i in range(vector_width):
@@ -528,7 +530,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
         t.add_out_connector("_out")
         e1 = state.add_edge(
             packed_access, None, t, "_in",
-            dace.memlet.Memlet(data=node.data + "_packed", subset=dace.subsets.Range([(str(i), str(i), 1)])))
+            dace.memlet.Memlet(data=packed_dataname, subset=dace.subsets.Range([(str(i), str(i), 1)])))
         touched_edges.add(e1)
 
         new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i), vector_map_param)
@@ -573,7 +575,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
     dst_conn = edge.dst_conn
 
     # Create or reuse vector array
-    vector_dataname = edge.data.data + "_vec"
+    vector_dataname = VecNameScheme.make(edge.data.data)
     if vector_dataname not in state.sdfg.arrays:
         orig_arr = state.sdfg.arrays[edge.data.data]
         arr_name, arr = state.sdfg.add_array(name=vector_dataname,
@@ -642,7 +644,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
     dst_conn = edge.dst_conn
 
     # Create or reuse vector array
-    vector_dataname = edge.data.data + "_vec"
+    vector_dataname = VecNameScheme.make(edge.data.data)
     if vector_dataname not in state.sdfg.arrays:
         orig_arr = state.sdfg.arrays[edge.data.data]
         _, arr = state.sdfg.add_array(name=vector_dataname,

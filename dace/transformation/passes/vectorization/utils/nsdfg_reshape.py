@@ -26,12 +26,7 @@ import dace
 from dace import SDFGState
 
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
-
-# Suffix used for the per-NSDFG vector-array name allocated by
-# ``prepare_vectorized_array``. Single module-level constant rather than a
-# hardcoded f-string at the callsite. See ``NameScheme`` cleanup TODO in
-# the plan's "Known issues" section for the broader centralisation.
-_VEC_K_SUFFIX = "_vec_k"
+from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
 
 
 def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
@@ -396,7 +391,7 @@ def prepare_vectorized_array(state: dace.SDFGState,
         to apply. It is kept in the return tuple for backwards-compatibility
         with ``compute_edge_subset``, which still accepts an offset arg.
     """
-    vector_dataname_candidate = orig_dataname + _VEC_K_SUFFIX if use_name is None else use_name
+    vector_dataname_candidate = VecNameScheme.make_k(orig_dataname) if use_name is None else use_name
     if reuse_name_if_existing:
         assert use_name is not None
         vector_dataname = vector_dataname_candidate
@@ -591,9 +586,10 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
                 ie_datas = {ie.data.data for ie in state.in_edges_by_connector(nsdfg_node, oe.src_conn)}
                 assert len(ie_datas) == 1
                 ie_data = ie_datas.pop()  # This can be vectorized
-                assert oe.data.data == ie_data or ie_data.startswith(
-                    oe.data.data + "_vec"
-                ), f"{oe.data.data} != {ie_data} and {ie_data} not startswith {oe.data.data + '_vec'} (from {inner_arr_name}) not in {state.sdfg.arrays}"
+                _vec_prefix = VecNameScheme.make(oe.data.data)
+                assert oe.data.data == ie_data or ie_data.startswith(_vec_prefix), (
+                    f"{oe.data.data} != {ie_data} and {ie_data} not startswith {_vec_prefix} "
+                    f"(from {inner_arr_name}) not in {state.sdfg.arrays}")
                 inout_data_name = ie_data
 
             # Prepare vectorized arrays
@@ -743,7 +739,7 @@ def add_copies_before_and_after_nsdfg(
         # Insert copy-ins
         desc = inner_sdfg.arrays[unmovable_arr_name]
         for i, subset in enumerate(subsets):
-            vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+            vec_arr_name = VecNameScheme.make_indexed(unmovable_arr_name, i)
             if vec_arr_name not in inner_sdfg.arrays:
                 inner_sdfg.add_array(
                     name=vec_arr_name,
@@ -765,7 +761,7 @@ def add_copies_before_and_after_nsdfg(
     for inner_state in inner_sdfg.all_states():
         for edge in inner_state.edges():
             # Skip packed arrays, it means either data name ends with packed or it is a gather-store to an array of length vector width
-            if edge.data.data is not None and (edge.data.data.endswith("_packed")
+            if edge.data.data is not None and (PackedNameScheme.is_packed(edge.data.data)
                                                or inner_state.in_degree(edge.dst) == vector_width):
                 continue
             if (edge.data.data, edge.data.subset) in subset_to_name_map:
@@ -777,7 +773,7 @@ def add_copies_before_and_after_nsdfg(
     for inner_state in inner_sdfg.all_states():
         for node in inner_state.data_nodes():
             # Do not check packed storage
-            if node.data.endswith("_packed"):
+            if PackedNameScheme.is_packed(node.data):
                 continue
 
             ies = {ie for ie in inner_state.in_edges(node) if ie.data.data is not None}
@@ -785,9 +781,9 @@ def add_copies_before_and_after_nsdfg(
 
             # Do not check packed storage
             for e in ies.union(oes):
-                if isinstance(e.src, dace.nodes.AccessNode) and e.src.data.endswith("_packed"):
+                if isinstance(e.src, dace.nodes.AccessNode) and PackedNameScheme.is_packed(e.src.data):
                     continue
-                if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data.endswith("_packed"):
+                if isinstance(e.dst, dace.nodes.AccessNode) and PackedNameScheme.is_packed(e.dst.data):
                     continue
 
             # Gather-store to a storage will have an in degree equal to vector length
@@ -853,7 +849,7 @@ def add_copies_before_and_after_nsdfg(
 
         if unmovable_arr_name in read_set:
             for i, subset in enumerate(subsets):
-                vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+                vec_arr_name = VecNameScheme.make_indexed(unmovable_arr_name, i)
                 name_to_subset_map[vec_arr_name] = subset
 
                 # We have the symbol mapping available in the beginning
@@ -882,7 +878,7 @@ def add_copies_before_and_after_nsdfg(
         # Insert corresponding copy-out
         if unmovable_arr_name in write_set:
             for i, subset in enumerate(subsets):
-                vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+                vec_arr_name = VecNameScheme.make_indexed(unmovable_arr_name, i)
                 name_to_subset_map[vec_arr_name] = subset
                 orig_access2 = copy_out_state.add_access(unmovable_arr_name)
                 orig_access2.setzero = True
@@ -914,7 +910,7 @@ def add_copies_before_and_after_nsdfg(
                                                    subset=dace.subsets.Range([(0, vector_width - 1, 1)]))
 
     for (dataname, subset) in movable_arrays:
-        inner_sdfg.replace_dict({dataname: dataname + "_vec"})
+        inner_sdfg.replace_dict({dataname: VecNameScheme.make(dataname)})
 
     movable_datas = {t[0] for t in movable_arrays}
 
@@ -930,33 +926,35 @@ def add_copies_before_and_after_nsdfg(
 
     for inc in nsdfg_in_conns:
         if inc in movable_datas:
-            nsdfg_node.add_in_connector(inc + "_vec", force=True)
+            nsdfg_node.add_in_connector(VecNameScheme.make(inc), force=True)
 
     for outc in nsdfg_out_conns:
         if outc in movable_datas:
-            nsdfg_node.add_out_connector(outc + "_vec", force=True)
+            nsdfg_node.add_out_connector(VecNameScheme.make(outc), force=True)
 
     # Update connector names
-    # Remove movable datanames from connectors and replace with "_vec" variant
-    # Some scalars / arrays will be not vectorized and thus not have `_vec` suffix
-    # Make sure that we only connect the arrays that have `_vec` suffix.
-    # For this: check if an edge's connector is in movable data (moved outside of the nested SDFG)
-    # and top of that check if the vector-suffixed data is in the in connectors
+    # Remove movable datanames from connectors and replace with vec variant.
+    # Some scalars / arrays will be not vectorized and thus not have ``_vec``
+    # suffix; make sure we only connect the arrays that DO have the suffix.
+    # Inout connectors get the same suffix on both directions (per the
+    # NameScheme directive); the route here is symmetric for ``in_edges``
+    # and ``out_edges``.
     for movable_data in movable_datas:
+        vec_data = VecNameScheme.make(movable_data)
         for ie in state.in_edges(nsdfg_node):
-            if ie.dst_conn is not None and ie.dst_conn == movable_data and ie.dst_conn + "_vec" in nsdfg_node.in_connectors:
-                assert movable_data + "_vec" in nsdfg_node.in_connectors, f"{movable_data}_vec not in {nsdfg_node.in_connectors}"
-                assert len(
-                    set(state.in_edges_by_connector(nsdfg_node, movable_data + "_vec"))
-                ) == 0, f"There are edges connected to {movable_data}_vec: {set(state.in_edges_by_connector(nsdfg_node, movable_data + '_vec'))}"
-                ie.dst_conn = movable_data + "_vec"
+            if ie.dst_conn is not None and ie.dst_conn == movable_data and vec_data in nsdfg_node.in_connectors:
+                assert vec_data in nsdfg_node.in_connectors, f"{vec_data} not in {nsdfg_node.in_connectors}"
+                assert len(set(state.in_edges_by_connector(nsdfg_node, vec_data))) == 0, (
+                    f"There are edges connected to {vec_data}: "
+                    f"{set(state.in_edges_by_connector(nsdfg_node, vec_data))}")
+                ie.dst_conn = vec_data
         for oe in state.out_edges(nsdfg_node):
-            if oe.src_conn is not None and oe.src_conn == movable_data and oe.src_conn + "_vec" in nsdfg_node.out_connectors:
-                assert movable_data + "_vec" in nsdfg_node.out_connectors, f"{movable_data}_vec not in {nsdfg_node.out_connectors}"
-                assert len(
-                    set(state.out_edges_by_connector(nsdfg_node, movable_data + "_vec"))
-                ) == 0, f"There are edges connected to {movable_data}_vec: {set(state.out_edges_by_connector(nsdfg_node, movable_data + '_vec'))}"
-                oe.src_conn = movable_data + "_vec"
+            if oe.src_conn is not None and oe.src_conn == movable_data and vec_data in nsdfg_node.out_connectors:
+                assert vec_data in nsdfg_node.out_connectors, f"{vec_data} not in {nsdfg_node.out_connectors}"
+                assert len(set(state.out_edges_by_connector(nsdfg_node, vec_data))) == 0, (
+                    f"There are edges connected to {vec_data}: "
+                    f"{set(state.out_edges_by_connector(nsdfg_node, vec_data))}")
+                oe.src_conn = vec_data
 
     # Move vector data above the vector map, it makes merging overlapping accesses easier
     sdict = state.scope_dict()
