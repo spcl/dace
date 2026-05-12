@@ -1,68 +1,87 @@
 // ============================================================================
 // LiftAllocArrayOfRecords.cpp — lift alloc-array-of-records struct members
-// into top-level companions with a leading runtime-extent dim.
+// into direct accesses on the pointer-rebind target storage.
 // ============================================================================
 //
 // Motivation:
-//     Fortran pattern (canonical ICON shape, e.g. ``mo_nonhydro_types.f90``):
+//     Fortran pattern (canonical ICON shape, see
+//     ``icon-artifacts/solve_nh/solve_nh_fake.f90:1576``):
 //
 //         type t_inner
 //           real(kind=8), pointer, contiguous :: w(:, :, :)
-//           real(kind=8), pointer, contiguous :: rho(:, :, :)
-//           ! ... more pointer-array members ...
 //         end type t_inner
 //         type t_outer
 //           type(t_inner), allocatable :: items(:)   ! alloc-array of records
 //         end type t_outer
 //
 //         type(t_outer) :: p_nh
+//         real(kind=8), target :: storage(...)
 //         allocate(p_nh%items(N))
 //         do n = 1, N
-//           p_nh%items(n)%w => <storage slice>
-//           ! ...
+//           p_nh%items(n)%w => storage(..., n)
 //         end do
-//         ! User code (potentially with runtime element index ``jg``):
+//         ! User code (with const or runtime element index ``jg``):
 //         val = p_nh%items(jg)%w(jc, jk, jb)
 //
-//     The bridge's existing FlattenStructs pass bails on
-//     ``box<heap|ptr<seq<? x record>>>`` members — there's no static
-//     way to enumerate the alloc-array's elements.  This pass closes
-//     the gap by rewriting every access chain
-//     ``<root>%<member>(<idx>)%<inner_leaf>(<inner_indices>)``
-//     into a direct access on a synthesised top-level companion of
-//     shape ``(N_member, *inner_leaf_shape)``.
+//     FlattenStructs bails on ``box<heap|ptr<seq<? x record>>>`` members
+//     because there's no static way to enumerate the alloc-array's
+//     elements.  This pass closes the gap by exploiting a fundamental
+//     fact: the runtime pointer rebinds inside the kernel bind each
+//     element's pointer member to a slice of an existing storage array.
+//     After those rebinds, ``p_nh%items(jg)%w(jc, jk, jb)`` is
+//     observably equivalent to ``storage(jc, jk, jb, jg)`` (or some
+//     other re-shaped slice access).
 //
-//     After the rewrite:
-//         val = p_nh_items_w(jg, jc, jk, jb)
-//     where ``p_nh_items_w`` is a new top-level declare with the
-//     leading dim sized by a synth symbol ``<root>_<member>_size``.
-//     The caller (SDFG bindings layer) is responsible for allocating
-//     the flat companion and threading the alloc-count symbol.
+// What the pass does:
 //
-//     The setup code (``allocate(p_nh%items(N))``, per-element pointer
-//     rebinds, ``deallocate``) becomes dead — no downstream consumer
-//     reads through the original AoS path after the rewrite — and
-//     gets cleaned up by symbol-dce / canonicalize in the pipeline.
+//     1. **Discovery** — walk for ``hlfir.designate %X{"<member>"}``
+//        where the result's element type peels to
+//        ``box<heap|ptr<seq<? x record>>>``.  Collect every distinct
+//        ``(parent_decl, member_name)`` pair.
 //
-// Uniformity contract:
-//     Every alloc-array element is assumed to have the same inner-leaf
-//     shape across the alloc-array's extent.  ICON satisfies this; the
-//     pass cannot statically prove it in general.  Runtime enforcement
-//     is implicit via the bindings layer (caller passes one flat
-//     companion of declared shape `(N_member, *inner_leaf_shape)`).
+//     2. **Rebind tracking** — walk for ``fir.store %embox to
+//        %dest`` where ``%dest`` is the per-element-pointer field
+//        ``hlfir.designate (hlfir.designate (load %parent_member))(%idx){"<inner>"}``.
+//        Parse the embox source (a designate over an existing storage
+//        declare).  Record:
+//           ``(parent_decl, member_name, element_idx_value, inner_member_name)
+//             → (storage_decl, slice_chain)``
+//
+//     3. **Access rewrite** — walk for ``fir.load %addr`` where
+//        ``%addr`` is the same per-element-pointer field shape as in
+//        Phase 2.  For each load of the box, find downstream
+//        ``hlfir.designate %loaded_box (<access_indices>)`` ops.
+//        Look up the matching rebind by tuple and replace the terminal
+//        designate with a new designate over the storage parent that
+//        merges the slice indices with the access indices.
+//
+//     4. **Cleanup** — erase the now-orphan setup ops:
+//          * ``fir.call @_FortranAAllocatableAllocate / Deallocate``
+//            whose first arg traces back to the parent member.
+//          * The rebind ``fir.store`` ops (their target designates
+//            have no remaining users).
+//          * Walk the function once more to delete dead designate /
+//            load / embox / fir.shape chains rooted in the parent
+//            member.  Trust the canonicalizer that runs after this
+//            pass to clean up anything we miss.
 //
 // Pipeline position:
-//     After ``hlfir-inline-all`` (so the inlined-callee element-alias
-//     declares — ``hlfir.declare %elem ...{uniq_name = "<callee>"}``
-//     wrapping ``hlfir.designate %items_box (%idx)`` — are visible)
-//     and BEFORE ``hlfir-flatten-structs`` (so flatten sees clean
-//     top-level arrays after the lift).
+//     After ``hlfir-inline-all`` (so inlined-callee element-alias
+//     declares are visible) and BEFORE ``hlfir-flatten-structs`` (so
+//     flatten sees clean top-level arrays after the lift).
+//
+// Uniformity contract:
+//     Each element's inner pointer-member must be rebound (the
+//     pattern requires the user to perform the rebind before any
+//     access).  Non-uniform per-element shape is not statically
+//     verified — trust the user-side contract.
 //
 // Out of scope:
+//     - Multiple rebinds for the same `(idx, inner)` slot interleaved
+//       with accesses: bail loudly with ``emitError``.
 //     - Whole-AoS copies (``a = p%items``): hard-fail in validation.
-//     - Non-uniform per-element shape: trust the caller (runtime
-//       contract via bindings).  No static check is general.
-//     - Reallocate-in-kernel of the alloc-array: hard-fail.
+//     - Reallocate-in-kernel of the alloc-array: hard-fail (the
+//       discovery's allocate-site check rejects multi-allocate).
 // ============================================================================
 
 #include "passes/Passes.h"
@@ -111,42 +130,40 @@ static fir::RecordType allocOrPtrArrayOfRecordsMember(mlir::Type t) {
     return mlir::dyn_cast<fir::RecordType>(seq.getEleTy());
 }
 
-/// Peel ``fir.ref<...>`` / ``fir.box<...>`` / ``fir.heap<...>`` /
-/// ``fir.ptr<...>`` wrappers to find the underlying RecordType.
-/// Returns null if no record is reachable.
-static fir::RecordType peelToRecord(mlir::Type t) {
-    for (int i = 0; i < 8 && t; ++i) {
-        if (auto r = mlir::dyn_cast<fir::RecordType>(t)) return r;
-        if (auto rt = mlir::dyn_cast<fir::ReferenceType>(t)) { t = rt.getEleTy(); continue; }
-        if (auto bt = mlir::dyn_cast<fir::BoxType>(t))       { t = bt.getEleTy(); continue; }
-        if (auto ht = mlir::dyn_cast<fir::HeapType>(t))      { t = ht.getEleTy(); continue; }
-        if (auto pt = mlir::dyn_cast<fir::PointerType>(t))   { t = pt.getEleTy(); continue; }
-        break;
-    }
-    return {};
-}
-
 // ---------------------------------------------------------------------------
-// Phase 1 — Discovery
+// Per-(parent, member) lift state
 // ---------------------------------------------------------------------------
 
-/// A discovered (parent_decl, member_name) → inner-record pairing for an
-/// alloc-array-of-records access site.  Multiple designate ops in the
-/// same function for the same (parent, member) collapse to one entry —
-/// they all access the same logical companion.
+/// A discovered ``(parent_decl, member_name)`` pair.  This is the
+/// outer-struct slot we're lifting away.
 struct LiftTarget {
     hlfir::DeclareOp parent;          // The struct holding the alloc-array member.
     std::string memberName;            // The member field name.
     fir::RecordType innerRecord;       // The element record type.
 };
 
-/// Walk a function and collect every distinct (parent_decl, member)
-/// pair where the member is alloc-array-of-records.  Multiple uses
-/// (different designate sites) of the same pair collapse.
+/// One rebind site: ``parent%member(idx)%inner_member => storage_chain``.
+///
+/// ``idx`` is the SSA value selecting the element (const or runtime).
+/// ``sliceOp`` is the ``hlfir.designate`` op that produces the slice
+/// of the parent storage, OR null if the bind target is the storage
+/// declare itself (whole-array bind).
+struct RebindInfo {
+    fir::StoreOp storeOp;
+    mlir::Value elemIdx;               // SSA value of the element index.
+    std::string innerMemberName;        // The inner record's field name.
+    hlfir::DeclareOp storageDecl;       // The backing storage declare.
+    hlfir::DesignateOp sliceOp;         // Designate of the slice (may be null).
+};
+
+// ---------------------------------------------------------------------------
+// Phase 1 — Discovery
+// ---------------------------------------------------------------------------
+
+/// Walk a function and collect every distinct ``(parent_decl, member)``
+/// pair where the member is alloc-array-of-records.
 static void discoverLiftTargets(mlir::func::FuncOp func,
                                 llvm::SmallVectorImpl<LiftTarget> &out) {
-    // Key: "<parent_op_address>::<member_name>" → index into out.
-    // Op pointers are stable within a function walk.
     llvm::StringMap<unsigned> seen;
 
     func.walk([&](hlfir::DesignateOp dg) {
@@ -154,17 +171,13 @@ static void discoverLiftTargets(mlir::func::FuncOp func,
         if (!compAttr) return;
         std::string memberName = compAttr.str();
 
-        // The designate's result type — must peel to a box-over-seq-of-record.
         auto resTy = dg.getResult().getType();
-        // For ``%dg = hlfir.designate %parent{"<member>"}``, the result
-        // type is ``ref<box<heap<seq<? x record>>>>``.
         mlir::Type peeled = resTy;
         if (auto rt = mlir::dyn_cast<fir::ReferenceType>(peeled))
             peeled = rt.getEleTy();
         auto innerRec = allocOrPtrArrayOfRecordsMember(peeled);
         if (!innerRec) return;
 
-        // Walk the memref back to the parent's hlfir.declare.
         mlir::Value mr = dg.getMemref();
         hlfir::DeclareOp parentDecl;
         for (int hops = 0; hops < 8 && mr; ++hops) {
@@ -174,7 +187,6 @@ static void discoverLiftTargets(mlir::func::FuncOp func,
                 parentDecl = d;
                 break;
             }
-            // Peel intermediate aliases / wrappers.
             if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { mr = cv.getValue(); continue; }
             if (auto bx = mlir::dyn_cast<fir::EmboxOp>(def))   { mr = bx.getMemref(); continue; }
             if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def))   { mr = rb.getBox(); continue; }
@@ -183,7 +195,6 @@ static void discoverLiftTargets(mlir::func::FuncOp func,
         }
         if (!parentDecl) return;
 
-        // Dedupe.
         std::string key = std::to_string(
                               reinterpret_cast<uintptr_t>(parentDecl.getOperation()))
                           + "::" + memberName;
@@ -200,6 +211,356 @@ static void discoverLiftTargets(mlir::func::FuncOp func,
 }
 
 // ---------------------------------------------------------------------------
+// Chain matching helpers
+// ---------------------------------------------------------------------------
+
+/// Match a value of the shape
+///   ``hlfir.designate (load (hlfir.designate %parent{"<member>"})) (%idx)``
+/// against a known ``(parent, member)`` pair.  On match, returns the
+/// SSA value of the element index (``%idx``) AND the inner element-
+/// selection designate op.  On non-match, returns ``{null, null}``.
+struct ElemMatch {
+    mlir::Value elemIdx;
+    hlfir::DesignateOp elemDg;
+};
+
+static ElemMatch matchElementSelect(mlir::Value v,
+                                    hlfir::DeclareOp parent,
+                                    llvm::StringRef memberName) {
+    ElemMatch r{};
+    auto *def = v.getDefiningOp();
+    if (!def) return r;
+    auto elemDg = mlir::dyn_cast<hlfir::DesignateOp>(def);
+    if (!elemDg) return r;
+    // Element-select designate: has no component name, takes a single
+    // index operand.
+    if (elemDg.getComponentAttr()) return r;
+    auto idxs = elemDg.getIndices();
+    if (idxs.size() != 1) return r;
+
+    // The memref must trace back to load(designate %parent{"<member>"}).
+    mlir::Value mr = elemDg.getMemref();
+    for (int hops = 0; hops < 6 && mr; ++hops) {
+        auto *mdef = mr.getDefiningOp();
+        if (!mdef) return r;
+        if (auto ld = mlir::dyn_cast<fir::LoadOp>(mdef)) {
+            auto *ldef = ld.getMemref().getDefiningOp();
+            if (auto memberDg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(ldef)) {
+                auto comp = memberDg.getComponentAttr();
+                if (!comp || comp.str() != memberName.str()) return r;
+                // Check the memberDg's memref is parent's result.
+                if (memberDg.getMemref() != parent.getResult(0) &&
+                    memberDg.getMemref() != parent.getResult(1))
+                    return r;
+                r.elemIdx = idxs[0];
+                r.elemDg = elemDg;
+                return r;
+            }
+            return r;
+        }
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(mdef)) { mr = cv.getValue(); continue; }
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(mdef))   { mr = rb.getBox(); continue; }
+        return r;
+    }
+    return r;
+}
+
+/// Match ``hlfir.designate <elem_value>{"<inner_member>"}``.
+/// Returns the inner-member designate op, or null.
+static hlfir::DesignateOp matchInnerMember(mlir::Value v) {
+    auto *def = v.getDefiningOp();
+    if (!def) return {};
+    auto dg = mlir::dyn_cast<hlfir::DesignateOp>(def);
+    if (!dg) return {};
+    if (!dg.getComponentAttr()) return {};
+    return dg;
+}
+
+/// Walk an embox source value to find a (storage_decl, slice_op) pair.
+/// Handles:
+///   * ``fir.embox %slice`` where ``%slice = hlfir.designate %decl (...)``.
+///   * ``fir.rebox %inner_box`` similarly.
+static std::pair<hlfir::DeclareOp, hlfir::DesignateOp>
+parseEmboxSource(mlir::Value emboxVal) {
+    auto *def = emboxVal.getDefiningOp();
+    while (def) {
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def)) {
+            def = rb.getBox().getDefiningOp();
+            continue;
+        }
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) {
+            def = cv.getValue().getDefiningOp();
+            continue;
+        }
+        break;
+    }
+    auto embox = mlir::dyn_cast_or_null<fir::EmboxOp>(def);
+    if (!embox) return {{}, {}};
+
+    mlir::Value src = embox.getMemref();
+    auto *srcDef = src.getDefiningOp();
+    if (!srcDef) return {{}, {}};
+
+    // The embox source may be a designate of a storage declare, or the
+    // declare itself.
+    if (auto sliceDg = mlir::dyn_cast<hlfir::DesignateOp>(srcDef)) {
+        // Walk the slice's memref back to the storage declare.
+        mlir::Value mr = sliceDg.getMemref();
+        for (int hops = 0; hops < 6 && mr; ++hops) {
+            auto *mdef = mr.getDefiningOp();
+            if (!mdef) break;
+            if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(mdef))
+                return {d, sliceDg};
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(mdef)) { mr = cv.getValue(); continue; }
+            break;
+        }
+        return {{}, {}};
+    }
+    if (auto declOp = mlir::dyn_cast<hlfir::DeclareOp>(srcDef))
+        return {declOp, hlfir::DesignateOp{}};
+    return {{}, {}};
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Rebind tracking
+// ---------------------------------------------------------------------------
+
+/// Walk a function and collect every rebind store targeting an
+/// inner-pointer-member of ``target.parent``'s alloc-array-of-records.
+static void collectRebinds(mlir::func::FuncOp func,
+                           LiftTarget &target,
+                           llvm::SmallVectorImpl<RebindInfo> &out) {
+    func.walk([&](fir::StoreOp store) {
+        // The dest must be the inner-member designate.
+        auto destDg = matchInnerMember(store.getMemref());
+        if (!destDg) return;
+
+        // The dest's memref must be the element-select chain.
+        auto em = matchElementSelect(destDg.getMemref(),
+                                     target.parent, target.memberName);
+        if (!em.elemDg) return;
+
+        // The stored value must be an embox of a slice / declare.
+        auto [storageDecl, sliceDg] = parseEmboxSource(store.getValue());
+        if (!storageDecl) return;
+
+        RebindInfo info;
+        info.storeOp = store;
+        info.elemIdx = em.elemIdx;
+        info.innerMemberName = destDg.getComponentAttr().str();
+        info.storageDecl = storageDecl;
+        info.sliceOp = sliceDg;
+        out.push_back(std::move(info));
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Access rewrite
+// ---------------------------------------------------------------------------
+
+/// Try to look up a rebind matching ``(elemIdx, innerMemberName)``.
+/// Idx matching is structural: same SSA value, OR same constant.
+///
+/// Returns the first matching rebind, or null on no match.
+static RebindInfo *findRebind(
+        llvm::SmallVectorImpl<RebindInfo> &rebinds,
+        mlir::Value elemIdx,
+        llvm::StringRef innerMemberName) {
+    // Try same-value match first.
+    for (auto &r : rebinds) {
+        if (r.innerMemberName != innerMemberName.str()) continue;
+        if (r.elemIdx == elemIdx) return &r;
+    }
+    // Constant-value fallback.
+    std::optional<int64_t> needed;
+    if (auto *def = elemIdx.getDefiningOp())
+        if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+            if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                needed = ia.getInt();
+    if (!needed) return nullptr;
+    for (auto &r : rebinds) {
+        if (r.innerMemberName != innerMemberName.str()) continue;
+        if (auto *def = r.elemIdx.getDefiningOp())
+            if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def))
+                if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+                    if (ia.getInt() == *needed) return &r;
+    }
+    return nullptr;
+}
+
+/// Materialise an access through the lifted-out chain as a direct
+/// designate over the rebind's storage parent.
+///
+/// Inputs:
+///   * ``accessDg`` — the user-side designate selecting one element
+///     of the rebound pointer-array (e.g. ``%w_box(%c1, %c1)``).  Its
+///     result type is ``ref<T>`` for some scalar T.
+///   * ``rebind`` — the matching rebind site.
+///   * ``elemIdx`` — the per-access element index value (matches the
+///     rebind's same-element).
+///
+/// Returns a fresh ``hlfir::DesignateOp`` whose result has the SAME
+/// type as ``accessDg`` and accesses the equivalent location in the
+/// rebind's storage parent.  Insertion point is set immediately
+/// before ``accessDg``.
+///
+/// Strategy: build new indices = ``rebind.sliceOp``'s scalar indices
+/// PLUS ``accessDg``'s indices.  For example:
+///   * rebind ``storage(:, :, jg)`` (slice = triplet, triplet, scalar=jg)
+///   * access ``w_box(i, j)`` (indices = i, j)
+///   * merged: ``storage(i, j, jg)``
+///
+/// The triplet entries in the slice get consumed by the access
+/// indices (rebased by ``lo - 1`` if non-1, but for ``(:, :, jg)``
+/// the lower bounds are 1, so no rebase).  Scalar entries pass
+/// through verbatim from the slice.
+static mlir::Value buildLiftedAccess(mlir::OpBuilder &b,
+                                     hlfir::DesignateOp accessDg,
+                                     RebindInfo &rebind) {
+    auto loc = accessDg.getLoc();
+    b.setInsertionPoint(accessDg);
+
+    auto accessIdxs = accessDg.getIndices();
+    llvm::SmallVector<mlir::Value, 6> newIdxs;
+
+    if (rebind.sliceOp) {
+        auto sliceIdxs = rebind.sliceOp.getIndices();
+        auto sliceTriplets = rebind.sliceOp.getIsTriplet();
+        unsigned cursor = 0;
+        unsigned accessCursor = 0;
+        for (unsigned k = 0; k < sliceTriplets.size(); ++k) {
+            if (sliceTriplets[k]) {
+                // Triplet — consume one access index.
+                if (accessCursor >= accessIdxs.size())
+                    return {};  // Shape mismatch: bail.
+                newIdxs.push_back(accessIdxs[accessCursor++]);
+                cursor += 3;
+            } else {
+                // Scalar — pass through from the slice.
+                newIdxs.push_back(sliceIdxs[cursor]);
+                cursor += 1;
+            }
+        }
+        // Any remaining access indices (shouldn't happen — the slice
+        // should have one triplet per access index): bail.
+        if (accessCursor != accessIdxs.size())
+            return {};
+    } else {
+        // Whole-array bind: storage parent is accessed directly with
+        // the access indices.
+        for (auto idx : accessIdxs)
+            newIdxs.push_back(idx);
+    }
+
+    // Build the result designate over the storage parent.  Use the
+    // short-form builder which handles all the operand-segment-sizes
+    // and ``is_triplet`` attributes (all-false for an element-access
+    // designate, which is what we always produce).
+    auto declRef = rebind.storageDecl.getResult(0);
+    auto newDg = b.create<hlfir::DesignateOp>(
+        loc,
+        accessDg.getResult().getType(),
+        declRef,
+        mlir::ValueRange{newIdxs});
+    return newDg.getResult();
+}
+
+/// Walk a function for every access through the lifted chain and
+/// rewrite each one.  Returns true if any rewrite happened.
+static bool rewriteAccesses(mlir::func::FuncOp func,
+                            LiftTarget &target,
+                            llvm::SmallVectorImpl<RebindInfo> &rebinds) {
+    // Pattern to match the access shape:
+    //   ``%addr = hlfir.designate %inner_box (<access_indices>)``
+    //   where ``%inner_box = fir.load %field_addr``
+    //   where ``%field_addr = hlfir.designate %elem{"<inner>"}``
+    //   where ``%elem = hlfir.designate (load (designate %parent{"<member>"})) (%idx)``
+    bool changed = false;
+    mlir::OpBuilder b(func.getContext());
+
+    llvm::SmallVector<std::pair<hlfir::DesignateOp, RebindInfo *>, 8> jobs;
+
+    func.walk([&](hlfir::DesignateOp accessDg) {
+        // Element-access designate: no component, has indices.
+        if (accessDg.getComponentAttr()) return;
+        if (accessDg.getIndices().empty()) return;
+
+        // Walk the memref: must be a load of an inner-member designate.
+        auto *mdef = accessDg.getMemref().getDefiningOp();
+        auto ld = mlir::dyn_cast_or_null<fir::LoadOp>(mdef);
+        if (!ld) return;
+        auto innerDg = matchInnerMember(ld.getMemref());
+        if (!innerDg) return;
+        auto em = matchElementSelect(innerDg.getMemref(),
+                                     target.parent, target.memberName);
+        if (!em.elemDg) return;
+
+        // Find the matching rebind.
+        RebindInfo *r = findRebind(rebinds, em.elemIdx,
+                                   innerDg.getComponentAttr().str());
+        if (!r) return;
+
+        jobs.push_back({accessDg, r});
+    });
+
+    for (auto &[accessDg, r] : jobs) {
+        auto newVal = buildLiftedAccess(b, accessDg, *r);
+        if (!newVal) continue;
+        accessDg.getResult().replaceAllUsesWith(newVal);
+        accessDg.erase();
+        changed = true;
+    }
+    return changed;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Cleanup
+// ---------------------------------------------------------------------------
+
+/// After rewrites, the rebind store / embox / inner-member designate /
+/// elem-select / load chains have no remaining users for the lifted
+/// member.  Erase the rebind stores and the runtime allocate /
+/// deallocate calls so downstream passes don't choke.
+static void cleanup(mlir::func::FuncOp func,
+                    LiftTarget &target,
+                    llvm::SmallVectorImpl<RebindInfo> &rebinds) {
+    // Erase rebind stores (their dest designates have no users now).
+    for (auto &r : rebinds) {
+        if (r.storeOp) r.storeOp.erase();
+    }
+
+    // Erase Fortran runtime allocate / deallocate calls touching the
+    // member.  The first argument is a fir.convert of the member-
+    // designate's result; check that the underlying designate matches.
+    llvm::SmallVector<fir::CallOp, 4> deadCalls;
+    func.walk([&](fir::CallOp call) {
+        auto callee = call.getCallee();
+        if (!callee) return;
+        auto name = callee->getRootReference().getValue();
+        if (name != "_FortranAAllocatableAllocate"
+            && name != "_FortranAAllocatableDeallocate"
+            && name != "_FortranAAllocatableSetBounds") return;
+        if (call.getNumOperands() == 0) return;
+        mlir::Value arg = call.getOperand(0);
+        for (int hops = 0; hops < 4 && arg; ++hops) {
+            auto *def = arg.getDefiningOp();
+            if (!def) break;
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) { arg = cv.getValue(); continue; }
+            if (auto memberDg = mlir::dyn_cast<hlfir::DesignateOp>(def)) {
+                auto comp = memberDg.getComponentAttr();
+                if (comp && comp.str() == target.memberName
+                    && (memberDg.getMemref() == target.parent.getResult(0)
+                        || memberDg.getMemref() == target.parent.getResult(1))) {
+                    deadCalls.push_back(call);
+                }
+            }
+            break;
+        }
+    });
+    for (auto c : deadCalls) c.erase();
+}
+
+// ---------------------------------------------------------------------------
 // Pass driver
 // ---------------------------------------------------------------------------
 
@@ -213,29 +574,23 @@ struct LiftAllocArrayOfRecordsPass
     }
     llvm::StringRef getDescription() const final {
         return "Lift `type(t), allocatable :: f(:)` (and pointer "
-               "variants) struct members into top-level companions with "
-               "a leading runtime-extent dim.  Rewrites every "
-               "`<root>%<member>(<idx>)%<inner_leaf>(<...>)` chain into "
-               "a direct access on the companion.";
+               "variants) struct members by tracing the user's pointer "
+               "rebinds and rewriting every "
+               "`<root>%<member>(<idx>)%<inner>(<...>)` access to the "
+               "rebind target's storage directly.";
     }
 
     void runOnOperation() override {
         getOperation().walk([&](mlir::func::FuncOp func) {
             llvm::SmallVector<LiftTarget, 4> targets;
             discoverLiftTargets(func, targets);
-
-            // TODO Phase 2: synthesise companions.
-            // TODO Phase 3: rewrite chains.
-            // TODO Phase 4: cleanup.
-            //
-            // For now the pass is discovery-only — if any targets are
-            // found, FlattenStructs's existing opaque-skip for
-            // alloc-array-of-records members lets the outer struct
-            // flatten with the member as a no-op slot, and the bridge
-            // surfaces the un-lowered access chain as the existing
-            // KeyError at SDFG build.  Subsequent commits land the
-            // rewrite.
-            (void)targets;
+            for (auto &t : targets) {
+                llvm::SmallVector<RebindInfo, 4> rebinds;
+                collectRebinds(func, t, rebinds);
+                if (rebinds.empty()) continue;
+                rewriteAccesses(func, t, rebinds);
+                cleanup(func, t, rebinds);
+            }
         });
     }
 };

@@ -325,6 +325,7 @@ subroutine kernel(d, x, y, z)
 end subroutine kernel
 """
     # SDFG via HLFIR bridge — xfails today at build (no rewrite pass).
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
 
     # f2py reference — always builds; serves as the oracle once the
@@ -489,10 +490,12 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("`type(t), allocatable :: pprog(:)` member — needs `LiftAllocArrayOfRecords` "
-       "pre-pass to rewrite the chain into accesses on a synthesised top-level "
-       "companion of shape `(NPPROG, *leaf_shape)`.  See the active plan in "
-       "`~/.claude/plans/vectorized-fluttering-pumpkin.md`.")
+@xfail("`type(t), allocatable :: pprog(:)` member with callee inlining: "
+       "`call f2(p_prog%pprog(1))` introduces an inlined-callee alias declare "
+       "for `stuff`, and the lift pass's chain matcher doesn't follow through "
+       "the alias declare wrapping the element select.  The non-aliased "
+       "variant (`test_lift_alloc_array_of_records_simple`) is closed by the "
+       "lift pass; this xfail tracks the inlined-callee extension.")
 def test_fortran_frontend_type_arg(tmp_path):
     src = """
 module lib
@@ -670,10 +673,6 @@ end subroutine main
 # ---------------------------------------------------------------------------
 
 
-@xfail("LiftAllocArrayOfRecords pre-pass not yet implemented.  Simple "
-       "stand-alone version of the alloc-array-of-records pattern: const "
-       "index, single pointer-array leaf, no inlining/callee aliasing.  "
-       "Smallest reproducer for the lift transformation.")
 def test_lift_alloc_array_of_records_simple(tmp_path):
     """Minimal unit test for the LiftAllocArrayOfRecords pre-pass.
 
@@ -699,8 +698,8 @@ subroutine kernel(d, val)
   real(kind=8), intent(in)    :: val
   real(kind=8), intent(inout) :: d(2)
   type(outer_t) :: s
-  ! Storage laid out so the LAST dim selects the record — keeps each
-  ! ``storage(:, :, jg)`` slice contiguous for the pointer rebind.
+  ! Storage laid out so the LAST dim selects the record - keeps each
+  ! storage(:, :, jg) slice contiguous for the pointer rebind.
   real(kind=8), target :: storage(4, 5, 3)
 
   ! Allocate the AoS spine + bind each record's pointer to a slice.
@@ -717,6 +716,7 @@ subroutine kernel(d, val)
   deallocate(s%items)
 end subroutine kernel
 """
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
     ref = f2py_compile(src, tmp_path / "ref", "lift_simple_ref")
 
@@ -731,12 +731,14 @@ end subroutine kernel
     np.testing.assert_allclose(d_ref, [val, val * 2.0], rtol=0, atol=0)
 
 
-@xfail("LiftAllocArrayOfRecords pre-pass not yet implemented.  "
-       "ICON-derived snippet: `t_nh_state` holds `TYPE(t_nh_prog), "
-       "ALLOCATABLE :: prog(:)` where each `t_nh_prog` carries multiple "
-       "pointer-array members.  Access pattern mirrors "
-       "`mo_solve_nonhydro.f90:1576`: `p_nh%prog(nvar)%rho(jc, jk, jb)` "
-       "with runtime `nvar`.")
+@xfail("LiftAllocArrayOfRecords runtime-index case not yet handled.  "
+       "Rebinds inside `do n = 1, N; p%items(n)%w => storage(..., n); end do` "
+       "establish a symbolic equivalence `p%items(<idx>)%w === "
+       "storage(..., <idx>)` for any idx, but the current pass matches "
+       "rebind sites by SSA-value or constant only.  Closing this needs "
+       "loop-iter substitution in findRebind: when the rebind sits inside "
+       "a do-loop, treat the iter as a wildcard that gets replaced by the "
+       "access-site element index.  See plan / TODO.")
 def test_lift_alloc_array_of_records_icon_pattern(tmp_path):
     """ICON-derived test for the LiftAllocArrayOfRecords pre-pass.
 
@@ -807,6 +809,7 @@ subroutine kernel(out_rho, out_theta, out_w, nvar, wgt, rho_val, theta_val, w_va
   deallocate(p_nh%prog)
 end subroutine kernel
 """
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
     ref = f2py_compile(src, tmp_path / "ref", "lift_icon_ref")
 
