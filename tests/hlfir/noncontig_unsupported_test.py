@@ -7,7 +7,7 @@ and the regression is caught.
 
 Currently covered:
   * Symbolic-extent noncontiguous gather (no compile-time-constant size).
-    Lowered by ``hlfir-materialise-associates`` only when extent is a
+    Lowered by ``hlfir-expand-vector-subscript-gather`` only when extent is a
     constant integer; otherwise pass aborts with ``op.emitError``.
 
 Higher-rank noncontiguous gathers and INTENT(out) scatter-back fail

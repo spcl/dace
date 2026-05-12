@@ -7,9 +7,9 @@ constraint of "no array of symbols" is respected because the symbol
 SLOT is reused, not duplicated.
 
 Pipeline:
-  * ``hlfir-materialise-associates`` — gather: replaces flang's
+  * ``hlfir-expand-vector-subscript-gather`` — gather: replaces flang's
     ``hlfir.associate %elemental`` with an explicit alloca + DO loop.
-  * ``hlfir-expand-region-assign`` — scatter: replaces flang's
+  * ``hlfir-expand-vector-subscript-scatter`` — scatter: replaces flang's
     ``hlfir.region_assign`` (with ``hlfir.elemental_addr`` destination)
     with a DO loop of per-element scalar assigns.
 
@@ -93,7 +93,7 @@ def test_inline_gather_with_symbolic_extent(tmp_path: Path):
     This is the positive counterpart of the symbolic-extent bail-out
     test in ``noncontig_unsupported_test.py``.  Inline gathers (no
     surrounding subroutine call) are NOT routed through
-    ``hlfir.associate``, so ``hlfir-materialise-associates``'s
+    ``hlfir.associate``, so ``hlfir-expand-vector-subscript-gather``'s
     static-extent guard never fires.  The bridge's regular
     elementwise-assign path handles the gather directly via
     indirection memlets — and crucially this path DOES support
@@ -123,7 +123,7 @@ end subroutine main
 def test_gather_via_call(tmp_path: Path):
     """``call fun(d(cols), out)`` — the noncontig slice is the actual
     arg to a callee that takes a contiguous array.  flang produces
-    ``hlfir.associate``; ``hlfir-materialise-associates`` lowers it.
+    ``hlfir.associate``; ``hlfir-expand-vector-subscript-gather`` lowers it.
     Constant-shape callee dummy avoids a separate ``n`` symbol on
     the SDFG signature."""
     src = """
@@ -160,7 +160,7 @@ end subroutine main
 def test_scatter_into_local_array(tmp_path: Path):
     """``d(cols) = source`` — write 4 elements into ``d`` at indices
     given by ``cols``, leaving the other elements untouched.
-    Exercises ``hlfir-expand-region-assign``."""
+    Exercises ``hlfir-expand-vector-subscript-scatter``."""
     src = """
 subroutine main(d, cols, source)
   double precision, intent(inout) :: d(8)
@@ -333,7 +333,7 @@ end subroutine main
                                expected,
                                rtol=1e-12,
                                err_msg="gather/scatter on the same array must materialise the "
-                               "RHS to a temp first; check that hlfir-expand-region-assign "
+                               "RHS to a temp first; check that hlfir-expand-vector-subscript-scatter "
                                "emits a separate gather loop into a transient before the "
                                "scatter loop.")
 

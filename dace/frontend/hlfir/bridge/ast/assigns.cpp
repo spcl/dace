@@ -392,7 +392,7 @@ ASTNode buildAssignNode(hlfir::AssignOp assign) {
         // elemental's body so reads inside it get tracked.  Mirrors the
         // global ``collectReadAccesses`` handler in elementals.cpp.
         // Without this, ``hlfir.assign (apply elem, i) to dst`` (the
-        // shape produced by ``hlfir-materialise-associates``' gather
+        // shape produced by ``hlfir-expand-vector-subscript-gather``' gather
         // loop) registers no read connectors and the tasklet body
         // references a free-floating array name.
         if (auto apply = mlir::dyn_cast<hlfir::ApplyOp>(op)) {

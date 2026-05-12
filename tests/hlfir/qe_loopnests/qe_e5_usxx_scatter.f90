@@ -8,7 +8,7 @@
 !
 ! Pattern: noncontiguous accumulating-scatter into a complex array
 ! via a 1-based index map.  Exercises the bridge's
-! ``hlfir-expand-region-assign`` plus complex(8) arithmetic.
+! ``hlfir-expand-vector-subscript-scatter`` plus complex(8) arithmetic.
 !
 ! Note: Fortran does NOT have ``+=`` on a vector subscript, so we
 ! write the equivalent ``do`` form directly.  This avoids triggering

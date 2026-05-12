@@ -101,11 +101,11 @@ DEFAULT_PIPELINE = (
     # ``fir.alloca`` + gather DO loop.  After inline-all so the
     # surrounding callee dummy declare aliasing the temp resolves
     # through the materialised hlfir.declare.
-    "hlfir-materialise-associates,"
+    "hlfir-expand-vector-subscript-gather,"
     # Scatter sibling: rewrites ``hlfir.region_assign`` whose lhs region
     # carries an ``hlfir.elemental_addr`` (Fortran ``d(cols) = source``)
     # into an explicit DO loop of per-element scalar assigns.
-    "hlfir-expand-region-assign,"
+    "hlfir-expand-vector-subscript-scatter,"
     # Drop private callee bodies once inlined — otherwise their
     # declares leak into extract_vars as stray scalars.
     "symbol-dce,"

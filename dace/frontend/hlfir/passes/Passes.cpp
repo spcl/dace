@@ -49,10 +49,10 @@ void registerAllBridgePasses() {
         return createFoldElementAliasesPass();
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
-        return createMaterialiseAssociatesPass();
+        return createExpandVectorSubscriptGatherPass();
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
-        return createExpandRegionAssignPass();
+        return createExpandVectorSubscriptScatterPass();
     });
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
         return createRejectPolymorphismPass();

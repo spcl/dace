@@ -74,7 +74,7 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
             syms.push_back(std::to_string(*c));
             return;
         }
-        // Dynamic gather-temp extent: ``hlfir-materialise-associates``
+        // Dynamic gather-temp extent: ``hlfir-expand-vector-subscript-gather``
         // creates a temp whose shape includes a triplet-derived extent
         // (``arith.select(cmpi_sgt, addi(subi(load_ub, load_lb), 1),
         // 0)``).  Render the SSA expression directly so the descriptor

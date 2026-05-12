@@ -216,8 +216,8 @@ add_library(hlfir_bridge_passes STATIC
     passes/DefaultIntent.cpp
     passes/VerifyNoUnresolvedCalls.cpp
     passes/FoldElementAliases.cpp
-    passes/MaterialiseAssociates.cpp
-    passes/ExpandRegionAssign.cpp
+    passes/ExpandVectorSubscriptGather.cpp
+    passes/ExpandVectorSubscriptScatter.cpp
     passes/RejectPolymorphism.cpp
     passes/RewritePointerAssigns.cpp
     passes/RewriteSequenceAssociation.cpp

@@ -1143,7 +1143,7 @@ def test_class_as_monomorphic_box(tmp_path: Path, call_arg, kwarg_for_sdfg):
       * ``literal_constant`` — flang creates an
         ``hlfir.associate %cst {adapt.valuebyref}`` so the inlined
         callee's by-ref dummy can take a value-converted constant.
-        ``hlfir-materialise-associates`` rewrites that scalar
+        ``hlfir-expand-vector-subscript-gather`` rewrites that scalar
         associate to a local alloca + store so the bridge sees a
         proper transient instead of a nameless associate result.
     """

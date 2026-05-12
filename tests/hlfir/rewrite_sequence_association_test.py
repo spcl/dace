@@ -24,7 +24,7 @@ from _util import _ensure_on_path, compile_to_hlfir, have_flang
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 _PRELUDE = ("lower-fir-select-case,hlfir-inline-all,hlfir-fold-element-aliases,"
-            "hlfir-materialise-associates,hlfir-expand-region-assign,symbol-dce,"
+            "hlfir-expand-vector-subscript-gather,hlfir-expand-vector-subscript-scatter,symbol-dce,"
             "fir-polymorphic-op,hlfir-reject-polymorphism")
 _REWRITE = "hlfir-rewrite-sequence-association"
 

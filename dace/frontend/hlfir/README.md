@@ -69,8 +69,8 @@ separately above only to keep the conceptual flow readable:
 | `lower-fir-select-case` | Lower `fir.select_case` to `cf.cond_br` BEFORE inlining (the inliner's block-operand remap segfaults on a callee containing a select-case) |
 | `hlfir-inline-all` | Splice every callee body into the pinned entry |
 | `hlfir-fold-element-aliases` | Erase element-scoped alias declares left by inlined elemental / scalar-arg procedures |
-| `hlfir-materialise-associates` | Replace `hlfir.associate` of an `hlfir.elemental` (Flang's gather temp for noncontiguous slice arguments) with an explicit `fir.alloca` + gather DO loop |
-| `hlfir-expand-region-assign` | Replace `hlfir.region_assign` with an `hlfir.elemental_addr` destination (vector-subscripted scatter `d(cols) = source`) by an explicit DO loop |
+| `hlfir-expand-vector-subscript-gather` | Replace `hlfir.associate` of an `hlfir.elemental` (Flang's gather temp for noncontiguous slice arguments) with an explicit `fir.alloca` + gather DO loop |
+| `hlfir-expand-vector-subscript-scatter` | Replace `hlfir.region_assign` with an `hlfir.elemental_addr` destination (vector-subscripted scatter `d(cols) = source`) by an explicit DO loop |
 | `symbol-dce` | Drop private callee bodies once `hlfir-inline-all` has folded them in |
 | `fir-polymorphic-op` | Statically devirtualise resolvable `fir.dispatch` / `fir.select_type`; lowers the rest to an indirect-call shape that the next pass catches |
 | `hlfir-reject-polymorphism` | Loud-fail on any surviving `fir.dispatch`, `fir.select_type`, or `fir.box_tdesc` (residual indirect dispatch from `fir-polymorphic-op`) — the bridge supports CLASS-as-monomorphic-box only |
@@ -357,8 +357,8 @@ dace/frontend/hlfir/
 │   ├── LowerFirSelectCase.cpp  fir.select_case → cf.cond_br (pre-inline)
 │   ├── InlineAll.cpp
 │   ├── FoldElementAliases.cpp  erase elemental-body alias declares
-│   ├── MaterialiseAssociates.cpp  hlfir.associate(elemental) → alloca + gather loop
-│   ├── ExpandRegionAssign.cpp  hlfir.region_assign(elemental_addr) → scatter loop
+│   ├── ExpandVectorSubscriptGather.cpp  hlfir.associate(elemental) → alloca + gather loop
+│   ├── ExpandVectorSubscriptScatter.cpp  hlfir.region_assign(elemental_addr) → scatter loop
 │   ├── RejectPolymorphism.cpp  loud-fail on residual virtual dispatch / SELECT TYPE
 │   ├── FlattenStructs.cpp      stamps hlfir.flatten_plan
 │   ├── PropagateShapes.cpp
@@ -484,7 +484,7 @@ xfails), ❌ never (out of scope).
 | Elementwise intrinsics (sin/cos/exp/sqrt/...) on real/complex | ✅ | added complex variants 2026-04-28 |
 | Reductions (sum/product/min/max/all/any/count/minval/maxval) | ✅ | |
 | BLAS/LAPACK (matmul, transpose) | ✅ | dense → libnode, strided → explicit DO loop |
-| Noncontiguous slice via index array `a(idx, :)` — rank-1, **constant** gather extent | ✅ | Lowered by `hlfir-materialise-associates` (replaces flang's `hlfir.associate` of an `hlfir.elemental` with an explicit `fir.alloca` + gather DO loop, then reuses DaCe indirection memlets `<arr>_at<gid>`).  See pass header for shape constraints. |
+| Noncontiguous slice via index array `a(idx, :)` — rank-1, **constant** gather extent | ✅ | Lowered by `hlfir-expand-vector-subscript-gather` (replaces flang's `hlfir.associate` of an `hlfir.elemental` with an explicit `fir.alloca` + gather DO loop, then reuses DaCe indirection memlets `<arr>_at<gid>`).  See pass header for shape constraints. |
 | Noncontiguous slice — rank-2+ gather (`d(cols2, cols)`) | 🟡 Phase 2 | 5 xfails — pass currently bails with a clear error |
 | Noncontiguous slice — **symbolic** extent | ❌ | DaCe can't express runtime-sized symbol arrays.  Pass aborts loudly via `op.emitError`; covered by [noncontig_unsupported_test.py](../../../tests/hlfir/noncontig_unsupported_test.py) |
 | Noncontiguous slice — INTENT(out) scatter-back | 🟡 | rare in real code; not yet modelled (the i1 must-finalise flag is hard-coded to false) |

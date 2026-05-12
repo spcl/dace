@@ -1,5 +1,5 @@
 // ============================================================================
-// ExpandRegionAssign.cpp — replace hlfir.region_assign with elemental_addr
+// ExpandVectorSubscriptScatter.cpp — replace hlfir.region_assign with elemental_addr
 // destination (Fortran array-based scatter) by an explicit DO loop.
 // ============================================================================
 //
@@ -31,7 +31,7 @@
 //         hlfir.assign %src_v to %dest_addr
 //     }
 //
-// Why a separate pass from MaterialiseAssociates:
+// Why a separate pass from ExpandVectorSubscriptGather:
 //     The gather case (rhs ``d(cols)``) flows through ``hlfir.associate`` of an
 //     ``hlfir.elemental`` — a value-producing expression that the bridge's
 //     read path can hook into via the synth temp's ``hlfir.declare``.
@@ -46,7 +46,7 @@
 //     defer.
 //   * Destination ``hlfir.elemental_addr`` must be rank-1 with a constant
 //     extent.  Same constraint as the gather pass — see
-//     MaterialiseAssociates.cpp's header for the full DaCe-side rationale.
+//     ExpandVectorSubscriptGather.cpp's header for the full DaCe-side rationale.
 // ============================================================================
 
 #include "passes/Passes.h"
@@ -69,13 +69,13 @@ namespace hlfir_bridge {
 
 namespace {
 
-struct ExpandRegionAssignPass
-    : public mlir::PassWrapper<ExpandRegionAssignPass,
+struct ExpandVectorSubscriptScatterPass
+    : public mlir::PassWrapper<ExpandVectorSubscriptScatterPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandRegionAssignPass)
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandVectorSubscriptScatterPass)
 
     llvm::StringRef getArgument() const final {
-        return "hlfir-expand-region-assign";
+        return "hlfir-expand-vector-subscript-scatter";
     }
     llvm::StringRef getDescription() const final {
         return "Replace hlfir.region_assign whose destination region uses "
@@ -125,7 +125,7 @@ struct ExpandRegionAssignPass
         auto shapeOp = mlir::dyn_cast_or_null<fir::ShapeOp>(shapeOper.getDefiningOp());
         if (!shapeOp || shapeOp.getExtents().size() != 1) {
             return op.emitError(
-                "hlfir-expand-region-assign: rank-")
+                "hlfir-expand-vector-subscript-scatter: rank-")
                 << (shapeOp ? shapeOp.getExtents().size() : 0)
                 << " scatter not yet supported (rank-1 only)";
         }
@@ -148,7 +148,7 @@ struct ExpandRegionAssignPass
                     srcVal = y.getEntity();
         if (!srcVal) {
             return op.emitError(
-                "hlfir-expand-region-assign: source region has no yield");
+                "hlfir-expand-vector-subscript-scatter: source region has no yield");
         }
         // Source can be:
         //   * a contiguous ``fir.ref<!fir.array<NxT>>`` (constant-shape
@@ -176,7 +176,7 @@ struct ExpandRegionAssignPass
             eleTy = exprTy.getElementType();
         } else {
             return op.emitError(
-                "hlfir-expand-region-assign: unsupported source type "
+                "hlfir-expand-vector-subscript-scatter: unsupported source type "
                 "(expected fir.ref/fir.box of fir.array or hlfir.expr)");
         }
 
@@ -280,7 +280,7 @@ struct ExpandRegionAssignPass
                 } else enclName = sym;
             }
             // Walk the elemental_addr body to find the destination
-            // array name (mirrors MaterialiseAssociates' source name
+            // array name (mirrors ExpandVectorSubscriptGather' source name
             // walk; the arg roles are reversed but the chain shape is
             // identical: yield → designate → declare).
             std::string dstName = "expr";
@@ -427,7 +427,7 @@ struct ExpandRegionAssignPass
         }
         if (!destAddr) {
             return op.emitError(
-                "hlfir-expand-region-assign: could not capture destination "
+                "hlfir-expand-vector-subscript-scatter: could not capture destination "
                 "address from elemental_addr body");
         }
         b.create<hlfir::AssignOp>(loc, srcLoadVal, destAddr);
@@ -444,8 +444,8 @@ struct ExpandRegionAssignPass
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> createExpandRegionAssignPass() {
-    return std::make_unique<ExpandRegionAssignPass>();
+std::unique_ptr<mlir::Pass> createExpandVectorSubscriptScatterPass() {
+    return std::make_unique<ExpandVectorSubscriptScatterPass>();
 }
 
 }  // namespace hlfir_bridge

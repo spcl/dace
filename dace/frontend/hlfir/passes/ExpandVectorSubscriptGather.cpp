@@ -1,5 +1,5 @@
 // ============================================================================
-// MaterialiseAssociates.cpp — replace hlfir.associate of an elemental with an
+// ExpandVectorSubscriptGather.cpp — replace hlfir.associate of an elemental with an
 // explicit gather temp.
 // ============================================================================
 //
@@ -91,13 +91,13 @@ namespace hlfir_bridge {
 
 namespace {
 
-struct MaterialiseAssociatesPass
-    : public mlir::PassWrapper<MaterialiseAssociatesPass,
+struct ExpandVectorSubscriptGatherPass
+    : public mlir::PassWrapper<ExpandVectorSubscriptGatherPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(MaterialiseAssociatesPass)
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandVectorSubscriptGatherPass)
 
     llvm::StringRef getArgument() const final {
-        return "hlfir-materialise-associates";
+        return "hlfir-expand-vector-subscript-gather";
     }
     llvm::StringRef getDescription() const final {
         return "Replace hlfir.associate of an hlfir.elemental with an "
@@ -187,13 +187,13 @@ struct MaterialiseAssociatesPass
         auto shapeOper = elem.getShape();
         if (!shapeOper) {
             return assoc.emitError(
-                "hlfir-materialise-associates: elemental has no shape "
+                "hlfir-expand-vector-subscript-gather: elemental has no shape "
                 "operand — cannot determine gather extent");
         }
         auto shapeOp = mlir::dyn_cast_or_null<fir::ShapeOp>(shapeOper.getDefiningOp());
         if (!shapeOp) {
             return assoc.emitError(
-                "hlfir-materialise-associates: shape operand is not a "
+                "hlfir-expand-vector-subscript-gather: shape operand is not a "
                 "fir.shape op — unsupported elemental form");
         }
 
@@ -373,8 +373,8 @@ struct MaterialiseAssociatesPass
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> createMaterialiseAssociatesPass() {
-    return std::make_unique<MaterialiseAssociatesPass>();
+std::unique_ptr<mlir::Pass> createExpandVectorSubscriptGatherPass() {
+    return std::make_unique<ExpandVectorSubscriptGatherPass>();
 }
 
 }  // namespace hlfir_bridge
