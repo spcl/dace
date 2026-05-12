@@ -277,6 +277,10 @@ class Subset(object):
 
 def _simplified_str(val):
     val = _expr(val)
+    if isinstance(val, sp.Basic):
+        typed_constants = {tc: tc.value for tc in val.atoms(symbolic.TypedConstant)}
+        if typed_constants:
+            val = symbolic.simplify(val.xreplace(typed_constants))
     try:
         return str(int(val))
     except TypeError:

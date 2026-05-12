@@ -102,5 +102,13 @@ def test_undefined_symbol_serialization_uses_dollar_prefix():
     assert isinstance(restored, symbolic.UndefinedSymbol)
 
 
+def test_symbol_assumption_roundtrip_preserves_bool_metadata():
+    serialized = 'symbol($i, dtype=dace.int64, nonnegative=True)'
+
+    restored = symbolic.deserialize_symbolic(serialized)
+
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

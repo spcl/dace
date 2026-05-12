@@ -10,6 +10,7 @@ import numpy
 
 import sympy.abc
 import sympy.printing.str
+from sympy.printing.precedence import precedence
 
 import packaging.version as packaging_version
 
@@ -508,7 +509,7 @@ def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
-        if value is True and default_assumptions.get(key) != value:
+        if value == True and default_assumptions.get(key) != True:
             kwargs[key] = value
     return kwargs
 
@@ -1609,6 +1610,39 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
+
+    def _normalized_term(self, expr):
+        if not isinstance(expr, sympy.Basic):
+            return expr
+        typed_constants = {tc: tc.value for tc in expr.atoms(TypedConstant)}
+        if typed_constants:
+            return sympy.simplify(expr.xreplace(typed_constants))
+        return expr
+
+    def _canonical_term_key(self, expr):
+        return sympy.default_sort_key(self._normalized_term(expr))
+
+    def _print_Add(self, expr, order=None):
+        terms = sorted(sympy.Add.make_args(expr), key=self._canonical_term_key)
+
+        prec = precedence(expr)
+        pieces = []
+        for term in terms:
+            rendered = self._print(term)
+            if rendered.startswith('-') and not term.is_Add:
+                sign = '-'
+                rendered = rendered[1:]
+            else:
+                sign = '+'
+            if precedence(term) < prec or term.is_Add:
+                pieces.extend([sign, f'({rendered})'])
+            else:
+                pieces.extend([sign, rendered])
+
+        sign = pieces.pop(0)
+        if sign == '+':
+            sign = ''
+        return sign + ' '.join(pieces)
 
     def _print_Symbol(self, expr):
         if expr.name == '?':
