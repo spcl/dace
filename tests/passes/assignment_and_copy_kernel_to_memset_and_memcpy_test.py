@@ -748,5 +748,38 @@ def test_transpose_map_is_not_lifted_to_memcpy():
         "lifted to a CopyLibraryNode — the pass treats permutation as pure copy.")
 
 
+def test_inkernel_memset_is_not_lifted():
+    """Pin: a memset (``scratch[j] = 0``) that sits *inside* a GPU_Device
+    map must NOT be lifted to a ``MemsetLibraryNode``. The libnode expands
+    to ``cudaMemsetAsync``, which is a host-only runtime entry point and
+    cannot be issued from device code. Also, the expansion produces a
+    ``GPU_Device``-scheduled mapped tasklet that, when nested inside
+    another GPU map, fails ``AddThreadBlockMap.can_be_applied`` and
+    breaks ``InferGPUGridAndBlockSize`` downstream. Regressed in the
+    four ``nested_kernel_transient_test`` variants.
+
+    Uses ``simplify=True`` so the inner Sequential map's ``MapEntry ->
+    Tasklet -> MapExit -> AccessNode`` shape is actually present at the
+    top level — with ``simplify=False`` the frontend wraps each map body
+    in a NestedSDFG and the lift pattern never matches even when the
+    precondition is off.
+    """
+
+    @dace.program
+    def kernel_with_inner_memset(A: dace.float64[128, 64] @ dace.StorageType.GPU_Global):
+        for i in dace.map[0:128] @ dace.ScheduleType.GPU_Device:
+            scratch = dace.define_local([64], numpy.float64, storage=dace.StorageType.GPU_Global)
+            for j in dace.map[0:64] @ dace.ScheduleType.Sequential:
+                scratch[j] = 0
+            A[i, :] = scratch
+
+    sdfg = kernel_with_inner_memset.to_sdfg(simplify=True)
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 0, (
+        "An in-kernel memset (Sequential map inside GPU_Device) was lifted to a "
+        "MemsetLibraryNode — but cudaMemsetAsync is host-only and cannot run from "
+        "device code. The pass should skip maps nested in any GPU scope.")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

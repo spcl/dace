@@ -6,7 +6,7 @@ import copy
 from dace import properties
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -490,6 +490,26 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if (state.degree(n) == 0):
                 state.remove_node(n)
 
+    @staticmethod
+    def _is_nested_in_gpu_scope(state: dace.SDFGState, node: dace.nodes.MapEntry) -> bool:
+        """True iff ``node`` sits inside any ancestor map with a GPU schedule.
+
+        Lifting an in-kernel map to a ``CopyLibraryNode`` / ``MemsetLibraryNode``
+        ends up calling ``cudaMemcpyAsync`` / ``cudaMemsetAsync`` once expanded,
+        which are host-only runtime entry points and cannot be issued from
+        device code. Additionally the expansion produces a ``GPU_Device``-
+        scheduled mapped tasklet that, when nested inside another GPU map,
+        fails ``AddThreadBlockMap.can_be_applied`` (nested-GPU rule) and then
+        breaks ``InferGPUGridAndBlockSize``.
+        """
+        parent_tuple = helpers.get_parent_map(state, node)
+        while parent_tuple is not None:
+            parent_map, parent_state = parent_tuple
+            if parent_map.map.schedule in dace.dtypes.GPU_SCHEDULES:
+                return True
+            parent_tuple = helpers.get_parent_map(parent_state, parent_map)
+        return False
+
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[int, Dict[dace.SDFGState, Set[dace.SDFGState]]]:
         map_entries = set()
 
@@ -508,6 +528,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             if self._get_num_tasklets_within_map(state, node) == 0:
+                continue
+
+            if self._is_nested_in_gpu_scope(state, node):
                 continue
 
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)

@@ -72,9 +72,6 @@ def _test_transient(persistent: bool):
     expected = np.copy(a)
     expected[:] = 1
     with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='64,8,1'):
-        sdfg.save("a.sdfg")
-        sdfg.generate_code()
-        sdfg.save("b.sdfg")
         sdfg(a)
 
     assert np.allclose(a, expected)
