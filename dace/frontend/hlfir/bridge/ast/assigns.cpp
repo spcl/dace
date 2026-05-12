@@ -482,6 +482,45 @@ ASTNode buildAssignNode(hlfir::AssignOp assign) {
             }
             return;
         }
+        // Scalar min/max idiom: ``arith.select(arith.cmpf|cmpi, t, f)``
+        // where buildExpr emits ``min(t, f)`` / ``max(t, f)``.  The cmp
+        // and the select reference the SAME ``t`` and ``f`` loads, so
+        // recursing into both branches would record 4 AccessInfos for
+        // the 2 textual operands ``min/max`` emits.  Skip the cmp's
+        // operands here so the AccessInfo count matches the textual
+        // occurrences emit_tasklet's regex sees.  Falls back to the
+        // generic operand walk for any select that doesn't match the
+        // idiom (in particular when t != cmp.lhs or f != cmp.rhs, which
+        // is the actual conditional-select shape).
+        if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(op)) {
+            auto *cdef = sel.getCondition().getDefiningOp();
+            bool isMinMax = false;
+            if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpFOp>(cdef)) {
+                using P = mlir::arith::CmpFPredicate;
+                auto pred = cmp.getPredicate();
+                bool ok_pred = (pred == P::OLT || pred == P::ULT
+                             || pred == P::OGT || pred == P::UGT);
+                if (ok_pred && cmp.getLhs() == sel.getTrueValue()
+                            && cmp.getRhs() == sel.getFalseValue())
+                    isMinMax = true;
+            }
+            if (!isMinMax) {
+                if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpIOp>(cdef)) {
+                    using P = mlir::arith::CmpIPredicate;
+                    auto pred = cmp.getPredicate();
+                    bool ok_pred = (pred == P::slt || pred == P::ult
+                                 || pred == P::sgt || pred == P::ugt);
+                    if (ok_pred && cmp.getLhs() == sel.getTrueValue()
+                                && cmp.getRhs() == sel.getFalseValue())
+                        isMinMax = true;
+                }
+            }
+            if (isMinMax) {
+                collectReads(sel.getTrueValue(), depth + 1);
+                collectReads(sel.getFalseValue(), depth + 1);
+                return;
+            }
+        }
         for (auto operand : op->getOperands())
             collectReads(operand, depth + 1);
     };

@@ -47,33 +47,44 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 def test_fortran_frontend_cloudsc_plude_conditional_zero(tmp_path):
     test_string = """
-                    SUBROUTINE driver(plude, plu, ldcum, zdtgdp, rlmin, &
+                    SUBROUTINE driver(plude, plu, ldcum, zgdp, ptsphy, rlmin, &
                                       klon, klev, nblocks, ncldtop)
                     integer :: klon, klev, nblocks, ncldtop
                     double precision plude(klon, klev, nblocks)
                     double precision plu(klon, klev, nblocks)
                     logical ldcum(klon, nblocks)
-                    double precision zdtgdp(klon)
+                    double precision zgdp(klon)
+                    double precision ptsphy
                     double precision rlmin
                     integer ibl
                     DO ibl = 1, nblocks
                         CALL kernel(plude(:, :, ibl), plu(:, :, ibl), &
-                                    ldcum(:, ibl), zdtgdp, rlmin, klon, klev, ncldtop)
+                                    ldcum(:, ibl), zgdp, ptsphy, rlmin, klon, klev, ncldtop)
                     ENDDO
                     END SUBROUTINE driver
 
-                    SUBROUTINE kernel(plude, plu, ldcum, zdtgdp, rlmin, &
+                    SUBROUTINE kernel(plude, plu, ldcum, zgdp, ptsphy, rlmin, &
                                       klon, klev, ncldtop)
                     integer :: klon, klev, ncldtop
                     double precision, intent(inout) :: plude(klon, klev)
                     double precision plu(klon, klev)
                     logical ldcum(klon)
-                    double precision zdtgdp(klon)
+                    double precision zgdp(klon)
+                    double precision ptsphy
                     double precision rlmin
                     integer jk, jl
-                    double precision, parameter :: zepsec = 1.0d-12
-                    DO jk = 1, klev
-                        IF (jk < klev .AND. jk >= ncldtop) THEN
+                    ! Local arrays + scalars body-init — mirrors cloudsc
+                    ! line 1255 ``ZEPSEC = 1.E-14`` and line 1589
+                    ! ``ZDTGDP(JL) = PTSPHY * ZGDP(JL)``.
+                    double precision zepsec, zdtgdp(klon)
+                    zepsec = 1.0d-12
+                    DO jk = ncldtop, klev
+                        ! Mimic cloudsc: ZDTGDP is computed locally each
+                        ! JK iteration in a separate loop block.
+                        IF (jk < klev) THEN
+                            DO jl = 1, klon
+                                zdtgdp(jl) = ptsphy * zgdp(jl)
+                            ENDDO
                             DO jl = 1, klon
                                 plude(jl, jk) = plude(jl, jk) * zdtgdp(jl)
                                 IF (ldcum(jl) .AND. plude(jl, jk) > rlmin &
@@ -95,36 +106,35 @@ def test_fortran_frontend_cloudsc_plude_conditional_zero(tmp_path):
     plude_in = rng.random((klon, klev, nblocks))
     plu = rng.random((klon, klev, nblocks))
     ldcum = rng.integers(0, 2, (klon, nblocks)).astype(np.bool_)
-    zdtgdp = rng.random((klon, ))
-    # Match cloudsc_full: RLMIN is in the input dict as a Python float
-    # drawn from rng.random(), so it's some value in [0, 1).  With this
-    # range the ``PLUDE > RLMIN`` check rejects most cells — exactly
-    # the regime where the cloudsc gap surfaces.
+    zgdp = rng.random((klon, ))
+    ptsphy_val = rng.random()
     rlmin_val = rng.random()
 
     # Expected (Python ref): mirrors the kernel logic exactly.
     expected = plude_in.copy(order='F')
     for ibl in range(nblocks):
+        zdtgdp_local = ptsphy_val * zgdp.copy()
         for jk in range(klev):
             jk1 = jk + 1  # Fortran 1-based
             if jk1 < klev and jk1 >= ncldtop:
                 for jl in range(klon):
-                    expected[jl, jk, ibl] *= zdtgdp[jl]
+                    expected[jl, jk, ibl] *= zdtgdp_local[jl]
                     cond = (ldcum[jl, ibl] and expected[jl, jk, ibl] > rlmin_val and plu[jl, jk + 1, ibl] > 1e-12)
                     if not cond:
                         expected[jl, jk, ibl] = 0.0
 
     plude = np.asfortranarray(plude_in.copy())
-    # rlmin is an inout scalar in the kernel signature → bridge registers
-    # it as length-1 Array; route via the same helper cloudsc_full uses.
     from dace.data import Scalar
-    rlmin_arg = (rlmin_val if isinstance(sdfg.arglist().get('rlmin'), Scalar) else np.array([rlmin_val],
-                                                                                            dtype=np.float64))
+
+    def _route(name, val, dtype):
+        return val if isinstance(sdfg.arglist().get(name), Scalar) else np.array([val], dtype=dtype)
+
     sdfg(plude=plude,
          plu=np.asfortranarray(plu),
          ldcum=np.asfortranarray(ldcum),
-         zdtgdp=np.asfortranarray(zdtgdp),
-         rlmin=rlmin_arg,
+         zgdp=np.asfortranarray(zgdp),
+         ptsphy=_route('ptsphy', ptsphy_val, np.float64),
+         rlmin=_route('rlmin', rlmin_val, np.float64),
          klon=klon,
          klev=klev,
          nblocks=nblocks,
