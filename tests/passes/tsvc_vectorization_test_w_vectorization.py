@@ -297,13 +297,13 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         filter_map = None
 
     pass_info = dict()
-    if not break_vectorize:
-        VectorizeCPU(vector_width=vector_width,
-                     fuse_overlapping_loads=fuse_overlapping_loads,
-                     insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
-    else:
-        from dace.transformation.passes.vectorization.vectorize_break import VectorizeBreak
-        VectorizeBreak(vector_width=vector_width).apply_pass(copy_sdfg, pass_info)
+    # VectorizeBreak removed (legacy break-vectorization path dropped); the
+    # ``break_vectorize`` parameter is now a no-op kept only for call-site
+    # compatibility with the s481/s482 tests, which compile through the
+    # scalar path and are not in the default sweep recipe.
+    VectorizeCPU(vector_width=vector_width,
+                 fuse_overlapping_loads=fuse_overlapping_loads,
+                 insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
     copy_sdfg.validate()
     #print(pass_info)
     #print(copy_sdfg.name, ":", pass_info["Vectorize"])
