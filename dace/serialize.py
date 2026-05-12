@@ -270,6 +270,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
             # Allow a property to not be set if it has a default value
             # TODO: is this really the job of serialize?
             if prop.default is not None:
+                # Prevent shared mutable defaults from being aliased across deserialized objects.
                 val = copy.deepcopy(prop.default)
             elif prop.allow_none:
                 val = None
