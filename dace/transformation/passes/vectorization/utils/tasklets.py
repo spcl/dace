@@ -87,6 +87,17 @@ def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
     return _VECTOR_COPY_CALL_RE.search(t.code.as_string) is not None
 
 
+# Operator tables consumed by ``instantiate_tasklet_from_info``. Kept at
+# module level so callers / tests can inspect them without poking at
+# function-local state.
+PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
+BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
+# ``+`` is excluded — unary ``+`` is rejected by the body with
+# ``raise Exception("Unary + …")``; keeping it out of the set lets the
+# ``op in UNARY_OPERATORS`` check stay honest.
+UNARY_OPERATORS = {"!", "-"}
+
+
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
     """
@@ -122,7 +133,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     is_commutative = op in {"+", "*", "==", "!="}
 
     # Cast boolean constants to C-compatible names
-    PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
     op = PYTHON_TO_CPP_OPERATORS.get(op, op)
 
     ies = state.in_edges(node)
@@ -134,7 +144,15 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     fallbackcode_due_to_types = len(all_dtypes) != 1
 
     def _str_to_float_or_str(s: Union[int, float, str, None]):
-        """Convert string constants to float if possible."""
+        """Convert ``s`` to ``float`` iff ``float(s)`` parses, else
+        return ``s`` unchanged. ``None`` passes through.
+
+        Used to fold C-numeric-literal strings (``"0.99"``, ``"1e5"``,
+        ``"-3"``) into ``float`` for template substitution. Symbol
+        names and SDFG data names fail the parse and stay as strings.
+        Note: ``"inf"`` / ``"nan"`` parse as floats — callers that
+        don't want IEEE specials must filter beforehand.
+        """
         if s is None:
             return s
         try:
@@ -234,14 +252,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         lhs_expr = lhs_ + "[_vi]"
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
-        OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
-        # ``+`` is intentionally excluded — unary ``+`` is rejected
-        # elsewhere in this dispatch with ``raise Exception("Unary + …")``,
-        # so listing it here would silently emit invalid code.
-        UNARY_OPERATORS = {"!", "-"}
 
         if rhs_left is None or rhs_right is None:
-            if op not in UNARY_OPERATORS and op in OPERATORS:
+            if op not in UNARY_OPERATORS and op in BINARY_OPERATORS:
                 raise Exception(
                     f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
                 )
@@ -265,7 +278,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 else:
                     code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
         else:
-            if op_ in OPERATORS:
+            if op_ in BINARY_OPERATORS:
                 if rhs_left == const1_:
                     code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
                 elif rhs_right == const2_:
@@ -576,7 +589,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
 
     # Create assignment tasklet
     t = state.add_tasklet(
-        name="_AssignT3",
+        name="_assign_vector_from_src",
         inputs={"_in"},
         outputs={"_out"},
         code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
@@ -645,7 +658,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
 
     # Create assignment tasklet
     t = state.add_tasklet(
-        name="_AssignT4",
+        name="_assign_vector_to_dst",
         inputs={"_in"},
         outputs={"_out"},
         code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
