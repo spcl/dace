@@ -19,6 +19,13 @@ from .code_rewrite import (  # noqa: F401
     use_laneid_symbol_in_expression,
 )
 from .iteration import walk_memlets_of  # noqa: F401
+from .nsdfg_reshape import (  # noqa: F401
+    check_nsdfg_connector_array_shapes_match,
+    find_state_of_nsdfg_node,
+    fix_nsdfg_connector_array_shapes_mismatch,
+    get_vector_max_access_ranges,
+    reset_connectors,
+)
 from .map_predicates import (  # noqa: F401
     assert_last_dim_of_maps_are_contigous_accesses,
     assert_maps_consist_of_single_nsdfg_or_no_nsdfg,
