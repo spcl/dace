@@ -32,6 +32,11 @@ from .nsdfg_reshape import (  # noqa: F401
     process_out_edges,
     reset_connectors,
 )
+from .arrays import (  # noqa: F401
+    add_transient_arrays_from_list,
+    copy_arrays_with_a_new_shape,
+    replace_arrays_with_new_shape,
+)
 from .source_sink import (  # noqa: F401
     check_writes_to_scalar_sinks_happen_through_assign_tasklets,
     expand_assignment_tasklets,
