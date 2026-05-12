@@ -1023,3 +1023,47 @@ def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
                 # the type reset. Previously this branch was missing,
                 # leaving deep hierarchies untouched.
                 reset_connectors(node.sdfg, node)
+
+
+def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_entry: dace.nodes.MapEntry):
+    # We have MapEntry -> AccessNode -> DstNode
+    # We move it up to be: AccessNode -> MapEntry -> DstNode
+    # If access node's size is multiplied with the loop's dimensions
+
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    src_nodes = {ie.src for ie in in_edges}
+    assert map_entry in src_nodes
+    assert len(in_edges) == 1
+    assert len(out_edges) == 1
+
+    desc = state.sdfg.arrays[node.data]
+    assert len(desc.shape) == len(map_entry.map.params)
+    map_lengths = tuple([(e + 1 - b) // s for (b, e, s) in map_entry.map.range])
+    # Vector map is one dimensional and has length 1 due to step size
+    assert len(map_entry.map.params) == 1
+    assert map_lengths[0] == 1
+
+    ie = in_edges[0]
+    oe = out_edges[0]
+    # Rm access node's connection
+    state.remove_edge(ie)
+    state.remove_edge(oe)
+    state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+
+    ies_from_connector = state.in_edges_by_connector(map_entry, ie.src_conn.replace("OUT_", "IN_"))
+    for s_ie in ies_from_connector:
+        state.remove_edge(s_ie)
+
+        # Expand oe.data.subset
+        new_subset_list = []
+        p, (mb, me, ms) = map_entry.map.params[0], map_entry.map.range[0]
+        for (b, e, s) in ie.data.subset:
+            nb = b.subs(p, mb)
+            ne = e.subs(p, mb)
+            ns = s
+            new_subset_list.append((nb, ne, ns))
+        s_ie_subset = dace.subsets.Range(new_subset_list)
+
+        state.add_edge(s_ie.src, s_ie.src_conn, node, None, dace.memlet.Memlet(data=s_ie.data.data, subset=s_ie_subset))
+        state.add_edge(node, None, s_ie.dst, s_ie.dst_conn, copy.deepcopy(oe.data))

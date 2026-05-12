@@ -24,6 +24,7 @@ from .nsdfg_reshape import (  # noqa: F401
     add_copies_before_and_after_nsdfg, check_nsdfg_connector_array_shapes_match, compute_edge_subset,
     find_copy_in_state, find_state_of_nsdfg_node, fix_nsdfg_connector_array_shapes_mismatch,
     get_vector_max_access_ranges, prepare_vectorized_array, process_in_edges, process_out_edges, reset_connectors,
+    sift_access_node_up,
 )
 from .tasklets import (  # noqa: F401
     duplicate_access, insert_assignment_tasklet_from_src, insert_assignment_tasklet_to_dst,
@@ -37,6 +38,8 @@ from .source_sink import (  # noqa: F401
     get_array_source_nodes, get_scalar_sink_nodes, get_scalar_source_nodes, input_is_zero_and_transient_accumulator,
     move_out_reduction, only_one_flop_after_source, reduce_before_use,
 )
+from .map_ops import remove_map  # noqa: F401
+from .multiplex import detect_halve_index, detect_halve_index_impl  # noqa: F401
 from .subsets import (  # noqa: F401
     expand_memlet_expression,
     offset_memlets,

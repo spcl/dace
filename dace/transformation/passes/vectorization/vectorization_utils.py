@@ -196,9 +196,10 @@ from dace.transformation.passes.vectorization.utils.subsets import (  # noqa: E4
 # ``insert_assignment_tasklet_to_dst`` moved to ``utils.tasklets`` (S6b).
 
 # ``add_copies_before_and_after_nsdfg`` and ``find_copy_in_state`` moved
-# to ``utils.nsdfg_reshape`` (split slice S4c). Re-exported below.
+# to ``utils.nsdfg_reshape`` (split slice S4c). ``sift_access_node_up``
+# moved to the same module in S6d-d. Re-exported below.
 from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (  # noqa: E402, F401
-    add_copies_before_and_after_nsdfg, find_copy_in_state,
+    add_copies_before_and_after_nsdfg, find_copy_in_state, sift_access_node_up,
 )
 
 # ``map_has_branching_memlets`` moved to ``utils.map_predicates`` (S3).
@@ -206,48 +207,7 @@ from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (  # no
 # ``parse_int_or_default`` moved to ``utils.queries`` (S1b).
 
 
-def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_entry: dace.nodes.MapEntry):
-    # We have MapEntry -> AccessNode -> DstNode
-    # We move it up to be: AccessNode -> MapEntry -> DstNode
-    # If access node's size is multiplied with the loop's dimensions
-
-    in_edges = state.in_edges(node)
-    out_edges = state.out_edges(node)
-    src_nodes = {ie.src for ie in in_edges}
-    assert map_entry in src_nodes
-    assert len(in_edges) == 1
-    assert len(out_edges) == 1
-
-    desc = state.sdfg.arrays[node.data]
-    assert len(desc.shape) == len(map_entry.map.params)
-    map_lengths = tuple([(e + 1 - b) // s for (b, e, s) in map_entry.map.range])
-    # Vector map is one dimensional and has length 1 due to step size
-    assert len(map_entry.map.params) == 1
-    assert map_lengths[0] == 1
-
-    ie = in_edges[0]
-    oe = out_edges[0]
-    # Rm access node's connection
-    state.remove_edge(ie)
-    state.remove_edge(oe)
-    state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
-
-    ies_from_connector = state.in_edges_by_connector(map_entry, ie.src_conn.replace("OUT_", "IN_"))
-    for s_ie in ies_from_connector:
-        state.remove_edge(s_ie)
-
-        # Expand oe.data.subset
-        new_subset_list = []
-        p, (mb, me, ms) = map_entry.map.params[0], map_entry.map.range[0]
-        for (b, e, s) in ie.data.subset:
-            nb = b.subs(p, mb)
-            ne = e.subs(p, mb)
-            ns = s
-            new_subset_list.append((nb, ne, ns))
-        s_ie_subset = dace.subsets.Range(new_subset_list)
-
-        state.add_edge(s_ie.src, s_ie.src_conn, node, None, dace.memlet.Memlet(data=s_ie.data.data, subset=s_ie_subset))
-        state.add_edge(node, None, s_ie.dst, s_ie.dst_conn, copy.deepcopy(oe.data))
+# ``sift_access_node_up`` moved to ``utils.nsdfg_reshape`` (S6d-d).
 
 
 # ``sdfg_has_nested_sdfgs``, ``map_has_nested_sdfgs``, and
@@ -265,167 +225,24 @@ def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_
 # ``reset_connectors`` moved to ``utils.nsdfg_reshape`` (S4a).
 
 
-def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
-    assert map_entry in state.nodes()
-    map_exit = state.exit_node(map_entry)
-
-    # Replace symbol dictionary
-    repldict = {str(p): str(r[0]) for p, r in zip(map_entry.map.params, map_entry.map.range)}
-
-    # Redirect map entry's out edges
-    write_only_map = True
-    for edge in state.out_edges(map_entry):
-        if edge.data.is_empty() or edge.data.data is None:
-            parent_map_entry = state.entry_node(map_entry)
-            if parent_map_entry is not None:
-                state.add_edge(parent_map_entry, None, edge.dst, edge.dst_conn, edge.data)
-        else:
-            # Add an edge directly from the previous source connector to the destination
-            path = state.memlet_path(edge)
-            index = path.index(edge)
-            state.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
-            write_only_map = False
-
-    # Redirect map exit's in edges.
-    for edge in state.in_edges(map_exit):
-        path = state.memlet_path(edge)
-        index = path.index(edge)
-
-        # Add an edge directly from the source to the next destination connector
-        if len(path) > index + 1:
-            state.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
-
-            if write_only_map:
-                outer_exit = path[index + 1].dst
-                outer_entry = state.entry_node(outer_exit)
-                if outer_entry is not None:
-                    if any({e.src == map_entry for e in state.in_edges(edge.src)}):
-                        state.add_edge(outer_entry, None, edge.src, None, Memlet(None))
-                    else:
-                        for src in {e.src for e in state.in_edges(edge.src)}:
-                            state.add_edge(outer_entry, None, src, None, Memlet(None))
-
-            else:
-                outer_exit = path[index + 1].dst
-                outer_entry = state.entry_node(outer_exit)
-
-    state.remove_node(map_entry)
-    state.remove_node(map_exit)
-
-    # Replace symbols
-    all_nodes = state.all_nodes_between(outer_entry, outer_exit)
-    all_edges = state.all_edges(*all_nodes)
-    for n in all_nodes:
-        if isinstance(n, dace.nodes.Tasklet):
-            code_before = copy.deepcopy(n.code.as_string)
-            tutil.tasklet_replace_code(n, repldict, py_only=False, use_sym_expr=False)
-            #print("Repldict:", repldict, "\nCode Before:", code_before, "\nCode After:", n.code.as_string)
-        if isinstance(n, dace.nodes.NestedSDFG):
-            for k, v in repldict.items():
-                if k in n.symbol_mapping:
-                    sym_expr = dace.symbolic.SymExpr(n.symbol_mapping[k])
-                    if k in {str(s) for s in sym_expr.free_symbols}:
-                        printer = DaceSympyPrinter(arrays=state.sdfg.arrays)
-                        n.symbol_mapping[v] = printer.doprint(sym_expr.subs(k, v))
-                    else:
-                        n.symbol_mapping[v] = n.symbol_mapping[k]
-                    del n.symbol_mapping[k]
-            n.sdfg.replace_dict(repldict)
-            for k, v in repldict.items():
-                assert k not in n.sdfg.symbols
-                assert k not in n.sdfg.free_symbols
-            # SDFG repldict does not change edge subsets
-            for _is in n.sdfg.all_states():
-                for _se in _is.edges():
-                    if _se.data.data is not None:
-                        _se.data.subset.replace(repldict)
-    for e in all_edges:
-        if e.data.data is None:
-            continue
-        e.data.subset.replace(repldict)
+# ``remove_map`` moved to ``utils.map_ops`` (S6d-e). Re-exported at the
+# bottom of this file. The plan originally proposed promoting it to
+# ``dace.sdfg.utils`` because the body has no vectorization-specific
+# logic, but the actual call set is narrow (``RemoveVectorMaps`` only)
+# and keeping the helper inside the vectorization package matches the
+# user's reuse-threshold directive.
 
 
 # ``try_clean_other_subset_going_out_from_map_entry`` moved to ``utils.subsets`` (S6d-b).
 
 
-def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vector_length):
-    all_nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
-    map_param = new_inner_map.map.params[-1]
-    all_edges = state.out_edges(new_inner_map)
-    modified_nodes = set()
-    modified_edges = set()
-    for edge in all_edges:
-        if edge.data.subset is not None:
-            detected_param = None
-            detected_divisor = None
-            for b, e, s in edge.data.subset:
-                param, divisor = detect_halve_index_impl(b)
-                if param is not None and divisor is not None:
-                    if detected_param is not None:
-                        raise NotImplementedError(f"Multiple halve-indexed dimensions on memlet {edge.data}; "
-                                                  f"only one supported (state {state.label}, edge {edge})")
-                    detected_param = param
-                    detected_divisor = divisor
-            if detected_param is not None:
-                # Multiply end expression with
-                desc = state.sdfg.arrays[edge.data.data]
-                arr_name, arr = state.sdfg.add_array(name=f"multiplexed_{edge.data.data}",
-                                                     shape=(vector_length, ),
-                                                     dtype=desc.dtype,
-                                                     transient=True,
-                                                     storage=dace.dtypes.StorageType.Register,
-                                                     find_new_name=True)
-                if vector_length % detected_divisor != 0:
-                    raise NotImplementedError(f"vector_length={vector_length} not divisible by halve-index divisor "
-                                              f"{detected_divisor} on memlet {edge.data}")
-                t = state.add_tasklet(
-                    "pack_tasklet", {"_in"}, {"_out"},
-                    f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
-                    language=dace.dtypes.Language.CPP,
-                    code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
-                modified_nodes.add(t)
-                state.remove_edge(edge)
-                new_range_list = list()
-                # Detection means we should have b -> b+vector_length step size 1 on the param dim
-                for (b, e, s) in edge.data.subset:
-                    nb = b
-                    if not hasattr(nb, "subs"):
-                        raise NotImplementedError(f"detect_halve_index expected symbolic begin, got {type(nb)}: {nb}")
-                    ne = nb.subs(detected_param, f"({detected_param}+{vector_length})")
-                    ns = 1
-                    new_range_list.append((nb, ne, ns))
-                e1 = state.add_edge(edge.src, edge.src_conn, t, "_in",
-                                    dace.memlet.Memlet(data=edge.data.data, subset=dace.subsets.Range(new_range_list)))
-                access = state.add_access(arr_name)
-                modified_nodes.add(access)
-                modified_edges.add(e1)
-                modified_edges.add(edge)
-                e2 = state.add_edge(t, "_out", access, None,
-                                    dace.memlet.Memlet.from_array(dataname=arr_name, datadesc=arr))
-                e3 = state.add_edge(access, None, edge.dst, edge.dst_conn,
-                                    dace.memlet.Memlet.from_array(dataname=arr_name, datadesc=arr))
-                modified_edges.add(e2)
-                modified_edges.add(e3)
-    return modified_nodes, modified_edges
+# ``detect_halve_index`` and ``detect_halve_index_impl`` moved to
+# ``utils.multiplex`` (S6d-f). Re-exported at the bottom of this file.
 
 
-def detect_halve_index_impl(expr):
-    """
-    Detect patterns like int_floor(i, k) or floor_int(i, k)
-    where k is ANY positive integer.
+from dace.transformation.passes.vectorization.utils.map_ops import remove_map  # noqa: E402, F401
 
-    Returns:
-        (symbol, divisor) or (None, None)
-    """
-    # Only custom functions
-    if isinstance(expr, sympy.Function) and expr.func.__name__ in ("int_floor", "floor_int"):
-        if len(expr.args) != 2:
-            return None, None
-
-        i, den = expr.args
-
-        # Divisor must be a positive integer
-        if isinstance(i, sympy.Symbol) and isinstance(den, (int, sympy.Integer)) and den > 0:
-            return i, int(den)
-
-    return None, None
+from dace.transformation.passes.vectorization.utils.multiplex import (  # noqa: E402, F401
+    detect_halve_index,
+    detect_halve_index_impl,
+)
