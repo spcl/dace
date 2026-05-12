@@ -6,10 +6,6 @@ from dace.sdfg import nodes, SDFGState
 from dace.codegen import common
 from dace.codegen.dispatcher import DefinedType
 from dace.transformation.helpers import get_parent_map
-# Re-exported so callers (e.g. ``InferGPUGridAndBlockSize``) keep their
-# ``gpu_utils.to_3d_dims(...)`` / ``.product(...)`` / ``.validate_block_size_limits(...)``
-# call sites working after dedup. Canonical definitions live in
-# ``add_threadblock_map``.
 
 # CUDA / HIP launch grids and blocks have exactly three dimensions
 # (x, y, z); accessor helpers index into that fixed-width tuple.
@@ -24,19 +20,8 @@ def get_cuda_dim(idx):
 
 
 def generate_sync_debug_call() -> str:
-    """
-    Generate backend sync and error-check calls as a string if
-    synchronous debugging is enabled.
-
-    Parameters
-    ----------
-    backend : str
-        Backend API prefix (e.g., 'cuda').
-
-    Returns
-    -------
-    str
-        The generated debug call code, or an empty string if debugging is disabled.
+    """Return backend sync + error-check calls when ``compiler.cuda.syncdebug`` is set,
+    or an empty string otherwise. Backend prefix is resolved via ``common.get_gpu_backend()``.
     """
     backend: str = common.get_gpu_backend()
     sync_call: str = ""

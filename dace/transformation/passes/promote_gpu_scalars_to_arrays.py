@@ -29,7 +29,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def invalidate_array_connectors(sdfg: SDFG) -> None:
+def invalidate_array_connectors(sdfg: SDFG):
     """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` to
     ``typeclass(None)`` so a follow-up ``infer_connector_types`` re-derives
     them as pointer-typed. Needed because a connector typed at construction
@@ -62,9 +62,6 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     in particular relies on every descriptor having a final, non-default
     storage decision, which is exactly what this pass establishes.
     """
-
-    def depends_on(self):
-        return set()
 
     def modifies(self) -> ppl.Modifies:
         # Storage and schedule attributes live on descriptors and on

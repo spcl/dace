@@ -89,7 +89,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._tb_inserted_kernels: Set[nodes.MapEntry] = set()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
-    def preprocess(self, sdfg: SDFG) -> None:
+    def preprocess(self, sdfg: SDFG):
         """Prepare the SDFG for GPU code generation.
 
         All SDFG-level transformation lives in
@@ -137,7 +137,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
 
-    def _rebuild_frame_symbol_cache(self, sdfg: SDFG) -> None:
+    def _rebuild_frame_symbol_cache(self, sdfg: SDFG):
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
 
         Needed whenever ``preprocess`` adds new nested SDFGs -- the cache is keyed
@@ -241,7 +241,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         return True
 
     def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import (ScopeGenerationStrategy,
                                                                                      KernelScopeGenerator,
@@ -356,7 +356,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def _declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
                                            state_id: int, function_stream: CodeIOStream,
-                                           callsite_stream: CodeIOStream) -> None:
+                                           callsite_stream: CodeIOStream):
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -388,7 +388,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             callsite_stream.write('}', cfg, state_id, scope_entry)
 
     def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -449,7 +449,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     edge: Tuple[nodes.Node, str, nodes.Node, str,
-                                Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                                Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         # All CPU↔GPU and GPU↔GPU AccessNode→AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
         # ``InsertExplicitGPUGlobalMemoryCopies`` during ``preprocess()`` and
@@ -484,7 +484,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                        state: SDFGState,
                        function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
-                       generate_state_footer: bool = False) -> None:
+                       generate_state_footer: bool = False):
 
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
 
@@ -519,7 +519,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 instr.on_state_end(sdfg, cfg, state, callsite_stream, function_stream)
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
-                      function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         gen = getattr(self, '_generate_' + type(node).__name__, False)
 
@@ -550,7 +550,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def _generate_NestedSDFG(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
-                             callsite_stream: CodeIOStream) -> None:
+                             callsite_stream: CodeIOStream):
         old_schedule = self._toplevel_schedule
         nested_schedule = get_node_schedule(sdfg, dfg, node)
         if nested_schedule != dtypes.ScheduleType.Default:
@@ -569,7 +569,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._toplevel_schedule = old_schedule
 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import ScopeManager
 
         tasklet: nodes.Tasklet = node
@@ -631,7 +631,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                      declaration_stream: CodeIOStream) -> None:
+                      declaration_stream: CodeIOStream):
 
         ptrname = ptr(node.data, nodedesc, sdfg, self._frame)
         fsymbols = self._frame.symbols_and_constants(sdfg)
@@ -663,7 +663,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
         """Declare and allocate a data container, dispatching on its storage type.
 
         Views and references fall through to the CPU codegen.  The actual allocation for
@@ -769,7 +769,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                         callsite_stream: CodeIOStream) -> None:
+                         callsite_stream: CodeIOStream):
 
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
@@ -988,7 +988,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet],
-                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         self._cpu_codegen.define_out_memlet(sdfg, cfg, state_dfg, state_id, src_node, dst_node, edge, function_stream,
                                             callsite_stream)
 

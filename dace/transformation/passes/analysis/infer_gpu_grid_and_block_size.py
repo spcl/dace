@@ -5,9 +5,9 @@ from typing import Dict, List, Set, Tuple
 import sympy
 
 from dace import SDFG, SDFGState, dtypes, symbolic
-from dace.codegen.targets.experimental_cuda_helpers import gpu_utils
 from dace.sdfg import nodes
 from dace.transformation import helpers, pass_pipeline as ppl
+from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 
 
 class InferGPUGridAndBlockSize(ppl.Pass):
@@ -52,7 +52,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         for map_entry, state in kernel_maps:
             # Compute grid size
             raw_grid = map_entry.map.range.size(True)[::-1]
-            grid_size = gpu_utils.to_3d_dims(raw_grid)
+            grid_size = to_3d_dims(raw_grid)
 
             # Compute Block size
             if map_entry in kernels_with_added_tb_maps:
@@ -60,8 +60,8 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             else:
                 block_size = self._infer_gpu_block_size(state, map_entry)
 
-            block_size = gpu_utils.to_3d_dims(block_size)
-            gpu_utils.validate_block_size_limits(map_entry, block_size)
+            block_size = to_3d_dims(block_size)
+            validate_block_size_limits(map_entry, block_size)
 
             kernel_dimensions_map[map_entry] = (grid_size, block_size)
 
@@ -118,7 +118,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
             # and collapse to GPU-compatible 3D dimensions
             tb_size = [symbolic.overapproximate(s) for s in tb_map.range.size()[::-1]]
-            tb_size = gpu_utils.to_3d_dims(tb_size)
+            tb_size = to_3d_dims(tb_size)
 
             if block_size is None:
                 block_size = tb_size

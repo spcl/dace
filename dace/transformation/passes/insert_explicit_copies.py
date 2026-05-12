@@ -209,7 +209,7 @@ class InsertExplicitCopies(ppl.Pass):
 
     _VIEW_BUF_PREFIX = "_view_buf_"
 
-    def _rewrite_view_edges(self, sdfg: SDFG, state: SDFGState) -> None:
+    def _rewrite_view_edges(self, sdfg: SDFG, state: SDFGState):
         """Insert a packed transient between a direct AN<->View edge so the
         data-movement side becomes an AN<->AN edge that ``_replace_direct_copies``
         can lift to a ``CopyLibraryNode``. Idempotent across repeated calls

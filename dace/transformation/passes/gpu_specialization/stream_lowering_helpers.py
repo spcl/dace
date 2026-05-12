@@ -37,7 +37,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
 # ---------------------------------------------------------------------------
 
 
-def allocate_stream_array(sdfg: SDFG, num_streams: int) -> None:
+def allocate_stream_array(sdfg: SDFG, num_streams: int):
     """Add the ``gpu_streams`` transient at the root SDFG and propagate it
     (non-transient) into every nested SDFG that hosts a stream consumer."""
     name = get_gpu_stream_array_name()
@@ -50,7 +50,7 @@ def allocate_stream_array(sdfg: SDFG, num_streams: int) -> None:
         _propagate_stream_array_up(child_sdfg, name, num_streams)
 
 
-def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool) -> None:
+def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool):
     desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t,
                            shape=(num_streams, ),
                            transient=transient,
@@ -58,7 +58,7 @@ def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, 
     target_sdfg.add_datadesc(stream_name, desc, _internal_use=True)
 
 
-def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int) -> None:
+def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):
     """Add ``stream_name`` to ``child_sdfg`` and every parent SDFG up to the
     first ancestor that already has it; wire the NestedSDFG-node connector
     at each level."""
@@ -98,7 +98,7 @@ def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
     return requiring
 
 
-def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet) -> None:
+def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
     nsdfg_node = level.parent_nsdfg_node
     parent_state = level.parent
     add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
@@ -111,7 +111,7 @@ def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet)
 # ---------------------------------------------------------------------------
 
 
-def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]) -> None:
+def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]):
     """Wire each consumer's stream connector to a ``gpu_streams[<i>]`` source.
 
     Top-level consumers form a per-stream chain
@@ -131,7 +131,7 @@ def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]) -> None:
 
 
 def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], stream_array_name: str,
-                              stream_var_prefix: str) -> None:
+                              stream_var_prefix: str):
     topo_index: Dict[Node, int] = {
         n: i
         for i, n in enumerate(dfs_topological_sort(state, sources=state.source_nodes()))
@@ -159,7 +159,7 @@ def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], st
 
 
 def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], stream_array_name: str,
-                 stream_var_prefix: str) -> None:
+                 stream_var_prefix: str):
     accessed_slot = f"{stream_array_name}[{stream_id}]"
     prev_access: Optional[nodes.AccessNode] = None
 
@@ -193,7 +193,7 @@ def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn
 
 def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
                                     get_source_access: 'Callable[[], nodes.AccessNode]',
-                                    memlet_factory: 'Callable[[], Memlet]') -> None:
+                                    memlet_factory: 'Callable[[], Memlet]'):
     """Thread a stream handle from a source AccessNode through every map in
     ``scope_chain`` (outermost → innermost) into ``target.target_conn``.
 
@@ -225,7 +225,7 @@ def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.Ma
 
 
 def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
-                             accessed_slot: str, stream_array_name: str) -> None:
+                             accessed_slot: str, stream_array_name: str):
     """Top-level seq-scope routing: source is a fresh ``gpu_streams[<i>]``
     AccessNode, memlet is the matching slice on the chain edges."""
     thread_stream_through_seq_scope(
@@ -258,7 +258,7 @@ def _stream_in_connector_name(node: Node, stream_id: int, stream_var_prefix: str
 # ---------------------------------------------------------------------------
 
 
-def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]) -> None:
+def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
     """Emit one fused ``cudaStreamSynchronize`` tasklet at the end of each
     state, syncing every stream the state needs to wait on.
 
@@ -304,7 +304,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], as
                            dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
-def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]) -> None:
+def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]):
     """Emit a sync tasklet on the path between ``node`` and its successors,
     syncing the node's bound stream via a single ``__stream_<id>`` connector
     (single-stream form of :func:`insert_state_end_syncs`)."""

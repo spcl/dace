@@ -51,9 +51,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
-
     def _get_edges_from_path(self, state: dace.SDFGState, node_path: List[dace.nodes.Node]) -> List[MultiConnectorEdge]:
         if len(node_path) == 1:
             return []
@@ -514,14 +511,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
-            if rmed_memcpy > 0:
-                print(f"Removed {rmed_memcpy} memcpy from {node.label}")
 
             # If the map is only used for 1 memcpy, then it might have been already removed
             if node in state.nodes():
                 rmed_memset = self.remove_memset_from_kernel(state, node)
-                if rmed_memset > 0:
-                    print(f"Removed {rmed_memset} memset from {node.label}")
             else:
                 rmed_memset = 0
 

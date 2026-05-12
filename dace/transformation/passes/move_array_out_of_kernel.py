@@ -75,7 +75,7 @@ class MoveArrayOutOfKernel(Pass):
         self._node_to_sdfg_cache: Dict[nodes.Node, SDFG] = dict()
 
     # Entry point
-    def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str) -> None:
+    def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
         """
         Applies the pass to move a transient GPU_Global array out of a GPU_Device map.
 
@@ -112,7 +112,7 @@ class MoveArrayOutOfKernel(Pass):
 
     # Main transformation algorithms and helpers
     def move_array_out_of_kernel_flat(self, kernel_entry: nodes.MapEntry, array_name: str,
-                                      access_nodes: List[nodes.AccessNode]) -> None:
+                                      access_nodes: List[nodes.AccessNode]):
         """
         Moves a transient GPU_Global array out of a GPU_Device map (kernel) in the flat case.
 
@@ -182,7 +182,7 @@ class MoveArrayOutOfKernel(Pass):
         parent_state.add_edge(kernel_exit, out_connector, access_node_outside, None,
                               Memlet.from_array(array_name, array_desc))
 
-    def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str) -> None:
+    def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str):
         """
         Moves a transient GPU_Global array out of a GPU_Device map (kernel) in the nested case.
 
@@ -261,7 +261,7 @@ class MoveArrayOutOfKernel(Pass):
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy, old_subset)
 
     def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry, sdfg_hierarchy: List[SDFG],
-                                        old_subset: List) -> None:
+                                        old_subset: List):
         """
         Lifts a transient array through nested SDFGs.
 
@@ -409,7 +409,7 @@ class MoveArrayOutOfKernel(Pass):
         return subset
 
     def update_memlets(self, kernel_entry: nodes.MapEntry, array_name: str, outermost_node: nodes.Node,
-                       access_nodes: Set[nodes.AccessNode]) -> None:
+                       access_nodes: Set[nodes.AccessNode]):
         """
         Updates all memlets related to a given transient array to reflect correct data
         movement when moving array out of the kernel entry.
@@ -529,7 +529,6 @@ class MoveArrayOutOfKernel(Pass):
                 accumulator = accumulator * cur_range_size
 
             extended_size = range_size + extended_size
-            #new_strides = [1 for _ in next_map.map.params] + new_strides  # add 1 per dimension
             new_offsets = [0 for _ in next_map.map.params] + new_offsets  # add 0 per dimension
 
         new_shape = extended_size + list(array_desc.shape)
@@ -537,8 +536,7 @@ class MoveArrayOutOfKernel(Pass):
 
         return new_shape, new_strides, new_total_size, new_offsets
 
-    # TODO: Ask Yakup -> No states test but this should be alright
-    def replace_array_name(self, sdfgs: FrozenSet[SDFG], old_name: str, new_name: str, array_desc: dt.Array) -> None:
+    def replace_array_name(self, sdfgs: FrozenSet[SDFG], old_name: str, new_name: str, array_desc: dt.Array):
         """
         Replaces all occurrences of an array name in the given SDFGs, including its data descriptor,
         memlets, connectors and access nodes with a new name.
@@ -578,7 +576,7 @@ class MoveArrayOutOfKernel(Pass):
                         dst.remove_in_connector(old_in_conn)
                         dst.add_in_connector(new_in_conn)
 
-    def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG) -> None:
+    def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG):
         """
         Ensures symbols from GPU maps are defined in all nested SDFGs.
 

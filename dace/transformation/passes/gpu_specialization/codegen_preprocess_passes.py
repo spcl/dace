@@ -21,9 +21,6 @@ class ExpandLibraryNodes(ppl.Pass):
     Pass so library-node expansion can be ordered declaratively
     alongside other transformations."""
 
-    def depends_on(self):
-        return set()
-
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
                 | ppl.Modifies.Symbols)
@@ -58,9 +55,6 @@ class AddThreadBlockMaps(ppl.Pass):
     leaks into host-side ``cudaMalloc`` size expressions for any
     transient lifted out of the kernel.
     """
-
-    def depends_on(self):
-        return set()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -99,16 +93,13 @@ class ReinferConnectorTypes(ppl.Pass):
     then re-infer them so they become pointer-typed.
     """
 
-    def depends_on(self):
-        return set()
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Connectors | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         from dace.sdfg import infer_types
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
         invalidate_array_connectors(sdfg)

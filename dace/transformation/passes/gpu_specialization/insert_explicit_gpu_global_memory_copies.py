@@ -89,9 +89,6 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         super().__init__()
         self.register_demotion_max_elements = register_demotion_max_elements
 
-    def depends_on(self):
-        return set()
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -108,7 +105,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         InsertExplicitCopies().apply_pass(sdfg, pipeline_results)
         return {}
 
-    def _hoist_transient_gpu_global_out_of_kernels(self, sdfg: SDFG) -> None:
+    def _hoist_transient_gpu_global_out_of_kernels(self, sdfg: SDFG):
         """Run ``MoveArrayOutOfKernel`` for every transient GPU_Global array
         defined inside a ``GPU_Device`` map.
 

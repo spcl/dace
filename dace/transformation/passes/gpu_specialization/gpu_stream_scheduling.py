@@ -107,7 +107,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
         raise NotImplementedError(f"{type(self).__name__} did not implement assign_streams(sdfg).")
 
-    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]) -> None:
+    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
         raise NotImplementedError(f"{type(self).__name__} did not implement insert_sync_tasklets(sdfg, assignments).")
 
 
@@ -274,7 +274,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
 
     # ----- sync placement (per-edge rule table) -----
 
-    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]) -> None:
+    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
         state_end, per_node = self._classify_sync_points(sdfg, assignments)
         insert_state_end_syncs(sdfg, state_end, assignments)
         insert_per_node_syncs(sdfg, per_node, assignments)
@@ -373,7 +373,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             return f"LibraryNode with schedule {getattr(node, 'schedule', None)} outside a GPU_Device scope"
         return None
 
-    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]) -> None:
+    def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
         """Sync after states that perform HOST↔DEVICE transfers (the only
         ordering-relevant points in the single-stream model), plus a
         trailing sync on every program-sink state that doesn't already.

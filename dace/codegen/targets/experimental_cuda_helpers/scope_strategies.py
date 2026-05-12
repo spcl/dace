@@ -10,7 +10,8 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (get_cuda_dim, product)
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
+from dace.transformation.dataflow.add_threadblock_map import product
 
 #----------------------------------------------------------------------------------
 # GPU Scope Generation Strategies
@@ -329,8 +330,6 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
     def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
                                       warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
                                       scope_manager: 'ScopeManager'):
-
-        #TODO: Move them to sdfg validation as well if possible
 
         # Get warpSize from the kernel specification
         warpSize = self._current_kernel_spec.warpSize
