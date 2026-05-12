@@ -26,7 +26,6 @@ from typing import Optional, Set, Tuple
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace import SDFGState
 from dace.symbolic import DaceSympyPrinter
 
 
@@ -225,30 +224,23 @@ def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
                 # Replace the branch with updated condition
                 cfg_region.branches[i] = (new_condition, block)
 
-    for state in sdfg.all_states():
-        if not isinstance(state, SDFGState):
+    from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
+    for _state, edge in walk_memlets_of(sdfg, dataname):
+        # An earlier rewrite may have already collapsed this memlet to a
+        # lower dimensionality (common after a previous prepare /
+        # vectorize pass touched the same array); skip such memlets rather
+        # than re-collapsing.
+        if len(edge.data.subset) != len(dim_mask):
             continue
 
-        for edge in state.edges():
-            # Check if this edge accesses the target array
-            if edge.data.data is None or edge.data.data != dataname:
-                continue
+        # Build new subset with filtered dimensions
+        new_subset = []
+        for (begin, end, step), mask_bit in zip(edge.data.subset, dim_mask):
+            if mask_bit:  # Keep this dimension
+                new_subset.append((begin, end, step))
 
-            # An earlier rewrite may have already collapsed this memlet to a
-            # lower dimensionality (common after a previous prepare /
-            # vectorize pass touched the same array); skip such memlets rather
-            # than re-collapsing.
-            if len(edge.data.subset) != len(dim_mask):
-                continue
-
-            # Build new subset with filtered dimensions
-            new_subset = []
-            for (begin, end, step), mask_bit in zip(edge.data.subset, dim_mask):
-                if mask_bit:  # Keep this dimension
-                    new_subset.append((begin, end, step))
-
-            # Create new memlet with reduced dimensionality
-            edge.data = dace.memlet.Memlet(data=dataname, subset=dace.subsets.Range(new_subset))
+        # Create new memlet with reduced dimensionality
+        edge.data = dace.memlet.Memlet(data=dataname, subset=dace.subsets.Range(new_subset))
 
     for interstate_edge in sdfg.all_interstate_edges():
         # Skip edges without assignments
