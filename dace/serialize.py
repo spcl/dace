@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from dataclasses import is_dataclass
 import enum
 import json
@@ -229,22 +230,8 @@ def all_properties_to_json(object_with_properties):
     save_all_fields = config.Config.get_bool('testing', 'serialize_all_fields')
     retdict = {}
     for x, v in object_with_properties.properties():
-        if not save_all_fields:
-            try:
-                is_default = (v == x.default)
-                if isinstance(is_default, np.ndarray):
-                    is_default = np.all(is_default)
-                if is_default:
-                    continue
-            except (TypeError, ValueError):
-                pass
-
-            try:
-                if x.to_json(v) == x.to_json(x.default):  # Skip default fields after normalization
-                    continue
-            except (AttributeError, TypeError, ValueError):
-                pass
-
+        if not save_all_fields and v == x.default:  # Skip default fields
+            continue
         if not x.serialize_if(object_with_properties):
             continue
         retdict[x.attr_name] = x.to_json(v)
@@ -266,34 +253,37 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
         if prop_name in ignore_properties:
             continue
 
+        missing_prop = False
         try:
             val = attrs[prop_name]
             # Make sure we use all properties
             source_properties.remove(prop_name)
         except KeyError:
+            missing_prop = True
             # Allow a property to not be set if it has a default value
             # TODO: is this really the job of serialize?
             if prop.default is not None:
-                val = prop.default
+                val = copy.deepcopy(prop.default)
             elif prop.allow_none:
                 val = None
             else:
                 raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
                                prop_name)
 
-        if isinstance(val, dict):
-            val = prop.from_json(val, context)
-        else:
-            try:
+        if not missing_prop:
+            if isinstance(val, dict):
                 val = prop.from_json(val, context)
-            except TypeError as err:
-                # TODO: This seems to be called both from places where the
-                # dictionary has been fully deserialized, and on raw json
-                # objects. In the interest of time, we're not failing here, but
-                # should untangle this eventually
-                warnings.warn("Failed to parse object {}"
-                              " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
-                raise
+            else:
+                try:
+                    val = prop.from_json(val, context)
+                except TypeError as err:
+                    # TODO: This seems to be called both from places where the
+                    # dictionary has been fully deserialized, and on raw json
+                    # objects. In the interest of time, we're not failing here, but
+                    # should untangle this eventually
+                    warnings.warn("Failed to parse object {}"
+                                  " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
+                    raise
 
         setattr(object_with_properties, prop_name, val)
 

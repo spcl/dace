@@ -4,6 +4,7 @@ import pytest
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
+import sympy
 
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():
@@ -108,6 +109,30 @@ def test_symbol_assumption_roundtrip_preserves_bool_metadata():
     restored = symbolic.deserialize_symbolic(serialized)
 
     assert symbolic.serialize_symbolic(restored) == serialized
+
+
+@pytest.mark.parametrize('expr', [
+    sympy.Add(symbolic.TypedConstant(np.int16(10)),
+              sympy.Mul(sympy.S.NegativeOne, symbolic.symbol('i'), evaluate=False),
+              evaluate=False),
+    sympy.Mul(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
+    sympy.Mul(symbolic.TypedConstant(np.int16(10)), sympy.Pow(symbolic.symbol('i'), -1, evaluate=False),
+              evaluate=False),
+    sympy.Pow(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
+    sympy.Mod(symbolic.symbol('i'), symbolic.TypedConstant(np.int16(3)), evaluate=False),
+])
+def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
+    serialized = symbolic.serialize_symbolic(expr)
+    restored = symbolic.deserialize_symbolic(serialized)
+
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
+def test_plain_integer_roundtrip_remains_sympy_integer():
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(sympy.Integer(10)))
+
+    assert restored == 10
+    assert isinstance(restored, sympy.Integer)
 
 
 if __name__ == '__main__':

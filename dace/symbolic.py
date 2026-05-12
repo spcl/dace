@@ -10,7 +10,6 @@ import numpy
 
 import sympy.abc
 import sympy.printing.str
-from sympy.printing.precedence import precedence
 
 import packaging.version as packaging_version
 
@@ -501,10 +500,6 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
-
-    def _assumption_is_true(value: Any) -> bool:
-        return value is True or value == True
-
     kwargs = {}
     if expr.dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
@@ -513,7 +508,7 @@ def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
-        if _assumption_is_true(value) and not _assumption_is_true(default_assumptions.get(key)):
+        if value is True and default_assumptions.get(key) != value:
             kwargs[key] = value
     return kwargs
 
@@ -1415,18 +1410,63 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
 
 
 class _SerializedSymbolicParser(ast.NodeVisitor):
+
+    @staticmethod
+    def _python_bool(value):
+        if value == sympy.true:
+            return True
+        if value == sympy.false:
+            return False
+        return value
+
+    @staticmethod
+    def _binop_add(a, b):
+        return sympy.Add(a, b, evaluate=False)
+
+    @staticmethod
+    def _negate(a):
+        if isinstance(a, TypedConstant):
+            return TypedConstant(-a.value, dtype=a.dtype)
+        if isinstance(a, (sympy.Integer, sympy.Float)):
+            return -a
+        return sympy.Mul(sympy.S.NegativeOne, a, evaluate=False)
+
+    @staticmethod
+    def _binop_sub(a, b):
+        return sympy.Add(a, _SerializedSymbolicParser._negate(b), evaluate=False)
+
+    @staticmethod
+    def _binop_mul(a, b):
+        return sympy.Mul(a, b, evaluate=False)
+
+    @staticmethod
+    def _binop_div(a, b):
+        return sympy.Mul(a, sympy.Pow(b, -1, evaluate=False), evaluate=False)
+
+    @staticmethod
+    def _binop_pow(a, b):
+        return sympy.Pow(a, b, evaluate=False)
+
+    @staticmethod
+    def _binop_mod(a, b):
+        return sympy.Mod(a, b, evaluate=False)
+
+    @staticmethod
+    def _unary_minus(a):
+        return _SerializedSymbolicParser._negate(a)
+
     _binops = {
-        ast.Add: lambda a, b: a + b,
-        ast.Sub: lambda a, b: a - b,
-        ast.Mult: lambda a, b: a * b,
-        ast.Div: lambda a, b: a / b,
-        ast.Pow: lambda a, b: a**b,
-        ast.Mod: lambda a, b: sympy.Mod(a, b),
+        ast.Add: _binop_add.__func__,
+        ast.Sub: _binop_sub.__func__,
+        ast.Mult: _binop_mul.__func__,
+        ast.Div: _binop_div.__func__,
+        ast.Pow: _binop_pow.__func__,
+        ast.Mod: _binop_mod.__func__,
         ast.FloorDiv: lambda a, b: int_floor(a, b),
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,
-        ast.USub: lambda a: -a,
+        ast.USub: _unary_minus.__func__,
         ast.Not: lambda a: sympy.Not(a),
         ast.Invert: lambda a: bitwise_invert(a),
     }
@@ -1556,7 +1596,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             if not isinstance(symname, symbol):
                 raise TypeError('symbol(...) expects its first argument to deserialize to a symbol instance, '
                                 f'got {type(symname).__name__}')
-            kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
+            kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
             return symbol(symname.name, dtype=dtype, **kwargs)
 
@@ -1615,39 +1655,6 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
-    def _normalized_term(self, expr):
-        if not isinstance(expr, sympy.Basic):
-            return expr
-        typed_constants = {tc: tc.value for tc in expr.atoms(TypedConstant)}
-        if typed_constants:
-            return sympy.simplify(expr.xreplace(typed_constants))
-        return expr
-
-    def _canonical_term_key(self, expr):
-        return sympy.default_sort_key(self._normalized_term(expr))
-
-    def _print_Add(self, expr, order=None):
-        terms = sorted(sympy.Add.make_args(expr), key=self._canonical_term_key)
-
-        prec = precedence(expr)
-        pieces = []
-        for term in terms:
-            rendered = self._print(term)
-            if rendered.startswith('-') and not term.is_Add:
-                sign = '-'
-                rendered = rendered[1:]
-            else:
-                sign = '+'
-            if precedence(term) < prec or term.is_Add:
-                pieces.extend([sign, f'({rendered})'])
-            else:
-                pieces.extend([sign, rendered])
-
-        sign = pieces.pop(0)
-        if sign == '+':
-            sign = ''
-        return sign + ' '.join(pieces)
-
     def _print_Symbol(self, expr):
         if expr.name == '?':
             return '$?'
@@ -1665,10 +1672,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return _typed_constant_to_string(expr)
 
     def _print_Integer(self, expr):
-        return f'{expr}{_typed_constant_suffix(DEFAULT_SYMBOL_TYPE)}'
+        return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return f'{super()._print_Float(expr)}{_typed_constant_suffix(dtypes.float64)}'
+        return super()._print_Float(expr)
 
 
 @lru_cache(maxsize=16384)
@@ -1680,9 +1687,9 @@ def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> s
     if isinstance(expr, numpy.generic):
         return _typed_constant_to_string(TypedConstant(expr, dtypes.dtype_to_typeclass(type(expr))))
     if isinstance(expr, int) and not isinstance(expr, bool):
-        return _typed_constant_to_string(TypedConstant(expr, DEFAULT_SYMBOL_TYPE))
+        return str(expr)
     if isinstance(expr, float):
-        return _typed_constant_to_string(TypedConstant(expr, dtypes.float64))
+        return sympy.printing.str.sstr(expr)
     if isinstance(expr, sympy.Basic):
         return DaceSympySerializer().doprint(expr)
     return str(expr)
@@ -1695,9 +1702,9 @@ def deserialize_symbolic(expr) -> SymbolicType:
     if isinstance(expr, numpy.generic):
         return TypedConstant(expr, dtypes.dtype_to_typeclass(type(expr)))
     if isinstance(expr, int) and not isinstance(expr, bool):
-        return TypedConstant(expr, DEFAULT_SYMBOL_TYPE)
+        return sympy.Integer(expr)
     if isinstance(expr, float):
-        return TypedConstant(expr, dtypes.float64)
+        return sympy.Float(expr)
     if not isinstance(expr, str):
         return expr
     if expr in ('?', '$?'):

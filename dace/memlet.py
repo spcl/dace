@@ -175,15 +175,7 @@ class Memlet(object):
         attrs['is_data_src'] = self._is_data_src
 
         # Fill in legacy (DEPRECATED) values for backwards compatibility
-        if not self.dynamic:
-            normalized_volume = self.volume
-            if isinstance(normalized_volume, symbolic.sympy.Basic):
-                typed_constants = {tc: tc.value for tc in normalized_volume.atoms(symbolic.TypedConstant)}
-                if typed_constants:
-                    normalized_volume = symbolic.simplify(normalized_volume.xreplace(typed_constants))
-            attrs['num_accesses'] = str(normalized_volume)
-        else:
-            attrs['num_accesses'] = -1
+        attrs['num_accesses'] = str(self.volume) if not self.dynamic else -1
 
         return {"type": "Memlet", "attributes": attrs}
 
