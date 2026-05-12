@@ -137,13 +137,43 @@ def emit_tasklet(builder, state, assign_node, idx: int, iter_map: dict, indirect
             if nm in r_scl:
                 code = re.sub(rf'\b{re.escape(nm)}\b', f'_in_{nm}', code)
                 continue
-
-            def sub(_m, _nm=nm):
-                n = occ[_nm]
-                occ[_nm] += 1
-                return conn_per_occ[_nm][n]
-
-            code = re.sub(rf'\b{re.escape(nm)}\b', sub, code)
+            # Array references in the bridge-emitted RHS come with their
+            # subscript: ``zsolqa[(i)-1, (j)-1, (k)-1]``.  Replace the
+            # whole ``name[...]`` group with the keyed connector — the
+            # connector's memlet already targets that one element, so
+            # leaving the subscript on it would surface as DaCe's
+            # "Subscript ... contains an invalid number of dimensions"
+            # validator error.  Walk balanced brackets manually since
+            # ``re`` can't.
+            new_chunks = []
+            cursor = 0
+            i = 0
+            pat = re.compile(rf'\b{re.escape(nm)}\b')
+            for m in pat.finditer(code):
+                start = m.start()
+                end = m.end()
+                # If the very next char is '[', consume the balanced [...].
+                if end < len(code) and code[end] == '[':
+                    depth = 1
+                    j = end + 1
+                    while j < len(code) and depth > 0:
+                        ch = code[j]
+                        if ch in '([{':
+                            depth += 1
+                        elif ch in ')]}':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        j += 1
+                    if depth == 0:
+                        end = j + 1
+                new_chunks.append(code[cursor:start])
+                n = occ[nm]
+                occ[nm] += 1
+                new_chunks.append(conn_per_occ[nm][n])
+                cursor = end
+            new_chunks.append(code[cursor:])
+            code = ''.join(new_chunks)
         return code
 
     in_c = {f"_in_{sc}" for sc in r_scl}

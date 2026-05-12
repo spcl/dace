@@ -68,6 +68,28 @@ def emit_memset(builder, ctx, n, region):
     state = ctx.cur
 
     tgt_name = n.target
+    # Section-alias dummies route memset through the source array,
+    # writing to the slab carved out by view_dim_map (surviving dims =
+    # full range, scalar dims = point index).
+    v_tgt = builder.arrays.get(tgt_name)
+    if v_tgt is not None and getattr(v_tgt, 'role', '') == 'section_alias':
+        src_name = v_tgt.view_source
+        src_desc = ctx.sdfg.arrays[src_name]
+        slab_parts = []
+        for d, slot in enumerate(v_tgt.view_dim_map):
+            if slot.startswith('_d'):
+                slab_parts.append(f"0:{src_desc.shape[d]}")
+            else:
+                slab_parts.append(f"({slot}) - 1")
+        slab_subset = ", ".join(slab_parts)
+        ms = MemsetLibraryNode(f"memset_{tgt_name}_{builder.nid()}")
+        ms.add_out_connector("_out")
+        state.add_node(ms)
+        tgt_access = acc(builder, state, tgt_name)  # redirects to src via resolve
+        state.add_edge(ms, "_out", tgt_access, None, Memlet(data=src_name, subset=slab_subset))
+        ctx.new_state(builder, region)
+        return
+
     tgt_desc = ctx.sdfg.arrays[tgt_name]
 
     ms = MemsetLibraryNode(f"memset_{tgt_name}_{builder.nid()}")
