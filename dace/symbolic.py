@@ -1475,7 +1475,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if (_SerializedSymbolicParser._requires_preserved_structure(a)
                 or _SerializedSymbolicParser._requires_preserved_structure(b)):
             return sympy.Mod(a, b, evaluate=False)
-        return sympy.Mod(a, b)
+        return a % b
 
     @staticmethod
     def _unary_minus(a):
