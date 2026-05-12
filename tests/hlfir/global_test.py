@@ -6,7 +6,7 @@ import ctypes
 import pytest
 
 from _util import build_sdfg, have_flang
-from ported._helpers import xfail
+from _helpers import xfail
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
