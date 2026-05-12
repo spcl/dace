@@ -3,6 +3,7 @@ from dataclasses import is_dataclass
 import enum
 import json
 import numpy as np
+import sympy
 import warnings
 from dace import attr_enum
 import dace.dtypes
@@ -109,6 +110,12 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
+    elif type(obj).__name__ == 'SymExpr':
+        from dace import symbolic
+        return symbolic.serialize_symbolic(obj)
+    elif isinstance(obj, sympy.Basic):
+        from dace import symbolic
+        return symbolic.serialize_symbolic(obj)
     elif is_dataclass(obj):
         # Serialize dataclass as a dictionary
         retval = {"type": type(obj).__name__}

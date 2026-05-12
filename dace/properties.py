@@ -12,6 +12,7 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
+from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
     from dace.data import Data as dData
 
 T = TypeVar('T')
+
+
+def _is_symbolic_converter(converter) -> bool:
+    return converter in (pystr_to_symbolic, symbolic.deserialize_symbolic, symbolic.SymExpr)
+
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -468,6 +474,8 @@ class ListProperty(Property[List[T]]):
     def to_json(self, l):
         if l is None:
             return None
+        if _is_symbolic_converter(self.element_type):
+            return [symbolic.serialize_symbolic(elem) for elem in l]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "to_json"):
             return [elem.to_json() for elem in l]
@@ -488,6 +496,8 @@ class ListProperty(Property[List[T]]):
             return data
         if not isinstance(data, list):
             raise TypeError('ListProperty expects a list input, got %s' % data)
+        if _is_symbolic_converter(self.element_type):
+            return [symbolic.deserialize_symbolic(elem) for elem in data]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "from_json"):
             return [self.element_type.from_json(elem) for elem in data]
@@ -584,14 +594,18 @@ class DictProperty(Property):
         saved_dictionary = d
 
         # If key knows how to convert itself, let it
-        if hasattr(self.key_type, "to_json"):
+        if _is_symbolic_converter(self.key_type):
+            saved_dictionary = {symbolic.serialize_symbolic(k): v for k, v in saved_dictionary.items()}
+        elif hasattr(self.key_type, "to_json"):
             saved_dictionary = {k.to_json(): v for k, v in saved_dictionary.items()}
         # Otherwise, if the keys are not a native JSON type, convert to strings
         elif self.key_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
 
         # Same as above, but for values
-        if hasattr(self.value_type, "to_json"):
+        if _is_symbolic_converter(self.value_type):
+            saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
+        elif hasattr(self.value_type, "to_json"):
             saved_dictionary = {k: v.to_json() for k, v in saved_dictionary.items()}
         elif self.value_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {k: str(v) for k, v in saved_dictionary.items()}
@@ -616,8 +630,10 @@ class DictProperty(Property):
         value_json = hasattr(self.value_type, "from_json")
 
         return {
-            self.key_type.from_json(k, sdfg) if key_json else self.key_type(k):
-            self.value_type.from_json(v, sdfg) if value_json else self.value_type(v)
+            symbolic.deserialize_symbolic(k) if _is_symbolic_converter(self.key_type) else (self.key_type.from_json(
+                k, sdfg) if key_json else self.key_type(k)):
+            symbolic.deserialize_symbolic(v) if _is_symbolic_converter(self.value_type) else
+            (self.value_type.from_json(v, sdfg) if value_json else self.value_type(v))
             for k, v in data.items()
         }
 
@@ -1171,6 +1187,16 @@ class SymbolicProperty(Property):
         # Go through sympy once to reorder factors
         return str(pystr_to_symbolic(str(obj), simplify=False))
 
+    def to_json(self, val):
+        if val is None:
+            return None
+        return symbolic.serialize_symbolic(val)
+
+    def from_json(self, val, sdfg=None):
+        if val is None:
+            return None
+        return symbolic.deserialize_symbolic(val)
+
 
 class DataProperty(Property):
     """ Custom Property type that represents a link to a data descriptor.
@@ -1268,12 +1294,12 @@ class ShapeProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return None
-        return list(map(str, obj))
+        return [symbolic.serialize_symbolic(o) for o in obj]
 
     def from_json(self, d, sdfg=None):
         if d is None:
             return None
-        return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
+        return tuple([symbolic.deserialize_symbolic(m) for m in d])
 
     def __set__(self, obj, val):
         if isinstance(val, list):

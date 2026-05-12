@@ -18,6 +18,25 @@ from dace import dtypes
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
+_SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
+_SERIALIZED_SYMBOL = re.compile(r'\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)')
+_SERIALIZED_TYPED_CONSTANT = re.compile(
+    r'(?<![A-Za-z0-9_\.])(?P<value>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+)(?P<suffix>i8|i16|i32|i64|u8|u16|u32|u64|f16|f32|f64)\b'
+)
+_TYPECLASS_TO_LITERAL_SUFFIX = {
+    dtypes.int8: 'i8',
+    dtypes.int16: 'i16',
+    dtypes.int32: 'i32',
+    dtypes.int64: 'i64',
+    dtypes.uint8: 'u8',
+    dtypes.uint16: 'u16',
+    dtypes.uint32: 'u32',
+    dtypes.uint64: 'u64',
+    dtypes.float16: 'f16',
+    dtypes.float32: 'f32',
+    dtypes.float64: 'f64',
+}
+_LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in _TYPECLASS_TO_LITERAL_SUFFIX.items()}
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -237,6 +256,64 @@ class UndefinedSymbol(symbol):
         return hash(self.name)
 
 
+class TypedConstant(sympy.AtomicExpr):
+    """A symbolic constant with an explicit DaCe data type."""
+
+    is_number = True
+    is_commutative = True
+
+    def __new__(cls, value, dtype=None):
+        if isinstance(value, TypedConstant):
+            dtype = dtype or value.dtype
+            value = value.value
+        dtype = dtype or _infer_typed_constant_dtype(value)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'dtype must be a DaCe type, got {dtype!r}')
+
+        self = sympy.AtomicExpr.__new__(cls)
+        self.value = _sympy_constant_value(value)
+        self.dtype = dtype
+        return self
+
+    def _hashable_content(self):
+        return (self.value, self.dtype)
+
+    def _sympystr(self, printer):
+        if hasattr(printer, '_print_TypedConstant'):
+            return printer._print_TypedConstant(self)
+        return printer.doprint(self.value)
+
+    def _eval_evalf(self, prec):
+        return self.value.evalf(prec)
+
+    def _eval_is_integer(self):
+        return self.value.is_integer
+
+    def _eval_is_real(self):
+        return self.value.is_real
+
+    def __int__(self):
+        return int(self.value)
+
+    def __float__(self):
+        return float(self.value)
+
+    @property
+    def is_Integer(self):
+        return self.value.is_Integer
+
+    @property
+    def is_Float(self):
+        return self.value.is_Float
+
+    @property
+    def is_integer(self):
+        return self.value.is_integer
+
+    def cast_value(self):
+        return self.dtype(self.value)
+
+
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
@@ -375,6 +452,70 @@ class SymExpr(object):
         return self > pystr_to_symbolic(other)
 
 
+def _sympy_constant_value(value):
+    if isinstance(value, TypedConstant):
+        return value.value
+    if isinstance(value, sympy.Integer):
+        return value
+    if isinstance(value, sympy.Float):
+        return value
+    if isinstance(value, numpy.integer):
+        return sympy.Integer(int(value))
+    if isinstance(value, numpy.floating):
+        return sympy.Float(float(value))
+    if isinstance(value, int) and not isinstance(value, bool):
+        return sympy.Integer(value)
+    if isinstance(value, float):
+        return sympy.Float(value)
+    raise TypeError(f'Unsupported typed constant value {value!r}')
+
+
+def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
+    if isinstance(value, TypedConstant):
+        return value.dtype
+    if isinstance(value, numpy.generic):
+        return dtypes.dtype_to_typeclass(type(value))
+    if isinstance(value, sympy.Integer):
+        return DEFAULT_SYMBOL_TYPE
+    if isinstance(value, sympy.Float):
+        return dtypes.float64
+    if isinstance(value, int) and not isinstance(value, bool):
+        return DEFAULT_SYMBOL_TYPE
+    if isinstance(value, float):
+        return dtypes.float64
+    raise TypeError(f'Cannot infer a DaCe dtype for {value!r}')
+
+
+def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
+    try:
+        return _TYPECLASS_TO_LITERAL_SUFFIX[dtype]
+    except KeyError as ex:
+        raise TypeError(f'Unsupported typed constant dtype {dtype}') from ex
+
+
+def _typed_constant_to_string(expr: TypedConstant) -> str:
+    value = sympy.printing.str.sstr(expr.value)
+    return f'{value}{_typed_constant_suffix(expr.dtype)}'
+
+
+def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
+    return symbol(expr.name, dtype=expr.dtype).assumptions0
+
+
+def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
+    kwargs = {}
+    if expr.dtype != DEFAULT_SYMBOL_TYPE:
+        kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
+
+    default_assumptions = _symbol_default_assumptions(expr)
+    for key, value in sorted(expr.assumptions0.items()):
+        if key == 'commutative' or key.startswith('extended_'):
+            continue
+        if value is True and default_assumptions.get(key) != value:
+            kwargs[key] = value
+    return kwargs
+
+
 # Type hint for symbolic expressions
 SymbolicType = Union[sympy.Basic, SymExpr]
 
@@ -450,6 +591,8 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
         raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
+    if isinstance(expr, TypedConstant):
+        return expr.cast_value()
 
     # Evaluate all symbols
     syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
@@ -503,7 +646,7 @@ def _overapproximate(expr):
             return overapproximate(expr.expr)
     if not isinstance(expr, sympy.Basic):
         return expr
-    if isinstance(expr, sympy.Number):
+    if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
 
     a = sympy.Wild('a')
@@ -1269,6 +1412,259 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+class _SerializedSymbolicParser(ast.NodeVisitor):
+    _binops = {
+        ast.Add: lambda a, b: a + b,
+        ast.Sub: lambda a, b: a - b,
+        ast.Mult: lambda a, b: a * b,
+        ast.Div: lambda a, b: a / b,
+        ast.Pow: lambda a, b: a**b,
+        ast.Mod: lambda a, b: sympy.Mod(a, b),
+        ast.FloorDiv: lambda a, b: int_floor(a, b),
+    }
+    _unaryops = {
+        ast.UAdd: lambda a: +a,
+        ast.USub: lambda a: -a,
+        ast.Not: lambda a: sympy.Not(a),
+        ast.Invert: lambda a: bitwise_invert(a),
+    }
+    _comparators = {
+        ast.Eq: sympy.Eq,
+        ast.NotEq: sympy.Ne,
+        ast.Gt: sympy.Gt,
+        ast.GtE: sympy.Ge,
+        ast.Lt: sympy.Lt,
+        ast.LtE: sympy.Le,
+        ast.Is: Is,
+        ast.IsNot: IsNot,
+    }
+    _functions = {
+        'abs': sympy.Abs,
+        'min': sympy.Min,
+        'max': sympy.Max,
+        'floor': sympy.floor,
+        'ceil': sympy.ceiling,
+        'round': ROUND,
+        'And': AND,
+        'Or': OR,
+        'Not': sympy.Not,
+        'Eq': sympy.Eq,
+        'Ne': sympy.Ne,
+        'Gt': sympy.Gt,
+        'Ge': sympy.Ge,
+        'Lt': sympy.Lt,
+        'Le': sympy.Le,
+        'int_floor': int_floor,
+        'int_ceil': int_ceil,
+        'IfExpr': IfExpr,
+        'Mod': sympy.Mod,
+        'Attr': Attr,
+        'BitwiseAnd': bitwise_and,
+        'BitwiseOr': bitwise_or,
+        'BitwiseXor': bitwise_xor,
+        'BitwiseNot': bitwise_invert,
+        'bitwise_and': bitwise_and,
+        'bitwise_or': bitwise_or,
+        'bitwise_xor': bitwise_xor,
+        'bitwise_invert': bitwise_invert,
+        'LeftShift': left_shift,
+        'RightShift': right_shift,
+        'left_shift': left_shift,
+        'right_shift': right_shift,
+    }
+    _constants = {
+        'True': sympy.true,
+        'False': sympy.false,
+        'None': symbol('NoneSymbol'),
+        'NoneSymbol': symbol('NoneSymbol'),
+        'pi': sympy.pi,
+        'E': sympy.E,
+        'oo': sympy.oo,
+        'nan': sympy.nan,
+    }
+
+    def visit_Expression(self, node):
+        return self.visit(node.body)
+
+    def visit_Name(self, node):
+        if node.id in self._constants:
+            return self._constants[node.id]
+        if node.id.startswith(_SERIALIZED_SYMBOL_PREFIX):
+            return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
+        try:
+            return getattr(dtypes, node.id)
+        except AttributeError as ex:
+            raise TypeError(f'Unknown symbolic identifier "{node.id}"') from ex
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, bool):
+            return sympy.true if node.value else sympy.false
+        if node.value is None:
+            return symbol('NoneSymbol')
+        if isinstance(node.value, int):
+            return sympy.Integer(node.value)
+        if isinstance(node.value, float):
+            return sympy.Float(node.value)
+        raise TypeError(f'Unsupported literal {node.value!r}')
+
+    def visit_UnaryOp(self, node):
+        return self._unaryops[type(node.op)](self.visit(node.operand))
+
+    def visit_BinOp(self, node):
+        return self._binops[type(node.op)](self.visit(node.left), self.visit(node.right))
+
+    def visit_BoolOp(self, node):
+        values = [self.visit(v) for v in node.values]
+        if isinstance(node.op, ast.And):
+            result = values[0]
+            for value in values[1:]:
+                result = AND(result, value)
+            return result
+        result = values[0]
+        for value in values[1:]:
+            result = OR(result, value)
+        return result
+
+    def visit_Compare(self, node):
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise NotImplementedError('Chained comparisons are not supported in symbolic deserialization')
+        return self._comparators[type(node.ops[0])](self.visit(node.left), self.visit(node.comparators[0]))
+
+    def visit_IfExp(self, node):
+        return IfExpr(self.visit(node.test), self.visit(node.body), self.visit(node.orelse))
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
+            value = ast.literal_eval(node.args[0])
+            suffix = ast.literal_eval(node.args[1])
+            if suffix.startswith('f'):
+                value = float(value)
+            else:
+                value = int(value)
+            return TypedConstant(value, _LITERAL_SUFFIX_TO_TYPECLASS[suffix])
+
+        if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
+            symname = self.visit(node.args[0])
+            if not isinstance(symname, symbol):
+                raise TypeError('symbol(...) expects a serialized symbol as its first argument')
+            kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
+            dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
+            return symbol(symname.name, dtype=dtype, **kwargs)
+
+        if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
+            args = [self.visit(arg) for arg in node.args]
+            return SymExpr(*args)
+
+        func = self._resolve_function(node.func)
+        args = [self.visit(arg) for arg in node.args]
+        if isinstance(func, dtypes.typeclass):
+            if len(args) != 1:
+                raise TypeError(f'Type conversion {func} expects one argument')
+            return _cast_symbolic_value(args[0], func)
+
+        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
+        if kwargs:
+            return func(*args, **kwargs)
+        return func(*args)
+
+    def visit_Attribute(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id == 'dace':
+            try:
+                return getattr(dtypes, node.attr)
+            except AttributeError as ex:
+                raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
+        return Attr(self.visit(node.value), symbol(node.attr))
+
+    def generic_visit(self, node):
+        raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
+
+    def _resolve_function(self, node):
+        if isinstance(node, ast.Name):
+            if node.id in self._functions:
+                return self._functions[node.id]
+            return sympy.Function(node.id)
+        if isinstance(node, ast.Attribute):
+            resolved = self.visit(node)
+            if isinstance(resolved, dtypes.typeclass):
+                return resolved
+        raise TypeError(f'Unsupported symbolic function {ast.dump(node)}')
+
+
+def _cast_symbolic_value(value, dtype: dtypes.typeclass):
+    if isinstance(value, SymExpr):
+        return SymExpr(_cast_symbolic_value(value.expr, dtype), _cast_symbolic_value(value.approx, dtype))
+    if isinstance(value, symbol):
+        return symbol(value.name, dtype=dtype, **value.assumptions0)
+    if isinstance(value, TypedConstant):
+        return TypedConstant(value.value, dtype=dtype)
+    if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):
+        return TypedConstant(value, dtype=dtype)
+    return sympy.Function(f'dace.{dtype.to_string()}')(value)
+
+
+class DaceSympySerializer(sympy.printing.str.StrPrinter):
+
+    def _print_Symbol(self, expr):
+        if expr.name == '?':
+            return '?'
+        if expr.name == 'NoneSymbol':
+            return 'None'
+        if isinstance(expr, symbol):
+            kwargs = _symbol_serializer_kwargs(expr)
+            if not kwargs:
+                return f'${expr.name}'
+            kwlist = ', '.join(f'{key}={value}' for key, value in kwargs.items())
+            return f'symbol(${expr.name}, {kwlist})'
+        return f'${expr.name}'
+
+    def _print_TypedConstant(self, expr):
+        return _typed_constant_to_string(expr)
+
+    def _print_Integer(self, expr):
+        return _typed_constant_to_string(TypedConstant(expr, DEFAULT_SYMBOL_TYPE))
+
+    def _print_Float(self, expr):
+        return _typed_constant_to_string(TypedConstant(expr, dtypes.float64))
+
+
+@lru_cache(maxsize=16384)
+def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+    if isinstance(expr, SymExpr):
+        return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
+    if isinstance(expr, TypedConstant):
+        return _typed_constant_to_string(expr)
+    if isinstance(expr, numpy.generic):
+        return _typed_constant_to_string(TypedConstant(expr, dtypes.dtype_to_typeclass(type(expr))))
+    if isinstance(expr, int) and not isinstance(expr, bool):
+        return _typed_constant_to_string(TypedConstant(expr, DEFAULT_SYMBOL_TYPE))
+    if isinstance(expr, float):
+        return _typed_constant_to_string(TypedConstant(expr, dtypes.float64))
+    if isinstance(expr, sympy.Basic):
+        return DaceSympySerializer().doprint(expr)
+    return str(expr)
+
+
+@lru_cache(maxsize=16384)
+def deserialize_symbolic(expr) -> SymbolicType:
+    if isinstance(expr, (SymExpr, sympy.Basic)):
+        return expr
+    if isinstance(expr, numpy.generic):
+        return TypedConstant(expr, dtypes.dtype_to_typeclass(type(expr)))
+    if isinstance(expr, int) and not isinstance(expr, bool):
+        return TypedConstant(expr, DEFAULT_SYMBOL_TYPE)
+    if isinstance(expr, float):
+        return TypedConstant(expr, dtypes.float64)
+    if not isinstance(expr, str):
+        return expr
+    if expr == '?':
+        return UndefinedSymbol()
+
+    expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
+    expr = _SERIALIZED_TYPED_CONSTANT.sub(
+        lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
+    return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
+
+
 @lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -1380,6 +1776,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return self._print(nf)
         return super()._print_Float(expr)
 
+    def _print_TypedConstant(self, expr):
+        value = self._print(expr.value)
+        if self.cpp_mode:
+            return f'{expr.dtype.ctype}({value})'
+        return f'dace.{expr.dtype.to_string()}({value})'
+
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
@@ -1490,7 +1892,7 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
-                sym, sympy.Number) or dtypes.isconstant(sym):
+                sym, (sympy.Number, TypedConstant)) or dtypes.isconstant(sym):
             return sstr
         else:
             return '(' + sstr + ')'
