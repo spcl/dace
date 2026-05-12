@@ -54,3 +54,66 @@ def test_wcr_via_reduction_kernel():
     row_sums = cp.zeros(8, dtype=cp.float64)
     row_reduce(A=A, row_sums=row_sums)
     cp.testing.assert_array_equal(row_sums, A.sum(axis=1))
+
+
+@pytest.mark.gpu
+def test_wcr_np_sum_small_n_auto_staging():
+    """``total[0] = np.sum(A)`` over 64 elements with NO explicit
+    storage annotations. DaCe's runtime auto-stages host arrays to GPU
+    around the compiled SDFG; ``auto_optimize``'s decision to
+    sequentialize the small reduce map is then valid because the inputs
+    are visible on the host. Reference behaviour for the explicit-storage
+    sibling test below."""
+    from dace.dtypes import DeviceType
+    from dace.transformation.auto.auto_optimize import auto_optimize
+
+    @dace.program
+    def reduce_sum(A: dace.float64[64], total: dace.float64[1]):
+        total[0] = np.sum(A)
+
+    sdfg = reduce_sum.to_sdfg()
+    auto_optimize(sdfg, DeviceType.GPU)
+
+    A = np.arange(64, dtype=np.float64)
+    total = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, total=total)
+    assert total[0] == np.sum(A)
+
+
+@pytest.mark.gpu
+@pytest.mark.xfail(
+    reason="auto_optimize sequentializes the reduce map for N < its tile "
+    "threshold (here N=64) but leaves the input array as GPU_Global. The "
+    "resulting Sequential (host) tasklet then reads GPU memory, and the "
+    "SDFG validator rejects the edge with 'Data container <X> is stored "
+    "as GPU_Global but accessed on host'. The auto-staging sibling above "
+    "dodges this by leaving storage implicit; the explicit-storage form "
+    "needs a proper fix in auto_optimize (or the validator).",
+    strict=True,
+)
+def test_wcr_np_sum_small_n_explicit_gpu_storage_threshold_bug():
+    """Natural ``total[0] = np.sum(A)`` over a 64-element input with
+    explicit ``GPU_Global`` annotations on both parameters. Expected:
+    ``auto_optimize`` GPU-fies the SDFG, the Reduce libnode lowers via
+    WCR atomics, the kernel runs, ``total`` matches ``cupy.sum(A)``.
+
+    Actual: ``auto_optimize`` decides ``N=64`` is below its tile
+    threshold and sequentializes the reduce map, but does not propagate
+    that schedule decision to the storage layer. The Sequential (host)
+    tasklet then reads ``GPU_Global`` data and the validator aborts."""
+    from dace.dtypes import DeviceType
+    from dace.transformation.auto.auto_optimize import auto_optimize
+
+    @dace.program
+    def reduce_sum(A: dace.float64[64] @ dace.StorageType.GPU_Global,
+                   total: dace.float64[1] @ dace.StorageType.GPU_Global):
+        total[0] = np.sum(A)
+
+    sdfg = reduce_sum.to_sdfg()
+    auto_optimize(sdfg, DeviceType.GPU)
+
+    import cupy as cp
+    A = cp.arange(64, dtype=cp.float64)
+    total = cp.zeros(1, dtype=cp.float64)
+    sdfg(A=A, total=total)
+    assert float(total[0]) == float(cp.sum(A))
