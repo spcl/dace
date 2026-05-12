@@ -122,6 +122,14 @@ DEFAULT_PIPELINE = (
     # declare-of-converted-ref is visible) and BEFORE flatten-structs
     # (so the section view feeds into the usual designate-rewrite).
     "hlfir-rewrite-sequence-association,"
+    # Lift ``type(t), allocatable :: f(:)`` struct members (alloc-array
+    # of records — ICON's ``p_patch%pprog(jg)`` shape) into top-level
+    # companions with a leading runtime-extent dim.  Runs BEFORE
+    # flatten-structs so the outer struct sees clean top-level arrays
+    # after the lift.  Bails silently when no such member is present;
+    # FlattenStructs's opaque-skip for alloc-array-of-records members
+    # provides the safety net for un-handled patterns.
+    "hlfir-lift-alloc-array-of-records,"
     "hlfir-flatten-structs,"
     # Collapse Fortran ``ptr => target`` rebinds under the strict-no-
     # aliasing assumption: every read or write of the pointer becomes

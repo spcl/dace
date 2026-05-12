@@ -500,6 +500,33 @@ static fir::RecordType pointerToRecordMember(mlir::Type t) {
     return mlir::dyn_cast<fir::RecordType>(inner);
 }
 
+/// Recognise ``type(T), allocatable :: f(:)`` or ``type(T), pointer ::
+/// f(:)`` — i.e. an alloc/pointer wrapper over an array of records.
+/// Companion of ``pointerToRecordMember`` for the array-shaped case.
+/// Returns the inner element ``RecordType`` when matched.
+///
+/// Treated as opaque by ``collectFlatLeaves`` for the same reason
+/// pointer-to-record-scalar is: the bridge can't pre-allocate a flat
+/// companion for "all records reachable through this descriptor"
+/// without runtime alloc-count info.  Access through such a member
+/// (``p_prog%pprog(<idx>)%...``) is handled by recognising the
+/// inlined-callee element-alias declare that Flang emits after
+/// ``hlfir-inline-all`` and flattening *that* declare instead.
+static fir::RecordType allocOrPtrArrayOfRecordsMember(mlir::Type t) {
+    auto box = mlir::dyn_cast<fir::BoxType>(t);
+    if (!box) return {};
+    mlir::Type inner;
+    if (auto h = mlir::dyn_cast<fir::HeapType>(box.getEleTy()))
+        inner = h.getEleTy();
+    else if (auto p = mlir::dyn_cast<fir::PointerType>(box.getEleTy()))
+        inner = p.getEleTy();
+    else
+        return {};
+    auto seq = mlir::dyn_cast<fir::SequenceType>(inner);
+    if (!seq) return {};
+    return mlir::dyn_cast<fir::RecordType>(seq.getEleTy());
+}
+
 static bool collectFlatLeaves(fir::RecordType rec,
                               llvm::SmallVectorImpl<std::string> &prefix,
                               llvm::SmallVectorImpl<int64_t> &outerDims,

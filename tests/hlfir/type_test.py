@@ -489,13 +489,10 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("`type(t), allocatable :: pprog(:)` member — `collectFlatLeaves` bails "
-       "on `box<heap<seq<? x record>>>`.  Closing this requires recognising "
-       "the inlined-callee element-alias declare that wraps "
-       "`hlfir.designate %pprog_box (%idx)` and routing it through the "
-       "existing nested-struct flatten as if it were a local `simple_type`.  "
-       "Full design in `project_alloc_array_of_records_todo.md` (Option B, "
-       "~150 LoC).  Real-world pattern: ICON `p_patch%pprog(jg)`.")
+@xfail("`type(t), allocatable :: pprog(:)` member — needs `LiftAllocArrayOfRecords` "
+       "pre-pass to rewrite the chain into accesses on a synthesised top-level "
+       "companion of shape `(NPPROG, *leaf_shape)`.  See the active plan in "
+       "`~/.claude/plans/vectorized-fluttering-pumpkin.md`.")
 def test_fortran_frontend_type_arg(tmp_path):
     src = """
 module lib
@@ -665,3 +662,179 @@ end subroutine main
     a = np.full([5, 5], 1, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 625)
+
+
+# ---------------------------------------------------------------------------
+# Alloc-array-of-records member — the `LiftAllocArrayOfRecords` pre-pass
+# target.  Both tests below xfail today; flip to passing when the pass lands.
+# ---------------------------------------------------------------------------
+
+
+@xfail("LiftAllocArrayOfRecords pre-pass not yet implemented.  Simple "
+       "stand-alone version of the alloc-array-of-records pattern: const "
+       "index, single pointer-array leaf, no inlining/callee aliasing.  "
+       "Smallest reproducer for the lift transformation.")
+def test_lift_alloc_array_of_records_simple(tmp_path):
+    """Minimal unit test for the LiftAllocArrayOfRecords pre-pass.
+
+    Structure: outer struct holds an alloc-array of records, each
+    record holds one pointer-array member.  Write a value through a
+    const-index access, read it back via the same path, assert
+    against a gfortran/f2py reference compiled from the same source.
+    """
+    src = """
+module lift_simple_mod
+  implicit none
+  type inner_t
+    real(kind=8), pointer, contiguous :: w(:, :)
+  end type inner_t
+  type outer_t
+    type(inner_t), allocatable :: items(:)
+  end type outer_t
+end module lift_simple_mod
+
+subroutine kernel(d, val)
+  use lift_simple_mod
+  implicit none
+  real(kind=8), intent(in)    :: val
+  real(kind=8), intent(inout) :: d(2)
+  type(outer_t) :: s
+  ! Storage laid out so the LAST dim selects the record — keeps each
+  ! ``storage(:, :, jg)`` slice contiguous for the pointer rebind.
+  real(kind=8), target :: storage(4, 5, 3)
+
+  ! Allocate the AoS spine + bind each record's pointer to a slice.
+  allocate(s%items(3))
+  s%items(1)%w => storage(:, :, 1)
+  s%items(2)%w => storage(:, :, 2)
+  s%items(3)%w => storage(:, :, 3)
+
+  ! Write a value, read it back through the AoS chain.
+  s%items(2)%w(1, 1) = val
+  d(1) = s%items(2)%w(1, 1)
+  d(2) = s%items(2)%w(1, 1) * 2.0d0
+
+  deallocate(s%items)
+end subroutine kernel
+"""
+    sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
+    ref = f2py_compile(src, tmp_path / "ref", "lift_simple_ref")
+
+    val = np.float64(3.5)
+    d_sdfg = np.zeros(2, dtype=np.float64)
+    d_ref = np.zeros(2, dtype=np.float64)
+
+    sdfg(d=d_sdfg, val=val)
+    ref.kernel(d_ref, val)
+
+    np.testing.assert_allclose(d_sdfg, d_ref, rtol=0, atol=0)
+    np.testing.assert_allclose(d_ref, [val, val * 2.0], rtol=0, atol=0)
+
+
+@xfail("LiftAllocArrayOfRecords pre-pass not yet implemented.  "
+       "ICON-derived snippet: `t_nh_state` holds `TYPE(t_nh_prog), "
+       "ALLOCATABLE :: prog(:)` where each `t_nh_prog` carries multiple "
+       "pointer-array members.  Access pattern mirrors "
+       "`mo_solve_nonhydro.f90:1576`: `p_nh%prog(nvar)%rho(jc, jk, jb)` "
+       "with runtime `nvar`.")
+def test_lift_alloc_array_of_records_icon_pattern(tmp_path):
+    """ICON-derived test for the LiftAllocArrayOfRecords pre-pass.
+
+    Mirrors the canonical solve_nh pattern: outer state struct holds
+    an alloc-array of prognostic records, each carrying several
+    rank-3 pointer-array members (rho, theta_v, w).  Access uses a
+    runtime element index (`nvar`), exactly as ICON's two-time-level
+    scheme does.  Compares the SDFG output against a gfortran/f2py
+    reference compiled from the same source.
+    """
+    src = """
+module lift_icon_mod
+  implicit none
+  type t_nh_prog
+    real(kind=8), pointer, contiguous :: rho(:, :, :)
+    real(kind=8), pointer, contiguous :: theta_v(:, :, :)
+    real(kind=8), pointer, contiguous :: w(:, :, :)
+  end type t_nh_prog
+  type t_nh_state
+    type(t_nh_prog), allocatable :: prog(:)
+  end type t_nh_state
+end module lift_icon_mod
+
+subroutine kernel(out_rho, out_theta, out_w, nvar, wgt, rho_val, theta_val, w_val)
+  use lift_icon_mod
+  implicit none
+  integer, intent(in)         :: nvar
+  real(kind=8), intent(in)    :: wgt, rho_val, theta_val, w_val
+  real(kind=8), intent(inout) :: out_rho(2, 3, 2)
+  real(kind=8), intent(inout) :: out_theta(2, 3, 2)
+  real(kind=8), intent(inout) :: out_w(2, 3, 2)
+
+  type(t_nh_state) :: p_nh
+  ! Trailing-dim record index keeps each ``store(:, :, :, n)`` slice
+  ! contiguous for the pointer rebind.
+  real(kind=8), target :: rho_store(2, 3, 2, 3)
+  real(kind=8), target :: theta_store(2, 3, 2, 3)
+  real(kind=8), target :: w_store(2, 3, 2, 3)
+  integer :: jc, jk, jb, n
+
+  allocate(p_nh%prog(3))
+  do n = 1, 3
+    p_nh%prog(n)%rho     => rho_store(:, :, :, n)
+    p_nh%prog(n)%theta_v => theta_store(:, :, :, n)
+    p_nh%prog(n)%w       => w_store(:, :, :, n)
+  end do
+
+  do jb = 1, 2
+    do jk = 1, 3
+      do jc = 1, 2
+        p_nh%prog(nvar)%rho(jc, jk, jb)     = rho_val   + 0.01d0 * (jc + jk + jb)
+        p_nh%prog(nvar)%theta_v(jc, jk, jb) = theta_val + 0.02d0 * (jc + jk + jb)
+        p_nh%prog(nvar)%w(jc, jk, jb)       = w_val     + 0.03d0 * (jc + jk + jb)
+      end do
+    end do
+  end do
+
+  do jb = 1, 2
+    do jk = 1, 3
+      do jc = 1, 2
+        out_rho(jc, jk, jb)   = wgt * p_nh%prog(nvar)%rho(jc, jk, jb)
+        out_theta(jc, jk, jb) = wgt * p_nh%prog(nvar)%theta_v(jc, jk, jb)
+        out_w(jc, jk, jb)     = wgt * p_nh%prog(nvar)%w(jc, jk, jb)
+      end do
+    end do
+  end do
+
+  deallocate(p_nh%prog)
+end subroutine kernel
+"""
+    sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
+    ref = f2py_compile(src, tmp_path / "ref", "lift_icon_ref")
+
+    rng = np.random.default_rng(0)
+    nvar = np.int32(2)
+    wgt = np.float64(rng.standard_normal())
+    rho_val = np.float64(rng.standard_normal())
+    theta_val = np.float64(rng.standard_normal())
+    w_val = np.float64(rng.standard_normal())
+
+    shape = (2, 3, 2)
+    out_rho_sdfg = np.zeros(shape, dtype=np.float64, order='F')
+    out_theta_sdfg = np.zeros(shape, dtype=np.float64, order='F')
+    out_w_sdfg = np.zeros(shape, dtype=np.float64, order='F')
+    out_rho_ref = np.zeros(shape, dtype=np.float64, order='F')
+    out_theta_ref = np.zeros(shape, dtype=np.float64, order='F')
+    out_w_ref = np.zeros(shape, dtype=np.float64, order='F')
+
+    sdfg(out_rho=out_rho_sdfg,
+         out_theta=out_theta_sdfg,
+         out_w=out_w_sdfg,
+         nvar=nvar,
+         wgt=wgt,
+         rho_val=rho_val,
+         theta_val=theta_val,
+         w_val=w_val)
+    ref.kernel(out_rho_ref, out_theta_ref, out_w_ref, nvar, wgt, rho_val, theta_val, w_val)
+
+    np.testing.assert_allclose(out_rho_sdfg, out_rho_ref, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(out_theta_sdfg, out_theta_ref, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(out_w_sdfg, out_w_ref, rtol=1e-12, atol=1e-12)

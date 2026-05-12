@@ -222,6 +222,7 @@ add_library(hlfir_bridge_passes STATIC
     passes/RewritePointerAssigns.cpp
     passes/RewriteSequenceAssociation.cpp
     passes/LiftReductionOperands.cpp
+    passes/LiftAllocArrayOfRecords.cpp
 )
 target_link_libraries(hlfir_bridge_passes PUBLIC
     hlfir_bridge_core
