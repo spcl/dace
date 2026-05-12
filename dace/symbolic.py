@@ -1546,7 +1546,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
             symname = self.visit(node.args[0])
             if not isinstance(symname, symbol):
-                raise TypeError('symbol(...) expects a serialized symbol as its first argument')
+                raise TypeError('symbol(...) expects its first argument to deserialize to a symbol instance, '
+                                f'got {type(symname).__name__}')
             kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
             return symbol(symname.name, dtype=dtype, **kwargs)
