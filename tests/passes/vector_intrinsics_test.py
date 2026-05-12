@@ -8,7 +8,6 @@ import numpy as np
 from dace.frontend.python.parser import DaceProgram
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from dace.transformation.passes.vectorization.detect_gather import DetectGather
 from math import log, exp
 
 ###############################################################################
@@ -85,6 +84,7 @@ def apply_vectorization_pass(
     insert_copies=True,
     no_inline=False,
     filter_map=None,
+    lower_to_intrinsics=False,
 ):
     VectorizeCPU(
         vector_width=vector_width,
@@ -93,6 +93,7 @@ def apply_vectorization_pass(
         apply_on_maps=filter_map,
         no_inline=no_inline,
         fail_on_unvectorizable=True,
+        lower_to_intrinsics=lower_to_intrinsics,
     ).apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -536,8 +537,7 @@ def test_strided_gather(config: List[Dict[str, str]]):
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = "strided_gather_vec"
 
-    apply_vectorization_pass(vsdfg, vector_width=8)
-    DetectGather().apply_pass(vsdfg, {})
+    apply_vectorization_pass(vsdfg, vector_width=8, lower_to_intrinsics=True)
     vsdfg.simplify()
 
     # -------------------------

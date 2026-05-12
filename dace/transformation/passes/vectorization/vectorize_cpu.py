@@ -15,6 +15,10 @@ from dace.transformation.passes.vectorization.fuse_overlapping_loads import Fuse
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import SameWriteSetIfElseToMergeCFG
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
+from dace.transformation.passes.vectorization.detect_gather import DetectGather
+from dace.transformation.passes.vectorization.detect_scatter import DetectScatter
+from dace.transformation.passes.vectorization.detect_strided_load import DetectStridedLoad
+from dace.transformation.passes.vectorization.detect_strided_store import DetectStridedStore
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -34,7 +38,8 @@ class VectorizeCPU(ppl.Pipeline):
                  eliminate_trivial_vector_map: bool = True,
                  user_skip_nsdfg_arrays: Optional[Set[str]] = None,
                  use_fp_factor: bool = True,
-                 branch_normalization: bool = False):
+                 branch_normalization: bool = False,
+                 lower_to_intrinsics: bool = False):
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
@@ -129,6 +134,21 @@ class VectorizeCPU(ppl.Pipeline):
             passes = [RemoveMathCall(), vectorizer]
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())
+        # Lower the scalar ``assign_<i>`` fans the vectorizer leaves around
+        # each ``_packed`` access node into single ``gather_double`` /
+        # ``scatter_double`` / ``strided_{load,store}_double`` intrinsic
+        # calls. The four passes share a single implementation in
+        # ``utils/lane_fanout.py``; only the dispatch direction and
+        # pattern differ. Default ``False`` keeps the scalar shape (the
+        # ``assign_<i>`` fan stays in the SDFG and the C++ compiler
+        # auto-vectorizes it if it can).
+        if lower_to_intrinsics:
+            passes.extend([
+                DetectGather(),
+                DetectScatter(),
+                DetectStridedLoad(),
+                DetectStridedStore(),
+            ])
         if eliminate_trivial_vector_map:
             passes.append(RemoveVectorMaps())
         self._applied_before = False
