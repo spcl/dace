@@ -450,7 +450,10 @@ def prepare_vectorized_array(state: dace.SDFGState,
             try:
                 if dace.symbolic.simplify(length) != 1:
                     keep_mask[i] = 1
-            except Exception:
+            except (TypeError, ValueError, AttributeError):
+                # Non-numeric length symbolic that ``simplify`` cannot
+                # canonicalize to ``1``. Conservatively keep the dim
+                # (it is provably not length-1).
                 keep_mask[i] = 1
         if sum(keep_mask) != 1:
             raise NotImplementedError(
@@ -495,10 +498,8 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
     """
     # Get stride-1 begin value
     if len(subset) == len(orig_arr.strides):
-        stride_one_subset = [b for (b, e, s), stride in zip(subset, orig_arr.strides) if stride == 1]
-        assert len(stride_one_subset) == 1, f"{stride_one_subset} != 1: {orig_arr.strides}, {subset}"
-        stride_one_begin = stride_one_subset[0]
         stride_one_indices = [i for i, stride in enumerate(orig_arr.strides) if stride == 1]
+        assert len(stride_one_indices) == 1, f"{stride_one_indices} != 1: {orig_arr.strides}, {subset}"
         # If the inner subset starts from 0, then to the SDFG just the subset accessed is passed
         # In that case we copy the edge as it is
         # Otherwise we need to generate the mapping (using the subst (and not edge subset))
@@ -832,9 +833,9 @@ def add_copies_before_and_after_nsdfg(
                         inner_state.add_edge(an, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
 
     # Handle unmovable arrays by adding copies at the beginning and at the end of the inner SDFG
-    # Copy in can't be always the first state, we need to traverse the SDFG to find it
-    # Traverse using BFS, for the vectorization we assume that the inner nSDFG is a line-graph
-    # And only consist of SDFGStates
+    # Copy in can't be always the first state, we need to traverse the SDFG to find it.
+    # The walk is single-successor only (line graph asserted in ``find_copy_in_state``),
+    # so BFS/DFS distinction does not apply.
     last_nodes = {n for n in inner_sdfg.nodes() if inner_sdfg.out_degree(n) == 0}
     assert len(last_nodes) == 1
     last_node = last_nodes.pop()
@@ -988,9 +989,10 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
         nodes_to_check.append(oe.dst)
         syms_available = syms_available.union({str(s) for s in oe.data.assignments.keys()})
 
-    raise Exception("Find copy_in state called, it could not find a state for copy-in,"
-                    "this should not occur as this array already exist,"
-                    "there needs to be a state where all symbols have been defined")
+    raise RuntimeError(
+        f"find_copy_in_state: no state in {inner_sdfg.label} defines every symbol in "
+        f"{free_syms} (have only {syms_available}); the array {name!r} must already exist "
+        f"by the time some state has all its defining symbols in scope")
 
 
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):

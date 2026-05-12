@@ -14,6 +14,7 @@ post-S7 slice; for now the helpers retain the existing template-based
 emission.
 """
 import copy
+import re
 from typing import Dict, Set, Tuple, Union
 
 import dace
@@ -66,6 +67,9 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
     return False
 
 
+_VECTOR_COPY_CALL_RE = re.compile(r"\bvector_copy\s*\(")
+
+
 def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
     """
     Check if a tasklet performs a vector copy operation.
@@ -74,9 +78,13 @@ def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
         t: The tasklet to check
 
     Returns:
-        True if the tasklet's code contains "vector_copy(", False otherwise
+        True if the tasklet's code contains a ``vector_copy(`` call,
+        False otherwise. The match is word-boundary anchored so that
+        identifiers like ``my_vector_copy(`` do not falsely match. CPP
+        comments / string literals are not stripped — accepting that
+        residual false-positive risk in exchange for a one-line check.
     """
-    return "vector_copy(" in t.code.as_string
+    return _VECTOR_COPY_CALL_RE.search(t.code.as_string) is not None
 
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
