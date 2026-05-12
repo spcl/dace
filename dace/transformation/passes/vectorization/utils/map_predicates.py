@@ -120,110 +120,66 @@ def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
                 raise AssertionError(f"Got nodes {all_nodes} has {nsdfg_count} nSDFGs")
 
 
-def no_other_subset(state, recursive: bool = True) -> bool:
-    """
-    Check if any edge in the state has an 'other_subset' attribute set.
+def _no_edge_attr_state(state, attr: str, recursive: bool) -> bool:
+    """Return True iff no edge in ``state`` has the attribute set (``is not None``).
 
-    Args:
-        state: The state to check
-        recursive: If True, recursively check nested SDFGs
-
-    Returns:
-        bool: True if no edge has other_subset set, False otherwise.
+    With ``recursive=True``, recursively descends into NestedSDFG nodes.
     """
     for edge in state.edges():
-        if edge.data.other_subset is not None:
+        if getattr(edge.data, attr) is not None:
             return False
     if recursive:
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                if not no_other_subset_sdfg(node.sdfg, True):
+                if not _no_edge_attr_sdfg(node.sdfg, attr, True):
                     return False
     return True
+
+
+def _no_edge_attr_sdfg(sdfg: dace.SDFG, attr: str, recursive: bool) -> bool:
+    """Return True iff no edge in any state of ``sdfg`` has the attribute set."""
+    for state in sdfg.all_states():
+        if not _no_edge_attr_state(state, attr, recursive):
+            return False
+    return True
+
+
+def no_other_subset(state, recursive: bool = True) -> bool:
+    """True iff no edge in ``state`` has ``other_subset`` set; recurses into NSDFGs by default."""
+    return _no_edge_attr_state(state, "other_subset", recursive)
 
 
 def no_other_subset_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
-    """
-    Check if any edge in the SDFG has an 'other_subset' attribute set.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
-
-    Returns:
-        bool: True if no edge has other_subset set, False otherwise.
-    """
-    for state in sdfg.all_states():
-        if not no_other_subset(state, recursive):
-            return False
-    return True
+    """True iff no edge in any state of ``sdfg`` has ``other_subset`` set."""
+    return _no_edge_attr_sdfg(sdfg, "other_subset", recursive)
 
 
 def assert_no_other_subset(sdfg: dace.SDFG, recursive: bool = True):
-    """
-    Assert that no edge in the SDFG has an 'other_subset' attribute set.
+    """Loud-failure variant of :func:`no_other_subset_sdfg`.
 
-    This validation is needed because vectorization does not support other subsets.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
+    Vectorization does not support ``other_subset`` on memlets; fail early
+    rather than silently mis-vectorize.
     """
-    assert no_other_subset_sdfg(sdfg, recursive), "Found edge with other_subset set"
+    assert _no_edge_attr_sdfg(sdfg, "other_subset", recursive), "Found edge with other_subset set"
 
 
 def no_wcr(state, recursive: bool = True) -> bool:
-    """
-    Check if any edge in the state has a write-conflict resolution (WCR) operation.
-
-    Args:
-        state: The state to check
-        recursive: If True, recursively check nested SDFGs
-
-    Returns:
-        bool: True if no edge has WCR set, False otherwise.
-    """
-    for edge in state.edges():
-        if edge.data.wcr is not None:
-            return False
-    if recursive:
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                if not no_wcr_sdfg(node.sdfg, True):
-                    return False
-    return True
+    """True iff no edge in ``state`` has WCR set; recurses into NSDFGs by default."""
+    return _no_edge_attr_state(state, "wcr", recursive)
 
 
 def no_wcr_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
-    """
-    Check if any edge in the SDFG has a write-conflict resolution (WCR) operation.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
-
-    Returns:
-        bool: True if no edge has WCR set, False otherwise.
-    """
-    for state in sdfg.all_states():
-        if not no_wcr(state, recursive):
-            return False
-    return True
+    """True iff no edge in any state of ``sdfg`` has WCR set."""
+    return _no_edge_attr_sdfg(sdfg, "wcr", recursive)
 
 
 def assert_no_wcr(sdfg: dace.SDFG, recursive: bool = True):
-    """
-    Assert that no edge in the SDFG has a write-conflict resolution (WCR) operation.
+    """Loud-failure variant of :func:`no_wcr_sdfg`.
 
-    WCR operations handle conflicting writes to the same memory location. This assertion
-    ensures that the SDFG doesn't contain such operations, which are not supported by
-    auto-vectorization.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
+    Auto-vectorization does not currently model WCR (write-conflict
+    resolution); fail early rather than silently mis-vectorize.
     """
-    assert no_wcr_sdfg(sdfg, recursive), "Found edge with WCR set"
+    assert _no_edge_attr_sdfg(sdfg, "wcr", recursive), "Found edge with WCR set"
 
 
 def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
