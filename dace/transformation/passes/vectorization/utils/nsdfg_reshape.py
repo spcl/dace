@@ -19,7 +19,8 @@ locked policy.
 ``add_copies_before_and_after_nsdfg``, and ``find_copy_in_state`` are
 larger and migrate in follow-up slices (S4b, S4c).
 """
-from typing import Dict
+import copy
+from typing import Dict, List, Set
 
 import dace
 from dace import SDFGState
@@ -375,6 +376,252 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
 
         if should_drop_dims:
             drop_dims(nsdfg_node.sdfg, dims_to_keep, connector_name)
+
+
+def prepare_vectorized_array(state: dace.SDFGState,
+                             inner_sdfg: dace.SDFG,
+                             inner_arr_name: str,
+                             orig_dataname: str,
+                             orig_arr: dace.data.Data,
+                             subset: dace.subsets.Range,
+                             vector_width: dace.symbolic.SymExpr,
+                             vector_storage: dace.dtypes.StorageType,
+                             reuse_name_if_existing: bool = False,
+                             use_name: str = None):
+    """
+    Prepares a vectorized array by creating the vector array in outer SDFG
+    and replacing the inner array with vectorized version.
+
+    Args:
+        state: The SDFG state
+        inner_sdfg: The inner SDFG containing the array
+        inner_arr_name: Name of the array to vectorize
+        orig_dataname: Original data array name
+        orig_arr: Original outer array descriptor
+        memlet: Memlet for determining offsets
+        vector_width: Width of the vector
+        vector_storage: Storage type for the vector
+        reuse_name_if_existing: Does not find a new name
+    Returns:
+        tuple: (vector_dataname, inner_offset or 0)
+    """
+    vector_dataname_candidate = orig_dataname + "_vec_k" if use_name is None else use_name
+    if reuse_name_if_existing:
+        assert use_name is not None
+        vector_dataname = vector_dataname_candidate
+        if vector_dataname not in state.sdfg.arrays:
+            state.sdfg.add_array(name=vector_dataname_candidate,
+                                 shape=(vector_width, ),
+                                 dtype=orig_arr.dtype,
+                                 location=orig_arr.location,
+                                 transient=True,
+                                 find_new_name=False,
+                                 storage=vector_storage)
+    else:
+        vector_dataname, _ = state.sdfg.add_array(name=vector_dataname_candidate,
+                                                  shape=(vector_width, ),
+                                                  dtype=orig_arr.dtype,
+                                                  location=orig_arr.location,
+                                                  transient=True,
+                                                  find_new_name=True,
+                                                  storage=vector_storage)
+
+    # Replace the array inside inner SDFG
+    prev_inner_arr = inner_sdfg.arrays[inner_arr_name]
+    inner_sdfg.remove_data(inner_arr_name, False)
+    inner_sdfg.add_array(name=inner_arr_name,
+                         shape=(vector_width, ),
+                         dtype=orig_arr.dtype,
+                         location=orig_arr.location,
+                         transient=False,
+                         find_new_name=False,
+                         storage=vector_storage)
+
+    # Handle multi-dimensional arrays
+    inner_offset = 0
+    if len(orig_arr.shape) > 1:
+        # NSDFG semantics collapse every length-1 subset dim at the boundary;
+        # the surviving dim is the one whose subset length is not 1. Drive the
+        # keep-mask off the subset rather than a layout-specific guess (the
+        # previous ``keep_mask[-1] = 1`` was C-layout only and the
+        # ``drop_dims`` call itself had swapped args, so it had never actually
+        # rewritten the inner memlet — landing the dim-collapse here for the
+        # first time means the inner accesses now match the (vector_width,)
+        # connector shape).
+        keep_mask = [0 for _ in orig_arr.shape]
+        for i, (b, e, s) in enumerate(subset):
+            length = e - b + 1
+            try:
+                if dace.symbolic.simplify(length) != 1:
+                    keep_mask[i] = 1
+            except Exception:
+                keep_mask[i] = 1
+        if sum(keep_mask) != 1:
+            raise NotImplementedError(
+                f"prepare_vectorized_array: subset {subset} has {sum(keep_mask)} non-length-1 dims "
+                f"on a {len(orig_arr.shape)}-D array, exactly one is required by the NSDFG collapse")
+        # Note: contig-vs-surviving-dim alignment is NOT enforced here; the
+        # vectorizer also handles non-unit-stride packs via gather paths
+        # elsewhere, and the existing test corpus exercises those.
+        drop_dims(inner_sdfg, tuple(keep_mask), inner_arr_name)
+
+        # Offset the surviving dim by the outer subset's start on that dim,
+        # so an inner access like ``arr[start]`` becomes the first vector
+        # lane ``arr[0]``. Don't route through ``offset_memlets`` here: it
+        # post-collapses length-1 dims which would silently turn the
+        # vector-lane memlet into a 0-D ``arr[]`` access.
+        if not (reuse_name_if_existing is True and use_name is not None):
+            from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
+            surviving_offsets = [(b, b, 1) for (b, e, s), keep in zip(subset, keep_mask) if keep]
+            offset_range = dace.subsets.Range(surviving_offsets)
+            for _inner_state, inner_edge in walk_memlets_of(inner_sdfg, inner_arr_name):
+                inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
+
+    return vector_dataname, inner_offset
+
+
+def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_width):
+    """
+    Computes the copy subset based on stride and offset.
+
+    Args:
+        edge_subset: Subset from the edge
+        subset: Subset from the memlet
+        orig_arr: Original array descriptor
+        inner_offset: Offset value
+        vector_width: Width of the vector
+
+    Returns:
+        dace.subsets.Range: The copy subset
+    """
+    # Get stride-1 begin value
+    if len(subset) == len(orig_arr.strides):
+        stride_one_subset = [b for (b, e, s), stride in zip(subset, orig_arr.strides) if stride == 1]
+        assert len(stride_one_subset) == 1, f"{stride_one_subset} != 1: {orig_arr.strides}, {subset}"
+        stride_one_begin = stride_one_subset[0]
+        stride_one_indices = [i for i, stride in enumerate(orig_arr.strides) if stride == 1]
+        # If the inner subset starts from 0, then to the SDFG just the subset accessed is passed
+        # In that case we copy the edge as it is
+        # Otherwise we need to generate the mapping (using the subst (and not edge subset))
+        stride_one_idx = stride_one_indices[0]
+        stride_one_begin = subset[stride_one_idx][0]
+
+        if stride_one_begin != 0:
+            new_subset = list(subset)
+            b, e, s = new_subset[stride_one_idx]
+            new_subset[stride_one_idx] = (b + inner_offset, b + inner_offset + vector_width - 1, 1)
+            return dace.subsets.Range(new_subset)
+        else:
+            return copy.deepcopy(edge_subset)
+    else:
+        # Definitely a smaller subset has ben taken due to the dimension change
+        return copy.deepcopy(edge_subset)
+
+
+def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
+                     vector_width: int, vector_storage: dace.dtypes.StorageType) -> Set[str]:
+    """
+    Process input edges for movable arrays.
+    Returns added array names.
+
+    Args:
+        state: The SDFG state
+        nsdfg_node: The nested SDFG node
+        movable_arrays: List of (array_name, memlet) tuples
+        vector_width: Width of the vector
+        vector_storage: Storage type for the vector
+    """
+    assert isinstance(nsdfg_node, dace.nodes.NestedSDFG)
+    inner_sdfg = nsdfg_node.sdfg
+
+    vectorized_datanames = set()
+    for movable_arr_name, subset in movable_arrays:
+        in_edges = list(state.in_edges_by_connector(nsdfg_node, movable_arr_name))
+        assert len(in_edges) <= 1
+
+        for ie in in_edges:
+            orig_arr = state.sdfg.arrays[ie.data.data]
+            inner_arr_name = ie.dst_conn
+
+            # Prepare vectorized arrays
+            # This subset will be offset, copy the prev one
+            prev_subset = copy.deepcopy(subset)
+            vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, ie.data.data,
+                                                                     orig_arr, subset, vector_width, vector_storage)
+            assert vector_dataname not in vectorized_datanames
+            vectorized_datanames.add(vector_dataname)
+
+            # Compute copy subset
+            copy_subset = compute_edge_subset(ie.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
+
+            # Add access node and rewire edges
+            an = state.add_access(vector_dataname)
+            an.setzero = True
+            state.remove_edge(ie)
+            state.add_edge(ie.src, ie.src_conn, an, None, dace.memlet.Memlet(data=ie.data.data, subset=copy_subset))
+            state.add_edge(an, None, ie.dst, ie.dst_conn,
+                           dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
+
+    return vectorized_datanames
+
+
+def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
+                      vector_width: int, vector_storage: dace.dtypes.StorageType):
+    """
+    Process output edges for movable arrays.
+
+    Args:
+        state: The SDFG state
+        nsdfg_node: The nested SDFG node
+        movable_arrays: List of (array_name, memlet) tuples
+        vector_width: Width of the vector
+        vector_storage: Storage type for the vector
+    """
+    inner_sdfg = nsdfg_node.sdfg
+
+    for id, (movable_arr_name, subset) in enumerate(movable_arrays):
+        out_edges = list(state.out_edges_by_connector(nsdfg_node, movable_arr_name))
+        assert len(out_edges) <= 1
+
+        for oe in out_edges:
+            orig_arr = state.sdfg.arrays[oe.data.data]
+            inner_arr_name = oe.src_conn
+
+            inout_data_name = None
+            # Check inout connector if nsdfg
+            if isinstance(oe.src, dace.nodes.NestedSDFG) and oe.src_conn in oe.src.in_connectors:
+                # Inout connector means, this array should have been added
+                ie_datas = {ie.data.data for ie in state.in_edges_by_connector(nsdfg_node, oe.src_conn)}
+                assert len(ie_datas) == 1
+                ie_data = ie_datas.pop()  # This can be vectorized
+                assert oe.data.data == ie_data or ie_data.startswith(
+                    oe.data.data + "_vec"
+                ), f"{oe.data.data} != {ie_data} and {ie_data} not startswith {oe.data.data + '_vec'} (from {inner_arr_name}) not in {state.sdfg.arrays}"
+                inout_data_name = ie_data
+
+            # Prepare vectorized arrays
+            # Copy it to avoid it changing
+            prev_subset = copy.deepcopy(subset)
+            # We should reuse the name if we have an inout connectors.
+            vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, oe.data.data,
+                                                                     orig_arr, subset, vector_width, vector_storage,
+                                                                     inout_data_name is not None, inout_data_name)
+
+            # Compute copy subset
+            copy_subset = compute_edge_subset(oe.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
+
+            # Add access node and rewire edges
+            an = state.add_access(vector_dataname)
+            an.setzero = True
+            state.remove_edge(oe)
+            assert oe.src == nsdfg_node
+            assert oe.src_conn is not None
+            assert len(set(state.out_edges_by_connector(nsdfg_node, oe.src_conn))) == 0
+            state.add_edge(oe.src, oe.src_conn, an, None,
+                           dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
+            state.add_edge(an, None, oe.dst, oe.dst_conn, dace.memlet.Memlet(data=oe.data.data, subset=copy_subset))
+
+    state.sdfg.validate()
 
 
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
