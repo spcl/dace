@@ -6,6 +6,11 @@ from dace.sdfg import nodes, SDFGState
 from dace.codegen import common
 from dace.codegen.dispatcher import DefinedType
 from dace.transformation.helpers import get_parent_map
+# Re-exported so callers (e.g. ``InferGPUGridAndBlockSize``) keep their
+# ``gpu_utils.to_3d_dims(...)`` / ``.product(...)`` / ``.validate_block_size_limits(...)``
+# call sites working after dedup. Canonical definitions live in
+# ``add_threadblock_map``.
+from dace.transformation.dataflow.add_threadblock_map import (product, to_3d_dims, validate_block_size_limits)
 
 # CUDA / HIP launch grids and blocks have exactly three dimensions
 # (x, y, z); accessor helpers index into that fixed-width tuple.
