@@ -32,6 +32,18 @@ from .nsdfg_reshape import (  # noqa: F401
     process_out_edges,
     reset_connectors,
 )
+from .source_sink import (  # noqa: F401
+    check_writes_to_scalar_sinks_happen_through_assign_tasklets,
+    expand_assignment_tasklets,
+    get_array_sink_nodes,
+    get_array_source_nodes,
+    get_scalar_sink_nodes,
+    get_scalar_source_nodes,
+    input_is_zero_and_transient_accumulator,
+    move_out_reduction,
+    only_one_flop_after_source,
+    reduce_before_use,
+)
 from .map_predicates import (  # noqa: F401
     assert_last_dim_of_maps_are_contigous_accesses,
     assert_maps_consist_of_single_nsdfg_or_no_nsdfg,
