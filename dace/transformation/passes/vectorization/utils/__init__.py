@@ -32,6 +32,15 @@ from .nsdfg_reshape import (  # noqa: F401
     process_out_edges,
     reset_connectors,
 )
+from .tasklets import (  # noqa: F401
+    duplicate_access,
+    insert_assignment_tasklet_from_src,
+    insert_assignment_tasklet_to_dst,
+    instantiate_tasklet_from_info,
+    is_assignment_tasklet,
+    is_vector_assign_tasklet,
+    match_connector_to_data,
+)
 from .arrays import (  # noqa: F401
     add_transient_arrays_from_list,
     copy_arrays_with_a_new_shape,
