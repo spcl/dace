@@ -1361,6 +1361,11 @@ class Vectorize(ppl.Pass):
                         continue
 
                 if map_param_appears_in_multiple_dimensions(state, map_entry):
+                    if self.fail_on_unvectorizable:
+                        raise NotImplementedError(
+                            f"Vectorize: {map_entry} ({state.label}) - map param accesses multiple dimensions "
+                            f"(diagonal / linear-combination access pattern); gather/scatter lowering for this "
+                            f"shape is not yet implemented")
                     warnings.warn(
                         f"Vectorize: skipping {map_entry} ({state.label}) - map param accesses multiple dimensions")
                     continue
