@@ -20,8 +20,10 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 _SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
 _SERIALIZED_SYMBOL = re.compile(r'\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)')
+_SERIALIZED_TYPED_CONSTANT_VALUE = r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+'
+_SERIALIZED_TYPED_CONSTANT_SUFFIX = r'i8|i16|i32|i64|u8|u16|u32|u64|f16|f32|f64'
 _SERIALIZED_TYPED_CONSTANT = re.compile(
-    r'(?<![A-Za-z0-9_\.])(?P<value>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+)(?P<suffix>i8|i16|i32|i64|u8|u16|u32|u64|f16|f32|f64)\b'
+    rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
 _TYPECLASS_TO_LITERAL_SUFFIX = {
     dtypes.int8: 'i8',
@@ -1541,7 +1543,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 value = float(value)
             else:
                 value = int(value)
-            return TypedConstant(value, _LITERAL_SUFFIX_TO_TYPECLASS[suffix])
+            try:
+                dtype = _LITERAL_SUFFIX_TO_TYPECLASS[suffix]
+            except KeyError as ex:
+                raise TypeError(f'Invalid type suffix "{suffix}" in typed constant') from ex
+            return TypedConstant(value, dtype)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
             symname = self.visit(node.args[0])
