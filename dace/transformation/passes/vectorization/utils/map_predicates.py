@@ -261,33 +261,24 @@ def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: d
     """
 
     last_param = str(map_entry.map.params[-1])
-    print(f"Checking last map parameter: {last_param}")
 
     nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
     edges = state.all_edges(*nodes_between)
 
-    total_appearances = 0
-
     for edge in edges:
         memlet: dace.memlet.Memlet = edge.data
 
-        # -------------------------
-        # 1. APPEARANCES IN SUBSETS
-        # -------------------------
+        # Count occurrences of the last map parameter across all subset
+        # dimensions of this memlet; flag if it appears more than once.
         if memlet.subset is not None:
             subset_appearances = 0
             for (b, e, s) in memlet.subset:
-                # Extract free symbols
-                # Count occurrences in lower bound
                 if hasattr(b, "free_symbols"):
                     subset_appearances += count_param_in_expr(b, last_param)
-
-            print(f"[Subset] {last_param} appears {subset_appearances} times in memlet {memlet}")
 
             if subset_appearances >= 2:
                 return True
 
-    print(f"Total appearances of {last_param}: {total_appearances}")
     return False
 
 

@@ -219,9 +219,10 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
     for edge in edges:
         if edge.data is not None:
             if not all(((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset):
-                print(
-                    "Edge found where not all memlets subsets are length 1, if only one dimension matches to vector length then it is ok"
-                )
+                # Edge found where not all memlet subsets are length 1.
+                # That's still acceptable iff exactly one dim has length
+                # equal to ``vector_width`` (the dim we'll expand); any
+                # other mix raises below.
                 vlens = {((e + 1 - b) // s) == vector_width for b, e, s in edge.data.subset}
                 if len(vlens) > 1:
                     raise Exception(
