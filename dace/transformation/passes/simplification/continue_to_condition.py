@@ -4,7 +4,7 @@ from typing import Dict, Optional, Any
 
 from dace import sdfg as sd, properties
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ContinueBlock, ControlFlowRegion, ConditionalBlock, LoopRegion
+from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
 from dace.transformation import transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.sdfg import SDFG

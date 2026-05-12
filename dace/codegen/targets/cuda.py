@@ -549,10 +549,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
-                for arch in hip_arch)
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
+            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
+            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
             host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
@@ -1482,7 +1480,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # otherwise streams do not behave as expected becasue they are
             # allocated on host side
             streams_to_reset = [
-                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
+                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.data.Stream)
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
@@ -1733,6 +1731,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
         if node.gpu_maxnreg == 0:
             maxnreg_str = ''
+            gpu_min_warps_per_eu = ''
+            if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
+                gpu_min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
             # Set kernel launch bounds
             if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
@@ -1740,9 +1741,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if any(symbolic.issymbolic(b) for b in block_dims):
                     launch_bounds = ''
                 else:
-                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))}{gpu_min_warps_per_eu})'
             else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{gpu_min_warps_per_eu})'
         else:
             maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
             launch_bounds = ''

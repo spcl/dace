@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes, utils as sdutils
@@ -6,7 +6,6 @@ from dace.transformation.dataflow import MapFission
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
-import unittest
 
 
 def mapfission_sdfg():
@@ -603,6 +602,146 @@ def test_dependent_symbol():
     assert np.array_equal(val, ref)
 
 
+@dace.program
+def strided_two_ops(A: dace.float64[10], B: dace.float64[10]):
+    for i in dace.map[0:9:2]:
+        tmp = A[i] * 2.0
+        B[i] = tmp + 1.0
+
+
+def test_strided_fission_step2():
+    """ MapFission on a map with step=2 and a scalar border transient. """
+    A = np.arange(10, dtype=np.float64)
+    B_ref = np.zeros(10, dtype=np.float64)
+    B_test = np.zeros(10, dtype=np.float64)
+
+    strided_two_ops(A=A, B=B_ref)
+
+    sdfg = strided_two_ops.to_sdfg()
+    sdfg.save("before.sdfg")
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    sdfg.save("after.sdfg")
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def strided_offset_ops(A: dace.float64[30], B: dace.float64[30]):
+    for i in dace.map[10:29:3]:
+        tmp = A[i] + 100.0
+        B[i] = tmp * 0.5
+
+
+def test_strided_fission_offset_and_step():
+    """ MapFission on a map with offset=10 and step=3. """
+    A = np.arange(30, dtype=np.float64)
+    B_ref = np.zeros(30, dtype=np.float64)
+    B_test = np.zeros(30, dtype=np.float64)
+
+    strided_offset_ops(A=A, B=B_ref)
+
+    sdfg = strided_offset_ops.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+_N = dace.symbol('N')
+_START = dace.symbol('START')
+_STEP = dace.symbol('STEP')
+_STOP = dace.symbol('STOP')
+
+
+@dace.program
+def symbolic_strided(A: dace.float64[_N], B: dace.float64[_N]):
+    for i in dace.map[_START:_STOP:_STEP]:
+        B[i] = A[i] + 2.0
+        A[i] = B[i] * 0.5
+
+
+def test_symbolic_strided_fission():
+    """ MapFission on a symbolic strided map. """
+    sdfg = symbolic_strided.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    A_ref = np.arange(10, dtype=np.float64)
+    A_test = A_ref.copy()
+    B_ref = np.zeros(10, dtype=np.float64)
+    B_test = np.zeros(10, dtype=np.float64)
+
+    symbolic_strided(A=A_ref, B=B_ref, N=10, START=1, STOP=9, STEP=2)
+    sdfg(A=A_test, B=B_test, N=10, START=1, STOP=9, STEP=2)
+
+    assert np.allclose(B_test, B_ref)
+    assert np.allclose(A_test, A_ref)
+
+
+@dace.program
+def trivial_1d(A: dace.float64[16], B: dace.float64[16]):
+    for i in dace.map[0:16]:
+        tmp = A[i] + 1.0
+        B[i] = tmp * 2.0
+
+
+def test_trivial_1d_step1():
+    """ MapFission on a simple 1D map with step=1. """
+    A = np.arange(16, dtype=np.float64)
+    B_ref = np.zeros(16, dtype=np.float64)
+    B_test = np.zeros(16, dtype=np.float64)
+
+    trivial_1d(A=A, B=B_ref)
+
+    sdfg = trivial_1d.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def trivial_3d(A: dace.float64[4, 5, 6], B: dace.float64[4, 5, 6]):
+    for i, j, k in dace.map[0:4, 0:5, 0:6]:
+        tmp = A[i, j, k] + 1.0
+        B[i, j, k] = tmp + 2.0
+
+
+def test_trivial_3d_step1():
+    """ MapFission on a 3D map with step=1. """
+    A = np.arange(4 * 5 * 6, dtype=np.float64).reshape(4, 5, 6).copy()
+    B_ref = np.zeros((4, 5, 6), dtype=np.float64)
+    B_test = np.zeros((4, 5, 6), dtype=np.float64)
+
+    trivial_3d(A=A, B=B_ref)
+
+    sdfg = trivial_3d.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def map_with_data_cond(A: dace.float64[10]):
+    for i in dace.map[0:10]:
+        if A[i] > 0.0:
+            A[i] = A[i] + 1.9
+
+
+def test_map_with_if_nested_sdfg():
+    """ MapFission must refuse maps whose body's interstate assignments depend on the map iterator. """
+    # The number of applications depends on whether auto-opt is enabled.
+    # We only check numerical correctness.
+    sdfg = map_with_data_cond.to_sdfg()
+
+    A_ref = np.array([-1.0, 2.0, -3.0, 4.0, 5.0, -6.0, 7.0, -8.0, 9.0, 10.0], dtype=np.float64)
+    A_test = A_ref.copy()
+    map_with_data_cond(A=A_ref)
+    sdfg(A=A_test)
+    assert np.allclose(A_test, A_ref)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -618,3 +757,9 @@ if __name__ == '__main__':
     test_array_copy_outside_scope()
     test_single_data_multiple_connectors()
     test_dependent_symbol()
+    test_strided_fission_step2()
+    test_strided_fission_offset_and_step()
+    test_symbolic_strided_fission()
+    test_trivial_1d_step1()
+    test_trivial_3d_step1()
+    test_map_with_if_nested_sdfg()

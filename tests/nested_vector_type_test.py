@@ -2,7 +2,6 @@
 
 import dace
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
 import numpy as np
 import scipy
 

@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 
-import pytest
 import dace
 import numpy as np
 
@@ -126,16 +125,23 @@ def test_write_struct_array():
     if_body.add_edge(indices, 'views', vcsr, None, dace.Memlet(data='vcsr.indices', subset='0:nnz'))
     if_body.add_edge(vcsr, 'views', B, None, dace.Memlet(data='B', subset='k'))
     # Make For Loop  for j
-    j_before, j_guard, j_after = sdfg.add_loop(None,
-                                               if_before,
-                                               None,
-                                               'j',
-                                               '0',
-                                               'j < N',
-                                               'j + 1',
-                                               loop_end_state=if_after)
+    j_before, _, j_after = sdfg.add_loop_state_machine(None,
+                                                       if_before,
+                                                       None,
+                                                       'j',
+                                                       '0',
+                                                       'j < N',
+                                                       'j + 1',
+                                                       loop_end_state=if_after)
     # Make For Loop  for i
-    i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
+    i_before, i_guard, i_after = sdfg.add_loop_state_machine(None,
+                                                             j_before,
+                                                             None,
+                                                             'i',
+                                                             '0',
+                                                             'i < M',
+                                                             'i + 1',
+                                                             loop_end_state=j_after)
     sdfg.start_state = sdfg.node_id(i_before)
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
@@ -154,7 +160,7 @@ def test_write_struct_array():
     i_after.add_edge(indptr, 'views', vcsr, None, dace.Memlet(data='vcsr.indptr', subset='0:M+1'))
     i_after.add_edge(vcsr, 'views', B, None, dace.Memlet(data='B', subset='k'))
 
-    k_before, k_guard, k_after = sdfg.add_loop(None, i_before, None, 'k', '0', 'k < L', 'k + 1', loop_end_state=i_after)
+    sdfg.add_loop(None, i_before, None, 'k', '0', 'k < L', 'k + 1', loop_end_block=i_after)
 
     func = sdfg.compile()
 

@@ -14,7 +14,6 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.strip_mining import StripMining
-from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.subgraph import SubgraphFusion
 
 from copy import deepcopy as dcpy

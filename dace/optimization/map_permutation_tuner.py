@@ -8,7 +8,6 @@ from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis.cutout import SDFGCutout
-from dace.codegen.instrumentation.data import data_report
 
 try:
     from tqdm import tqdm

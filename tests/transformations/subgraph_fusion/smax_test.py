@@ -1,18 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import sys
-from typing import List, Union
 
 import numpy as np
 from util import expand_maps, expand_reduce, fusion
 
 import dace
-import dace.dtypes as dtypes
 import dace.libraries.standard as stdlib
 import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.dataflow import ReduceExpansion
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 dace_dtype = dace.float32
 H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))

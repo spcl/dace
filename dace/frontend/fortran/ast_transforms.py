@@ -1,7 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import ast_components, ast_internal_classes
-from typing import Dict, List, Optional, Tuple, Set
+from dace.frontend.fortran import ast_internal_classes
+from typing import Dict, List, Optional, Tuple
 import copy
 
 
