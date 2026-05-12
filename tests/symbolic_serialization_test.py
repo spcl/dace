@@ -7,8 +7,9 @@ from dace.codegen.common import sym2cpp
 
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():
-    sym = symbolic.symbol('test_sym', dtype=dace.uint64, nonnegative=True)
-    expr = symbolic.SymExpr(sym + symbolic.TypedConstant(np.int16(2)), sym + symbolic.TypedConstant(np.int16(4)))
+    metadata_sym = symbolic.symbol('test_sym', dtype=dace.uint64, nonnegative=True)
+    expr = symbolic.SymExpr(metadata_sym + symbolic.TypedConstant(np.int16(2)),
+                            metadata_sym + symbolic.TypedConstant(np.int16(4)))
 
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)

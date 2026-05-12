@@ -1311,7 +1311,7 @@ def cpp_typed_literal(value, dtype):
     suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype)
     if suffix is None:
         return None
-    if dtype == float32:
+    if dtype in (float16, float32, float64):
         return f'{float(value)}{suffix}'
     return f'{int(value)}{suffix}'
 
