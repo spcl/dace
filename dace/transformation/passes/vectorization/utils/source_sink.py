@@ -165,11 +165,15 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
     from dace.transformation.passes.vectorization.vectorization_utils import is_assignment_tasklet
 
     nodes_to_check = [node]
+    visited = set()
     tasklets_with_flops = 0
     checked_nodes = []
 
     while nodes_to_check:
         cur_node = nodes_to_check.pop(0)
+        if cur_node in visited:
+            continue
+        visited.add(cur_node)
         checked_nodes.append(cur_node)
         if isinstance(cur_node, dace.nodes.Tasklet) and not is_assignment_tasklet(cur_node):
             tasklets_with_flops += 1
@@ -205,8 +209,6 @@ def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.n
     # Make sure the data of in and out edges refer to the same name
     sink_data = sink_node.data
     source_data = source_node.data
-    sink_connector = nsdfg.out_connectors[sink_data]
-    source_connector = nsdfg.in_connectors[source_data]
     sink_edges = state.out_edges_by_connector(nsdfg, sink_data)
     source_edges = state.in_edges_by_connector(nsdfg, source_data)
 

@@ -227,7 +227,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
         OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
-        UNARY_OPERATORS = {"+", "!", "-"}
+        # ``+`` is intentionally excluded — unary ``+`` is rejected
+        # elsewhere in this dispatch with ``raise Exception("Unary + …")``,
+        # so listing it here would silently emit invalid code.
+        UNARY_OPERATORS = {"!", "-"}
 
         if rhs_left is None or rhs_right is None:
             if op not in UNARY_OPERATORS and op in OPERATORS:
@@ -336,8 +339,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         node.code = dace.properties.CodeBlock(code=code, language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         arr_name = rhs1 if rhs1 is not None else rhs2
-        occurences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)
-        assert occurences == 1
+        occurrences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)
+        assert occurrences == 1
         if op == "-":
             # Implement (-A) as (0 - A)
             _set_template(None, arr_name, "0.0", None, lhs, op, tutil.TaskletType.ARRAY_SYMBOL)
@@ -418,7 +421,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
     else:
-        state.sdfg.save("failing.sdfg")
         raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
 
