@@ -32,6 +32,12 @@ always_false = [
 
 cant_eval = ["a < 5", "c == 0", "d >= 1"]
 
+# Conditions where pystr_to_symbolic yields an unevaluated symbolic
+# expression (Function/Indexed/Symbol). bool() of such an expression is
+# truthy, which would mis-classify dynamic dataflow conditions like
+# `A[0]` as trivially true. Regression guard for that bug.
+dynamic_runtime_cond = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
+
 
 def _get_sdfg(condition: str):
     sdfg = dace.SDFG("basic1")
@@ -207,6 +213,21 @@ def test_fortran_style_nested_comparison_true(condition: str):
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
+
+# Regression: dynamic (runtime-dataflow) conditions must NOT be treated as
+# trivially true/false. Before this guard, pystr_to_symbolic produced an
+# unevaluated sympy expression (Function/Indexed/Symbol) whose bool() was
+# truthy, causing the pass to eliminate live branches.
+@pytest.mark.parametrize("condition", dynamic_runtime_cond)
+def test_dynamic_runtime_cond_not_trivial(condition: str):
+    sdfg = _get_sdfg(condition)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    # The conditional must survive: it depends on data we don't know at
+    # transform time.
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 1
 
 
 def test_simplify_pipeline_includes_lift_trivial_if():
