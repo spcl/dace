@@ -624,6 +624,369 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
     state.sdfg.validate()
 
 
+def add_copies_before_and_after_nsdfg(
+    state: SDFGState,
+    nsdfg_node: dace.nodes.NestedSDFG,
+    vector_width: int,
+    vector_storage: dace.dtypes.StorageType,
+    skip: Set[str],
+) -> Set[str]:
+    """
+    Add vector copy operations before and after a nested SDFG node.
+    If the copy can't be inserted before, then it is done inside as a fallback,
+
+    This function analyzes data access patterns in a nested SDFG and determines which
+    arrays can have their copies moved outside the nested SDFG for optimization. It
+    handles two types of arrays:
+
+    Skip set will result in the dataname to be not copied no matter what, it should be
+    used for unstructured loads.
+
+    1. Movable arrays: Arrays with uniform access patterns (structured and vectorizable)
+       can be copied before/after the nested SDFG execution.
+
+    2. Unmovable arrays: Arrays with unstructured access patterns or symbol dependencies
+       that require copies to remain inside the nested SDFG.
+
+    ----------------
+    For movable arrays:
+        MapEntry -(Array[0:N])-> NSDFG
+        becomes:
+        MapEntry -(Array[0:N])-> VecArray -(VecArray[0:vector_width])-> NSDFG
+
+        or:
+
+        MapEntry -(Array[i:i+vector_width])-> NSDFG
+        becomes:
+        MapEntry -(Array[i:i+vector_width])-> VecArray -(VecArray[0:vector_width])-> NSDFG
+
+    For unmovable arrays:
+        Assignment tasklets are inserted at each read/write point inside the nested SDFG.
+
+    Args:
+        state: The SDFG state containing the nested SDFG node
+        nsdfg_node: The nested SDFG node to process
+        vector_width: The width of vector operations
+        vector_storage: Storage type for vector arrays (e.g., Register, FPGA_Local)
+
+    Side effects:
+        - Modifies the nested SDFG by adding assignment tasklets for unmovable arrays
+        - Saves intermediate SDFG to "b.sdfg" for debugging
+        - Calls process_in_edges and process_out_edges (which must be defined elsewhere)
+    """
+    # ``collect_all_memlets_to_dataname`` lives in ``utils.queries`` (S1b) and
+    # ``sift_access_node_up`` is still in ``vectorization_utils.py`` (migrates in
+    # a later slice). Both are imported lazily to keep this module's top-level
+    # import surface narrow.
+    from dace.transformation.passes.vectorization.utils.queries import collect_all_memlets_to_dataname
+    from dace.transformation.passes.vectorization.vectorization_utils import sift_access_node_up
+
+    # Fix offset bug here, test_snippet_from_cloudsc_three -> incorrect offests
+    # Collect all arrays that are accessed in the nested SDFG
+    inner_sdfg = nsdfg_node.sdfg
+    dataname_to_subsets = collect_all_memlets_to_dataname(inner_sdfg)
+
+    # Get read and write sets
+    read_set, write_set = inner_sdfg.read_and_write_sets()
+
+    # Filter to only non-transient arrays (inputs/outputs of the nested SDFG)
+    dataname_to_subsets = {
+        k: v
+        for k, v in dataname_to_subsets.items() if k in inner_sdfg.arrays and inner_sdfg.arrays[k].transient is False
+        and isinstance(inner_sdfg.arrays[k], dace.data.Array)
+    }
+
+    movable_arrays = set()
+    unmovable_arrays = dict()
+
+    # Classify arrays as movable or unmovable
+    for dataname, memlets in dataname_to_subsets.items():
+        if len(memlets) > 1:
+            # Multiple distinct access patterns - can't safely move outside
+            if dataname not in skip:
+                unmovable_arrays[dataname] = set(memlets)
+        else:
+            # Single access pattern - check if symbols are available outside
+            memlet = next(iter(memlets))
+            memlet_syms = {str(s) for s in memlet.free_symbols}
+            avaialble_syms = {str(s) for s in state.symbols_defined_at(nsdfg_node)}
+
+            if all({s in avaialble_syms for s in memlet_syms}):
+                if dataname not in skip:
+                    movable_arrays.add((dataname, memlet))
+            else:
+                if dataname not in skip:
+                    unmovable_arrays[dataname] = set(memlets)
+
+    # Better analysis for this might be necessary (to make sure write happens through multiple laneid_* symbols)
+    unstructured_load_arrays = set()
+    for dataname, memlets in dataname_to_subsets.items():
+        if len(memlets) == vector_width:
+            unstructured_load_arrays.add(dataname)
+        # Remove them from unmovable arrays (they are not in movable arrays either), as there is no need for a second copy
+        for k in unstructured_load_arrays:
+            if k in unmovable_arrays:
+                del unmovable_arrays[k]
+
+    # Generate name mappings
+    subset_to_name_map = dict()
+    for unmovable_arr_name, subsets in unmovable_arrays.items():
+        # Insert copy-ins
+        desc = inner_sdfg.arrays[unmovable_arr_name]
+        for i, subset in enumerate(subsets):
+            vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+            if vec_arr_name not in inner_sdfg.arrays:
+                inner_sdfg.add_array(
+                    name=vec_arr_name,
+                    shape=(vector_width, ),
+                    dtype=desc.dtype,
+                    location=desc.location,
+                    transient=True,
+                    strides=(1, ),
+                    find_new_name=False,
+                )
+            subset_to_name_map[(unmovable_arr_name, subset)] = vec_arr_name
+
+    # For every memlet, replace the subset and
+    # First replace all memlets, then access nodes
+
+    # If there is discrepancy between in and out data names, then duplicate access nodes and add a dependency edge
+
+    # First work on interstate edges
+    for inner_state in inner_sdfg.all_states():
+        for edge in inner_state.edges():
+            # Skip packed arrays, it means either data name ends with packed or it is a gather-store to an array of length vector width
+            if edge.data.data is not None and (edge.data.data.endswith("_packed")
+                                               or inner_state.in_degree(edge.dst) == vector_width):
+                continue
+            if (edge.data.data, edge.data.subset) in subset_to_name_map:
+                vec_name = subset_to_name_map[(edge.data.data, edge.data.subset)]
+                # Then we need to get the new nae
+                vec_subset = dace.subsets.Range([(0, vector_width - 1, 1)])
+                edge.data = dace.memlet.Memlet(data=vec_name, subset=vec_subset)
+
+    for inner_state in inner_sdfg.all_states():
+        for node in inner_state.data_nodes():
+            # Do not check packed storage
+            if node.data.endswith("_packed"):
+                continue
+
+            ies = {ie for ie in inner_state.in_edges(node) if ie.data.data is not None}
+            oes = {oe for oe in inner_state.out_edges(node) if oe.data.data is not None}
+
+            # Do not check packed storage
+            for e in ies.union(oes):
+                if isinstance(e.src, dace.nodes.AccessNode) and e.src.data.endswith("_packed"):
+                    continue
+                if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data.endswith("_packed"):
+                    continue
+
+            # Gather-store to a storage will have an in degree equal to vector length
+            if len(ies) == vector_width:
+                continue
+
+            ie_datanames = {ie.data.data for ie in ies}
+            oe_datanames = {oe.data.data for oe in oes}
+            assert len(ie_datanames) in {
+                0, 1, vector_width
+            }, f"Input datanames more than one {ie_datanames}, and not equal to {vector_width} in state {state}, sdfg {state.sdfg.label}."
+
+            assert len(ie_datanames) + len(oe_datanames) > 0
+            if len(oe_datanames) == 0:
+                ie_dataname = ie_datanames.pop()
+                node.data = ie_dataname
+            else:
+                if len(oe_datanames) == 1:
+                    oe_dataname = oe_datanames.pop()
+                    node.data = oe_dataname
+
+                    # If there is discrepancy between in and out data names, then duplicate access nodes and add a dependency edge
+                    if len(ie_datanames) == 1:
+                        ie_dataname = ie_datanames.pop()
+                        if ie_dataname != oe_dataname:
+                            # Need to duplicate the access node
+                            an_in = inner_state.add_access(ie_dataname)
+                            an_in.setzer = True
+                            for ie in ies:
+                                inner_state.remove_edge(ie)
+                                inner_state.add_edge(ie.src, ie.src_conn, an_in, None, copy.deepcopy(ie.data))
+                            # Add dependency edge
+                            inner_state.add_edge(an_in, None, node, None, dace.memlet.Memlet(None))
+                else:
+                    assert len(
+                        ie_datanames
+                    ) == 0, f"If multiple out edges, no in edges allowed, found {ie_datanames} for {oe_datanames} in {inner_state}"
+                    assert inner_state.in_degree(
+                        node
+                    ) == 0, f"If multiple out edges, no in edges allowed, found {ie_datanames} for {oe_datanames} in {inner_state}"
+                    inner_state.remove_node(node)
+                    for oe in oes:
+                        an = inner_state.add_access(oe.data.data)
+                        an.setzero = True
+                        inner_state.add_edge(an, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+
+    # Handle unmovable arrays by adding copies at the beginning and at the end of the inner SDFG
+    # Copy in can't be always the first state, we need to traverse the SDFG to find it
+    # Traverse using BFS, for the vectorization we assume that the inner nSDFG is a line-graph
+    # And only consist of SDFGStates
+    last_nodes = {n for n in inner_sdfg.nodes() if inner_sdfg.out_degree(n) == 0}
+    assert len(last_nodes) == 1
+    last_node = last_nodes.pop()
+    if len(unmovable_arrays) > 0:
+        copy_out_state = inner_sdfg.add_state_after(last_node, "copy_out")
+
+    # Insert copy-ins and outs
+    name_to_subset_map = dict()
+    for unmovable_arr_name, subsets in unmovable_arrays.items():
+        # If a packed stored, then continue
+        # Add a unique vector array for each unique subset
+        desc = inner_sdfg.arrays[unmovable_arr_name]
+
+        if unmovable_arr_name in read_set:
+            for i, subset in enumerate(subsets):
+                vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+                name_to_subset_map[vec_arr_name] = subset
+
+                # We have the symbol mapping available in the beginning
+                copy_in_state = find_copy_in_state(inner_sdfg, nsdfg_node, {str(s)
+                                                                            for s in subset.free_symbols},
+                                                   unmovable_arr_name)
+
+                # Insert copy-ins
+                # Need to find the copy in state
+                orig_access = copy_in_state.add_access(unmovable_arr_name)
+                orig_access.setzero = True
+                v_access = copy_in_state.add_access(vec_arr_name)
+                v_access.setzero = True
+                vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
+                assign_tasklet = copy_in_state.add_tasklet(
+                    name="_AssignT1",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
+                    language=dace.dtypes.Language.CPP)
+                copy_in_state.add_edge(orig_access, None, assign_tasklet, "_in",
+                                       dace.memlet.Memlet(data=unmovable_arr_name, subset=copy.deepcopy(subset)))
+                copy_in_state.add_edge(assign_tasklet, "_out", v_access, None,
+                                       dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
+
+        # Insert corresponding copy-out
+        if unmovable_arr_name in write_set:
+            for i, subset in enumerate(subsets):
+                vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+                name_to_subset_map[vec_arr_name] = subset
+                orig_access2 = copy_out_state.add_access(unmovable_arr_name)
+                orig_access2.setzero = True
+                v_access2 = copy_out_state.add_access(vec_arr_name)
+                v_access2.setzero = True
+                vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
+                assign_tasklet2 = copy_out_state.add_tasklet(
+                    name="_AssignT2",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
+                    language=dace.dtypes.Language.CPP)
+                copy_out_state.add_edge(v_access2, None, assign_tasklet2, "_in",
+                                        dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
+                copy_out_state.add_edge(assign_tasklet2, "_out", orig_access2, None,
+                                        dace.memlet.Memlet(data=unmovable_arr_name, subset=copy.deepcopy(subset)))
+
+    # Save intermediate SDFG for debugging
+    # Process movable arrays at the nested SDFG boundary
+    inserted_array_names = process_in_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
+    process_out_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
+
+    for inner_state in inner_sdfg.all_states():
+        for (dataname, subset) in movable_arrays:
+            for edge in inner_state.edges():
+                if edge.data.data == dataname and edge.data.subset == subset:
+                    # Change the name later
+                    edge.data = dace.memlet.Memlet(data=edge.data.data,
+                                                   subset=dace.subsets.Range([(0, vector_width - 1, 1)]))
+
+    for (dataname, subset) in movable_arrays:
+        inner_sdfg.replace_dict({dataname: dataname + "_vec"})
+
+    movable_datas = {t[0] for t in movable_arrays}
+
+    nsdfg_in_conns = list(nsdfg_node.in_connectors.keys())
+    nsdfg_out_conns = list(nsdfg_node.out_connectors.keys())
+
+    for inc in nsdfg_in_conns:
+        if inc in movable_datas:
+            nsdfg_node.remove_in_connector(inc)
+    for outc in nsdfg_out_conns:
+        if outc in movable_datas:
+            nsdfg_node.remove_out_connector(outc)
+
+    for inc in nsdfg_in_conns:
+        if inc in movable_datas:
+            nsdfg_node.add_in_connector(inc + "_vec", force=True)
+
+    for outc in nsdfg_out_conns:
+        if outc in movable_datas:
+            nsdfg_node.add_out_connector(outc + "_vec", force=True)
+
+    # Update connector names
+    # Remove movable datanames from connectors and replace with "_vec" variant
+    # Some scalars / arrays will be not vectorized and thus not have `_vec` suffix
+    # Make sure that we only connect the arrays that have `_vec` suffix.
+    # For this: check if an edge's connector is in movable data (moved outside of the nested SDFG)
+    # and top of that check if the vector-suffixed data is in the in connectors
+    for movable_data in movable_datas:
+        for ie in state.in_edges(nsdfg_node):
+            if ie.dst_conn is not None and ie.dst_conn == movable_data and ie.dst_conn + "_vec" in nsdfg_node.in_connectors:
+                assert movable_data + "_vec" in nsdfg_node.in_connectors, f"{movable_data}_vec not in {nsdfg_node.in_connectors}"
+                assert len(
+                    set(state.in_edges_by_connector(nsdfg_node, movable_data + "_vec"))
+                ) == 0, f"There are edges connected to {movable_data}_vec: {set(state.in_edges_by_connector(nsdfg_node, movable_data + '_vec'))}"
+                ie.dst_conn = movable_data + "_vec"
+        for oe in state.out_edges(nsdfg_node):
+            if oe.src_conn is not None and oe.src_conn == movable_data and oe.src_conn + "_vec" in nsdfg_node.out_connectors:
+                assert movable_data + "_vec" in nsdfg_node.out_connectors, f"{movable_data}_vec not in {nsdfg_node.out_connectors}"
+                assert len(
+                    set(state.out_edges_by_connector(nsdfg_node, movable_data + "_vec"))
+                ) == 0, f"There are edges connected to {movable_data}_vec: {set(state.out_edges_by_connector(nsdfg_node, movable_data + '_vec'))}"
+                oe.src_conn = movable_data + "_vec"
+
+    # Move vector data above the vector map, it makes merging overlapping accesses easier
+    sdict = state.scope_dict()
+    for ie in state.in_edges(nsdfg_node):
+        if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
+            sift_access_node_up(state, ie.src, sdict[ie.src])
+
+    return inserted_array_names
+
+
+def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG, free_syms: Set[str],
+                       name: str) -> dace.SDFGState:
+    assert all({isinstance(n, dace.SDFGState) for n in inner_sdfg.nodes()})
+
+    syms_available = set(nsdfg_node.symbol_mapping.keys())
+    nodes_to_check = [inner_sdfg.start_block]
+    # Stop when all symbols ara available
+    while nodes_to_check:
+        node_to_check = nodes_to_check.pop()
+        cur_node = node_to_check
+
+        if all({free_sym in syms_available for free_sym in free_syms}):
+            # Add a state after cur_node
+            # Check next node
+            if cur_node.label.startswith("copy_in"):
+                cur_node.label += f"_{name}"
+                return cur_node
+            return inner_sdfg.add_state_before(cur_node, f"copy_in_{name}")
+
+        assert len(inner_sdfg.out_edges(cur_node)) <= 1
+        oe = inner_sdfg.out_edges(cur_node).pop()
+        nodes_to_check.append(oe.dst)
+        syms_available = syms_available.union({str(s) for s in oe.data.assignments.keys()})
+
+    raise Exception("Find copy_in state called, it could not find a state for copy-in,"
+                    "this should not occur as this array already exist,"
+                    "there needs to be a state where all symbols have been defined")
+
+
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
     for in_conn in nsdfg.in_connectors:
         nsdfg.in_connectors[in_conn] = dace.dtypes.typeclass(None)

@@ -20,8 +20,10 @@ from .code_rewrite import (  # noqa: F401
 )
 from .iteration import walk_memlets_of  # noqa: F401
 from .nsdfg_reshape import (  # noqa: F401
+    add_copies_before_and_after_nsdfg,
     check_nsdfg_connector_array_shapes_match,
     compute_edge_subset,
+    find_copy_in_state,
     find_state_of_nsdfg_node,
     fix_nsdfg_connector_array_shapes_mismatch,
     get_vector_max_access_ranges,
