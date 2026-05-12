@@ -106,20 +106,25 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
 # ---------------------------------------------------------------------------
 
 
-def _is_gpu_global(node, state: SDFGState) -> bool:
+def _is_gpu_global_access(node, state: SDFGState) -> bool:
+    """Node is an AccessNode pointing at GPU_Global storage."""
     return isinstance(node, nodes.AccessNode) and node.desc(state.parent).storage == dtypes.StorageType.GPU_Global
 
 
-def _is_nongpu(node, state: SDFGState) -> bool:
+def _is_non_gpu_accessible(node, state: SDFGState) -> bool:
+    """Node is an AccessNode whose storage cannot be touched by a GPU kernel
+    (e.g. CPU_Heap, CPU_Pinned). Negation of ``GPU_KERNEL_ACCESSIBLE_STORAGES``."""
     return (isinstance(node, nodes.AccessNode)
             and node.desc(state.parent).storage not in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
 
 
-def _is_kernel_exit(node) -> bool:
+def _is_gpu_device_exit(node) -> bool:
+    """Node is the ExitNode of a GPU_Device map (kernel boundary)."""
     return isinstance(node, nodes.ExitNode) and node.schedule == dtypes.ScheduleType.GPU_Device
 
 
-def _edge_within_kernel(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
+def _both_within_gpu_kernel(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
+    """Both edge endpoints are inside a GPU schedule scope (i.e. on the device)."""
     return (is_within_schedule_types(state, src, dtypes.GPU_SCHEDULES)
             and is_within_schedule_types(state, dst, dtypes.GPU_SCHEDULES))
 
@@ -148,18 +153,20 @@ class _SyncRule:
 _NAIVE_SYNC_RULES: List[_SyncRule] = [
     # GPU AccessNode → host AccessNode (host needs to wait on the GPU stream).
     _SyncRule(
-        predicate=lambda c: (_is_gpu_global(c.src, c.state) and _is_nongpu(c.dst, c.state) and not c.in_kernel),
+        predicate=lambda c: (_is_gpu_global_access(c.src, c.state) and _is_non_gpu_accessible(c.dst, c.state)
+                             and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
         per_node_sync_target=lambda c: c.dst if not c.is_sink else None,
     ),
     # host AccessNode → GPU AccessNode (GPU needs to see the host write).
     _SyncRule(
-        predicate=lambda c: (_is_nongpu(c.src, c.state) and _is_gpu_global(c.dst, c.state) and not c.in_kernel),
+        predicate=lambda c: (_is_non_gpu_accessible(c.src, c.state) and _is_gpu_global_access(c.dst, c.state)
+                             and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
     ),
     # Kernel exit → GPU AccessNode: sync the kernel's own stream.
     _SyncRule(
-        predicate=lambda c: _is_kernel_exit(c.src) and _is_gpu_global(c.dst, c.state),
+        predicate=lambda c: _is_gpu_device_exit(c.src) and _is_gpu_global_access(c.dst, c.state),
         stream_id=lambda c, s: s[c.dst if c.is_sink else c.src],
     ),
     # Stream-bound copy/memset libnode that needs sync after.
@@ -273,7 +280,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             ctx = _EdgeCtx(state=parent,
                            src=edge.src,
                            dst=edge.dst,
-                           in_kernel=_edge_within_kernel(parent, edge.src, edge.dst),
+                           in_kernel=_both_within_gpu_kernel(parent, edge.src, edge.dst),
                            is_sink=parent.out_degree(edge.dst) == 0)
             for rule in _NAIVE_SYNC_RULES:
                 if not rule.predicate(ctx):

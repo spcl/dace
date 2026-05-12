@@ -15,11 +15,11 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
-    """Implementation of the lifting operatio.
+    """Lift contiguous zero-assignments and element-wise copies out of maps.
 
-    The pass walks every map in the SDFG, identifies data paths that perform
-    a constant-zero write or a direct element-wise copy over a contiguous
-    region, and replaces them with the corresponding library node.  When a
+    Walks every map in the SDFG, identifies data paths that perform a
+    constant-zero write or a direct element-wise copy over a contiguous
+    region, and replaces them with the corresponding library node. When a
     map mixes compute paths with pure data-movement paths, the map is
     fissioned first so that the data-movement part can be extracted
     independently.
