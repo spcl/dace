@@ -28,77 +28,57 @@ from dace import SDFGState
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
 
 
+# Suffix used for the per-NSDFG vector-array name allocated by
+# ``prepare_vectorized_array``. Single module-level constant rather than a
+# hardcoded f-string at the callsite. See ``NameScheme`` cleanup TODO in
+# the plan's "Known issues" section for the broader centralisation.
+_VEC_K_SUFFIX = "_vec_k"
+
+
 def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
     """
-    Extract the maximum access range for vectorized map parameters.
+    For each vector-map parameter, return the END bound of the outer
+    data-parallel map that supplies its BEGIN expression.
 
-    This function analyzes the nested map hierarchy to determine the maximum
-    iteration range for vector map parameters. It walks up the scope hierarchy (two steps)
-    from the nested SDFG through its vectorized map (vmap) to the outer data-parallel map (dmap),
-    extracting the end bounds that constrain vector access ranges.
-
-    The typical use case is for vectorization where you have:
-    - Outer data-parallel map (dmap): iterates over independent data chunks
-    - Inner vector map (vmap): 1-vector op, map of form (i:i+vector_simd_len:vector_simd_len)
-    - Nested SDFG: contains the actual computation
+    Walks the two-level scope hierarchy ``nsdfg -> vector_map -> data_map``,
+    matches each vector-map ``begin`` expression to a data-map parameter
+    (so that ``vector_map`` was constructed as ``i_v = i : i + W : W`` over
+    the data-map's ``i``), and returns the data-map's end bound.
 
     Args:
-        state: The SDFG state containing the nested SDFG node
-        node: The nested SDFG node whose vector access ranges to determine
+        state: The SDFG state containing the nested SDFG node.
+        node: The nested SDFG node whose vector access ranges to determine.
 
     Returns:
-        Dictionary mapping vector map parameter names to their maximum values
-        (end bounds from the data-parallel map)
+        Dictionary mapping vector-map parameter names (e.g. ``'i_v'``) to
+        the outer data-map's end bound (e.g. the string repr of ``'N - 1'``
+        if the data map iterates ``0:N``). The semantic name "max access
+        range" is loose — this is the upper iteration bound, not the
+        per-memlet access range.
 
     Example:
-        For a hierarchy:
-        ```
-        map i=0:N (data-parallel map)
-          map i_v=i:i+4:4 (vector map, vectorizing over 'i')
-            NestedSDFG
-        ```
-        Returns: {'i_v': 'N'}
+        For ``map i=0:N -> map i_v=i:i+4:4 -> NestedSDFG``, returns ``{'i_v': 'N - 1'}``.
 
     Note:
-        This assumes a two-level map hierarchy with the nested SDFG inside
-        a vector map, which is itself inside a data-parallel map.
+        Lookup uses ``dace.symbolic.simplify(begin)`` for canonical
+        equality so structurally-equal exprs (``i + 0`` vs ``i``) match.
     """
-    # Get scope hierarchy: nsdfg -> vector_map -> data_map
     scope_dict = state.scope_dict()
-
-    # Vector map is the immediate parent of the nested SDFG
     vector_map = scope_dict[node]
-
-    # Build mapping: vector_param -> vector_begin_expr
-    # and reverse: vector_begin_expr -> vector_param
-    v_params_to_begins = {}
-    v_begins_to_params = {}
-    for param, (begin, end, step) in zip(vector_map.map.params, vector_map.map.range):
-        v_params_to_begins[param] = str(begin)
-        v_begins_to_params[str(begin)] = param
-
-    # Data-parallel map is the parent of the vector map
     data_map = scope_dict[vector_map]
 
-    # Build mappings for data-parallel map parameters
-    d_params_to_begins = {}
-    d_begins_to_params = {}
-    d_params_to_ends = {}
-    for param, (begin, end, step) in zip(data_map.map.params, data_map.map.range):
-        d_params_to_begins[param] = str(begin)
-        d_begins_to_params[str(begin)] = param
-        d_params_to_ends[param] = str(end)
+    # Simplify-keyed mapping: data-map ``begin`` -> data-map ``end``.
+    d_simplified_begin_to_end = {
+        dace.symbolic.simplify(begin): end
+        for begin, end, _ in data_map.map.range
+    }
 
-    # For each vector parameter, find its maximum bound from the data map
-    # The vector map begin expression should match a data map parameter,
-    # allowing us to look up the corresponding end bound
     param_max_ranges = {}
-    for v_param in vector_map.map.params:
-        # Get the begin expression of the vector parameter (e.g., 'i')
-        v_begin_expr = v_params_to_begins[v_param]
-
-        # Look up the corresponding data map end bound (e.g., 'N')
-        param_max_ranges[v_param] = d_params_to_ends[v_begin_expr]
+    for v_param, (v_begin, _, _) in zip(vector_map.map.params, vector_map.map.range):
+        canonical_begin = dace.symbolic.simplify(v_begin)
+        # Bare lookup: matches when the vector-map ``begin`` simplifies
+        # to the same sympy expression as one of the data-map begins.
+        param_max_ranges[v_param] = str(d_simplified_begin_to_end[canonical_begin])
 
     return param_max_ranges
 
@@ -147,20 +127,21 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
         connector_name = in_edge.dst_conn  # Connector name in nested SDFG
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
 
-        # Calculate expected shapes based on subset
-        # Shape 1: Full dimension size (end - begin + 1)
-        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+        # Calculate expected shapes based on subset.
+        # Apply ``.simplify()`` so that the canonicalisation matches the
+        # sibling ``fix_nsdfg_connector_array_shapes_mismatch`` — previously
+        # the check used raw ``(end + 1 - begin)`` and the fix used
+        # ``.simplify()``, so the same input could be flagged as a mismatch
+        # by ``check_*`` but accepted by ``fix_*``.
+        expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        # Shape 2: Effective size accounting for stride
-        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
 
-        # Shape 3: Collapsed (remove size-1 dimensions from full shape)
-        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
-                                               if (end + 1 - begin) != 1])
+        expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
+                                               if ((end + 1 - begin).simplify()) != 1])
 
-        # Shape 4: Collapsed with stride (remove size-1 dimensions from strided)
-        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
-                                                  if (end + 1 - begin) // step != 1])
+        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
+                                                  if ((end + 1 - begin) // step).simplify() != 1])
 
         # Validate: array shape must match one of the expected shapes
         shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
@@ -402,10 +383,15 @@ def prepare_vectorized_array(state: dace.SDFGState,
         vector_width: Width of the vector
         vector_storage: Storage type for the vector
         reuse_name_if_existing: Does not find a new name
+
     Returns:
-        tuple: (vector_dataname, inner_offset or 0)
+        tuple: (vector_dataname, inner_offset). ``inner_offset`` is currently
+        always ``0`` because the multi-dim path rewrites inner memlets directly
+        via ``walk_memlets_of`` instead of returning an offset for the caller
+        to apply. It is kept in the return tuple for backwards-compatibility
+        with ``compute_edge_subset``, which still accepts an offset arg.
     """
-    vector_dataname_candidate = orig_dataname + "_vec_k" if use_name is None else use_name
+    vector_dataname_candidate = orig_dataname + _VEC_K_SUFFIX if use_name is None else use_name
     if reuse_name_if_existing:
         assert use_name is not None
         vector_dataname = vector_dataname_candidate
@@ -470,13 +456,16 @@ def prepare_vectorized_array(state: dace.SDFGState,
         # lane ``arr[0]``. Don't route through ``offset_memlets`` here: it
         # post-collapses length-1 dims which would silently turn the
         # vector-lane memlet into a 0-D ``arr[]`` access.
-        if not (reuse_name_if_existing is True and use_name is not None):
+        if not (reuse_name_if_existing and use_name is not None):
             from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
             surviving_offsets = [(b, b, 1) for (b, e, s), keep in zip(subset, keep_mask) if keep]
             offset_range = dace.subsets.Range(surviving_offsets)
             for _inner_state, inner_edge in walk_memlets_of(inner_sdfg, inner_arr_name):
                 inner_edge.data.subset = inner_edge.data.subset.offset_new(offset_range, negative=True)
 
+    assert inner_offset == 0, (
+        f"prepare_vectorized_array contract: inner_offset must remain 0 (the multi-dim path "
+        f"rewrites memlets in-place via walk_memlets_of); got {inner_offset}")
     return vector_dataname, inner_offset
 
 
@@ -806,7 +795,7 @@ def add_copies_before_and_after_nsdfg(
                         if ie_dataname != oe_dataname:
                             # Need to duplicate the access node
                             an_in = inner_state.add_access(ie_dataname)
-                            an_in.setzer = True
+                            an_in.setzero = True
                             for ie in ies:
                                 inner_state.remove_edge(ie)
                                 inner_state.add_edge(ie.src, ie.src_conn, an_in, None, copy.deepcopy(ie.data))
@@ -988,6 +977,10 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
 
 
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
+    # TODO(upstream-correctness): this helper erases all connector dtypes
+    # because earlier passes in the vectorization pipeline leave wrong
+    # types behind. The proper fix is to make those upstream passes set
+    # the right type at the source; this helper is a band-aid.
     for in_conn in nsdfg.in_connectors:
         nsdfg.in_connectors[in_conn] = dace.dtypes.typeclass(None)
     for out_conn in nsdfg.out_connectors:
@@ -1000,3 +993,8 @@ def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
                     node.in_connectors[in_conn] = dace.dtypes.typeclass(None)
                 for out_conn in node.out_connectors:
                     node.out_connectors[out_conn] = dace.dtypes.typeclass(None)
+            elif isinstance(node, dace.nodes.NestedSDFG):
+                # Recurse: NSDFG nested deeper than one level also needs
+                # the type reset. Previously this branch was missing,
+                # leaving deep hierarchies untouched.
+                reset_connectors(node.sdfg, node)

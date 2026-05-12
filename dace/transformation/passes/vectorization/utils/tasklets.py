@@ -478,8 +478,6 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
     packed_access.setzero = True
     touched_nodes.add(packed_access)
     state.remove_edge(ie)
-    if isinstance(ie, dace.nodes.Node):
-        assert False
     touched_edges.add(ie)
     if f"{node.data}_packed" not in state.sdfg.arrays:
         dst_arr = state.sdfg.arrays[node.data]
@@ -497,8 +495,6 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
                              may_alias=False)
     e = state.add_edge(ie.src, ie.src_conn, packed_access, None,
                        dace.memlet.Memlet(f"{node.data}_packed[0:{vector_width}]"))
-    if isinstance(e, dace.nodes.Node):
-        assert False
     touched_edges.add(e)
 
     for i in range(vector_width):
@@ -509,15 +505,11 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
         e1 = state.add_edge(
             packed_access, None, t, "_in",
             dace.memlet.Memlet(data=node.data + "_packed", subset=dace.subsets.Range([(str(i), str(i), 1)])))
-        if isinstance(e1, dace.nodes.Node):
-            assert False
         touched_edges.add(e1)
 
         new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i), vector_map_param)
 
         e2 = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
-        if isinstance(e2, dace.nodes.Node):
-            assert False
         touched_edges.add(e2)
 
     return touched_nodes, touched_edges

@@ -265,7 +265,10 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: i
             in_conns = e.src.in_connectors
             out_conns = e.src.out_connectors
             if len(in_conns) != 0:
-                assert False, "Non-assignemnt tasklet found for accumulator, unsupported case"
+                raise NotImplementedError(
+                    f"expand_assignment_tasklets: non-assignment tasklet {e.src.label} feeds accumulator "
+                    f"{name} with input connectors {in_conns}; only literal-init tasklets (no in-conns) "
+                    f"are supported by the reduction-lift contract")
             assert len(out_conns) == 1, f"{out_conns}"
             out_conn = next(iter(out_conns))
             assert code.language == dace.dtypes.Language.Python
