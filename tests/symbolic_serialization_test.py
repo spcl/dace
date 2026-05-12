@@ -19,7 +19,7 @@ def test_symbolic_serialization_roundtrip_preserves_metadata():
     assert isinstance(restored_sym, symbolic.symbol)
     assert restored_sym.name == 'sin'
     assert restored_sym.dtype == dace.uint64
-    assert restored_sym.is_nonnegative == True
+    assert restored_sym.is_nonnegative
 
     constants = [atom for atom in restored.expr.atoms() if isinstance(atom, symbolic.TypedConstant)]
     assert len(constants) == 1
@@ -43,7 +43,7 @@ def test_range_json_roundtrip_uses_symbolic_deserializer():
     restored_sym = next(iter(end.free_symbols))
     assert isinstance(restored_sym, symbolic.symbol)
     assert restored_sym.dtype == dace.uint64
-    assert restored_sym.is_nonnegative == True
+    assert restored_sym.is_nonnegative
 
     assert isinstance(step, symbolic.TypedConstant)
     assert step.dtype == dace.int16

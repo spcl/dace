@@ -629,13 +629,17 @@ class DictProperty(Property):
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
 
-        return {
-            symbolic.deserialize_symbolic(k) if _is_symbolic_converter(self.key_type) else (self.key_type.from_json(
-                k, sdfg) if key_json else self.key_type(k)):
-            symbolic.deserialize_symbolic(v) if _is_symbolic_converter(self.value_type) else
-            (self.value_type.from_json(v, sdfg) if value_json else self.value_type(v))
-            for k, v in data.items()
-        }
+        def _convert_key(key):
+            if _is_symbolic_converter(self.key_type):
+                return symbolic.deserialize_symbolic(key)
+            return self.key_type.from_json(key, sdfg) if key_json else self.key_type(key)
+
+        def _convert_value(value):
+            if _is_symbolic_converter(self.value_type):
+                return symbolic.deserialize_symbolic(value)
+            return self.value_type.from_json(value, sdfg) if value_json else self.value_type(value)
+
+        return {_convert_key(k): _convert_value(v) for k, v in data.items()}
 
 
 ###############################################################################

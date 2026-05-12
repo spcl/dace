@@ -490,7 +490,7 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
     try:
         return _TYPECLASS_TO_LITERAL_SUFFIX[dtype]
     except KeyError as ex:
-        raise TypeError(f'Unsupported typed constant dtype {dtype}') from ex
+        raise TypeError(f'Unsupported typed constant dtype {dtype.to_string()}') from ex
 
 
 def _typed_constant_to_string(expr: TypedConstant) -> str:
