@@ -18,8 +18,6 @@ from .queries import (  # noqa: F401
     to_ints,
 )
 from .code_rewrite import (  # noqa: F401
-    FuncToSubscript,
-    convert_nonstandard_calls,
     drop_dims,
     drop_dims_from_str,
     extract_bracket_contents,

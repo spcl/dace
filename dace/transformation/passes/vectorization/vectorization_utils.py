@@ -1312,13 +1312,12 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
 
 
 # ``extract_bracket_contents``, ``_DropDimsTransformer``, ``drop_dims_from_str``,
-# ``drop_dims``, ``offset_symbol_in_expression``, ``use_laneid_symbol_in_expression``,
-# ``STANDARD_FUNCS``, ``FuncToSubscript`` and ``convert_nonstandard_calls`` all live
-# in ``utils.code_rewrite`` (split slice S1c). Re-exported below for backward
-# compatibility.
+# ``drop_dims``, ``offset_symbol_in_expression`` and
+# ``use_laneid_symbol_in_expression`` all live in ``utils.code_rewrite``
+# (split slice S1c). Re-exported below for backward compatibility.
+# ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
+# were deleted in S1c-bis — their sole caller now uses ``DaceSympyPrinter``.
 from dace.transformation.passes.vectorization.utils.code_rewrite import (  # noqa: E402, F401
-    FuncToSubscript,
-    convert_nonstandard_calls,
     drop_dims,
     drop_dims_from_str,
     extract_bracket_contents,
@@ -2509,8 +2508,9 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 # moved to ``utils.queries`` (split slice S1b). Re-exported at the top of this file.
 
 
-# ``STANDARD_FUNCS``, ``FuncToSubscript`` and ``convert_nonstandard_calls``
-# moved to ``utils.code_rewrite`` (S1c). Re-exported at the top of this file.
+# ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
+# were deleted in S1c-bis (replaced by ``DaceSympyPrinter`` at the
+# ``expand_interstate_assignments_to_lanes`` callsite).
 
 
 def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
@@ -2604,14 +2604,20 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                             assert inner_sdfg.arrays[free_sym_str].shape != (1, )
                             v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
 
-                new_v = sympy.pycode(v_expr, allow_unknown_functions=True)
-                new_v = tutil.rewrite_boolean_functions_to_boolean_ops(new_v)
-                new_assignments[new_k] = convert_nonstandard_calls(new_v)
+                # ``DaceSympyPrinter`` prints array reads as ``arr[idx]``
+                # (subscript form for names in the ``arrays`` set) and emits
+                # ``(a and b)`` / ``(a or b)`` / ``(not a)`` directly for
+                # ``sympy.Or``/``And``/``Not``, so the previous two-step
+                # ``sympy.pycode`` + ``rewrite_boolean_functions_to_boolean_ops``
+                # + ``convert_nonstandard_calls`` chain collapses to one print.
+                printer = DaceSympyPrinter(set(inner_sdfg.arrays.keys()))
+                new_v = printer.doprint(v_expr)
+                new_assignments[new_k] = new_v
 
                 if i == 0:
                     # Keep the original un-suffixed symbol bound to the lane-0 expansion so
                     # downstream consumers that haven't been retargeted yet still see it.
-                    new_assignments[k] = convert_nonstandard_calls(new_v)
+                    new_assignments[k] = new_v
 
         edge.data.assignments = new_assignments
 

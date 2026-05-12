@@ -20,7 +20,6 @@ locked scope decision the helpers stay AST-based and are not folded
 into the sympy round-trip.
 """
 import ast
-import math
 import re
 from typing import Tuple
 
@@ -330,74 +329,9 @@ def use_laneid_symbol_in_expression(expr_str: str,
     return sympy.pycode(offset_expr)
 
 
-# Allowed standard and math-like functions
-STANDARD_FUNCS = {
-    # Builtins and math intrinsics
-    "abs",
-    "exp",
-    "log",
-    "ln",
-    "sqrt",
-    "sin",
-    "cos",
-    "tan",
-    "asin",
-    "acos",
-    "atan",
-    "atan2",
-    "sinh",
-    "cosh",
-    "tanh",
-    "floor",
-    "ceil",
-    "pow",
-    "min",
-    "max",
-    # DaCe-like or symbolic math intrinsics
-    "int_floor",
-    "int_ceil",
-    "div_floor",
-    "div_ceil",
-} | set(dir(math))
-
-
-class FuncToSubscript(ast.NodeTransformer):
-
-    def visit_Call(self, node):
-        # Recurse into child nodes
-        self.generic_visit(node)
-
-        func = node.func
-        func_name = None
-
-        # Handle simple functions like foo(...)
-        if isinstance(func, ast.Name):
-            func_name = func.id
-
-        # Handle qualified names like math.sin or np.exp
-        elif isinstance(func, ast.Attribute):
-            if isinstance(func.value, ast.Name):
-                # Keep math.*, np.*, numpy.* untouched
-                if func.value.id in ("math", "np", "numpy"):
-                    func_name = f"{func.value.id}.{func.attr}"
-                else:
-                    func_name = func.attr
-
-        # Skip conversion if function is standard
-        if func_name and func_name.split(".")[-1] in STANDARD_FUNCS:
-            return node
-
-        # Otherwise, convert func(a, b) → func[a, b]
-        if len(node.args) == 1:
-            new_slice = node.args[0]
-        else:
-            new_slice = ast.Tuple(elts=node.args, ctx=ast.Load())
-
-        return ast.Subscript(value=func, slice=new_slice, ctx=ast.Load())
-
-
-def convert_nonstandard_calls(expr: str) -> str:
-    tree = ast.parse(expr, mode="eval")
-    new_tree = FuncToSubscript().visit(tree)
-    ast.fix_missing_locations(new_tree)
-    return ast.unparse(new_tree)
+# ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
+# were deleted in S1c-bis. Their sole caller
+# (``expand_interstate_assignments_to_lanes``) now emits the lane-suffixed
+# assignment via ``DaceSympyPrinter(arrays).doprint`` which prints array
+# reads as ``arr[idx]`` natively and emits ``and``/``or``/``not`` for
+# ``sympy.And``/``Or``/``Not`` — the AST round-trip is no longer needed.
