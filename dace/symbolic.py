@@ -19,26 +19,14 @@ DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 _SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
+_SERIALIZED_UNDEFINED_SYMBOL = '__DACE_SERIALIZED_UNDEFINED_SYMBOL'
 _SERIALIZED_SYMBOL = re.compile(r'\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)')
 _SERIALIZED_TYPED_CONSTANT_VALUE = r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+'
-_SERIALIZED_TYPED_CONSTANT_SUFFIX = r'i8|i16|i32|i64|u8|u16|u32|u64|f16|f32|f64'
+_SERIALIZED_TYPED_CONSTANT_SUFFIX = r'|'.join(
+    sorted((re.escape(suffix) for suffix in dtypes.LITERAL_SUFFIX_TO_TYPECLASS), key=len, reverse=True))
 _SERIALIZED_TYPED_CONSTANT = re.compile(
     rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
-_TYPECLASS_TO_LITERAL_SUFFIX = {
-    dtypes.int8: 'i8',
-    dtypes.int16: 'i16',
-    dtypes.int32: 'i32',
-    dtypes.int64: 'i64',
-    dtypes.uint8: 'u8',
-    dtypes.uint16: 'u16',
-    dtypes.uint32: 'u32',
-    dtypes.uint64: 'u64',
-    dtypes.float16: 'f16',
-    dtypes.float32: 'f32',
-    dtypes.float64: 'f64',
-}
-_LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in _TYPECLASS_TO_LITERAL_SUFFIX.items()}
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -259,7 +247,15 @@ class UndefinedSymbol(symbol):
 
 
 class TypedConstant(sympy.AtomicExpr):
-    """A symbolic constant with an explicit DaCe data type."""
+    """A typed constant value that participates in symbolic expressions.
+
+    Examples
+    --------
+    >>> from dace import symbolic, int16
+    >>> expr = symbolic.symbol('N') + symbolic.TypedConstant(2, int16)
+    >>> symbolic.serialize_symbolic(expr)
+    '$N + 2i16'
+    """
 
     is_number = True
     is_commutative = True
@@ -490,7 +486,7 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
 
 def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
     try:
-        return _TYPECLASS_TO_LITERAL_SUFFIX[dtype]
+        return dtypes.typeclass_to_literal_suffix(dtype)
     except KeyError as ex:
         raise TypeError(f'Unsupported typed constant dtype {dtype.to_string()}') from ex
 
@@ -1491,6 +1487,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def visit_Name(self, node):
         if node.id in self._constants:
             return self._constants[node.id]
+        if node.id == _SERIALIZED_UNDEFINED_SYMBOL:
+            return UndefinedSymbol()
         if node.id.startswith(_SERIALIZED_SYMBOL_PREFIX):
             return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
         try:
@@ -1540,7 +1538,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             value = ast.literal_eval(node.args[0])
             suffix = ast.literal_eval(node.args[1])
             try:
-                dtype = _LITERAL_SUFFIX_TO_TYPECLASS[suffix]
+                dtype = dtypes.literal_suffix_to_typeclass(suffix)
             except KeyError as ex:
                 raise TypeError(f'Invalid type suffix "{suffix}" in typed constant') from ex
             if dtype in (dtypes.float16, dtypes.float32, dtypes.float64):
@@ -1615,7 +1613,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
     def _print_Symbol(self, expr):
         if expr.name == '?':
-            return '?'
+            return '$?'
         if expr.name == 'NoneSymbol':
             return 'None'
         if isinstance(expr, symbol):
@@ -1665,12 +1663,13 @@ def deserialize_symbolic(expr) -> SymbolicType:
         return TypedConstant(expr, dtypes.float64)
     if not isinstance(expr, str):
         return expr
-    if expr == '?':
+    if expr in ('?', '$?'):
         return UndefinedSymbol()
 
     # Symbols are rewritten first because typed-literal replacement introduces
     # helper calls, and keeping the substitutions one-way avoids reparsing the
     # generated helper identifiers.
+    expr = expr.replace('$?', _SERIALIZED_UNDEFINED_SYMBOL)
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
@@ -1791,6 +1790,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_TypedConstant(self, expr):
         value = self._print(expr.value)
         if self.cpp_mode:
+            literal = dtypes.cpp_typed_literal(expr.value, expr.dtype)
+            if literal is not None:
+                return literal
             return f'{expr.dtype.ctype}({value})'
         return f'dace.{expr.dtype.to_string()}({value})'
 

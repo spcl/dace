@@ -108,10 +108,18 @@ def infer_expr_type(code, symbols=None):
         if code.name in symbols:
             return symbols[code.name]
         return code.dtype
+    elif isinstance(code, symbolic.TypedConstant):
+        return code.dtype
     elif isinstance(code, sympy.Basic):
-        parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
+        if any(isinstance(node, symbolic.TypedConstant) for node in sympy.preorder_traversal(code)):
+            parsed_ast = ast.parse(symstr(code))
+        else:
+            parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):
-        parsed_ast = ast.parse(sympy.printing.pycode(code.expr, allow_unknown_functions=True))
+        if any(isinstance(node, symbolic.TypedConstant) for node in sympy.preorder_traversal(code.expr)):
+            parsed_ast = ast.parse(symstr(code.expr))
+        else:
+            parsed_ast = ast.parse(sympy.printing.pycode(code.expr, allow_unknown_functions=True))
     else:
         raise TypeError(f"Cannot convert type {type(code)} to a Python AST.")
 

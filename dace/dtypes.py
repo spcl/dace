@@ -1261,12 +1261,53 @@ TYPECLASS_TO_STRING = {
     complex128: "dace::complex128"
 }
 
+TYPECLASS_TO_LITERAL_SUFFIX = {
+    int8: 'i8',
+    int16: 'i16',
+    int32: 'i32',
+    int64: 'i64',
+    uint8: 'u8',
+    uint16: 'u16',
+    uint32: 'u32',
+    uint64: 'u64',
+    float16: 'f16',
+    float32: 'f32',
+    float64: 'f64',
+}
+
+LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
+
+TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
+    float32: 'f',
+    uint32: 'U',
+    int64: 'LL',
+    uint64: 'ULL',
+}
+
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
     "uint64", "float16", "float32", "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]
+
+
+def typeclass_to_literal_suffix(dtype):
+    return TYPECLASS_TO_LITERAL_SUFFIX[dtype]
+
+
+def literal_suffix_to_typeclass(suffix):
+    return LITERAL_SUFFIX_TO_TYPECLASS[suffix]
+
+
+def cpp_typed_literal(value, dtype):
+    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype)
+    if suffix is None:
+        return None
+    if dtype == float32:
+        return f'{float(value)}{suffix}'
+    return f'{int(value)}{suffix}'
+
 
 #######################################################
 # Allowed types
