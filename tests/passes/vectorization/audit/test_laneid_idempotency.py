@@ -51,11 +51,9 @@ def _build_minimal_sdfg_for_idempotency():
     nsdfg_node = pstate.add_nested_sdfg(inner, {"arr"}, {"out"})
     pstate.add_edge(arr_an, None, me, "IN_arr", dace.memlet.Memlet.from_array("arr", parent.arrays["arr"]))
     me.add_in_connector("IN_arr")
-    pstate.add_edge(me, "OUT_arr", nsdfg_node, "arr",
-                    dace.memlet.Memlet.from_array("arr", parent.arrays["arr"]))
+    pstate.add_edge(me, "OUT_arr", nsdfg_node, "arr", dace.memlet.Memlet.from_array("arr", parent.arrays["arr"]))
     me.add_out_connector("OUT_arr")
-    pstate.add_edge(nsdfg_node, "out", mx, "IN_out",
-                    dace.memlet.Memlet.from_array("out", parent.arrays["out"]))
+    pstate.add_edge(nsdfg_node, "out", mx, "IN_out", dace.memlet.Memlet.from_array("out", parent.arrays["out"]))
     mx.add_in_connector("IN_out")
     pstate.add_edge(mx, "OUT_out", out_an, None, dace.memlet.Memlet.from_array("out", parent.arrays["out"]))
     mx.add_out_connector("OUT_out")
@@ -72,19 +70,26 @@ def test_expand_interstate_assignments_to_lanes_is_idempotent():
     parent, pstate, inner, nsdfg_node = _build_minimal_sdfg_for_idempotency()
 
     # First call — produce per-lane keys.
-    expand_interstate_assignments_to_lanes(inner, nsdfg_node, pstate, vector_width=8,
-                                           invariant_data=set(), vector_map_param="i")
+    expand_interstate_assignments_to_lanes(inner,
+                                           nsdfg_node,
+                                           pstate,
+                                           vector_width=8,
+                                           invariant_data=set(),
+                                           vector_map_param="i")
     after_first = _interstate_assignments(inner)
     syms_after_first = set(inner.symbols.keys())
 
     # Sanity: at least one per-lane key was produced.
-    assert any(LaneIdScheme.is_laneid(k)
-               for assigns in after_first.values()
+    assert any(LaneIdScheme.is_laneid(k) for assigns in after_first.values()
                for k in assigns), f"Expected lane-encoded keys after first call, got {after_first}"
 
     # Second call — must be a no-op (no NEW lane keys, no doubly-suffixed names).
-    expand_interstate_assignments_to_lanes(inner, nsdfg_node, pstate, vector_width=8,
-                                           invariant_data=set(), vector_map_param="i")
+    expand_interstate_assignments_to_lanes(inner,
+                                           nsdfg_node,
+                                           pstate,
+                                           vector_width=8,
+                                           invariant_data=set(),
+                                           vector_map_param="i")
     after_second = _interstate_assignments(inner)
     syms_after_second = set(inner.symbols.keys())
 
@@ -94,14 +99,12 @@ def test_expand_interstate_assignments_to_lanes_is_idempotent():
             parsed = LaneIdScheme.parse(k)
             if parsed is not None:
                 base, _ = parsed
-                assert not LaneIdScheme.is_laneid(base), (
-                    f"Doubly-encoded lane id on the second call: {k!r}")
+                assert not LaneIdScheme.is_laneid(base), (f"Doubly-encoded lane id on the second call: {k!r}")
 
     # Assignments stable across the second call.
-    assert after_second == after_first, (
-        f"Second call mutated assignments — not idempotent.\n"
-        f"  before: {after_first}\n"
-        f"  after:  {after_second}")
+    assert after_second == after_first, (f"Second call mutated assignments — not idempotent.\n"
+                                         f"  before: {after_first}\n"
+                                         f"  after:  {after_second}")
 
     # No new symbols added on the second call.
     assert syms_after_second == syms_after_first, (

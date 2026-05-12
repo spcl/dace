@@ -24,7 +24,6 @@ import numpy as np
 import sympy
 
 import dace
-import dace.symbolic as ds
 from dace.symbolic import DaceSympyPrinter, SymExpr, merge
 
 
@@ -133,8 +132,7 @@ def test_merge_compiled_in_sdfg_matches_python_reference():
             out = np.zeros((1, ), dtype=np.float64)
             csdfg(a=a, b=b, out=out, c=cv)
             expected = av if cv else bv
-            np.testing.assert_allclose(out, np.array([expected]),
-                                       err_msg=f"c={cv} a={av} b={bv} got={out[0]}")
+            np.testing.assert_allclose(out, np.array([expected]), err_msg=f"c={cv} a={av} b={bv} got={out[0]}")
 
 
 def test_merge_recognized_under_alternate_capitalization():

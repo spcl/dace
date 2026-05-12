@@ -8,7 +8,6 @@ output as the original.
 """
 
 import ctypes
-import os
 import pathlib
 import textwrap
 
@@ -18,14 +17,12 @@ import pytest
 import dace
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import (
-    BreakBlock,
     ConditionalBlock,
     ContinueBlock,
     ControlFlowRegion,
     LoopRegion,
 )
 from dace.sdfg.to_python import sdfg_to_python
-
 
 _DATA_DIR = pathlib.Path(__file__).parent / "data" / "sdfg_reconstruction"
 
@@ -88,12 +85,8 @@ def _assert_runs_equivalent(original: SDFG, rebuilt: SDFG, **call_args):
     issue (e.g. OpenMP not linked by the system CMake config), the test is
     skipped — that's not a correctness regression in the emitter.
     """
-    original_args = {
-        k: v.copy() if hasattr(v, "copy") else v for k, v in call_args.items()
-    }
-    rebuilt_args = {
-        k: v.copy() if hasattr(v, "copy") else v for k, v in call_args.items()
-    }
+    original_args = {k: v.copy() if hasattr(v, "copy") else v for k, v in call_args.items()}
+    rebuilt_args = {k: v.copy() if hasattr(v, "copy") else v for k, v in call_args.items()}
     if _try_compile_and_run(original, **original_args) is None:
         return
     if _try_compile_and_run(rebuilt, **rebuilt_args) is None:
@@ -164,8 +157,10 @@ def test_mapped_tasklet_round_trip():
 
     A = np.arange(16, dtype=np.float32)
     _assert_runs_equivalent(
-        original, rebuilt,
-        A=A, B=np.zeros(16, dtype=np.float32),
+        original,
+        rebuilt,
+        A=A,
+        B=np.zeros(16, dtype=np.float32),
     )
 
 
@@ -205,7 +200,8 @@ def test_loop_region_round_trip():
     rebuilt = _exec_emitted(sdfg_to_python(original))
 
     _assert_runs_equivalent(
-        original, rebuilt,
+        original,
+        rebuilt,
         A=np.zeros(10, dtype=np.float32),
     )
 
@@ -296,7 +292,8 @@ def test_nested_sdfg_round_trip():
     rebuilt = _exec_emitted(src)
 
     _assert_runs_equivalent(
-        original, rebuilt,
+        original,
+        rebuilt,
         A=np.array([2.0], dtype=np.float32),
         B=np.zeros(1, dtype=np.float32),
     )
@@ -326,7 +323,8 @@ def test_reduce_library_node_round_trip():
     rebuilt = _exec_emitted(src)
 
     _assert_runs_equivalent(
-        original, rebuilt,
+        original,
+        rebuilt,
         A=np.arange(16, dtype=np.float32),
         B=np.zeros(1, dtype=np.float32),
     )
@@ -377,10 +375,8 @@ def test_emitter_uses_imperative_api_only(builder):
     src = sdfg_to_python(builder())
     forbidden = ("from_json", "set_properties_from_json", "dace.serialize")
     for token in forbidden:
-        assert token not in src, (
-            f"Emitter leaked non-imperative token {token!r}; output:\n"
-            + textwrap.indent(src, "    ")
-        )
+        assert token not in src, (f"Emitter leaked non-imperative token {token!r}; output:\n" +
+                                  textwrap.indent(src, "    "))
 
 
 # ---------------------------------------------------------------------
@@ -414,11 +410,9 @@ def test_velocity_stage1_round_trip(filename):
     rebuilt = _exec_emitted(src)
 
     # Signature equivalence: the exported argument list must match.
-    assert original.signature_arglist() == rebuilt.signature_arglist(), (
-        f"signature mismatch for {filename}\n"
-        f"original: {original.signature_arglist()}\n"
-        f"rebuilt:  {rebuilt.signature_arglist()}"
-    )
+    assert original.signature_arglist() == rebuilt.signature_arglist(), (f"signature mismatch for {filename}\n"
+                                                                         f"original: {original.signature_arglist()}\n"
+                                                                         f"rebuilt:  {rebuilt.signature_arglist()}")
 
     # Structural equivalence: arrays, symbols, state count.
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
@@ -448,16 +442,31 @@ _N_SYM = dace.symbol("N", dtype=dace.int64)
 
 @dace.program
 def _cloudsc_kernel(
-    pap: dace.float64[_N_SYM], ptsphy: dace.float64, r2es: dace.float64,
-    r3ies: dace.float64, r4ies: dace.float64, rcldtopcf: dace.float64,
-    rd: dace.float64, rdepliqrefdepth: dace.float64,
-    rdepliqrefrate: dace.float64, rg: dace.float64, riceinit: dace.float64,
-    rlmin: dace.float64, rlstt: dace.float64, rtt: dace.float64,
-    rv: dace.float64, za: dace.float64[_N_SYM], zdp: dace.float64[_N_SYM],
-    zfokoop: dace.float64[_N_SYM], zicecld: dace.float64[_N_SYM],
-    zrho: dace.float64[_N_SYM], ztp1: dace.float64[_N_SYM],
-    zcldtopdist: dace.float64[_N_SYM], zicenuclei: dace.float64[_N_SYM],
-    zqxfg: dace.float64[_N_SYM], zsolqa: dace.float64[_N_SYM],
+    pap: dace.float64[_N_SYM],
+    ptsphy: dace.float64,
+    r2es: dace.float64,
+    r3ies: dace.float64,
+    r4ies: dace.float64,
+    rcldtopcf: dace.float64,
+    rd: dace.float64,
+    rdepliqrefdepth: dace.float64,
+    rdepliqrefrate: dace.float64,
+    rg: dace.float64,
+    riceinit: dace.float64,
+    rlmin: dace.float64,
+    rlstt: dace.float64,
+    rtt: dace.float64,
+    rv: dace.float64,
+    za: dace.float64[_N_SYM],
+    zdp: dace.float64[_N_SYM],
+    zfokoop: dace.float64[_N_SYM],
+    zicecld: dace.float64[_N_SYM],
+    zrho: dace.float64[_N_SYM],
+    ztp1: dace.float64[_N_SYM],
+    zcldtopdist: dace.float64[_N_SYM],
+    zicenuclei: dace.float64[_N_SYM],
+    zqxfg: dace.float64[_N_SYM],
+    zsolqa: dace.float64[_N_SYM],
 ):
     for it_47 in dace.map[0:_N_SYM:1]:
         if za[it_47] < rcldtopcf and za[it_47] >= rcldtopcf:
@@ -491,9 +500,7 @@ def _cloudsc_kernel(
             zdepos1 = max(0.0, za[it_47] * (zinew - zice0))
             zdepos2 = min(zdepos1, 1.1)
 
-            tmp_arg_33 = zinfactor + (1.0 - zinfactor) * (
-                rdepliqrefrate + zcldtopdist[it_47] / rdepliqrefdepth
-            )
+            tmp_arg_33 = zinfactor + (1.0 - zinfactor) * (rdepliqrefrate + zcldtopdist[it_47] / rdepliqrefdepth)
             zdepos3 = zdepos2 * min(1.0, tmp_arg_33)
 
             zqxfg[it_47] = zqxfg[it_47] + zdepos3
@@ -524,17 +531,17 @@ def _cloudsc_inputs(n: int):
         "rtt": np.float64(273.15),
         "rv": np.float64(461.5),
         "N": np.int64(n),
-        "pap": u(1.0, 2.0, (n,)),
-        "za": u(0.9, 1.5, (n,)),
-        "ztp1": u(260.0, 280.0, (n,)),
-        "zqxfg": u(5.0, 11.0, (n,)),
-        "zsolqa": u(5.0, 11.0, (n,)),
-        "zdp": u(0.5, 2.0, (n,)),
-        "zfokoop": u(0.95, 1.05, (n,)),
-        "zicecld": u(10.0, 11.0, (n,)),
-        "zrho": u(0.9, 1.2, (n,)),
-        "zcldtopdist": u(0.1, 1.0, (n,)),
-        "zicenuclei": u(1e2, 1e4, (n,)),
+        "pap": u(1.0, 2.0, (n, )),
+        "za": u(0.9, 1.5, (n, )),
+        "ztp1": u(260.0, 280.0, (n, )),
+        "zqxfg": u(5.0, 11.0, (n, )),
+        "zsolqa": u(5.0, 11.0, (n, )),
+        "zdp": u(0.5, 2.0, (n, )),
+        "zfokoop": u(0.95, 1.05, (n, )),
+        "zicecld": u(10.0, 11.0, (n, )),
+        "zrho": u(0.9, 1.2, (n, )),
+        "zcldtopdist": u(0.1, 1.0, (n, )),
+        "zicenuclei": u(1e2, 1e4, (n, )),
     }
 
 
@@ -549,9 +556,7 @@ def test_cloudsc_kernel_numerical_round_trip():
 
     n = 1024  # the "very big test case" — 1024 grid points
     inputs_orig = _cloudsc_inputs(n)
-    inputs_rebuilt = {
-        k: v.copy() if hasattr(v, "copy") else v for k, v in inputs_orig.items()
-    }
+    inputs_rebuilt = {k: v.copy() if hasattr(v, "copy") else v for k, v in inputs_orig.items()}
 
     # Compile both. If the original won't compile in this env, that's an
     # env-side failure, not a reconstruction regression.
@@ -567,7 +572,10 @@ def test_cloudsc_kernel_numerical_round_trip():
     array_keys = [k for k, v in inputs_orig.items() if isinstance(v, np.ndarray)]
     for k in array_keys:
         np.testing.assert_allclose(
-            inputs_orig[k], inputs_rebuilt[k], rtol=0.0, atol=0.0,
+            inputs_orig[k],
+            inputs_rebuilt[k],
+            rtol=0.0,
+            atol=0.0,
             err_msg=f"CloudSC numerical mismatch on output {k!r}",
         )
 
@@ -585,6 +593,7 @@ def test_cloudsc_kernel_numerical_round_trip():
 # structural equivalence (validate, signature, array set, symbol set);
 # users wanting numerical correctness can feed the rebuilt SDFG into the
 # same C++ runner and compare against the original's outputs.
+
 
 @pytest.mark.slow
 def test_full_cloudsc_round_trip():

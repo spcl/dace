@@ -113,18 +113,16 @@ class _DropDimsTransformer(ast.NodeTransformer):
         if isinstance(slice_node, ast.Tuple):
             elts = slice_node.elts
             if len(elts) != len(self.dim_mask):
-                raise ValueError(
-                    f"drop_dims_from_str: array {self.dataname!r} accessed with {len(elts)} dimensions, "
-                    f"dim_mask has {len(self.dim_mask)}")
+                raise ValueError(f"drop_dims_from_str: array {self.dataname!r} accessed with {len(elts)} dimensions, "
+                                 f"dim_mask has {len(self.dim_mask)}")
             kept = [e for e, m in zip(elts, self.dim_mask) if m]
             if len(kept) == 1:
                 return kept[0]
             return ast.Tuple(elts=kept, ctx=ast.Load())
         # Single-element subscript (1-D access)
         if len(self.dim_mask) != 1:
-            raise ValueError(
-                f"drop_dims_from_str: array {self.dataname!r} accessed with 1 dimension, "
-                f"dim_mask has {len(self.dim_mask)}")
+            raise ValueError(f"drop_dims_from_str: array {self.dataname!r} accessed with 1 dimension, "
+                             f"dim_mask has {len(self.dim_mask)}")
         if self.dim_mask[0]:
             return slice_node
         # Dropping the only dim collapses the subscript; return the bare value (caller swaps Subscript->value).

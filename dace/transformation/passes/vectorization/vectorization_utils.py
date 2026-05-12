@@ -1,11 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import re
-import typing
 import sympy
 import dace
-import ast
-import math
 from typing import Dict, Iterable, Optional, Set, Tuple, Union
 from dace import SDFGState, typeclass
 from dace import Any
@@ -661,11 +658,8 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
 # Re-exported below for backward compatibility — wildcard importers and
 # named-import callers keep resolving the symbols from this module.
 from dace.transformation.passes.vectorization.utils.queries import (  # noqa: E402, F401
-    collect_accesses_to_array_name,
-    collect_all_memlets_to_dataname,
-    collect_non_unit_stride_accesses_in_map,
-    parse_int_or_default,
-    to_ints,
+    collect_accesses_to_array_name, collect_all_memlets_to_dataname, collect_non_unit_stride_accesses_in_map,
+    parse_int_or_default, to_ints,
 )
 
 
@@ -1314,10 +1308,7 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
 # ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
 # were deleted in S1c-bis — their sole caller now uses ``DaceSympyPrinter``.
 from dace.transformation.passes.vectorization.utils.code_rewrite import (  # noqa: E402, F401
-    drop_dims,
-    drop_dims_from_str,
-    extract_bracket_contents,
-    offset_symbol_in_expression,
+    drop_dims, drop_dims_from_str, extract_bracket_contents, offset_symbol_in_expression,
     use_laneid_symbol_in_expression,
 )
 
@@ -1609,8 +1600,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         for i in range(vw):
             expr = f"({l_op} {op} {r_op})"
             if str(c) in symbols:
-                expr = offset_symbol_in_expression(expr, vector_map_param, i,
-                                                   arrays=set(state.sdfg.arrays.keys()))
+                expr = offset_symbol_in_expression(expr, vector_map_param, i, arrays=set(state.sdfg.arrays.keys()))
             else:
                 if l_op == c:
                     expr = f"({l_op} {op} {r_op})"
@@ -2504,7 +2494,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 # ``collect_non_unit_stride_accesses_in_map`` and ``collect_accesses_to_array_name``
 # moved to ``utils.queries`` (split slice S1b). Re-exported at the top of this file.
 
-
 # ``STANDARD_FUNCS`` / ``FuncToSubscript`` / ``convert_nonstandard_calls``
 # were deleted in S1c-bis (replaced by ``DaceSympyPrinter`` at the
 # ``expand_interstate_assignments_to_lanes`` callsite).
@@ -2592,8 +2581,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                         lane_sym = LaneIdScheme.make(free_sym_str, i)
                         v_expr = v_expr.subs(free_sym, lane_sym)
                         if lane_sym not in inner_sdfg.symbols:
-                            inner_sdfg.add_symbol(lane_sym,
-                                                  inner_sdfg.symbols.get(free_sym_str, dace.float64))
+                            inner_sdfg.add_symbol(lane_sym, inner_sdfg.symbols.get(free_sym_str, dace.float64))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
                             v_expr = v_expr.subs(free_sym, f"{free_sym}")
@@ -3319,9 +3307,8 @@ def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
         for missing_sym in unresolved:
             parsed = LaneIdScheme.parse(missing_sym)
             if parsed is None:
-                raise NotImplementedError(
-                    f"Unexpected free symbol {missing_sym!r} without `_laneid_<i>` suffix; "
-                    f"cannot auto-construct")
+                raise NotImplementedError(f"Unexpected free symbol {missing_sym!r} without `_laneid_<i>` suffix; "
+                                          f"cannot auto-construct")
             base, laneid = parsed
 
             if base == vector_map_param:
@@ -3576,9 +3563,8 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 param, divisor = detect_halve_index_impl(b)
                 if param is not None and divisor is not None:
                     if detected_param is not None:
-                        raise NotImplementedError(
-                            f"Multiple halve-indexed dimensions on memlet {edge.data}; "
-                            f"only one supported (state {state.label}, edge {edge})")
+                        raise NotImplementedError(f"Multiple halve-indexed dimensions on memlet {edge.data}; "
+                                                  f"only one supported (state {state.label}, edge {edge})")
                     detected_param = param
                     detected_divisor = divisor
             if detected_param is not None:
@@ -3591,9 +3577,8 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                                                      storage=dace.dtypes.StorageType.Register,
                                                      find_new_name=True)
                 if vector_length % detected_divisor != 0:
-                    raise NotImplementedError(
-                        f"vector_length={vector_length} not divisible by halve-index divisor "
-                        f"{detected_divisor} on memlet {edge.data}")
+                    raise NotImplementedError(f"vector_length={vector_length} not divisible by halve-index divisor "
+                                              f"{detected_divisor} on memlet {edge.data}")
                 t = state.add_tasklet(
                     "pack_tasklet", {"_in"}, {"_out"},
                     f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
@@ -3606,8 +3591,7 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 for (b, e, s) in edge.data.subset:
                     nb = b
                     if not hasattr(nb, "subs"):
-                        raise NotImplementedError(
-                            f"detect_halve_index expected symbolic begin, got {type(nb)}: {nb}")
+                        raise NotImplementedError(f"detect_halve_index expected symbolic begin, got {type(nb)}: {nb}")
                     ne = nb.subs(detected_param, f"({detected_param}+{vector_length})")
                     ns = 1
                     new_range_list.append((nb, ne, ns))

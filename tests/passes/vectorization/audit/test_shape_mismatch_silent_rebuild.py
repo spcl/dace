@@ -38,8 +38,7 @@ def test_shape_mismatch_should_raise_not_silently_rebuild():
     parent_state = parent_sdfg.add_state("p", is_start_block=True)
     parent_an = parent_state.add_access("arr")
     nsdfg_node = parent_state.add_nested_sdfg(inner_sdfg, {"conn"}, set())
-    parent_state.add_edge(parent_an, None, nsdfg_node, "conn",
-                          dace.memlet.Memlet("arr[0:5, 0:9]"))
+    parent_state.add_edge(parent_an, None, nsdfg_node, "conn", dace.memlet.Memlet("arr[0:5, 0:9]"))
 
     # Today: silently rebuilds inner_sdfg.arrays['conn'] to expected_shape_collapsed_full=(5,9).
     # Wanted post-redesign: raises with the four expected shapes shown.

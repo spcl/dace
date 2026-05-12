@@ -15,7 +15,6 @@ from typing import Dict, Set, Tuple
 import sympy
 
 import dace
-from dace import SDFGState
 
 
 def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:

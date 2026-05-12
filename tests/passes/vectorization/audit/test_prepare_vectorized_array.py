@@ -15,7 +15,6 @@ Expected to xfail until the planned pass-through-subsets redesign deletes
 ``prepare_vectorized_array`` entirely. After the redesign there is no per-connector
 reshape and this test should xpass.
 """
-import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorization_utils import prepare_vectorized_array
 

@@ -319,8 +319,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         # pass `arrays=set(state.sdfg.arrays)` to the printer.
         symbol_inputs = sym_inputs
         arr_to_conn = {arr_input: f"_in_{arr_input}_{i}" for i, arr_input in enumerate(arr_inputs)}
-        cleaned, extracted_subsets = dace.symbolic.replace_array_accesses_with_connectors(
-            rhs, arr_to_conn, arrays=set(state.sdfg.arrays.keys()))
+        cleaned, extracted_subsets = dace.symbolic.replace_array_accesses_with_connectors(rhs,
+                                                                                          arr_to_conn,
+                                                                                          arrays=set(
+                                                                                              state.sdfg.arrays.keys()))
 
         assert arr_inputs.union(symbol_inputs) == free_vars
 

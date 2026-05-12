@@ -37,10 +37,19 @@ class Vectorize(ppl.Pass):
     eliminate_trivial_vector_map = properties.Property(dtype=bool, default=True, allow_none=False)
     user_skip_nsdfg_arrays = properties.SetProperty(element_type=str, default=set())
 
-    def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
-                 vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
-                 global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
-                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool,
+    def __init__(self,
+                 templates: Dict[str, str],
+                 vector_width: str,
+                 vector_input_storage: dace.dtypes.StorageType,
+                 vector_output_storage: dace.dtypes.StorageType,
+                 vector_op_numeric_type: typeclass,
+                 global_code: str,
+                 global_code_location: str,
+                 try_to_demote_symbols_in_nsdfgs: bool,
+                 apply_on_maps: Optional[List[str]],
+                 insert_copies: bool,
+                 fail_on_unvectorizable: bool,
+                 eliminate_trivial_vector_map: bool,
                  user_skip_nsdfg_arrays: Optional[Set[str]] = None):
         super().__init__()
 
@@ -950,11 +959,9 @@ class Vectorize(ppl.Pass):
                             f"(edge {edge}, state {state.label})")
 
                     if lb == le:
-                        new_le = le.subs(param_sym,
-                                         dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
+                        new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
                     else:
-                        new_le = le.subs(param_sym,
-                                         dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1"))
+                        new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1"))
                     new_range_list[d] = (lb, new_le, ls)
 
                 new_memlet = dace.memlet.Memlet(
@@ -1228,9 +1235,8 @@ class Vectorize(ppl.Pass):
         out_datas = set()
         for oe in state.out_edges(map_exit):
             if oe.data.data is None:
-                raise RuntimeError(
-                    f"Map exit out-edge has no data in {state.label}; pre-flatten before vectorization "
-                    f"(map_entry={map_entry})")
+                raise RuntimeError(f"Map exit out-edge has no data in {state.label}; pre-flatten before vectorization "
+                                   f"(map_entry={map_entry})")
             oe_arr = state.sdfg.arrays[oe.data.data]
             assert isinstance(oe_arr, dace.data.Array)
 
@@ -1373,9 +1379,8 @@ class Vectorize(ppl.Pass):
                         if has_only_states_or_single_block_with_break_only(nsdfg.sdfg):
                             pass
                         else:
-                            warnings.warn(
-                                f"Vectorize: skipping {map_entry} ({state.label}) - nested SDFG contains "
-                                f"non-state nodes other than break-only conditionals")
+                            warnings.warn(f"Vectorize: skipping {map_entry} ({state.label}) - nested SDFG contains "
+                                          f"non-state nodes other than break-only conditionals")
                             continue
 
                 if not no_other_subset(state, map_entry):

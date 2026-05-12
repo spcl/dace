@@ -61,13 +61,11 @@ def test_s482_vectorized_matches_baseline():
     sdfg_ref = dace_s482.to_sdfg()
     exe_ref = sdfg_ref.compile()
     run_sdfg(exe_ref, a_ref, b=b0.copy(), c=c0.copy())
-    sdfg_ref.save("s482_v2.sdfg")
 
     # --- vectorized SDFG ---
     sdfg_vec = dace_s482.to_sdfg()
     sdfg_vec.apply_transformations_repeated(LoopToMap)
     VectorizeBreak(vector_width=8).apply_pass(sdfg_vec, {})
-    sdfg_vec.save("s482_vectorized_v2.sdfg")
     exe_vec = sdfg_vec.compile()
     run_sdfg(exe_vec, a_vec, b=b0.copy(), c=c0.copy())
     try:
@@ -107,7 +105,6 @@ def test_s481_vectorized_matches_baseline():
     sdfg_ref = dace_s481.to_sdfg()
     exe_ref = sdfg_ref.compile()
     run_sdfg(exe_ref, a_ref, b=b0.copy(), c=c0.copy(), d=d0.copy())
-    sdfg_ref.save("s481.sdfg")
 
     # --- vectorized ---
     sdfg_vec = dace_s481.to_sdfg()
@@ -115,7 +112,6 @@ def test_s481_vectorized_matches_baseline():
     sdfg_vec.apply_transformations_repeated(LoopToMap)
     VectorizeBreak(vector_width=8).apply_pass(sdfg_vec, {})
     exe_vec = sdfg_vec.compile()
-    sdfg_vec.save("s481_veec.sdfg")
 
     run_sdfg(exe_vec, a_vec, b=b0.copy(), c=c0.copy(), d=d0.copy())
 

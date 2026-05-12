@@ -56,9 +56,8 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                 continue
             if e.dst_conn not in in_names:
                 if e.dst_conn in out_names:
-                    raise AssertionError(
-                        f"Node {node.label!r}: edge lands on out-connector {e.dst_conn!r} "
-                        f"(should land on an in-connector). Src: {e.src}")
+                    raise AssertionError(f"Node {node.label!r}: edge lands on out-connector {e.dst_conn!r} "
+                                         f"(should land on an in-connector). Src: {e.src}")
                 raise AssertionError(f"Node {node.label!r}: edge lands on unknown connector {e.dst_conn!r}")
             in_edges_per_conn[e.dst_conn] += 1
 
@@ -67,9 +66,8 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                 continue
             if e.src_conn not in out_names:
                 if e.src_conn in in_names:
-                    raise AssertionError(
-                        f"Node {node.label!r}: edge leaves in-connector {e.src_conn!r} "
-                        f"(should leave from an out-connector). Dst: {e.dst}")
+                    raise AssertionError(f"Node {node.label!r}: edge leaves in-connector {e.src_conn!r} "
+                                         f"(should leave from an out-connector). Dst: {e.dst}")
                 raise AssertionError(f"Node {node.label!r}: edge leaves unknown connector {e.src_conn!r}")
             out_edges_per_conn[e.src_conn] += 1
 

@@ -36,9 +36,8 @@ class VectorizeCPU(ppl.Pipeline):
                  use_fp_factor: bool = True,
                  branch_normalization: bool = False):
         if use_fp_factor and branch_normalization:
-            raise ValueError(
-                "VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
-                "choose one branch-lowering strategy")
+            raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
+                             "choose one branch-lowering strategy")
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",

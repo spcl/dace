@@ -7,7 +7,6 @@ every ``merge(c, t, e)`` is rewritten to ``c * t + (1 - c) * e``. The pass
 is purely a code-text rewrite — connectors and edges are unchanged.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.properties import CodeBlock

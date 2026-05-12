@@ -164,7 +164,6 @@ def test_chained_if_else_numerical_matches_python_reference():
 # the same write-side access node.
 # ---------------------------------------------------------------------------
 
-
 N = dace.symbol("N")
 
 

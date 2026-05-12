@@ -92,9 +92,7 @@ class PythonEmitter:
         # decided up-front by ``_scan_helper_eligibility``.
         if self._helpers_used:
             lines.append("# === Compact helpers ===")
-            lines.append(
-                "# Stamped shortcuts for the most repetitive patterns in this SDFG."
-            )
+            lines.append("# Stamped shortcuts for the most repetitive patterns in this SDFG.")
             for helper in _HELPER_ORDER:
                 if helper in self._helpers_used:
                     lines.extend(_HELPER_DEFS[helper])
@@ -151,16 +149,14 @@ class PythonEmitter:
         n_arrays = len(sdfg.arrays)
         n_symbols = len(sdfg.symbols)
         n_states = sum(1 for _ in sdfg.all_states())
-        return (
-            f'"""Reconstructed SDFG ``{sdfg.name}`` (auto-generated).\n\n'
-            f"This file was emitted by ``dace.sdfg.to_python.sdfg_to_python``.\n"
-            f"Calling :func:`build_sdfg` constructs an SDFG equivalent to the\n"
-            f"original via DaCe's imperative public API. No JSON deserialisation\n"
-            f"is involved.\n\n"
-            f"Stats: {n_symbols} symbols, {n_arrays} data descriptors, "
-            f"{n_states} states.\n"
-            f'"""'
-        )
+        return (f'"""Reconstructed SDFG ``{sdfg.name}`` (auto-generated).\n\n'
+                f"This file was emitted by ``dace.sdfg.to_python.sdfg_to_python``.\n"
+                f"Calling :func:`build_sdfg` constructs an SDFG equivalent to the\n"
+                f"original via DaCe's imperative public API. No JSON deserialisation\n"
+                f"is involved.\n\n"
+                f"Stats: {n_symbols} symbols, {n_arrays} data descriptors, "
+                f"{n_states} states.\n"
+                f'"""')
 
     def _emit_factory(self, fn_name: str, sdfg: SDFG) -> List[str]:
         lines: List[str] = [f"def {fn_name}() -> SDFG:"]
@@ -184,45 +180,31 @@ class PythonEmitter:
 
         if sdfg.symbols:
             buf.line("")
-            buf.line(
-                f"# --- Symbols ({len(sdfg.symbols)}) ---"
-            )
+            buf.line(f"# --- Symbols ({len(sdfg.symbols)}) ---")
             self._emit_symbol_block(sdfg, var, buf)
 
         if sdfg.constants_prop:
             buf.line("")
-            buf.line(
-                f"# --- Constants ({len(sdfg.constants_prop)}) ---"
-            )
+            buf.line(f"# --- Constants ({len(sdfg.constants_prop)}) ---")
             self._emit_constant_block(sdfg, var, buf)
 
         if sdfg.arrays:
             buf.line("")
-            buf.line(
-                f"# --- Data descriptors ({len(sdfg.arrays)}) ---"
-            )
+            buf.line(f"# --- Data descriptors ({len(sdfg.arrays)}) ---")
             self._emit_descriptor_block(sdfg, var, buf)
 
         # Init/global/exit code blocks — only emit a section when at least
         # one block has non-empty source.
-        code_pairs = [
-            (lang, code, "append_global_code")
-            for lang, code in sdfg.global_code.items() if code.as_string
-        ] + [
-            (lang, code, "append_init_code")
-            for lang, code in sdfg.init_code.items() if code.as_string
-        ] + [
-            (lang, code, "append_exit_code")
-            for lang, code in sdfg.exit_code.items() if code.as_string
-        ]
+        code_pairs = [(lang, code, "append_global_code")
+                      for lang, code in sdfg.global_code.items() if code.as_string] + [
+                          (lang, code, "append_init_code") for lang, code in sdfg.init_code.items() if code.as_string
+                      ] + [(lang, code, "append_exit_code") for lang, code in sdfg.exit_code.items() if code.as_string]
         if code_pairs:
             buf.line("")
             buf.line("# --- Init/Global/Exit code blocks ---")
             for lang, code, method in code_pairs:
-                buf.line(
-                    f"{var}.{method}({_pyrepr(code.as_string)}, "
-                    f"location={_emit_language(lang)})"
-                )
+                buf.line(f"{var}.{method}({_pyrepr(code.as_string)}, "
+                         f"location={_emit_language(lang)})")
 
         # Hoist the SDFG's CFG body (states, regions, interstate edges)
         # into a populator function so this factory stays a thin orchestrator.
@@ -241,16 +223,13 @@ class PythonEmitter:
     # the table of names is data, the loop body is the "how to add" code.
     # ------------------------------------------------------------------
 
-    def _emit_symbol_block(self, sdfg: SDFG, var: str,
-                           buf: "_IndentedBuffer"):
+    def _emit_symbol_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
         items = list(sdfg.symbols.items())
         if not items:
             return
         if len(items) == 1:
             name, dtype = items[0]
-            buf.line(
-                f"{var}.add_symbol({_pyrepr(name)}, {_emit_dtype(dtype)})"
-            )
+            buf.line(f"{var}.add_symbol({_pyrepr(name)}, {_emit_dtype(dtype)})")
             return
         # Group by dtype: an SDFG with 250 bool symbols collapses into a
         # single name list + one-line loop body, not 250 ``add_symbol`` lines.
@@ -268,31 +247,25 @@ class PythonEmitter:
             buf.line("]:")
             buf.line(f"    {var}.add_symbol(_name, {dtype_str})")
 
-    def _emit_constant_block(self, sdfg: SDFG, var: str,
-                             buf: "_IndentedBuffer"):
+    def _emit_constant_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
         items = list(sdfg.constants_prop.items())
         if not items:
             return
         if len(items) == 1:
             name, (cdtype, cval) = items[0]
             dtype_arg = _emit_dtype(cdtype) if cdtype is not None else "None"
-            buf.line(
-                f"{var}.add_constant({_pyrepr(name)}, "
-                f"{_emit_constant_value(cval)}, {dtype_arg})"
-            )
+            buf.line(f"{var}.add_constant({_pyrepr(name)}, "
+                     f"{_emit_constant_value(cval)}, {dtype_arg})")
             return
         buf.line("for _name, _value, _dtype in [")
         for name, (cdtype, cval) in items:
             dtype_arg = _emit_dtype(cdtype) if cdtype is not None else "None"
-            buf.line(
-                f"    ({_pyrepr(name)}, {_emit_constant_value(cval)}, "
-                f"{dtype_arg}),"
-            )
+            buf.line(f"    ({_pyrepr(name)}, {_emit_constant_value(cval)}, "
+                     f"{dtype_arg}),")
         buf.line("]:")
         buf.line(f"    {var}.add_constant(_name, _value, _dtype)")
 
-    def _emit_descriptor_block(self, sdfg: SDFG, var: str,
-                               buf: "_IndentedBuffer"):
+    def _emit_descriptor_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
         scalars: List = []
         arrays: List = []
         streams: List = []
@@ -310,23 +283,17 @@ class PythonEmitter:
             elif type(desc) is dt.Array:
                 arrays.append((name, desc))
             else:
-                raise NotImplementedError(
-                    f"Descriptor emission not implemented for {name!r} "
-                    f"({type(desc).__module__}.{type(desc).__name__}); extend "
-                    f"to_python._emit_descriptor_block with imperative API"
-                )
+                raise NotImplementedError(f"Descriptor emission not implemented for {name!r} "
+                                          f"({type(desc).__module__}.{type(desc).__name__}); extend "
+                                          f"to_python._emit_descriptor_block with imperative API")
 
         self._emit_array_loop(arrays, var, "add_array", buf, _array_kwargs)
-        self._emit_descriptor_loop(scalars, var, "add_scalar", buf,
-                                   _scalar_kwargs, takes_shape=False)
+        self._emit_descriptor_loop(scalars, var, "add_scalar", buf, _scalar_kwargs, takes_shape=False)
         self._emit_array_loop(views, var, "add_view", buf, _arrayview_kwargs)
-        self._emit_array_loop(refs, var, "add_reference", buf,
-                              _arrayview_kwargs)
-        self._emit_descriptor_loop(streams, var, "add_stream", buf,
-                                   _stream_kwargs, takes_shape=False)
+        self._emit_array_loop(refs, var, "add_reference", buf, _arrayview_kwargs)
+        self._emit_descriptor_loop(streams, var, "add_stream", buf, _stream_kwargs, takes_shape=False)
 
-    def _emit_array_loop(self, items: List, var: str, method: str,
-                         buf: "_IndentedBuffer", kwargs_fn):
+    def _emit_array_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn):
         """Emit grouped loops for ``var.add_X(name, shape, dtype, **kwargs)``.
 
         Arrays sharing the same (shape, dtype, kwargs) signature collapse into
@@ -339,23 +306,18 @@ class PythonEmitter:
         if len(items) == 1:
             name, desc = items[0]
             kw = kwargs_fn(desc)
-            buf.line(_call(f"{var}.{method}",
-                           [_pyrepr(name), _emit_shape(desc.shape),
-                            _emit_dtype(desc.dtype)], kw))
+            buf.line(_call(f"{var}.{method}", [_pyrepr(name), _emit_shape(desc.shape), _emit_dtype(desc.dtype)], kw))
             return
 
         groups = self._group_descriptors(items, kwargs_fn)
         # Group by (shape, dtype, kwargs) so arrays sharing a signature
         # collapse into one name list.
-        buf.line(
-            f"# {method}: {sum(len(n) for n in groups.values())} arrays, "
-            f"{len(groups)} signature group(s)"
-        )
+        buf.line(f"# {method}: {sum(len(n) for n in groups.values())} arrays, "
+                 f"{len(groups)} signature group(s)")
         for (shape_str, dtype_str, kw_tuple), names in groups.items():
             kw = dict(kw_tuple)
             if len(names) == 1:
-                buf.line(_call(f"{var}.{method}",
-                               [_pyrepr(names[0]), shape_str, dtype_str], kw))
+                buf.line(_call(f"{var}.{method}", [_pyrepr(names[0]), shape_str, dtype_str], kw))
                 continue
             buf.line("for _name in [")
             for name in names:
@@ -364,8 +326,7 @@ class PythonEmitter:
             kw_args = "".join(f", {k}={v}" for k, v in kw.items())
             buf.line(f"    {var}.{method}(_name, {shape_str}, {dtype_str}{kw_args})")
 
-    def _emit_descriptor_loop(self, items: List, var: str, method: str,
-                              buf: "_IndentedBuffer", kwargs_fn,
+    def _emit_descriptor_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn,
                               takes_shape: bool):
         """Emit grouped loops for ``var.add_X(name, dtype, **kwargs)`` (no shape)."""
         if not items:
@@ -373,8 +334,7 @@ class PythonEmitter:
         if len(items) == 1:
             name, desc = items[0]
             kw = kwargs_fn(desc)
-            buf.line(_call(f"{var}.{method}",
-                           [_pyrepr(name), _emit_dtype(desc.dtype)], kw))
+            buf.line(_call(f"{var}.{method}", [_pyrepr(name), _emit_dtype(desc.dtype)], kw))
             return
 
         groups: Dict[Tuple[str, Tuple], List[str]] = collections.OrderedDict()
@@ -383,15 +343,12 @@ class PythonEmitter:
             key = (_emit_dtype(desc.dtype), tuple(sorted(kw.items())))
             groups.setdefault(key, []).append(name)
 
-        buf.line(
-            f"# {method}: {sum(len(n) for n in groups.values())} entries, "
-            f"{len(groups)} dtype group(s)"
-        )
+        buf.line(f"# {method}: {sum(len(n) for n in groups.values())} entries, "
+                 f"{len(groups)} dtype group(s)")
         for (dtype_str, kw_tuple), names in groups.items():
             kw = dict(kw_tuple)
             if len(names) == 1:
-                buf.line(_call(f"{var}.{method}",
-                               [_pyrepr(names[0]), dtype_str], kw))
+                buf.line(_call(f"{var}.{method}", [_pyrepr(names[0]), dtype_str], kw))
                 continue
             buf.line("for _name in [")
             for name in names:
@@ -406,8 +363,7 @@ class PythonEmitter:
         groups: Dict[Tuple[str, str, Tuple], List[str]] = collections.OrderedDict()
         for name, desc in items:
             kw = kwargs_fn(desc)
-            key = (_emit_shape(desc.shape), _emit_dtype(desc.dtype),
-                   tuple(sorted(kw.items())))
+            key = (_emit_shape(desc.shape), _emit_dtype(desc.dtype), tuple(sorted(kw.items())))
             groups.setdefault(key, []).append(name)
         return groups
 
@@ -415,8 +371,7 @@ class PythonEmitter:
     # Control flow region body
     # ------------------------------------------------------------------
 
-    def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion,
-                            kind: str = "cfg") -> Optional[str]:
+    def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion, kind: str = "cfg") -> Optional[str]:
         """Emit a top-level ``_populate_<kind>_<N>(cfg, sdfg)`` function for
         this CFG region's body, and return the function name. Returns ``None``
         for empty regions so the caller can skip emitting a noop call.
@@ -453,8 +408,7 @@ class PythonEmitter:
             start_block = None
 
         for block in cfg.nodes():
-            self._emit_cfg_block(block, "cfg", body,
-                                 is_start=block is start_block)
+            self._emit_cfg_block(block, "cfg", body, is_start=block is start_block)
 
         self._emit_interstate_edges(cfg, "cfg", body)
 
@@ -472,8 +426,7 @@ class PythonEmitter:
         self._state_populators[idx] = lines
         return fn_name
 
-    def _emit_interstate_edges(self, cfg: AbstractControlFlowRegion,
-                               cfg_var: str, buf: "_IndentedBuffer"):
+    def _emit_interstate_edges(self, cfg: AbstractControlFlowRegion, cfg_var: str, buf: "_IndentedBuffer"):
         """Batch trivial ``InterstateEdge()`` edges into a single for-loop;
         emit conditioned/assigning edges imperatively (one line each)."""
         trivial: List = []
@@ -483,10 +436,7 @@ class PythonEmitter:
             dst_var = self._var_for[id(edge.dst)]
             data = edge.data
             cond_str = data.condition.as_string if data.condition is not None else ""
-            is_trivial = (
-                cond_str.strip() in {"", "1", "True", "true"}
-                and not data.assignments
-            )
+            is_trivial = (cond_str.strip() in {"", "1", "True", "true"} and not data.assignments)
             if is_trivial:
                 trivial.append((src_var, dst_var))
             else:
@@ -505,14 +455,11 @@ class PythonEmitter:
         for src_var, dst_var, edge_str in rich:
             buf.line(f"{cfg_var}.add_edge({src_var}, {dst_var}, {edge_str})")
 
-    def _emit_cfg_block(self, block, parent_var: str, buf: "_IndentedBuffer",
-                        is_start: bool):
+    def _emit_cfg_block(self, block, parent_var: str, buf: "_IndentedBuffer", is_start: bool):
         if isinstance(block, SDFGState):
             var = self._fresh(f"s_{_sanitize(block.label)}")
             extra = ", is_start_block=True" if is_start else ""
-            buf.line(
-                f"{var} = {parent_var}.add_state({_pyrepr(block.label)}{extra})"
-            )
+            buf.line(f"{var} = {parent_var}.add_state({_pyrepr(block.label)}{extra})")
             self._var_for[id(block)] = var
             populator = self._emit_state_populator(block)
             if populator is not None:
@@ -560,29 +507,21 @@ class PythonEmitter:
             self._var_for[id(block)] = var
             for branch_idx, (cond, region) in enumerate(block.branches):
                 region_var = self._fresh(f"branch_{_sanitize(region.label)}")
-                buf.line(
-                    f"{region_var} = ControlFlowRegion("
-                    f"{_pyrepr(region.label)}, sdfg=sdfg)"
-                )
+                buf.line(f"{region_var} = ControlFlowRegion("
+                         f"{_pyrepr(region.label)}, sdfg=sdfg)")
                 self._var_for[id(region)] = region_var
                 populator = self._emit_cfg_populator(region, kind="branch")
                 if populator is not None:
                     buf.line(f"{populator}({region_var}, sdfg)")
-                cond_arg = (
-                    f"CodeBlock({_pyrepr(cond.as_string)})" if cond is not None else "None"
-                )
+                cond_arg = (f"CodeBlock({_pyrepr(cond.as_string)})" if cond is not None else "None")
                 buf.line(f"{var}.add_branch({cond_arg}, {region_var})")
             return
 
         if isinstance(block, FunctionCallRegion):
             var = self._fresh(f"call_{_sanitize(block.label)}")
-            args_dict = "{" + ", ".join(
-                f"{_pyrepr(k)}: {_pyrepr(v)}" for k, v in block.arguments.items()
-            ) + "}"
-            buf.line(
-                f"{var} = FunctionCallRegion({_pyrepr(block.label)}, "
-                f"arguments={args_dict})"
-            )
+            args_dict = "{" + ", ".join(f"{_pyrepr(k)}: {_pyrepr(v)}" for k, v in block.arguments.items()) + "}"
+            buf.line(f"{var} = FunctionCallRegion({_pyrepr(block.label)}, "
+                     f"arguments={args_dict})")
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
             populator = self._emit_cfg_populator(block, kind="call")
@@ -631,15 +570,12 @@ class PythonEmitter:
             self._var_for[id(block)] = var
             return
 
-        raise NotImplementedError(
-            f"CFG block emission not implemented for "
-            f"{type(block).__module__}.{type(block).__name__} "
-            f"(label={getattr(block, 'label', '?')!r})"
-        )
+        raise NotImplementedError(f"CFG block emission not implemented for "
+                                  f"{type(block).__module__}.{type(block).__name__} "
+                                  f"(label={getattr(block, 'label', '?')!r})")
 
     @staticmethod
-    def _add_node(parent_var: str, var: str, is_start: bool,
-                  buf: "_IndentedBuffer"):
+    def _add_node(parent_var: str, var: str, is_start: bool, buf: "_IndentedBuffer"):
         extra = ", is_start_block=True" if is_start else ""
         buf.line(f"{parent_var}.add_node({var}{extra})")
 
@@ -688,19 +624,15 @@ class PythonEmitter:
             dst_var = self._var_for[id(edge.dst)]
             src_conn = _pyrepr(edge.src_conn) if edge.src_conn is not None else "None"
             dst_conn = _pyrepr(edge.dst_conn) if edge.dst_conn is not None else "None"
-            body.line(
-                f"state.add_edge({src_var}, {src_conn}, {dst_var}, "
-                f"{dst_conn}, {self._render_memlet(edge.data)})"
-            )
+            body.line(f"state.add_edge({src_var}, {src_conn}, {dst_var}, "
+                      f"{dst_conn}, {self._render_memlet(edge.data)})")
 
         self._var_for = outer_var_for
         self._name_counter = outer_counter
         self._taken_names = outer_taken
 
         lines = [f"def {fn_name}(state):"]
-        lines.append(
-            f'    """Populate state {state.label!r} with its data-flow body."""'
-        )
+        lines.append(f'    """Populate state {state.label!r} with its data-flow body."""')
         if not body.lines:
             lines.append("    pass")
         else:
@@ -708,8 +640,7 @@ class PythonEmitter:
         self._state_populators[idx] = lines
         return fn_name
 
-    def _emit_state_node(self, node, state: SDFGState, state_var: str,
-                         buf: "_IndentedBuffer", skip: set):
+    def _emit_state_node(self, node, state: SDFGState, state_var: str, buf: "_IndentedBuffer", skip: set):
         if isinstance(node, nd.AccessNode):
             var = self._fresh(f"acc_{_sanitize(node.data)}")
             buf.line(f"{var} = {state_var}.add_access({_pyrepr(node.data)})")
@@ -730,10 +661,8 @@ class PythonEmitter:
                 kwargs["schedule"] = _emit_schedule(map_obj.schedule)
             if map_obj.unroll:
                 kwargs["unroll"] = "True"
-            buf.line(
-                f"{entry_var}, {exit_var} = "
-                + _call(f"{state_var}.add_map", [_pyrepr(map_obj.label), ndrange], kwargs)
-            )
+            buf.line(f"{entry_var}, {exit_var} = " +
+                     _call(f"{state_var}.add_map", [_pyrepr(map_obj.label), ndrange], kwargs))
             self._var_for[id(node)] = entry_var
             self._var_for[id(exit_node)] = exit_var
             skip.add(id(exit_node))
@@ -744,10 +673,8 @@ class PythonEmitter:
         if isinstance(node, nd.MapExit):
             # Should have been emitted alongside its entry; if we hit a bare
             # exit, something is malformed.
-            raise NotImplementedError(
-                f"MapExit {node} encountered without paired MapEntry; "
-                f"malformed SDFG"
-            )
+            raise NotImplementedError(f"MapExit {node} encountered without paired MapEntry; "
+                                      f"malformed SDFG")
 
         if isinstance(node, nd.ConsumeEntry):
             entry_var = self._fresh(f"ce_{_sanitize(node.label)}")
@@ -758,8 +685,7 @@ class PythonEmitter:
                 consume.pe_index,
                 _emit_symbolic_inline(consume.num_pes),
             )
-            args = [_pyrepr(consume.label),
-                    f"({_pyrepr(elements[0])}, {elements[1]})"]
+            args = [_pyrepr(consume.label), f"({_pyrepr(elements[0])}, {elements[1]})"]
             kwargs: Dict[str, str] = {}
             if consume.condition is not None and consume.condition.as_string:
                 kwargs["condition"] = _pyrepr(consume.condition.as_string)
@@ -767,10 +693,7 @@ class PythonEmitter:
                 kwargs["schedule"] = _emit_schedule(consume.schedule)
             if int(consume.chunksize) != 1:
                 kwargs["chunksize"] = repr(int(consume.chunksize))
-            buf.line(
-                f"{entry_var}, {exit_var} = "
-                + _call(f"{state_var}.add_consume", args, kwargs)
-            )
+            buf.line(f"{entry_var}, {exit_var} = " + _call(f"{state_var}.add_consume", args, kwargs))
             self._var_for[id(node)] = entry_var
             self._var_for[id(exit_node)] = exit_var
             skip.add(id(exit_node))
@@ -779,9 +702,7 @@ class PythonEmitter:
             return
 
         if isinstance(node, nd.ConsumeExit):
-            raise NotImplementedError(
-                "ConsumeExit without paired ConsumeEntry; malformed SDFG"
-            )
+            raise NotImplementedError("ConsumeExit without paired ConsumeEntry; malformed SDFG")
 
         if isinstance(node, nd.NestedSDFG):
             factory_name = self._emit_nested_factory(node.sdfg)
@@ -797,12 +718,9 @@ class PythonEmitter:
             if node.symbol_mapping:
                 mapping = "{" + ", ".join(
                     f"{_pyrepr(k)}: {_pyrepr(symbolic.symstr(v) if isinstance(v, sympy.Basic) else str(v))}"
-                    for k, v in node.symbol_mapping.items()
-                ) + "}"
+                    for k, v in node.symbol_mapping.items()) + "}"
                 kwargs["symbol_mapping"] = mapping
-            buf.line(
-                f"{var} = " + _call(f"{state_var}.add_nested_sdfg", args, kwargs)
-            )
+            buf.line(f"{var} = " + _call(f"{state_var}.add_nested_sdfg", args, kwargs))
             self._var_for[id(node)] = var
             return
 
@@ -815,15 +733,11 @@ class PythonEmitter:
                 if helper_name in self._helpers_used:
                     var = self._fresh(f"t_{_sanitize(node.label)}")
                     if kind[0] == "const":
-                        buf.line(
-                            f"{var} = _const_tasklet({state_var}, "
-                            f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})"
-                        )
+                        buf.line(f"{var} = _const_tasklet({state_var}, "
+                                 f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})")
                     else:  # binop
-                        buf.line(
-                            f"{var} = _binop_tasklet({state_var}, "
-                            f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})"
-                        )
+                        buf.line(f"{var} = _binop_tasklet({state_var}, "
+                                 f"{_pyrepr(node.label)}, {_pyrepr(kind[1])})")
                     self._var_for[id(node)] = var
                     return
 
@@ -853,12 +767,10 @@ class PythonEmitter:
             self._emit_library_node(node, state, state_var, buf)
             return
 
-        raise NotImplementedError(
-            f"State-node emission not implemented for "
-            f"{type(node).__module__}.{type(node).__name__} "
-            f"(label={getattr(node, 'label', '?')!r}); extend "
-            f"to_python._emit_state_node"
-        )
+        raise NotImplementedError(f"State-node emission not implemented for "
+                                  f"{type(node).__module__}.{type(node).__name__} "
+                                  f"(label={getattr(node, 'label', '?')!r}); extend "
+                                  f"to_python._emit_state_node")
 
     # ------------------------------------------------------------------
     # NestedSDFG support
@@ -888,8 +800,7 @@ class PythonEmitter:
     # LibraryNode
     # ------------------------------------------------------------------
 
-    def _emit_library_node(self, node, state: SDFGState, state_var: str,
-                           buf: "_IndentedBuffer"):
+    def _emit_library_node(self, node, state: SDFGState, state_var: str, buf: "_IndentedBuffer"):
         cls = type(node)
         module = cls.__module__
         qualname = cls.__qualname__
@@ -900,15 +811,12 @@ class PythonEmitter:
         try:
             sig = inspect.signature(init_fn)
         except (TypeError, ValueError) as exc:
-            raise NotImplementedError(
-                f"LibraryNode {module}.{qualname} has no introspectable "
-                f"__init__: {exc}; expose a typed constructor or extend "
-                f"to_python._emit_library_node"
-            ) from exc
+            raise NotImplementedError(f"LibraryNode {module}.{qualname} has no introspectable "
+                                      f"__init__: {exc}; expose a typed constructor or extend "
+                                      f"to_python._emit_library_node") from exc
 
         ctor_params = [
-            p for p in sig.parameters.values()
-            if p.name != "self" and p.kind not in (
+            p for p in sig.parameters.values() if p.name != "self" and p.kind not in (
                 inspect.Parameter.VAR_KEYWORD,
                 inspect.Parameter.VAR_POSITIONAL,
             )
@@ -927,12 +835,10 @@ class PythonEmitter:
             value = _read_node_attr(node, p.name)
             if value is _MISSING:
                 if p.default is inspect.Parameter.empty:
-                    raise NotImplementedError(
-                        f"LibraryNode {module}.{qualname}.__init__ requires "
-                        f"parameter {p.name!r} but the node has no matching "
-                        f"attribute or property; extend to_python or expose "
-                        f"the value as a Property/attr"
-                    )
+                    raise NotImplementedError(f"LibraryNode {module}.{qualname}.__init__ requires "
+                                              f"parameter {p.name!r} but the node has no matching "
+                                              f"attribute or property; extend to_python or expose "
+                                              f"the value as a Property/attr")
                 continue
             rendered = _emit_value(value)
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
@@ -948,22 +854,16 @@ class PythonEmitter:
         self._var_for[id(node)] = var
 
         for cname, cdtype in node.in_connectors.items():
-            buf.line(
-                f"{var}.add_in_connector({_pyrepr(cname)}, "
-                f"dtype={_emit_dtype_optional(cdtype)})"
-            )
+            buf.line(f"{var}.add_in_connector({_pyrepr(cname)}, "
+                     f"dtype={_emit_dtype_optional(cdtype)})")
         for cname, cdtype in node.out_connectors.items():
-            buf.line(
-                f"{var}.add_out_connector({_pyrepr(cname)}, "
-                f"dtype={_emit_dtype_optional(cdtype)})"
-            )
+            buf.line(f"{var}.add_out_connector({_pyrepr(cname)}, "
+                     f"dtype={_emit_dtype_optional(cdtype)})")
 
         # Properties not covered by __init__ — set imperatively via attribute
         # assignment if they differ from their declared default.
         for prop_name, default in prop_defaults.items():
-            if prop_name in consumed_props or prop_name in {
-                "in_connectors", "out_connectors", "guid", "debuginfo"
-            }:
+            if prop_name in consumed_props or prop_name in {"in_connectors", "out_connectors", "guid", "debuginfo"}:
                 continue
             try:
                 current = getattr(node, prop_name)
@@ -972,12 +872,10 @@ class PythonEmitter:
             if _values_equal(current, default):
                 continue
             if not _attr_is_settable(node, prop_name):
-                raise NotImplementedError(
-                    f"LibraryNode {module}.{qualname} property "
-                    f"{prop_name!r} is not exposed via a setter and is not a "
-                    f"constructor parameter; extend to_python or the node "
-                    f"class with imperative API"
-                )
+                raise NotImplementedError(f"LibraryNode {module}.{qualname} property "
+                                          f"{prop_name!r} is not exposed via a setter and is not a "
+                                          f"constructor parameter; extend to_python or the node "
+                                          f"class with imperative API")
             buf.line(f"{var}.{prop_name} = {_emit_value(current)}")
 
     def _fresh(self, base: str) -> str:
@@ -999,11 +897,11 @@ class PythonEmitter:
 # Helpers
 # ------------------------------------------------------------------------
 
-
 _MISSING = object()
 
 
 class _IndentedBuffer:
+
     def __init__(self, indent: int = 0):
         self.indent = indent
         self.lines: List[str] = []
@@ -1069,9 +967,7 @@ def _emit_dtype(dtype) -> str:
         name = dtype.to_string()
         if hasattr(dtypes, name):
             return f"dtypes.{name}"
-    raise NotImplementedError(
-        f"Cannot emit dtype {dtype!r} ({type(dtype).__name__}) imperatively"
-    )
+    raise NotImplementedError(f"Cannot emit dtype {dtype!r} ({type(dtype).__name__}) imperatively")
 
 
 def _emit_dtype_optional(dtype) -> str:
@@ -1112,9 +1008,7 @@ def _emit_constant_value(value: Any) -> str:
         if isinstance(value, tuple):
             return f"({inner}{',' if len(value) == 1 else ''})"
         return f"[{inner}]"
-    raise NotImplementedError(
-        f"Cannot emit constant value {value!r} ({type(value).__name__})"
-    )
+    raise NotImplementedError(f"Cannot emit constant value {value!r} ({type(value).__name__})")
 
 
 def _emit_symbolic(expr) -> str:
@@ -1279,7 +1173,7 @@ def _stream_kwargs(desc: dt.Stream) -> Dict[str, str]:
     except (TypeError, ValueError):
         kwargs["buffer_size"] = _emit_symbolic(bs)
     shape = tuple(desc.shape)
-    if shape != (1,):
+    if shape != (1, ):
         kwargs["shape"] = _emit_shape_inline(shape)
     if desc.storage is not dtypes.StorageType.Default:
         kwargs["storage"] = _emit_storage(desc.storage)
@@ -1323,10 +1217,7 @@ def _emit_connector_dict(conns) -> str:
     if all(_is_void_dtype(v) for _, v in items):
         names = ", ".join(_pyrepr(k) for k, _ in items)
         return "{" + names + "}"
-    parts = [
-        f"{_pyrepr(k)}: {'None' if _is_void_dtype(v) else _emit_dtype(v)}"
-        for k, v in items
-    ]
+    parts = [f"{_pyrepr(k)}: {'None' if _is_void_dtype(v) else _emit_dtype(v)}" for k, v in items]
     return "{" + ", ".join(parts) + "}"
 
 
@@ -1337,9 +1228,7 @@ def _emit_interstate_edge(edge: InterstateEdge) -> str:
     if not trivial:
         kwargs["condition"] = f"CodeBlock({_pyrepr(cond_str)})"
     if edge.assignments:
-        items = ", ".join(
-            f"{_pyrepr(k)}: {_pyrepr(str(v))}" for k, v in edge.assignments.items()
-        )
+        items = ", ".join(f"{_pyrepr(k)}: {_pyrepr(str(v))}" for k, v in edge.assignments.items())
         kwargs["assignments"] = "{" + items + "}"
     if not kwargs:
         return "InterstateEdge()"
@@ -1553,10 +1442,8 @@ def _emit_value(value) -> str:
     if isinstance(value, dict):
         items = ", ".join(f"{_emit_value(k)}: {_emit_value(v)}" for k, v in value.items())
         return "{" + items + "}"
-    raise NotImplementedError(
-        f"Cannot emit value {value!r} of type {type(value).__name__} as "
-        f"imperative Python; teach to_python._emit_value how to render it"
-    )
+    raise NotImplementedError(f"Cannot emit value {value!r} of type {type(value).__name__} as "
+                              f"imperative Python; teach to_python._emit_value how to render it")
 
 
 def _read_node_attr(node, name: str):
@@ -1640,18 +1527,17 @@ def _main():
 
     parser = argparse.ArgumentParser(
         prog="python -m dace.sdfg.to_python",
-        description=(
-            "Emit a Python source file that reconstructs the given SDFG via "
-            "DaCe's imperative public API. The emitted file defines "
-            "``build_sdfg()`` and validates the rebuilt SDFG when run."
-        ),
+        description=("Emit a Python source file that reconstructs the given SDFG via "
+                     "DaCe's imperative public API. The emitted file defines "
+                     "``build_sdfg()`` and validates the rebuilt SDFG when run."),
     )
     parser.add_argument(
         "sdfg_path",
         help="Path to a .sdfg / .sdfgz file (DaCe's serialized SDFG format)",
     )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         help="Output Python file path (default: write to stdout)",
     )
     args = parser.parse_args()

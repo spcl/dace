@@ -202,8 +202,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # Per-arm escape set drives temp allocation and the clone-redirect.
         # An arm-local intermediate that nothing outside reads stays inline.
         from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
-            compute_arm_escape_writes,
-        )
+            compute_arm_escape_writes, )
         escape_plan = compute_arm_escape_writes(local_sdfg, cb)
         all_escapes = escape_plan.get(0, set()) | escape_plan.get(1, set())
         if not all_escapes:
@@ -259,7 +258,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         for arr, subset in write_subsets.items():
             then_op = temp_then.get(arr, arr)
             else_op = temp_else.get(arr, arr)
-            self._emit_merge_tasklet(local_sdfg, am_state, arr, subset, then_op, else_op, cond_text,
+            self._emit_merge_tasklet(local_sdfg,
+                                     am_state,
+                                     arr,
+                                     subset,
+                                     then_op,
+                                     else_op,
+                                     cond_text,
                                      cond_array_name=cond_array_name)
 
         # Stitch in/out edges of the ConditionalBlock onto ct_state -> ce_state
@@ -299,8 +304,16 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 # element-wise per the slice's restriction).
                 e.data.data = rename[e.data.data]
 
-    def _emit_merge_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, subset, then_name: str,
-                            else_name: str, cond_text: str, *, cond_array_name: Optional[str] = None):
+    def _emit_merge_tasklet(self,
+                            sdfg: dace.SDFG,
+                            state: dace.SDFGState,
+                            arr_name: str,
+                            subset,
+                            then_name: str,
+                            else_name: str,
+                            cond_text: str,
+                            *,
+                            cond_array_name: Optional[str] = None):
         """Emit ``arr[subset] = merge(_c, _t, _e)`` where ``_c``, ``_t``,
         ``_e`` are wired as 3 in-connectors. ``cond_array_name`` is the
         bool transient already lifted for this cond; when ``None``, the
@@ -331,8 +344,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         state.add_edge(access_else, None, t, "_e", dace.Memlet(expr=f"{else_name}[{subset_str}]"))
         state.add_edge(t, "_o", access_out, None, dace.Memlet(expr=f"{arr_name}[{subset_str}]"))
 
-    def _resolve_cond_to_array(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
-                               subset_str: str, *, skip_cb=None) -> Optional[str]:
+    def _resolve_cond_to_array(self,
+                               sdfg: dace.SDFG,
+                               state: dace.SDFGState,
+                               cond_text: str,
+                               subset_str: str,
+                               *,
+                               skip_cb=None) -> Optional[str]:
         """Resolve ``cond_text`` to the name of a per-lane bool transient
         usable as the ``_c`` source of the merge tasklet. Returns ``None``
         when no transient can be produced (the caller then keeps the cond
@@ -357,8 +375,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             return direct
         return self._lift_compound_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
 
-    def _lift_compound_cond_to_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
-                                       subset_str: str, *, skip_cb=None):
+    def _lift_compound_cond_to_tasklet(self,
+                                       sdfg: dace.SDFG,
+                                       state: dace.SDFGState,
+                                       cond_text: str,
+                                       subset_str: str,
+                                       *,
+                                       skip_cb=None):
         """Handle the case where ``cond_text`` is a Python boolean
         expression over multiple symbols, each set by an interstate-edge
         assignment, e.g. ``(__tmp0 or __tmp1)``. Recursively lifts each
@@ -433,8 +456,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name
 
-    def _lift_interstate_cond_to_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_sym: str,
-                                          subset_str: str, *, skip_cb=None):
+    def _lift_interstate_cond_to_tasklet(self,
+                                         sdfg: dace.SDFG,
+                                         state: dace.SDFGState,
+                                         cond_sym: str,
+                                         subset_str: str,
+                                         *,
+                                         skip_cb=None):
         """Walk the CFG looking for an interstate-edge assignment to
         ``cond_sym``. If found, emit a tasklet in ``state`` that computes
         the assignment's RHS using array reads as in-connectors and

@@ -1,31 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import copy
-from typing import Tuple
 import dace
 import pytest
 import numpy
-from dace import InterstateEdge
-from dace import Union
-from dace.properties import CodeBlock
-from dace.sdfg import ControlFlowRegion
-from dace.sdfg.state import ConditionalBlock
-from dace.transformation.interstate import branch_elimination
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow,
-)
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from tests.passes.vectorization._harness import (
     run_vectorization_test,
-    N, S, S1, S2, klev, kidia, kfdia, n, m, nnz,
-    KLON, KLEV, NCLDQL, NCLDQI, ssym, X, Y, C,
-    log, exp, pow,
-    _get_disjoint_chain_sdfg, _get_disjoint_chain_sdfg_two,
-    _get_cloudsc_snippet_three, _get_cloudsc_snippet_four,
+    N,
+    S,
+    S1,
+    S2,
+    n,
+    m,
+    nnz,
     _get_map_inside_nested_map,
-    _get_dependency_edge_to_unary_symbol_sdfg,
-    _get_unstructured_access_cloudsc_sdfg,
 )
+
 
 @dace.program
 def no_maps(A: dace.float64[N, N], B: dace.float64[N, N]):
@@ -252,9 +242,7 @@ def test_spmv():
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
-    sdfg.save("spmv.sdfg")
     VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("spmv_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
@@ -302,4 +290,3 @@ def test_map_inside_nested_map(opt_parameters):
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True)
-

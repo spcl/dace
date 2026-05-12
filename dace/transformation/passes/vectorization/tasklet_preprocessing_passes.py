@@ -1,15 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from typing import Any, Callable, Dict, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Optional, Set
 import ast
 from dace import SDFG, properties, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
 
 
-def _rewrite_python_tasklet_bodies(sdfg: SDFG, rewrite: Callable[[str], str],
-                                   filter_node: Optional[Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"],
-                                                                  bool]] = None) -> None:
+def _rewrite_python_tasklet_bodies(
+        sdfg: SDFG,
+        rewrite: Callable[[str], str],
+        filter_node: Optional[Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool]] = None) -> None:
     """Apply ``rewrite`` to every Python tasklet body in ``sdfg`` (recursively).
 
     ``rewrite`` is called with the tasklet's source string; if it returns a different
@@ -72,17 +73,13 @@ class PowerOperatorExpander(ast.NodeTransformer):
                 return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
         # Case 2: non-integer exponent → exp(right * log(left))
-        log_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()),
-                                                attr="log",
-                                                ctx=ast.Load()),
-                             args=[ast.copy_location(left, left)],
-                             keywords=[])
+        log_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()), attr="log", ctx=ast.Load()),
+                            args=[ast.copy_location(left, left)],
+                            keywords=[])
         mul_expr = ast.BinOp(left=ast.copy_location(right, right), op=ast.Mult(), right=log_call)
-        exp_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()),
-                                                attr="exp",
-                                                ctx=ast.Load()),
-                             args=[mul_expr],
-                             keywords=[])
+        exp_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()), attr="exp", ctx=ast.Load()),
+                            args=[mul_expr],
+                            keywords=[])
         return ast.copy_location(exp_call, loc)
 
     def visit_BinOp(self, node):
@@ -299,8 +296,7 @@ class RemoveMathCall(ppl.Pass):
         return None
 
 
-def _matched_fp_dtype_suffix(graph: "dace.SDFGState",
-                             node: "dace.sdfg.nodes.Tasklet") -> Optional[str]:
+def _matched_fp_dtype_suffix(graph: "dace.SDFGState", node: "dace.sdfg.nodes.Tasklet") -> Optional[str]:
     """Return ``"f"`` / ``"d"`` if the tasklet is a single-input/single-output operation on
     matching float32 / float64 arrays, else None (meaning "skip this tasklet").
     """
@@ -321,8 +317,8 @@ def _matched_fp_dtype_suffix(graph: "dace.SDFGState",
     return None
 
 
-def _apply_replace_std_function(sdfg: SDFG, *, use_safe_implementation: bool, src_func: str,
-                                dst_prefix: str, include_path: str) -> None:
+def _apply_replace_std_function(sdfg: SDFG, *, use_safe_implementation: bool, src_func: str, dst_prefix: str,
+                                include_path: str) -> None:
     """Shared body for the STD->dace replacement trio (log/exp/pow).
 
     Walks all Python tasklets, rewrites ``src_func`` to ``dst_prefix{safe_infix}{f|d}``

@@ -1,31 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import copy
 from typing import Tuple
 import dace
 import pytest
 import numpy
-from dace import InterstateEdge
-from dace import Union
-from dace.properties import CodeBlock
-from dace.sdfg import ControlFlowRegion
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow,
-)
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from tests.passes.vectorization._harness import (
-    run_vectorization_test,
-    N, S, S1, S2, klev, kidia, kfdia, n, m, nnz,
-    KLON, KLEV, NCLDQL, NCLDQI, ssym, X, Y, C,
-    log, exp, pow,
-    _get_disjoint_chain_sdfg, _get_disjoint_chain_sdfg_two,
-    _get_cloudsc_snippet_three, _get_cloudsc_snippet_four,
-    _get_map_inside_nested_map,
-    _get_dependency_edge_to_unary_symbol_sdfg,
-    _get_unstructured_access_cloudsc_sdfg,
+    N,
+    C,
+    _get_disjoint_chain_sdfg,
+    _get_disjoint_chain_sdfg_two,
 )
+
 
 @pytest.mark.parametrize("trivial_if_demote_symbols", [(True, True), (True, False), (False, True), (False, False)])
 def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool], branch_mode):
@@ -44,7 +32,6 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
     arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
 
     sdfg.validate()
-    sdfg.save(f"disjoint_chain_{str(trivial_if).lower()}_{str(demote_symbols).lower()}.sdfg")
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
 
@@ -68,7 +55,6 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
     vectorizer = VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, **branch_kwargs)
     vectorizer.try_to_demote_symbols_in_nsdfgs = demote_symbols
     vectorizer.apply_pass(copy_sdfg, {})
-    copy_sdfg.save("disjoint_chain_vectorized.sdfg")
 
     copy_sdfg(**out_fused)
 
@@ -87,7 +73,6 @@ def test_disjoint_chain_with_overlapping_region_fusion(branch_mode):
     rtt = numpy.array([4.2], numpy.float64)
     _N = numpy.array([64], numpy.int64)
     sdfg.validate()
-    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
@@ -98,12 +83,14 @@ def test_disjoint_chain_with_overlapping_region_fusion(branch_mode):
     sdfg(**out_no_fuse)
     # Run SDFG version (with transformation)
     branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
-    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=True,
-                 fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8,
+                 insert_copies=True,
+                 fuse_overlapping_loads=True,
+                 fail_on_unvectorizable=True,
+                 **branch_kwargs).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()
-    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
 
     # There is should be no `_union` access nodes
 
@@ -132,7 +119,6 @@ def test_disjoint_chain(branch_mode):
     rtt = numpy.array([4.2], numpy.float64)
     _N = numpy.array([64], numpy.int64)
     sdfg.validate()
-    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
@@ -143,12 +129,14 @@ def test_disjoint_chain(branch_mode):
     sdfg(**out_no_fuse)
     # Run SDFG version (with transformation)
     branch_kwargs = {"use_fp_factor": False, "branch_normalization": True} if branch_mode == "merge" else {}
-    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False,
-                 fail_on_unvectorizable=True, **branch_kwargs).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8,
+                 insert_copies=True,
+                 fuse_overlapping_loads=False,
+                 fail_on_unvectorizable=True,
+                 **branch_kwargs).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()
-    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
 
     for state in copy_sdfg.all_states():
         for node in state.nodes():
@@ -163,4 +151,3 @@ def test_disjoint_chain(branch_mode):
         print(f"Compare {name}")
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
         print(f"{name} OK")
-

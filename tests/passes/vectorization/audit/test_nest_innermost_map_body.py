@@ -21,7 +21,6 @@ from dace.transformation.passes.vectorization.vectorization_utils import (
     is_innermost_map,
 )
 
-
 N = dace.symbol("N")
 
 
@@ -69,13 +68,15 @@ def test_nested_pass_is_idempotent_on_already_wrapped_body():
 def test_pass_does_not_touch_outer_maps_in_nested_map_program():
     sdfg = nested_map_program.to_sdfg(simplify=True)
     # Snapshot which maps are outer vs inner.
-    outers_before = [(n, g) for n, g in sdfg.all_nodes_recursive()
-                     if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)
-                     and not is_innermost_map(g, n)]
+    outers_before = [
+        (n, g) for n, g in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and not is_innermost_map(g, n)
+    ]
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
-    outers_after = [(n, g) for n, g in sdfg.all_nodes_recursive()
-                    if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)
-                    and not is_innermost_map(g, n)]
+    outers_after = [
+        (n, g) for n, g in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and not is_innermost_map(g, n)
+    ]
     # The outer map count is preserved (the pass only touches innermost maps).
     assert len(outers_before) == len(outers_after)
 

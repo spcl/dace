@@ -43,7 +43,9 @@ class GenerateIterationMask(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     vector_width = properties.Property(dtype=int, default=8, allow_none=False)
-    mode = properties.Property(dtype=str, default="step_w_only", allow_none=False,
+    mode = properties.Property(dtype=str,
+                               default="step_w_only",
+                               allow_none=False,
                                desc="``step_w_only`` masks only maps with step==vector_width, "
                                "``all_innermost`` masks every innermost map")
 
@@ -75,10 +77,9 @@ class GenerateIterationMask(ppl.Pass):
                 continue
             nsdfg_node = get_single_nsdfg_inside_map(g, n)
             if nsdfg_node is None:
-                raise NotImplementedError(
-                    f"GenerateIterationMask requires every innermost map's body to be a single "
-                    f"NestedSDFG (run NestInnermostMapBodyIntoNSDFG first); map {n.label!r} has "
-                    f"a bare-tasklet body")
+                raise NotImplementedError(f"GenerateIterationMask requires every innermost map's body to be a single "
+                                          f"NestedSDFG (run NestInnermostMapBodyIntoNSDFG first); map {n.label!r} has "
+                                          f"a bare-tasklet body")
             if self._attach_mask(nsdfg_node, n.map.params[-1], lb, ub, W):
                 applied += 1
         return applied or None

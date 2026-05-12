@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import copy
 from typing import Any, Dict
 from dace import SDFG, InterstateEdge, properties

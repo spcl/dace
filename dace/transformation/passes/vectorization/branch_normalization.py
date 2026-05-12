@@ -237,8 +237,8 @@ class BranchNormalization(ppl.Pass):
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
 
-    def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock,
-                                body0: ControlFlowRegion, body1: ControlFlowRegion) -> bool:
+    def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
+                                body1: ControlFlowRegion) -> bool:
         if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
             return False
         s0, s1 = body0.nodes()[0], body1.nodes()[0]
@@ -306,8 +306,13 @@ class BranchNormalization(ppl.Pass):
                 out[n.data] = e.data.subset
         return out
 
-    def _rewrite_writes_to_merge(self, sdfg: dace.SDFG, state: dace.SDFGState, write_subsets: dict, cond_text: str,
-                                 *, skip_cb=None):
+    def _rewrite_writes_to_merge(self,
+                                 sdfg: dace.SDFG,
+                                 state: dace.SDFGState,
+                                 write_subsets: dict,
+                                 cond_text: str,
+                                 *,
+                                 skip_cb=None):
         """For each access-node write in ``state``, redirect through a merge
         tasklet so the post-condition write becomes
         ``arr = merge(cond, expr, arr)``."""
@@ -374,8 +379,7 @@ class BranchNormalization(ppl.Pass):
 
                 # Redirect the existing in-edge to write to the temp instead.
                 state.remove_edge(in_edge)
-                state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None,
-                               dace.Memlet(expr=f"{tmp_name}[0]"))
+                state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
                 if cond_array_name is not None:
                     cond_access = state.add_access(cond_array_name)
                     merge_t = state.add_tasklet(

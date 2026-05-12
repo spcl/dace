@@ -18,10 +18,8 @@ Cases covered:
 - End-to-end numerical correctness against the plain-Python reference,
   inputs chosen to exercise every arm.
 """
-import os
 
 import numpy as np
-import pytest
 
 import dace
 from dace.properties import CodeBlock
@@ -135,8 +133,7 @@ def test_single_arm_numerical_correctness():
             B = np.array([b], dtype=np.float64)
             csdfg(A=A, B=B, cond=c)
             expected = (b + 1.0) if c else 99.0
-            np.testing.assert_allclose(A, np.array([expected]),
-                                       err_msg=f"c={c}, b={b}, got={A}, expected={expected}")
+            np.testing.assert_allclose(A, np.array([expected]), err_msg=f"c={c}, b={b}, got={A}, expected={expected}")
 
 
 def test_disjoint_two_arm_splits_and_normalizes():
@@ -167,10 +164,8 @@ def test_disjoint_two_arm_numerical_correctness():
             csdfg(A=A, B=B, C=C, cond=c)
             expected_A = (b + 1.0) if c else 10.0
             expected_C = 20.0 if c else (b - 1.0)
-            np.testing.assert_allclose(A, np.array([expected_A]),
-                                       err_msg=f"A c={c}, b={b}, got={A}")
-            np.testing.assert_allclose(C, np.array([expected_C]),
-                                       err_msg=f"C c={c}, b={b}, got={C}")
+            np.testing.assert_allclose(A, np.array([expected_A]), err_msg=f"A c={c}, b={b}, got={A}")
+            np.testing.assert_allclose(C, np.array([expected_C]), err_msg=f"C c={c}, b={b}, got={C}")
 
 
 def test_pass_is_idempotent_after_first_run():
@@ -223,7 +218,7 @@ def _build_arm_with_writes(sdfg: dace.SDFG, label: str, writes):
 def test_escape_writes_non_transient_target_escapes():
     """Rule 1: a write to a non-transient array always escapes."""
     sdfg = dace.SDFG("escape_rule1")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)   # non-transient
+    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)  # non-transient
     sdfg.add_array("S", shape=(1, ), dtype=dace.float64, transient=True)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
@@ -301,8 +296,8 @@ def test_escape_writes_cross_arm_read_escapes_writer():
     cb.add_branch(None, else_cfr)
 
     plan = compute_arm_escape_writes(sdfg, cb)
-    assert "T" in plan[0], plan        # arm 0's write to T escapes (rule 3)
-    assert plan[1] == set(), plan      # arm 1 has no writes that escape
+    assert "T" in plan[0], plan  # arm 0's write to T escapes (rule 3)
+    assert plan[1] == set(), plan  # arm 1 has no writes that escape
 
 
 def test_escape_writes_interstate_edge_cond_outside_cb_is_a_read():

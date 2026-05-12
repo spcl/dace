@@ -23,7 +23,6 @@ from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.passes.vectorization.vectorization_utils import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
-    map_consists_of_single_nsdfg_or_no_nsdfg,
 )
 
 

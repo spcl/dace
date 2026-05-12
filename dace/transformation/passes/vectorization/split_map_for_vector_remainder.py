@@ -40,7 +40,9 @@ class SplitMapForVectorRemainder(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     vector_width = properties.Property(dtype=int, default=8, allow_none=False)
-    mode = properties.Property(dtype=str, default="scalar", allow_none=False,
+    mode = properties.Property(dtype=str,
+                               default="scalar",
+                               allow_none=False,
                                desc="``scalar`` for a step-1 sequential remainder, ``masked`` for step-W "
                                "remainder that P3 will attach the iter-mask connector to")
 

@@ -18,7 +18,6 @@ from dace.transformation.passes.vectorization.split_map_for_vector_remainder imp
     SplitMapForVectorRemainder, )
 from dace.transformation.passes.vectorization.vectorization_utils import is_innermost_map
 
-
 N = dace.symbol("N")
 
 

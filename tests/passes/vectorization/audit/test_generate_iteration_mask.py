@@ -14,7 +14,6 @@ The pass requires P1 (NestInnermostMapBodyIntoNSDFG) to have wrapped
 every innermost map's body in a single nested SDFG, the mask is added
 to that nested SDFG so it is visible to every state in the body.
 """
-import numpy as np
 import pytest
 
 import dace
@@ -28,7 +27,6 @@ from dace.transformation.passes.vectorization.vectorization_utils import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
 )
-
 
 N = dace.symbol("N")
 

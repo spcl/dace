@@ -1,31 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import math
-import copy
-from typing import Tuple
 import dace
 import pytest
 import numpy
-from dace import InterstateEdge
-from dace import Union
-from dace.properties import CodeBlock
-from dace.sdfg import ControlFlowRegion
-from dace.sdfg.state import ConditionalBlock
-from dace.transformation.interstate import branch_elimination
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow,
-)
-from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from tests.passes.vectorization._harness import (
     run_vectorization_test,
-    N, S, S1, S2, klev, kidia, kfdia, n, m, nnz,
-    KLON, KLEV, NCLDQL, NCLDQI, ssym, X, Y, C,
-    log, exp, pow,
-    _get_disjoint_chain_sdfg, _get_disjoint_chain_sdfg_two,
-    _get_cloudsc_snippet_three, _get_cloudsc_snippet_four,
-    _get_map_inside_nested_map,
-    _get_dependency_edge_to_unary_symbol_sdfg,
-    _get_unstructured_access_cloudsc_sdfg,
+    S,
 )
+
 
 @dace.program
 def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  #, N, tsteps):
@@ -140,4 +121,3 @@ def test_jacobi2d_with_parameters(param_tuple):
         sdfg_name=f"jacobi2d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
         fuse_overlapping_loads=fuse_overlapping_loads,
         insert_copies=insert_copies)
-

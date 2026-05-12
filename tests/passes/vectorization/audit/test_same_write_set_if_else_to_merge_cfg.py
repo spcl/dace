@@ -16,7 +16,6 @@ SDFG variant.
 import os
 
 import numpy as np
-import pytest
 
 import dace
 from dace.properties import CodeBlock

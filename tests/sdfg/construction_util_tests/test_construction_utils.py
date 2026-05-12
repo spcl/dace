@@ -82,11 +82,11 @@ def test_copy_state_contents_edge_connectors_preserved():
 
     node_map = copy_state_contents(src, dst)
 
-    src_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn, e.dst.label if hasattr(
-        e.dst, "label") else e.dst.data, e.dst_conn)
+    src_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn,
+                  e.dst.label if hasattr(e.dst, "label") else e.dst.data, e.dst_conn)
                  for e in src.edges()}
-    dst_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn, e.dst.label if hasattr(
-        e.dst, "label") else e.dst.data, e.dst_conn)
+    dst_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn,
+                  e.dst.label if hasattr(e.dst, "label") else e.dst.data, e.dst_conn)
                  for e in dst.edges()}
     assert src_edges == dst_edges
 
@@ -282,8 +282,7 @@ def _build_conditional_with_two_branches(sdfg: dace.SDFG):
 
 def test_move_branch_cfg_up_replaces_conditional_with_then_body():
     sdfg = dace.SDFG("mbcu_then")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (
-        _build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
 
     move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=then_cfr)
 
@@ -302,8 +301,7 @@ def test_move_branch_cfg_up_replaces_conditional_with_then_body():
 
 def test_move_branch_cfg_up_replaces_conditional_with_else_body():
     sdfg = dace.SDFG("mbcu_else")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (
-        _build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
 
     move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=else_cfr)
 
@@ -319,8 +317,7 @@ def test_move_branch_cfg_up_replaces_conditional_with_else_body():
 def test_move_branch_cfg_up_rejects_foreign_branch():
     """``body_to_take`` must be one of the conditional's branches."""
     sdfg = dace.SDFG("mbcu_foreign")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (
-        _build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
     foreign = ControlFlowRegion("foreign", sdfg=sdfg)
     foreign.add_state("foreign_state", is_start_block=True)
 

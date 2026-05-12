@@ -5,15 +5,10 @@ vectorization test files in this directory.
 All `_get_*_sdfg` fixtures and the `run_vectorization_test` harness live here
 so each topical `test_*.py` file imports them rather than redefining.
 """
-import math
-
-from typing import Tuple
 
 import dace
 
 import copy
-
-import pytest
 
 import numpy
 
@@ -27,13 +22,7 @@ from dace.sdfg import ControlFlowRegion
 
 from dace.sdfg.state import ConditionalBlock
 
-from dace.transformation.interstate import branch_elimination
-
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow
-
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-
-from math import log, exp, pow
 
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
@@ -53,6 +42,7 @@ KLON = dace.symbol('KLON')
 KLEV = dace.symbol('KLEV')
 NCLDQL = dace.symbol('NCLDQL')
 NCLDQI = dace.symbol('NCLDQI')
+
 
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
@@ -908,4 +898,3 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
 
     sdfg_outer.validate()
     return sdfg_outer
-

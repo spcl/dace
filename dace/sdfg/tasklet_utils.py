@@ -1018,8 +1018,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             raise NotImplementedError(f"classify_tasklet: merge call shape unexpected: {code_str!r}")
         arg_names = [a.id for a in rhs_tree.args if isinstance(a, _ast.Name)]
         if len(arg_names) != 3:
-            raise NotImplementedError(
-                f"classify_tasklet: merge args must be simple connector names, got {code_str!r}")
+            raise NotImplementedError(f"classify_tasklet: merge args must be simple connector names, got {code_str!r}")
         info_dict.update({
             "type": TaskletType.TERNARY_ARRAY,
             "cond": arg_names[0],

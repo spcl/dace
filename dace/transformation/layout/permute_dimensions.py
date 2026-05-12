@@ -1,7 +1,7 @@
 import dace
 import warnings
 
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Tuple
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes as nd
 from dace.sdfg.core_dialect import require_core_dialect
@@ -34,8 +34,7 @@ def _is_memcpy_tasklet_between(state, src_an, dst_an) -> bool:
             if tasklet_oe.dst is dst_an:
                 src_arr = state.parent.arrays.get(src_an.data)
                 dst_arr = state.parent.arrays.get(dst_an.data)
-                if (src_arr and dst_arr
-                        and _is_full_extent(oe.data, src_arr)
+                if (src_arr and dst_arr and _is_full_extent(oe.data, src_arr)
                         and _is_full_extent(tasklet_oe.data, dst_arr)):
                     return True
     return False
@@ -62,8 +61,7 @@ def _has_init_copy_in(state, t_name: str) -> bool:
                 for tin in state.in_edges(ie.src):
                     if isinstance(tin.src, nd.AccessNode):
                         src_arr = sdfg.arrays.get(tin.src.data)
-                        if (src_arr and not src_arr.transient
-                                and _is_memcpy_tasklet_between(state, tin.src, an)):
+                        if (src_arr and not src_arr.transient and _is_memcpy_tasklet_between(state, tin.src, an)):
                             return True
     return False
 
@@ -87,8 +85,7 @@ def _has_final_copy_in(state, t_name: str) -> bool:
                 for tout in state.out_edges(oe.dst):
                     if isinstance(tout.dst, nd.AccessNode):
                         dst_arr = sdfg.arrays.get(tout.dst.data)
-                        if (dst_arr and not dst_arr.transient
-                                and _is_memcpy_tasklet_between(state, an, tout.dst)):
+                        if (dst_arr and not dst_arr.transient and _is_memcpy_tasklet_between(state, an, tout.dst)):
                             return True
     return False
 
@@ -107,8 +104,7 @@ def _find_final_copy_state(sdfg, t_name: str):
     return None
 
 
-def _warn_unhandled_full_extent_ops(sdfg, t_name: str,
-                                    init_state, final_state) -> None:
+def _warn_unhandled_full_extent_ops(sdfg, t_name: str, init_state, final_state) -> None:
     """Emit a loud warning for any top-level full-extent write/read of
     ``t_name`` that ISN'T the init copy, the final copy, or a body
     Map writer/reader (which the rename loop handles via subscript
@@ -448,19 +444,25 @@ class PermuteDimensions(ppl.Pass):
                     if init_state is not None:
                         after = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
                         permute_states_to_skip.add(after)
-                        self._add_permute_map(sdfg=sdfg, state=after,
-                                              old_shape=old_shape, new_shape=new_shape,
+                        self._add_permute_map(sdfg=sdfg,
+                                              state=after,
+                                              old_shape=old_shape,
+                                              new_shape=new_shape,
                                               permute_indices=permute_indices,
-                                              old_name=old_name, new_name=new_name)
+                                              old_name=old_name,
+                                              new_name=new_name)
 
                     if final_state is not None:
                         before = sdfg.add_state_before(final_state, f"permute_before_{old_name}")
                         permute_states_to_skip.add(before)
                         inverse = self._inverse_permute_indices(permute_indices)
-                        self._add_permute_map(sdfg=sdfg, state=before,
-                                              old_shape=new_shape, new_shape=old_shape,
+                        self._add_permute_map(sdfg=sdfg,
+                                              state=before,
+                                              old_shape=new_shape,
+                                              new_shape=old_shape,
                                               permute_indices=inverse,
-                                              old_name=new_name, new_name=old_name)
+                                              old_name=new_name,
+                                              new_name=old_name)
 
         # The transformation has added the permuted shapes and maps to permute them if the user requested it.
         # The transformation has yet permuted the memlets as we want to access the previous defined arrays
