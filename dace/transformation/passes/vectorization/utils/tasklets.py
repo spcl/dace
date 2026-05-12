@@ -99,6 +99,28 @@ BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", 
 UNARY_OPERATORS = {"!", "-"}
 
 
+def _str_to_float_or_str(s: Union[int, float, str, None]):
+    """Convert ``s`` to ``float`` iff ``float(s)`` parses, else return ``s`` unchanged.
+
+    ``None`` passes through. Used to fold C-numeric-literal strings
+    (``"0.99"``, ``"1e5"``, ``"-3"``) into ``float`` for template
+    substitution. Symbol names and SDFG data names fail the parse and
+    stay as strings. Note: ``"inf"`` / ``"nan"`` parse as floats —
+    callers that don't want IEEE specials must filter beforehand.
+    """
+    if s is None:
+        return s
+    try:
+        return float(s)
+    except ValueError:
+        return s
+
+
+def _is_number(s: str) -> bool:
+    """True iff ``float(s)`` parses. ``None`` returns ``False``."""
+    return s is not None and _str_to_float_or_str(s) != s
+
+
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
     """
@@ -143,28 +165,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     all_dtypes = in_dtypes.union(out_dtypes)
 
     fallbackcode_due_to_types = len(all_dtypes) != 1
-
-    def _str_to_float_or_str(s: Union[int, float, str, None]):
-        """Convert ``s`` to ``float`` iff ``float(s)`` parses, else
-        return ``s`` unchanged. ``None`` passes through.
-
-        Used to fold C-numeric-literal strings (``"0.99"``, ``"1e5"``,
-        ``"-3"``) into ``float`` for template substitution. Symbol
-        names and SDFG data names fail the parse and stay as strings.
-        Note: ``"inf"`` / ``"nan"`` parse as floats — callers that
-        don't want IEEE specials must filter beforehand.
-        """
-        if s is None:
-            return s
-        try:
-            return float(s)
-        except ValueError:
-            return s
-
-    def _is_number(s: str):
-        # Reuse the same float-parse predicate ``_str_to_float_or_str`` uses;
-        # ``_str_to_float_or_str(s) != s`` is True iff ``float(s)`` parsed.
-        return s is not None and _str_to_float_or_str(s) != s
 
     def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
         """
