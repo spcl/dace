@@ -1539,14 +1539,14 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
             value = ast.literal_eval(node.args[0])
             suffix = ast.literal_eval(node.args[1])
-            if suffix.startswith('f'):
-                value = float(value)
-            else:
-                value = int(value)
             try:
                 dtype = _LITERAL_SUFFIX_TO_TYPECLASS[suffix]
             except KeyError as ex:
                 raise TypeError(f'Invalid type suffix "{suffix}" in typed constant') from ex
+            if dtype in (dtypes.float16, dtypes.float32, dtypes.float64):
+                value = float(value)
+            else:
+                value = int(value)
             return TypedConstant(value, dtype)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
@@ -1630,10 +1630,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return _typed_constant_to_string(expr)
 
     def _print_Integer(self, expr):
-        return _typed_constant_to_string(TypedConstant(expr, DEFAULT_SYMBOL_TYPE))
+        return f'{expr}{_typed_constant_suffix(DEFAULT_SYMBOL_TYPE)}'
 
     def _print_Float(self, expr):
-        return _typed_constant_to_string(TypedConstant(expr, dtypes.float64))
+        return f'{super()._print_Float(expr)}{_typed_constant_suffix(dtypes.float64)}'
 
 
 @lru_cache(maxsize=16384)

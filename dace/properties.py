@@ -25,7 +25,7 @@ T = TypeVar('T')
 
 
 def _is_symbolic_converter(converter) -> bool:
-    """Return True for symbolic converter functions or symbolic element types."""
+    """Return True for symbolic converter functions or for the SymExpr class."""
     return converter in (pystr_to_symbolic, symbolic.deserialize_symbolic, symbolic.SymExpr)
 
 
