@@ -112,3 +112,61 @@ END SUBROUTINE int_double
     out = np.zeros(n, dtype=np.int32)
     sdfg(inp=inp, out=out, n=n)
     np.testing.assert_array_equal(out, out_ref)
+
+
+def test_bool_scalar_logical_pass_through(tmp_path):
+    """Scalar LOGICAL passed as a length-1 array argument.
+
+    Closes the audit gap that let the cloudsc registry pass
+    ``np.int32(np.bool_(True))`` to a ``bool *`` parameter for six
+    of its scalar LOGICAL inputs (``LAERLIQCOLL``, ``LDMAINCALL``,
+    ``LDSLPHY``, etc.).  Functionally it worked because the int32
+    LSB for value ``1`` happens to read as ``true`` in C bool, but
+    any value with bit-0 = 0 (e.g. 256) would silently corrupt to
+    ``false``.  Pin the contract here: scalar LOGICAL must be
+    routed as a length-1 ``np.bool_`` array.
+    """
+    src = """
+SUBROUTINE bool_scalar(flag, out, n)
+integer, intent(in) :: n
+logical, intent(in) :: flag
+integer, intent(out) :: out(n)
+integer i
+DO i = 1, n
+    IF (flag) THEN
+        out(i) = 1
+    ELSE
+        out(i) = 0
+    ENDIF
+ENDDO
+END SUBROUTINE bool_scalar
+"""
+    ref = f2py(src, tmp_path / 'ref', 'bool_scalar_ref')
+    sdfg_dir = tmp_path / 'sdfg'
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name='bool_scalar', entry='_QPbool_scalar').build()
+
+    from dace.data import Scalar
+    desc = sdfg.arglist().get('flag')
+
+    def _route_bool(v):
+        """Route scalar LOGICAL to whatever the bridge declared:
+        ``Scalar(bool)`` (intent(in) scalar) takes a plain Python
+        bool; ``Array(1,) bool`` takes a length-1 ``np.bool_``
+        array.  Routing as ``np.int32`` would mis-type the C ABI
+        and the dtype-mismatch warning would fire (silent corruption
+        on values with bit-0 = 0)."""
+        if isinstance(desc, Scalar):
+            return bool(v)
+        return np.array([bool(v)], dtype=np.bool_)
+
+    n = 5
+    out_ref = ref.bool_scalar(True, n=n)
+    out = np.zeros(n, dtype=np.int32)
+    sdfg(flag=_route_bool(True), out=out, n=n)
+    np.testing.assert_array_equal(out, out_ref)
+
+    out_ref = ref.bool_scalar(False, n=n)
+    out = np.zeros(n, dtype=np.int32)
+    sdfg(flag=_route_bool(False), out=out, n=n)
+    np.testing.assert_array_equal(out, out_ref)

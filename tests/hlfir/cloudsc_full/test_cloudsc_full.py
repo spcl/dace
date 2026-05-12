@@ -55,7 +55,13 @@ def _sdfg_call_args(sdfg, scalar_values: dict) -> dict:
     Per `feedback_scalar_io_convention` the bridge can register a
     Fortran scalar dummy as either Scalar (intent(in)) or length-1
     Array (intent(inout)/(out)) — this helper picks the binding the
-    SDFG actually expects.  Handles both int and float scalars.
+    SDFG actually expects.
+
+    For LOGICAL scalars the bridge declares the length-1 array as
+    ``bool *`` (1-byte element).  Routing them as ``np.int32`` (4
+    bytes) only accidentally works for ``{0, 1}`` because the LSB
+    happens to match -- any value with bit-0 = 0 (e.g. 256, -2)
+    would read as ``false``.  Match the declared dtype explicitly.
     """
     from dace.data import Scalar
 
@@ -66,8 +72,16 @@ def _sdfg_call_args(sdfg, scalar_values: dict) -> dict:
         if desc is None or isinstance(desc, Scalar):
             out[k] = v
         else:
-            dtype = np.float64 if isinstance(v, float) else np.int32
-            out[k] = np.array([v], dtype=dtype)
+            # Pick the numpy dtype that matches the bridge's
+            # declaration -- bool stays 1-byte, float stays 8-byte,
+            # everything else int32.
+            decl_dtype = str(desc.dtype) if hasattr(desc, "dtype") else ""
+            if "bool" in decl_dtype.lower():
+                out[k] = np.array([bool(v)], dtype=np.bool_)
+            elif isinstance(v, float):
+                out[k] = np.array([v], dtype=np.float64)
+            else:
+                out[k] = np.array([v], dtype=np.int32)
     return out
 
 

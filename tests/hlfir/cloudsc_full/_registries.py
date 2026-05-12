@@ -50,16 +50,21 @@ parameters = {
     'NCLDDIAG': 1,
     'NAERCLD': 1,
     'NBLOCKS': nbvalue,
-    'LDMAINCALL': np.int32(np.bool_(True)),
-    'LDSLPHY': np.int32(np.bool_(True)),
-    'LAERLIQAUTOCP': np.int32(np.bool_(True)),
-    'LAERLIQAUTOCPB': np.int32(np.bool_(True)),
-    'LAERLIQAUTOLSP': np.int32(np.bool_(True)),
-    'LAERLIQCOLL': np.int32(np.bool_(True)),
-    'LAERICESED': np.int32(np.bool_(True)),
-    'LAERICEAUTO': np.int32(np.bool_(True)),
-    'LCLDEXTRA': np.int32(np.bool_(True)),
-    'LCLDBUDGET': np.int32(np.bool_(True)),
+    # Scalar LOGICAL parameters: keep as np.bool_ so the call-site
+    # routing in test_cloudsc_full.py::_sdfg_call_args picks the
+    # bridge's ``bool *`` ABI cleanly.  Casting to np.int32 here would
+    # work for value=1 by accident (LSB matches) but silently corrupt
+    # any value with bit-0 = 0 -- see ``test_bool_scalar_logical_pass_through``.
+    'LDMAINCALL': np.bool_(True),
+    'LDSLPHY': np.bool_(True),
+    'LAERLIQAUTOCP': np.bool_(True),
+    'LAERLIQAUTOCPB': np.bool_(True),
+    'LAERLIQAUTOLSP': np.bool_(True),
+    'LAERLIQCOLL': np.bool_(True),
+    'LAERICESED': np.bool_(True),
+    'LAERICEAUTO': np.bool_(True),
+    'LCLDEXTRA': np.bool_(True),
+    'LCLDBUDGET': np.bool_(True),
     'NGPBLKS': 10,
     'NUMOMP': 10,
     'NGPTOT': nbvalue * 1,
