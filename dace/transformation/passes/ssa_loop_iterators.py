@@ -81,18 +81,53 @@ class SSALoopIterators(ppl.Pass):
                 self._repl_recursive(cfg, loop_var, next_ssa_loop_var)
 
                 # Assign to the variable after the loop end so any reads
-                # AFTER the loop see the canonical post-loop value.  Skip
-                # only when ``get_loop_end`` couldn't solve a closed form
-                # (counted-loop heuristics fail on ``do while`` /
-                # ``do-EXIT`` shapes -- those have no induction variable
-                # in the LoopRegion to reconstruct).
+                # AFTER the loop see the canonical post-loop value.
+                #
+                # ``get_loop_end`` returns the symbolic *cond-failing
+                # boundary* (e.g. ``N`` for ``i <= N`` or equivalently
+                # ``N`` for ``i < N + 1``) -- coincides with the last
+                # attained value only when ``step == 1``.  Fortran /
+                # gfortran convention leaves the iterator at the value
+                # that **failed** the loop condition, i.e. the first
+                # ``init + k*step`` past the bound.
+                #
+                # Use a ``Mod``-based formulation to dodge a sympy /
+                # codegen interaction: ``sp.floor((loop_end - init) /
+                # step)`` simplifies to ``floor(n/step - C)`` for any
+                # non-zero integer ``C``, which the C++ codegen lowers
+                # via ``int_floor(int_floor(n, step) - C, 1)`` -- and
+                # the inner ``C = m / step`` then collapses to ``0``
+                # under C's integer division when step != 1.  The
+                # equivalent ``last + step - ((last + step) % step)``
+                # stays integer-typed end-to-end and renders cleanly.
+                #
+                # Formula: ``post = init + diff - (diff mod step)`` where
+                # ``diff = loop_end - init + step``.  Verified:
+                #   DO i = 1, N           (step= 1):  diff=N,    mod=0,    post=N+1
+                #   DO i = N, 1, -1       (step=-1):  diff=-N,   mod=0,    post=0
+                #   DO i = 1, 10, 2       (step= 2):  diff=11,   mod=1,    post=11
+                #   DO i = 10, 2, -2      (step=-2):  diff=-10,  mod=0,    post=0
                 if loop_end_raw is not None:
-                    loop_end_str = dace.symbolic.symstr(loop_end_raw, arrayexprs=array_names).strip()
-                    if loop_end_str:
+                    stride = loop_analysis.get_loop_stride(cfg)
+                    init = loop_analysis.get_init_assignment(cfg)
+                    if stride is not None and init is not None:
+                        diff = loop_end_raw - init + stride
+                        exit_value_raw = init + diff - sp.Mod(diff, stride)
+                    elif stride is not None:
+                        # Init unknown -- fall back to last-attained + step
+                        # (correct when ``step == 1`` since loop_end already
+                        # equals the last attained value).
+                        exit_value_raw = loop_end_raw + stride
+                    else:
+                        # Stride unknown -- fall back to last-attained
+                        # value, preserving prior bridge behavior.
+                        exit_value_raw = loop_end_raw
+                    exit_value_str = dace.symbolic.symstr(exit_value_raw, arrayexprs=array_names).strip()
+                    if exit_value_str:
                         parent_graph = cfg.parent_graph
                         parent_graph.add_state_after(cfg,
                                                      f"SSA_loop_var_reconstruction_{SSALoopIterators.loop_var_counter}",
-                                                     assignments={loop_var: f"({loop_end_str})"})
+                                                     assignments={loop_var: f"({exit_value_str})"})
 
                 SSALoopIterators.loop_var_counter += 1
 
