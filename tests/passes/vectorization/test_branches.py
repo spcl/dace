@@ -398,11 +398,7 @@ def huge_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3
             zsolqa[it_47] = zsolqa[it_47] + zdepos3
 
 
-def test_huge_sdfg_with_log_exp_div(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
-                              "(KeyError: 'ztp1_slice_minus_rtt'), pending follow-up"))
+def test_huge_sdfg_with_log_exp_div(branch_mode):
     """Generate test data for the loop body function"""
     eps_operator_type_for_log_and_div: str = "add"
     _N = 32
@@ -475,11 +471,7 @@ def test_huge_sdfg_with_log_exp_div(request, branch_mode):
         numpy.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
-def test_mid_sdfg_with_log_exp_div(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits arm-local temp routing bug "
-                              "(KeyError: 'ztp1_slice_minus_rtt'), pending follow-up"))
+def test_mid_sdfg_with_log_exp_div(branch_mode):
     """Generate test data for the loop body function"""
     eps_operator_type_for_log_and_div = "add"
     _N = 32
@@ -580,11 +572,7 @@ def cloud_fraction_update(
                 ZICEFRAC[jk, jl] = 0.0
 
 
-def test_cloud_fraction_update(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(
-            pytest.mark.xfail(reason="merge mode hits a missing-symbols validation error "
-                              "after the interstate cond is lowered, pending follow-up"))
+def test_cloud_fraction_update(branch_mode):
     # Example sizes
     klev = 16
     klon = 32

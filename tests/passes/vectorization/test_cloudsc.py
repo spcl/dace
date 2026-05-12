@@ -71,9 +71,7 @@ def cloudsc_snippet_two(
                 E[i, j] = 0.0
 
 
-def test_snippet_from_cloudsc_two(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_snippet_from_cloudsc_two(branch_mode):
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))
@@ -105,9 +103,7 @@ def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
     return True
 
 
-def test_snippet_from_cloudsc_two_fuse_overlapping_loads(request, branch_mode):
-    if branch_mode == "merge":
-        request.applymarker(pytest.mark.xfail(reason="merge mode coverage pending follow-up; track as TODO"))
+def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode):
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))

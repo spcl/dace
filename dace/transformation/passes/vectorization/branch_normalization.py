@@ -24,11 +24,10 @@ processed, and ``assert_connector_role_matches_edges`` passes on every
 emitted state.
 """
 import copy
-import re
 from typing import Dict, Optional, Set
 
 import dace
-from dace import properties
+from dace import properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
@@ -36,16 +35,6 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
-
-
-# Same token splitter shape used by ``construction_utils._tokens`` for
-# the equivalent walk over interstate-edge expressions. Kept module-local
-# so the analysis is self-contained.
-_INTERSTATE_TOKEN_RE = re.compile(r"[()\[\]\s,+\-*/%<>!=&|^~?:]+")
-
-
-def _tokenize_interstate_expr(text: str) -> Set[str]:
-    return {s.strip() for s in _INTERSTATE_TOKEN_RE.split(text) if s.strip()}
 
 
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
@@ -111,10 +100,9 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
                 continue
             assigns = getattr(e.data, "assignments", None) or {}
             for v in assigns.values():
-                outside_reads |= (_tokenize_interstate_expr(str(v)) & array_names)
+                outside_reads |= symbolic.symbols_in_code(str(v), potential_symbols=array_names)
             cond = e.data.condition.as_string if e.data.condition is not None else ""
-            if cond:
-                outside_reads |= (_tokenize_interstate_expr(cond) & array_names)
+            outside_reads |= symbolic.symbols_in_code(cond, potential_symbols=array_names)
 
     # ConditionalBlock branch conditions live on the block itself, not on
     # interstate edges. The condition of ``cb`` and its sibling cond
@@ -128,7 +116,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
             if c is None:
                 continue
             text = c.as_string if isinstance(c, CodeBlock) else str(c)
-            outside_reads |= (_tokenize_interstate_expr(text) & array_names)
+            outside_reads |= symbolic.symbols_in_code(text, potential_symbols=array_names)
 
     # ---- Per-arm read sets for rule 3. ----
     arm_reads: Dict[int, Set[str]] = {}
@@ -313,6 +301,18 @@ class BranchNormalization(ppl.Pass):
         """For each access-node write in ``state``, redirect through a merge
         tasklet so the post-condition write becomes
         ``arr = merge(cond, expr, arr)``."""
+        # Resolve cond once. The symbol-lifting side effect (deleting the
+        # upstream assignment for the cond symbol) must fire at most once
+        # across all writes that share the same cond; resolving inside the
+        # per-write loop would re-trigger the lift, find the assignment
+        # gone after the first iteration, and silently bake the cond text
+        # into later merge tasklets.
+        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
+            SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
+        resolver = SameWriteSetIfElseToMergeCFG()
+        any_subset_str = str(next(iter(write_subsets.values())))
+        cond_array_name = resolver._resolve_cond_to_array(sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+
         for arr_name, subset in list(write_subsets.items()):
             # Find the unique write access node for this array in this state.
             writes = [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == arr_name]
@@ -342,17 +342,12 @@ class BranchNormalization(ppl.Pass):
                                dace.Memlet(expr=f"{tmp_name}[{subset}]"))
 
                 # Read the old value of ``arr`` so we can pass it as the
-                # else-branch of the merge. Reuse M3.1b's cond resolver so
-                # the same three-stage recipe (direct array / single
-                # interstate symbol / compound expression over multiple
-                # symbols) drives the ``_c`` connector wiring here too.
-                from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-                    SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
+                # else-branch of the merge. ``cond_array_name`` was resolved
+                # once above so we get a fresh access node per merge tasklet
+                # but reuse the single lifted bool transient.
                 old_an = state.add_access(arr_name)
-                cond_resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(
-                    sdfg, state, cond_text, str(subset), skip_cb=skip_cb)
-                if cond_resolved is not None:
-                    cond_array_name, cond_access = cond_resolved
+                if cond_array_name is not None:
+                    cond_access = state.add_access(cond_array_name)
                     merge_t = state.add_tasklet(
                         name=f"bn_merge_{arr_name}",
                         inputs={"_c", "_new", "_old"},

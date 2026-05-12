@@ -25,7 +25,7 @@ import re
 from typing import Optional
 
 import dace
-from dace import properties
+from dace import properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
@@ -33,15 +33,6 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
-
-
-# Same token splitter shape used by the escape analysis. Kept module-local
-# so this file is self-contained.
-_INTERSTATE_TOKEN_RE = re.compile(r"[()\[\]\s,+\-*/%<>!=&|^~?:]+")
-
-
-def _tokenize(text: str):
-    return {s.strip() for s in _INTERSTATE_TOKEN_RE.split(text) if s.strip()}
 
 
 def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge, skip_cb=None) -> bool:
@@ -61,17 +52,18 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
     from dace.sdfg.state import LoopRegion as _LoopRegion
     from dace.sdfg.state import ConditionalBlock as _ConditionalBlock
 
+    only = {sym_name}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for e in cfg.edges():
             for lhs, rhs in (e.data.assignments or {}).items():
                 # Skip the about-to-be-deleted assignment of sym_name itself.
                 if e is defining_edge and lhs == sym_name:
                     continue
-                if sym_name in _tokenize(str(rhs)):
+                if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
                     return True
             if e.data.condition is not None:
                 cond_text = e.data.condition.as_string
-                if cond_text and sym_name in _tokenize(cond_text):
+                if symbolic.symbols_in_code(cond_text, potential_symbols=only):
                     return True
 
     for block in sdfg.all_control_flow_blocks():
@@ -82,7 +74,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if c is None:
                     continue
                 text = c.as_string if isinstance(c, CodeBlock) else str(c)
-                if sym_name in _tokenize(text):
+                if symbolic.symbols_in_code(text, potential_symbols=only):
                     return True
 
     for region in sdfg.all_control_flow_regions(recursive=True):
@@ -92,21 +84,21 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if code is None:
                     continue
                 text = code.as_string if isinstance(code, CodeBlock) else str(code)
-                if text and sym_name in _tokenize(text):
+                if symbolic.symbols_in_code(text, potential_symbols=only):
                     return True
 
     for state in sdfg.all_states():
         for n in state.nodes():
             if isinstance(n, dace.nodes.Tasklet):
                 code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
-                if sym_name in _tokenize(code):
+                if symbolic.symbols_in_code(code, potential_symbols=only):
                     return True
 
     if sdfg.parent_nsdfg_node is not None:
         for k, v in sdfg.parent_nsdfg_node.symbol_mapping.items():
             if k == sym_name:
                 continue
-            if sym_name in _tokenize(str(v)):
+            if symbolic.symbols_in_code(str(v), potential_symbols=only):
                 return True
 
     return False
@@ -258,11 +250,17 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # Merge tasklets. A non-writing arm contributes the pre-cb value
         # (read the original ``arr``, which is intact because the writing
         # arm now targets its private temp).
+        # Resolve cond once so the symbol-lifting side effect (deleting
+        # the upstream assignment) fires exactly once even when multiple
+        # writes share the same cond.
         cond_text = cond_block.as_string if isinstance(cond_block, CodeBlock) else str(cond_block)
+        any_subset_str = str(next(iter(write_subsets.values())))
+        cond_array_name = self._resolve_cond_to_array(local_sdfg, am_state, cond_text, any_subset_str, skip_cb=cb)
         for arr, subset in write_subsets.items():
             then_op = temp_then.get(arr, arr)
             else_op = temp_else.get(arr, arr)
-            self._emit_merge_tasklet(local_sdfg, am_state, arr, subset, then_op, else_op, cond_text, skip_cb=cb)
+            self._emit_merge_tasklet(local_sdfg, am_state, arr, subset, then_op, else_op, cond_text,
+                                     cond_array_name=cond_array_name)
 
         # Stitch in/out edges of the ConditionalBlock onto ct_state -> ce_state
         # -> am_state, then drop the original block.
@@ -302,22 +300,18 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                 e.data.data = rename[e.data.data]
 
     def _emit_merge_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, subset, then_name: str,
-                            else_name: str, cond_text: str, *, skip_cb=None):
+                            else_name: str, cond_text: str, *, cond_array_name: Optional[str] = None):
         """Emit ``arr[subset] = merge(_c, _t, _e)`` where ``_c``, ``_t``,
-        ``_e`` are wired as 3 in-connectors. ``cond_text`` may be:
-        - an array name in the SDFG, used directly as the ``_c`` source,
-        - a symbol set by an interstate-edge assignment upstream, lifted
-          inline into a comparison tasklet that writes a fresh scalar
-          transient and connects it to ``_c``,
-        - a free symbol kept as text in the merge tasklet's code (no in-edge)."""
+        ``_e`` are wired as 3 in-connectors. ``cond_array_name`` is the
+        bool transient already lifted for this cond; when ``None``, the
+        cond stays as free-symbol text inside the merge tasklet body."""
         access_then = state.add_access(then_name)
         access_else = state.add_access(else_name)
         access_out = state.add_access(arr_name)
         subset_str = str(subset)
 
-        cond_resolved = self._resolve_cond_to_array(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
-        if cond_resolved is not None:
-            cond_array_name, cond_access = cond_resolved
+        if cond_array_name is not None:
+            cond_access = state.add_access(cond_array_name)
             t = state.add_tasklet(
                 name=f"merge_{arr_name}",
                 inputs={"_c", "_t", "_e"},
@@ -338,13 +332,17 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         state.add_edge(t, "_o", access_out, None, dace.Memlet(expr=f"{arr_name}[{subset_str}]"))
 
     def _resolve_cond_to_array(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
-                               subset_str: str, *, skip_cb=None):
-        """Resolve ``cond_text`` to an ``(array_name, access_node)`` tuple
-        usable as the ``_c`` source of the merge tasklet. Tries three
-        recipes in order, falls back to ``None`` so the merge tasklet
-        keeps the cond as free-symbol text:
+                               subset_str: str, *, skip_cb=None) -> Optional[str]:
+        """Resolve ``cond_text`` to the name of a per-lane bool transient
+        usable as the ``_c`` source of the merge tasklet. Returns ``None``
+        when no transient can be produced (the caller then keeps the cond
+        as free-symbol text in the merge body).
 
-        1. ``cond_text`` already names an SDFG array.
+        The function only manages bookkeeping for the WRITE side of any
+        emitted lift / combine tasklet: each caller adds its own READ
+        access node into the returned array. Recipes tried in order:
+
+        1. ``cond_text`` already names an SDFG array — return the name.
         2. ``cond_text`` is a single symbol that an interstate edge sets;
            lift that assignment into a comparison tasklet.
         3. ``cond_text`` is a compound expression (`(c1 or c2)`, etc.)
@@ -353,7 +351,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         """
         cond_text = cond_text.strip()
         if cond_text in sdfg.arrays:
-            return cond_text, state.add_access(cond_text)
+            return cond_text
         direct = self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if direct is not None:
             return direct
@@ -396,7 +394,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
 
         # Pick the shape from any lifted transient; they all describe the
         # same per-lane bool result.
-        any_arr = next(iter(lifted.values()))[0]
+        any_arr = next(iter(lifted.values()))
         shape = sdfg.arrays[any_arr].shape
 
         cond_name, _ = sdfg.add_array(name="_cond_compound",
@@ -422,7 +420,8 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                               outputs={out_conn},
                               code=f"{out_conn} = ({cleaned})")
         for name, conn in in_conn_names.items():
-            lifted_name, lifted_access = lifted[name]
+            lifted_name = lifted[name]
+            lifted_access = state.add_access(lifted_name)
             lifted_total = sdfg.arrays[lifted_name].total_size
             lifted_subset = "0" if lifted_total == 1 else subset_str
             state.add_edge(lifted_access, None, t, conn, dace.Memlet(expr=f"{lifted_name}[{lifted_subset}]"))
@@ -430,7 +429,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
-        return cond_name, cond_access
+        return cond_name
 
     def _lift_interstate_cond_to_tasklet(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_sym: str,
                                           subset_str: str, *, skip_cb=None):
@@ -487,17 +486,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
 
         # Substitute each array reference with its in-connector name. The
         # interstate-edge RHS may write ``arr[idx]`` (bracketed access) or
-        # the bare ``arr`` symbol, both forms collapse to the per-lane
-        # scalar connector inside the tasklet body.
-        cleaned_rhs = rhs
-        in_conn_names = {}
-        for i, arr in enumerate(arr_reads):
-            conn = f"_in_{arr}_{i}"
-            in_conn_names[arr] = conn
-            # Bracketed: ``arr[anything]`` -> ``conn``.
-            cleaned_rhs = re.sub(rf"\b{re.escape(arr)}\[[^\]]*\]", conn, cleaned_rhs)
-            # Bare name: ``arr`` (as a whole token) -> ``conn``.
-            cleaned_rhs = re.sub(rf"\b{re.escape(arr)}\b", conn, cleaned_rhs)
+        # the bare ``arr`` symbol; ``replace_array_accesses_with_connectors``
+        # parses the RHS via :class:`SymExpr` and rewrites both forms
+        # structurally so identifier overlaps (``arr`` vs ``arr10``) cannot
+        # corrupt the result.
+        in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
+        cleaned_rhs, _ = symbolic.replace_array_accesses_with_connectors(rhs, in_conn_names,
+                                                                          set(sdfg.arrays.keys()))
 
         out_conn = f"_out_{cond_name}"
         t = state.add_tasklet(name=f"lift_cond_{cond_sym}",
@@ -512,4 +507,4 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
-        return cond_name, cond_access
+        return cond_name
