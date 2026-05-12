@@ -13,7 +13,7 @@ from .name_schemes import LaneIdScheme  # noqa: F401
 from .layout import assert_strides_are_packed_C_or_packed_Fortran  # noqa: F401
 from .queries import (  # noqa: F401
     collect_accesses_to_array_name, collect_all_memlets_to_dataname, collect_non_unit_stride_accesses_in_map,
-    parse_int_or_default, to_ints,
+    collect_vectorizable_arrays, parse_int_or_default, to_ints,
 )
 from .code_rewrite import (  # noqa: F401
     drop_dims, drop_dims_from_str, extract_bracket_contents, offset_symbol_in_expression,

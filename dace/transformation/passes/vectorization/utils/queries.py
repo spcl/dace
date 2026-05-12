@@ -150,3 +150,172 @@ def parse_int_or_default(value, default=8):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
+                                parent_state: dace.SDFGState, invariant_scalars: Set[str]) -> Dict[str, bool]:
+    """
+    Determines which arrays can be vectorized based on their access patterns and symbol usage.
+    The symbols used for accessing should not have any indirectness, meaning that they should
+    not be accessing other Arrays on interstate assignemnts, this is expressed as a free function
+    in sympy.
+
+    The map parameter involve in vectorization should not appear in a multiplicaiton expression.
+    E.g. loop (int i = 0; i < N; i ++) and access A[i] is ok but, A[i*2] means it is strided and it
+    needs to be packed
+
+    Consider the case A[for_it_88, 0, jo] and interstate assignment has jo = B[for_it_88, 0]
+    And the loop is over 0->for_it_88, this not vectorizable, so if any dimension involved uses the loop map
+    param return false
+
+    Args:
+        sdfg: The SDFG to analyze.
+        parent_nsdfg_node: NestedSDFG node.
+        parent_state: State containing the NestedSDFG.
+        invariant_scalars: Set of scalar names that are invariant across lanes (means these
+            scalars to do not prevent vectorization)
+
+    Returns:
+        Dictionary mapping array names to a boolean indicating vectorizability.
+    """
+    # Lazy import to avoid an obvious cycle: ``utils.lane_expansion``
+    # itself imports from ``utils.name_schemes`` but not from this
+    # module — keep the import inside the function so callers don't
+    # have to reason about load order between ``queries`` and
+    # ``lane_expansion``.
+    from dace.transformation.passes.vectorization.utils.lane_expansion import (
+        _all_atoms,
+        find_symbol_assignment,
+    )
+
+    # Pre condition first parent maps is over the contiguous dimension and right most param if multi-dimensional
+    parent_map = parent_state.scope_dict()[parent_nsdfg_node]
+    assert isinstance(parent_map, dace.nodes.MapEntry)
+    map_param = parent_map.map.params[-1]
+    parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
+
+    all_accesses_to_arrays = collect_accesses_to_array_name(sdfg)
+    #print(all_accesses_to_arrays)
+
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.other_subset is not None:
+                raise NotImplementedError("other subset support not implemented")
+
+    array_is_vectorizable = {k: True for k in all_accesses_to_arrays}
+
+    for arr_name, accesses in all_accesses_to_arrays.items():
+        for access_subset in accesses:
+            # Get the stride 1 dimension
+            stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
+            b, e, s = access_subset[stride_one_dim]
+            assert b == e
+            assert s == 1
+
+            # Evaluate the expression (b == e)
+            access_expr = b  # use b since b==e
+            #print(access_expr, type(access_expr))
+            #print(isinstance(access_expr, (dace.symbolic.SymExpr, dace.symbolic.symbol, sympy.Expr)))
+            if isinstance(access_expr, (dace.symbolic.SymExpr, sympy.Expr)):
+                # Check for multipliers
+                # If map_param appears multiplied in the expression, it is strided
+                free_syms = {str(s) for s in access_expr.free_symbols}
+                if len({
+                        term
+                        for term in access_expr.atoms(sympy.Mul)
+                        if isinstance(term, sympy.Mul) and map_param in free_syms
+                }) > 0:
+                    array_is_vectorizable[arr_name] = False
+                    raise Exception("TODO - I have not analyzed this case yet")
+
+            if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol, sympy.Expr)):
+                if isinstance(b, (dace.symbolic.SymExpr, sympy.Expr)):
+                    free_syms = {str(s) for s in b.free_symbols}
+                else:
+                    free_syms = {b}
+                for free_sym in free_syms:
+                    # Accessing map param is ok
+                    if str(free_sym) == map_param:
+                        continue
+                    else:
+                        # Other free symbols should not have indirect accesses
+                        # Analysis tries find the first assignment in the CFG
+                        assignment = find_symbol_assignment(sdfg, str(free_sym))
+                        assert not (
+                            assignment is None and str(free_sym) not in parent_syms_defined
+                        ), f"Could not find an iedge assignment for {free_sym}, assignment {assignment}, parent symbols defined {parent_syms_defined}. {sdfg.label}, {sdfg.parent_nsdfg_node}: map param {map_param}"
+                        # Loop invariant symbol passed from outside
+                        if assignment is None:
+                            continue
+
+                        assignment_expr = dace.symbolic.SymExpr(assignment)
+                        # Define functions to ignore (common arithmetic + piecewise + rounding)
+                        ignored = {
+                            sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs, sympy.floor,
+                            sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
+                            sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
+                        }
+
+                        # Collect only user-defined or nonstandard functions - in intersate edge this means array accees
+                        funcs = {f.name for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
+                        # Any array on the right-hand-side -> big problem
+                        # Check for scalar / array accesses like this too
+                        scalars = {str(s)
+                                   for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars
+                        # If scalar is invariant it should be ok?
+                        #print("Invariant", invariant_scalars)
+                        #print("Non-invariant scalars",
+                        #      {s
+                        #       for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars)
+                        if len(funcs) != 0 or len(scalars) != 0:
+                            #print(f"Indirect access detected: ({funcs}, {scalars}) for {arr_name}, is not vectorizable")
+                            array_is_vectorizable[arr_name] = False
+
+            # Go through non unit stride dimensions in case it those dimensions have unstructuredness
+            for i, (b, e, s) in enumerate(access_subset):
+                #print(i, ",", (b,e,s), "|", access_subset)
+                if i == stride_one_dim:
+                    continue
+                #print(b, type(b),)
+                free_syms = set()
+                if hasattr(b, "free_syms"):
+                    free_syms = {str(s) for s in b.free_syms}
+                if hasattr(b, "free_symbols"):
+                    free_syms = {str(s) for s in b.free_symbols}
+
+                if free_syms != set():
+                    #print(free_syms)
+                    for free_sym in free_syms:
+                        # Accessing map param is ok
+                        #print("FS", free_syms)
+                        if str(free_sym) == map_param:
+                            continue
+                        else:
+                            # Other free symbols should not have indirect accesses
+                            # Analysis tries find the first assignment in the CFG
+                            assignment = find_symbol_assignment(sdfg, str(free_sym))
+
+                            # If assignment is None, it is probably coming from parent map
+                            parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
+                            if assignment is None:
+                                assert str(
+                                    free_sym
+                                ) in parent_syms_defined, f"Could not find an iedge assignment for {free_sym} it is also not defined in symbols defined in nsdfg entry {parent_syms_defined}"
+                                continue
+
+                            assignment_expr = dace.symbolic.SymExpr(assignment)
+                            # Define functions to ignore (common arithmetic + piecewise + rounding)
+                            ignored = {
+                                sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs,
+                                sympy.floor, sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan,
+                                sympy.sinh, sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
+                            }
+                            all_atoms = _all_atoms(assignment_expr, ignored)
+                            all_atoms_str = {str(s) for s in all_atoms}
+                            #print(all_atoms_str)
+
+                            # Map parameter appears in inddirect access, array is not vectorizable
+                            if map_param in all_atoms_str:
+                                array_is_vectorizable[arr_name] = False
+
+    return array_is_vectorizable
