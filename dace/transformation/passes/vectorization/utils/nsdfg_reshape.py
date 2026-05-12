@@ -514,7 +514,9 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
         else:
             return copy.deepcopy(edge_subset)
     else:
-        # Definitely a smaller subset has ben taken due to the dimension change
+        # ``subset`` has fewer dims than the original array. The NSDFG
+        # collapse already dropped the length-1 dims, so the edge_subset
+        # carries the post-collapse access window — pass it through.
         return copy.deepcopy(edge_subset)
 
 

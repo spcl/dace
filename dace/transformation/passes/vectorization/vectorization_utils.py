@@ -565,11 +565,9 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # Other free symbols should not have indirect accesses
                         # Analysis tries find the first assignment in the CFG
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
-                        if assignment is None and str(free_sym) not in parent_syms_defined:
-                            sdfg.save("failing_vectorization.sdfg")
                         assert not (
                             assignment is None and str(free_sym) not in parent_syms_defined
-                        ), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}. {sdfg.label}, {sdfg.parent_nsdfg_node}: map param {map_param}"
+                        ), f"Could not find an iedge assignment for {free_sym}, assignment {assignment}, parent symbols defined {parent_syms_defined}. {sdfg.label}, {sdfg.parent_nsdfg_node}: map param {map_param}"
                         # Loop invariant symbol passed from outside
                         if assignment is None:
                             continue
@@ -624,7 +622,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             # If assignment is None, it is probably coming from parent map
                             parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
                             if assignment is None:
-                                sdfg.save("failing_vectorization.sdfg")
                                 assert str(
                                     free_sym
                                 ) in parent_syms_defined, f"Could not find an iedge assignment for {free_sym} it is also not defined in symbols defined in nsdfg entry {parent_syms_defined}"

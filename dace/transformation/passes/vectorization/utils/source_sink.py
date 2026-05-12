@@ -316,10 +316,20 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                                   lifetime=arr.lifetime)
             an = state.add_access(name + "_scl")
             an.setzero = True
+            lanes = [f"_in[{i}]" for i in range(vector_width)]
+            if op in {"max", "min"}:
+                # ``max``/``min`` are not infix; emit nested function calls
+                # so the chain is well-formed Python regardless of width.
+                expr = lanes[0]
+                for lane in lanes[1:]:
+                    expr = f"{op}({expr}, {lane})"
+                reduction_code = f"_out = {expr}"
+            else:
+                reduction_code = "_out =" + f" {op} ".join(lanes)
             t = state.add_tasklet(name=f"scalarize_{name}",
                                   inputs={"_in"},
                                   outputs={"_out"},
-                                  code="_out =" + f" {op} ".join([f"_in[{i}]" for i in range(vector_width)]))
+                                  code=reduction_code)
             t.add_in_connector("_in")
             t.add_out_connector("_out")
             state.add_edge(src, None, t, "_in", copy.deepcopy(edge.data))

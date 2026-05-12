@@ -67,12 +67,9 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
         valid = []
         for s in strings:
             match = re.fullmatch(r'([A-Za-z_]\w*?)(\d+)$', s)
-            if not match:
-                state.sdfg.save("vectorize_failing.sdfg")
             assert match, f"No match in {strings} for a variable name"
-            if match:
-                name, num = match.groups()
-                valid.append((name, int(num)))
+            name, num = match.groups()
+            valid.append((name, int(num)))
         return valid
 
     stripped_symbols = validate_and_strip(missing_symbols)
@@ -95,9 +92,9 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
 
     for loop_var in loop_vars:
         loop_var = loop_var[:-len("_laneid_")] if loop_var.endswith("_laneid_") else loop_var
-        if loop_var not in loop_symbols and loop_var not in nsdfg.symbol_mapping:
-            state.sdfg.save("failing.sdfg")
-        assert loop_var in loop_symbols or loop_var in nsdfg.symbol_mapping, f"{loop_var} not in {loop_symbols}"
+        assert loop_var in loop_symbols or loop_var in nsdfg.symbol_mapping, (
+            f"{loop_var} not in parent-scope loop_symbols={loop_symbols} and not in "
+            f"nsdfg.symbol_mapping={set(nsdfg.symbol_mapping.keys())}")
 
     return loop_vars
 
