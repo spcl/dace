@@ -167,23 +167,17 @@ def _py_lu_solver(zqlhs: dace.float64[_PY_KLON + 1, _PY_NCLV + 1, _PY_NCLV + 1],
             zqxn[jl, jn] = a / b
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DaCe Python frontend produces NaNs when sequential outer "
-    "``range()`` loops are nested with two sibling ``dace.map`` "
-    "blocks accessing 1-indexed offsets.  The Fortran-bridge port of "
-    "the same algorithm passes, so the bug sits in DaCe core's "
-    "offset/map sequencing, not the HLFIR bridge.",
-)
 def test_python_frontend_cloudsc_lu_solver_one_indexed():
     """Same LU solve via the DaCe Python frontend with 1-indexed
     ``dace.map[1:N+1]`` ranges.
 
     Verifies that DaCe core handles offset (non-zero-based) map ranges
     + sequential outer (range) loops + parallel inner JL maps without
-    the HLFIR bridge in the loop.  If the HLFIR bridge produces correct
-    SDFG for the Fortran LU but the Python-frontend variant fails, the
-    bug is in DaCe's offset/map lowering rather than the bridge.
+    the HLFIR bridge in the loop.  Indexing in the generated C++ uses
+    ``array[jl * stride_d0 + ...]`` (no ``-1``) on row-major C-order
+    buffers, so the input numpy arrays MUST be allocated ``order="C"``
+    and padded to ``(N+1, ...)`` so the wasted [0] slot leaves the
+    1-indexed reads aligned with the padded layout.
     """
     klon, nclv = 3, 5
     rng = np.random.default_rng(11)
@@ -191,9 +185,13 @@ def test_python_frontend_cloudsc_lu_solver_one_indexed():
     for jl in range(klon):
         for jn in range(nclv):
             base[jl, jn, jn] += nclv  # diag dominance
-    zqlhs_in = np.zeros((klon + 1, nclv + 1, nclv + 1), dtype=np.float64, order="F")
+    # DaCe Python frontend's ``dace.float64[N, M]`` is row-major (C-order),
+    # so allocate the numpy buffers C-order — otherwise ``array[jl]`` in the
+    # generated C++ (which uses ``jl * stride_d0 + ...`` without ``-1``)
+    # lands on the wrong element and produces NaNs via div-by-padding-zero.
+    zqlhs_in = np.zeros((klon + 1, nclv + 1, nclv + 1), dtype=np.float64, order="C")
     zqlhs_in[1:, 1:, 1:] = base
-    zqxn_in = np.zeros((klon + 1, nclv + 1), dtype=np.float64, order="F")
+    zqxn_in = np.zeros((klon + 1, nclv + 1), dtype=np.float64, order="C")
     zqxn_in[1:, 1:] = rng.random((klon, nclv))
 
     def _np_lu(zqlhs, zqxn):
@@ -211,12 +209,12 @@ def test_python_frontend_cloudsc_lu_solver_one_indexed():
                 zqxn[1:, jn] -= zqlhs[1:, jn, jm] * zqxn[1:, jm]
             zqxn[1:, jn] /= zqlhs[1:, jn, jn]
 
-    zqlhs_ref = zqlhs_in.copy(order="F")
-    zqxn_ref = zqxn_in.copy(order="F")
+    zqlhs_ref = zqlhs_in.copy(order="C")
+    zqxn_ref = zqxn_in.copy(order="C")
     _np_lu(zqlhs_ref, zqxn_ref)
 
-    zqlhs = zqlhs_in.copy(order="F")
-    zqxn = zqxn_in.copy(order="F")
+    zqlhs = zqlhs_in.copy(order="C")
+    zqxn = zqxn_in.copy(order="C")
     _py_lu_solver(zqlhs=zqlhs, zqxn=zqxn, _PY_NCLV=nclv, _PY_KLON=klon)
 
     np.testing.assert_allclose(zqxn[1:, 1:], zqxn_ref[1:, 1:], rtol=1e-12, atol=1e-12)
