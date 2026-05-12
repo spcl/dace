@@ -38,8 +38,10 @@ def _make_same_storage_sdfg(implementation,
     if implementation is not None:
         libnode.implementation = implementation
 
-    state.add_edge(a1, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet(f"{a_name}[{src_slice.start}:{src_slice.stop}]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b1, None, dace.memlet.Memlet(f"{b_name}[{dst_slice.start}:{dst_slice.stop}]"))
+    state.add_edge(a1, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet(f"{a_name}[{src_slice.start}:{src_slice.stop}]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b1, None,
+                   dace.memlet.Memlet(f"{b_name}[{dst_slice.start}:{dst_slice.stop}]"))
 
     return sdfg, a_name, b_name
 
@@ -63,8 +65,10 @@ def _make_cross_storage_sdfg(implementation, src_storage, dst_storage, size=128)
     libnode = CopyLibraryNode(name="cp_cross")
     libnode.implementation = implementation
 
-    state.add_edge(src_access, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet(f"{src_name}[0:{size}]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access, None, dace.memlet.Memlet(f"{dst_name}[0:{size}]"))
+    state.add_edge(src_access, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet(f"{src_name}[0:{size}]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access, None,
+                   dace.memlet.Memlet(f"{dst_name}[0:{size}]"))
 
     return sdfg, src_name, dst_name
 
@@ -187,8 +191,10 @@ def test_copy_copynd_rejects_padded_strides():
 
     libnode = CopyLibraryNode(name="cp_padded")
     libnode.implementation = "CopyNDTemplate"
-    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None,
+                   dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
 
     sdfg.validate()
     with pytest.raises(ValueError, match="C-packed"):
@@ -335,8 +341,10 @@ def test_copy_cuda_4d_strided_host_to_device():
 
     # Source slice [1:6, 1:7, 1:8, 1:9] picks a 4D sub-cube with strided
     # outer dims relative to the full array's row-major strides.
-    state.add_edge(src_access, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access, None, dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
+    state.add_edge(src_access, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet("A_full[1:6, 1:7, 1:8, 1:9]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access, None,
+                   dace.memlet.Memlet("B_dst[0:5, 0:6, 0:7, 0:8]"))
 
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -849,8 +857,18 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
     libnode = CopyLibraryNode(name="shmcpy_bad")
     libnode.implementation = "SharedMemoryCollective"
 
-    state.add_memlet_path(a, ome, ime, libnode, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet("A[bi:bi+32]"))
-    state.add_memlet_path(libnode, imx, omx, shm, src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet("shmem[0:32]"))
+    state.add_memlet_path(a,
+                          ome,
+                          ime,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("A[bi:bi+32]"))
+    state.add_memlet_path(libnode,
+                          imx,
+                          omx,
+                          shm,
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("shmem[0:32]"))
 
     with pytest.raises(Exception, match="GPU_ThreadBlock"):
         sdfg.expand_library_nodes()
@@ -1029,8 +1047,10 @@ def _build_explicit_copy_sdfg(direction: str, dtype: dace.dtypes.typeclass = dac
 
     cn = CopyLibraryNode(name=f'copy_{direction}')
     state.add_node(cn)
-    state.add_edge(src, None, cn, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
-    state.add_edge(cn, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
+    state.add_edge(src, None, cn, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
+    state.add_edge(cn, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None,
+                   dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
     return sdfg
 
 
@@ -1064,8 +1084,10 @@ def test_copy_two_element_h2d():
     src, dst = state.add_read('host'), state.add_write('dev')
     cn = CopyLibraryNode(name='copy_h2d_2')
     state.add_node(cn)
-    state.add_edge(src, None, cn, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
-    state.add_edge(cn, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
+    state.add_edge(src, None, cn, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.Memlet.from_array(src.data, sdfg.arrays[src.data]))
+    state.add_edge(cn, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None,
+                   dace.Memlet.from_array(dst.data, sdfg.arrays[dst.data]))
 
     host = np.array([1.0, 2.0], dtype=np.float64)
     dev = cp.zeros(2, dtype=cp.float64)

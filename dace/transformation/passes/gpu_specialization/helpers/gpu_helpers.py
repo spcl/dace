@@ -288,5 +288,3 @@ def read_stream_assignments_from_wired_sdfg(sdfg: SDFG):
             assignments[node] = stream_id
             break
     return assignments
-
-

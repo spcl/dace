@@ -167,8 +167,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 # ``_out = _in`` is identical for copy and transpose, so
                 # without this check we'd silently lower a transpose to
                 # ``cudaMemcpyAsync``. See ``_in_out_subsets_are_pure_copy``.
-                if not self._in_out_subsets_are_pure_copy(path_candidate[0].data.subset,
-                                                         path_candidate[1].data.subset, node.map.params):
+                if not self._in_out_subsets_are_pure_copy(path_candidate[0].data.subset, path_candidate[1].data.subset,
+                                                          node.map.params):
                     continue
                 paths.append([ie] + path_candidate + [oe])
 

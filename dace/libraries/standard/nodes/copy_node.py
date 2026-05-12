@@ -394,7 +394,12 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
                          language=dace.Language.CPP)
 
 
-def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg=_INPUT_CONNECTOR_NAME, out_arg=_OUTPUT_CONNECTOR_NAME):
+def _build_copynd_call(ctype,
+                       copy_shape,
+                       src_strides,
+                       dst_strides,
+                       in_arg=_INPUT_CONNECTOR_NAME,
+                       out_arg=_OUTPUT_CONNECTOR_NAME):
     """Build a ``dace::CopyND`` / ``dace::CopyNDDynamic`` call string,
     picking the most-specific static template form: ``CopyND<T, 1, false,
     dims...>`` for static shapes (else ``CopyNDDynamic<T, 1, false, ndims>``),
@@ -981,10 +986,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         out_name = oe.src_conn
 
         stream_input, dynamic_inputs = extract_stream_and_dynamic_inputs(
-            self,
-            sdfg,
-            state,
-            reserved_conns=(CopyLibraryNode.INPUT_CONNECTOR_NAME, ))
+            self, sdfg, state, reserved_conns=(CopyLibraryNode.INPUT_CONNECTOR_NAME, ))
 
         in_edges = [ie for ie in state.in_edges(self) if ie.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
         if len(in_edges) != 1:

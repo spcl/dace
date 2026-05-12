@@ -163,15 +163,15 @@ class _SyncRule:
 _NAIVE_SYNC_RULES: List[_SyncRule] = [
     # GPU AccessNode → host AccessNode (host needs to wait on the GPU stream).
     _SyncRule(
-        predicate=lambda c: (_is_gpu_global_access(c.src, c.state) and _is_non_gpu_accessible(c.dst, c.state)
-                             and not c.in_kernel),
+        predicate=lambda c:
+        (_is_gpu_global_access(c.src, c.state) and _is_non_gpu_accessible(c.dst, c.state) and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
         per_node_sync_target=lambda c: c.dst if not c.is_sink else None,
     ),
     # host AccessNode → GPU AccessNode (GPU needs to see the host write).
     _SyncRule(
-        predicate=lambda c: (_is_non_gpu_accessible(c.src, c.state) and _is_gpu_global_access(c.dst, c.state)
-                             and not c.in_kernel),
+        predicate=lambda c:
+        (_is_non_gpu_accessible(c.src, c.state) and _is_gpu_global_access(c.dst, c.state) and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
     ),
     # Kernel exit → GPU AccessNode: sync the kernel's own stream.

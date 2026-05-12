@@ -50,8 +50,7 @@ def test_no_libnode_connector_literals_outside_definitions():
             if _QUOTED_LITERAL.search(line):
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
-    assert not offenders, (
-        "Hardcoded libnode connector literals found outside their "
-        "definition files. Use CopyLibraryNode.INPUT_CONNECTOR_NAME / "
-        "OUTPUT_CONNECTOR_NAME / MemsetLibraryNode.OUTPUT_CONNECTOR_NAME "
-        "instead:\n  " + "\n  ".join(offenders))
+    assert not offenders, ("Hardcoded libnode connector literals found outside their "
+                           "definition files. Use CopyLibraryNode.INPUT_CONNECTOR_NAME / "
+                           "OUTPUT_CONNECTOR_NAME / MemsetLibraryNode.OUTPUT_CONNECTOR_NAME "
+                           "instead:\n  " + "\n  ".join(offenders))

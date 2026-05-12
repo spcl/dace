@@ -150,8 +150,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # ``dace.transformation`` package init.
         from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
             AssignmentAndCopyKernelToMemsetAndMemcpy)
-        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
-            AddThreadBlockMaps, ExpandLibraryNodes, ReinferConnectorTypes)
+        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (AddThreadBlockMaps,
+                                                                                             ExpandLibraryNodes,
+                                                                                             ReinferConnectorTypes)
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays

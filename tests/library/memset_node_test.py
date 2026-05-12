@@ -50,7 +50,8 @@ def _get_multi_dim_sdfg(implementation, gpu=True) -> dace.SDFG:
         libnode.implementation = implementation
 
     # Only set a slice
-    state.add_edge(libnode, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b1, None, dace.memlet.Memlet(f"{name}[40:50, 0:2, 0:2]"))
+    state.add_edge(libnode, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b1, None,
+                   dace.memlet.Memlet(f"{name}[40:50, 0:2, 0:2]"))
 
     return sdfg
 

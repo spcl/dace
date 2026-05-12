@@ -1,11 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Set
+from typing import Set
 
 from dace import Config, data as dt, dtypes
 from dace.sdfg import nodes, SDFGState
 from dace.codegen import common
 from dace.codegen.dispatcher import DefinedType
-from dace.transformation.dataflow.add_threadblock_map import (product, to_3d_dims, validate_block_size_limits)
 from dace.transformation.helpers import get_parent_map
 
 # CUDA / HIP launch grids and blocks have exactly three dimensions

@@ -78,5 +78,3 @@ def test_wcr_np_sum_small_n_auto_staging():
     total = np.zeros(1, dtype=np.float64)
     sdfg(A=A, total=total)
     assert total[0] == np.sum(A)
-
-
