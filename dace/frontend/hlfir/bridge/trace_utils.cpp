@@ -101,6 +101,12 @@ std::string traceToDecl(mlir::Value val, int max) {
             { val = rb.getBox(); continue; }
         if (auto eb = mlir::dyn_cast<fir::EmboxOp>(d))
             { val = eb.getMemref(); continue; }
+        // ``fir.box_addr`` extracts the data pointer from a descriptor
+        // (heap / ptr underlying the box).  Flang emits it for every
+        // allocatable / pointer dereference; the underlying storage
+        // name is the box's source declare, so we walk through.
+        if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(d))
+            { val = ba.getVal(); continue; }
         // Section / element designates (``a(lo:hi)``, ``a(i)``) — walk
         // through to the underlying memref so a reduce over an
         // ``hlfir.any %levmask(i_startblk:i_endblk, jk)`` resolves its

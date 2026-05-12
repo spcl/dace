@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
-from _helpers import xfail
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
@@ -159,7 +158,6 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
 
 
-@xfail("nested derived types + allocatable + scalar branches not lowered")
 def test_fortran_frontend_type3_array(tmp_path):
     src = """
 module lib

@@ -281,6 +281,28 @@ static bool isAllocatableArrayMember(mlir::Type t) {
     return isSimpleScalar(seq.getEleTy());
 }
 
+/// Recognise an allocatable-scalar OR pointer-scalar struct member:
+///   * ``real, allocatable :: a``  → ``fir.box<fir.heap<T>>``
+///   * ``real, pointer     :: a``  → ``fir.box<fir.ptr<T>>``
+/// Sibling of ``isAllocatableArrayMember`` for rank-0 allocatables /
+/// pointers.  These appear in nested struct hierarchies (e.g. an
+/// inner record holds a scalar allocatable field); admitting them to
+/// ``collectFlatLeaves`` lets ``replaceStructArgNested`` produce a
+/// ``box<heap<T>>`` leaf with the appropriate FortranAttr.
+static bool isAllocatableScalarMember(mlir::Type t) {
+    auto box = mlir::dyn_cast<fir::BoxType>(t);
+    if (!box) return false;
+    mlir::Type inner;
+    if (auto heap = mlir::dyn_cast<fir::HeapType>(box.getEleTy()))
+        inner = heap.getEleTy();
+    else if (auto ptr = mlir::dyn_cast<fir::PointerType>(box.getEleTy()))
+        inner = ptr.getEleTy();
+    else
+        return false;
+    if (mlir::isa<fir::SequenceType>(inner)) return false;
+    return isSimpleScalar(inner);
+}
+
 /// Scalar or array-of-scalar (or allocatable array-of-scalar).  Used
 /// both for struct members (when the enclosing struct is a scalar)
 /// and for the final companion pointee type.
@@ -463,7 +485,11 @@ static bool collectFlatLeaves(fir::RecordType rec,
     if (depth > kFlattenMaxDepth) return false;
     for (auto &pair : rec.getTypeList()) {
         prefix.push_back(pair.first);
-        if (isFlatMemberType(pair.second)) {
+        // Admit allocatable/pointer scalars alongside the regular flat
+        // shapes — ``replaceStructArgNested``'s BoxType leaf branch
+        // already produces the right declare for either rank.
+        if (isFlatMemberType(pair.second)
+            || isAllocatableScalarMember(pair.second)) {
             FlatLeaf leaf;
             leaf.path.assign(prefix.begin(), prefix.end());
             // Compose the leaf's flat companion shape:

@@ -222,6 +222,67 @@ namespace hlfir_bridge {
         if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
             return std::to_string(i.getInt());
 
+    // ``fir.box_dims %arr, %dim`` — runtime descriptor read on an
+    // allocatable / pointer array.  Flang emits this for ``arr(:)``
+    // section bounds: each ``:`` triplet's ``lo`` is ``box_dims#0``
+    // (lower bound) and the implicit ``hi`` derives from
+    // ``box_dims#0 + box_dims#1 - 1`` (extent).  Map back onto the
+    // bridge's per-array shape / offset symbols so a whole-array
+    // section ``arr(:)`` resolves to ``offset_<arr>_d<K> :
+    // (offset_<arr>_d<K> + <arr>_d<K> - 1)``.
+    //
+    // Only fires for arrays without a visible ``fir.allocmem`` in the
+    // module — local allocatables (``allocate(x(n))``) have one, and
+    // ``extract_vars`` resolves their extent to the real Fortran scalar
+    // (``n``) rather than minting an ``<arr>_d<K>`` symbol.  Emitting
+    // the synth symbol here for those would surface a missing-symbol
+    // KeyError at SDFG build time.  Top-level pointer / allocatable
+    // companions produced by ``hlfir-flatten-structs`` (alloc happens
+    // outside this scope) have no allocmem and DO carry the ``_d<K>``
+    // symbol via ``extract_vars``'s assumed-shape branch.
+    if (def->getName().getStringRef() == "fir.box_dims"
+            && def->getNumOperands() >= 2) {
+        auto resIdx = mlir::cast<mlir::OpResult>(v).getResultNumber();
+        if (resIdx == 2) return "1";  // stride — bridge requires contiguous
+        auto dimC = traceConstInt(def->getOperand(1));
+        // Walk operand 0 back to a declare so we can name the array.
+        mlir::Value arrayVal = def->getOperand(0);
+        for (int hop = 0; hop < limits::kTraceToDeclMax && arrayVal; ++hop) {
+            auto *adef = arrayVal.getDefiningOp();
+            if (!adef) break;
+            if (auto cv = mlir::dyn_cast<fir::ConvertOp>(adef))
+                { arrayVal = cv.getValue(); continue; }
+            if (auto ld = mlir::dyn_cast<fir::LoadOp>(adef))
+                { arrayVal = ld.getMemref(); continue; }
+            break;
+        }
+        auto arrName = traceToDecl(arrayVal);
+        if (dimC && !arrName.empty()) {
+            // Suppress when an allocmem in the module carries this
+            // declare's expected name — that path keeps the legacy
+            // bounds-fail fallback (``buildCopyNode`` whole-array copy).
+            bool hasAllocmem = false;
+            if (auto *adef = arrayVal.getDefiningOp()) {
+                if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(adef)) {
+                    std::string allocName = decl.getUniqName().str() + ".alloc";
+                    if (auto mod = decl->getParentOfType<mlir::ModuleOp>()) {
+                        mod.walk([&](fir::AllocMemOp a) {
+                            if (hasAllocmem) return;
+                            if (auto un = a.getUniqName())
+                                if (un->str() == allocName)
+                                    hasAllocmem = true;
+                        });
+                    }
+                }
+            }
+            if (!hasAllocmem) {
+                std::string suffix = "_d" + std::to_string(*dimC);
+                if (resIdx == 0) return "offset_" + arrName + suffix;
+                if (resIdx == 1) return arrName + suffix;
+            }
+        }
+    }
+
     // Integer arithmetic used inside index expressions — Flang lowers
     // ``arr(..., nlev-1, ...)`` via ``arith.subi %nlev, %c1``, ``nlev+1``
     // via ``arith.addi``, etc.  Render parenthesised so downstream

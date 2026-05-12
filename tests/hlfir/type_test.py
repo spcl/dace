@@ -415,7 +415,11 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("nested derived types with allocatable arrays not lowered")
+@xfail("allocatable-array-of-records struct member (`type(t), allocatable :: "
+       "pprog(:)`) not flattened — `collectFlatLeaves` bails on the "
+       "`box<heap<seq<? x record>>>` shape; needs alloc-array-of-records "
+       "support (Phase 5c-A style, but for nested records with their own "
+       "pointer/allocatable members).")
 def test_fortran_frontend_type_arg(tmp_path):
     src = """
 module lib
