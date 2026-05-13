@@ -21,6 +21,7 @@ from dace.transformation.passes.vectorization.detect_strided_load import DetectS
 from dace.transformation.passes.vectorization.detect_strided_store import DetectStridedStore
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_load import DetectMultiDimStridedLoad
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_store import DetectMultiDimStridedStore
+from dace.transformation.passes.vectorization.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -186,6 +187,12 @@ class VectorizeCPU(ppl.Pipeline):
                 PowerOperatorExpansion(),
                 SplitTasklets(),
                 CleanDataToScalarSliceToTaskletPattern(),
+                # Normalise direct ``MapEntry -> AccessNode`` / ``AccessNode -> MapExit``
+                # staging edges (produced by python-frontend shifted reads like
+                # ``b[i + 1]``) into 3-node chains with a plain ``_out = _in``
+                # tasklet in the middle. The vectorize pass refuses memlets with
+                # ``other_subset`` set; this pass eliminates them as a precursor.
+                InsertAssignTaskletsAtMapBoundary(),
             ]
             if not no_inline:
                 passes.append(InlineSDFGs())
