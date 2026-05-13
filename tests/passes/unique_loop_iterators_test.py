@@ -1,5 +1,5 @@
 """
-Unit tests for SSALoopIterators pass.
+Unit tests for UniqueLoopIterators pass.
 """
 import ctypes
 
@@ -7,7 +7,7 @@ import dace
 import numpy as np
 import pytest
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
 
 # Preload libgomp for runtime calls (omp_get_max_threads) that DaCe's
@@ -30,10 +30,10 @@ def test_nested_sdfg_symbol_mapping():
     """
     The map inside the loop body becomes a nested SDFG.
     The loop variable `i` must appear in the nested SDFG's symbol_mapping.
-    After SSALoopIterators, the symbol_mapping should reference the new
+    After UniqueLoopIterators, the symbol_mapping should reference the new
     SSA name (_it_N), not the original `i`.
     """
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = foo.to_sdfg(simplify=False)
 
@@ -51,17 +51,17 @@ def test_nested_sdfg_symbol_mapping():
     assert found_i_in_mapping, "Expected 'i' in nested SDFG symbol_mapping before pass"
 
     # Apply pass
-    SSALoopIterators().apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
-    # After: the nested SDFG symbol_mapping should have _it_0, not i
+    # After: the nested SDFG symbol_mapping should have _loop_it_0, not i
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 assert 'i' not in node.symbol_mapping, \
                     f"Original loop var 'i' should not be in symbol_mapping, got {node.symbol_mapping}"
-                assert '_it_0' in node.symbol_mapping, \
-                    f"SSA loop var '_it_0' should be in symbol_mapping, got {node.symbol_mapping}"
+                assert '_loop_it_0' in node.symbol_mapping, \
+                    f"SSA loop var '_loop_it_0' should be in symbol_mapping, got {node.symbol_mapping}"
 
     # Verify correctness
     A = np.random.rand(10, 10)
@@ -92,21 +92,23 @@ def loop_var_used_after(A: dace.float64[10], B: dace.float64[10]):
 
 def test_loop_var_reconstruction():
     """
-    After SSALoopIterators, a reconstruction state should assign
-    the original loop variable to (loop_end - 1) so that any
-    downstream use of the variable sees the correct final value.
+    With ``assign_loop_iterator_post_value=True``, the pass must stage
+    a postfix-assignment state that sets the original loop variable to
+    its iterator-after-loop value (``init + diff - (diff mod step)``)
+    so downstream reads see the same value gfortran / ifort / flang
+    leave the iterator at after a counted DO exit.
     """
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = loop_var_used_after.to_sdfg(simplify=False)
 
-    SSALoopIterators().apply_pass(sdfg, None)
+    pass_ = UniqueLoopIterators()
+    pass_.assign_loop_iterator_post_value = True
+    pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
     # Check that a reconstruction state was added
-    reconstruction_states = [
-        s for s in sdfg.all_states() if hasattr(s, 'label') and 'SSA_loop_var_reconstruction' in s.label
-    ]
+    reconstruction_states = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     assert len(reconstruction_states) == 1, f"Expected 1 reconstruction state, found {len(reconstruction_states)}"
 
     # Check that assignment is correct
@@ -119,9 +121,16 @@ def test_loop_var_reconstruction():
 
     assignments = out_edges[0].data.assignments
     assert 'i' in assignments, f"Expected assignment to 'i', got {assignments}"
-    assert str(
-        assignments['i']
-    ) == f"({(str(loop_analysis.get_loop_end(loop)))})", f"Expected loop end assignment, got {assignments['i']}"
+    # Mod-based post-value formula: init + diff - (diff mod step),
+    # where diff = loop_end - init + step.  For ``for i in range(10)``
+    # (init=0, loop_end=9, step=1): diff=10, mod=0, post=10.
+    loop_end = loop_analysis.get_loop_end(loop)
+    init = loop_analysis.get_init_assignment(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    import sympy as sp
+    expected_post = init + (loop_end - init + stride) - sp.Mod(loop_end - init + stride, stride)
+    assert str(assignments['i']) == f"({expected_post})", \
+        f"Expected post-value {expected_post}, got {assignments['i']}"
 
     # Verify correctness
     A = np.zeros(10)
@@ -144,10 +153,10 @@ def nested_loops(A: dace.float64[8, 8]):
 def test_nested_loops():
     """
     Two nested LoopRegions with variables i and j.
-    Both should be renamed to distinct SSA names (_it_0, _it_1),
+    Both should be renamed to distinct unique names (_loop_it_0, _loop_it_1),
     and both should get reconstruction states.
     """
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = nested_loops.to_sdfg(simplify=False)
 
@@ -157,7 +166,7 @@ def test_nested_loops():
     loop_vars_before = {l.loop_variable for l in loops_before}
     assert loop_vars_before == {'i', 'j'}
 
-    SSALoopIterators().apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
     # Verify correctness
@@ -177,7 +186,7 @@ def test_nested_loops():
 def test_loop_var_in_tasklet_body():
     """The pass must rename the loop iter inside tasklet expressions, not
     just on memlet subsets."""
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('iter_in_tasklet')
     sdfg.add_array('out', [10], dace.int64)
@@ -188,10 +197,10 @@ def test_loop_var_in_tasklet_body():
     a = inner.add_access('out')
     inner.add_edge(t, '_o', a, None, dace.Memlet('out[i]'))
 
-    SSALoopIterators().apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
-    # The tasklet's code must now reference _it_0, not i.
+    # The tasklet's code must now reference _loop_it_0, not i.
     found = False
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -199,9 +208,9 @@ def test_loop_var_in_tasklet_body():
                 code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
                 assert 'i ' not in code and code.strip() != '_o = i * 2', \
                     f"Tasklet still references original 'i': {code}"
-                if '_it_0' in code:
+                if '_loop_it_0' in code:
                     found = True
-    assert found, "Expected tasklet code to reference _it_0"
+    assert found, "Expected tasklet code to reference _loop_it_0"
 
     out = np.zeros(10, dtype=np.int64)
     csdfg = sdfg.compile()
@@ -218,7 +227,7 @@ def test_loop_var_on_interstate_edge():
     """The loop iter is read on an interstate edge inside the loop body.
     The pass must rewrite the edge's assignment / condition to use the
     SSA name."""
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('iter_on_edge')
     sdfg.add_array('out', [10], dace.int64)
@@ -235,18 +244,18 @@ def test_loop_var_on_interstate_edge():
     a = s2.add_access('out')
     s2.add_edge(t, '_o', a, None, dace.Memlet('out[i]'))
 
-    SSALoopIterators().apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
     # Find the interstate edge inside ``body`` and confirm its assignment
-    # references _it_0, not i.
+    # references _loop_it_0, not i.
     found = False
     for e in body.edges():
         for tgt, rhs in e.data.assignments.items():
             assert 'i ' not in str(rhs), f"Edge assignment still references 'i': {rhs}"
-            if '_it_0' in str(rhs):
+            if '_loop_it_0' in str(rhs):
                 found = True
-    assert found, "Expected interstate-edge assignment to reference _it_0"
+    assert found, "Expected interstate-edge assignment to reference _loop_it_0"
 
     out = np.zeros(10, dtype=np.int64)
     csdfg = sdfg.compile()
@@ -267,7 +276,7 @@ def test_loop_bound_with_indirect_array():
     would render the array access as a function call.  The pass must use
     ``arrayexprs=`` so the reconstruction assignment carries the
     Python subscript form."""
-    SSALoopIterators.loop_var_counter = 0
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('indirect_bound')
     sdfg.add_array('row_ptr', [11], dace.int64)
@@ -296,11 +305,13 @@ def test_loop_bound_with_indirect_array():
     wr2 = inner_body.add_access('acc')
     inner_body.add_edge(t, '_o', wr2, None, dace.Memlet('acc[i]'))
 
-    SSALoopIterators().apply_pass(sdfg, None)
+    pass_ = UniqueLoopIterators()
+    pass_.assign_loop_iterator_post_value = True
+    pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
     # The inner-loop reconstruction state must use Python subscript form.
-    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'SSA_loop_var_reconstruction' in s.label]
+    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     rhs_strings = []
     for s in recon:
         for e in s.parent_graph.in_edges(s):
@@ -323,9 +334,10 @@ def test_loop_bound_with_indirect_array():
 
 def test_while_loop_no_induction_var():
     """A LoopRegion that wasn't synthesised from a counted ``for`` (no
-    ``loop_variable``) has nothing to SSA-rename.  The pass must skip it
-    cleanly."""
-    SSALoopIterators.loop_var_counter = 0
+    ``loop_variable``) has nothing to rename.  The pass must skip it
+    cleanly even with the postfix-assignment option on (there's no
+    induction variable to leave a post-value for)."""
+    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('whileloop')
     sdfg.add_symbol('flag', dace.int64)
@@ -339,11 +351,13 @@ def test_while_loop_no_induction_var():
     inner.add_edge(t, '_o', a, None, dace.Memlet('out[0]'))
 
     # Should not throw.
-    SSALoopIterators().apply_pass(sdfg, None)
+    pass_ = UniqueLoopIterators()
+    pass_.assign_loop_iterator_post_value = True
+    pass_.apply_pass(sdfg, None)
 
-    # No reconstruction state should be added (no loop_variable to
-    # reconstruct).
-    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'SSA_loop_var_reconstruction' in s.label]
+    # No postfix-assignment state should be added (no loop_variable
+    # whose post-value would be assigned).
+    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 

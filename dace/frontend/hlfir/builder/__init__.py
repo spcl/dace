@@ -434,9 +434,14 @@ class SDFGBuilder:
         ``dace/frontend/hlfir/README.md`` for the pipeline.
 
         Currently:
-            * ``SSALoopIterators`` -- rewrites every ``LoopRegion``'s
-              loop variable to a globally-unique ``_it_<N>`` symbol and
-              propagates the rename through the body.
+            * ``UniqueLoopIterators`` -- rewrites every ``LoopRegion``'s
+              loop variable to a globally-unique ``_loop_it_<N>`` symbol
+              and propagates the rename through the body.  Enabled with
+              ``assign_loop_iterator_post_value=True``: bridge-emitted
+              SDFGs land in Fortran callers that read the iterator after
+              the loop end (gfortran/ifort/flang convention: one stride
+              past the last attained value), so the pass also stages a
+              postfix-assignment state for that read.
             * ``replace_length_one_arrays_with_scalars`` -- folds
               every length-1 ``Array`` on the SDFG signature down to a
               true ``Scalar``.  The bridge already emits scalar inputs
@@ -446,7 +451,7 @@ class SDFGBuilder:
               wrapping in a numpy 1-array.
         """
         from dace.sdfg.construction_utils import replace_length_one_arrays_with_scalars
-        from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
+        from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
         # Empty-region cleanup: any ControlFlowRegion (LoopRegion,
         # ConditionalBlock branch, the top-level SDFG, etc.) that
@@ -464,7 +469,9 @@ class SDFGBuilder:
             if len(list(region.nodes())) == 0:
                 region.add_state("empty_body", is_start_block=True)
 
-        SSALoopIterators().apply_pass(sdfg, {})
+        uniq_loop_iter_pass = UniqueLoopIterators()
+        uniq_loop_iter_pass.assign_loop_iterator_post_value = True
+        uniq_loop_iter_pass.apply_pass(sdfg, {})
         # ``transient_only=True``: only fold LOCAL 1-element transients
         # (e.g. accumulators left as length-1 arrays by the bridge).  The
         # signature convention is preserved: ``intent(out)`` / ``inout``

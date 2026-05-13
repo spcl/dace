@@ -266,13 +266,14 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     # ambiguous.
     ctx.flush(builder, region)
     # The bridge no longer uniquifies loop iter names -- the
-    # ``SSALoopIterators`` post-pass (run from ``SDFGBuilder.build()``
+    # ``UniqueLoopIterators`` post-pass (run from ``SDFGBuilder.build()``
     # via ``_run_post_gen_passes``) renames every ``LoopRegion.loop_var``
-    # to a globally-unique ``_it_<N>`` symbol and propagates the rename
-    # through the body.  ``emit_loop`` therefore uses the source-Fortran
-    # iter name verbatim, and ``iter_map`` is the identity map kept here
-    # only so the few callers that still pipe expressions through
-    # ``rename_iters`` see a no-op rather than a missing dict.
+    # to a globally-unique ``_loop_it_<N>`` symbol and propagates the
+    # rename through the body.  ``emit_loop`` therefore uses the
+    # source-Fortran iter name verbatim, and ``iter_map`` is the
+    # identity map kept here only so the few callers that still pipe
+    # expressions through ``rename_iters`` see a no-op rather than a
+    # missing dict.
     if iter_map is None:
         iter_map = dict(ctx.iter_map) if ctx.iter_map else {}
 
