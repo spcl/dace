@@ -4,6 +4,7 @@ import pytest
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
+from dace.properties import DictProperty, ListProperty
 import sympy
 
 
@@ -109,6 +110,39 @@ def test_symbol_assumption_roundtrip_preserves_bool_metadata():
     restored = symbolic.deserialize_symbolic(serialized)
 
     assert symbolic.serialize_symbolic(restored) == serialized
+
+
+def test_inferred_symbol_dtype_is_not_serialized():
+    inferred = symbolic.symbol('i', dtype=dace.int64, explicit_dtype=False)
+
+    assert symbolic.serialize_symbolic(inferred) == '$i'
+
+
+def test_explicit_symbol_dtype_is_serialized():
+    explicit = symbolic.symbol('i', dtype=dace.int64)
+
+    assert symbolic.serialize_symbolic(explicit) == 'symbol($i, dtype=dace.int64)'
+
+
+def test_list_property_pystr_to_symbolic_json_roundtrip_supports_plain_names():
+    prop = ListProperty(element_type=symbolic.pystr_to_symbolic)
+
+    assert prop.to_json(['START']) == ['$START']
+
+    restored = prop.from_json(['START'])
+
+    assert len(restored) == 1
+    assert restored[0] == symbolic.symbol('START')
+
+
+def test_dict_property_pystr_to_symbolic_json_roundtrip_supports_plain_names():
+    prop = DictProperty(key_type=str, value_type=symbolic.pystr_to_symbolic)
+
+    assert prop.to_json({'N': 'N'}) == {'N': '$N'}
+
+    restored = prop.from_json({'N': 'N'})
+
+    assert restored == {'N': symbolic.symbol('N')}
 
 
 @pytest.mark.parametrize('expr', [

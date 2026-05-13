@@ -29,6 +29,21 @@ def _is_symbolic_converter(converter) -> bool:
     return converter in (pystr_to_symbolic, symbolic.deserialize_symbolic, symbolic.SymExpr)
 
 
+def _deserialize_symbolic_with_converter(converter, value):
+    if converter in (pystr_to_symbolic, symbolic.deserialize_symbolic, symbolic.SymExpr):
+        return symbolic.deserialize_symbolic(value)
+    raise TypeError(f'Unsupported symbolic converter {converter!r}')
+
+
+def _serialize_symbolic_with_converter(converter, value):
+    if not isinstance(value, (symbolic.SymExpr, sp.Basic)):
+        try:
+            value = _deserialize_symbolic_with_converter(converter, value)
+        except Exception:
+            pass
+    return symbolic.serialize_symbolic(value)
+
+
 ###############################################################################
 # External interface to guarantee correct usage
 ###############################################################################
@@ -476,7 +491,7 @@ class ListProperty(Property[List[T]]):
         if l is None:
             return None
         if _is_symbolic_converter(self.element_type):
-            return [symbolic.serialize_symbolic(elem) for elem in l]
+            return [_serialize_symbolic_with_converter(self.element_type, elem) for elem in l]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "to_json"):
             return [elem.to_json() for elem in l]
@@ -498,7 +513,7 @@ class ListProperty(Property[List[T]]):
         if not isinstance(data, list):
             raise TypeError('ListProperty expects a list input, got %s' % data)
         if _is_symbolic_converter(self.element_type):
-            return [symbolic.deserialize_symbolic(elem) for elem in data]
+            return [_deserialize_symbolic_with_converter(self.element_type, elem) for elem in data]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "from_json"):
             return [self.element_type.from_json(elem) for elem in data]
@@ -596,7 +611,10 @@ class DictProperty(Property):
 
         # If key knows how to convert itself, let it
         if _is_symbolic_converter(self.key_type):
-            saved_dictionary = {symbolic.serialize_symbolic(k): v for k, v in saved_dictionary.items()}
+            saved_dictionary = {
+                _serialize_symbolic_with_converter(self.key_type, k): v
+                for k, v in saved_dictionary.items()
+            }
         elif hasattr(self.key_type, "to_json"):
             saved_dictionary = {k.to_json(): v for k, v in saved_dictionary.items()}
         # Otherwise, if the keys are not a native JSON type, convert to strings
@@ -605,7 +623,10 @@ class DictProperty(Property):
 
         # Same as above, but for values
         if _is_symbolic_converter(self.value_type):
-            saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
+            saved_dictionary = {
+                k: _serialize_symbolic_with_converter(self.value_type, v)
+                for k, v in saved_dictionary.items()
+            }
         elif hasattr(self.value_type, "to_json"):
             saved_dictionary = {k: v.to_json() for k, v in saved_dictionary.items()}
         elif self.value_type not in (int, float, list, tuple, dict, str):
@@ -632,12 +653,12 @@ class DictProperty(Property):
 
         def _convert_key(key):
             if _is_symbolic_converter(self.key_type):
-                return symbolic.deserialize_symbolic(key)
+                return _deserialize_symbolic_with_converter(self.key_type, key)
             return self.key_type.from_json(key, sdfg) if key_json else self.key_type(key)
 
         def _convert_value(value):
             if _is_symbolic_converter(self.value_type):
-                return symbolic.deserialize_symbolic(value)
+                return _deserialize_symbolic_with_converter(self.value_type, value)
             return self.value_type.from_json(value, sdfg) if value_json else self.value_type(value)
 
         return {_convert_key(k): _convert_value(v) for k, v in data.items()}

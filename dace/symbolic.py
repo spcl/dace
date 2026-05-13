@@ -54,7 +54,7 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, explicit_dtype=True, **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -77,11 +77,17 @@ class symbol(sympy.Symbol):
             self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
 
         self.dtype = dtype
+        self._explicit_dtype = explicit_dtype
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
+        return dict(
+            self.assumptions0, **{
+                'dtype': self.dtype,
+                '_explicit_dtype': getattr(self, '_explicit_dtype', self.dtype != DEFAULT_SYMBOL_TYPE),
+                '_constraints': self._constraints
+            })
 
     def _eval_subs(self, old, new):
         """
@@ -501,7 +507,7 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     kwargs = {}
-    if expr.dtype != DEFAULT_SYMBOL_TYPE:
+    if getattr(expr, '_explicit_dtype', expr.dtype != DEFAULT_SYMBOL_TYPE) and expr.dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
 
     default_assumptions = _symbol_default_assumptions(expr)
@@ -1428,7 +1434,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     @staticmethod
     def _binop_add(a, b):
         if (_SerializedSymbolicParser._requires_preserved_structure(a)
-                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+                or _SerializedSymbolicParser._requires_preserved_structure(b)
+                or (isinstance(a, sympy.Mul) and a.args and a.args[0] == -1)
+                or (isinstance(b, sympy.Mul) and b.args and b.args[0] == -1)):
             return sympy.Add(a, b, evaluate=False)
         return a + b
 
@@ -1452,14 +1460,17 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     @staticmethod
     def _binop_mul(a, b):
         if (_SerializedSymbolicParser._requires_preserved_structure(a)
-                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+                or _SerializedSymbolicParser._requires_preserved_structure(b) or isinstance(a, sympy.Add)
+                or isinstance(b, sympy.Add)):
             return sympy.Mul(a, b, evaluate=False)
         return a * b
 
     @staticmethod
     def _binop_div(a, b):
         if (_SerializedSymbolicParser._requires_preserved_structure(a)
-                or _SerializedSymbolicParser._requires_preserved_structure(b)):
+                or _SerializedSymbolicParser._requires_preserved_structure(b)
+                or (isinstance(a, sympy.Mul) and any(isinstance(arg, sympy.Add)
+                                                     for arg in a.args)) or isinstance(b, sympy.Add)):
             return sympy.Mul(a, sympy.Pow(b, -1, evaluate=False), evaluate=False)
         return a / b
 
@@ -1564,6 +1575,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         try:
             return getattr(dtypes, node.id)
         except AttributeError as ex:
+            if dtypes.validate_name(node.id):
+                return symbol(node.id)
             raise TypeError(f'Unknown symbolic identifier "{node.id}"') from ex
 
     def visit_Constant(self, node):
@@ -1623,8 +1636,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 raise TypeError('symbol(...) expects its first argument to deserialize to a symbol instance, '
                                 f'got {type(symname).__name__}')
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
+            dtype_explicit = 'dtype' in kwargs
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
-            return symbol(symname.name, dtype=dtype, **kwargs)
+            return symbol(symname.name, dtype=dtype, explicit_dtype=dtype_explicit, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
             args = [self.visit(arg) for arg in node.args]
@@ -1669,7 +1683,10 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
     if isinstance(value, SymExpr):
         return SymExpr(_cast_symbolic_value(value.expr, dtype), _cast_symbolic_value(value.approx, dtype))
     if isinstance(value, symbol):
-        return symbol(value.name, dtype=dtype, **value.assumptions0)
+        return symbol(value.name,
+                      dtype=dtype,
+                      explicit_dtype=getattr(value, '_explicit_dtype', value.dtype != DEFAULT_SYMBOL_TYPE),
+                      **value.assumptions0)
     if isinstance(value, TypedConstant):
         return TypedConstant(value.value, dtype=dtype)
     if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):
@@ -1703,8 +1720,63 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
     def _print_Float(self, expr):
         return super()._print_Float(expr)
 
+    def _print_Add(self, expr):
+        parts = []
 
-@lru_cache(maxsize=16384)
+        def _render_term(term):
+            rendered = self._print(term)
+            if isinstance(term, sympy.Add):
+                return f'({rendered})'
+            return rendered
+
+        for i, arg in enumerate(expr.args):
+            if i == 0:
+                parts.append(_render_term(arg))
+                continue
+            if isinstance(arg, sympy.Mul) and arg.args and arg.args[0] == -1:
+                if len(arg.args) == 2:
+                    negated = arg.args[1]
+                else:
+                    negated = sympy.Mul(*arg.args[1:], evaluate=False)
+                parts.append(' - ' + _render_term(negated))
+            else:
+                parts.append(' + ' + _render_term(arg))
+        return ''.join(parts)
+
+    def _print_Mul(self, expr):
+        flat_args = []
+
+        def _flatten(arg):
+            if isinstance(arg, sympy.Mul):
+                for nested in arg.args:
+                    _flatten(nested)
+            else:
+                flat_args.append(arg)
+
+        for arg in expr.args:
+            _flatten(arg)
+
+        if len(flat_args) > 1:
+            flat_args = [arg for arg in flat_args if arg != 1]
+
+        numeric_args = []
+        symbolic_args = []
+        for arg in flat_args:
+            if isinstance(arg, TypedConstant) or getattr(arg, 'is_Number', False):
+                numeric_args.append(arg)
+            else:
+                symbolic_args.append(arg)
+        symbolic_args.sort(key=sympy.default_sort_key)
+
+        parts = []
+        for arg in numeric_args + symbolic_args:
+            rendered = self._print(arg)
+            if isinstance(arg, sympy.Add):
+                rendered = f'({rendered})'
+            parts.append(rendered)
+        return '*'.join(parts) if parts else '1'
+
+
 def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
     if isinstance(expr, SymExpr):
         return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
@@ -1735,6 +1807,8 @@ def deserialize_symbolic(expr) -> SymbolicType:
         return expr
     if expr in ('?', '$?'):
         return UndefinedSymbol()
+    if dtypes.validate_name(expr):
+        return symbol(expr)
 
     # Symbols are rewritten first because typed-literal replacement introduces
     # helper calls, and keeping the substitutions one-way avoids reparsing the

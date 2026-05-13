@@ -1073,9 +1073,30 @@ class Map(object):
         self._fence_instrumentation = fence_instrumentation
 
     def __str__(self):
+
+        def _label_str(val):
+            if issymbolic(val):
+                return dace.symbolic.serialize_symbolic(val).replace('$', '')
+            return str(val)
+
+        def _dim_to_string(dim):
+            if not isinstance(dim, tuple):
+                return _label_str(dim)
+            dres = _label_str(dim[0])
+            if dim[1] is not None:
+                if dim[1] - dim[0] != 0:
+                    off = 1
+                    if dim[2] is not None and (dim[2] < 0) == True:
+                        off = -1
+                    dres += ':' + _label_str(dim[1] + off)
+            if dim[2] != 1:
+                if dim[1] is None:
+                    dres += ':'
+                dres += ':' + _label_str(dim[2])
+            return dres
+
         return self.label + "[" + ", ".join(
-            ["{}={}".format(i, r)
-             for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]) + "]"
+            [f"{i}={r}" for i, r in zip(self._params, [_dim_to_string(d) for d in self._range])]) + "]"
 
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
