@@ -1357,6 +1357,13 @@ class Vectorize(ppl.Pass):
                 if map_entry.map.label.startswith("vectorloop_"):
                     continue
 
+                # Skip Sequential-scheduled maps: P2's scalar postamble runs
+                # at step 1 and is explicitly marked Sequential — tiling it
+                # to step W would emit a step-W loop over the trailing R<W
+                # elements and overrun the kernel bounds.
+                if map_entry.map.schedule == dace.dtypes.ScheduleType.Sequential:
+                    continue
+
                 # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
                 if has_nsdfg_depth_more_than_one(state, map_entry):
                     warnings.warn(
