@@ -701,6 +701,7 @@ SUBROUTINE CLOUDSCOUTER &
       & PFSQLTUR(:,:,IBL), PFSQITUR(:,:,IBL), &
       & PFPLSL(:,:,IBL), PFPLSN(:,:,IBL), &
       & PFHPSL(:,:,IBL), PFHPSN(:,:,IBL), KFLDX, &
+      & PEXTRA(:,:,1,IBL), &
       & YDCST, YDTHF, YDECLDP)
   END DO
 
@@ -743,6 +744,7 @@ SUBROUTINE CLOUDSC &
  & PFSQRF,   PFSQSF ,  PFCQRNG,  PFCQSNG,&
  & PFSQLTUR, PFSQITUR , &
  & PFPLSL,   PFPLSN,   PFHPSL,   PFHPSN, KFLDX, &
+ & PEXTRA_PROBE, &
  & YDCST, YDTHF, YDECLDP)
 
 !===============================================================================
@@ -922,6 +924,7 @@ REAL(KIND=JPRB)   ,INTENT(OUT)   :: PFPLSL(KLON,KLEV+1) ! liq+rain sedim flux
 REAL(KIND=JPRB)   ,INTENT(OUT)   :: PFPLSN(KLON,KLEV+1) ! ice+snow sedim flux
 REAL(KIND=JPRB)   ,INTENT(OUT)   :: PFHPSL(KLON,KLEV+1) ! Enthalpy flux for liq
 REAL(KIND=JPRB)   ,INTENT(OUT)   :: PFHPSN(KLON,KLEV+1) ! Enthalp flux for ice
+REAL(KIND=JPRB)   ,INTENT(OUT)   :: PEXTRA_PROBE(KLON,KLEV) ! debug probe
 
 !-------------------------------------------------------------------------------
 !                       Declare local variables
@@ -1408,6 +1411,7 @@ FOKOOP (PTARE) = MIN(YDTHF%RKOOP1 -YDTHF%RKOOP2*PTARE,FOEELIQ(PTARE)/FOEEICE(PTA
 
 !===============================================================================
 !IF (LHOOK) CALL DR_HOOK('CLOUDSC',0,ZHOOK_HANDLE)
+PEXTRA_PROBE(:,:) = 0.0_JPRB
 ASSOCIATE( LAERICEAUTO=>YDECLDP%LAERICEAUTO, LAERICESED=>YDECLDP%LAERICESED, &
  & LAERLIQAUTOLSP=>YDECLDP%LAERLIQAUTOLSP, LAERLIQCOLL=>YDECLDP%LAERLIQCOLL, &
  & LCLDBUDGET=>YDECLDP%LCLDBUDGET, NCLDTOP=>YDECLDP%NCLDTOP, &
@@ -3608,6 +3612,30 @@ ENDIF ! on IEVAPSNOW
       ZPFPLSX(JL,JK+1,JM) = ZFALLSINK(JL,JM)*ZQXN(JL,JM)*ZRDTGDP(JL)
     ENDDO
   ENDDO
+
+  ! DEBUG PROBE: at JK=NCLDTOP, capture inputs+output of the 3-way multiply
+  ! at line 3608 into PEXTRA_PROBE.  The NEXT iteration (JK=NCLDTOP+1=16)
+  ! is where ZQPRETOT 1-ulp drifts; comparing PEXTRA_PROBE bit-for-bit
+  ! between SDFG and gfortran tells us which input (if any) is already off.
+  ! Slot layout (within PEXTRA_PROBE(JL, slot) where slot uses KLEV bins):
+  !   slots 1..5  : ZFALLSINK(JL, JM=1..5)
+  !   slots 6..10 : ZQXN(JL, JM=1..5)
+  !   slot  11    : ZRDTGDP(JL)
+  !   slots 12..16: ZPFPLSX(JL, JK+1, JM=1..5)
+  !   slot  17    : ZDTGDP(JL)
+  IF (JK == NCLDTOP) THEN
+    DO JM = 1, NCLV
+      DO JL = KIDIA, KFDIA
+        PEXTRA_PROBE(JL, JM)      = ZFALLSINK(JL, JM)
+        PEXTRA_PROBE(JL, 5 + JM)  = ZQXN(JL, JM)
+        PEXTRA_PROBE(JL, 11 + JM) = ZPFPLSX(JL, JK + 1, JM)
+      ENDDO
+    ENDDO
+    DO JL = KIDIA, KFDIA
+      PEXTRA_PROBE(JL, 11) = ZRDTGDP(JL)
+      PEXTRA_PROBE(JL, 17) = ZDTGDP(JL)
+    ENDDO
+  ENDIF
 
   ! Ensure precipitation fraction is zero if no precipitation
   DO JL=KIDIA,KFDIA

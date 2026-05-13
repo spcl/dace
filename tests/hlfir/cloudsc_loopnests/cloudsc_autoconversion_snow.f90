@@ -1,6 +1,6 @@
-SUBROUTINE autoconversion_snow(kidia, kfdia, klon, ztp1, zicecld, pnice, zsolqb, zsnowaut, rtt, rlcritsnow, rsnowlin1, rsnowlin2, rnice, ptsphy, zepsec, laericeauto, ncldqs, ncldqi)
+SUBROUTINE autoconversion_snow(kidia, kfdia, klon, nclv, ztp1, zicecld, pnice, zsolqb, zsnowaut, rtt, rlcritsnow, rsnowlin1, rsnowlin2, rnice, ptsphy, zepsec, laericeauto, ncldqs, ncldqi)
   IMPLICIT NONE
-  INTEGER(KIND = 4), VALUE :: kidia, kfdia, klon
+  INTEGER(KIND = 4), VALUE :: kidia, kfdia, klon, nclv
   INTEGER(KIND = 4), VALUE :: ncldqs, ncldqi
   REAL(KIND = 8), INTENT(IN) :: ztp1(klon)
   REAL(KIND = 8), INTENT(IN) :: zicecld(klon)
@@ -14,7 +14,7 @@ SUBROUTINE autoconversion_snow(kidia, kfdia, klon, ztp1, zicecld, pnice, zsolqb,
   REAL(KIND = 8), VALUE :: zepsec
   INTEGER(KIND=4), VALUE :: laericeauto
   REAL(KIND = 8), INTENT(OUT) :: zsnowaut(klon)
-  REAL(KIND = 8), INTENT(INOUT) :: zsolqb(klon, ncldqs, ncldqi)
+  REAL(KIND = 8), INTENT(INOUT) :: zsolqb(klon, nclv, nclv)
   INTEGER(KIND = 4) :: jl
   REAL(KIND = 8) :: zzco, zlcrit
   zsnowaut(:) = 0.0D0

@@ -166,7 +166,13 @@ def test_cloudsc_autoconversion_snow_sdfg_matches_f2py(tmp_path: Path):
     sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="autoconversion_snow")
 
     rng = np.random.default_rng(103)
-    klon, ncldqs, ncldqi = 8, 5, 4
+    # NCLV is the array bound (5 species), ncldqs/ncldqi are runtime
+    # INDICES into that dimension (snow=4, ice=2 per CLOUDSC).  Mixing
+    # them up (declaring zsolqb shape as (klon, ncldqs, ncldqi)) makes
+    # the test write to the LAST cell of each dim instead of the interior
+    # cell that real CLOUDSC touches.
+    klon, nclv = 8, 5
+    ncldqs, ncldqi = 4, 2
     kidia, kfdia = 1, klon
 
     ztp1 = np.asfortranarray(250.0 + 30.0 * rng.random((klon, ), dtype=np.float64))
@@ -175,7 +181,7 @@ def test_cloudsc_autoconversion_snow_sdfg_matches_f2py(tmp_path: Path):
     consts = dict(rtt=273.16, rlcritsnow=0.5e-4, rsnowlin1=1e-3, rsnowlin2=0.018, rnice=1.0, ptsphy=600.0, zepsec=1e-14)
     laericeauto = 1
 
-    zsolqb_ref = np.zeros((klon, ncldqs, ncldqi), order="F")
+    zsolqb_ref = np.zeros((klon, nclv, nclv), order="F")
     zsolqb_sdfg = np.zeros_like(zsolqb_ref, order="F")
 
     # f2py: zsnowaut (OUT) -> return; zsolqb (INOUT) -> positional.
@@ -192,7 +198,9 @@ def test_cloudsc_autoconversion_snow_sdfg_matches_f2py(tmp_path: Path):
                                            rnice=consts["rnice"],
                                            ptsphy=consts["ptsphy"],
                                            zepsec=consts["zepsec"],
-                                           laericeauto=laericeauto)
+                                           laericeauto=laericeauto,
+                                           ncldqs=ncldqs,
+                                           ncldqi=ncldqi)
     zsnowaut_sdfg = np.zeros((klon, ), order="F")
 
     kw = dict(ztp1=ztp1,
@@ -202,7 +210,7 @@ def test_cloudsc_autoconversion_snow_sdfg_matches_f2py(tmp_path: Path):
               zsnowaut=zsnowaut_sdfg,
               laericeauto=laericeauto,
               **consts)
-    kw.update(_sdfg_call_args(sdfg, dict(kidia=kidia, kfdia=kfdia, klon=klon, ncldqs=ncldqs, ncldqi=ncldqi)))
+    kw.update(_sdfg_call_args(sdfg, dict(kidia=kidia, kfdia=kfdia, klon=klon, nclv=nclv, ncldqs=ncldqs, ncldqi=ncldqi)))
     sdfg(**kw)
 
     np.testing.assert_allclose(zsnowaut_sdfg, zsnowaut_ref, atol=1e-12, rtol=1e-10)
@@ -364,3 +372,71 @@ def test_cloudsc_rain_evap_sdfg_matches_f2py(tmp_path: Path):
     np.testing.assert_allclose(zcovptot_sdfg, zcovptot_ref, atol=at, rtol=rt)
     np.testing.assert_allclose(zcovpclr_sdfg, zcovpclr_ref, atol=at, rtol=rt)
     np.testing.assert_allclose(zqxfg_sdfg, zqxfg_ref, atol=at, rtol=rt)
+
+
+def test_cloudsc_full_microphysics_solve_sdfg_matches_f2py(tmp_path: Path):
+    """Full Section-5.2.2 microphysics solver: ZQLHS construction
+    (diagonal/off-diagonal from ZFALLSINK + sum(ZSOLQB) over JO) +
+    ZQXN RHS assembly (ZQX + sum(ZSOLQA) over JN) + LU factorization
+    + 2-step back-substitution + ZEPSEC clipping into vapor.
+
+    Bigger than ``cloudsc_lu_solver`` (which only tests the factor +
+    back-sub on pre-built matrices).  This reproducer extends scope
+    to the LHS/RHS assembly  --  the suspected source of the 1-9 ulp
+    ``ZQXN`` drift observed at JK=NCLDTOP=15 in the full-CLOUDSC run
+    (cloudsc_full xfail).  If this loopnest passes bit-exactly while
+    full-CLOUDSC still diverges, the bug is in JK-loop-carried state
+    further upstream (ZFALLSINK / ZSOLQA / ZSOLQB assembly across
+    iterations).  If this loopnest also diverges, the assembly +
+    solve combination itself triggers the bridge bug.
+    """
+    src = (_HERE / "cloudsc_full_microphysics_solve.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "full_solve_ref")
+    sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="full_microphysics_solve")
+
+    rng = np.random.default_rng(106)
+    klon, klev, nclv = 8, 137, 5  # match cloudsc_full (KLEV=137, NCLV=5)
+    ncldqv = 5
+    kidia, kfdia = 1, klon
+    jk_idx = 15  # NCLDTOP -- pick the same JK at which cloudsc_full first diverges
+    zepsec = 1e-14
+
+    # Inputs: keep ZFALLSINK in [0,1) so diagonals stay well-conditioned;
+    # ZSOLQB/ZSOLQA small so the matrix stays close to identity (LU stable);
+    # ZQX in [1e-5, 1e-2] for plausible mass-mixing ratios.
+    zfallsink = np.asfortranarray(rng.random((klon, nclv), dtype=np.float64))
+    zsolqb = np.asfortranarray(rng.random((klon, nclv, nclv), dtype=np.float64) * 1e-2)
+    zsolqa = np.asfortranarray(rng.random((klon, nclv, nclv), dtype=np.float64) * 1e-2)
+    zqx = np.asfortranarray(1e-5 + 1e-2 * rng.random((klon, klev, nclv), dtype=np.float64))
+
+    zqlhs_ref = np.zeros((klon, nclv, nclv), order="F")
+    zqxn_ref = np.zeros((klon, nclv), order="F")
+    zqlhs_sdfg = np.array(zqlhs_ref, order="F")
+    zqxn_sdfg = np.array(zqxn_ref, order="F")
+
+    # f2py auto-derives klon/klev/nclv from array shapes; jk_idx stays
+    # a runtime arg (it's an INDEX into the JK dimension, not the bound).
+    # ZQXN is INTENT(OUT) so it's returned.  Positional order:
+    #   kidia, kfdia, ncldqv, jk_idx, zfallsink, zsolqa, zsolqb, zqx, zqlhs, zepsec
+    zqxn_ref = ref.full_microphysics_solve(kidia, kfdia, ncldqv, jk_idx, zfallsink, zsolqa, zsolqb, zqx, zqlhs_ref,
+                                           zepsec)
+
+    kw = dict(zfallsink=zfallsink,
+              zsolqa=zsolqa,
+              zsolqb=zsolqb,
+              zqx=zqx,
+              zqlhs=zqlhs_sdfg,
+              zqxn=zqxn_sdfg,
+              zepsec=zepsec)
+    kw.update(
+        _sdfg_call_args(sdfg,
+                        dict(kidia=kidia, kfdia=kfdia, klon=klon, klev=klev, nclv=nclv, ncldqv=ncldqv, jk_idx=jk_idx)))
+    sdfg(**kw)
+
+    # Strict ulp-level tolerance.  Values are <1, so 1 ulp is ~2e-16;
+    # at rtol=atol=1e-15 we catch ~5 ulps and above.  cloudsc_lu_solver
+    # uses 1e-10 because that test does many more sequential ops; for
+    # this bigger loopnest at smaller klon/nclv the bridge should match
+    # gfortran nearly bit-exactly.
+    np.testing.assert_allclose(zqlhs_sdfg, zqlhs_ref, atol=1e-15, rtol=1e-15)
+    np.testing.assert_allclose(zqxn_sdfg, zqxn_ref, atol=1e-15, rtol=1e-15)
