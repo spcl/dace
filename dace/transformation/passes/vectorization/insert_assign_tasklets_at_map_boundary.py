@@ -58,7 +58,61 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 count += self._replace_map_staging(nsdfg, state)
+                count += self._replace_other_subset_an_edges(nsdfg, state)
         return count if count > 0 else None
+
+    @staticmethod
+    def _replace_other_subset_an_edges(sdfg: SDFG, state: SDFGState) -> int:
+        """Replace ``AccessNode -[other_subset]→ AccessNode`` edges with an
+        intermediate assign tasklet so downstream passes never see
+        ``other_subset`` set.
+
+        The frontend lowers a scalar slice like ``a0 = a[0]`` into
+        ``a -[data=a, subset=0, other_subset=0]→ a0`` (a single edge that
+        carries both ends' subsets). The vectorize pipeline's
+        ``no_other_subset`` invariant rejects this shape. Inserting a plain
+        ``_out = _in`` tasklet between the two AccessNodes splits the
+        memlet into two clean halves (``a -[subset=0]→ tasklet`` +
+        ``tasklet -[a0, subset=0]→ a0``).
+        """
+        edges_to_process = []
+        for e in state.edges():
+            if e.data is None or e.data.is_empty():
+                continue
+            if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
+                continue
+            if e.data.other_subset is None:
+                continue
+            edges_to_process.append(e)
+
+        count = 0
+        for edge in edges_to_process:
+            if edge not in state.edges():
+                continue
+            src_an = edge.src
+            dst_an = edge.dst
+            mem = edge.data
+            # Identify which side of the memlet matches each AccessNode.
+            if mem.data == src_an.data:
+                src_subset = mem.subset
+                dst_subset = mem.other_subset
+            else:
+                assert mem.data == dst_an.data
+                src_subset = mem.other_subset
+                dst_subset = mem.subset
+            tasklet = state.add_tasklet(
+                name=f"_assign_{src_an.data}_to_{dst_an.data}",
+                inputs={"_in"},
+                outputs={"_out"},
+                code="_out = _in",
+            )
+            state.remove_edge(edge)
+            state.add_edge(src_an, edge.src_conn, tasklet, "_in",
+                           Memlet(data=src_an.data, subset=_copy.deepcopy(src_subset)))
+            state.add_edge(tasklet, "_out", dst_an, edge.dst_conn,
+                           Memlet(data=dst_an.data, subset=_copy.deepcopy(dst_subset)))
+            count += 1
+        return count
 
     @staticmethod
     def _replace_map_staging(sdfg: SDFG, state: SDFGState) -> int:

@@ -194,14 +194,16 @@ def dace_s293(a: dace.float64[LEN_1D]):
             a[i] = a0
 
 
-@pytest.mark.skip(reason="other_subset on array memlets is not supported by the vectorization pipeline")
 def test_s293():
     LEN_1D_val = 64  # example, adjust as needed
 
     # Allocate array a
     a = np.random.rand(LEN_1D_val).astype(np.float64)
 
-    # Run DaCe test harness
+    # Run DaCe test harness — InsertAssignTaskletsAtMapBoundary normalizes the
+    # ``a[0] = a0`` slice (AccessNode → AccessNode with other_subset) into a
+    # plain assign-tasklet chain, so the vectorize pipeline's
+    # ``no_other_subset`` invariant holds.
     run_vectorization_test(
         dace_func=dace_s293,
         arrays={"a": a},
