@@ -97,12 +97,10 @@ def test_cloudsc_autoconversion_snow_numerical(tmp_path: Path):
     ZTP1 = np.asfortranarray(rng.uniform(220.0, 300.0, KLON))
     ZICECLD = np.asfortranarray(rng.uniform(0.0, 1e-3, KLON))
     PNICE = np.asfortranarray(rng.uniform(1e3, 1e5, KLON))
-    # Shape ZSOLQB as ``(KLON, NCLDQS, NCLDQI)`` so f2py auto-infers
-    # ``ncldqs = NCLDQS`` and ``ncldqi = NCLDQI`` from ``shape(zsolqb)``
-    # -- otherwise f2py uses ``shape(zsolqb, 2)`` which is the second
-    # array bound, not the runtime ``ncldqi`` index, and the reference
-    # writes to the wrong species slot.
-    ZSOLQB = np.asfortranarray(np.zeros((KLON, NCLDQS, NCLDQI)))
+    # Shape ZSOLQB as ``(KLON, NCLV, NCLV)`` so f2py auto-infers ``klon`` and
+    # ``nclv`` from ``shape(zsolqb)``.  ``ncldqs`` and ``ncldqi`` are runtime
+    # INDICES into that dim, not the bounds -- passed as keyword args.
+    ZSOLQB = np.asfortranarray(np.zeros((KLON, NCLV, NCLV)))
 
     consts = dict(rtt=273.16,
                   rlcritsnow=1.0e-4,
@@ -116,17 +114,19 @@ def test_cloudsc_autoconversion_snow_numerical(tmp_path: Path):
     mod = f2py_compile(src, tmp_path / "ref", "autoconv_snow_ref")
     ZSOLQB_ref = ZSOLQB.copy(order="F")
     # f2py signature: ``zsnowaut = autoconversion_snow(kidia, kfdia,
-    # ztp1, zicecld, pnice, zsolqb, rtt, ..., laericeauto)``; ``klon /
-    # ncldqs / ncldqi`` are inferred from array shapes.
+    # ztp1, zicecld, pnice, zsolqb, rtt, ..., laericeauto, ncldqs, ncldqi)``;
+    # ``klon / nclv`` are inferred from array shapes.
     ZSNOWAUT_ref = mod.autoconversion_snow(1, KLON, ZTP1, ZICECLD, PNICE, ZSOLQB_ref, consts["rtt"],
                                            consts["rlcritsnow"], consts["rsnowlin1"], consts["rsnowlin2"],
-                                           consts["rnice"], consts["ptsphy"], consts["zepsec"], consts["laericeauto"])
+                                           consts["rnice"], consts["ptsphy"], consts["zepsec"], consts["laericeauto"],
+                                           NCLDQS, NCLDQI)
 
     sdfg = _build(src, tmp_path, name="autoconversion_snow", entry="_QPautoconversion_snow")
     ZSNOWAUT = np.zeros(KLON, dtype=np.float64, order="F")
     sdfg(kidia=1,
          kfdia=KLON,
          klon=KLON,
+         nclv=NCLV,
          ztp1=ZTP1,
          zicecld=ZICECLD,
          pnice=PNICE,

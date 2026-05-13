@@ -614,3 +614,32 @@ def test_cloudsc_zsolqa_accumulator_sdfg_matches_f2py(tmp_path: Path):
                                rtol=1e-15,
                                err_msg="zsolqa_accumulator: SDFG += diverges from gfortran "
                                "(suggests WCR-instead-of-RMW lowering)")
+
+
+def test_cloudsc_int_pow_kernel_sdfg_matches_f2py(tmp_path: Path):
+    """Tests integer-exponent power: y2(i) = x(i)**2, y3(i) = x(i)**3.
+
+    The cloudsc 4.5b SNOW evap section has ``ZTP1**2`` and ``ZTP1**3``
+    appearances.  Bridge may lower as repeated multiply, libm pow(d, d),
+    libm pow(d, i), or ipow().  gfortran's intrinsic almost certainly
+    uses repeated multiply for small integer exponents.  If the bridge
+    picks a different lowering, even ``-O0 -fno-fast-math`` cannot save
+    us -- different code paths give different rounding.
+    """
+    src = (_HERE / "cloudsc_int_pow.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "int_pow_ref")
+    sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="int_pow_kernel")
+
+    rng = np.random.default_rng(110)
+    n = 32
+    x = np.asfortranarray(220.0 + 80.0 * rng.random(n, dtype=np.float64))
+
+    y2_ref, y3_ref = ref.int_pow_kernel(x)
+    y2_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    y3_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    kw = dict(x=x, y2=y2_sdfg, y3=y3_sdfg)
+    kw.update(_sdfg_call_args(sdfg, dict(n=n)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(y2_sdfg, y2_ref, atol=1e-15, rtol=1e-15, err_msg="int_pow x**2 diverges")
+    np.testing.assert_allclose(y3_sdfg, y3_ref, atol=1e-15, rtol=1e-15, err_msg="int_pow x**3 diverges")
