@@ -41,50 +41,82 @@ class VectorizeCPU(ppl.Pipeline):
                  user_skip_nsdfg_arrays: Optional[Set[str]] = None,
                  use_fp_factor: bool = True,
                  branch_normalization: bool = False,
-                 lower_to_intrinsics: bool = False):
+                 lower_to_intrinsics: bool = False,
+                 force_autovec_ops: Optional[Set[str]] = None,
+                 force_pscalar_ops: Optional[Set[str]] = None):
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
+        # ``force_autovec_ops`` / ``force_pscalar_ops`` (Option F overlay)
+        # let callers override per-op which implementation the emitter
+        # selects. Keys are templates-dict op identifiers (``"+"``,
+        # ``"merge"``, ``"+c"``, ``"c-"``, ``"log"``, ``"=c"`` etc.).
+        #   force_pscalar_ops={"div"}  -> emit ``vector_div_pscalar``
+        #                                  (pure scalar loop, no autovec hint)
+        #   force_autovec_ops={"exp"}  -> emit ``vector_exp_av``
+        #                                  (scalar loop + _dace_vectorize hint)
+        # Default: unsuffixed names (best for the dispatcher-selected arch).
+        force_autovec_ops = set(force_autovec_ops) if force_autovec_ops else set()
+        force_pscalar_ops = set(force_pscalar_ops) if force_pscalar_ops else set()
+        overlap = force_autovec_ops & force_pscalar_ops
+        if overlap:
+            raise ValueError(f"VectorizeCPU: force_autovec_ops and force_pscalar_ops "
+                             f"overlap on {sorted(overlap)}; an op can only be in one set")
+        templates = {
+            "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "+": "vector_add<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "-": "vector_sub<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "/": "vector_div<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "=": "vector_copy<{dtype}, {vector_width}>({lhs}, {rhs1});",
+            "=c": "vector_copy_w_scalar<{dtype}, {vector_width}>({lhs}, {constant});",
+            "log": "vector_log<{dtype}, {vector_width}>({lhs}, {rhs1});",
+            "exp": "vector_exp<{dtype}, {vector_width}>({lhs}, {rhs1});",
+            "min": "vector_min<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "max": "vector_max<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            ">": "vector_gt<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "<": "vector_lt<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            ">=": "vector_ge<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "<=": "vector_le<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "==": "vector_eq<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "!=": "vector_ne<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
+            "merge": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
+            # scalar variants type 1
+            "*c": "vector_mult_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "+c": "vector_add_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "-c": "vector_sub_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "/c": "vector_div_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "minc": "vector_min_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "maxc": "vector_max_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            ">c": "vector_gt_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "<c": "vector_lt_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            ">=c": "vector_ge_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "<=c": "vector_le_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "==c": "vector_eq_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            "!=c": "vector_ne_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
+            # scalar variants type 2 for non-commutative ops
+            "c-": "vector_sub_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            "c/": "vector_div_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            "c>": "vector_gt_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            "c<": "vector_lt_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            "c>=": "vector_ge_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            "c<=": "vector_le_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+        }
+        # Apply per-op variant overrides. Rewrites ``vector_<name><...>`` to
+        # ``vector_<name>_<suffix><...>`` in the affected template string;
+        # the suffixed functions are defined in cpu_vectorizable_math_common.h
+        # for every op identically across arches.
+        import re as _re
+        _vec_name_pat = _re.compile(r"\bvector_(\w+)<")
+        for op in force_pscalar_ops | force_autovec_ops:
+            if op not in templates:
+                raise KeyError(f"VectorizeCPU: force_*_ops references unknown op {op!r}; "
+                               f"valid op identifiers: {sorted(templates)}")
+        for op in force_pscalar_ops:
+            templates[op] = _vec_name_pat.sub(r"vector_\1_pscalar<", templates[op], count=1)
+        for op in force_autovec_ops:
+            templates[op] = _vec_name_pat.sub(r"vector_\1_av<", templates[op], count=1)
         vectorizer = Vectorize(
-            templates={
-                "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "+": "vector_add<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "-": "vector_sub<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "/": "vector_div<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "=": "vector_copy<{dtype}, {vector_width}>({lhs}, {rhs1});",
-                "=c": "vector_copy_w_scalar<{dtype}, {vector_width}>({lhs}, {constant});",
-                "log": "vector_log<{dtype}, {vector_width}>({lhs}, {rhs1});",
-                "exp": "vector_exp<{dtype}, {vector_width}>({lhs}, {rhs1});",
-                "min": "vector_min<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "max": "vector_max<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                ">": "vector_gt<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "<": "vector_lt<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                ">=": "vector_ge<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "<=": "vector_le<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "==": "vector_eq<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "!=": "vector_ne<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
-                "merge": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
-                # scalar variants type 1
-                "*c": "vector_mult_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "+c": "vector_add_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "-c": "vector_sub_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "/c": "vector_div_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "minc": "vector_min_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "maxc": "vector_max_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                ">c": "vector_gt_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "<c": "vector_lt_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                ">=c": "vector_ge_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "<=c": "vector_le_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "==c": "vector_eq_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                "!=c": "vector_ne_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
-                # scalar variants type 2 for non-commutative ops
-                "c-": "vector_sub_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-                "c/": "vector_div_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-                "c>": "vector_gt_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-                "c<": "vector_lt_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-                "c>=": "vector_ge_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-                "c<=": "vector_le_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
-            },
+            templates=templates,
             vector_width=vector_width,
             vector_input_storage=dace.dtypes.StorageType.Register,
             vector_output_storage=dace.dtypes.StorageType.Register,
