@@ -495,18 +495,32 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
                 copy_out_lines.append(f"    {oa.name} = {scratch}")
             copy_out_lines.append(f"    deallocate({scratch})")
             name_override[fa.sdfg_name] = scratch
-        # Scalar bool dummy: input and inout/out paths.  intent(in)
-        # passes-by-value, so the Fortran intrinsic cast happens
-        # naturally at the call expression — no scratch needed.
-        # intent(out)/inout passes-by-pointer with a length-1 Array
-        # descriptor: scratch + copy-in (zero-init) + copy-out.
+        # Scalar bool dummy (fa.rank == 0): the SDFG declares the C
+        # interface as ``logical(c_bool), value :: <name>``, but the
+        # outer Fortran dummy is default ``logical`` (4 bytes).  A
+        # direct call ``dace_program_X(flag, ...)`` makes gfortran
+        # reject with ``Type mismatch ... passed LOGICAL(4) to
+        # LOGICAL(1)`` -- there is no implicit kind conversion at the
+        # call expression for a pass-by-value bind(c) dummy.
+        #
+        # The fix mirrors the array path: declare a local
+        # ``logical(c_bool)`` temporary, run the Fortran-intrinsic
+        # LOGICAL-kind cast on it (``flag_cbool = flag``), then pass
+        # the temp.  ``name_override`` redirects the SDFG-call name to
+        # the temp; the call-arg renderer in ``build_wrapper_tail``
+        # already knows ``kind == 'scalar'`` means pass-by-value, so it
+        # won't wrap with ``c_loc`` (correct: the interface wants the
+        # value itself, not a c_ptr).
         else:
-            # Scalar of any kind currently surfaces as length-1 Array
-            # only when intent in {'out', 'inout'}.  Skip the scalar
-            # bridge for now; caller-side test infrastructure passes
-            # ``np.bool_`` directly through the SDFG and bypasses the
-            # wrapper.  Land this when a real scalar-LOGICAL caller
-            # exercises the wrapper.
+            scratch = f"{fa.fortran_name}_cbool"
+            decl_lines.append(f"    logical(c_bool) :: {scratch}")
+            copy_in_lines.append(f"    {scratch} = {oa.name}")
+            if oa.intent in ('out', 'inout', ''):
+                # Symmetric copy-back for intent(out)/inout scalars.
+                # No deallocate -- this is a stack temporary, not
+                # allocatable.
+                copy_out_lines.append(f"    {oa.name} = {scratch}")
+            name_override[fa.sdfg_name] = scratch
             continue
 
     return decl_lines, copy_in_lines, copy_out_lines, name_override

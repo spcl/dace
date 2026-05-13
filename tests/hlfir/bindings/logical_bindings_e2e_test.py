@@ -512,25 +512,16 @@ module scalar_flag_driver
   use scalar_flag_dace_bindings
   implicit none
 contains
-  subroutine run(flag, out)
+  subroutine run(flag, out, n)
+    integer, intent(in) :: n
     logical, intent(in) :: flag
-    integer, intent(out) :: out(:)
-    call scalar_flag_dace(flag, out, size(out))
+    integer, intent(out) :: out(n)
+    call scalar_flag_dace(flag, out, n)
   end subroutine run
 end module scalar_flag_driver
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Bridge bug: the bindings emitter skips the scalar LOGICAL "
-    "bridge (block_builders.py:488-494 explicitly defers scalar c_bool "
-    "scratch).  The wrapper currently passes a 4-byte default LOGICAL "
-    "directly to a 1-byte logical(c_bool) SDFG parameter -- gfortran "
-    "rejects with 'Type mismatch ... passed LOGICAL(4) to LOGICAL(1)'.  "
-    "Fix: extend _build_logical_bridges in block_builders.py to also "
-    "emit a scratch path for fa.rank == 0 with dtype == 'bool'.",
-)
 def test_e2e_scalar_logical(tmp_path: Path):
     """Scalar LOGICAL ``intent(in)`` -- the cloudsc LDMAINCALL / LDSLPHY
     pattern.  The bindings emitter currently passes a length-1 c_bool
@@ -555,7 +546,7 @@ def test_e2e_scalar_logical(tmp_path: Path):
     n = 5
     for flag_value in (True, False):
         out_ref = ref.scalar_flag(flag_value, n=n)
-        out = np.zeros(n, dtype=np.int32)
-        mod.scalar_flag_driver.run(flag_value, out)
+        # f2py auto-derives intent(out) array shape from ``n`` -- returns ``out``.
+        out = mod.scalar_flag_driver.run(flag_value, n=n)
         np.testing.assert_array_equal(out, out_ref)
     mod.scalar_flag_dace_bindings.scalar_flag_dace_finalize()
