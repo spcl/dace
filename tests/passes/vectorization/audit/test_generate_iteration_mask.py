@@ -67,14 +67,17 @@ def test_step_w_only_skips_step_1_maps():
         assert not any(name.startswith("_iter_mask") for name in nsdfg.sdfg.arrays)
 
 
-def test_step_w_only_attaches_mask_to_masked_remainder():
-    """After P2 in masked mode, the remainder map runs step-W; P3 with
-    ``step_w_only`` should attach the mask to that body."""
+def test_masked_attaches_mask_to_masked_remainder():
+    """After P2 in masked mode, the remainder map is step-1 with the
+    ``__masked_rem`` label suffix; P3 with ``mode='masked'`` matches the
+    marker and attaches the mask to that body. (Renamed from
+    ``test_step_w_only_*`` after Option A v2 changed P2 to emit step-1
+    remainders + a label marker rather than step-W maps.)"""
     sdfg = add_one.to_sdfg(simplify=True)
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     sdfg.replace_dict({"N": 17})
     SplitMapForVectorRemainder(vector_width=8, mode="masked").apply_pass(sdfg, {})
-    applied = GenerateIterationMask(vector_width=8, mode="step_w_only").apply_pass(sdfg, {})
+    applied = GenerateIterationMask(vector_width=8, mode="masked").apply_pass(sdfg, {})
     assert applied is not None and applied >= 1
 
 

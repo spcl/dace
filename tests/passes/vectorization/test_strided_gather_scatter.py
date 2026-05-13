@@ -1057,11 +1057,13 @@ _SCALAR_STRIDED_XFAIL = pytest.mark.xfail(
     strict=True,
     reason="strided + scalar postamble: compute_edge_subset returns 15-element bounding box into 8-wide vec buffer — todo #11"
 )
-
-
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_gather_load_nondiv(remainder_strategy):
-    N_val = 17
+    # N=22 exercises remainder R=6; the previous N=17 case used R=1 which
+    # happens to land on a single OMP iteration writing one element by
+    # accident, masking the architectural gap (verified end-to-end against
+    # the scalar reference).
+    N_val = 22
     src = numpy.random.rand(N_val)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val)
@@ -1085,7 +1087,7 @@ def test_gather_load_nondiv(remainder_strategy):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_scatter_store_nondiv(remainder_strategy):
-    N_val = 17
+    N_val = 22
     src = numpy.random.rand(N_val)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val)

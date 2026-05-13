@@ -270,10 +270,18 @@ class VectorizeCPU(ppl.Pipeline):
             # body so the lane-fanout collapse (R2-b) picks the _masked
             # template variant on remainder-side fanouts.
             elif remainder_strategy == "masked":
+                # P2 emits remainder as step-1 length-R with a ``__masked_rem``
+                # label marker; P3 detects the marker and attaches _iter_mask
+                # using the map's static lb in the fill formula (so the mask
+                # survives Vectorize's tiling unchanged). Vectorize then tiles
+                # the step-1 length-R remainder to outer step-W trip-1 +
+                # inner step-1 length-W (the standard form), and the C.2-b
+                # wiring routes every body tasklet to its _masked runtime
+                # variant so the trailing OOB lanes are gated.
                 passes.extend([
                     NestInnermostMapBodyIntoNSDFG(),
                     SplitMapForVectorRemainder(vector_width=vector_width, mode="masked"),
-                    GenerateIterationMask(vector_width=vector_width, mode="step_w_only"),
+                    GenerateIterationMask(vector_width=vector_width, mode="masked"),
                 ])
             passes.append(vectorizer)
         else:

@@ -210,6 +210,16 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             if edge.data.other_subset is not None:
                 raise NotImplementedError("other subset support not implemented")
 
+    # Drop ``_iter_mask`` arrays entirely from the classification: they are
+    # transient W-wide bool buffers filled per lane by GenerateIterationMask
+    # (P3) and are NOT user data the vectorizer should touch — neither
+    # vectorize (they are already W-wide) nor pack (they are not strided).
+    # Their fill memlet is ``[0:W]`` which would fail the point-access
+    # assert below; their packing path crashes on tasklet edges.
+    for arr_name in list(all_accesses_to_arrays.keys()):
+        if arr_name == "_iter_mask" or arr_name.startswith("_iter_mask_"):
+            del all_accesses_to_arrays[arr_name]
+
     array_is_vectorizable = {k: True for k in all_accesses_to_arrays}
 
     for arr_name, accesses in all_accesses_to_arrays.items():

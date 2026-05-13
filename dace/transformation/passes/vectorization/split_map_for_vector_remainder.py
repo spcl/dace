@@ -105,12 +105,24 @@ class SplitMapForVectorRemainder(ppl.Pass):
         scope_view = state.scope_subgraph(map_entry, include_entry=True, include_exit=True)
         rem_scope = replicate_scope(state.sdfg, state, scope_view)
 
-        # Tighten the main map's innermost range and the remainder's.
+        # Tighten the main map's innermost range and the remainder's. Both
+        # ``scalar`` and ``masked`` modes emit a step-1 length-R remainder;
+        # the only difference is the schedule + label marker:
+        #
+        # - ``scalar``: Sequential schedule so the vectorizer leaves it alone
+        #   (codegen emits a plain scalar tail loop).
+        # - ``masked``: default schedule + ``__masked_rem`` label marker so
+        #   ``GenerateIterationMask`` (P3) attaches an ``_iter_mask`` to the
+        #   body and the vectorizer tiles the map to step-W trip-1 via
+        #   MapTiling's ``divides_evenly`` hint. The masked emitter (C.2-b)
+        #   then routes every body tasklet to its ``_masked`` runtime variant
+        #   so the trailing OOB lanes are gated.
         map_entry.map.range[-1] = (lb, main_end, 1)
-        rem_step = 1 if self.mode == "scalar" else W
-        rem_scope.entry.map.range[-1] = (rem_start, ub, rem_step)
+        rem_scope.entry.map.range[-1] = (rem_start, ub, 1)
 
         if self.mode == "scalar":
             # Scalar remainder must not be vectorised by the downstream pass.
             rem_scope.entry.map.schedule = dace.dtypes.ScheduleType.Sequential
+        else:  # "masked"
+            rem_scope.entry.map.label = rem_scope.entry.map.label + "__masked_rem"
         return True

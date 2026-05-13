@@ -270,6 +270,12 @@ class Vectorize(ppl.Pass):
 
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
+        # ``_iter_mask`` arrays attached by ``GenerateIterationMask`` (P3) are
+        # already correctly typed (``bool[W]``) and must NOT be reshaped or
+        # have their dtype rewritten to ``vector_op_numeric_type`` (which
+        # would convert ``bool`` to ``float64`` and break the masked emitter
+        # contract). Exclude them from the W-wide-transient set below.
+        transient_arrays = {n for n in transient_arrays if n != "_iter_mask" and not n.startswith("_iter_mask_")}
         vector_width_transient_arrays = {
             arr_name
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
@@ -519,6 +525,13 @@ class Vectorize(ppl.Pass):
         for state in sdfg.all_states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data in array_accessed_to_be_packed:
+                    # Skip edges sourced from non-AccessNodes (e.g., the
+                    # CPP ``_iter_mask_fill`` tasklet emitted by P3). The
+                    # packing path assumes both endpoints are AccessNodes,
+                    # so the ``edge.src.data`` access below would AttributeError
+                    # on a Tasklet src.
+                    if not isinstance(edge.src, dace.nodes.AccessNode):
+                        continue
                     # Create a packed copy
                     # If it is a source node (no in edges, copy in), otherwise replace with the packed data
                     if state.in_degree(edge.src) == 0 and edge.src.data == edge.data.data:
@@ -1007,6 +1020,12 @@ class Vectorize(ppl.Pass):
 
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
+                # Skip non-Python tasklets: already-emitted CPP intrinsics
+                # (vector_<op> bodies, _iter_mask_fill, gather_load /
+                # scatter_store intrinsic emissions) are in their final form;
+                # classify_tasklet asserts Language.Python and would fail.
+                if node.code.language != dace.dtypes.Language.Python:
+                    continue
                 tasklet_info = tutil.classify_tasklet(state, node)
                 ttype: tutil.TaskletType = tasklet_info.get("type")
                 # If we still have scalar-scalar or scalar-symbol or symbol-symbol op
@@ -1029,7 +1048,11 @@ class Vectorize(ppl.Pass):
 
                 mask_connector_arg = None
                 if iter_mask_name is not None and "_mask" not in node.in_connectors:
-                    node.add_in_connector("_mask")
+                    # Declare the connector as a bool pointer so DaCe codegen
+                    # emits ``const bool* _mask`` rather than inferring
+                    # ``double*`` from the tasklet's other in-connectors.
+                    mask_ptr_type = dace.dtypes.pointer(dace.bool_)
+                    node.add_in_connector("_mask", dtype=mask_ptr_type, force=True)
                     mask_an = state.add_access(iter_mask_name)
                     state.add_edge(mask_an, None, node, "_mask",
                                    dace.memlet.Memlet(f"{iter_mask_name}[0:{self.vector_width}]"))

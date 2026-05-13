@@ -33,7 +33,7 @@ from dace.sdfg import nodes
 from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme
 
 
-_ASSIGN_LABEL_RE = re.compile(r"^assign_(\d+)$")
+_ASSIGN_LABEL_RE = re.compile(r"^(?:assign|a)_(\d+)$")
 
 _ITER_MASK_PREFIX = "_iter_mask"
 

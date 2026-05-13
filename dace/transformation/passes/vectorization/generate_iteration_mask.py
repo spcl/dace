@@ -46,8 +46,11 @@ class GenerateIterationMask(ppl.Pass):
     mode = properties.Property(dtype=str,
                                default="step_w_only",
                                allow_none=False,
-                               desc="``step_w_only`` masks only maps with step==vector_width, "
-                               "``all_innermost`` masks every innermost map")
+                               desc="``step_w_only`` masks only maps with step==vector_width "
+                               "(legacy step-W detection); ``all_innermost`` masks every innermost "
+                               "map (used by full_loop_mask strategy); ``masked`` masks maps tagged "
+                               "``__masked_rem`` by SplitMapForVectorRemainder(mode='masked'). The "
+                               "mode names match the ``VectorizeCPU.remainder_strategy`` knob.")
 
     def __init__(self, vector_width: int = 8, mode: str = "step_w_only"):
         super().__init__()
@@ -61,9 +64,9 @@ class GenerateIterationMask(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        if self.mode not in ("step_w_only", "all_innermost"):
-            raise ValueError(f"GenerateIterationMask.mode must be 'step_w_only' or 'all_innermost', "
-                             f"got {self.mode!r}")
+        if self.mode not in ("step_w_only", "all_innermost", "masked"):
+            raise ValueError(f"GenerateIterationMask.mode must be 'step_w_only', 'all_innermost', or "
+                             f"'masked', got {self.mode!r}")
         W = self.vector_width
         applied = 0
         for n, g in [(n, g) for n, g in sdfg.all_nodes_recursive()
@@ -74,6 +77,8 @@ class GenerateIterationMask(ppl.Pass):
                 continue
             lb, ub, step = n.map.range[-1]
             if self.mode == "step_w_only" and (step != W) and (str(step) != str(W)):
+                continue
+            if self.mode == "masked" and not n.map.label.endswith("__masked_rem"):
                 continue
             nsdfg_node = get_single_nsdfg_inside_map(g, n)
             if nsdfg_node is None:
@@ -92,13 +97,24 @@ class GenerateIterationMask(ppl.Pass):
 
         mask_name = add_mask(inner, "_iter_mask", W)
 
-        # Make sure the iteration variable and the upper bound are visible
-        # as symbols inside the nested SDFG. ``iter_var`` is the map's
-        # innermost parameter; while the map entry registers the symbol
-        # in scope, the inner NSDFG also needs ``iter_var`` in its own
-        # ``symbols`` table and ``symbol_mapping`` so the init tasklet's
-        # CPP body (which references ``iter_var``) can resolve it.
-        symbols_to_ensure = [iter_var] + [str(s) for s in dace.symbolic.symlist(ub).values()]
+        # Mask fill formula uses the map's STATIC start value (``lb``) rather
+        # than the dynamic ``iter_var``. Reason: after Vectorize tiles the
+        # map (W-step outer + step-1 length-W inner), the body NSDFG runs
+        # per-inner-iteration; if the formula referenced the loop param it
+        # would re-fill the mask 8x with shifting values. Using ``lb`` (a
+        # symbolic expression in the outer-scope symbols, e.g. ``8*floor(N/8)``
+        # for the masked remainder) makes the formula invariant — same value
+        # on every inner iteration. For step-W trip-1 maps (the legacy
+        # ``step_w_only`` path), ``lb == iter_var`` at runtime so this is
+        # backward compatible.
+        lb_str = str(lb)
+        ub_str = str(ub)
+
+        # Ensure every free symbol in ``lb`` and ``ub`` is visible inside the
+        # inner NSDFG. The map's own ``iter_var`` is also kept in the symbol
+        # set for backward compatibility with callers that might rely on it.
+        symbols_to_ensure = ([iter_var] + [str(s) for s in dace.symbolic.symlist(ub).values()] +
+                             [str(s) for s in dace.symbolic.symlist(lb).values()])
         for sname in symbols_to_ensure:
             if sname not in inner.symbols and sname in nsdfg_node.sdfg.parent_sdfg.symbols:
                 inner.add_symbol(sname, nsdfg_node.sdfg.parent_sdfg.symbols[sname])
@@ -114,10 +130,8 @@ class GenerateIterationMask(ppl.Pass):
         # the existing start and the new node.
         old_start = inner.start_block
 
-        # Each lane ``l`` sets ``mask[l] = (iter_var + l <= ub)`` so the
-        # vectorizer's base predicate matches the iteration's valid lane count.
-        ub_str = str(ub)
-        body = "\n".join([f"_o[{l}] = ({iter_var} + {l} <= {ub_str});" for l in range(W)])
+        # Each lane ``l`` sets ``mask[l] = (lb + l <= ub)``.
+        body = "\n".join([f"_o[{l}] = (({lb_str}) + {l} <= ({ub_str}));" for l in range(W)])
         prep = inner.add_state("_iter_mask_init", is_start_block=True)
         an = prep.add_access(mask_name)
         t = prep.add_tasklet(
