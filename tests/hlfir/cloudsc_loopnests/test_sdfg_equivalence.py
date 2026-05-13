@@ -440,3 +440,92 @@ def test_cloudsc_full_microphysics_solve_sdfg_matches_f2py(tmp_path: Path):
     # gfortran nearly bit-exactly.
     np.testing.assert_allclose(zqlhs_sdfg, zqlhs_ref, atol=1e-15, rtol=1e-15)
     np.testing.assert_allclose(zqxn_sdfg, zqxn_ref, atol=1e-15, rtol=1e-15)
+
+
+def test_cloudsc_jk_precip_chain_sdfg_matches_f2py(tmp_path: Path):
+    """Multi-JK precip chain reproducer: vertical loop over JK=NCLDTOP..KLEV
+    that runs the suspect dataflow ZRHO -> ZFALLSINK -> ZPFPLSX -> ZQPRETOT
+    -> ZCOVPTOT with the line-3608 3-way multiply, the line-3614 NCLDQR+
+    NCLDQS sum, and the max-overlap ZCOVPTOT update.  Skips the LU solver
+    entirely (takes ZQXN and ZFALLSINK as inputs) so we can bisect the
+    JK-loop-carried portion of the cloudsc_full divergence chain from the
+    LU solver portion.
+
+    This is the first loopnest that exercises a multi-iteration JK loop
+    with loop-carried state.  Other loopnests in this file are single
+    iteration (KLON-only or KLON,NCLV-shaped).
+    """
+    src = (_HERE / "cloudsc_jk_precip_chain.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "jk_precip_ref")
+    sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="jk_precip_chain")
+
+    rng = np.random.default_rng(107)
+    # Match cloudsc_full's geometry so the bug-reproducing JK iteration
+    # count is the same.
+    klon, klev, nclv = 1, 137, 5
+    ncldqr, ncldqs = 3, 4
+    ncldtop = 15
+    kidia, kfdia = 1, klon
+    rd, rg = 287.0597, 9.80665
+    ptsphy = 1800.0  # 30-min physics timestep
+    zepsec = 1e-14
+
+    # Pressure increases with depth; T tapers near surface.  ZA random in [0,1].
+    pap = np.asfortranarray(
+        np.linspace(2e4, 1e5, klev)[None, :].repeat(klon, axis=0) + 100.0 * rng.standard_normal((klon, klev)))
+    paph = np.asfortranarray(np.linspace(1.5e4, 1.05e5, klev + 1)[None, :].repeat(klon, axis=0))
+    ztp1 = np.asfortranarray(220.0 + 60.0 * rng.random((klon, klev), dtype=np.float64))
+    za = np.asfortranarray(rng.random((klon, klev), dtype=np.float64))
+
+    # ZQXN / ZFALLSINK: mostly small, sometimes near zero -- to exercise
+    # the IF (ZQPRETOT < ZEPSEC) branch on both sides of the threshold.
+    zqxn = np.asfortranarray(1e-7 * rng.random((klon, klev, nclv), dtype=np.float64))
+    zfallsink_in = np.asfortranarray(0.5 + 0.4 * rng.random((klon, klev, nclv), dtype=np.float64))
+
+    # Outputs.
+    zpfplsx_ref = np.zeros((klon, klev + 1, nclv), order="F")
+    zqpretot_ref = np.zeros((klon, klev), order="F")
+    zcovptot_ref = np.zeros((klon, klev), order="F")
+    zpfplsx_sdfg = np.zeros_like(zpfplsx_ref, order="F")
+    zqpretot_sdfg = np.zeros_like(zqpretot_ref, order="F")
+    zcovptot_sdfg = np.zeros_like(zcovptot_ref, order="F")
+
+    # f2py positional (returns the 3 OUTs as a tuple).  klon/klev/nclv
+    # auto-derived from array shapes.
+    zpfplsx_ref, zqpretot_ref, zcovptot_ref = ref.jk_precip_chain(kidia, kfdia, ncldqr, ncldqs, ncldtop, pap, paph,
+                                                                  ztp1, za, zqxn, zfallsink_in, rd, rg, ptsphy, zepsec)
+
+    kw = dict(pap=pap,
+              paph=paph,
+              ztp1=ztp1,
+              za=za,
+              zqxn=zqxn,
+              zfallsink_in=zfallsink_in,
+              zpfplsx=zpfplsx_sdfg,
+              zqpretot=zqpretot_sdfg,
+              zcovptot=zcovptot_sdfg,
+              rd=rd,
+              rg=rg,
+              ptsphy=ptsphy,
+              zepsec=zepsec)
+    kw.update(
+        _sdfg_call_args(
+            sdfg,
+            dict(kidia=kidia,
+                 kfdia=kfdia,
+                 klon=klon,
+                 klev=klev,
+                 nclv=nclv,
+                 ncldqr=ncldqr,
+                 ncldqs=ncldqs,
+                 ncldtop=ncldtop)))
+    sdfg(**kw)
+
+    # Strict ulp-level tolerance.  If this passes, the multi-JK precip
+    # carry is bit-correct under the bridge; cloudsc_full's drift then
+    # has to be upstream (in the ZFALLSINK / ZQXN computation that feeds
+    # this chain).  If it fails, we've isolated the bug to the precip
+    # chain itself across JK iterations.
+    np.testing.assert_allclose(zpfplsx_sdfg, zpfplsx_ref, atol=1e-15, rtol=1e-15, err_msg="ZPFPLSX diverges")
+    np.testing.assert_allclose(zqpretot_sdfg, zqpretot_ref, atol=1e-15, rtol=1e-15, err_msg="ZQPRETOT diverges")
+    np.testing.assert_allclose(zcovptot_sdfg, zcovptot_ref, atol=1e-15, rtol=1e-15, err_msg="ZCOVPTOT diverges")
