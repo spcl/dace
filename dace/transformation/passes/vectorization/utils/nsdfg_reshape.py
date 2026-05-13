@@ -504,6 +504,135 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
         return copy.deepcopy(edge_subset)
 
 
+def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str,
+                                orig_arr, vector_width: int, stride: int, *, direction: str) -> None:
+    """Wire a strided boundary edge into the NSDFG so the strided load /
+    store happens INSIDE the NSDFG body.
+
+    Direction "in": outer edge passes the full bbox to the NSDFG connector
+    (reshaped to (bbox_size,)). Inside the NSDFG, a new prep state runs
+    ``strided_load<T>`` from the connector array into a fresh W-wide
+    transient ``<inner_conn>_vec``. Body memlets that referenced the
+    connector are rewritten to reference ``<inner_conn>_vec``.
+
+    Direction "out": symmetric — the body writes to ``<inner_conn>_vec``;
+    a finish state runs ``strided_store<T>`` from the transient into the
+    bbox-shaped connector; the outer edge carries the bbox subset.
+    """
+    assert direction in ("in", "out")
+    # bbox shape: only the stride-1 dim is wider than W. Other dims are
+    # preserved from the original array.
+    bbox_shape = list(orig_arr.shape)
+    stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
+    assert len(stride_one_indices) == 1, f"Strided-inside requires a single stride-1 dim; got {orig_arr.strides}"
+    stride_one_idx = stride_one_indices[0]
+    edge_b, edge_e, _ = edge.data.subset[stride_one_idx]
+    bbox_size = edge_e - edge_b + 1
+    bbox_shape[stride_one_idx] = bbox_size
+
+    # Reshape the inner connector array to the bbox shape.
+    if inner_conn in inner_sdfg.arrays:
+        prev_arr = inner_sdfg.arrays[inner_conn]
+        inner_sdfg.remove_data(inner_conn, validate=False)
+    else:
+        prev_arr = orig_arr
+    inner_sdfg.add_array(name=inner_conn,
+                         shape=tuple(bbox_shape),
+                         dtype=orig_arr.dtype,
+                         storage=getattr(prev_arr, "storage", orig_arr.storage),
+                         transient=False,
+                         find_new_name=False,
+                         may_alias=False)
+
+    # Add the W-wide inner transient.
+    vec_name = f"__strided_buf_{inner_conn}"
+    if vec_name in inner_sdfg.arrays:
+        inner_sdfg.remove_data(vec_name, validate=False)
+    inner_sdfg.add_array(name=vec_name,
+                         shape=(vector_width, ),
+                         dtype=orig_arr.dtype,
+                         storage=dace.dtypes.StorageType.Register,
+                         transient=True,
+                         find_new_name=False,
+                         may_alias=False)
+
+    dtype_ctype = orig_arr.dtype.ctype
+
+    if direction == "in":
+        # Rewrite body memlets: every reference to ``inner_conn`` in body
+        # states becomes ``vec_name``. The connector's underlying array
+        # (still named ``inner_conn``) stays bbox-shaped — only the prep
+        # state reads it; the body sees ``vec_name`` instead.
+        for inner_state in list(inner_sdfg.states()):
+            for inner_edge in inner_state.edges():
+                if inner_edge.data is not None and inner_edge.data.data == inner_conn:
+                    inner_edge.data.data = vec_name
+            for node in list(inner_state.nodes()):
+                if isinstance(node, dace.nodes.AccessNode) and node.data == inner_conn:
+                    node.data = vec_name
+
+        # Insert prep state at the start: strided_load(connector, vec).
+        old_start = inner_sdfg.start_block
+        prep = inner_sdfg.add_state("_strided_load_prep_" + inner_conn, is_start_block=True)
+        bbox_an = prep.add_access(inner_conn)
+        vec_an = prep.add_access(vec_name)
+        tasklet = prep.add_tasklet(
+            name=f"_strided_load_{inner_conn}",
+            inputs={"_in"},
+            outputs={"_out"},
+            code=f"strided_load<{dtype_ctype}>(_in, _out, {vector_width}, {stride});",
+            language=dace.dtypes.Language.CPP,
+        )
+        prep.add_edge(bbox_an, None, tasklet, "_in",
+                      dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+        prep.add_edge(tasklet, "_out", vec_an, None,
+                      dace.memlet.Memlet.from_array(vec_name, inner_sdfg.arrays[vec_name]))
+        if old_start is not None and old_start is not prep:
+            inner_sdfg.add_edge(prep, old_start, dace.InterstateEdge())
+
+        # Outer edge: re-attach with the bbox subset directly to the NSDFG.
+        state.remove_edge(edge)
+        state.add_edge(edge.src, edge.src_conn, nsdfg_node, edge.dst_conn,
+                       dace.memlet.Memlet(data=orig_data, subset=edge.data.subset))
+    else:
+        # Direction "out": rewrite body's writes from inner_conn → vec_name;
+        # add a finish state that strided_stores vec → connector.
+        for inner_state in list(inner_sdfg.states()):
+            for inner_edge in inner_state.edges():
+                if inner_edge.data is not None and inner_edge.data.data == inner_conn:
+                    inner_edge.data.data = vec_name
+            for node in list(inner_state.nodes()):
+                if isinstance(node, dace.nodes.AccessNode) and node.data == inner_conn:
+                    node.data = vec_name
+
+        # Add finish state after every existing sink state.
+        sink_states = [s for s in inner_sdfg.states() if len(inner_sdfg.out_edges(s)) == 0]
+        finish = inner_sdfg.add_state("_strided_store_finish_" + inner_conn)
+        vec_an = finish.add_access(vec_name)
+        bbox_an = finish.add_access(inner_conn)
+        tasklet = finish.add_tasklet(
+            name=f"_strided_store_{inner_conn}",
+            inputs={"_in"},
+            outputs={"_out"},
+            code=f"strided_store<{dtype_ctype}>(_in, _out, {vector_width}, {stride});",
+            language=dace.dtypes.Language.CPP,
+        )
+        finish.add_edge(vec_an, None, tasklet, "_in",
+                        dace.memlet.Memlet.from_array(vec_name, inner_sdfg.arrays[vec_name]))
+        finish.add_edge(tasklet, "_out", bbox_an, None,
+                        dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+        for sink in sink_states:
+            if sink is finish:
+                continue
+            inner_sdfg.add_edge(sink, finish, dace.InterstateEdge())
+
+        # Outer edge: re-attach with the bbox subset directly from the NSDFG.
+        state.remove_edge(edge)
+        state.add_edge(nsdfg_node, edge.src_conn, edge.dst, edge.dst_conn,
+                       dace.memlet.Memlet(data=orig_data, subset=edge.data.subset))
+
+
 def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
                    vector_width: int, vector_storage: dace.dtypes.StorageType, *, direction: str) -> Set[str]:
     """
@@ -534,6 +663,45 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
             orig_arr = state.sdfg.arrays[orig_data]
             inner_conn = e.dst_conn if direction == "in" else e.src_conn
 
+            # Strided detection: BEFORE prepare_vectorized_array, check the
+            # OUTER edge's subset volume in the array's stride-1 dim. If the
+            # bbox is wider than ``vector_width``, the W lanes are at a fixed
+            # stride > 1 and we route the boundary through a strided_load /
+            # strided_store INSIDE the NSDFG body (not at the map_entry
+            # boundary). Stride formula: bbox = (W-1)*stride + 1.
+            stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
+            is_strided = False
+            stride_value = 1
+            if len(stride_one_indices) == 1:
+                edge_b, edge_e, edge_s = e.data.subset[stride_one_indices[0]]
+                try:
+                    bbox_vol = int(edge_e - edge_b + 1)
+                except (TypeError, ValueError):
+                    bbox_vol = None
+                if bbox_vol is not None and bbox_vol > vector_width and edge_s == 1:
+                    if vector_width <= 1 or (bbox_vol - 1) % (vector_width - 1) != 0:
+                        raise NotImplementedError(
+                            f"_process_edges (direction={direction!r}): outer subset on {orig_data} "
+                            f"has bbox volume {bbox_vol}; (W-1)*stride+1 doesn't yield an integer "
+                            f"stride for vector_width={vector_width}.")
+                    is_strided = True
+                    stride_value = (bbox_vol - 1) // (vector_width - 1)
+
+            if is_strided:
+                # Strided boundary (inside the NSDFG): the FULL bbox passes
+                # through to the NSDFG connector (kept at its original name,
+                # array reshaped to bbox shape). A prep / finish state inside
+                # the NSDFG performs ``strided_load<T>`` (in) or
+                # ``strided_store<T>`` (out) into / from a new W-wide
+                # transient. The body's memlets are rewritten to reference
+                # the W-wide transient. Note: strided arrays are NOT added
+                # to ``vectorized_datanames`` so the downstream connector
+                # rename (``movable_data`` → ``VecNameScheme.make(movable_data)``)
+                # skips them — the connector keeps the original name.
+                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn, orig_data,
+                                            orig_arr, vector_width, stride_value, direction=direction)
+                continue
+
             inout_data_name = None
             if direction == "out" and isinstance(e.src, dace.nodes.NestedSDFG) and e.src_conn in e.src.in_connectors:
                 # Inout connector: a sibling ``process_in_edges`` call already
@@ -560,32 +728,6 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
             vectorized_datanames.add(vector_dataname)
 
             copy_subset = compute_edge_subset(e.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
-
-            # Defensive: the destination ``an`` is allocated at shape
-            # (vector_width,). If ``copy_subset`` has volume > vector_width
-            # (the strided-but-misclassified-as-vectorizable case under
-            # remainder_strategy="scalar" where compute_edge_subset's
-            # ``stride_one_begin == 0`` branch returns the original
-            # bounding-box subset unchanged), the codegen-emitted CopyND
-            # writes past the destination buffer and SIGABRTs / SIGSEGVs
-            # at runtime. Raise loudly here so the failure is named.
-            try:
-                copy_volume = copy_subset.num_elements_exact()
-            except Exception:
-                copy_volume = copy_subset.num_elements()
-            try:
-                copy_volume_int = int(copy_volume)
-            except (TypeError, ValueError):
-                copy_volume_int = None
-            if copy_volume_int is not None and copy_volume_int > vector_width:
-                raise NotImplementedError(
-                    f"_process_edges (direction={direction!r}): copy memlet on {orig_data} has "
-                    f"subset {copy_subset} (volume {copy_volume_int}) > vector_width "
-                    f"({vector_width}); destination buffer is (vector_width,) so the emitted "
-                    f"CopyND would overflow. This is the strided-pattern + non-scalar-remainder "
-                    f"interaction (todo: scalar-postamble investigation). Workaround: use "
-                    f"remainder_strategy='divides_evenly' for this kernel, or wait for "
-                    f"R2's masked-remainder + intrinsic-collapse path.")
 
             an = state.add_access(vector_dataname)
             an.setzero = True
@@ -952,11 +1094,19 @@ def add_copies_before_and_after_nsdfg(
                     f"{set(state.out_edges_by_connector(nsdfg_node, vec_data))}")
                 oe.src_conn = vec_data
 
-    # Move vector data above the vector map, it makes merging overlapping accesses easier
+    # Move vector data above the vector map, it makes merging overlapping accesses easier.
+    # Skip when the AccessNode's in-edge does NOT come directly from a MapEntry:
+    # that's the strided-load boundary, where ``_process_edges`` inserts a
+    # ``strided_load<T>`` CPP tasklet between map_entry and the vec AccessNode.
+    # The tasklet is correctly placed inside the map scope; sifting the vec
+    # AccessNode above the map would break the tasklet wiring.
     sdict = state.scope_dict()
     for ie in state.in_edges(nsdfg_node):
         if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
-            sift_access_node_up(state, ie.src, sdict[ie.src])
+            an = ie.src
+            an_in_edges = state.in_edges(an)
+            if len(an_in_edges) == 1 and isinstance(an_in_edges[0].src, dace.nodes.MapEntry):
+                sift_access_node_up(state, an, sdict[an])
 
     return inserted_array_names
 

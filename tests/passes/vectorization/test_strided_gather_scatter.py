@@ -1053,10 +1053,6 @@ def test_diagonal_scatter_store_fp32():
 #
 # N=17, W=8 ⇒ main covers 16, remainder covers 1.
 
-_SCALAR_STRIDED_XFAIL = pytest.mark.xfail(
-    strict=True,
-    reason="strided + scalar postamble: compute_edge_subset returns 15-element bounding box into 8-wide vec buffer — todo #11"
-)
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_gather_load_nondiv(remainder_strategy):
     # N=22 exercises remainder R=6; the previous N=17 case used R=1 which
@@ -1109,10 +1105,7 @@ def test_scatter_store_nondiv(remainder_strategy):
     )
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    pytest.param("scalar", marks=_SCALAR_STRIDED_XFAIL),
-    pytest.param("masked", marks=_SCALAR_STRIDED_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_strided_load_stride_2_nondiv(remainder_strategy):
     N_val = 17
     src = numpy.random.rand(2 * N_val)
@@ -1134,10 +1127,7 @@ def test_strided_load_stride_2_nondiv(remainder_strategy):
     )
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    pytest.param("scalar", marks=_SCALAR_STRIDED_XFAIL),
-    pytest.param("masked", marks=_SCALAR_STRIDED_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_strided_store_stride_2_nondiv(remainder_strategy):
     N_val = 17
     src = numpy.random.rand(N_val)
