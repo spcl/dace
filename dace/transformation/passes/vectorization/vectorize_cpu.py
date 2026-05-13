@@ -100,6 +100,28 @@ class VectorizeCPU(ppl.Pipeline):
             "c<": "vector_lt_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
             "c>=": "vector_ge_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
             "c<=": "vector_le_w_scalar_c<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1});",
+            # Masked variants (Option F overlay): emitted when the tasklet has
+            # an ``_iter_mask`` input connector wired from a P3-generated
+            # ``_iter_mask: bool[W]`` array. Bound to ``_av_masked`` from
+            # ``cpu_vectorizable_math_common.h`` — uniformly available across
+            # arches via the macros; arch-specific masked specializations can
+            # be added later for ops where they're a measured win.
+            "*_masked": "vector_mult_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "+_masked": "vector_add_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "-_masked": "vector_sub_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "/_masked": "vector_div_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "=_masked": "vector_copy_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {mask});",
+            "=c_masked": "vector_copy_w_scalar_av_masked<{dtype}, {vector_width}>({lhs}, {constant}, {mask});",
+            "log_masked": "vector_log_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {mask});",
+            "exp_masked": "vector_exp_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {mask});",
+            "min_masked": "vector_min_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "max_masked": "vector_max_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2}, {mask});",
+            "*c_masked": "vector_mult_w_scalar_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant}, {mask});",
+            "+c_masked": "vector_add_w_scalar_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant}, {mask});",
+            "-c_masked": "vector_sub_w_scalar_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant}, {mask});",
+            "/c_masked": "vector_div_w_scalar_av_masked<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant}, {mask});",
+            "c-_masked": "vector_sub_w_scalar_c_av_masked<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1}, {mask});",
+            "c/_masked": "vector_div_w_scalar_c_av_masked<{dtype}, {vector_width}>({lhs}, {constant}, {rhs1}, {mask});",
         }
         # Apply per-op variant overrides. Rewrites ``vector_<name><...>`` to
         # ``vector_<name>_<suffix><...>`` in the affected template string;
@@ -108,9 +130,13 @@ class VectorizeCPU(ppl.Pipeline):
         import re as _re
         _vec_name_pat = _re.compile(r"\bvector_(\w+)<")
         for op in force_pscalar_ops | force_autovec_ops:
+            if op.endswith("_masked"):
+                raise ValueError(f"VectorizeCPU: override key {op!r} references a masked-variant "
+                                 f"entry; force_*_ops applies to the default-path emission only. "
+                                 f"Use the base op identifier (without _masked).")
             if op not in templates:
                 raise KeyError(f"VectorizeCPU: force_*_ops references unknown op {op!r}; "
-                               f"valid op identifiers: {sorted(templates)}")
+                               f"valid op identifiers: {sorted(k for k in templates if not k.endswith('_masked'))}")
         for op in force_pscalar_ops:
             templates[op] = _vec_name_pat.sub(r"vector_\1_pscalar<", templates[op], count=1)
         for op in force_autovec_ops:

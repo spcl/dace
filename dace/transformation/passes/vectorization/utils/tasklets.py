@@ -16,7 +16,7 @@ emission.
 import copy
 import re
 from dataclasses import dataclass
-from typing import Dict, Set, Tuple, Union
+from typing import Dict, Optional, Set, Tuple, Union
 
 import dace
 from dace.memlet import Memlet
@@ -126,11 +126,16 @@ def _is_number(s: str) -> bool:
 class EmitCtx:
     """Per-tasklet emission state shared by every per-``TaskletType`` emitter.
 
-    Bundles the eight variables that ``_generate_code`` and the per-type
-    emitters used to read from the enclosing closure of
-    ``instantiate_tasklet_from_info``. Explicit container, no inheritance —
-    just a flat dataclass so the helpers move to module level without
-    losing access to anything they need.
+    Bundles the variables that ``_generate_code`` and the per-type emitters
+    used to read from the enclosing closure of ``instantiate_tasklet_from_info``.
+    Explicit container, no inheritance — just a flat dataclass so the helpers
+    move to module level without losing access to anything they need.
+
+    ``mask_connector`` (C.2b): the name of an ``_iter_mask`` input connector
+    on the tasklet, set when the upstream pipeline wired a P3-generated
+    ``_iter_mask: bool[W]`` array to this tasklet. When set, the emitter
+    looks up ``templates[op + "_masked"]`` and formats with ``mask=<name>``;
+    when ``None`` (the default), the emitter uses the unsuffixed template.
     """
     state: dace.SDFGState
     node: dace.nodes.Tasklet
@@ -140,6 +145,23 @@ class EmitCtx:
     vector_map_param: str
     is_commutative: bool
     fallbackcode_due_to_types: bool
+    mask_connector: Optional[str] = None
+
+
+def _template_key(ctx: EmitCtx, base_op: str) -> str:
+    """Return the templates-dict key for ``base_op`` adjusted for ``mask_connector``.
+
+    When ``ctx.mask_connector`` is set AND the masked variant exists in the
+    templates dict, returns ``base_op + "_masked"``. Otherwise returns
+    ``base_op`` unchanged. Callers route to the masked variant by passing
+    ``mask=ctx.mask_connector`` into the .format() call; the unsuffixed
+    template silently ignores the extra kwarg.
+    """
+    if ctx.mask_connector is not None:
+        masked = base_op + "_masked"
+        if masked in ctx.templates:
+            return masked
+    return base_op
 
 
 def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> str:
@@ -151,6 +173,10 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
     - Commutative and non-commutative ops
     - Single constant + array/scalar (or array/scalar + constant)
     - Fallback loops if operator not supported (hope compiler will do it)
+
+    When ``ctx.mask_connector`` is set the emitter routes to ``op_ + "_masked"``
+    template entries (if present) and passes ``mask=ctx.mask_connector`` to
+    .format(), producing calls like ``vector_<op>_av_masked(out, a, b, mask)``.
     """
 
     # Get out edge and its dtype
@@ -169,6 +195,7 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
 
     vw = ctx.vector_width
     templates = ctx.templates
+    mask_arg = ctx.mask_connector or ""
 
     # Multiple dtypes involved - fallback code should be used
     if not ctx.fallbackcode_due_to_types:
@@ -180,19 +207,14 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                 constant = const1_ if const1_ is not None else const2_
                 if constant is None:
                     # Single array or repeated array case
-                    if ctx.is_commutative:
-                        return templates[op_].format(rhs1=rhs,
-                                                     rhs2=rhs,
-                                                     lhs=lhs_,
-                                                     op=op_,
-                                                     vector_width=vw,
-                                                     dtype=dtype_)
-                    return templates[op_].format(rhs1=rhs,
+                    key = _template_key(ctx, op_)
+                    return templates[key].format(rhs1=rhs,
                                                  rhs2=rhs,
                                                  lhs=lhs_,
                                                  op=op_,
                                                  vector_width=vw,
-                                                 dtype=dtype_)
+                                                 dtype=dtype_,
+                                                 mask=mask_arg)
                 else:
                     # Single array + constant
                     cop_ = None
@@ -205,21 +227,25 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                         cop_ = op_ + "c"
                     # Maybe this constant version is not implemented in templates
                     if cop_ in templates:
-                        return templates[cop_].format(rhs1=rhs,
-                                                      constant=_str_to_float_or_str(constant),
-                                                      lhs=lhs_,
-                                                      op=op_,
-                                                      vector_width=vw,
-                                                      dtype=dtype_)
+                        key = _template_key(ctx, cop_)
+                        return templates[key].format(rhs1=rhs,
+                                                     constant=_str_to_float_or_str(constant),
+                                                     lhs=lhs_,
+                                                     op=op_,
+                                                     vector_width=vw,
+                                                     dtype=dtype_,
+                                                     mask=mask_arg)
 
             else:
                 # Two arrays
-                return templates[op_].format(rhs1=rhs1_,
+                key = _template_key(ctx, op_)
+                return templates[key].format(rhs1=rhs1_,
                                              rhs2=rhs2_,
                                              lhs=lhs_,
                                              op=op_,
                                              vector_width=vw,
-                                             dtype=dtype_)
+                                             dtype=dtype_,
+                                             mask=mask_arg)
 
     # Fallback: unsupported operator
     comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
