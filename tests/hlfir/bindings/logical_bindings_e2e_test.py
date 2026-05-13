@@ -433,56 +433,87 @@ END SUBROUTINE flip_cbool
 """
 
 _CBOOL_DRIVER = """
-module flip_cbool_driver
+! C-callable driver that exercises the pass-through path: ``mask`` is
+! ``logical(c_bool)`` matching the SDFG's bool ABI exactly, so the
+! bindings wrapper allocates NO scratch and emits NO intrinsic cast.
+! ``logical(c_bool)`` is not parseable by f2py (it emits ``unsigned_char``
+! with underscore -- gcc rejects), so we expose this driver via plain
+! ``bind(c)`` and invoke it with ctypes from Python.
+
+subroutine run_cbool_passthrough(mask, out, n) bind(c, name='run_cbool_passthrough')
   use iso_c_binding
   use flip_cbool_dace_bindings
   implicit none
-contains
-  subroutine run(mask, out)
-    logical(c_bool), intent(in) :: mask(:)
-    integer, intent(out) :: out(size(mask))
-    call flip_cbool_dace(mask, out, size(mask))
-  end subroutine run
-end module flip_cbool_driver
+  integer(c_int), value :: n
+  logical(c_bool), intent(in) :: mask(n)
+  integer(c_int), intent(out) :: out(n)
+  call flip_cbool_dace(mask, out, n)
+  call flip_cbool_dace_finalize()
+end subroutine run_cbool_passthrough
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="f2py's C wrapper generator emits 'unsigned_char' (with "
-    "underscore) when it encounters 'logical(c_bool)' in the Fortran "
-    "driver -- gcc rejects.  Known f2py limitation; not a bridge bug.  "
-    "The string-match equivalent in emit_bindings_test.py "
-    "(test_logical_cbool_passes_through_no_bridge) verifies the codegen "
-    "surface for this pass-through path.",
-)
 def test_e2e_rank1_cbool_passthrough(tmp_path: Path):
     """``logical(c_bool)`` matches the SDFG ABI -- the wrapper must
     pass the outer array straight through, no scratch allocation, no
     intrinsic-cast bridge.
 
-    No f2py reference: f2py's C wrapper generator emits ``unsigned_char``
-    (with underscore -- gcc rejects) when fed a ``logical(c_bool)``
-    Fortran type.  The kernel logic (``IF mask THEN 1 ELSE 0``) is
-    trivial -- compare against the numpy-direct equivalent."""
+    f2py's C wrapper generator can't parse ``logical(c_bool)`` (emits
+    ``unsigned_char`` with an underscore that gcc rejects).  We dodge
+    f2py entirely: gfortran-compile the bindings + a C-bound driver
+    into a single shared library, load it with ctypes, call directly.
+    """
+    sdfg_dir = tmp_path / "sdfg"
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(_CBOOL_KERNEL, sdfg_dir, name="flip_cbool", entry="_QPflip_cbool").build()
+    sdfg.name = "flip_cbool"
+    compiled = sdfg.compile()
+    so_path = Path(compiled._lib._library_filename)
+    fs = sdfg._frozen_signature
+
     outer = (
         OriginalArg(name="mask", fortran_type="logical(c_bool)", rank=1, shape=("n", ), intent="in"),
         OriginalArg(name="out", fortran_type="integer(c_int)", rank=1, shape=("n", ), intent="out"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
     )
-    mod = _build_e2e_module(
-        tmp_path,
-        kernel_src=_CBOOL_KERNEL,
-        name="flip_cbool",
-        entry="_QPflip_cbool",
-        outer_args=outer,
-        driver_src=_CBOOL_DRIVER,
-        module_name="flip_cbool_e2e",
-    )
+    iface = OriginalInterface(entry=fs.entry, args=outer)
+    bindings_path = tmp_path / "flip_cbool_bindings.f90"
+    emit_bindings(fs, iface, FlattenPlan(entries=()), str(bindings_path))
+    bindings_path.write_text(bindings_path.read_text().encode("ascii", errors="replace").decode("ascii"))
+
+    driver_path = tmp_path / "flip_cbool_driver.f90"
+    driver_path.write_text(_CBOOL_DRIVER)
+
+    # gfortran-compile bindings + driver into a single .so linked to
+    # the SDFG library.  This bypasses f2py's logical(c_bool) parser
+    # limitation entirely.
+    driver_so = tmp_path / "flip_cbool_driver.so"
+    subprocess.check_call([
+        "gfortran",
+        "-shared",
+        "-fPIC",
+        str(bindings_path),
+        str(driver_path),
+        "-o",
+        str(driver_so),
+        f"-L{so_path.parent}",
+        f"-Wl,-rpath,{so_path.parent}",
+        f"-l:{so_path.name}",
+    ])
+
+    lib = ctypes.CDLL(str(driver_so))
+    lib.run_cbool_passthrough.argtypes = [
+        ctypes.POINTER(ctypes.c_bool),  # mask
+        ctypes.POINTER(ctypes.c_int),  # out
+        ctypes.c_int,  # n (pass-by-value)
+    ]
+    lib.run_cbool_passthrough.restype = None
+
     mask_in = np.array([True, False, True, False, True, False], dtype=np.bool_)
+    out = np.zeros(mask_in.size, dtype=np.int32)
     out_ref = mask_in.astype(np.int32)
-    out = mod.flip_cbool_driver.run(mask_in)
-    mod.flip_cbool_dace_bindings.flip_cbool_dace_finalize()
+    lib.run_cbool_passthrough(mask_in.ctypes.data_as(ctypes.POINTER(ctypes.c_bool)),
+                              out.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), mask_in.size)
     np.testing.assert_array_equal(out, out_ref)
 
 
