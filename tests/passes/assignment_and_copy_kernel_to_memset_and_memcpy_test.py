@@ -861,5 +861,35 @@ def test_shared_passthrough_connector_blocks_lift():
     sdfg.validate()
 
 
+def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
+    # The map_entry receives a dynamic-range scalar on a CUSTOM-named connector
+    # (not the auto-generated `__map_*` prefix). The libnode doesn't iterate
+    # so the dynamic input must not be propagated; otherwise the libnode ends
+    # up with a dangling connector that codegen later trips on.
+    Ub = dace.symbol('Ub')
+    sdfg = dace.SDFG('arbitrary_dyn_conn')
+    sdfg.add_array('src', [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_array('dst', [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_scalar('upper_bound', dace.int32)
+    state = sdfg.add_state('s')
+    src = state.add_access('src')
+    dst = state.add_access('dst')
+    ub = state.add_access('upper_bound')
+
+    me, mx = state.add_map('cpy_map', {'i': '0:Ub', 'j': '0:Ub'})
+    me.add_in_connector('Ub_in')
+    state.add_edge(ub, None, me, 'Ub_in', dace.Memlet('upper_bound[0]'))
+
+    t = state.add_tasklet('copy_t', {'_in'}, {'_out'}, '_out = _in')
+    state.add_memlet_path(src, me, t, dst_conn='_in', memlet=dace.Memlet('src[i, j]'))
+    state.add_memlet_path(t, mx, dst, src_conn='_out', memlet=dace.Memlet('dst[i, j]'))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, CopyLibraryNode):
+            assert 'Ub_in' not in n.in_connectors
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

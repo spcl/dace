@@ -380,8 +380,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         f"CopyLibraryNode's connectors.", UserWarning)
                 continue
 
-            in_edges = state.in_edges(map_entry)
-
             if src_access_node not in state.nodes():
                 new_src_access_node = state.add_access(src_access_node.data)
             else:
@@ -399,11 +397,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                            dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
             state.add_edge(tasklet, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, new_dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=new_dst_access_node.data))
-            for ie in in_edges:
-                if not ie.dst_conn.startswith("IN_"):
-                    _an = state.add_access(ie.data.data)
-                    state.add_edge(_an, None, tasklet, ie.dst_conn, copy.deepcopy(ie.data))
-                    tasklet.add_in_connector(ie.dst_conn)
+            # Map-entry in-edges are either IN_* data passthroughs (already
+            # handled by the libnode's _cpy_in / _cpy_out) or dynamic map-range
+            # scalars (any non-IN_*, regardless of naming). The libnode doesn't
+            # iterate, so neither belongs on it.
 
             rmed_count += 1
             joined_edges.update(memcpy_path)
@@ -474,18 +471,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         f"with the new MemsetLibraryNode's connector.", UserWarning)
                 continue
 
-            in_edges = state.in_edges(map_entry)
-
             tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
             state.add_node(tasklet)
             self.rmid += 1
             state.add_edge(tasklet, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
-            for ie in in_edges:
-                if not ie.dst_conn.startswith("IN_"):
-                    _an1 = state.add_access(ie.data.data)
-                    state.add_edge(_an1, None, tasklet, ie.dst_conn, copy.deepcopy(ie.data))
-                    tasklet.add_in_connector(ie.dst_conn)
+            # Map-entry in-edges are either IN_* data passthroughs or dynamic
+            # map-range scalars (any non-IN_*); neither belongs on the libnode.
 
             rmed_count += 1
             joined_edges.update(memset_path)
