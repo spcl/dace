@@ -679,6 +679,33 @@ std::string lowerIsPresent(mlir::Value operand) {
         }
     }
 
+    // Standalone ``fir.extract_value`` on a complex value -- Fortran
+    // ``real(z, kind=K)`` and ``aimag(z)`` lower to extract_value at
+    // coord [0] / [1] respectively (the conjg / cmplx idiom recognizers
+    // above match the embedded-extract case, but neither fires when
+    // the extract is a top-level operand of a downstream arith op).
+    // Emit ``<z>.real()`` / ``<z>.imag()`` -- method-call syntax so
+    // ``cppunparse`` renders it as ``z.real()`` in the generated C++,
+    // matching ``std::complex<T>::real()`` / ``::imag()`` member
+    // functions.  The Python AST is well-formed (no runtime evaluation
+    // happens on tasklet code), and DaCe's tasklet codegen routes it
+    // through directly.
+    if (auto ext = mlir::dyn_cast<fir::ExtractValueOp>(def)) {
+        auto srcTy = ext.getAdt().getType();
+        if (mlir::isa<mlir::ComplexType>(srcTy)) {
+            auto coords = ext.getCoor();
+            if (coords.size() == 1) {
+                if (auto cAttr = mlir::dyn_cast<mlir::IntegerAttr>(coords[0])) {
+                    int64_t c = cAttr.getInt();
+                    if (c == 0)
+                        return "(" + buildExpr(ext.getAdt(), d + 1) + ".real())";
+                    if (c == 1)
+                        return "(" + buildExpr(ext.getAdt(), d + 1) + ".imag())";
+                }
+            }
+        }
+    }
+
     // Elementwise min / max  --  arith.minimumf / maximumf produce IEEE-min/max
     // (NaN-propagating); arith.minnumf / maxnumf are the numeric variants.
     static const std::map<llvm::StringRef, std::string> minmax_ops = {

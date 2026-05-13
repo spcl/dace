@@ -251,6 +251,20 @@ static bool isSimpleScalar(mlir::Type t) {
     // ``.TRUE.``/``.FALSE.`` <-> ``1``/``0`` conversion at the Fortran
     // caller boundary.
     if (mlir::isa<fir::LogicalType>(t)) return true;
+    // Fortran ``COMPLEX(KIND=N)`` lowers to ``mlir::ComplexType`` over
+    // an ``f32`` / ``f64`` element.  DaCe has native ``complex64`` /
+    // ``complex128``; ``extract_vars.cpp`` maps each kind to the
+    // matching DaCe complex dtype, so a struct's ``complex(c_double)``
+    // member can flatten to a flat ``complex128`` companion (NOT split
+    // into re/im flats -- DaCe handles complex arithmetic on the
+    // single complex array natively).  The bindings emitter aliases
+    // the complex flat with a normal ``c_f_pointer(c_loc(<outer>%z),
+    // <outer>_z, [...])``  --  ABI between ``complex(c_double)`` and
+    // ``complex128`` is bit-identical (16 bytes, two contiguous f64).
+    if (auto ct = mlir::dyn_cast<mlir::ComplexType>(t)) {
+        auto et = ct.getElementType();
+        return et.isF32() || et.isF64();
+    }
     return false;
 }
 
@@ -748,6 +762,11 @@ static std::string dtypeName(mlir::Type t) {
     if (t.isF64()) return "float64";
     if (t.isInteger(32)) return "int32";
     if (t.isInteger(64)) return "int64";
+    if (auto ct = mlir::dyn_cast<mlir::ComplexType>(t)) {
+        auto et = ct.getElementType();
+        if (et.isF32()) return "complex64";
+        if (et.isF64()) return "complex128";
+    }
     return "";
 }
 
@@ -1395,37 +1414,30 @@ struct FlattenStructsPass
             argDecl.getResult(0).getType().print(os);
         }
 
-        llvm::SmallVector<mlir::Attribute, 4> flatNames;
-        llvm::SmallVector<mlir::Attribute, 4> readExprs;
-        // All members of one recipe share a dtype in the current model.
-        // Record the element dtype of the first flat member (they match
-        // by construction  --  the per-member path rejects ragged member
-        // dtypes upstream in ``allMembersFlattenable``).
-        std::string scratchDtype = "float64";
-        int64_t maxRank = 0;
-
         // For AoS dummy args the outer index dim(s) prepend the
         // member's index dims.  So for ``A(i)%w(j, k)``, the recipe's
         // total rank is outer_rank + member_rank, and the read expr
         // is ``A($i1)%w($i2, $i3)``.
         unsigned outerRank = outerIsArray ? (unsigned)outerShape.size() : 0u;
 
-        // Track the first non-excluded member name so the shape-expr
-        // sampling below uses one whose flat companion actually carries
-        // the member-dim extents.
-        std::string firstMember;
-
+        // Emit one FlattenEntry per member.  Earlier the function
+        // bundled every member into a single multi-flat recipe, which
+        // worked while every struct member had the same dtype (e.g.
+        // two ``real(c_double)`` arrays) but produced an incorrect
+        // ``scratch_dtype`` when members differed -- a ``t_state``
+        // with a ``complex(c_double)`` member alongside a ``real``
+        // member would assign one shared ``float64`` dtype to both
+        // flats, and the emitter would declare the complex flat as
+        // ``real(c_double), pointer``.  Per-member entries keep each
+        // flat's dtype isolated.
         for (auto &pair : rec.getTypeList()) {
             llvm::StringRef memName = pair.first;
             if (excludeMembers.count(memName)) continue;
             mlir::Type memTy = pair.second;
             int memRank = memberRank(memTy);
             int totalRank = (int)outerRank + memRank;
-            if (totalRank > maxRank) maxRank = totalRank;
 
             std::string flat = (outerName + "_" + memName).str();
-            flatNames.push_back(mkStr(flat));
-            if (firstMember.empty()) firstMember = memName.str();
 
             // read_expr: ``<outer>($i1, ..., $iOR)%<member>($iOR+1, ..., $iTotal)``
             // Scalar outer + scalar member: just ``<outer>%<member>``.
@@ -1448,66 +1460,62 @@ struct FlattenStructsPass
                 }
                 read += ")";
             }
-            readExprs.push_back(mkStr(read));
 
-            if (std::string dt = dtypeName(memberElementType(memTy)); !dt.empty())
-                scratchDtype = dt;
-        }
+            std::string scratchDtype = dtypeName(memberElementType(memTy));
+            if (scratchDtype.empty()) scratchDtype = "float64";
 
-        // Nothing to record when every member was excluded  --  the
-        // companion entries already cover them.
-        if (flatNames.empty()) return;
-
-        // Shape exprs for the recipe.  For AoS dummy args the leading
-        // ``outerRank`` dims come from the outer struct array itself
-        // (``size(outer, dim=i)``); the remaining dims come from
-        // ``size(outer(1)%<first_member>, dim=j)``.  For scalar-outer
-        // structs all dims are member dims.
-        llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
-        if (maxRank > 0 && !firstMember.empty()) {
-            for (unsigned i = 1; i <= outerRank; ++i) {
-                std::string s = "size(" + outerName
-                                + ", dim=" + std::to_string((int)i) + ")";
-                shapeExprs.push_back(mkStr(s));
-            }
-            int memDimsToEmit = maxRank - (int)outerRank;
-            // Sample one instance for member-dim sizes.  Per Fortran
-            // type semantics, every instance has the same member shape.
-            std::string sampleOuter = outerName.c_str();
-            if (outerRank > 0) {
-                sampleOuter += "(";
-                for (unsigned i = 0; i < outerRank; ++i) {
-                    if (i) sampleOuter += ", ";
-                    sampleOuter += "1";
+            // Shape exprs for this member: outer-array dims first
+            // (sampled from ``outer``), then the member's own dims
+            // (sampled from ``outer(1, ...)%member``).
+            llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
+            if (totalRank > 0) {
+                for (unsigned i = 1; i <= outerRank; ++i) {
+                    std::string s = "size(" + outerName
+                                    + ", dim=" + std::to_string((int)i) + ")";
+                    shapeExprs.push_back(mkStr(s));
                 }
-                sampleOuter += ")";
+                std::string sampleOuter = outerName;
+                if (outerRank > 0) {
+                    sampleOuter += "(";
+                    for (unsigned i = 0; i < outerRank; ++i) {
+                        if (i) sampleOuter += ", ";
+                        sampleOuter += "1";
+                    }
+                    sampleOuter += ")";
+                }
+                for (int i = 1; i <= memRank; ++i) {
+                    std::string s = ("size(" + sampleOuter + "%"
+                                     + memName.str() + ", dim="
+                                     + std::to_string(i) + ")");
+                    shapeExprs.push_back(mkStr(s));
+                }
             }
-            for (int i = 1; i <= memDimsToEmit; ++i) {
-                std::string s = ("size(" + sampleOuter + "%" + firstMember
-                                 + ", dim=" + std::to_string(i) + ")");
-                shapeExprs.push_back(mkStr(s));
-            }
+
+            auto recipe = b.getDictionaryAttr({
+                b.getNamedAttr("flat_names",    b.getArrayAttr({mkStr(flat)})),
+                b.getNamedAttr("read_exprs",    b.getArrayAttr({mkStr(read)})),
+                b.getNamedAttr("write_expr",    mkStr("")),
+                b.getNamedAttr("rank",          b.getI64IntegerAttr(totalRank)),
+                b.getNamedAttr("shape_exprs",   b.getArrayAttr(shapeExprs)),
+                b.getNamedAttr("aliasable",     b.getBoolAttr(true)),
+                b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
+                b.getNamedAttr("aos_alloc",     b.getBoolAttr(false)),
+                b.getNamedAttr("cap_symbol",    mkStr("")),
+            });
+
+            // Per-member outer_expr ``<outer>%<member>`` so the
+            // emitter renders one ``c_f_pointer(c_loc(<outer>%<member>),
+            // <flat>, [...])`` per entry without ambiguity.
+            std::string outerExpr = outerName + "%" + memName.str();
+
+            auto entry = b.getDictionaryAttr({
+                b.getNamedAttr("outer_expr",       mkStr(outerExpr)),
+                b.getNamedAttr("outer_type",       mkStr(outerType)),
+                b.getNamedAttr("writeback_intent", mkStr(intentStr)),
+                b.getNamedAttr("recipe",           recipe),
+            });
+            planEntries.push_back(entry);
         }
-
-        auto recipe = b.getDictionaryAttr({
-            b.getNamedAttr("flat_names",    b.getArrayAttr(flatNames)),
-            b.getNamedAttr("read_exprs",    b.getArrayAttr(readExprs)),
-            b.getNamedAttr("write_expr",    mkStr("")),
-            b.getNamedAttr("rank",          b.getI64IntegerAttr(maxRank)),
-            b.getNamedAttr("shape_exprs",   b.getArrayAttr(shapeExprs)),
-            b.getNamedAttr("aliasable",     b.getBoolAttr(true)),
-            b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
-            b.getNamedAttr("aos_alloc",     b.getBoolAttr(false)),
-            b.getNamedAttr("cap_symbol",    mkStr("")),
-        });
-
-        auto entry = b.getDictionaryAttr({
-            b.getNamedAttr("outer_expr",       mkStr(outerName)),
-            b.getNamedAttr("outer_type",       mkStr(outerType)),
-            b.getNamedAttr("writeback_intent", mkStr(intentStr)),
-            b.getNamedAttr("recipe",           recipe),
-        });
-        planEntries.push_back(entry);
     }
 
     /// Nested-DT companion of ``recordStructArgEntry``: emit a single

@@ -51,8 +51,15 @@ end subroutine
 
 
 def test_two_real_array_struct_emits_aliased_recipe(tmp_path: Path):
-    """Static-shape struct with two real members -> one FlattenEntry,
-    aliasable, rank-2 shape exprs."""
+    """Static-shape struct with two real members -> one FlattenEntry
+    per member (aliasable, rank-2 shape exprs).
+
+    The bridge emits one entry per member rather than bundling every
+    member into a single multi-flat recipe so mixed-dtype structs
+    (e.g. ``complex(c_double)`` next to ``real(c_double)``) carry the
+    correct per-flat ``scratch_dtype``; the emitter walks
+    ``plan.entries`` and renders each with its own dtype.
+    """
     plan = _plan_from_fortran(
         """
 module state_mod
@@ -77,25 +84,30 @@ subroutine kernel(st)
   end do
 end subroutine
 """, tmp_path)
-    assert len(plan.entries) == 1
-    e = plan.entries[0]
-    assert e.outer_expr == "st"
-    assert e.writeback_intent == "inout"
-    r = e.recipe
-    assert r.flat_names == ("st_u", "st_v")
-    assert r.read_exprs == ("st%u($i1, $i2)", "st%v($i1, $i2)")
-    assert r.rank == 2
-    assert r.aliasable is True
-    assert r.write_expr == ""
-    assert r.scratch_dtype == "float64"
-    assert len(r.shape_exprs) == 2
-    assert r.shape_exprs[0].startswith("size(st%")
-    assert "dim=1" in r.shape_exprs[0]
-    assert "dim=2" in r.shape_exprs[1]
+    assert len(plan.entries) == 2
+    e_u, e_v = plan.entries
+    assert e_u.outer_expr == "st%u"
+    assert e_v.outer_expr == "st%v"
+    assert e_u.writeback_intent == "inout"
+    assert e_v.writeback_intent == "inout"
+    assert e_u.recipe.flat_names == ("st_u", )
+    assert e_v.recipe.flat_names == ("st_v", )
+    assert e_u.recipe.read_exprs == ("st%u($i1, $i2)", )
+    assert e_v.recipe.read_exprs == ("st%v($i1, $i2)", )
+    for r in (e_u.recipe, e_v.recipe):
+        assert r.rank == 2
+        assert r.aliasable is True
+        assert r.write_expr == ""
+        assert r.scratch_dtype == "float64"
+        assert len(r.shape_exprs) == 2
+        assert r.shape_exprs[0].startswith("size(st%")
+        assert "dim=1" in r.shape_exprs[0]
+        assert "dim=2" in r.shape_exprs[1]
 
 
 def test_intent_in_carries_through(tmp_path: Path):
-    """A read-only struct dummy should produce writeback_intent='in'."""
+    """A read-only struct dummy should produce writeback_intent='in'
+    on every per-member entry."""
     plan = _plan_from_fortran(
         """
 module state_mod
@@ -120,8 +132,8 @@ subroutine sink(ro, acc)
   end do
 end subroutine
 """, tmp_path)
-    assert len(plan.entries) == 1
-    assert plan.entries[0].writeback_intent == "in"
+    assert len(plan.entries) == 2
+    assert all(e.writeback_intent == "in" for e in plan.entries)
 
 
 def test_aos_allocatable_dummy_emits_aos_alloc_recipe(tmp_path: Path):

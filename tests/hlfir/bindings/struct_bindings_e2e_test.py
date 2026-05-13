@@ -429,14 +429,25 @@ def test_e2e_nested_struct(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Complex-split struct  --  bridge gap (xfail)
+# Complex member struct  --  complex stays as a native complex128 SDFG dtype
 # ---------------------------------------------------------------------------
 #
-# The bridge currently can't lower a tasklet that projects out
-# real / aimag components from a struct member of Fortran ``complex``
-# kind.  The AST extractor leaves both operands as ``?`` placeholders
-# and the generated tasklet code is ``_out = (? + ?)`` which Python
-# AST rejects with ``SyntaxError`` at tasklet construction time.
+# ``complex(c_double)`` struct members flatten to a single
+# ``complex128`` companion array, NOT into a re/im pair.  Per the
+# user's policy "complex types are supported in DaCe; complex arrays
+# should be flattened using the complex dtype": DaCe handles complex
+# arithmetic on a single ``std::complex<T>`` array natively.
+#
+# Bridge plumbing:
+#   * ``FlattenStructs.cpp::isSimpleScalar`` accepts ``ComplexType``.
+#   * ``dtypeName`` maps to ``complex64`` / ``complex128``.
+#   * ``recordStructArgEntry`` emits one FlattenEntry per member so
+#     mixed-dtype structs (complex + real) carry the right
+#     ``scratch_dtype`` per entry.
+#   * AST extractor ``ast/expressions.cpp`` recognises standalone
+#     ``fir.extract_value`` from a complex value and emits
+#     ``<z>.real()`` / ``<z>.imag()``; cppunparse renders these as
+#     ``std::complex<T>::real()`` / ``::imag()`` method calls in C++.
 
 _COMPLEX_TYPES_SRC = """
 module mo_state
@@ -503,23 +514,14 @@ end subroutine run_complex
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="HLFIR bridge can't lower real()/aimag() projections on a "
-    "complex struct member -- the tasklet body comes out as "
-    "``_out = (? + ?)`` and Python AST rejects it at tasklet "
-    "construction.  Closing this needs complex-member projection "
-    "support in the AST extractor + the complex-split FlattenEntry "
-    "emission in FlattenStructs.cpp.",
-)
-def test_e2e_complex_split_struct(tmp_path: Path):
+def test_e2e_complex_member_struct(tmp_path: Path):
     """``type(t_state)`` with ``complex(c_double)`` and ``real(c_double)``
     array members.  Kernel does ``st%u = real(st%z) + aimag(st%z)``.
-    The bindings would need to split ``st%z`` into ``st_z_re`` /
-    ``st_z_im`` scratch + cmplx() copy-out; this is the shape pinned
-    by ``_complex_split_struct`` in the string-match suite.  Xfail
-    until both the bridge AST extractor handles ``real()``/``aimag()``
-    on struct-member complex and FlattenStructs records the split."""
+    The complex member flattens to a single ``complex128`` companion
+    (NOT split into re/im); the bindings emitter aliases it via
+    ``c_f_pointer(c_loc(st%z), st_z, [...])`` and DaCe's tasklet
+    codegen handles the ``.real()`` / ``.imag()`` method calls on
+    ``std::complex<double>``."""
     iface = OriginalInterface(
         entry="kernel_complex",
         args=(OriginalArg(name="st", fortran_type="type(t_state)", rank=0, intent="inout", struct_type="t_state"), ),

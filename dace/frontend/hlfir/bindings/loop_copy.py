@@ -31,6 +31,8 @@ _DTYPE_TO_F = {
     'int32': 'integer(c_int)',
     'int64': 'integer(c_long)',
     'bool': 'logical(c_bool)',
+    'complex64': 'complex(c_float)',
+    'complex128': 'complex(c_double)',
 }
 
 
