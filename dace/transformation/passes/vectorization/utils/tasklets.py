@@ -314,7 +314,8 @@ def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> No
 
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
-                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
+                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass,
+                                  mask_connector: Optional[str] = None) -> None:
     """
     Instantiates a tasklet's code block in vectorized form based on classification info.
 
@@ -365,7 +366,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                   vector_width=vw,
                   vector_map_param=vector_map_param,
                   is_commutative=is_commutative,
-                  fallbackcode_due_to_types=fallbackcode_due_to_types)
+                  fallbackcode_due_to_types=fallbackcode_due_to_types,
+                  mask_connector=mask_connector)
 
     # Cast python boolean to C++ compatible string
     if c1 == "False":

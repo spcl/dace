@@ -991,6 +991,20 @@ class Vectorize(ppl.Pass):
 
     def _replace_tasklets_from_node_list(self, state: SDFGState, nodes: Iterable[dace.nodes.Node],
                                          vector_map_param: str):
+        # C.2-b: when the inner SDFG has a P3-generated ``_iter_mask: bool[W]``
+        # transient in scope, every vectorized tasklet that writes to an array
+        # picks up a ``_mask`` input connector wired from that array. The
+        # emitter then routes to the ``_masked`` template variant (RMW on the
+        # destination so inactive lanes stay untouched). For tasklets whose
+        # op has no ``_masked`` template entry, ``_template_key`` falls back
+        # to the unsuffixed variant and the dangling ``_mask`` connector is a
+        # tolerated dead read.
+        iter_mask_name = None
+        for name in state.sdfg.arrays:
+            if name == "_iter_mask" or name.startswith("_iter_mask_"):
+                iter_mask_name = name
+                break
+
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
                 tasklet_info = tutil.classify_tasklet(state, node)
@@ -1012,8 +1026,20 @@ class Vectorize(ppl.Pass):
                     oe = state.out_edges(node).pop()
                     if not isinstance(state.sdfg.arrays[oe.data.data], dace.data.Array):
                         continue
+
+                mask_connector_arg = None
+                if iter_mask_name is not None and "_mask" not in node.in_connectors:
+                    node.add_in_connector("_mask")
+                    mask_an = state.add_access(iter_mask_name)
+                    state.add_edge(mask_an, None, node, "_mask",
+                                   dace.memlet.Memlet(f"{iter_mask_name}[0:{self.vector_width}]"))
+                    mask_connector_arg = "_mask"
+                elif iter_mask_name is not None:
+                    mask_connector_arg = "_mask"
+
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
-                                              vector_map_param, self.vector_op_numeric_type)
+                                              vector_map_param, self.vector_op_numeric_type,
+                                              mask_connector=mask_connector_arg)
 
     def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
