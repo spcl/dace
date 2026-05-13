@@ -7,6 +7,8 @@ from dace import SDFG, config, properties
 from dace.transformation import helpers as xfh, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
+from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
+    AssignmentAndCopyKernelToMemsetAndMemcpy)
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -39,6 +41,7 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
     ContinueToCondition,
     EmptyLoopElimination,
+    AssignmentAndCopyKernelToMemsetAndMemcpy,
     InsertExplicitCopies,
 ]
 
