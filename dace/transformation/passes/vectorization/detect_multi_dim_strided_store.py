@@ -36,9 +36,7 @@ class DetectMultiDimStridedStore(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        found = detect_multi_dim_strided_apply(sdfg, direction="store",
+        detect_multi_dim_strided_apply(sdfg, direction="store",
                                                intrinsic_template=_MULTI_DIM_STRIDED_STORE_TEMPLATE,
                                                intrinsic_tasklet_name="multi_dim_strided_store")
-        if found > 0:
-            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/strided_store.h"')
         sdfg.validate()

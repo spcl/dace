@@ -1597,3 +1597,74 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, c
     for (int i = 0; i < vector_width; ++i)
         out[i] = cond[i] ? t[i] : e[i];
 }
+
+// ============================================================================
+// Runtime-length scatter / gather / strided load+store (moved from
+// vector_intrinsics/{gather,scatter,strided_load,strided_store}.h).
+// SVE uses native gather/scatter intrinsics with svwhilelt-driven predicates;
+// the whole loop runs without remainder.
+// ============================================================================
+
+#include <stdint.h>
+
+inline void gather_double(const double* __restrict__ A,
+                          const int64_t* __restrict__ idx,
+                          double* __restrict__ B,
+                          const int64_t length)
+{
+    int64_t i = 0;
+    while (i < length) {
+        svbool_t pg = svwhilelt_b64(i, length);
+        svint64_t vindex = svld1_s64(pg, &idx[i]);
+        svfloat64_t vdata = svld1_gather_s64index_f64(pg, A, vindex);
+        svst1_f64(pg, &B[i], vdata);
+        i += svcntd();
+    }
+}
+
+inline void scatter_double(const double* __restrict__ A,
+                           const int64_t* __restrict__ idx,
+                           double* __restrict__ B,
+                           const int64_t length)
+{
+    int64_t i = 0;
+    while (i < length) {
+        svbool_t pg = svwhilelt_b64(i, length);
+        svfloat64_t vdata = svld1_f64(pg, &A[i]);
+        svint64_t vindex = svld1_s64(pg, &idx[i]);
+        svst1_scatter_s64index_f64(pg, B, vindex, vdata);
+        i += svcntd();
+    }
+}
+
+inline void strided_load_double(const double* __restrict__ A,
+                                double* __restrict__ B,
+                                const int64_t length,
+                                const int64_t stride)
+{
+    int64_t i = 0;
+    while (i < length) {
+        svbool_t pg = svwhilelt_b64(i, length);
+        svint64_t vi = svindex_s64(i, 1);
+        svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+        svfloat64_t vdata = svld1_gather_s64index_f64(pg, A, vindex);
+        svst1_f64(pg, &B[i], vdata);
+        i += svcntd();
+    }
+}
+
+inline void strided_store_double(const double* __restrict__ A,
+                                 double* __restrict__ B,
+                                 const int64_t length,
+                                 const int64_t stride)
+{
+    int64_t i = 0;
+    while (i < length) {
+        svbool_t pg = svwhilelt_b64(i, length);
+        svfloat64_t vdata = svld1_f64(pg, &A[i]);
+        svint64_t vi = svindex_s64(i, 1);
+        svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+        svst1_scatter_s64index_f64(pg, B, vindex, vdata);
+        i += svcntd();
+    }
+}

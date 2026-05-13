@@ -30,9 +30,7 @@ class DetectStridedLoad(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        found = detect_lane_fanout_apply(sdfg, direction="load", pattern="strided",
+        detect_lane_fanout_apply(sdfg, direction="load", pattern="strided",
                                          intrinsic_template=_STRIDED_LOAD_TEMPLATE,
                                          intrinsic_tasklet_name="gather_load")
-        if found > 0:
-            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/strided_load.h"')
         sdfg.validate()

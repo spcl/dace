@@ -1592,3 +1592,62 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, c
     for (int i = 0; i < vector_width; ++i)
         out[i] = cond[i] ? t[i] : e[i];
 }
+
+// ============================================================================
+// Runtime-length scatter / gather / strided load+store (moved from
+// vector_intrinsics/{gather,scatter,strided_load,strided_store}.h).
+// NEON has no native gather/scatter; we pack 2-lane chunks where possible
+// and fall back to scalar.
+// ============================================================================
+
+#include <stdint.h>
+
+inline void gather_double(const double* __restrict__ A,
+                          const int64_t* __restrict__ idx,
+                          double* __restrict__ B,
+                          const int64_t length)
+{
+    int64_t i = 0;
+    for (; i + 1 < length; i += 2) {
+        float64x2_t vdata = { A[idx[i]], A[idx[i + 1]] };
+        vst1q_f64(&B[i], vdata);
+    }
+    for (; i < length; ++i) B[i] = A[idx[i]];
+}
+
+inline void scatter_double(const double* __restrict__ A,
+                           const int64_t* __restrict__ idx,
+                           double* __restrict__ B,
+                           const int64_t length)
+{
+    for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
+}
+
+inline void strided_load_double(const double* __restrict__ A,
+                                double* __restrict__ B,
+                                const int64_t length,
+                                const int64_t stride)
+{
+    int64_t i = 0;
+    for (; i + 1 < length; i += 2) {
+        float64x2_t vdata = { A[(i + 0) * stride], A[(i + 1) * stride] };
+        vst1q_f64(&B[i], vdata);
+    }
+    for (; i < length; ++i) B[i] = A[i * stride];
+}
+
+inline void strided_store_double(const double* __restrict__ A,
+                                 double* __restrict__ B,
+                                 const int64_t length,
+                                 const int64_t stride)
+{
+    int64_t i = 0;
+    for (; i + 1 < length; i += 2) {
+        float64x2_t vdata = vld1q_f64(&A[i]);
+        double tmp[2];
+        vst1q_f64(tmp, vdata);
+        B[(i + 0) * stride] = tmp[0];
+        B[(i + 1) * stride] = tmp[1];
+    }
+    for (; i < length; ++i) B[i * stride] = A[i];
+}

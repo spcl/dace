@@ -31,8 +31,6 @@ class DetectGather(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        found = detect_lane_fanout_apply(sdfg, direction="gather", pattern="contiguous",
+        detect_lane_fanout_apply(sdfg, direction="gather", pattern="contiguous",
                                          intrinsic_template=_GATHER_TEMPLATE, intrinsic_tasklet_name="gather_load")
-        if found > 0:
-            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/gather.h"')
         sdfg.validate()

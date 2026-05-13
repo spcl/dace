@@ -30,9 +30,7 @@ class DetectStridedStore(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        found = detect_lane_fanout_apply(sdfg, direction="store", pattern="strided",
+        detect_lane_fanout_apply(sdfg, direction="store", pattern="strided",
                                          intrinsic_template=_STRIDED_STORE_TEMPLATE,
                                          intrinsic_tasklet_name="scatter_store")
-        if found > 0:
-            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/strided_store.h"')
         sdfg.validate()
