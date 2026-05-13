@@ -282,6 +282,70 @@ def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: d
     return False
 
 
+def is_linear_in_param(expr, param_str: str) -> bool:
+    """
+    Return True iff ``expr`` is a sympy expression of the form ``c*p + d``
+    where ``p`` is the symbol named ``param_str``, ``c`` is a constant
+    (does not contain ``p``), and ``d`` is constant in ``p`` too.
+
+    Used by :func:`map_param_dim_usage_is_linear_combo` to classify
+    diagonal / linear-combination access patterns (``A[i, i]``,
+    ``A[2*i, i]``, ``A[i, 2*i]``) that the vectorizer can lower as
+    strided loads/stores once the per-dim coefficients are constant.
+
+    A bare integer / float literal counts as linear (coefficient 0).
+    """
+    if not isinstance(expr, sympy.Basic):
+        return True  # plain int/float literal
+    param_sym = sympy.Symbol(param_str)
+    if param_sym not in expr.free_symbols:
+        return True
+    try:
+        poly = sympy.Poly(expr, param_sym)
+    except (sympy.PolynomialError, sympy.GeneratorsNeeded):
+        return False
+    if poly.degree() > 1:
+        return False
+    # Coefficients must not themselves contain ``param_sym``.
+    for c in poly.all_coeffs():
+        if param_sym in getattr(c, "free_symbols", set()):
+            return False
+    return True
+
+
+def map_param_dim_usage_is_linear_combo(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """
+    For every memlet inside the map whose last-param appears in more than
+    one dimension, verify each dim's begin expression is linear in the
+    last-param (form ``c*p + d`` with ``c`` constant in ``p``).
+
+    Returns ``True`` when the usage is purely linear-combo (vectorizable as
+    a strided load/store), ``False`` otherwise. Memlets where the param
+    does not appear at all, or appears in only one dim, do not block the
+    classification — they are unaffected by linear-combo lowering.
+    """
+    last_param = str(map_entry.map.params[-1])
+    nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
+    edges = state.all_edges(*nodes_between)
+    for edge in edges:
+        memlet: dace.memlet.Memlet = edge.data
+        if memlet.subset is None:
+            continue
+        dims_with_param = []
+        for d, (b, e, _) in enumerate(memlet.subset):
+            if hasattr(b, "free_symbols"):
+                if count_param_in_expr(b, last_param) > 0:
+                    dims_with_param.append((d, b, e))
+        if len(dims_with_param) < 2:
+            continue
+        for _, b, e in dims_with_param:
+            if b != e:
+                return False
+            if not is_linear_in_param(b, last_param):
+                return False
+    return True
+
+
 def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
     """
     Assert that the last dimension of all maps in an SDFG performs contiguous accesses.

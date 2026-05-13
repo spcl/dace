@@ -74,6 +74,18 @@ def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGSta
 
     for arr_name, accesses in all_accesses_to_arrays.items():
         for access_subset in accesses:
+            # Param appearing in more than one dimension (diagonal A[i,i] /
+            # linear-combo A[2*i,i] / A[i,2*i]) is a non-unit-stride access
+            # regardless of which dim happens to be stride-1; the per-lane
+            # fan-out path linearises it through the array strides.
+            dims_with_param = 0
+            for dim_b, _, _ in access_subset:
+                if hasattr(dim_b, "free_symbols") and any(str(s) == map_param for s in dim_b.free_symbols):
+                    dims_with_param += 1
+            if dims_with_param > 1:
+                array_is_vectorizable[arr_name] = False
+                continue
+
             # Get the stride 1 dimension
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
             b, e, s = access_subset[stride_one_dim]

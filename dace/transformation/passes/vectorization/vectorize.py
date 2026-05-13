@@ -932,10 +932,24 @@ class Vectorize(ppl.Pass):
                         param_dims.append(d)
 
                 if len(param_dims) > 1:
-                    raise NotImplementedError(
-                        f"Vectorize: map param {used_param} appears in multiple dimensions of memlet {memlet} "
-                        f"on edge {edge} (state {state.label}); precondition map_param_appears_in_multiple_dimensions "
-                        f"should have filtered this")
+                    # Linear-combination access (e.g. A[i,i], A[2*i,i], A[i,2*i]) is
+                    # permitted by the entry-side precondition. Leave the per-iteration
+                    # scalar subset alone here — _generate_strided_loads_to_packed_storage
+                    # (or its store sibling) emits per-lane fan-out, and the post-emit
+                    # strided detector linearises the multi-dim subsets through array
+                    # strides. Verified at entry by map_param_dim_usage_is_linear_combo.
+                    for d in param_dims:
+                        b, e, _ = new_range_list[d]
+                        if b != e:
+                            raise NotImplementedError(
+                                f"Vectorize: multi-dim param {used_param} on a non-point subset "
+                                f"(dim {d}: {b}..{e}) of memlet {memlet} on edge {edge} "
+                                f"(state {state.label}); only point accesses A[c*i+d, ...] supported")
+                    new_memlet = dace.memlet.Memlet(data=memlet.data, subset=dace.subsets.Range(new_range_list))
+                    self._assert_no_other_subset(memlet, edge, state)
+                    state.remove_edge(edge)
+                    state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+                    continue
 
                 # Extend only when the param is in a stride-1 dim. If the param sits in a
                 # non-stride-1 dim, leave the memlet alone — the gather/strided-load path will
@@ -1361,14 +1375,18 @@ class Vectorize(ppl.Pass):
                         continue
 
                 if map_param_appears_in_multiple_dimensions(state, map_entry):
-                    if self.fail_on_unvectorizable:
-                        raise NotImplementedError(
-                            f"Vectorize: {map_entry} ({state.label}) - map param accesses multiple dimensions "
-                            f"(diagonal / linear-combination access pattern); gather/scatter lowering for this "
-                            f"shape is not yet implemented")
-                    warnings.warn(
-                        f"Vectorize: skipping {map_entry} ({state.label}) - map param accesses multiple dimensions")
-                    continue
+                    if not map_param_dim_usage_is_linear_combo(state, map_entry):
+                        if self.fail_on_unvectorizable:
+                            raise NotImplementedError(
+                                f"Vectorize: {map_entry} ({state.label}) - map param accesses multiple "
+                                f"dimensions non-linearly; gather/scatter lowering for this shape is not "
+                                f"yet implemented")
+                        warnings.warn(f"Vectorize: skipping {map_entry} ({state.label}) - map param "
+                                      f"accesses multiple dimensions non-linearly")
+                        continue
+                    # Linear-combination uses (A[i,i], A[2*i,i], A[i,2*i], ...) flow through
+                    # the per-lane fan-out path; the strided-load / strided-store detector
+                    # linearises the multi-dim subsets through array strides at post-emit.
 
                 opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)
                 if opt_nsdfg is not None:

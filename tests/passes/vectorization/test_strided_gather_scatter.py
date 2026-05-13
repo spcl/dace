@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy
-import pytest
 from tests.passes.vectorization._harness import (
     run_vectorization_test,
     N,
@@ -695,7 +694,6 @@ def scatter_store_i_2i(src: dace.float64[N], A: dace.float64[N, 2 * N], scale: d
         A[i, 2 * i] = src[i] * scale
 
 
-@pytest.mark.xfail(reason="C.5: gather lowering does not yet recognize diagonal A[i,i] pattern", strict=True)
 def test_diagonal_gather_load():
     N_val = 64
     A = numpy.random.rand(N_val, N_val)
@@ -715,7 +713,6 @@ def test_diagonal_gather_load():
     )
 
 
-@pytest.mark.xfail(reason="C.6: scatter lowering does not yet recognize diagonal A[i,i] pattern", strict=True)
 def test_diagonal_scatter_store():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -735,7 +732,6 @@ def test_diagonal_scatter_store():
     )
 
 
-@pytest.mark.xfail(reason="C.5: gather lowering does not yet recognize A[2*i, i] linear-combo pattern", strict=True)
 def test_gather_load_2i_i():
     N_val = 64
     A = numpy.random.rand(2 * N_val, N_val)
@@ -755,7 +751,6 @@ def test_gather_load_2i_i():
     )
 
 
-@pytest.mark.xfail(reason="C.6: scatter lowering does not yet recognize A[2*i, i] linear-combo pattern", strict=True)
 def test_scatter_store_2i_i():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -775,7 +770,6 @@ def test_scatter_store_2i_i():
     )
 
 
-@pytest.mark.xfail(reason="C.5: gather lowering does not yet recognize A[i, 2*i] linear-combo pattern", strict=True)
 def test_gather_load_i_2i():
     N_val = 64
     A = numpy.random.rand(N_val, 2 * N_val)
@@ -795,7 +789,6 @@ def test_gather_load_i_2i():
     )
 
 
-@pytest.mark.xfail(reason="C.6: scatter lowering does not yet recognize A[i, 2*i] linear-combo pattern", strict=True)
 def test_scatter_store_i_2i():
     N_val = 64
     src = numpy.random.rand(N_val)
