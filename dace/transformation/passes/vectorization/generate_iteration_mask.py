@@ -94,12 +94,18 @@ class GenerateIterationMask(ppl.Pass):
 
         # Make sure the iteration variable and the upper bound are visible
         # as symbols inside the nested SDFG. ``iter_var`` is the map's
-        # innermost parameter, already in the nested-SDFG symbol mapping
-        # via the map entry. ``ub`` may be a free symbol of the outer scope.
-        for s in dace.symbolic.symlist(ub).values():
-            sname = str(s)
+        # innermost parameter; while the map entry registers the symbol
+        # in scope, the inner NSDFG also needs ``iter_var`` in its own
+        # ``symbols`` table and ``symbol_mapping`` so the init tasklet's
+        # CPP body (which references ``iter_var``) can resolve it.
+        symbols_to_ensure = [iter_var] + [str(s) for s in dace.symbolic.symlist(ub).values()]
+        for sname in symbols_to_ensure:
             if sname not in inner.symbols and sname in nsdfg_node.sdfg.parent_sdfg.symbols:
                 inner.add_symbol(sname, nsdfg_node.sdfg.parent_sdfg.symbols[sname])
+            elif sname not in inner.symbols:
+                # iter_var is typically not in parent_sdfg.symbols (it's a map
+                # parameter, scoped to the map entry). Default to int64.
+                inner.add_symbol(sname, dace.int64)
             if sname not in nsdfg_node.symbol_mapping:
                 nsdfg_node.symbol_mapping[sname] = sname
 
