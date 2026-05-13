@@ -19,6 +19,8 @@ from dace.transformation.passes.vectorization.detect_gather import DetectGather
 from dace.transformation.passes.vectorization.detect_scatter import DetectScatter
 from dace.transformation.passes.vectorization.detect_strided_load import DetectStridedLoad
 from dace.transformation.passes.vectorization.detect_strided_store import DetectStridedStore
+from dace.transformation.passes.vectorization.detect_multi_dim_strided_load import DetectMultiDimStridedLoad
+from dace.transformation.passes.vectorization.detect_multi_dim_strided_store import DetectMultiDimStridedStore
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -155,6 +157,8 @@ class VectorizeCPU(ppl.Pipeline):
                 DetectScatter(),
                 DetectStridedLoad(),
                 DetectStridedStore(),
+                DetectMultiDimStridedLoad(),
+                DetectMultiDimStridedStore(),
             ])
         if eliminate_trivial_vector_map:
             passes.append(RemoveVectorMaps())

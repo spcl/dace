@@ -140,6 +140,158 @@ def _single_indirect_neighbour(state: dace.SDFGState, sorted_tasklets, is_pack_i
     return indirect_neighbours.pop()
 
 
+def _linearise_subset_through_strides(subset: dace.subsets.Range, strides) -> Optional[dace.symbolic.SymExpr]:
+    """
+    Linearise a multi-dim point subset ``[(b0, b0, 1), (b1, b1, 1), ...]``
+    through the array's strides into a single scalar offset
+    ``sum_d (b_d * strides[d])``.
+
+    Returns ``None`` if any dim is not a point access (``begin != end``).
+    """
+    if len(subset) != len(strides):
+        return None
+    total = sp.Integer(0)
+    for d, (b, e, s) in enumerate(subset):
+        if b != e or s != 1:
+            return None
+        total = total + dace.symbolic.SymExpr(str(b)) * dace.symbolic.SymExpr(str(strides[d]))
+    return sp.expand(total)
+
+
+def _bounding_box_per_dim(subsets):
+    """
+    Per-dim bounding box ``(min(begin), max(begin))`` across a list of point
+    subsets. Returns a list of ``(lo, hi, 1)`` tuples suitable for building a
+    ``dace.subsets.Range``.
+    """
+    num_dims = len(subsets[0])
+    box = []
+    for d in range(num_dims):
+        begins = [sp.expand(dace.symbolic.SymExpr(str(s[d][0]))) for s in subsets]
+        lo = sp.Min(*begins) if len(begins) > 1 else begins[0]
+        hi = sp.Max(*begins) if len(begins) > 1 else begins[0]
+        box.append((dace.symbolic.SymExpr(str(lo)), dace.symbolic.SymExpr(str(hi)), 1))
+    return box
+
+
+def detect_multi_dim_strided_apply(sdfg: SDFG, *, direction: str, intrinsic_template: str,
+                                   intrinsic_tasklet_name: str) -> int:
+    """
+    Recognise the multi-dim linear-combo fan around a ``_packed`` access node
+    (e.g. ``A[i,i]``, ``A[2*i,i]``, ``A[i,2*i]``) and collapse it into a single
+    ``strided_load_double`` / ``strided_store_double`` intrinsic call.
+
+    The per-lane subsets are linearised through the array's strides; if the
+    resulting scalar offsets form a fixed-increment sequence, the W assign
+    tasklets are replaced by one CPP intrinsic tasklet whose memlet is the
+    bounding box of the touched elements. ``_in`` (load) or ``_out`` (store)
+    in the emitted body is a flat ``double*`` pointing at the lane-0 element.
+
+    Per the per-lane-multi-dim-tasklets-must-be-Python rule, this pass only
+    fires for fully matched fans — the collapsed tasklet operates on the
+    linearised stride and emits CPP, while any unmatched fan remains as the
+    original Python per-lane assigns.
+
+    Returns the number of fans collapsed (recurses into nested SDFGs).
+    """
+    assert direction in ("load", "store"), direction
+    is_pack_in_side = direction == "load"
+
+    found = 0
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and PackedNameScheme.is_packed(node.data)):
+                continue
+
+            match = _match_assign_fan(state, node, direction)
+            if match is None:
+                continue
+            sorted_tasklets, idx_data_and_subset, vector_length = match
+
+            # Multi-dim only — 1D cases stay on the existing strided detector.
+            if not all(len(s) > 1 for _, s in idx_data_and_subset):
+                continue
+
+            indirect_dataname = idx_data_and_subset[0][0]
+            arr_strides = state.sdfg.arrays[indirect_dataname].strides
+
+            linear_offsets = []
+            for _, sub in idx_data_and_subset:
+                off = _linearise_subset_through_strides(sub, arr_strides)
+                if off is None:
+                    break
+                linear_offsets.append(off)
+            if len(linear_offsets) != vector_length:
+                continue
+
+            # Linearised offsets may contain symbols that are constant per
+            # lane (e.g. ``N`` in ``N*tile_i + l*(N+1)``); ``detect_fixed_increment``
+            # demands a single free symbol so we directly check that consecutive
+            # differences are equal here.
+            deltas = [sp.expand(linear_offsets[k + 1] - linear_offsets[k]) for k in range(vector_length - 1)]
+            if not all(d == deltas[0] for d in deltas[1:]):
+                continue
+            fixed_increment = deltas[0]
+
+            # The fan can be rooted at the surrounding MapEntry (when the
+            # AccessNode lives outside the map scope, as for multi-dim arrays)
+            # or at an AccessNode (1D arrays moved inside the map). Either is
+            # acceptable — we re-plumb the replacement tasklet to the same root.
+            indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)
+            if not isinstance(indirect, (dace.nodes.AccessNode, dace.nodes.MapEntry, dace.nodes.MapExit)):
+                continue
+
+            far_edges: List = []
+            for t in sorted_tasklets:
+                far_edges.extend(state.in_edges(t) if is_pack_in_side else state.out_edges(t))
+            keeper_edge = far_edges[0] if far_edges else None
+
+            subsets = [sub for _, sub in idx_data_and_subset]
+            bbox = _bounding_box_per_dim(subsets)
+
+            for t in sorted_tasklets:
+                state.remove_node(t)
+
+            intrinsic_code = intrinsic_template.format(vector_length=vector_length, stride=fixed_increment)
+            t1 = state.add_tasklet(intrinsic_tasklet_name, {"_in"}, {"_out"}, intrinsic_code,
+                                   dace.dtypes.Language.CPP)
+            packed_memlet = dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data])
+            indirect_memlet = dace.memlet.Memlet(data=indirect_dataname, subset=dace.subsets.Range(bbox))
+
+            if is_pack_in_side:
+                keeper_conn = keeper_edge.src_conn if keeper_edge is not None else None
+                state.add_edge(indirect, keeper_conn, t1, "_in", indirect_memlet)
+                for e in far_edges:
+                    if e in state.edges():
+                        state.remove_edge(e)
+                    if e.src_conn is not None:
+                        e.src.remove_out_connector(e.src_conn)
+                if keeper_conn is not None:
+                    indirect.add_out_connector(keeper_conn)
+                state.add_edge(t1, "_out", node, None, packed_memlet)
+            else:
+                keeper_conn = keeper_edge.dst_conn if keeper_edge is not None else None
+                state.add_edge(t1, "_out", indirect, keeper_conn, indirect_memlet)
+                for e in far_edges:
+                    if e in state.edges():
+                        state.remove_edge(e)
+                    if e.dst_conn is not None:
+                        e.dst.remove_in_connector(e.dst_conn)
+                if keeper_conn is not None:
+                    indirect.add_in_connector(keeper_conn)
+                state.add_edge(node, None, t1, "_in", packed_memlet)
+
+            found += 1
+
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                found += detect_multi_dim_strided_apply(node.sdfg, direction=direction,
+                                                        intrinsic_template=intrinsic_template,
+                                                        intrinsic_tasklet_name=intrinsic_tasklet_name)
+    return found
+
+
 def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrinsic_template: str,
                              intrinsic_tasklet_name: str) -> int:
     """
@@ -172,6 +324,12 @@ def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrin
             if match is None:
                 continue
             sorted_tasklets, idx_data_and_subset, vector_length = match
+
+            # Skip multi-dim subsets — those are handled by
+            # ``detect_multi_dim_strided_apply`` (1D vs multi-dim are separate
+            # collapse paths so the memlet shape and intrinsic differ).
+            if not all(len(s) == 1 for _, s in idx_data_and_subset):
+                continue
 
             if pattern == "contiguous":
                 initializer_values = ", ".join(str(s) for _, s in idx_data_and_subset)
