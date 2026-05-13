@@ -13,6 +13,12 @@ strided_load<{dtype}>(_in, _out, {vector_length}, {stride});
 }}
 """
 
+_STRIDED_LOAD_TEMPLATE_MASKED = """
+{{
+strided_load_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -31,6 +37,7 @@ class DetectStridedLoad(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         detect_lane_fanout_apply(sdfg, direction="load", pattern="strided",
-                                         intrinsic_template=_STRIDED_LOAD_TEMPLATE,
-                                         intrinsic_tasklet_name="gather_load")
+                                 intrinsic_template=_STRIDED_LOAD_TEMPLATE,
+                                 intrinsic_template_masked=_STRIDED_LOAD_TEMPLATE_MASKED,
+                                 intrinsic_tasklet_name="gather_load")
         sdfg.validate()

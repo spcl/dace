@@ -1044,29 +1044,22 @@ def test_diagonal_scatter_store_fp32():
 #   currently raise ``NotImplementedError`` from the defensive guard in
 #   ``_process_edges`` (subset volume > vector_width on the strided-but-
 #   classified-vectorizable case under scalar mode) — todo #11
-#   (scalar-postamble investigation). Marked strict-xfail; flips to pass
-#   when ``collect_non_unit_stride_accesses_in_map`` correctly classifies
-#   strided patterns under scalar mode (or when ``compute_edge_subset``
-#   handles the strided case properly).
-# - ``remainder_strategy="masked"``: requires R2 (masked gather_masked /
-#   scatter_masked / strided_*_masked runtime variants + iter_mask wiring +
-#   ``_assert_no_lane_memlet_reads`` verifier). Today ``VectorizeCPU``
-#   raises ``NotImplementedError``; tests are strict-xfail so they flip to
-#   pass automatically when R2 lands.
+#   (scalar-postamble investigation).
+# - ``remainder_strategy="masked"``: R2 (this slice). Requires
+#   ``lower_to_intrinsics=True`` per the locked decision: the per-lane
+#   memlet reads in an uncollapsed fan would fault on inactive lanes.
+#   The verifier in ``utils/iteration.assert_no_lane_memlet_reads``
+#   enforces this contract post-collapse.
 #
 # N=17, W=8 ⇒ main covers 16, remainder covers 1.
 
-_R2_XFAIL = pytest.mark.xfail(strict=True, reason="masked remainder + indirection requires R2 + verifier")
 _SCALAR_STRIDED_XFAIL = pytest.mark.xfail(
     strict=True,
     reason="strided + scalar postamble: compute_edge_subset returns 15-element bounding box into 8-wide vec buffer — todo #11"
 )
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    "scalar",
-    pytest.param("masked", marks=_R2_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_gather_load_nondiv(remainder_strategy):
     N_val = 17
     src = numpy.random.rand(N_val)
@@ -1086,13 +1079,11 @@ def test_gather_load_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"gather_load_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    "scalar",
-    pytest.param("masked", marks=_R2_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_scatter_store_nondiv(remainder_strategy):
     N_val = 17
     src = numpy.random.rand(N_val)
@@ -1112,12 +1103,13 @@ def test_scatter_store_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"scatter_store_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
 @pytest.mark.parametrize("remainder_strategy", [
     pytest.param("scalar", marks=_SCALAR_STRIDED_XFAIL),
-    pytest.param("masked", marks=_R2_XFAIL),
+    pytest.param("masked", marks=_SCALAR_STRIDED_XFAIL),
 ])
 def test_strided_load_stride_2_nondiv(remainder_strategy):
     N_val = 17
@@ -1136,12 +1128,13 @@ def test_strided_load_stride_2_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"strided_load_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
 
 @pytest.mark.parametrize("remainder_strategy", [
     pytest.param("scalar", marks=_SCALAR_STRIDED_XFAIL),
-    pytest.param("masked", marks=_R2_XFAIL),
+    pytest.param("masked", marks=_SCALAR_STRIDED_XFAIL),
 ])
 def test_strided_store_stride_2_nondiv(remainder_strategy):
     N_val = 17
@@ -1160,4 +1153,5 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"strided_store_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
     )

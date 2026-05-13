@@ -41,3 +41,62 @@ def walk_memlets_of(sdfg: dace.SDFG, dataname: str) -> Iterator[Tuple[SDFGState,
         for edge in state.edges():
             if edge.data.data is not None and edge.data.data == dataname:
                 yield state, edge
+
+
+def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
+    """Verifier for the masked-remainder contract (locked decision 2026-05-14).
+
+    For every map in ``sdfg`` (recursively) that has an ``_iter_mask`` array
+    allocated in scope, every memlet inside that map's scope subgraph must
+    have been collapsed by the lane-fanout / intrinsic-detect passes — no
+    per-lane subset references (i.e. no ``_laneid_<i>`` symbol in any subset
+    expression) may remain. Such references would lower to unconditional
+    scalar memlet reads in codegen and fault on inactive lanes when the
+    surrounding map runs the masked-remainder iteration.
+
+    Raises ``RuntimeError`` on the first uncollapsed per-lane memlet,
+    naming the offending edge so the caller can flip
+    ``lower_to_intrinsics=True`` or fall back to ``remainder_strategy="scalar"``.
+
+    ``vector_width`` is accepted for symmetry / future use; the check is
+    currently width-agnostic (just looks for the ``_laneid_`` symbol).
+    """
+    from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
+
+    for state in sdfg.all_states():
+        has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_")
+                            for name in state.sdfg.arrays)
+        if not has_iter_mask:
+            continue
+        for e in state.edges():
+            if e.data.data is None:
+                continue
+            subset_str = str(e.data.subset)
+            if LaneIdScheme.SUFFIX in subset_str:
+                raise RuntimeError(
+                    f"assert_no_lane_memlet_reads: map with _iter_mask in scope "
+                    f"({state.label}) still has a per-lane memlet on '{e.data.data}' "
+                    f"with subset {subset_str}. Lane fanout failed to collapse to "
+                    f"an intrinsic — would fault on inactive lanes. Set "
+                    f"`lower_to_intrinsics=True` on VectorizeCPU, or use "
+                    f"`remainder_strategy='scalar'` for this kernel.")
+
+    for s in sdfg.all_sdfgs_recursive():
+        if s is sdfg:
+            continue
+        # Re-walk children: each NSDFG may have its own _iter_mask scope.
+        for state in s.states():
+            has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_")
+                                for name in state.sdfg.arrays)
+            if not has_iter_mask:
+                continue
+            for e in state.edges():
+                if e.data.data is None:
+                    continue
+                subset_str = str(e.data.subset)
+                if LaneIdScheme.SUFFIX in subset_str:
+                    raise RuntimeError(
+                        f"assert_no_lane_memlet_reads: nested SDFG '{s.name}' with "
+                        f"_iter_mask in scope still has a per-lane memlet on "
+                        f"'{e.data.data}' in state '{state.label}' with subset "
+                        f"{subset_str}.")

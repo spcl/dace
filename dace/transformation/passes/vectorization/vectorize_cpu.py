@@ -24,6 +24,28 @@ from dace.transformation.passes.vectorization.detect_multi_dim_strided_store imp
 from dace.transformation.passes.vectorization.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.passes.vectorization.split_map_for_vector_remainder import SplitMapForVectorRemainder
+from dace.transformation.passes.vectorization.generate_iteration_mask import GenerateIterationMask
+from dace.transformation.passes.vectorization.utils.iteration import assert_no_lane_memlet_reads
+
+
+class _AssertNoLaneMemletReadsPass(ppl.Pass):
+    """Thin Pass wrapper that runs ``assert_no_lane_memlet_reads`` after
+    the vectorizer. Lands in the pipeline only when ``remainder_strategy='masked'``
+    so the loud failure is exactly the locked-decision contract — see
+    Option B in the plan."""
+
+    def __init__(self, vector_width: int):
+        super().__init__()
+        self._vector_width = vector_width
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified) -> bool:
+        return False
+
+    def apply_pass(self, sdfg, _pipeline_results):
+        assert_no_lane_memlet_reads(sdfg, self._vector_width)
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -72,10 +94,19 @@ class VectorizeCPU(ppl.Pipeline):
         if remainder_strategy not in _VALID_REMAINDER:
             raise ValueError(f"VectorizeCPU: remainder_strategy must be one of "
                              f"{sorted(_VALID_REMAINDER)}, got {remainder_strategy!r}")
-        if remainder_strategy in ("masked", "full_loop_mask"):
-            raise NotImplementedError(f"VectorizeCPU: remainder_strategy={remainder_strategy!r} "
-                                      f"is queued (R2 / R3); currently only 'divides_evenly' and "
-                                      f"'scalar' are wired end-to-end.")
+        if remainder_strategy == "full_loop_mask":
+            raise NotImplementedError("VectorizeCPU: remainder_strategy='full_loop_mask' is queued (R3); "
+                                      "currently only 'divides_evenly', 'scalar' and 'masked' are wired "
+                                      "end-to-end.")
+        # K1=fp_factor + K2=masked is rejected per the locked plan decision:
+        # the masked path emits canonical merge tasklets / iter_mask blends
+        # that fp-factor lowering can't combine with cleanly (would need a
+        # bool-to-float cast on every iteration). Use branch_normalization
+        # for the masked path, or remainder_strategy="scalar" for fp_factor.
+        if use_fp_factor and remainder_strategy == "masked":
+            raise ValueError("VectorizeCPU: use_fp_factor=True is incompatible with "
+                             "remainder_strategy='masked'; choose branch_normalization=True or "
+                             "remainder_strategy='scalar'")
         # ``force_autovec_ops`` / ``force_pscalar_ops`` (Option F overlay)
         # let callers override per-op which implementation the emitter
         # selects. Keys are templates-dict op identifiers (``"+"``,
@@ -234,6 +265,16 @@ class VectorizeCPU(ppl.Pipeline):
                     NestInnermostMapBodyIntoNSDFG(),
                     SplitMapForVectorRemainder(vector_width=vector_width, mode="scalar"),
                 ])
+            # R2: masked remainder. Split into main step-W (no mask) + step-W
+            # remainder body NSDFG; P3 attaches _iter_mask to the remainder
+            # body so the lane-fanout collapse (R2-b) picks the _masked
+            # template variant on remainder-side fanouts.
+            elif remainder_strategy == "masked":
+                passes.extend([
+                    NestInnermostMapBodyIntoNSDFG(),
+                    SplitMapForVectorRemainder(vector_width=vector_width, mode="masked"),
+                    GenerateIterationMask(vector_width=vector_width, mode="step_w_only"),
+                ])
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]
@@ -265,6 +306,14 @@ class VectorizeCPU(ppl.Pipeline):
             ])
         if eliminate_trivial_vector_map:
             passes.append(RemoveVectorMaps())
+        # Masked-remainder verifier (Option B in the plan): when _iter_mask
+        # is in scope, every per-lane memlet must have been collapsed by the
+        # detect_*.py passes to a masked intrinsic. The verifier raises a
+        # named NotImplementedError-style RuntimeError if it finds any
+        # uncollapsed _laneid_<i> in a subset — preventing the SIGABRT/SIGSEGV
+        # that would otherwise happen at runtime on inactive lanes.
+        if remainder_strategy == "masked":
+            passes.append(_AssertNoLaneMemletReadsPass(vector_width=vector_width))
         self._applied_before = False
         super().__init__(passes)
 

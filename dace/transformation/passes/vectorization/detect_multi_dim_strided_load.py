@@ -13,6 +13,12 @@ strided_load<{dtype}>(_in, _out, {vector_length}, {stride});
 }}
 """
 
+_MULTI_DIM_STRIDED_LOAD_TEMPLATE_MASKED = """
+{{
+strided_load_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -38,6 +44,7 @@ class DetectMultiDimStridedLoad(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         detect_multi_dim_strided_apply(sdfg, direction="load",
-                                               intrinsic_template=_MULTI_DIM_STRIDED_LOAD_TEMPLATE,
-                                               intrinsic_tasklet_name="multi_dim_strided_load")
+                                       intrinsic_template=_MULTI_DIM_STRIDED_LOAD_TEMPLATE,
+                                       intrinsic_template_masked=_MULTI_DIM_STRIDED_LOAD_TEMPLATE_MASKED,
+                                       intrinsic_tasklet_name="multi_dim_strided_load")
         sdfg.validate()

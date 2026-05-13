@@ -1696,3 +1696,121 @@ inline void strided_store(const T* __restrict__ A,
 #endif
     for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
 }
+
+// --------------------------- masked variants (RMW) ---------------------------
+// SVE has native gather/scatter intrinsics with an svbool_t predicate.
+// Build the predicate by AND-ing the whilelt iteration predicate with the
+// user mask (loaded as u64-per-lane then compared against zero). Inactive
+// lanes leave destination memory unchanged.
+
+#if defined(__ARM_FEATURE_SVE)
+static inline svbool_t _dace_load_bool_mask_b64(const bool* __restrict__ mask, int64_t i, int64_t length) {
+    // Materialize one mask lane per active u64 element via a per-lane fill
+    // to a uint64 temp buffer. Keeps the contract simple at the cost of a
+    // small stack buffer; SVE's vector-length is implementation-defined so
+    // we don't assume svcntd <= 16. The caller has already bounded the
+    // iteration via svwhilelt_b64 to the lane count, so the fill is bounded.
+    uint64_t buf[svcntd()];
+    for (int64_t lane = 0; lane < (int64_t)svcntd(); ++lane) {
+        const int64_t pos = i + lane;
+        buf[lane] = (pos < length && mask[pos]) ? UINT64_C(~0) : UINT64_C(0);
+    }
+    svbool_t pg_iter = svwhilelt_b64(i, length);
+    svuint64_t user = svld1_u64(pg_iter, buf);
+    return svcmpne_n_u64(pg_iter, user, 0);
+}
+#endif
+
+template <typename T>
+inline void gather_masked(const T* __restrict__ A,
+                          const int64_t* __restrict__ idx,
+                          T* __restrict__ B,
+                          const int64_t length,
+                          const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = _dace_load_bool_mask_b64(mask, i, length);
+            svint64_t vindex = svld1_s64(pg, &idx[i]);
+            svfloat64_t vdata = svld1_gather_s64index_f64(pg, (const double*)A, vindex);
+            svst1_f64(pg, (double*)&B[i], vdata);
+            i += svcntd();
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) if (mask[i]) B[i] = A[idx[i]];
+}
+
+template <typename T>
+inline void scatter_masked(const T* __restrict__ A,
+                           const int64_t* __restrict__ idx,
+                           T* __restrict__ B,
+                           const int64_t length,
+                           const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = _dace_load_bool_mask_b64(mask, i, length);
+            svfloat64_t vdata = svld1_f64(pg, (const double*)&A[i]);
+            svint64_t vindex = svld1_s64(pg, &idx[i]);
+            svst1_scatter_s64index_f64(pg, (double*)B, vindex, vdata);
+            i += svcntd();
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) if (mask[i]) B[idx[i]] = A[i];
+}
+
+template <typename T>
+inline void strided_load_masked(const T* __restrict__ A,
+                                T* __restrict__ B,
+                                const int64_t length,
+                                const int64_t stride,
+                                const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = _dace_load_bool_mask_b64(mask, i, length);
+            svint64_t vi = svindex_s64(i, 1);
+            svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+            svfloat64_t vdata = svld1_gather_s64index_f64(pg, (const double*)A, vindex);
+            svst1_f64(pg, (double*)&B[i], vdata);
+            i += svcntd();
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) if (mask[i]) B[i] = A[i * stride];
+}
+
+template <typename T>
+inline void strided_store_masked(const T* __restrict__ A,
+                                 T* __restrict__ B,
+                                 const int64_t length,
+                                 const int64_t stride,
+                                 const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = _dace_load_bool_mask_b64(mask, i, length);
+            svfloat64_t vdata = svld1_f64(pg, (const double*)&A[i]);
+            svint64_t vi = svindex_s64(i, 1);
+            svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+            svst1_scatter_s64index_f64(pg, (double*)B, vindex, vdata);
+            i += svcntd();
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) if (mask[i]) B[i * stride] = A[i];
+}

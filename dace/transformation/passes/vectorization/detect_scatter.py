@@ -14,6 +14,13 @@ scatter<{dtype}>(_in, idx, _out, {vector_length});
 }}
 """
 
+_SCATTER_TEMPLATE_MASKED = """
+{{
+int64_t idx[{vector_length}] = {{ {initializer_values} }};
+scatter_masked<{dtype}>(_in, idx, _out, {vector_length}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -32,5 +39,7 @@ class DetectScatter(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         detect_lane_fanout_apply(sdfg, direction="scatter", pattern="contiguous",
-                                         intrinsic_template=_SCATTER_TEMPLATE, intrinsic_tasklet_name="scatter_store")
+                                 intrinsic_template=_SCATTER_TEMPLATE,
+                                 intrinsic_template_masked=_SCATTER_TEMPLATE_MASKED,
+                                 intrinsic_tasklet_name="scatter_store")
         sdfg.validate()

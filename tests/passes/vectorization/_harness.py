@@ -60,7 +60,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            exact=None,
                            branch_mode: str = "merge",
                            remainder_strategy: str = "divides_evenly",
-                           param_tag: str = None):
+                           param_tag: str = None,
+                           lower_to_intrinsics: bool = False):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -149,6 +150,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  no_inline=no_inline,
                  fail_on_unvectorizable=True,
                  remainder_strategy=remainder_strategy,
+                 lower_to_intrinsics=lower_to_intrinsics,
                  **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 

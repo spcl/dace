@@ -13,6 +13,12 @@ strided_store<{dtype}>(_in, _out, {vector_length}, {stride});
 }}
 """
 
+_MULTI_DIM_STRIDED_STORE_TEMPLATE_MASKED = """
+{{
+strided_store_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -37,6 +43,7 @@ class DetectMultiDimStridedStore(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         detect_multi_dim_strided_apply(sdfg, direction="store",
-                                               intrinsic_template=_MULTI_DIM_STRIDED_STORE_TEMPLATE,
-                                               intrinsic_tasklet_name="multi_dim_strided_store")
+                                       intrinsic_template=_MULTI_DIM_STRIDED_STORE_TEMPLATE,
+                                       intrinsic_template_masked=_MULTI_DIM_STRIDED_STORE_TEMPLATE_MASKED,
+                                       intrinsic_tasklet_name="multi_dim_strided_store")
         sdfg.validate()

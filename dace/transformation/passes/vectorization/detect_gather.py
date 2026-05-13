@@ -14,6 +14,13 @@ gather<{dtype}>(_in, idx, _out, {vector_length});
 }}
 """
 
+_GATHER_TEMPLATE_MASKED = """
+{{
+int64_t idx[{vector_length}] = {{ {initializer_values} }};
+gather_masked<{dtype}>(_in, idx, _out, {vector_length}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -32,5 +39,7 @@ class DetectGather(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         detect_lane_fanout_apply(sdfg, direction="gather", pattern="contiguous",
-                                         intrinsic_template=_GATHER_TEMPLATE, intrinsic_tasklet_name="gather_load")
+                                 intrinsic_template=_GATHER_TEMPLATE,
+                                 intrinsic_template_masked=_GATHER_TEMPLATE_MASKED,
+                                 intrinsic_tasklet_name="gather_load")
         sdfg.validate()

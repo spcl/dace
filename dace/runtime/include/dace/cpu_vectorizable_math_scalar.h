@@ -370,3 +370,51 @@ inline void strided_store(const T* __restrict__ A,
         B[i * stride] = A[i];
     }
 }
+
+// --------------------------- masked variants (RMW) ---------------------------
+// Inactive lanes leave the destination memory unchanged; matches the
+// vector_<op>_masked convention used elsewhere in the runtime.
+
+template <typename T>
+inline void gather_masked(const T* __restrict__ A,
+                          const int64_t* __restrict__ idx,
+                          T* __restrict__ B,
+                          const int64_t length,
+                          const bool* __restrict__ mask) {
+    for (int64_t i = 0; i < length; ++i) {
+        if (mask[i]) B[i] = A[idx[i]];
+    }
+}
+
+template <typename T>
+inline void scatter_masked(const T* __restrict__ A,
+                           const int64_t* __restrict__ idx,
+                           T* __restrict__ B,
+                           const int64_t length,
+                           const bool* __restrict__ mask) {
+    for (int64_t i = 0; i < length; ++i) {
+        if (mask[i]) B[idx[i]] = A[i];
+    }
+}
+
+template <typename T>
+inline void strided_load_masked(const T* __restrict__ A,
+                                T* __restrict__ B,
+                                const int64_t length,
+                                const int64_t stride,
+                                const bool* __restrict__ mask) {
+    for (int64_t i = 0; i < length; ++i) {
+        if (mask[i]) B[i] = A[i * stride];
+    }
+}
+
+template <typename T>
+inline void strided_store_masked(const T* __restrict__ A,
+                                 T* __restrict__ B,
+                                 const int64_t length,
+                                 const int64_t stride,
+                                 const bool* __restrict__ mask) {
+    for (int64_t i = 0; i < length; ++i) {
+        if (mask[i]) B[i * stride] = A[i];
+    }
+}
