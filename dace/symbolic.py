@@ -1451,6 +1451,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
         if len(args) > 1:
             args = [arg for arg in args if not getattr(arg, 'is_Number', False) or not equal_valued(arg, 1)]
+        if not args:
+            return sympy.Integer(1)
         return sympy.Mul(*args, evaluate=False)
 
     @staticmethod
@@ -1736,7 +1738,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             if isinstance(arg, sympy.Add):
                 rendered = f'({rendered})'
             parts.append(rendered)
-        return '*'.join(parts)
+        return '*'.join(parts) if parts else '1'
 
 
 def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
