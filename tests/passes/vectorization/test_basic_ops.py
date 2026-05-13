@@ -130,7 +130,7 @@ def memset_4d(A: dace.float64[N, N, N, N]):
                     A[i, j, k, m] = 0.0
 
 
-def test_memset_4d():
+def test_memset_4d(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
     c = 0.8
@@ -144,11 +144,10 @@ def test_memset_4d():
             'N': N,
         },
         vector_width=8,
-        sdfg_name="memset_4d",
-    )
+        sdfg_name="memset_4d", remainder_strategy=remainder_strategy)
 
 
-def test_v_const_subs_4d():
+def test_v_const_subs_4d(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
 
@@ -161,11 +160,10 @@ def test_v_const_subs_4d():
             'N': N,
         },
         vector_width=8,
-        sdfg_name="v_const_subs_4d",
-    )
+        sdfg_name="v_const_subs_4d", remainder_strategy=remainder_strategy)
 
 
-def test_v_const_subs_4d_indirect_access():
+def test_v_const_subs_4d_indirect_access(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
 
@@ -179,8 +177,7 @@ def test_v_const_subs_4d_indirect_access():
             'c': 0,
         },
         vector_width=8,
-        sdfg_name="v_const_subs_4d_indirect_access",
-    )
+        sdfg_name="v_const_subs_4d_indirect_access", remainder_strategy=remainder_strategy)
 
 
 def foo(A):
@@ -208,7 +205,7 @@ def max_with_constant_reversed_order(A: dace.float64[N, N], c: dace.float64):
             A[i, j] = max(A[i, j], c)
 
 
-def test_max_with_constant():
+def test_max_with_constant(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     c = 0.8
@@ -223,11 +220,10 @@ def test_max_with_constant():
             'c': c
         },
         vector_width=8,
-        sdfg_name="max_with_constant",
-    )
+        sdfg_name="max_with_constant", remainder_strategy=remainder_strategy)
 
 
-def test_max_with_constant_reversed_order():
+def test_max_with_constant_reversed_order(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     c = 0.8
@@ -242,11 +238,10 @@ def test_max_with_constant_reversed_order():
             'c': c
         },
         vector_width=8,
-        sdfg_name="max_with_constant_reversed_order",
-    )
+        sdfg_name="max_with_constant_reversed_order", remainder_strategy=remainder_strategy)
 
 
-def test_vsubs_cpu():
+def test_vsubs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
@@ -259,11 +254,10 @@ def test_vsubs_cpu():
         },
         params={'N': N},
         vector_width=8,
-        sdfg_name="vsubs_one",
-    )
+        sdfg_name="vsubs_one", remainder_strategy=remainder_strategy)
 
 
-def test_memset():
+def test_memset(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -274,10 +268,10 @@ def test_memset():
                            params={'N': N},
                            vector_width=8,
                            sdfg_name="memset",
-                           exact=0.0)
+                           exact=0.0, remainder_strategy=remainder_strategy)
 
 
-def test_memset_with_fuse_and_copyin_enabled():
+def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -290,10 +284,10 @@ def test_memset_with_fuse_and_copyin_enabled():
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
                            fuse_overlapping_loads=True,
                            insert_copies=True,
-                           exact=0.0)
+                           exact=0.0, remainder_strategy=remainder_strategy)
 
 
-def test_nested_memset_with_fuse_and_copyin_enabled():
+def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -307,10 +301,10 @@ def test_nested_memset_with_fuse_and_copyin_enabled():
                            fuse_overlapping_loads=True,
                            insert_copies=True,
                            simplify=False,
-                           exact=0.0)
+                           exact=0.0, remainder_strategy=remainder_strategy)
 
 
-def test_vexp_cpu():
+def test_vexp_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -321,11 +315,10 @@ def test_vexp_cpu():
         },
         params={'N': N},
         vector_width=8,
-        sdfg_name="vexp_one",
-    )
+        sdfg_name="vexp_one", remainder_strategy=remainder_strategy)
 
 
-def test_vsubs_two_cpu():
+def test_vsubs_two_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
@@ -338,11 +331,10 @@ def test_vsubs_two_cpu():
         },
         params={'N': N},
         vector_width=8,
-        sdfg_name="vsubs_two",
-    )
+        sdfg_name="vsubs_two", remainder_strategy=remainder_strategy)
 
 
-def test_v_const_subs_cpu():
+def test_v_const_subs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -351,11 +343,10 @@ def test_v_const_subs_cpu():
         arrays={'A': A},
         params={'N': N},
         vector_width=8,
-        sdfg_name="v_const_subs_one",
-    )
+        sdfg_name="v_const_subs_one", remainder_strategy=remainder_strategy)
 
 
-def test_v_const_subs_two_cpu():
+def test_v_const_subs_two_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -364,11 +355,10 @@ def test_v_const_subs_two_cpu():
         arrays={'A': A},
         params={'N': N},
         vector_width=8,
-        sdfg_name="v_const_subs_two",
-    )
+        sdfg_name="v_const_subs_two", remainder_strategy=remainder_strategy)
 
 
-def test_simple_cpu():
+def test_simple_cpu(remainder_strategy):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
@@ -380,8 +370,7 @@ def test_simple_cpu():
         },
         params={'N': 64},
         vector_width=4,
-        sdfg_name="simple_cpu",
-    )
+        sdfg_name="simple_cpu", remainder_strategy=remainder_strategy)
 
 
 @dace.program
@@ -401,7 +390,7 @@ def vadd_with_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1
         A[i, j] = A[i, j] + c5
 
 
-def test_vadd_with_unary_scalar_cpu():
+def test_vadd_with_unary_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
@@ -418,11 +407,10 @@ def test_vadd_with_unary_scalar_cpu():
             'c': c
         },
         vector_width=8,
-        sdfg_name="vadd_with_unary_scalar_cpu",
-    )
+        sdfg_name="vadd_with_unary_scalar_cpu", remainder_strategy=remainder_strategy)
 
 
-def test_vabs():
+def test_vabs(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -435,11 +423,10 @@ def test_vabs():
             'N': N,
         },
         vector_width=8,
-        sdfg_name="vabs",
-    )
+        sdfg_name="vabs", remainder_strategy=remainder_strategy)
 
 
-def test_unary_symbol():
+def test_unary_symbol(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
@@ -452,11 +439,10 @@ def test_unary_symbol():
             'N': N,
         },
         vector_width=8,
-        sdfg_name="unary_symbol",
-    )
+        sdfg_name="unary_symbol", remainder_strategy=remainder_strategy)
 
 
-def test_vadd_with_scalar_scalar_cpu():
+def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
@@ -475,11 +461,10 @@ def test_vadd_with_scalar_scalar_cpu():
             'c2': c2
         },
         vector_width=8,
-        sdfg_name="vadd_with_scalar_scalar_cpu",
-    )
+        sdfg_name="vadd_with_scalar_scalar_cpu", remainder_strategy=remainder_strategy)
 
 
-def test_vadd_int():
+def test_vadd_int(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -492,11 +477,10 @@ def test_vadd_int():
         },
         params={'N': N},
         vector_width=8,
-        sdfg_name="vadd_int",
-    )
+        sdfg_name="vadd_int", remainder_strategy=remainder_strategy)
 
 
-def test_vadd_with_different_types():
+def test_vadd_with_different_types(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.float64)
@@ -509,11 +493,10 @@ def test_vadd_with_different_types():
         },
         params={'N': N},
         vector_width=8,
-        sdfg_name="vadd_with_different_types",
-    )
+        sdfg_name="vadd_with_different_types", remainder_strategy=remainder_strategy)
 
 
-def test_vadd_with_scalars_int():
+def test_vadd_with_scalars_int(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
@@ -532,8 +515,7 @@ def test_vadd_with_scalars_int():
             'c2': c2
         },
         vector_width=8,
-        sdfg_name="vadd_int_with_scalars",
-    )
+        sdfg_name="vadd_int_with_scalars", remainder_strategy=remainder_strategy)
 
 
 @dace.program
@@ -554,7 +536,7 @@ def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
         B[i] = pow(A[i], 3.3)
 
 
-def test_log():
+def test_log(remainder_strategy):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -573,11 +555,10 @@ def test_log():
         params={"S": _S},
         vector_width=8,
         sdfg_name=f"test_log",
-        from_sdfg=True,
-    )
+        from_sdfg=True, remainder_strategy=remainder_strategy)
 
 
-def test_exp():
+def test_exp(remainder_strategy):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -596,12 +577,11 @@ def test_exp():
         params={"S": _S},
         vector_width=8,
         sdfg_name=f"test_exp",
-        from_sdfg=True,
-    )
+        from_sdfg=True, remainder_strategy=remainder_strategy)
 
 
 @pytest.mark.skip
-def test_pow():
+def test_pow(remainder_strategy):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -619,7 +599,7 @@ def test_pow():
                            params={"S": _S},
                            vector_width=8,
                            sdfg_name=f"test_pow",
-                           from_sdfg=True)
+                           from_sdfg=True, remainder_strategy=remainder_strategy)
 
 
 @dace.program
@@ -629,7 +609,7 @@ def dace_s000(A: dace.float64[S], B: dace.float64[S]):
             A[i] = B[i] + 1.0
 
 
-def test_s000():
+def test_s000(remainder_strategy):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -643,4 +623,4 @@ def test_s000():
                            params={"S": _S},
                            vector_width=8,
                            sdfg_name=f"s000",
-                           from_sdfg=False)
+                           from_sdfg=False, remainder_strategy=remainder_strategy)

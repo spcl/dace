@@ -58,12 +58,20 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            from_sdfg=False,
                            no_inline=False,
                            exact=None,
-                           branch_mode: str = "fp_factor",
+                           branch_mode: str = "merge",
                            remainder_strategy: str = "divides_evenly"):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
+
+    # Suffix the sdfg name with the parametrization keys so each combination
+    # of (branch_mode, remainder_strategy) gets its own ``.dacecache/<name>/``
+    # build directory. Without this, parallel pytest workers building the
+    # same kernel under different parametrizations race on shared cmake state
+    # and the loser worker crashes with a stale ``.so`` load error.
+    if sdfg_name is not None:
+        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}"
 
     # Original SDFG
     if not from_sdfg:
