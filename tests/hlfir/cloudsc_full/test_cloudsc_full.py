@@ -168,10 +168,16 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
     _f2py_ref.cloudscouter(**{k: v for k, v in all_kwargs.items() if k in accepted})
 
     # SDFG-side call: same kwargs, plus the scalar-arg routing that
-    # handles Scalar-vs-length-1-Array classification for both int
-    # and float scalars (per feedback_scalar_io_convention).
-    scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, (int, float, np.integer, np.floating))}
-    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, (int, float, np.integer, np.floating))}
+    # handles Scalar-vs-length-1-Array classification for every
+    # 0-d Python/numpy value (per feedback_scalar_io_convention).
+    # `np.bool_` must be included -- Fortran ``LOGICAL :: LAERICEAUTO``
+    # with no explicit intent defaults to ``intent(inout)`` and the
+    # bridge surfaces that as ``Array(dtype=bool, shape=(1,))``, so
+    # the caller needs ``_sdfg_call_args`` to box it as a length-1
+    # numpy bool array.
+    _scalar_types = (bool, int, float, np.bool_, np.integer, np.floating)
+    scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, _scalar_types)}
+    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, _scalar_types)}
     sdfg_kwargs.update(_lower_keys(outputs_sdfg))
     sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
     sdfg(**sdfg_kwargs)
