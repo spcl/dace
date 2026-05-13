@@ -580,7 +580,6 @@ def test_exp(remainder_strategy):
         from_sdfg=True, remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.skip
 def test_pow(remainder_strategy):
     # Create test arrays
     _S = 64
@@ -591,7 +590,7 @@ def test_pow(remainder_strategy):
     pow_implementations_std_sdfg = pow_implementations.to_sdfg()
     ReplaceSTDPowWithDaCePow().apply_pass(pow_implementations_std_sdfg, {})
 
-    run_vectorization_test(dace_func=pow_implementations,
+    run_vectorization_test(dace_func=pow_implementations_std_sdfg,
                            arrays={
                                "A": A,
                                "B": B
