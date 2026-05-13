@@ -11,6 +11,8 @@ from tests.passes.vectorization._harness import (
     _get_cloudsc_snippet_four,
 )
 
+_OPT_PARAMS = [(True, True), (True, False), (False, True), (False, False)]
+
 
 @dace.program
 def cloudsc_snippet_one(
@@ -220,12 +222,12 @@ def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
                            branch_mode=branch_mode, remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strategy):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
-    sdfg.name = f"cloudsc_snippet_three_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "cloudsc_snippet_three"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -269,15 +271,16 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
-    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "cloudsc_snippet_three_with_partial_subset"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -322,15 +325,16 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters, branch_mode, remainder_strategy):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
-    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_without_inline_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "cloudsc_snippet_three_with_partial_subset_without_inline"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -375,15 +379,16 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_mode, remainder_strategy):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
-    sdfg.name = f"cloudsc_snippet_three_without_inline_sdfgs_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "cloudsc_snippet_three_without_inline_sdfgs"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -428,15 +433,16 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode, remainder_strategy):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=True)
-    sdfg.name = f"cloudsc_snippet_three_with_scalar_use_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "cloudsc_snippet_three_with_scalar_use"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -481,4 +487,5 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")

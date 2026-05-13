@@ -561,6 +561,32 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
 
             copy_subset = compute_edge_subset(e.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
 
+            # Defensive: the destination ``an`` is allocated at shape
+            # (vector_width,). If ``copy_subset`` has volume > vector_width
+            # (the strided-but-misclassified-as-vectorizable case under
+            # remainder_strategy="scalar" where compute_edge_subset's
+            # ``stride_one_begin == 0`` branch returns the original
+            # bounding-box subset unchanged), the codegen-emitted CopyND
+            # writes past the destination buffer and SIGABRTs / SIGSEGVs
+            # at runtime. Raise loudly here so the failure is named.
+            try:
+                copy_volume = copy_subset.num_elements_exact()
+            except Exception:
+                copy_volume = copy_subset.num_elements()
+            try:
+                copy_volume_int = int(copy_volume)
+            except (TypeError, ValueError):
+                copy_volume_int = None
+            if copy_volume_int is not None and copy_volume_int > vector_width:
+                raise NotImplementedError(
+                    f"_process_edges (direction={direction!r}): copy memlet on {orig_data} has "
+                    f"subset {copy_subset} (volume {copy_volume_int}) > vector_width "
+                    f"({vector_width}); destination buffer is (vector_width,) so the emitted "
+                    f"CopyND would overflow. This is the strided-pattern + non-scalar-remainder "
+                    f"interaction (todo: scalar-postamble investigation). Workaround: use "
+                    f"remainder_strategy='divides_evenly' for this kernel, or wait for "
+                    f"R2's masked-remainder + intrinsic-collapse path.")
+
             an = state.add_access(vector_dataname)
             an.setzero = True
             state.remove_edge(e)

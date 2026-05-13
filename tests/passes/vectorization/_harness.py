@@ -59,7 +59,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            no_inline=False,
                            exact=None,
                            branch_mode: str = "merge",
-                           remainder_strategy: str = "divides_evenly"):
+                           remainder_strategy: str = "divides_evenly",
+                           param_tag: str = None):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -70,8 +71,16 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # build directory. Without this, parallel pytest workers building the
     # same kernel under different parametrizations race on shared cmake state
     # and the loser worker crashes with a stale ``.so`` load error.
+    #
+    # ``param_tag`` is the convention for tests that ALSO parametrise over an
+    # ``opt_parameters`` (or similar) tuple beyond the conftest fixtures.
+    # Pass ``param_tag=f"param{idx}"`` from the test body so each tuple gets
+    # a unique cache dir. The verbose alternative is to encode the tuple
+    # into the sdfg.name directly, but parametrize indices keep names short.
     if sdfg_name is not None:
         sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}"
+        if param_tag is not None:
+            sdfg_name = f"{sdfg_name}_{param_tag}"
 
     # Original SDFG
     if not from_sdfg:
@@ -81,6 +90,15 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
     else:
         sdfg: dace.SDFG = dace_func
+        # When the caller pre-built the SDFG (from_sdfg=True) and supplied
+        # a base sdfg_name, also rename the reference SDFG itself so the
+        # unvectorized compile lands in its own .dacecache directory. Without
+        # this, every (branch_mode, remainder_strategy, opt_parameters)
+        # parametrization shares the same reference build dir and parallel
+        # pytest workers race on CMake state — surfaces as FileExistsError /
+        # CompilerConfigurationError / OSError loading the .so.
+        if sdfg_name is not None:
+            sdfg.name = sdfg_name
 
     c_sdfg = sdfg.compile()
 

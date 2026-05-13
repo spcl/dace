@@ -1515,82 +1515,111 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, c
 // tail handling for length not divisible by 8.
 // ============================================================================
 
-inline void gather_double(const double* __restrict__ A,
-                          const int64_t* __restrict__ idx,
-                          double* __restrict__ B,
-                          const int64_t length) {
-    if (length >= 8) {
-        int64_t i = 0;
-        for (; i + 8 <= length; i += 8) {
-            __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-            __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
-            _mm512_storeu_pd(&B[i], vdata);
-        }
-        for (; i < length; ++i) B[i] = A[idx[i]];
-    } else {
-        for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
-    }
-}
-
-inline void scatter_double(const double* __restrict__ A,
-                           const int64_t* __restrict__ idx,
-                           double* __restrict__ B,
-                           const int64_t length) {
-    if (length >= 8) {
-        int64_t i = 0;
-        for (; i + 8 <= length; i += 8) {
-            __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
-            __m512d vdata = _mm512_loadu_pd(&A[i]);
-            _mm512_i64scatter_pd(B, vindex, vdata, 8);
-        }
-        for (; i < length; ++i) B[idx[i]] = A[i];
-    } else {
-        for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
-    }
-}
-
-inline void strided_load_double(const double* __restrict__ A,
-                                double* __restrict__ B,
-                                const int64_t length,
-                                const int64_t stride) {
-    if (length >= 8) {
-        for (int64_t i = 0; i < length; i += 8) {
-            int64_t idx_buf[8];
-            int lane_count = 0;
-            for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-                idx_buf[lane] = (i + lane) * stride;
-                ++lane_count;
+template <typename T>
+inline void gather(const T* __restrict__ A,
+                   const int64_t* __restrict__ idx,
+                   T* __restrict__ B,
+                   const int64_t length) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, double>::value) {
+        if (length >= 8) {
+            int64_t i = 0;
+            for (; i + 8 <= length; i += 8) {
+                __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+                __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
+                _mm512_storeu_pd(&B[i], vdata);
             }
-            __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-            __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
-            double tmp[8];
-            _mm512_storeu_pd(tmp, vdata);
-            for (int lane = 0; lane < lane_count; ++lane) B[i + lane] = tmp[lane];
+            for (; i < length; ++i) B[i] = A[idx[i]];
+        } else {
+            for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
         }
-    } else {
-        for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
+        return;
     }
+#endif
+    // Scalar fallback for non-double T or non-AVX-512 builds (also covers float).
+    for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
 }
 
-inline void strided_store_double(const double* __restrict__ A,
-                                 double* __restrict__ B,
-                                 const int64_t length,
-                                 const int64_t stride) {
-    if (length >= 8) {
-        for (int64_t i = 0; i < length; i += 8) {
-            int64_t idx_buf[8];
-            double val_buf[8];
-            int lane_count = 0;
-            for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-                idx_buf[lane] = (i + lane) * stride;
-                val_buf[lane] = A[i + lane];
-                ++lane_count;
+template <typename T>
+inline void scatter(const T* __restrict__ A,
+                    const int64_t* __restrict__ idx,
+                    T* __restrict__ B,
+                    const int64_t length) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, double>::value) {
+        if (length >= 8) {
+            int64_t i = 0;
+            for (; i + 8 <= length; i += 8) {
+                __m512i vindex = _mm512_loadu_si512((const __m512i*)&idx[i]);
+                __m512d vdata = _mm512_loadu_pd(&A[i]);
+                _mm512_i64scatter_pd(B, vindex, vdata, 8);
             }
-            __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-            __m512d vdata = _mm512_loadu_pd(val_buf);
-            _mm512_i64scatter_pd(B, vindex, vdata, 8);
+            for (; i < length; ++i) B[idx[i]] = A[i];
+        } else {
+            for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
         }
-    } else {
-        for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
+        return;
     }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
+}
+
+template <typename T>
+inline void strided_load(const T* __restrict__ A,
+                         T* __restrict__ B,
+                         const int64_t length,
+                         const int64_t stride) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, double>::value) {
+        if (length >= 8) {
+            for (int64_t i = 0; i < length; i += 8) {
+                int64_t idx_buf[8];
+                int lane_count = 0;
+                for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
+                    idx_buf[lane] = (i + lane) * stride;
+                    ++lane_count;
+                }
+                __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+                __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);
+                double tmp[8];
+                _mm512_storeu_pd(tmp, vdata);
+                for (int lane = 0; lane < lane_count; ++lane) B[i + lane] = tmp[lane];
+            }
+        } else {
+            for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
+}
+
+template <typename T>
+inline void strided_store(const T* __restrict__ A,
+                          T* __restrict__ B,
+                          const int64_t length,
+                          const int64_t stride) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, double>::value) {
+        if (length >= 8) {
+            for (int64_t i = 0; i < length; i += 8) {
+                int64_t idx_buf[8];
+                double val_buf[8];
+                int lane_count = 0;
+                for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
+                    idx_buf[lane] = (i + lane) * stride;
+                    val_buf[lane] = A[i + lane];
+                    ++lane_count;
+                }
+                __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+                __m512d vdata = _mm512_loadu_pd(val_buf);
+                _mm512_i64scatter_pd(B, vindex, vdata, 8);
+            }
+        } else {
+            for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
+        }
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
 }

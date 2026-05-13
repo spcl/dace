@@ -9,7 +9,7 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_mu
 
 _MULTI_DIM_STRIDED_STORE_TEMPLATE = """
 {{
-strided_store_double(_in, _out, {vector_length}, {stride});
+strided_store<{dtype}>(_in, _out, {vector_length}, {stride});
 }}
 """
 

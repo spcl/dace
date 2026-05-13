@@ -99,9 +99,6 @@ def _match_assign_fan(state: dace.SDFGState, packed_node: dace.nodes.AccessNode,
         return None
     tasklets = {n for n in neighbours if isinstance(n, nodes.Tasklet)}
 
-    if state.sdfg.arrays[packed_node.data].dtype != dace.float64:
-        return None
-
     numbers = []
     for t in tasklets:
         m = _ASSIGN_LABEL_RE.match(t.label)
@@ -123,8 +120,6 @@ def _match_assign_fan(state: dace.SDFGState, packed_node: dace.nodes.AccessNode,
         idx_data_and_subset.append((far.data.data, far.data.subset))
         idx_datanames.add(far.data.data)
     if len(idx_datanames) != 1:
-        return None
-    if state.sdfg.arrays[next(iter(idx_datanames))].dtype != dace.float64:
         return None
 
     return sorted_tasklets, idx_data_and_subset, vector_length
@@ -233,6 +228,8 @@ def detect_multi_dim_strided_apply(sdfg: SDFG, *, direction: str, intrinsic_temp
                 continue
             fixed_increment = deltas[0]
 
+            dtype_cpp = state.sdfg.arrays[node.data].dtype.ctype
+
             # The fan can be rooted at the surrounding MapEntry (when the
             # AccessNode lives outside the map scope, as for multi-dim arrays)
             # or at an AccessNode (1D arrays moved inside the map). Either is
@@ -252,7 +249,8 @@ def detect_multi_dim_strided_apply(sdfg: SDFG, *, direction: str, intrinsic_temp
             for t in sorted_tasklets:
                 state.remove_node(t)
 
-            intrinsic_code = intrinsic_template.format(vector_length=vector_length, stride=fixed_increment)
+            intrinsic_code = intrinsic_template.format(vector_length=vector_length, stride=fixed_increment,
+                                                       dtype=dtype_cpp)
             t1 = state.add_tasklet(intrinsic_tasklet_name, {"_in"}, {"_out"}, intrinsic_code,
                                    dace.dtypes.Language.CPP)
             packed_memlet = dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data])
@@ -331,16 +329,19 @@ def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrin
             if not all(len(s) == 1 for _, s in idx_data_and_subset):
                 continue
 
+            dtype_cpp = state.sdfg.arrays[node.data].dtype.ctype
+
             if pattern == "contiguous":
                 initializer_values = ", ".join(str(s) for _, s in idx_data_and_subset)
                 intrinsic_code = intrinsic_template.format(initializer_values=initializer_values,
-                                                           vector_length=vector_length)
+                                                           vector_length=vector_length, dtype=dtype_cpp)
             else:  # strided
                 initializers = [str(s) for _, s in idx_data_and_subset]
                 fixed_increment, base_expr = detect_fixed_increment(initializers)
                 if fixed_increment is None:
                     continue
-                intrinsic_code = intrinsic_template.format(vector_length=vector_length, stride=fixed_increment)
+                intrinsic_code = intrinsic_template.format(vector_length=vector_length, stride=fixed_increment,
+                                                           dtype=dtype_cpp)
 
             indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)
             if not isinstance(indirect, dace.nodes.AccessNode):

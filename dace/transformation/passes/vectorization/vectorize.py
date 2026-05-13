@@ -1213,6 +1213,34 @@ class Vectorize(ppl.Pass):
 
             array = state.parent_graph.sdfg.arrays[ie.data.data]
             if array.storage != self.vector_input_storage:
+                # Defensive: the destination buffer is allocated at shape
+                # (vector_width,) and the source memlet is copied into it
+                # via a contiguous CopyND. If the source subset's element
+                # count exceeds vector_width (the strided-but-classified-
+                # vectorizable case under remainder_strategy="scalar"
+                # where collect_non_unit_stride_accesses_in_map mis-classifies
+                # the array as vectorizable=True instead of False), the
+                # codegen emits a memcpy that writes past the destination
+                # buffer and SIGABRTs / SIGSEGVs at runtime. Raise loudly
+                # here so the failure is named instead of crashing.
+                try:
+                    src_volume = ie.data.subset.num_elements_exact()
+                except Exception:
+                    src_volume = ie.data.subset.num_elements()
+                try:
+                    src_volume_int = int(src_volume)
+                except (TypeError, ValueError):
+                    src_volume_int = None
+                if src_volume_int is not None and src_volume_int > self.vector_width:
+                    raise NotImplementedError(
+                        f"_copy_in_and_copy_out: source memlet on {ie.data.data} has "
+                        f"subset {ie.data.subset} (volume {src_volume_int}) > vector_width "
+                        f"({self.vector_width}); destination buffer is (vector_width,) so the "
+                        f"emitted CopyND would overflow. This is the strided-pattern + "
+                        f"insert_copies interaction (todo: scalar-postamble investigation). "
+                        f"Workaround: set insert_copies=False, or set "
+                        f"remainder_strategy='divides_evenly' for this kernel, or wait for "
+                        f"R2's masked-remainder + lane-fanout intrinsic-collapse path.")
                 # Add new array, if not there
                 arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
@@ -1253,6 +1281,25 @@ class Vectorize(ppl.Pass):
 
             array = state.parent_graph.sdfg.arrays[oe.data.data]
             if array.storage != self.vector_output_storage:
+                # Same defensive check as the in-edge side: the destination
+                # buffer is allocated (vector_width,); a strided out-memlet
+                # with volume > vector_width would overflow the destination
+                # via the emitted CopyND. Raise loudly instead of SIGABRT.
+                try:
+                    out_volume = oe.data.subset.num_elements_exact()
+                except Exception:
+                    out_volume = oe.data.subset.num_elements()
+                try:
+                    out_volume_int = int(out_volume)
+                except (TypeError, ValueError):
+                    out_volume_int = None
+                if out_volume_int is not None and out_volume_int > self.vector_width:
+                    raise NotImplementedError(
+                        f"_copy_in_and_copy_out: output memlet on {oe.data.data} has "
+                        f"subset {oe.data.subset} (volume {out_volume_int}) > vector_width "
+                        f"({self.vector_width}); destination buffer is (vector_width,) so the "
+                        f"emitted CopyND would overflow. Same root cause as the in-edge "
+                        f"strided-pattern + insert_copies bug.")
                 # If the name exists in the inputs, reuse the name
                 arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
 

@@ -10,7 +10,7 @@ from dace.transformation.passes.vectorization.utils.lane_fanout import detect_la
 _GATHER_TEMPLATE = """
 {{
 int64_t idx[{vector_length}] = {{ {initializer_values} }};
-gather_double(_in, idx, _out, {vector_length});
+gather<{dtype}>(_in, idx, _out, {vector_length});
 }}
 """
 

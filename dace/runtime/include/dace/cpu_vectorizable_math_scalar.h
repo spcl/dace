@@ -331,37 +331,41 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, c
 // avx512/neon/sve arch files alongside their own vector_<op>s.
 // ============================================================================
 
-inline void gather_double(const double* __restrict__ A,
-                          const int64_t* __restrict__ idx,
-                          double* __restrict__ B,
-                          const int64_t length) {
+template <typename T>
+inline void gather(const T* __restrict__ A,
+                   const int64_t* __restrict__ idx,
+                   T* __restrict__ B,
+                   const int64_t length) {
     for (int64_t i = 0; i < length; ++i) {
         B[i] = A[idx[i]];
     }
 }
 
-inline void scatter_double(const double* __restrict__ A,
-                           const int64_t* __restrict__ idx,
-                           double* __restrict__ B,
-                           const int64_t length) {
+template <typename T>
+inline void scatter(const T* __restrict__ A,
+                    const int64_t* __restrict__ idx,
+                    T* __restrict__ B,
+                    const int64_t length) {
     for (int64_t i = 0; i < length; ++i) {
         B[idx[i]] = A[i];
     }
 }
 
-inline void strided_load_double(const double* __restrict__ A,
-                                double* __restrict__ B,
-                                const int64_t length,
-                                const int64_t stride) {
+template <typename T>
+inline void strided_load(const T* __restrict__ A,
+                         T* __restrict__ B,
+                         const int64_t length,
+                         const int64_t stride) {
     for (int64_t i = 0; i < length; ++i) {
         B[i] = A[i * stride];
     }
 }
 
-inline void strided_store_double(const double* __restrict__ A,
-                                 double* __restrict__ B,
-                                 const int64_t length,
-                                 const int64_t stride) {
+template <typename T>
+inline void strided_store(const T* __restrict__ A,
+                          T* __restrict__ B,
+                          const int64_t length,
+                          const int64_t stride) {
     for (int64_t i = 0; i < length; ++i) {
         B[i * stride] = A[i];
     }

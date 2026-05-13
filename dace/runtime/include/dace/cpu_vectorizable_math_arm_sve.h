@@ -1607,64 +1607,92 @@ inline void vector_select(T* __restrict__ out, const CondT* __restrict__ cond, c
 
 #include <stdint.h>
 
-inline void gather_double(const double* __restrict__ A,
-                          const int64_t* __restrict__ idx,
-                          double* __restrict__ B,
-                          const int64_t length)
+template <typename T>
+inline void gather(const T* __restrict__ A,
+                   const int64_t* __restrict__ idx,
+                   T* __restrict__ B,
+                   const int64_t length)
 {
-    int64_t i = 0;
-    while (i < length) {
-        svbool_t pg = svwhilelt_b64(i, length);
-        svint64_t vindex = svld1_s64(pg, &idx[i]);
-        svfloat64_t vdata = svld1_gather_s64index_f64(pg, A, vindex);
-        svst1_f64(pg, &B[i], vdata);
-        i += svcntd();
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = svwhilelt_b64(i, length);
+            svint64_t vindex = svld1_s64(pg, &idx[i]);
+            svfloat64_t vdata = svld1_gather_s64index_f64(pg, (const double*)A, vindex);
+            svst1_f64(pg, (double*)&B[i], vdata);
+            i += svcntd();
+        }
+        return;
     }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[i] = A[idx[i]];
 }
 
-inline void scatter_double(const double* __restrict__ A,
-                           const int64_t* __restrict__ idx,
-                           double* __restrict__ B,
-                           const int64_t length)
+template <typename T>
+inline void scatter(const T* __restrict__ A,
+                    const int64_t* __restrict__ idx,
+                    T* __restrict__ B,
+                    const int64_t length)
 {
-    int64_t i = 0;
-    while (i < length) {
-        svbool_t pg = svwhilelt_b64(i, length);
-        svfloat64_t vdata = svld1_f64(pg, &A[i]);
-        svint64_t vindex = svld1_s64(pg, &idx[i]);
-        svst1_scatter_s64index_f64(pg, B, vindex, vdata);
-        i += svcntd();
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = svwhilelt_b64(i, length);
+            svfloat64_t vdata = svld1_f64(pg, (const double*)&A[i]);
+            svint64_t vindex = svld1_s64(pg, &idx[i]);
+            svst1_scatter_s64index_f64(pg, (double*)B, vindex, vdata);
+            i += svcntd();
+        }
+        return;
     }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[idx[i]] = A[i];
 }
 
-inline void strided_load_double(const double* __restrict__ A,
-                                double* __restrict__ B,
-                                const int64_t length,
-                                const int64_t stride)
+template <typename T>
+inline void strided_load(const T* __restrict__ A,
+                         T* __restrict__ B,
+                         const int64_t length,
+                         const int64_t stride)
 {
-    int64_t i = 0;
-    while (i < length) {
-        svbool_t pg = svwhilelt_b64(i, length);
-        svint64_t vi = svindex_s64(i, 1);
-        svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
-        svfloat64_t vdata = svld1_gather_s64index_f64(pg, A, vindex);
-        svst1_f64(pg, &B[i], vdata);
-        i += svcntd();
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = svwhilelt_b64(i, length);
+            svint64_t vi = svindex_s64(i, 1);
+            svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+            svfloat64_t vdata = svld1_gather_s64index_f64(pg, (const double*)A, vindex);
+            svst1_f64(pg, (double*)&B[i], vdata);
+            i += svcntd();
+        }
+        return;
     }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[i] = A[i * stride];
 }
 
-inline void strided_store_double(const double* __restrict__ A,
-                                 double* __restrict__ B,
-                                 const int64_t length,
-                                 const int64_t stride)
+template <typename T>
+inline void strided_store(const T* __restrict__ A,
+                          T* __restrict__ B,
+                          const int64_t length,
+                          const int64_t stride)
 {
-    int64_t i = 0;
-    while (i < length) {
-        svbool_t pg = svwhilelt_b64(i, length);
-        svfloat64_t vdata = svld1_f64(pg, &A[i]);
-        svint64_t vi = svindex_s64(i, 1);
-        svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
-        svst1_scatter_s64index_f64(pg, B, vindex, vdata);
-        i += svcntd();
+#if defined(__ARM_FEATURE_SVE)
+    if constexpr (std::is_same<T, double>::value) {
+        int64_t i = 0;
+        while (i < length) {
+            svbool_t pg = svwhilelt_b64(i, length);
+            svfloat64_t vdata = svld1_f64(pg, (const double*)&A[i]);
+            svint64_t vi = svindex_s64(i, 1);
+            svint64_t vindex = svmul_n_s64_x(pg, vi, stride);
+            svst1_scatter_s64index_f64(pg, (double*)B, vindex, vdata);
+            i += svcntd();
+        }
+        return;
     }
+#endif
+    for (int64_t i = 0; i < length; ++i) B[i * stride] = A[i];
 }

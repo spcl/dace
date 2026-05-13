@@ -249,12 +249,15 @@ def test_spmv():
     assert numpy.allclose(y_orig, y_vec, atol=1e-12), f"{y_orig - y_vec}"
 
 
-@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+_OPT_PARAMS = [(True, True), (True, False), (False, True), (False, False)]
+
+
+@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
 def test_map_inside_nested_map(opt_parameters):
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_map_inside_nested_map()
-    sdfg.name = f"map_inside_nested_map_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = "map_inside_nested_map"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -283,4 +286,5 @@ def test_map_inside_nested_map(opt_parameters):
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
-                           no_inline=True)
+                           no_inline=True,
+                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
