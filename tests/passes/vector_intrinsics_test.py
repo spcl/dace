@@ -525,7 +525,8 @@ def test_strided_gather(config: List[Dict[str, str]]):
     # Build baseline SDFG
     # -------------------------
     sdfg = dace_strided_gather.to_sdfg(simplify=False)
-    sdfg.name = "strided_gather"
+    cfg_label = "_".join(f"{k}{v}" for k, v in config.items())
+    sdfg.name = f"strided_gather_{cfg_label}"
 
     simplify_sdfg_if_needed(sdfg, simplify=True, skip_simplify=["ScalarToSymbolPromotion"])
     sdfg.apply_transformations_repeated(LoopToMap())
@@ -535,7 +536,7 @@ def test_strided_gather(config: List[Dict[str, str]]):
     # Build vectorized SDFG
     # -------------------------
     vsdfg = copy.deepcopy(sdfg)
-    vsdfg.name = "strided_gather_vec"
+    vsdfg.name = sdfg.name + "_vec"
 
     apply_vectorization_pass(vsdfg, vector_width=8, lower_to_intrinsics=True)
     vsdfg.simplify()

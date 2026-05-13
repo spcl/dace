@@ -1593,7 +1593,7 @@ class Vectorize(ppl.Pass):
 
         # Set zero for all transients
         # Vectorization requires all transient to be 0 to not accidentally read trash data
-        # All access nodes need to be set to setzer of the same array as, the first node that trigger allocation
+        # All access nodes of the same array need to be setzero=True so the first node that triggers allocation
         # determines if we set zero or not
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.AccessNode):

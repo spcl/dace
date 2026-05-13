@@ -25,9 +25,9 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
     ztp1 = numpy.random.choice([3.5, 5.0], size=(C, ))
     rtt = numpy.random.choice([4.0], size=(1, ))
 
-    sdfg.name = f"{sdfg.name}_{str(trivial_if).lower()}_{str(demote_symbols).lower()}"
+    sdfg.name = f"{sdfg.name}_{branch_mode}_{str(trivial_if).lower()}_{str(demote_symbols).lower()}"
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_sdfg.name = f"{copy_sdfg.name}_{str(trivial_if).lower()}_{str(demote_symbols).lower()}_vectorized"
+    copy_sdfg.name = sdfg.name + "_vectorized"
 
     arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
 
@@ -64,7 +64,7 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
 
 def test_disjoint_chain_with_overlapping_region_fusion(branch_mode):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
-    sdfg.name = f"disjoint_chain_split_two_rtt_val_4_2_with_overlapping_region_fusion"
+    sdfg.name = f"disjoint_chain_split_two_rtt_val_4_2_with_overlapping_region_fusion_{branch_mode}"
     _N = 64
     zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
@@ -110,7 +110,7 @@ def test_disjoint_chain_with_overlapping_region_fusion(branch_mode):
 
 def test_disjoint_chain(branch_mode):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
-    sdfg.name = f"disjoint_chain"
+    sdfg.name = f"disjoint_chain_{branch_mode}"
     _N = 64
     zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
