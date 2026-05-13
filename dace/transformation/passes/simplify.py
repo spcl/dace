@@ -12,6 +12,7 @@ from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -38,6 +39,7 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
     ContinueToCondition,
     EmptyLoopElimination,
+    InsertExplicitCopies,
 ]
 
 _nonrecursive_passes = [
