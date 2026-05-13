@@ -806,3 +806,65 @@ def test_scatter_store_i_2i():
         vector_width=8,
         sdfg_name="scatter_store_i_2i",
     )
+
+
+# Halve-index access pattern: ``c[i // 2]`` — each pair of consecutive
+# iterations shares a source element. Lowering candidate for the
+# ``multiplex`` pattern detector (utils/multiplex.py).
+#
+# Kernel shape borrowed from TSVC s4117:
+#   a[i] = b[i] + c[i // 2] * d[i]
+# Plus an isolated form ``dst[i] = src[i // 2]`` to exercise the pattern
+# on its own without the surrounding arithmetic.
+
+
+@dace.program
+def halve_index_gather(src: dace.float64[N], dst: dace.float64[N]):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i // 2]
+
+
+@dace.program
+def halve_index_s4117(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i, in dace.map[0:N:1]:
+        a[i] = b[i] + c[i // 2] * d[i]
+
+
+def test_halve_index_gather():
+    N_val = 64
+    src = numpy.random.rand(N_val)
+    dst = numpy.zeros(N_val)
+    run_vectorization_test(
+        dace_func=halve_index_gather,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N_val
+        },
+        vector_width=8,
+        sdfg_name="halve_index_gather",
+    )
+
+
+def test_halve_index_s4117():
+    N_val = 64
+    a = numpy.zeros(N_val)
+    b = numpy.random.rand(N_val)
+    c = numpy.random.rand(N_val)
+    d = numpy.random.rand(N_val)
+    run_vectorization_test(
+        dace_func=halve_index_s4117,
+        arrays={
+            "a": a,
+            "b": b,
+            "c": c,
+            "d": d
+        },
+        params={
+            "N": N_val
+        },
+        vector_width=8,
+        sdfg_name="halve_index_s4117",
+    )
