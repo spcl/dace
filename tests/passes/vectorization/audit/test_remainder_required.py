@@ -21,6 +21,7 @@ the full pipeline matrix. Today's strategies:
   ``NotImplementedError`` from ``VectorizeCPU`` for now.
 """
 import copy
+import math
 
 import dace
 import numpy as np
@@ -43,6 +44,42 @@ def shift_plus_one(a: dace.float64[N], b: dace.float64[N]):
 def shift_plus_two(a: dace.float64[N], b: dace.float64[N]):
     for i in range(N - 2):
         a[i] = 3.0 * b[i + 2]
+
+
+# Additional kernels exercising remainder under different op shapes —
+# add (vec+vec), mul (vec*scalar), elementwise sqrt (unary math),
+# min/max (binary library calls).
+
+
+@dace.program
+def add_vec_vec(a: dace.float64[N], b: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = a[i] + b[i]
+
+
+@dace.program
+def mul_vec_scalar(a: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = a[i] * 3.5
+
+
+@dace.program
+def sqrt_unary(a: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = math.sqrt(a[i])
+
+
+@dace.program
+def min_vec_vec(a: dace.float64[N], b: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = min(a[i], b[i])
+
+
+@dace.program
+def fused_chain(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], out: dace.float64[N]):
+    """Multi-op kernel: out[i] = (a[i] + b[i]) * c[i] + 1.5"""
+    for i in range(N):
+        out[i] = (a[i] + b[i]) * c[i] + 1.5
 
 
 @pytest.fixture(params=["divides_evenly", "scalar"])
@@ -116,3 +153,142 @@ def test_shift_plus_two_n10_divides_evenly(remainder_strategy):
     """N=10, range(N-2)=range(8) = 8 iters, divisible by 8."""
     a_ref, a_vec, diff = _run(shift_plus_two, Nv=10, remainder_strategy=remainder_strategy)
     assert diff < 1e-12, f"max abs diff = {diff}\nref={a_ref}\nvec={a_vec}"
+
+
+# Additional kernel shapes at non-divisible N (forces remainder handling).
+
+
+def _run3(prog, Nv: int, remainder_strategy: str, in_arrays: list, out_arrays: list):
+    """Like ``_run`` but accepts arbitrary in/out array lists by name."""
+    rng = np.random.default_rng(seed=Nv)
+    arrs_ref = {k: rng.random(Nv) for k in in_arrays}
+    arrs_ref.update({k: np.zeros(Nv) for k in out_arrays})
+    arrs_vec = {k: arrs_ref[k].copy() for k in arrs_ref}
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_ref"
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    vsdfg = copy.deepcopy(sdfg)
+    vsdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_v"
+
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+                 use_fp_factor=True, branch_normalization=False,
+                 insert_copies=False,
+                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+
+    sdfg(**arrs_ref, N=Nv)
+    vsdfg(**arrs_vec, N=Nv)
+    diffs = {k: np.max(np.abs(arrs_ref[k] - arrs_vec[k])) for k in out_arrays}
+    return arrs_ref, arrs_vec, diffs
+
+
+# For non-divisible N, only the "scalar" strategy is safe. "divides_evenly"
+# unconditionally tiles to step-W and overwrites past the end of the array,
+# corrupting the heap and crashing subsequent tests in the same worker process.
+# These tests therefore pin remainder_strategy="scalar" explicitly.
+
+
+@pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
+def test_add_vec_vec_nondivisible_scalar(Nv: int):
+    """out[i] = a[i] + b[i] over N iterations, N not divisible by W=8."""
+    ref, vec, diffs = _run3(add_vec_vec, Nv, "scalar", ["a", "b"], ["out"])
+    assert diffs["out"] < 1e-12, f"diffs={diffs}"
+
+
+@pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
+def test_mul_vec_scalar_nondivisible_scalar(Nv: int):
+    """out[i] = a[i] * 3.5 over N iterations, N not divisible by W=8."""
+    ref, vec, diffs = _run3(mul_vec_scalar, Nv, "scalar", ["a"], ["out"])
+    assert diffs["out"] < 1e-12, f"diffs={diffs}"
+
+
+@pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
+def test_sqrt_unary_nondivisible_scalar(Nv: int):
+    """out[i] = sqrt(a[i]) over N iterations, N not divisible by W=8."""
+    ref, vec, diffs = _run3(sqrt_unary, Nv, "scalar", ["a"], ["out"])
+    assert diffs["out"] < 1e-12, f"diffs={diffs}"
+
+
+@pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
+def test_min_vec_vec_nondivisible_scalar(Nv: int):
+    """out[i] = min(a[i], b[i]) over N iterations, N not divisible by W=8."""
+    ref, vec, diffs = _run3(min_vec_vec, Nv, "scalar", ["a", "b"], ["out"])
+    assert diffs["out"] < 1e-12, f"diffs={diffs}"
+
+
+@pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
+def test_fused_chain_nondivisible_scalar(Nv: int):
+    """out[i] = (a[i] + b[i]) * c[i] + 1.5 over N iterations, N not divisible by W=8."""
+    ref, vec, diffs = _run3(fused_chain, Nv, "scalar", ["a", "b", "c"], ["out"])
+    assert diffs["out"] < 1e-12, f"diffs={diffs}"
+
+
+# Constant map range: when the iteration count is a known constant divisible
+# by W, P2 (SplitMapForVectorRemainder) should detect it and SKIP the split
+# (`trip %% W == 0` evaluates to True statically). The divides_evenly path
+# stays safe because the range is genuinely divisible.
+
+
+@dace.program
+def constant_range_div_16(a: dace.float64[16], out: dace.float64[16]):
+    """N=16 constant, divisible by W=8. Should fully vectorize cleanly."""
+    for i in range(16):
+        out[i] = a[i] * 2.5
+
+
+@dace.program
+def constant_range_div_24(a: dace.float64[24], out: dace.float64[24]):
+    """N=24 constant, divisible by W=8. Three full tiles, no remainder."""
+    for i in range(24):
+        out[i] = a[i] + 1.0
+
+
+def test_constant_range_div_16(remainder_strategy):
+    """Constant range divisible by W. Both strategies must produce correct
+    output; ``scalar`` should be a no-op split (P2 detects divisibility)."""
+    rng = np.random.default_rng(seed=16)
+    a = rng.random(16)
+    out_ref = np.zeros(16)
+    out_vec = np.zeros(16)
+
+    sdfg = constant_range_div_16.to_sdfg(simplify=True)
+    sdfg.name = f"constant_range_div_16_{remainder_strategy}_ref"
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    vsdfg = copy.deepcopy(sdfg)
+    vsdfg.name = f"constant_range_div_16_{remainder_strategy}_v"
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+                 use_fp_factor=True, branch_normalization=False,
+                 insert_copies=False,
+                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+
+    sdfg(a=a, out=out_ref)
+    vsdfg(a=a, out=out_vec)
+    assert np.max(np.abs(out_ref - out_vec)) < 1e-12
+
+
+def test_constant_range_div_24(remainder_strategy):
+    """Constant range divisible by W. 3 full tiles, P2 skip on scalar mode."""
+    rng = np.random.default_rng(seed=24)
+    a = rng.random(24)
+    out_ref = np.zeros(24)
+    out_vec = np.zeros(24)
+
+    sdfg = constant_range_div_24.to_sdfg(simplify=True)
+    sdfg.name = f"constant_range_div_24_{remainder_strategy}_ref"
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    vsdfg = copy.deepcopy(sdfg)
+    vsdfg.name = f"constant_range_div_24_{remainder_strategy}_v"
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+                 use_fp_factor=True, branch_normalization=False,
+                 insert_copies=False,
+                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+
+    sdfg(a=a, out=out_ref)
+    vsdfg(a=a, out=out_vec)
+    assert np.max(np.abs(out_ref - out_vec)) < 1e-12
