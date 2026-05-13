@@ -22,6 +22,8 @@ from dace.transformation.passes.vectorization.detect_strided_store import Detect
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_load import DetectMultiDimStridedLoad
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_store import DetectMultiDimStridedStore
 from dace.transformation.passes.vectorization.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+from dace.transformation.passes.vectorization.split_map_for_vector_remainder import SplitMapForVectorRemainder
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -44,10 +46,36 @@ class VectorizeCPU(ppl.Pipeline):
                  branch_normalization: bool = False,
                  lower_to_intrinsics: bool = False,
                  force_autovec_ops: Optional[Set[str]] = None,
-                 force_pscalar_ops: Optional[Set[str]] = None):
+                 force_pscalar_ops: Optional[Set[str]] = None,
+                 remainder_strategy: str = "divides_evenly"):
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
+        # ``remainder_strategy`` controls how the pipeline handles maps whose
+        # iteration count is not provably divisible by ``vector_width``:
+        #   "divides_evenly"  - default; assumes the caller's range is divisible
+        #                       by W. Trailing tile reads/writes can overrun
+        #                       the kernel bounds for non-divisible ranges
+        #                       (correct only by luck on the memory layout).
+        #   "scalar"          - R1: P2(mode="scalar") splits each non-divisible
+        #                       innermost map into a main step-W map + a step-1
+        #                       sequential scalar postamble. No mask anywhere.
+        #                       Main goes through the normal vectorize path;
+        #                       the postamble's Sequential schedule keeps it
+        #                       as a plain scalar loop.
+        #   "masked"          - R2 (TODO): P2(mode="masked") + P3 + masked
+        #                       emitter routing. Main step-W (no mask) +
+        #                       step-W remainder with _iter_mask.
+        #   "full_loop_mask"  - R3 (TODO): no remainder split; one step-W map
+        #                       with _iter_mask wired everywhere (SVE-style).
+        _VALID_REMAINDER = {"divides_evenly", "scalar", "masked", "full_loop_mask"}
+        if remainder_strategy not in _VALID_REMAINDER:
+            raise ValueError(f"VectorizeCPU: remainder_strategy must be one of "
+                             f"{sorted(_VALID_REMAINDER)}, got {remainder_strategy!r}")
+        if remainder_strategy in ("masked", "full_loop_mask"):
+            raise NotImplementedError(f"VectorizeCPU: remainder_strategy={remainder_strategy!r} "
+                                      f"is queued (R2 / R3); currently only 'divides_evenly' and "
+                                      f"'scalar' are wired end-to-end.")
         # ``force_autovec_ops`` / ``force_pscalar_ops`` (Option F overlay)
         # let callers override per-op which implementation the emitter
         # selects. Keys are templates-dict op identifiers (``"+"``,
@@ -196,6 +224,16 @@ class VectorizeCPU(ppl.Pipeline):
             ]
             if not no_inline:
                 passes.append(InlineSDFGs())
+            # R1: scalar postamble. Split innermost step-1 maps into a main
+            # step-1 (which the vectorize pass tiles to step-W in the normal
+            # way) plus a step-1 ScheduleType.Sequential remainder that the
+            # vectorize pass leaves alone — the codegen emits it as a plain
+            # scalar tail loop.
+            if remainder_strategy == "scalar":
+                passes.extend([
+                    NestInnermostMapBodyIntoNSDFG(),
+                    SplitMapForVectorRemainder(vector_width=vector_width, mode="scalar"),
+                ])
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]
