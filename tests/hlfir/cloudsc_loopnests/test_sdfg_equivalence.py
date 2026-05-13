@@ -643,3 +643,143 @@ def test_cloudsc_int_pow_kernel_sdfg_matches_f2py(tmp_path: Path):
 
     np.testing.assert_allclose(y2_sdfg, y2_ref, atol=1e-15, rtol=1e-15, err_msg="int_pow x**2 diverges")
     np.testing.assert_allclose(y3_sdfg, y3_ref, atol=1e-15, rtol=1e-15, err_msg="int_pow x**3 diverges")
+
+
+def test_cloudsc_zterm2_kernel_sdfg_matches_f2py(tmp_path: Path):
+    """Verbatim extract of cloudsc.F90 line 3304 ZTERM2 expression
+    (4.5b SNOW evap, IEVAPSNOW=1).  Bare-default-real literals
+    ``0.65``, ``0.5`` interact with runtime-variable powers
+    ``ZPR02**RCL_CONST4S``.  If this fails, the bridge's lowering of
+    this exact compound pattern diverges from gfortran's.
+    """
+    src = (_HERE / "cloudsc_zterm2_kernel.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "zterm2_ref")
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src,
+                      tmp_path / "sdfg",
+                      name="zterm2_kernel",
+                      pipeline="hlfir-propagate-shapes",
+                      entry="_QPzterm2_kernel").build()
+
+    rng = np.random.default_rng(120)
+    n = 32
+    zpr02 = np.asfortranarray(1e-3 + 1e-2 * rng.random(n, dtype=np.float64))
+    zcorrfac = np.asfortranarray(0.8 + 0.4 * rng.random(n, dtype=np.float64))
+    zrho = np.asfortranarray(0.3 + 1.2 * rng.random(n, dtype=np.float64))
+    zcorrfac2 = np.asfortranarray(0.5 + 0.5 * rng.random(n, dtype=np.float64))
+    rcl_const3s, rcl_const4s, rcl_const5s, rcl_const6s = 1.5, 0.5, 0.65, 2.0
+
+    zterm2_ref = ref.zterm2_kernel(zpr02, zcorrfac, zrho, zcorrfac2, rcl_const3s, rcl_const4s, rcl_const5s, rcl_const6s)
+    zterm2_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    kw = dict(zpr02=zpr02,
+              zcorrfac=zcorrfac,
+              zrho=zrho,
+              zcorrfac2=zcorrfac2,
+              rcl_const3s=rcl_const3s,
+              rcl_const4s=rcl_const4s,
+              rcl_const5s=rcl_const5s,
+              rcl_const6s=rcl_const6s,
+              zterm2=zterm2_sdfg)
+    kw.update(_sdfg_call_args(sdfg, dict(n=n)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(zterm2_sdfg,
+                               zterm2_ref,
+                               atol=1e-15,
+                               rtol=1e-15,
+                               err_msg="ZTERM2 compound expression diverges")
+
+
+def test_cloudsc_zbeta_kernel_sdfg_matches_f2py(tmp_path: Path):
+    """Verbatim extract of cloudsc.F90 lines 3158-3161 ZBETA expression
+    (4.5a RAIN evap Abel-Boutle).  All literals properly _JPRB-suffixed.
+    Deeply nested compound: ``(0.5/zqsliq) * ztp1**2 * zesatliq *
+    const1r * (zcorr2/zevap_denom) * (0.78/zlambda**const4r +
+    const2r*(zrho*zfallcorr)**0.5 / (zcorr2**0.5*zlambda**const3r))``.
+    """
+    src = (_HERE / "cloudsc_zterm2_kernel.f90").read_text()  # same file
+    ref = _f2py_build(src, tmp_path / "ref", "zbeta_ref")
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src,
+                      tmp_path / "sdfg",
+                      name="zbeta_kernel",
+                      pipeline="hlfir-propagate-shapes",
+                      entry="_QPzbeta_kernel").build()
+
+    rng = np.random.default_rng(121)
+    n = 32
+    zqsliq = np.asfortranarray(1e-5 + 1e-3 * rng.random(n, dtype=np.float64))
+    ztp1 = np.asfortranarray(240.0 + 50.0 * rng.random(n, dtype=np.float64))
+    zesatliq = np.asfortranarray(1e2 + 1e3 * rng.random(n, dtype=np.float64))
+    zcorr2 = np.asfortranarray(0.5 + 0.5 * rng.random(n, dtype=np.float64))
+    zevap_denom = np.asfortranarray(1.0 + 1.0 * rng.random(n, dtype=np.float64))
+    zlambda = np.asfortranarray(1.0 + 10.0 * rng.random(n, dtype=np.float64))
+    zrho = np.asfortranarray(0.3 + 1.2 * rng.random(n, dtype=np.float64))
+    zfallcorr = np.asfortranarray(0.5 + 1.0 * rng.random(n, dtype=np.float64))
+    rcl_const1r, rcl_const2r, rcl_const3r, rcl_const4r = 1.0, 0.3, 0.5, 0.4
+
+    zbeta_ref = ref.zbeta_kernel(zqsliq, ztp1, zesatliq, zcorr2, zevap_denom, zlambda, zrho, zfallcorr, rcl_const1r,
+                                 rcl_const2r, rcl_const3r, rcl_const4r)
+    zbeta_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    kw = dict(zqsliq=zqsliq,
+              ztp1=ztp1,
+              zesatliq=zesatliq,
+              zcorr2=zcorr2,
+              zevap_denom=zevap_denom,
+              zlambda=zlambda,
+              zrho=zrho,
+              zfallcorr=zfallcorr,
+              rcl_const1r=rcl_const1r,
+              rcl_const2r=rcl_const2r,
+              rcl_const3r=rcl_const3r,
+              rcl_const4r=rcl_const4r,
+              zbeta=zbeta_sdfg)
+    kw.update(_sdfg_call_args(sdfg, dict(n=n)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(zbeta_sdfg,
+                               zbeta_ref,
+                               atol=1e-15,
+                               rtol=1e-15,
+                               err_msg="ZBETA compound expression diverges")
+
+
+def test_cloudsc_zaplusb_kernel_sdfg_matches_f2py(tmp_path: Path):
+    """Verbatim extract of cloudsc.F90 line 3295 ZAPLUSB expression
+    (4.5b SNOW evap).  ``ZTP1**3`` integer-exponent + 3-term FMA-chain
+    arithmetic.  ``RCL_APB1*ZVPICE - RCL_APB2*ZVPICE*ZTP1 +
+    PAP*RCL_APB3*ZTP1**3``.
+    """
+    src = (_HERE / "cloudsc_zterm2_kernel.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "zaplusb_ref")
+    (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src,
+                      tmp_path / "sdfg",
+                      name="zaplusb_kernel",
+                      pipeline="hlfir-propagate-shapes",
+                      entry="_QPzaplusb_kernel").build()
+
+    rng = np.random.default_rng(122)
+    n = 32
+    zvpice = np.asfortranarray(1e-3 + 1e-1 * rng.random(n, dtype=np.float64))
+    ztp1 = np.asfortranarray(240.0 + 50.0 * rng.random(n, dtype=np.float64))
+    pap = np.asfortranarray(2e4 + 8e4 * rng.random(n, dtype=np.float64))
+    rcl_apb1, rcl_apb2, rcl_apb3 = 0.46e0, 1.6e-3, 4.9e-6
+
+    zaplusb_ref = ref.zaplusb_kernel(zvpice, ztp1, pap, rcl_apb1, rcl_apb2, rcl_apb3)
+    zaplusb_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    kw = dict(zvpice=zvpice,
+              ztp1=ztp1,
+              pap=pap,
+              rcl_apb1=rcl_apb1,
+              rcl_apb2=rcl_apb2,
+              rcl_apb3=rcl_apb3,
+              zaplusb=zaplusb_sdfg)
+    kw.update(_sdfg_call_args(sdfg, dict(n=n)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(zaplusb_sdfg,
+                               zaplusb_ref,
+                               atol=1e-15,
+                               rtol=1e-15,
+                               err_msg="ZAPLUSB compound expression diverges")
