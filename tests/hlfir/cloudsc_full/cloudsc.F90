@@ -3024,7 +3024,7 @@ DO JK=NCLDTOP,KLEV
   ENDDO
 
   !----------------------------------------------------------------------
-  ! 4.5   EVAPORATION OF RAIN/SNOW
+  ! 4.5_JPRB   EVAPORATION OF RAIN/SNOW
   !----------------------------------------------------------------------
 
   !----------------------------------------
@@ -3114,7 +3114,7 @@ DO JK=NCLDTOP,KLEV
     ! Critical relative humidity
     !ZRHC=RAMID
     !ZSIGK=PAP(JL,JK)/PAPH(JL,KLEV+1)
-    ! Increase RHcrit to 1.0 towards the surface (eta>0.8)
+    ! Increase RHcrit to 1.0_JPRB towards the surface (eta>0.8_JPRB)
     !IF(ZSIGK > 0.8_JPRB) THEN
     !  ZRHC=RAMID+(1.0_JPRB-RAMID)*((ZSIGK-0.8_JPRB)/0.2_JPRB)**2
     !ENDIF
@@ -3193,7 +3193,7 @@ DO JK=NCLDTOP,KLEV
 ENDIF ! on IEVAPRAIN
 
   !----------------------------------------------------------------------
-  ! 4.5   EVAPORATION OF SNOW
+  ! 4.5_JPRB   EVAPORATION OF SNOW
   !----------------------------------------------------------------------
   ! Snow
  IF (IEVAPSNOW == 1) THEN
@@ -3294,15 +3294,15 @@ ENDIF ! on IEVAPRAIN
 
       ZAPLUSB   = RCL_APB1*ZVPICE-RCL_APB2*ZVPICE*ZTP1(JL,JK)+ &
      &             PAP(JL,JK)*RCL_APB3*ZTP1(JL,JK)**3
-      ZCORRFAC  = (1.0/ZRHO(JL))**0.5
-      ZCORRFAC2 = ((ZTP1(JL,JK)/273.0)**1.5)*(393.0/(ZTP1(JL,JK)+120.0))
+      ZCORRFAC  = (1.0_JPRB/ZRHO(JL))**0.5_JPRB
+      ZCORRFAC2 = ((ZTP1(JL,JK)/273.0_JPRB)**1.5_JPRB)*(393.0_JPRB/(ZTP1(JL,JK)+120.0_JPRB))
 
       ZPR02 = ZRHO(JL)*ZPRECLR*RCL_CONST1S/(ZTCG*ZFACX1S)
 
       ZTERM1 = (ZQSICE(JL,JK)-ZQE)*ZTP1(JL,JK)**2*ZVPICE*ZCORRFAC2*ZTCG* &
      &          RCL_CONST2S*ZFACX1S/(ZRHO(JL)*ZAPLUSB*ZQSICE(JL,JK))
-      ZTERM2 = 0.65*RCL_CONST6S*ZPR02**RCL_CONST4S+RCL_CONST3S*ZCORRFAC**0.5 &
-     &          *ZRHO(JL)**0.5*ZPR02**RCL_CONST5S/ZCORRFAC2**0.5
+      ZTERM2 = 0.65_JPRB*RCL_CONST6S*ZPR02**RCL_CONST4S+RCL_CONST3S*ZCORRFAC**0.5_JPRB &
+     &          *ZRHO(JL)**0.5_JPRB*ZPR02**RCL_CONST5S/ZCORRFAC2**0.5_JPRB
 
       ZDPEVAP = MAX(ZCOVPCLR(JL)*ZTERM1*ZTERM2*PTSPHY,0.0_JPRB)
 
@@ -3347,7 +3347,7 @@ ENDIF ! on IEVAPSNOW
   ENDDO
 
   !######################################################################
-  !            5.0  *** SOLVERS FOR A AND L ***
+  !            5.0_JPRB  *** SOLVERS FOR A AND L ***
   ! now use an implicit solution rather than exact solution
   ! solver is forward in time, upstream difference for advection
   !######################################################################
