@@ -159,6 +159,45 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     if n.target_is_array or assign_reads_array(n, builder.arrays):
         ctx.flush(builder, region)
         ctx.ensure(region)
+
+        # WAR / WAW hazard guard.  When the current state already
+        # contains tasklets that read or write any array this new
+        # assign touches, force a new state so state-edge ordering
+        # enforces Fortran's sequential semantics.  Without this,
+        # the codegen scheduler (which sees only RAW dependencies
+        # on shared AccessNodes) is free to reorder sibling tasklets
+        # that share underlying storage  --  yielding the WAR-violation
+        # diagnosed at commit a9bf02173 (cloudsc Section 4.5).
+        # ``emit_loop``'s flat ``elif child_assigns`` path already
+        # serialises hazardous siblings via its ``_raw_hazard`` helper;
+        # this guard extends the same discipline to ``has_structured``
+        # and IF-body emission, which process children one at a time
+        # and would otherwise share the current state.
+        from dace.sdfg.state import SDFGState
+        from dace.sdfg.nodes import Tasklet, AccessNode
+
+        if isinstance(ctx.cur, SDFGState):
+            prior_writes = set()
+            prior_reads = set()
+            for nd in ctx.cur.nodes():
+                if isinstance(nd, AccessNode):
+                    has_w = any(isinstance(e.src, Tasklet) for e in ctx.cur.in_edges(nd))
+                    has_r = any(isinstance(e.dst, Tasklet) for e in ctx.cur.out_edges(nd))
+                    if has_w:
+                        prior_writes.add(nd.data)
+                    if has_r:
+                        prior_reads.add(nd.data)
+            new_reads = {ac.array_name for ac in n.accesses if ac.is_read and ac.array_name in builder.arrays}
+            new_writes = ({n.target} if (n.target_is_array and n.target in builder.arrays) else set())
+            new_writes |= {ac.array_name for ac in n.accesses if ac.is_write and ac.array_name in builder.arrays}
+            # RAW: new reads vs prior writes (state-edge would chain through
+            # the shared AccessNode anyway, but be explicit).
+            # WAR: new writes vs prior reads.
+            # WAW: new writes vs prior writes.
+            hazard = ((new_reads & prior_writes) or (new_writes & prior_reads) or (new_writes & prior_writes))
+            if hazard:
+                ctx.new_state(builder, region, label=f"asn_{n.target}_{builder.nid()}")
+
         # Inline indirect accesses: ``vn(iqidx(je,jb,1), jk, iqblk(je,jb,1))``
         # inside an IF body skips ``emit_loop``'s batch path, so the
         # indirect symbols would otherwise never get minted and the
