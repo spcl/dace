@@ -481,6 +481,27 @@ class SDFGBuilder:
         # ``descriptors.py`` and don't need this pass.
         replace_length_one_arrays_with_scalars(sdfg, recursive=True, transient_only=True)
 
+        # Zero-initialise every transient Scalar in the SDFG (and every
+        # nested SDFG).  Fortran semantics: a local REAL/INTEGER scalar
+        # is undefined until written -- but for code paths that read it
+        # under data-dependent IF branches without a guaranteed prior
+        # write, gfortran and the bridge see DIFFERENT garbage values
+        # (depending on stack layout, register allocation, prior
+        # function calls), which causes divergent IF outcomes and
+        # cascading numerical drift downstream.  Forcing zero-init on
+        # every transient Scalar pins the bit pattern across both
+        # paths and eliminates this class of divergence.
+        import dace
+        from dace.data import Scalar
+        for nsdfg in [sdfg] + [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]:
+            for state in nsdfg.all_states():
+                for node in state.nodes():
+                    if not isinstance(node, dace.nodes.AccessNode):
+                        continue
+                    desc = nsdfg.arrays.get(node.data)
+                    if isinstance(desc, Scalar) and desc.transient:
+                        node.setzero = True
+
     def _attach_frozen_signature(self, sdfg: SDFG) -> None:
         """Snapshot ``sdfg.arglist()`` + free symbols into a
         ``FrozenSignature`` and pin it on the SDFG.

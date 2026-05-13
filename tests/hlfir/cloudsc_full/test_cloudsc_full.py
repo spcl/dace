@@ -36,12 +36,38 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import dace
 from _util import build_sdfg, f2py_compile, have_flang
 from cloudsc_full._registries import (
     get_inputs,
     get_outputs,
     program_outputs,
 )
+
+
+@pytest.fixture
+def _strict_fp_cpu_args():
+    """Override DaCe's default C++ compiler flags for the SDFG side of
+    the test.  The default ``-O3 -march=native -ffast-math`` lets gcc
+    fuse multiplies / adds and reassociate floating-point operations,
+    which diverges from the gfortran-built f2py reference (gfortran
+    defaults to strict IEEE arithmetic, no ``-ffast-math``).  Match
+    the reference's FP semantics by dropping ``-ffast-math``, dropping
+    ``-O3`` down to ``-O0``, and disabling FMA contraction.  Restore
+    the previous flags after the test."""
+    prev = dace.Config.get('compiler', 'cpu', 'args')
+    dace.Config.set(
+        'compiler',
+        'cpu',
+        'args',
+        value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off '
+        '-Wno-unused-parameter -Wno-unused-label',
+    )
+    try:
+        yield
+    finally:
+        dace.Config.set('compiler', 'cpu', 'args', value=prev)
+
 
 _HERE = Path(__file__).resolve().parent
 
@@ -119,10 +145,20 @@ def _f2py_ref(tmp_path_factory):
 
     f2py compile of the 3541-line source takes ~30-90s, so this is
     a session-scoped fixture instead of per-test setup.
+
+    ``-finit-local-zero`` makes gfortran zero-initialise every local
+    REAL/INTEGER scalar.  The cloudsc source has at least one known
+    use-of-uninitialised path (gfortran warns ``'zqe' may be used
+    uninitialized``), and the bridge's post-build pass force-sets
+    ``setzero=True`` on every transient Scalar AccessNode.  Without
+    matching the gfortran side, the two paths read different garbage
+    values for ``zqe`` -> different ``IF (ZQE >= ...)`` branches ->
+    cascading divergence through the LU solver into the flux outputs.
+    Zero-initialising both pins the bit pattern across both runtimes.
     """
     src = (_HERE / "cloudscexp2_simplified.F90").read_text()
     ref_dir = tmp_path_factory.mktemp("cloudsc_ref")
-    return f2py_compile(src, ref_dir, "cloudsc_ref")
+    return f2py_compile(src, ref_dir, "cloudsc_ref", extra_f90flags="-finit-local-zero")
 
 
 @pytest.mark.xfail(
@@ -134,7 +170,7 @@ def _f2py_ref(tmp_path_factory):
     "closes in a follow-up commit; the test stays xfailed until "
     "all gaps clear.",
 )
-def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
+def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     """End-to-end SDFG-vs-f2py equivalence on the full CLOUDSC.
 
     Same Fortran source through both paths, seeded random inputs,

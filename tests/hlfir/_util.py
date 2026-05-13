@@ -51,13 +51,19 @@ def _ensure_on_path():
         sys.path.insert(0, p)
 
 
-def f2py_compile(src, out_dir: Path, mod_name: str):
+def f2py_compile(src, out_dir: Path, mod_name: str, extra_f90flags: str | None = None):
     """Build the given Fortran source via gfortran/f2py and return the
     compiled module.  ``src`` may be a file path or an inline string  --
     inline sources are written to ``<out_dir>/<mod_name>.f90`` first.
 
     Skips the calling test (via pytest.skip) when gfortran or meson is
     missing, so test files can call this unconditionally.
+
+    ``extra_f90flags``: optional space-separated string of gfortran flags
+    appended via ``--f90flags=``.  Use for source-specific defensive
+    flags like ``-finit-local-zero`` when the Fortran source has known
+    UB (uninitialized-local reads) that must agree with the bridge's
+    zero-init behavior.
 
     Used by the e2e numerical tests to compare an SDFG's output against
     the same code compiled with gfortran (the reference implementation).
@@ -76,9 +82,10 @@ def f2py_compile(src, out_dir: Path, mod_name: str):
         src_file.write_text(src_text)
     else:
         src_file = src
-    subprocess.check_call([sys.executable, "-m", "numpy.f2py", "-c",
-                           str(src_file), "-m", mod_name, "--quiet"],
-                          cwd=out_dir)
+    cmd = [sys.executable, "-m", "numpy.f2py", "-c", str(src_file), "-m", mod_name, "--quiet"]
+    if extra_f90flags:
+        cmd.append(f"--f90flags={extra_f90flags}")
+    subprocess.check_call(cmd, cwd=out_dir)
     if str(out_dir) not in sys.path:
         sys.path.insert(0, str(out_dir))
     __import__(mod_name)
