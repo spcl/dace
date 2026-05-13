@@ -114,26 +114,36 @@ def _run(prog, Nv: int, remainder_strategy: str):
 
 
 # Non-divisible iteration counts (force remainder/mask handling).
+#
+# These tests must NOT run under remainder_strategy="divides_evenly":
+# that path tiles to step-W unconditionally and the trailing OOB writes
+# corrupt the heap (per module docstring). The corruption then crashes
+# the NEXT test scheduled on the same pytest-xdist worker, producing
+# misleading "[scalar] crashed" failure reports. Pin to ["scalar"] only.
 
 
+@pytest.mark.parametrize("remainder_strategy", ["scalar"])
 def test_shift_plus_one_n10_remainder(remainder_strategy):
     """N=10, range(N-1)=range(9) = 9 iters → 1 vector tile + 1 remainder."""
     a_ref, a_vec, diff = _run(shift_plus_one, Nv=10, remainder_strategy=remainder_strategy)
     assert diff < 1e-12, f"max abs diff = {diff}\nref={a_ref}\nvec={a_vec}"
 
 
+@pytest.mark.parametrize("remainder_strategy", ["scalar"])
 def test_shift_plus_one_n15_remainder(remainder_strategy):
     """N=15, range(N-1)=range(14) = 14 iters → 1 vector + 6 remainder."""
     a_ref, a_vec, diff = _run(shift_plus_one, Nv=15, remainder_strategy=remainder_strategy)
     assert diff < 1e-12, f"max abs diff = {diff}\nref={a_ref}\nvec={a_vec}"
 
 
+@pytest.mark.parametrize("remainder_strategy", ["scalar"])
 def test_shift_plus_two_n11_remainder(remainder_strategy):
     """+2 shift, N=11, range(N-2)=range(9) = 9 iters → 1 vector + 1 remainder."""
     a_ref, a_vec, diff = _run(shift_plus_two, Nv=11, remainder_strategy=remainder_strategy)
     assert diff < 1e-12, f"max abs diff = {diff}\nref={a_ref}\nvec={a_vec}"
 
 
+@pytest.mark.parametrize("remainder_strategy", ["scalar"])
 def test_shift_plus_two_n15_remainder(remainder_strategy):
     """+2 shift, N=15, range(N-2)=range(13) = 13 iters → 1 vector + 5 remainder."""
     a_ref, a_vec, diff = _run(shift_plus_two, Nv=15, remainder_strategy=remainder_strategy)
