@@ -111,9 +111,23 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                                              sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
                                              branch_mode=branch_mode, remainder_strategy=remainder_strategy)
 
-    # Should have 1 access node between two maps
+    # Should have 1 access node between two maps. Only check vectorized NSDFGs —
+    # the ``scalar`` remainder strategy adds a Sequential postamble that has
+    # its own NSDFG body which fuse_overlapping_loads correctly leaves alone
+    # (the pass only fires on vectorized maps). Walk only NSDFGs inside
+    # non-Sequential map scopes.
+    def _is_inside_sequential_scope(state, node):
+        entry = state.entry_node(node)
+        while entry is not None:
+            if isinstance(entry, dace.nodes.MapEntry) and entry.map.schedule == dace.dtypes.ScheduleType.Sequential:
+                return True
+            entry = state.entry_node(entry)
+        return False
+
     nsdfgs = {(n, g) for n, g in vectorized_sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
     for nsdfg, state in nsdfgs:
+        if _is_inside_sequential_scope(state, nsdfg):
+            continue
         src_access_nodes = {ie.src for ie in state.in_edges(nsdfg) if isinstance(ie.src, dace.nodes.AccessNode)}
 
         src_src_access_nodes = set()
@@ -124,7 +138,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
 
         assert len(
             src_src_access_nodes
-        ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes}) (from: ({src_access_nodes}))"
+        ) == 1, f"Expected one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes}) (from: ({src_access_nodes}))"
 
 
 def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy):
