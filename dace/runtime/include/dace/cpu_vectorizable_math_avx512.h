@@ -15,11 +15,17 @@
 
 #if defined(__AVX512F__)
 #include <immintrin.h>
+// Option F overlay: per-op escape-hatch siblings (vector_<op>_pscalar /
+// vector_<op>_av). Arch-independent; one source of truth, included by
+// every arch file so the binary always has them regardless of which
+// backend the dispatcher selected.
+#include "dace/cpu_vectorizable_math_common.h"
 #endif
 
 #if !defined(__AVX512F__)
 # error Included the AVX512 header without support AVX512
 #endif
+
 // --------------------------- vector_mult ---------------------------
 
 template<typename T, int vector_width>

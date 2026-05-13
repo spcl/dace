@@ -15,16 +15,20 @@
 
 #if defined(__ARM_FEATURE_SVE)
 #include <arm_sve.h>
+// Option F overlay: per-op escape-hatch siblings (vector_<op>_pscalar /
+// vector_<op>_av). Arch-independent; one source of truth, included by
+// every arch file so the binary always has them regardless of which
+// backend the dispatcher selected.
+#include "dace/cpu_vectorizable_math_common.h"
+#endif
+
+#if !defined(__ARM_FEATURE_SVE)
+# error Included the SVE header without support SVE
 #endif
 
 // ============================================================================
 // Arithmetic
 // ============================================================================
-
-#if defined(__ARM_FEATURE_SVE)
-#else
-# error Included the SVE header without support SVE
-#endif
 
 // vector_mult
 template<typename T, int vector_width>

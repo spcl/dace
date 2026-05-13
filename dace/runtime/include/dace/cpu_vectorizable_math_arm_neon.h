@@ -30,6 +30,11 @@
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
+// Option F overlay: per-op escape-hatch siblings (vector_<op>_pscalar /
+// vector_<op>_av). Arch-independent; one source of truth, included by
+// every arch file so the binary always has them regardless of which
+// backend the dispatcher selected.
+#include "dace/cpu_vectorizable_math_common.h"
 #endif
 
 #if !defined(__ARM_NEON)
