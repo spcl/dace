@@ -194,6 +194,108 @@ inline void vector_add_w_scalar(T* __restrict__ out,
 #endif
 }
 
+// vector_add_masked: lanes where mask[i] == false leave out[i] unchanged
+// (RMW). The bool[W] mask is loaded byte-wise into a uint64/uint32 lane
+// vector, compared against zero to derive a svbool_t predicate. The sum
+// is computed unmasked under svwhilelt_b{64,32} (the VLS tile predicate)
+// and svsel blends it against the prior out where mask is false.
+template<typename T, int vector_width>
+inline void vector_add_masked(T* __restrict__ out,
+                              const T* __restrict__ a,
+                              const T* __restrict__ b,
+                              const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+
+    if constexpr (std::is_same<T,float>::value) {
+        int i = 0;
+        while (i < vector_width) {
+            svbool_t pg = svwhilelt_b32(i, vector_width);
+            svuint32_t mv = svld1ub_u32(pg, (const uint8_t*)(mask + i));
+            svbool_t m = svcmpne_n_u32(pg, mv, 0);
+            svfloat32_t va = svld1_f32(pg, a + i);
+            svfloat32_t vb = svld1_f32(pg, b + i);
+            svfloat32_t vold = svld1_f32(pg, out + i);
+            svfloat32_t sum = svadd_f32_x(pg, va, vb);
+            svst1_f32(pg, out + i, svsel_f32(m, sum, vold));
+            i += svcntw();
+        }
+        return;
+    }
+
+    if constexpr (std::is_same<T,double>::value) {
+        int i = 0;
+        while (i < vector_width) {
+            svbool_t pg = svwhilelt_b64(i, vector_width);
+            svuint64_t mv = svld1ub_u64(pg, (const uint8_t*)(mask + i));
+            svbool_t m = svcmpne_n_u64(pg, mv, 0);
+            svfloat64_t va = svld1_f64(pg, a + i);
+            svfloat64_t vb = svld1_f64(pg, b + i);
+            svfloat64_t vold = svld1_f64(pg, out + i);
+            svfloat64_t sum = svadd_f64_x(pg, va, vb);
+            svst1_f64(pg, out + i, svsel_f64(m, sum, vold));
+            i += svcntd();
+        }
+        return;
+    }
+
+#else
+
+    for (int i = 0; i < vector_width; ++i)
+        if (mask[i]) out[i] = a[i] + b[i];
+
+#endif
+}
+
+// vector_add_w_scalar_masked
+template<typename T, int vector_width>
+inline void vector_add_w_scalar_masked(T* __restrict__ out,
+                                       const T* __restrict__ a,
+                                       const T constant,
+                                       const bool* __restrict__ mask)
+{
+#if defined(__ARM_FEATURE_SVE)
+
+    if constexpr (std::is_same<T,float>::value) {
+        svfloat32_t vconst = svdup_f32(constant);
+        int i = 0;
+        while (i < vector_width) {
+            svbool_t pg = svwhilelt_b32(i, vector_width);
+            svuint32_t mv = svld1ub_u32(pg, (const uint8_t*)(mask + i));
+            svbool_t m = svcmpne_n_u32(pg, mv, 0);
+            svfloat32_t va = svld1_f32(pg, a + i);
+            svfloat32_t vold = svld1_f32(pg, out + i);
+            svfloat32_t sum = svadd_f32_x(pg, va, vconst);
+            svst1_f32(pg, out + i, svsel_f32(m, sum, vold));
+            i += svcntw();
+        }
+        return;
+    }
+
+    if constexpr (std::is_same<T,double>::value) {
+        svfloat64_t vconst = svdup_f64(constant);
+        int i = 0;
+        while (i < vector_width) {
+            svbool_t pg = svwhilelt_b64(i, vector_width);
+            svuint64_t mv = svld1ub_u64(pg, (const uint8_t*)(mask + i));
+            svbool_t m = svcmpne_n_u64(pg, mv, 0);
+            svfloat64_t va = svld1_f64(pg, a + i);
+            svfloat64_t vold = svld1_f64(pg, out + i);
+            svfloat64_t sum = svadd_f64_x(pg, va, vconst);
+            svst1_f64(pg, out + i, svsel_f64(m, sum, vold));
+            i += svcntd();
+        }
+        return;
+    }
+
+#else
+
+    for (int i = 0; i < vector_width; ++i)
+        if (mask[i]) out[i] = a[i] + constant;
+
+#endif
+}
+
 // vector_sub
 template<typename T, int vector_width>
 inline void vector_sub(T* __restrict__ out,

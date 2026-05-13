@@ -46,6 +46,25 @@ inline void vector_add_w_scalar(T* __restrict__ b, const T* __restrict__ a, cons
     }
 }
 
+// Masked add: lanes where mask[i] == false leave out[i] unchanged (RMW).
+template<typename T, int vector_width>
+inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
+                              const bool* __restrict__ mask) {
+    _dace_vectorize(vector_width)
+    for (int i = 0; i < vector_width; i++) {
+        if (mask[i]) out[i] = a[i] + b[i];
+    }
+}
+
+template<typename T, int vector_width>
+inline void vector_add_w_scalar_masked(T* __restrict__ out, const T* __restrict__ a, const T constant,
+                                       const bool* __restrict__ mask) {
+    _dace_vectorize(vector_width)
+    for (int i = 0; i < vector_width; i++) {
+        if (mask[i]) out[i] = a[i] + constant;
+    }
+}
+
 template<typename T, int vector_width>
 inline void vector_sub(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
     _dace_vectorize(vector_width)

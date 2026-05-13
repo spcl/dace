@@ -180,6 +180,94 @@ inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict__ a, co
 #endif
 }
 
+// --------------------------- vector_add_masked ---------------------------
+// Masked add: lanes where mask[i] == false leave out[i] unchanged in memory
+// (RMW). Built on _mm512_mask_storeu_{ps,pd} which writes only active lanes.
+
+template<typename T, int vector_width>
+inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
+                              const bool* __restrict__ mask) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, float>::value) {
+        constexpr int W = 16;
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            __mmask16 k = 0;
+            for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask16(1) << j;
+            __m512 va = _mm512_loadu_ps(a + i);
+            __m512 vb = _mm512_loadu_ps(b + i);
+            _mm512_mask_storeu_ps(out + i, k, _mm512_add_ps(va, vb));
+        }
+        for (; i < vector_width; ++i) {
+            if (mask[i]) out[i] = a[i] + b[i];
+        }
+        return;
+    }
+    if constexpr (std::is_same<T, double>::value) {
+        constexpr int W = 8;
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            __mmask8 k = 0;
+            for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask8(1) << j;
+            __m512d va = _mm512_loadu_pd(a + i);
+            __m512d vb = _mm512_loadu_pd(b + i);
+            _mm512_mask_storeu_pd(out + i, k, _mm512_add_pd(va, vb));
+        }
+        for (; i < vector_width; ++i) {
+            if (mask[i]) out[i] = a[i] + b[i];
+        }
+        return;
+    }
+    // Non-float/double under AVX-512: fall through to scalar fallback below.
+#endif
+    for (int i = 0; i < vector_width; i++) {
+        if (mask[i]) out[i] = a[i] + b[i];
+    }
+}
+
+// --------------------------- vector_add_w_scalar_masked ---------------------------
+
+template<typename T, int vector_width>
+inline void vector_add_w_scalar_masked(T* __restrict__ out, const T* __restrict__ a, const T constant,
+                                       const bool* __restrict__ mask) {
+#if defined(__AVX512F__)
+    if constexpr (std::is_same<T, float>::value) {
+        constexpr int W = 16;
+        __m512 vconst = _mm512_set1_ps(constant);
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            __mmask16 k = 0;
+            for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask16(1) << j;
+            __m512 va = _mm512_loadu_ps(a + i);
+            _mm512_mask_storeu_ps(out + i, k, _mm512_add_ps(va, vconst));
+        }
+        for (; i < vector_width; ++i) {
+            if (mask[i]) out[i] = a[i] + constant;
+        }
+        return;
+    }
+    if constexpr (std::is_same<T, double>::value) {
+        constexpr int W = 8;
+        __m512d vconst = _mm512_set1_pd(constant);
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            __mmask8 k = 0;
+            for (int j = 0; j < W; ++j) if (mask[i + j]) k |= __mmask8(1) << j;
+            __m512d va = _mm512_loadu_pd(a + i);
+            _mm512_mask_storeu_pd(out + i, k, _mm512_add_pd(va, vconst));
+        }
+        for (; i < vector_width; ++i) {
+            if (mask[i]) out[i] = a[i] + constant;
+        }
+        return;
+    }
+    // Non-float/double under AVX-512: fall through to scalar fallback below.
+#endif
+    for (int i = 0; i < vector_width; i++) {
+        if (mask[i]) out[i] = a[i] + constant;
+    }
+}
+
 // --------------------------- vector_sub ---------------------------
 
 template<typename T, int vector_width>

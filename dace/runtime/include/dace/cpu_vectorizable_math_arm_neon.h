@@ -212,6 +212,114 @@ inline void vector_add_w_scalar(T* __restrict__ out,
 #endif
 }
 
+// vector_add_masked: lanes where mask[i] == false leave out[i] unchanged
+// (RMW). NEON has no native mask register; the lane-mask vector is built from
+// bool[W] and applied via vbslq_f{32,64} blending sum against the old out.
+template<typename T, int vector_width>
+inline void vector_add_masked(T* __restrict__ out,
+                              const T* __restrict__ a,
+                              const T* __restrict__ b,
+                              const bool* __restrict__ mask)
+{
+#if defined(__ARM_NEON)
+
+    if constexpr (std::is_same<T,float>::value) {
+        constexpr int W = 4;
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            uint32_t lanes[W];
+            for (int j = 0; j < W; ++j) lanes[j] = mask[i + j] ? ~uint32_t(0) : uint32_t(0);
+            uint32x4_t m = vld1q_u32(lanes);
+            float32x4_t va = vld1q_f32(a + i);
+            float32x4_t vb = vld1q_f32(b + i);
+            float32x4_t vold = vld1q_f32(out + i);
+            float32x4_t sum = vaddq_f32(va, vb);
+            vst1q_f32(out + i, vbslq_f32(m, sum, vold));
+        }
+        for (; i < vector_width; ++i)
+            if (mask[i]) out[i] = a[i] + b[i];
+        return;
+    }
+
+    if constexpr (std::is_same<T,double>::value) {
+        constexpr int W = 2;
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            uint64_t lanes[W];
+            for (int j = 0; j < W; ++j) lanes[j] = mask[i + j] ? ~uint64_t(0) : uint64_t(0);
+            uint64x2_t m = vld1q_u64(lanes);
+            float64x2_t va = vld1q_f64(a + i);
+            float64x2_t vb = vld1q_f64(b + i);
+            float64x2_t vold = vld1q_f64(out + i);
+            float64x2_t sum = vaddq_f64(va, vb);
+            vst1q_f64(out + i, vbslq_f64(m, sum, vold));
+        }
+        for (; i < vector_width; ++i)
+            if (mask[i]) out[i] = a[i] + b[i];
+        return;
+    }
+
+#else
+
+    for (int i = 0; i < vector_width; ++i)
+        if (mask[i]) out[i] = a[i] + b[i];
+
+#endif
+}
+
+// vector_add_w_scalar_masked
+template<typename T, int vector_width>
+inline void vector_add_w_scalar_masked(T* __restrict__ out,
+                                       const T* __restrict__ a,
+                                       const T constant,
+                                       const bool* __restrict__ mask)
+{
+#if defined(__ARM_NEON)
+
+    if constexpr (std::is_same<T,float>::value) {
+        constexpr int W = 4;
+        float32x4_t vconst = vdupq_n_f32(constant);
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            uint32_t lanes[W];
+            for (int j = 0; j < W; ++j) lanes[j] = mask[i + j] ? ~uint32_t(0) : uint32_t(0);
+            uint32x4_t m = vld1q_u32(lanes);
+            float32x4_t va = vld1q_f32(a + i);
+            float32x4_t vold = vld1q_f32(out + i);
+            float32x4_t sum = vaddq_f32(va, vconst);
+            vst1q_f32(out + i, vbslq_f32(m, sum, vold));
+        }
+        for (; i < vector_width; ++i)
+            if (mask[i]) out[i] = a[i] + constant;
+        return;
+    }
+
+    if constexpr (std::is_same<T,double>::value) {
+        constexpr int W = 2;
+        float64x2_t vconst = vdupq_n_f64(constant);
+        int i = 0;
+        for (; i + W <= vector_width; i += W) {
+            uint64_t lanes[W];
+            for (int j = 0; j < W; ++j) lanes[j] = mask[i + j] ? ~uint64_t(0) : uint64_t(0);
+            uint64x2_t m = vld1q_u64(lanes);
+            float64x2_t va = vld1q_f64(a + i);
+            float64x2_t vold = vld1q_f64(out + i);
+            float64x2_t sum = vaddq_f64(va, vconst);
+            vst1q_f64(out + i, vbslq_f64(m, sum, vold));
+        }
+        for (; i < vector_width; ++i)
+            if (mask[i]) out[i] = a[i] + constant;
+        return;
+    }
+
+#else
+
+    for (int i = 0; i < vector_width; ++i)
+        if (mask[i]) out[i] = a[i] + constant;
+
+#endif
+}
+
 // vector_sub
 template<typename T, int vector_width>
 inline void vector_sub(T* __restrict__ out,
