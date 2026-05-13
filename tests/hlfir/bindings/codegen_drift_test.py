@@ -1,4 +1,4 @@
-"""Codegen-time drift check — ``codegen.generate_code`` must refuse
+"""Codegen-time drift check  --  ``codegen.generate_code`` must refuse
 to emit C++ headers when the SDFG's live arglist has drifted from
 its attached ``FrozenSignature``.
 
@@ -67,7 +67,7 @@ def test_codegen_honours_frozen_signature_happy_path():
 
 
 def test_codegen_raises_on_arg_removal():
-    """Transformation dropped array ``b`` → drift → raise."""
+    """Transformation dropped array ``b`` -> drift -> raise."""
     sdfg = _demo_sdfg()
     _pin(sdfg)
     sdfg.add_state("s0", is_start_block=True)
@@ -77,7 +77,7 @@ def test_codegen_raises_on_arg_removal():
 
 
 def test_codegen_raises_on_dtype_change():
-    """Transformation changed ``a`` to float32 → drift → raise."""
+    """Transformation changed ``a`` to float32 -> drift -> raise."""
     sdfg = _demo_sdfg()
     _pin(sdfg)
     sdfg.add_state("s0", is_start_block=True)
@@ -88,7 +88,7 @@ def test_codegen_raises_on_dtype_change():
 
 def test_codegen_unpinned_sdfg_unaffected():
     """A plain SDFG without a frozen signature goes through codegen
-    without any drift check — the pinning is purely opt-in."""
+    without any drift check  --  the pinning is purely opt-in."""
     sdfg = _demo_sdfg()
     sdfg.add_state("s0", is_start_block=True)
     # No frozen signature set.

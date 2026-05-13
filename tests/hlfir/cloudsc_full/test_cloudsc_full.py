@@ -3,16 +3,16 @@
 Drives the entire ECMWF CLOUDSC microphysics kernel through the
 bridge and compares the SDFG output against a gfortran/f2py
 reference compiled from the same Fortran source.  Catches
-integration regressions the per-loopnest tests can't see — state
+integration regressions the per-loopnest tests can't see  --  state
 hoisting across the block loop, the 100+ scalar-arg signature,
 deeply-nested ELEMENTAL expressions, rank-4 ``PCLV(:, :, :, JKGLO)``
-per-block slicing — and serves as the gate for the full-ICON
+per-block slicing  --  and serves as the gate for the full-ICON
 integration test that comes next.
 
 **Source:** ``cloudscexp2_simplified.F90`` (3541 LoC).  Single
 ``MODULE PARKIND1`` + ``SUBROUTINE CLOUDSCOUTER`` (block-loop
 wrapper) + ``SUBROUTINE CLOUDSC`` (physics core).  Every physical
-constant passes as a scalar argument — no
+constant passes as a scalar argument  --  no
 ``YDCST``/``YDTHF``/``YDECLDP`` derived-type bundling.  This is the
 bridge-friendly variant; the verification_pipeline's struct-args
 variant is harder until DT-of-constants lowers.
@@ -24,7 +24,7 @@ non-transformed reference.
 **Inputs:** seeded random data (``np.random.default_rng(42)``) via
 the registries in ``_registries.py``.  No HDF5 dependency.
 
-**Status:** xfail probe initially — surfaces the first bridge gap
+**Status:** xfail probe initially  --  surfaces the first bridge gap
 cleanly without breaking the sweep.  Each gap closes in a separate
 commit (the test stays xfailed throughout).  Final commit removes
 the xfail decorator.
@@ -54,7 +54,7 @@ def _sdfg_call_args(sdfg, scalar_values: dict) -> dict:
     or a length-1 numpy array (if classified as a length-1 Array).
     Per `feedback_scalar_io_convention` the bridge can register a
     Fortran scalar dummy as either Scalar (intent(in)) or length-1
-    Array (intent(inout)/(out)) — this helper picks the binding the
+    Array (intent(inout)/(out))  --  this helper picks the binding the
     SDFG actually expects.
 
     For LOGICAL scalars the bridge declares the length-1 array as
@@ -95,7 +95,7 @@ def _lower_keys(d: dict) -> dict:
 def _f2py_argnames(fn) -> set:
     """Parse ``cloudsc_ref.cloudscouter.__doc__`` to extract the actual
     argument-name list f2py exposes.  f2py auto-derives shape symbols
-    (``klon``, ``klev``, ``nblocks``, …) from array shapes and lists
+    (``klon``, ``klev``, ``nblocks``, ...) from array shapes and lists
     them in brackets at the end of the signature.  Return a set of
     accepted kwargs (lowercased)."""
     import re
@@ -127,7 +127,7 @@ def _f2py_ref(tmp_path_factory):
 
 @pytest.mark.xfail(
     strict=False,
-    reason="full CLOUDSC integration probe — first iteration surfaces "
+    reason="full CLOUDSC integration probe  --  first iteration surfaces "
     "the bridge gaps that the per-loopnest tests can't see "
     "(rank-4 PCLV slicing, 100+ scalar-arg signature, deeply-nested "
     "ELEMENTAL chains, block-loop state hoisting).  Each gap "
@@ -144,7 +144,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
 
     # SDFG via HLFIR bridge.  Use the DEFAULT_PIPELINE (the full
     # bridge pipeline including inline-all / flatten-structs /
-    # lift-alloc-array-of-records / etc.) — the minimal
+    # lift-alloc-array-of-records / etc.)  --  the minimal
     # ``hlfir-propagate-shapes`` pipeline used by the per-loopnest
     # tests isn't enough for the full kernel.
     sdfg_dir = tmp_path / "sdfg"
@@ -161,7 +161,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref):
 
     # Fortran-side call: gfortran-compiled CLOUDSCOUTER.  f2py
     # auto-derives shape symbols from array shapes and accepts only
-    # the args in its parsed signature — filter our kwarg dict to
+    # the args in its parsed signature  --  filter our kwarg dict to
     # avoid ``TypeError: takes at most N keyword arguments``.
     accepted = _f2py_argnames(_f2py_ref.cloudscouter)
     all_kwargs = {**_lower_keys(inputs), **_lower_keys(outputs_ref)}

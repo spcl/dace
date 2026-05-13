@@ -1,6 +1,6 @@
 """Mode-C reductions (COUNT / ANY / ALL over a comparison-derived
 mask) when the source array is itself a *section* of a higher-rank
-array — e.g. ``m(:, pos1)`` where ``pos1`` is a scalar dim of a
+array  --  e.g. ``m(:, pos1)`` where ``pos1`` is a scalar dim of a
 rank-2 array.
 
 The bridge's elemental walker materialises the comparison into a
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_count_parent_designate_scalar_dim(tmp_path: Path):
-    """``COUNT(m(:, pos1) .eq. 5)`` — the comparison's elemental walks
+    """``COUNT(m(:, pos1) .eq. 5)``  --  the comparison's elemental walks
     a section whose parent designate has a scalar dim (``pos1``).
     The collectReadAccesses helper must thread that scalar through to
     the underlying access."""
@@ -60,7 +60,7 @@ END SUBROUTINE count_parent_dg
 
 
 def test_any_parent_designate_scalar_dim(tmp_path: Path):
-    """``ANY(m(:, pos1) .gt. 0)`` — Mode-C ANY over a parent-section
+    """``ANY(m(:, pos1) .gt. 0)``  --  Mode-C ANY over a parent-section
     designate.  Same shape as the COUNT case above; pins
     ``buildElementalAnyAllReduce``'s walker."""
     src = """
@@ -87,7 +87,7 @@ END SUBROUTINE any_parent_dg
 
 
 def test_all_parent_designate_scalar_dim(tmp_path: Path):
-    """``ALL(m(:, pos1) .gt. 0)`` — Mode-C ALL counterpart.  All
+    """``ALL(m(:, pos1) .gt. 0)``  --  Mode-C ALL counterpart.  All
     elements of the parent-designate slice must satisfy the
     predicate; if any don't, ALL is false."""
     src = """

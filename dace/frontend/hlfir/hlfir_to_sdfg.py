@@ -1,4 +1,4 @@
-"""Back-compat shim — the real builder lives in ``.builder``.
+"""Back-compat shim  --  the real builder lives in ``.builder``.
 
 Existing callers do ``from dace.frontend.hlfir.hlfir_to_sdfg import
 SDFGBuilder, DEFAULT_PIPELINE, generate_sdfg``; this one-line re-export
@@ -6,7 +6,7 @@ keeps that import path working after the split into per-concern
 modules under ``builder/``.
 
 ``__all__`` pins the public surface so re-exports aren't flagged as
-"imported but unused" by linters (F401) — no per-line suppressions
+"imported but unused" by linters (F401)  --  no per-line suppressions
 needed.
 """
 from dace.frontend.hlfir.builder import (

@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — array-section assignment ``res(a:b) = 42``.
+"""Baseline HLFIR coverage  --  array-section assignment ``res(a:b) = 42``.
 Pulled out of the original ``ported_from_f2dace_windmill_test.py``
 per-feature split.
 """
@@ -20,7 +20,7 @@ def _build(src: str, tmp: Path, name: str):
 
 
 def test_array_section_assign(tmp_path):
-    """``res(a:b) = 42`` — section assign with symbolic bounds."""
+    """``res(a:b) = 42``  --  section assign with symbolic bounds."""
     src = """
 subroutine fill_range(res, a, b)
   implicit none

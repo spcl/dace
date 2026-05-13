@@ -2,14 +2,14 @@
 gather (``rhs = a(idx)``) and array-based scatter (``a(idx) = rhs``).
 
 Both shapes lower through a per-iteration loop where each iteration
-reassigns a single indirection symbol (``<arr>_at<gid>``) — DaCe's
+reassigns a single indirection symbol (``<arr>_at<gid>``)  --  DaCe's
 constraint of "no array of symbols" is respected because the symbol
 SLOT is reused, not duplicated.
 
 Pipeline:
-  * ``hlfir-expand-vector-subscript-gather`` — gather: replaces flang's
+  * ``hlfir-expand-vector-subscript-gather``  --  gather: replaces flang's
     ``hlfir.associate %elemental`` with an explicit alloca + DO loop.
-  * ``hlfir-expand-vector-subscript-scatter`` — scatter: replaces flang's
+  * ``hlfir-expand-vector-subscript-scatter``  --  scatter: replaces flang's
     ``hlfir.region_assign`` (with ``hlfir.elemental_addr`` destination)
     with a DO loop of per-element scalar assigns.
 
@@ -30,13 +30,13 @@ from _util import build_sdfg, have_flang
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 # ---------------------------------------------------------------------------
-# GATHER — ``out = d(cols)`` shape patterns
+# GATHER  --  ``out = d(cols)`` shape patterns
 # ---------------------------------------------------------------------------
 
 
 def test_gather_into_local_then_use(tmp_path: Path):
     """``d(cols)`` materialised as a local array, then doubled
-    elementwise.  Doesn't cross a subroutine call — exercises the
+    elementwise.  Doesn't cross a subroutine call  --  exercises the
     bridge's gather expression directly."""
     src = """
 subroutine main(d, cols, out)
@@ -62,7 +62,7 @@ end subroutine main
 
 
 def test_gather_inline_in_expression(tmp_path: Path):
-    """``out(i) = d(cols(i)) + d(cols(i)) ** 2`` — the gather appears
+    """``out(i) = d(cols(i)) + d(cols(i)) ** 2``  --  the gather appears
     inside a bigger arithmetic tree.  The bridge must handle each
     indirect read independently (one indirection-symbol slot per
     syntactic occurrence)."""
@@ -96,7 +96,7 @@ def test_inline_gather_with_symbolic_extent(tmp_path: Path):
     ``hlfir.associate``, so ``hlfir-expand-vector-subscript-gather``'s
     static-extent guard never fires.  The bridge's regular
     elementwise-assign path handles the gather directly via
-    indirection memlets — and crucially this path DOES support
+    indirection memlets  --  and crucially this path DOES support
     symbolic ``n``, because each loop iteration reassigns the same
     indirection-symbol slot (no array of symbols ever needed).
     """
@@ -121,7 +121,7 @@ end subroutine main
 
 
 def test_gather_via_call(tmp_path: Path):
-    """``call fun(d(cols), out)`` — the noncontig slice is the actual
+    """``call fun(d(cols), out)``  --  the noncontig slice is the actual
     arg to a callee that takes a contiguous array.  flang produces
     ``hlfir.associate``; ``hlfir-expand-vector-subscript-gather`` lowers it.
     Constant-shape callee dummy avoids a separate ``n`` symbol on
@@ -153,12 +153,12 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# SCATTER — ``d(cols) = source`` shape patterns
+# SCATTER  --  ``d(cols) = source`` shape patterns
 # ---------------------------------------------------------------------------
 
 
 def test_scatter_into_local_array(tmp_path: Path):
-    """``d(cols) = source`` — write 4 elements into ``d`` at indices
+    """``d(cols) = source``  --  write 4 elements into ``d`` at indices
     given by ``cols``, leaving the other elements untouched.
     Exercises ``hlfir-expand-vector-subscript-scatter``."""
     src = """
@@ -202,7 +202,7 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# GATHER + SCATTER combined — ``a(b) = c(d)`` round-trip
+# GATHER + SCATTER combined  --  ``a(b) = c(d)`` round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def test_scatter_with_symbolic_extent(tmp_path: Path):
     ``source`` arrays directly (no temp materialisation needed when
     the source is a contiguous ``fir.box`` / ``fir.ref``).  Each
     iteration of the scatter loop reassigns one indirection-symbol
-    slot — DaCe's invariant ("no array of symbols") is respected
+    slot  --  DaCe's invariant ("no array of symbols") is respected
     because ``n`` controls the loop trip count, not the number of
     distinct symbols.
     """
@@ -238,7 +238,7 @@ end subroutine main
 
 
 def test_scatter_with_symbolic_extent_two_index_arrays(tmp_path: Path):
-    """``a(cols2) = c(cols1)`` with symbolic ``n`` — two separate
+    """``a(cols2) = c(cols1)`` with symbolic ``n``  --  two separate
     index arrays, distinct from each other and from the data
     arrays.  Source is ``hlfir.expr`` (gather of c via cols1) so
     the fused single-loop path fires.  Disjoint arrays mean the
@@ -268,7 +268,7 @@ end subroutine main
 
 
 def test_gather_then_scatter_roundtrip(tmp_path: Path):
-    """``a(write_idx) = c(read_idx)`` — gather from c via read_idx,
+    """``a(write_idx) = c(read_idx)``  --  gather from c via read_idx,
     scatter into a via write_idx.  Disjoint arrays (no aliasing)."""
     src = """
 subroutine main(a, c, read_idx, write_idx)
@@ -293,7 +293,7 @@ end subroutine main
 
 
 def test_gather_scatter_aliasing_same_array(tmp_path: Path):
-    """``a(write_idx) = a(read_idx)`` — same array on both sides.
+    """``a(write_idx) = a(read_idx)``  --  same array on both sides.
 
     Fortran 2003 semantics: the right-hand side must be fully
     evaluated to a temporary BEFORE any element of the LHS is

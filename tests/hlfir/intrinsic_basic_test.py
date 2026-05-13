@@ -99,8 +99,8 @@ def test_fortran_frontend_present(tmp_path):
     After ``hlfir-inline-all`` flattens ``tf2``'s body into ``main``,
     each call site leaves a ``fir.is_present`` whose operand traces
     through the inlined alias to either ``main``'s mandatory dummy
-    ``a`` (host bound storage → constant ``1``) or to ``fir.absent``
-    (caller passed nothing → constant ``0``).  The bridge folds these
+    ``a`` (host bound storage -> constant ``1``) or to ``fir.absent``
+    (caller passed nothing -> constant ``0``).  The bridge folds these
     statically at AST-extract time."""
     src = """
 subroutine main(res, res2, a)

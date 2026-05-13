@@ -1,10 +1,10 @@
-"""Thin coordinator — turns ``(FrozenSignature, OriginalInterface,
+"""Thin coordinator  --  turns ``(FrozenSignature, OriginalInterface,
 FlattenPlan)`` into a ``<entry>_bindings.f90`` file.
 
 The real work is in sibling modules:
-    * ``flatten_plan.py``    — data model for the pass's output.
-    * ``loop_copy.py``       — per-recipe renderers.
-    * ``block_builders.py``  — one builder per Fortran section +
+    * ``flatten_plan.py``     --  data model for the pass's output.
+    * ``loop_copy.py``        --  per-recipe renderers.
+    * ``block_builders.py``   --  one builder per Fortran section +
                                ``assemble_module`` stitcher.
 
 ``emit_bindings`` is ~10 lines of orchestration.  No Fortran-
@@ -38,13 +38,13 @@ def emit_bindings(
     """Emit a Fortran binding module for the built SDFG.
 
     Args:
-        frozen:   ``FrozenSignature`` snapshot — the SDFG-facing arg
+        frozen:   ``FrozenSignature`` snapshot  --  the SDFG-facing arg
                   list + free symbols.  Comes from ``SDFGBuilder.build()``
                   and is verified at codegen to catch drift.
-        iface:    ``OriginalInterface`` — the caller-facing Fortran
+        iface:    ``OriginalInterface``  --  the caller-facing Fortran
                   surface of the entry subroutine (dummies + struct
                   layouts, snapshotted from HLFIR pre-pass).
-        plan:     ``FlattenPlan`` — the record of every unpack
+        plan:     ``FlattenPlan``  --  the record of every unpack
                   ``hlfir-flatten-structs`` performed.  One source
                   of truth for copy-in / copy-out code.
         out_path: Where to write ``<entry>_bindings.f90``.

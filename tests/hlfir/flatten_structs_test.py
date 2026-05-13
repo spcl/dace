@@ -22,7 +22,7 @@ def _names(builder):
 
 def test_flatten_structs_splits_members(tmp_path):
     """Array-of-struct (``type(complex_t) :: z(8)``): the pass must synthesise
-    the per-member flat companions ``z_re`` and ``z_im`` — that's what the
+    the per-member flat companions ``z_re`` and ``z_im``  --  that's what the
     downstream SDFG will build against."""
     b = build_sdfg(_SRC, tmp_path, name="complex_struct")
 

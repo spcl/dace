@@ -9,7 +9,7 @@ The OR-arm reads ``ZA(JL, JK)`` inside an arithmetic sub-expression
 ``hlfir.no_reassoc`` and the cond ultimately lifts to an interstate-
 edge assignment.  The bridge's ``buildExprWithSubscripts`` must peel
 ``hlfir.no_reassoc`` (and recurse through ``arith.subf``) so the
-inner load's subscript survives — otherwise C++ codegen rejects
+inner load's subscript survives  --  otherwise C++ codegen rejects
 ``1 - za`` (int - double*).
 
 E2e against an f2py-compiled reference of the same Fortran source.

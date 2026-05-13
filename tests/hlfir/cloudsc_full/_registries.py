@@ -4,7 +4,7 @@ Lifted near-verbatim from
 ``/home/primrose/Work/data_must_flow_artifacts/cloudsc/validate_cloudsc.py``
 (the dict registries + ``get_inputs``/``get_outputs`` helpers that
 drove the old ``dace.frontend.fortran`` Python frontend's
-end-to-end test).  Reused here for the HLFIR bridge port — the
+end-to-end test).  Reused here for the HLFIR bridge port  --  the
 shapes and intent classifications are independent of which
 frontend builds the SDFG.
 
@@ -560,7 +560,7 @@ def get_inputs(rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]
             dtype = np.float64
         if issubclass(dtype, Integral) or dtype is np.bool_:
             if dtype is np.bool_:
-                # Generate ints in {0, 1} then cast to np.bool_ — keep the
+                # Generate ints in {0, 1} then cast to np.bool_  --  keep the
                 # 1-byte boolean storage so the bridge's ``bool *`` SDFG
                 # signature reads each element correctly.  Casting to
                 # np.int32 here used to leave the 4-byte int32 array

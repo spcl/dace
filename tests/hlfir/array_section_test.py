@@ -4,7 +4,7 @@ Exercises the Phase-1 section-assignment path in the HLFIR bridge:
 ``hlfir.assign %scalar to <section-designate>`` is detected by
 ``asSectionDesignate`` in extract_ast.cpp and lowered into a nested
 ``kind="loop"`` wrapper + inner ``kind="assign"``.  No new Python
-emitters are involved — everything reuses the existing ``emit_loop`` /
+emitters are involved  --  everything reuses the existing ``emit_loop`` /
 ``emit_tasklet`` dispatch.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ end subroutine
 
 def test_section_assign_ast_shape(tmp_path: Path):
     """Confirm the bridge produces a single outer loop with symbolic
-    bounds + one inner assign writing the scalar constant — i.e. the
+    bounds + one inner assign writing the scalar constant  --  i.e. the
     shape `buildSectionScalarAssign` synthesises."""
     b = build_sdfg(_SRC, tmp_path, name="fill_range", pipeline="hlfir-propagate-shapes")
     # Only one top-level AST node.
@@ -60,7 +60,7 @@ def test_section_assign_sdfg_structure(tmp_path: Path):
     loops = [n for n in sdfg.nodes() if isinstance(n, LoopRegion)]
     assert len(loops) == 1, f"expected one LoopRegion, got {len(loops)}"
     loop = loops[0]
-    # Bounds appear verbatim in the Python expressions — symbols `a` and
+    # Bounds appear verbatim in the Python expressions  --  symbols `a` and
     # `b` are carried through to the condition / init.
     assert "a" in loop.init_statement.as_string
     assert "b" in loop.loop_condition.as_string
@@ -89,4 +89,4 @@ def test_section_assign_numerical(tmp_path: Path, a, b, expected):
     res = np.zeros(6, dtype=np.int32)
     sdfg(res=res, a=a, b=b)
     assert res.tolist() == expected, \
-        f"res({a}:{b}) = 42 → {res.tolist()}, expected {expected}"
+        f"res({a}:{b}) = 42 -> {res.tolist()}, expected {expected}"

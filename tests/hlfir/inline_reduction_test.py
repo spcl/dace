@@ -50,7 +50,7 @@ def _build_and_run(src: str, tmp_path: Path, **kwargs) -> dict:
 
 
 def test_inline_maxval_in_max_expression(tmp_path: Path):
-    """``out = max(scalar, MAXVAL(arr(1:n)))`` — the failure repro from
+    """``out = max(scalar, MAXVAL(arr(1:n)))``  --  the failure repro from
     the velocity_tendencies probe."""
     src = """
 subroutine kernel(arr, scalar, out, n)
@@ -72,7 +72,7 @@ end subroutine kernel
 
 
 def test_inline_minval_in_min_expression(tmp_path: Path):
-    """``out = min(scalar, MINVAL(arr))`` — symmetric of the maxval
+    """``out = min(scalar, MINVAL(arr))``  --  symmetric of the maxval
     case."""
     src = """
 subroutine kernel(arr, scalar, out, n)
@@ -94,7 +94,7 @@ end subroutine kernel
 
 
 def test_inline_sum_in_arithmetic(tmp_path: Path):
-    """``out = scalar + SUM(arr(1:n))`` — sum used additively in a
+    """``out = scalar + SUM(arr(1:n))``  --  sum used additively in a
     larger expression."""
     src = """
 subroutine kernel(arr, scalar, out, n)
@@ -116,7 +116,7 @@ end subroutine kernel
 
 
 def test_inline_product_in_arithmetic(tmp_path: Path):
-    """``out = scalar * PRODUCT(arr(1:n))`` — product used
+    """``out = scalar * PRODUCT(arr(1:n))``  --  product used
     multiplicatively in a larger expression."""
     src = """
 subroutine kernel(arr, scalar, out, n)
@@ -138,7 +138,7 @@ end subroutine kernel
 
 
 def test_two_inline_reductions_in_same_expression(tmp_path: Path):
-    """``out = MAXVAL(a(1:n)) + MINVAL(b(1:n))`` — two distinct
+    """``out = MAXVAL(a(1:n)) + MINVAL(b(1:n))``  --  two distinct
     reductions in one expression, each must lift independently."""
     src = """
 subroutine kernel(a, b, out, n)
@@ -159,7 +159,7 @@ end subroutine kernel
 
 
 def test_inline_maxval_no_section(tmp_path: Path):
-    """``out = max(scalar, MAXVAL(arr))`` — whole-array reduction
+    """``out = max(scalar, MAXVAL(arr))``  --  whole-array reduction
     (no slice) used inline.  Exercises the same lift but routes the
     lifted assign through the whole-array Reduce path instead of the
     section-reduce loop."""

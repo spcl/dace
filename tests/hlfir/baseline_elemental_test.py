@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — ``ELEMENTAL`` subroutine called on arrays.
+"""Baseline HLFIR coverage  --  ``ELEMENTAL`` subroutine called on arrays.
 Pulled out of the original ``ported_from_f2dace_windmill_test.py``
 per-feature split.
 

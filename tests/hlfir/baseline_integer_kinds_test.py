@@ -1,10 +1,10 @@
 """Pinned coverage for Fortran ``INTEGER(KIND=N)`` mappings.
 
 Contract:
-  * ``INTEGER(1)`` (1-byte signed) → ``np.int8``
-  * ``INTEGER(2)`` (2-byte signed) → ``np.int16``
-  * ``INTEGER(4)`` (default, 4-byte) → ``np.int32``  (already covered)
-  * ``INTEGER(8)`` (8-byte) → ``np.int64``  (already covered)
+  * ``INTEGER(1)`` (1-byte signed) -> ``np.int8``
+  * ``INTEGER(2)`` (2-byte signed) -> ``np.int16``
+  * ``INTEGER(4)`` (default, 4-byte) -> ``np.int32``  (already covered)
+  * ``INTEGER(8)`` (8-byte) -> ``np.int64``  (already covered)
 
 The smaller kinds are exercised here because the wider kinds are
 implicit in nearly every other test.  ``INTEGER(1)`` is the byte type
@@ -13,7 +13,7 @@ and bit-stream interchange.
 
 Distinguishes ``INTEGER(1)`` (signed 8-bit ``int8_t``) from MLIR's
 ``i1`` (1-bit boolean predicate, surfaced as ``bool`` after the
-LOGICAL→bool migration lands; today as ``uint8``).  The two are
+LOGICAL->bool migration lands; today as ``uint8``).  The two are
 unrelated despite both involving "1".
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ end subroutine copy_int2
 
 
 def test_integer_kind_1_same_kind_addition(tmp_path: Path):
-    """``c(i) = a(i) + b(i)`` over ``INTEGER(1)`` arrays — same-kind
+    """``c(i) = a(i) + b(i)`` over ``INTEGER(1)`` arrays  --  same-kind
     addition with no widening literals.  Verifies tasklet arithmetic
     on ``int8`` operands stays in ``int8`` end-to-end."""
     src = """
@@ -98,7 +98,7 @@ end subroutine add_int1
 
 
 def test_integer_kind_2_same_kind_multiply(tmp_path: Path):
-    """``c(i) = a(i) * b(i)`` over ``INTEGER(2)`` arrays — same-kind
+    """``c(i) = a(i) * b(i)`` over ``INTEGER(2)`` arrays  --  same-kind
     multiplication.  Verifies ``int16`` arithmetic stays in ``int16``."""
     src = """
 subroutine mul_int2(a, b, c, n)

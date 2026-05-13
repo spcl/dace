@@ -5,25 +5,25 @@ explanation): an assumed-shape dummy argument always has ``lbound=1``
 inside the callee regardless of the caller's custom lower bound.
 When we inline such a callee into a caller whose actual argument has
 ``(-2:2)``-style bounds, the callee's body must still treat index 1
-as "first storage element" — not as "first caller-bound element".
+as "first storage element"  --  not as "first caller-bound element".
 
 Our HLFIR bridge relies on Flang's own lowering for this: the caller
 builds a ``fir.shape_shift %lb, %ext`` for the custom-bounded array,
 and Flang's call site wraps the box such that the callee's
 ``hlfir.declare %arg0 dummy_scope %0`` (no shape operand) re-associates
 to ``lbound=1``.  When ``hlfir-inline-all`` splices the callee body
-into the caller, each IR construct retains its own declare — the
+into the caller, each IR construct retains its own declare  --  the
 inlined declare still carries the 1-based view of the box, distinct
 from the caller's ``custom_array`` declare with its ``-2:2`` bounds.
 
 These tests guard that behaviour end to end:
 
-- ``test_inline_rebase_storage`` — build the SDFG through
-  ``SDFGBuilder.from_files`` (multi-file → inline-all path), run it,
+- ``test_inline_rebase_storage``  --  build the SDFG through
+  ``SDFGBuilder.from_files`` (multi-file -> inline-all path), run it,
   and assert that ``arr(1) = 999`` inside the callee lands in the
   caller's first storage slot (the ``custom_array(-2)`` element).
 
-- ``test_sdfg_matches_gfortran_reference`` — same source compiled with
+- ``test_sdfg_matches_gfortran_reference``  --  same source compiled with
   ``gfortran`` via ``f2py``; two outputs must match bit-exactly.
 """
 from __future__ import annotations
@@ -47,7 +47,7 @@ _FLANG = "flang-new-21"
 
 # Two files: ``callee`` takes an assumed-shape dummy; ``driver`` owns a
 # custom-bounded local and calls the callee on it.  Splitting across
-# files exercises the multi-file driver (parse_files → inline-all) the
+# files exercises the multi-file driver (parse_files -> inline-all) the
 # way ICON's cross-module kernels will.
 
 _CALLEE_SRC = """
@@ -104,7 +104,7 @@ def _f2py_build(srcs: list[str], out_dir: Path, mod_name: str):
 def test_inlined_hlfir_has_assumed_shape_alias_declare(tmp_path: Path):
     """Structural guard: after ``hlfir-inline-all + symbol-dce`` the
     IR contains exactly the alias declare pattern that drives the
-    assumed-shape re-basing problem — a second ``hlfir.declare`` with
+    assumed-shape re-basing problem  --  a second ``hlfir.declare`` with
     no shape operand whose memref is a ``fir.convert`` of the caller's
     ``fir.shape_shift``-bounded declare.  This test asserts the shape
     of the IR that subsequent frontend work needs to handle; it does
@@ -128,7 +128,7 @@ def test_inlined_hlfir_has_assumed_shape_alias_declare(tmp_path: Path):
     # memref is a fir.convert (extent erasure).
     assert '_QFcalleeEarr' in dump, \
         "expected the inlined callee's alias declare to survive inline+dce"
-    # The fir.convert box<array<5xi32>> → box<array<?xi32>> is the
+    # The fir.convert box<array<5xi32>> -> box<array<?xi32>> is the
     # assumed-shape-alias signature we'll need to fold.
     assert "fir.convert" in dump
 

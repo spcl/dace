@@ -1,4 +1,4 @@
-"""End-to-end LOGICAL → logical(c_bool) bridge tests.
+"""End-to-end LOGICAL -> logical(c_bool) bridge tests.
 
 The bindings emitter in ``dace/frontend/hlfir/bindings/block_builders.py``
 generates a ``logical(c_bool), allocatable, target`` scratch buffer and
@@ -69,7 +69,7 @@ def _build_e2e_module(
     2. Recover the ``FrozenSignature`` attached by the builder.
     3. Synthesise the ``OriginalInterface`` (caller-visible Fortran
        declarations) and an empty ``FlattenPlan`` (no struct flattening).
-    4. ``emit_bindings`` → ``<name>_bindings.f90``.
+    4. ``emit_bindings`` -> ``<name>_bindings.f90``.
     5. f2py-compile the bindings + the Fortran driver into a Python
        extension, linking to the SDFG ``.so``.
     6. Return the loaded extension module and the f2py reference module.
@@ -92,12 +92,8 @@ def _build_e2e_module(
     iface = OriginalInterface(entry=name, args=outer_args)
     bindings_path = tmp_path / f"{name}_bindings.f90"
     emit_bindings(fs, iface, FlattenPlan(entries=()), str(bindings_path))
-    # The auto-generated header contains an em-dash (``--``); f2py's
-    # crackfortran reads as ASCII and rejects it.  Strip non-ASCII so
-    # the parse succeeds without losing any Fortran semantics.
-    bindings_path.write_text(bindings_path.read_text().encode("ascii", errors="replace").decode("ascii"))
 
-    # Driver + bindings → Python extension via f2py.  Link the SDFG
+    # Driver + bindings -> Python extension via f2py.  Link the SDFG
     # shared library so the bindings' ``bind(c)`` interface resolves
     # at load time.
     driver_path = tmp_path / f"{name}_driver.f90"
@@ -479,7 +475,6 @@ def test_e2e_rank1_cbool_passthrough(tmp_path: Path):
     iface = OriginalInterface(entry=fs.entry, args=outer)
     bindings_path = tmp_path / "flip_cbool_bindings.f90"
     emit_bindings(fs, iface, FlattenPlan(entries=()), str(bindings_path))
-    bindings_path.write_text(bindings_path.read_text().encode("ascii", errors="replace").decode("ascii"))
 
     driver_path = tmp_path / "flip_cbool_driver.f90"
     driver_path.write_text(_CBOOL_DRIVER)

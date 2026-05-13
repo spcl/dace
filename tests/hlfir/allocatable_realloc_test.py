@@ -1,8 +1,8 @@
 """End-to-end tests for ``ALLOCATABLE`` re-allocation.
 
-Each ``ALLOCATE`` lands as a fresh SDFG transient — the first one
+Each ``ALLOCATE`` lands as a fresh SDFG transient  --  the first one
 keeps the variable's original Fortran name (``x``), every subsequent
-one gets a synthetic alias (``x_alloc1``, ``x_alloc2``, …).  The
+one gets a synthetic alias (``x_alloc1``, ``x_alloc2``, ...).  The
 intervening ``DEALLOCATE`` is a no-op at the SDFG level.
 
 We don't model pointer aliasing, so this only covers straight-line
@@ -43,7 +43,7 @@ subroutine main(n1, n2, src1, src2, out)
 end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
-    # ``x_alloc1`` should appear as a transient — the second allocation.
+    # ``x_alloc1`` should appear as a transient  --  the second allocation.
     assert 'x_alloc1' in sdfg.arrays, f"expected x_alloc1 transient, got {list(sdfg.arrays)}"
     assert sdfg.arrays['x_alloc1'].transient
     n1, n2 = 4, 6
@@ -57,7 +57,7 @@ end subroutine main
 
 
 def test_realloc_same_size(tmp_path: Path):
-    """Two ALLOCATEs with the same shape — the second still gets its
+    """Two ALLOCATEs with the same shape  --  the second still gets its
     own transient.  Without the per-site rebind, leftover writes from
     the first allocation would leak through."""
     src = """

@@ -8,9 +8,9 @@ known compile-time values (default ``1``; ``dimension(20:24)`` gets
 
 Tests pin three Fortran shapes the design unblocks:
 
-  * ``dimension(20:24)``  — constant non-1 lower bound.
-  * ``dimension(0:4)``    — constant zero lower bound.
-  * Whole-array section assignment with a non-1 lb on both sides —
+  * ``dimension(20:24)``   --  constant non-1 lower bound.
+  * ``dimension(0:4)``     --  constant zero lower bound.
+  * Whole-array section assignment with a non-1 lb on both sides  --
     section-parent + array offset interact through the symbol layer.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_constant_nonone_lower_bound(tmp_path: Path):
-    """``real :: a(20:24)`` — lbound 20.  Writing ``a(22) = 7`` must
+    """``real :: a(20:24)``  --  lbound 20.  Writing ``a(22) = 7`` must
     land on the third element (offset 2 from the start of storage)."""
     src = """
 subroutine main(a)
@@ -41,7 +41,7 @@ end subroutine main
 
 
 def test_constant_zero_lower_bound(tmp_path: Path):
-    """``real :: a(0:4)`` — lbound 0.  Writing ``a(0) = 1`` and
+    """``real :: a(0:4)``  --  lbound 0.  Writing ``a(0) = 1`` and
     ``a(4) = 5`` lands on the first and last element of storage."""
     src = """
 subroutine main(a)
@@ -57,7 +57,7 @@ end subroutine main
 
 
 def test_section_assignment_with_default_lb(tmp_path: Path):
-    """Section assign over default-lb arrays — ``res(2:4) = src(2:4)``
+    """Section assign over default-lb arrays  --  ``res(2:4) = src(2:4)``
     exercises the section-parent's ``(lo - 1)`` contribution alongside
     the array's offset symbol."""
     src = """

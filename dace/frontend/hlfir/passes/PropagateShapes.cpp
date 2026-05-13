@@ -1,10 +1,10 @@
 // ============================================================================
-// PropagateShapes.cpp — Caller → callee shape propagation.
+// PropagateShapes.cpp  --  Caller -> callee shape propagation.
 // ============================================================================
 // Problem:
 //     When Flang emits HLFIR for a subroutine with an assumed-shape dummy
 //     argument A(:,:), the hlfir.declare for that dummy has no fir.shape
-//     operand — the extents live in the incoming fir.box and are opaque
+//     operand  --  the extents live in the incoming fir.box and are opaque
 //     inside the callee.  The bridge falls back to synthetic symbols
 //     (A_d0, A_d1), which is correct but uninformative.
 //
@@ -62,7 +62,7 @@ static hlfir::DeclareOp findEntryDeclare(mlir::Value formal) {
 }
 
 /// True if a declare already has a local shape operand resolved to Fortran
-/// names — no need to propagate, we already know the shape.
+/// names  --  no need to propagate, we already know the shape.
 static bool hasLocalShape(hlfir::DeclareOp decl) {
     return static_cast<bool>(decl.getShape());
 }
@@ -91,7 +91,7 @@ traceShapeAtCallSite(mlir::Value actual) {
             continue;
         }
         if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(def)) {
-            // The caller's own declare — either has a shape directly,
+            // The caller's own declare  --  either has a shape directly,
             // or has been stamped with a hint by a previous iteration.
             if (decl.getShape())
                 return extractExtents(decl.getShape());
@@ -100,7 +100,7 @@ traceShapeAtCallSite(mlir::Value actual) {
                 // Hint is by-name; we can't produce SSA values for it,
                 // so re-encode as a dummy extent list by looking up
                 // declares of the named symbols.  For simplicity, give
-                // up in this case — the fixed-point iteration will
+                // up in this case  --  the fixed-point iteration will
                 // catch it next round after we propagate the inner one.
                 (void)hint;
             }
@@ -116,9 +116,9 @@ traceShapeAtCallSite(mlir::Value actual) {
 }
 
 /// Merge new names into an existing hint.  Per-dimension rule:
-///   existing empty or absent → take new
-///   existing == new          → keep
-///   existing != new          → ""  (disagreement, fall back to synthetic)
+///   existing empty or absent -> take new
+///   existing == new          -> keep
+///   existing != new          -> ""  (disagreement, fall back to synthetic)
 static mlir::ArrayAttr
 mergeHint(mlir::MLIRContext *ctx, mlir::ArrayAttr existing,
           llvm::ArrayRef<std::string> fresh) {

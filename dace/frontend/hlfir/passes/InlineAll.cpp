@@ -1,5 +1,5 @@
 // ============================================================================
-// InlineAll.cpp — Aggressive whole-program inlining.
+// InlineAll.cpp  --  Aggressive whole-program inlining.
 // ============================================================================
 // Problem:
 //     For deployment-time specialisation (namelist constant injection +
@@ -16,7 +16,7 @@
 // Assumptions:
 //     - No recursive functions.  The pass does not detect cycles; if
 //       recursion exists, it will hit the iteration cap and bail out.
-//     - Code size explosion is acceptable — the result is meant for
+//     - Code size explosion is acceptable  --  the result is meant for
 //       specialisation, not direct compilation.
 //
 // After this pass, the entry function(s) contain the full flattened
@@ -46,14 +46,14 @@ namespace hlfir_bridge {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Inliner interface — accept everything.
+// Inliner interface  --  accept everything.
 // ---------------------------------------------------------------------------
 
 /// Permissive inliner interface that allows inlining any callable into any
 /// call site.  We override the legality hooks to always return true, and
 /// defer the transformation hooks (``handleTerminator`` / ``handleArgument``
 /// / ``handleResult``) to the per-dialect ``DialectInlinerInterface`` that
-/// Flang registers for FIR and the core dialects — overriding them here
+/// Flang registers for FIR and the core dialects  --  overriding them here
 /// would short-circuit the correct per-op behaviour and can corrupt the IR.
 struct AggressiveInlinerInterface : public mlir::InlinerInterface {
     using mlir::InlinerInterface::InlinerInterface;
@@ -96,7 +96,7 @@ struct InlineAllPass
         unsigned inlined = 0;
         AggressiveInlinerInterface interface(module.getContext());
 
-        // Collect call ops first — we'll be mutating the IR during inlining,
+        // Collect call ops first  --  we'll be mutating the IR during inlining,
         // so we cannot walk and inline simultaneously.
         llvm::SmallVector<fir::CallOp, 64> calls;
         module.walk([&](fir::CallOp call) {
@@ -172,7 +172,7 @@ struct InlineAllPass
 
         // Fixed-point iteration.  Each round inlines one level of calls;
         // repeat until no more inlining is possible.
-        // Cap at 128 rounds — without recursion this is the max call-tree
+        // Cap at 128 rounds  --  without recursion this is the max call-tree
         // depth; in practice convergence is much faster.
         unsigned totalInlined = 0;
         for (int round = 0; round < 128; ++round) {

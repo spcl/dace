@@ -1,12 +1,12 @@
 // ============================================================================
-// LiftReductionOperands.cpp — pre-lower reduction intrinsics that appear as
+// LiftReductionOperands.cpp  --  pre-lower reduction intrinsics that appear as
 // inline expression operands.
 // ============================================================================
 //
 // Motivation:
 //     The bridge's ``buildExpr`` (expressions.cpp) handles scalar-shape
 //     ops (arith.*, math.*, hlfir.designate, fir.load, ...) but has no
-//     case for array-reducing intrinsics — ``hlfir.sum`` / ``maxval`` /
+//     case for array-reducing intrinsics  --  ``hlfir.sum`` / ``maxval`` /
 //     ``minval`` / ``product`` / ``any`` / ``all``.  Those map to scalar
 //     values but can't be rendered as a tasklet expression: a tasklet
 //     reads scalars, not array slices.
@@ -37,9 +37,9 @@
 //
 //     After this pass:
 //         - The lifted ``temp = MAXVAL(slice)`` is a top-level reduction
-//           assign — ``buildSectionReduceAssign`` handles it.
+//           assign  --  ``buildSectionReduceAssign`` handles it.
 //         - The outer ``max_vcfl_dyn = MAX(p_diag_..., load(temp))``
-//           sees only a scalar load — the existing buildExpr arith.maxnumf
+//           sees only a scalar load  --  the existing buildExpr arith.maxnumf
 //           handler renders it correctly.
 //
 // Pipeline position:
@@ -50,7 +50,7 @@
 //     ``hlfir-default-intent`` is fine.
 //
 // Out of scope:
-//     * ``hlfir.count`` — already routed through a libcall in the dispatch
+//     * ``hlfir.count``  --  already routed through a libcall in the dispatch
 //       table; that codepath supports inline use via the libcall's emit
 //       path.  If it ever surfaces as a problem, fold in here.
 //     * Reductions whose source is an ``hlfir.elemental`` (a compound
@@ -76,7 +76,7 @@ namespace hlfir_bridge {
 namespace {
 
 /// True iff ``op`` is one of the array-reducing intrinsics that
-/// ``buildExpr`` cannot render inline.  ``hlfir.count`` is excluded —
+/// ``buildExpr`` cannot render inline.  ``hlfir.count`` is excluded  --
 /// the dispatcher routes it through ``CountLibraryNode`` which handles
 /// inline use via the libcall emit path.
 static bool isReductionOp(mlir::Operation *op) {
@@ -86,7 +86,7 @@ static bool isReductionOp(mlir::Operation *op) {
 }
 
 /// Find every reduction op transitively used by ``rootOp`` (the RHS of an
-/// assign) — except the rootOp itself.  Returns them in
+/// assign)  --  except the rootOp itself.  Returns them in
 /// reverse-postorder so callers process inner reductions before outer.
 static void collectNestedReductions(
         mlir::Operation *rootOp,
@@ -127,7 +127,7 @@ struct LiftReductionOperandsPass
         // Counter for unique temp names per function.
         llvm::DenseMap<mlir::func::FuncOp, unsigned> liftCounter;
 
-        // Two-pass: collect first, mutate after — modifying the IR
+        // Two-pass: collect first, mutate after  --  modifying the IR
         // mid-walk would invalidate iterators.
         struct Job {
             hlfir::AssignOp consumer;
@@ -140,7 +140,7 @@ struct LiftReductionOperandsPass
             auto *rhsOp = rhs.getDefiningOp();
             if (!rhsOp) return;
             // If the RHS itself is a reduction, the dispatcher already
-            // handles it — leave alone.  Only lift NESTED reductions.
+            // handles it  --  leave alone.  Only lift NESTED reductions.
             llvm::SmallVector<mlir::Operation *, 4> nested;
             collectNestedReductions(rhsOp, nested);
             for (auto *r : nested) jobs.push_back({assign, r});
@@ -166,7 +166,7 @@ struct LiftReductionOperandsPass
         auto loc = redOp->getLoc();
         auto *ctx = func.getContext();
 
-        // Create the temp local at the function entry block — putting
+        // Create the temp local at the function entry block  --  putting
         // it inline at the consuming assign's location works too, but
         // hoisting to entry keeps the pattern uniform with how flang
         // emits other Fortran-source ``REAL :: tmp`` locals.
@@ -185,7 +185,7 @@ struct LiftReductionOperandsPass
             mlir::ValueRange{alloca.getResult()}, attrs);
 
         // Emit the lifted assign and load IMMEDIATELY AFTER the
-        // reduction op — placing them at the consumer's location would
+        // reduction op  --  placing them at the consumer's location would
         // put the load AFTER existing uses of the reduction (e.g.
         // ``arith.cmpf %scalar, %maxval`` followed by
         // ``arith.select`` followed by the assign), and rewriting those

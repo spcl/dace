@@ -8,7 +8,7 @@ Also asserts the structural invariants the frontend is supposed to give
 for an indirect access:
 
   * Each distinct ``edge_idx(jc, k)`` load mints a fresh SDFG symbol
-    named ``edge_idx_at<gid>`` (``<arr>_at<gid>`` — the prefix carries
+    named ``edge_idx_at<gid>`` (``<arr>_at<gid>``  --  the prefix carries
     the source array's Fortran name; the global ``gid`` disambiguates
     same-expression-different-call-site).
   * The load turns into an interstate-edge assignment
@@ -94,7 +94,7 @@ def test_indirect_access_numerical(tmp_path):
     finally:
         sys.path.remove(str(f2py_dir))
 
-    # Build SDFG via the flang → HLFIR → SDFG pipeline.
+    # Build SDFG via the flang -> HLFIR -> SDFG pipeline.
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
     b = build_sdfg(_SRC_PATH.read_text(), sdfg_dir, name="indirect", pipeline="hlfir-propagate-shapes")
@@ -103,7 +103,7 @@ def test_indirect_access_numerical(tmp_path):
 
     # Random inputs.  Our frontend now emits Fortran-order (column-major)
     # strides for every rank>1 array descriptor, so both sides share the
-    # same layout convention — pass Fortran-order numpy arrays to both.
+    # same layout convention  --  pass Fortran-order numpy arrays to both.
     rng = np.random.default_rng(0)
     nc, ne, nk = 7, 13, 5
     edge_idx = np.asfortranarray(rng.integers(1, ne + 1, size=(nc, 3), dtype=np.int32))

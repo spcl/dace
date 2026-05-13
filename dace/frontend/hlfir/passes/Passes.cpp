@@ -1,5 +1,5 @@
 // ============================================================================
-// Passes.cpp — Registration dispatch for every bridge pass.
+// Passes.cpp  --  Registration dispatch for every bridge pass.
 // ============================================================================
 
 #include "passes/Passes.h"
@@ -23,7 +23,7 @@ void registerAllBridgePasses() {
     mlir::registerPass([]() { return mlir::createCanonicalizerPass(); });
     mlir::registerPass([]() { return mlir::createCSEPass(); });
     mlir::registerPass([]() { return mlir::createSymbolDCEPass(); });
-    // Upstream interprocedural inliner — relies on FIRInlinerInterface
+    // Upstream interprocedural inliner  --  relies on FIRInlinerInterface
     // registered by the Flang dialect to know how to inline fir.call.
     mlir::registerPass([]() { return mlir::createInlinerPass(); });
 

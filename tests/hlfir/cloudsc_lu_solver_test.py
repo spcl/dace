@@ -10,7 +10,7 @@ Structure:
 
 * Non-pivoting recursive factorisation (forward sweep over JN, inner
   JM/IK loops; modifies ZQLHS in place).
-* Forward-substitute (step 1): ``DO JN=2,NCLV / DO JM=1,JN-1`` —
+* Forward-substitute (step 1): ``DO JN=2,NCLV / DO JM=1,JN-1``  --
   ``ZQXN(:, JN) -= ZQLHS(:, JN, JM) * ZQXN(:, JM)``.
 * Diagonal divide on the last row: ``ZQXN(:, NCLV) /= ZQLHS(:, NCLV, NCLV)``.
 * Back-substitute: ``DO JN=NCLV-1,1,-1 / DO JM=JN+1,NCLV`` with both
@@ -186,7 +186,7 @@ def test_python_frontend_cloudsc_lu_solver_one_indexed():
         for jn in range(nclv):
             base[jl, jn, jn] += nclv  # diag dominance
     # DaCe Python frontend's ``dace.float64[N, M]`` is row-major (C-order),
-    # so allocate the numpy buffers C-order — otherwise ``array[jl]`` in the
+    # so allocate the numpy buffers C-order  --  otherwise ``array[jl]`` in the
     # generated C++ (which uses ``jl * stride_d0 + ...`` without ``-1``)
     # lands on the wrong element and produces NaNs via div-by-padding-zero.
     zqlhs_in = np.zeros((klon + 1, nclv + 1, nclv + 1), dtype=np.float64, order="C")

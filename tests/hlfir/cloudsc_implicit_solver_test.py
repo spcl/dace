@@ -3,20 +3,20 @@
 Lifts the full implicit-solver block (cloudscexp2_simplified.F90
 lines 3257-3380) that combines five back-to-back loopnests:
 
-1. ZQLHS construction (lines 3257-3278) — diagonals as
+1. ZQLHS construction (lines 3257-3278)  --  diagonals as
    ``1 + ZFALLSINK(JM) + sum_O ZSOLQB(JO,JN)`` and off-diagonals as
    ``-ZSOLQB(JN,JM)``.  Two IF branches in the JN/JM nest.
-2. ZQXN RHS initialization (lines 3283-3294) — ``ZQXN(JM) = ZQX(JK,JM)
+2. ZQXN RHS initialization (lines 3283-3294)  --  ``ZQXN(JM) = ZQX(JK,JM)
    + sum_N ZSOLQA(JM,N)``.
-3. LU forward+back substitution (lines 3308-3336) — already covered
+3. LU forward+back substitution (lines 3308-3336)  --  already covered
    in ``cloudsc_lu_solver_test.py`` but exercised here in the
    full-pipeline context.
-4. Sub-epsilon clamp (lines 3341-3348) — ``IF ZQXN(JN) < ZEPSEC THEN
+4. Sub-epsilon clamp (lines 3341-3348)  --  ``IF ZQXN(JN) < ZEPSEC THEN
    ZQXN(NCLDQV) += ZQXN(JN); ZQXN(JN) = 0``.  IF-mutation of a shared
    reduction target.
-5. ZQXN -> ZQXN2D + ZQXNM1 carry (lines 3353-3358) — column-wise
+5. ZQXN -> ZQXN2D + ZQXNM1 carry (lines 3353-3358)  --  column-wise
    write-back and cross-JK carry.
-6. Precip-flux derivation + ZCOVPTOT reset (lines 3366-3380) — feeds
+6. Precip-flux derivation + ZCOVPTOT reset (lines 3366-3380)  --  feeds
    PCOVPTOT's pattern A.
 
 This is the chunk where the cloudsc_full integration test's per-step

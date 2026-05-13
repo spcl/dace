@@ -1,10 +1,10 @@
-"""Baseline HLFIR coverage — Fortran ``POINTER`` rebinding under the
+"""Baseline HLFIR coverage  --  Fortran ``POINTER`` rebinding under the
 strict-no-aliasing assumption.
 
 The bridge collapses ``ptr => target`` rebinds in
 ``hlfir-rewrite-pointer-assigns``: every read or write of the pointer
 becomes an access to the rebind target's storage.  The pass emits a
-warning per firing so callers see the no-alias assumption — Fortran
+warning per firing so callers see the no-alias assumption  --  Fortran
 allows aliased pointer access, this collapse is unsafe if the program
 relies on it.
 
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not avail
 
 
 def test_pointer_to_scalar_local(tmp_path: Path):
-    """``tmp => x; tmp = 13; res = tmp + 1`` — pointer to a scalar local."""
+    """``tmp => x; tmp = 13; res = tmp + 1``  --  pointer to a scalar local."""
     src = """
 subroutine main(out)
   implicit none
@@ -50,7 +50,7 @@ end subroutine main
 
 def test_dead_store_rebind_is_collapsed(tmp_path: Path):
     """Sequential dead-store rebinds (``ptr => A; ptr => B; use ptr``)
-    are not ambiguous — only the LAST rebind is observable.  The
+    are not ambiguous  --  only the LAST rebind is observable.  The
     pass takes the last and erases the earlier dead store.
 
     Pattern shows up in ICON-style code where flang lowers an
@@ -76,7 +76,7 @@ end subroutine main
 
 def test_unsupported_interleaved_rebinds_raises(tmp_path: Path):
     """Loud-failure contract: a READ between two rebinds observes the
-    earlier target — collapsing to one would lose that semantics.
+    earlier target  --  collapsing to one would lose that semantics.
     The pass must surface a clear unsupported error.
 
     NOTE: triggering this from Fortran source needs a non-trivial
@@ -126,7 +126,7 @@ end subroutine main
 
 
 def test_pointer_rebind_to_array_slice(tmp_path: Path):
-    """``w => store(1:n); res = w(2) + w(4)`` — pointer rebound to a
+    """``w => store(1:n); res = w(2) + w(4)``  --  pointer rebound to a
     triplet section of a TARGET array.  Distinct from
     ``ptr => target_decl`` (the existing test): the rebind value is
     ``fir.rebox(hlfir.designate(parent, slice))`` rather than
@@ -160,7 +160,7 @@ end subroutine main
 
 
 def test_pointer_to_struct_scalar_field(tmp_path: Path):
-    """``tmp => s%a; tmp = 13`` — pointer rebound onto a scalar struct field.
+    """``tmp => s%a; tmp = 13``  --  pointer rebound onto a scalar struct field.
 
     flatten-structs runs first and replaces ``s%a`` with a flat ``s_a``
     declare; the rewrite-pointer-assigns pass then traces the rebind's

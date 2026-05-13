@@ -1,4 +1,4 @@
-"""``FlattenPlan`` data model — JSON round-trip, index substitution,
+"""``FlattenPlan`` data model  --  JSON round-trip, index substitution,
 strip helpers, recipe equality."""
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dace.frontend.hlfir.bindings import (
 
 
 def _real_alias_recipe() -> FlattenRecipe:
-    """``fld%a`` → one flat ``fld_a``, aliased."""
+    """``fld%a`` -> one flat ``fld_a``, aliased."""
     return FlattenRecipe(
         flat_names=("fld_a", ),
         read_exprs=("fld%a($i1, $i2)", ),
@@ -27,7 +27,7 @@ def _real_alias_recipe() -> FlattenRecipe:
 
 
 def _complex_split_recipe() -> FlattenRecipe:
-    """``st%z`` → two flats ``st_z_re`` / ``st_z_im`` via complex split."""
+    """``st%z`` -> two flats ``st_z_re`` / ``st_z_im`` via complex split."""
     return FlattenRecipe(
         flat_names=("st_z_re", "st_z_im"),
         read_exprs=(
@@ -79,7 +79,7 @@ def test_substitute_indices_replaces_placeholders():
 
 
 def test_substitute_indices_with_rename():
-    """Index names are a tuple — the emitter could use ``k1``, ``k2``
+    """Index names are a tuple  --  the emitter could use ``k1``, ``k2``
     for some reason."""
     out = substitute_indices("real(st%z($i1,$i2), kind=c_double)", ("k1", "k2"))
     assert out == "real(st%z(k1,k2), kind=c_double)"

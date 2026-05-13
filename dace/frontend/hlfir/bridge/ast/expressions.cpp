@@ -24,7 +24,7 @@ namespace hlfir_bridge {
 //
 // Expression-builder primitives.  Owns:
 //   * buildExpr (recursive Python-syntax expression rewrite for arith,
-//     math.*, fir.load, hlfir.designate, hlfir.apply, …) + its forward
+//     math.*, fir.load, hlfir.designate, hlfir.apply, ...) + its forward
 //     declarations.
 //   * buildIndexExpr and buildDesignateIndexExpr (Fortran 1-based
 //     index renderer with section-parent + assumed-shape rebase, 0).
@@ -36,7 +36,7 @@ namespace hlfir_bridge {
 // This file is included verbatim from extract_ast.cpp via
 // #include "bridge/ast/expressions.cpp" and shares that translation
 // unit's namespace, includes, and file-static state.  It MUST NOT be
-// added to the build's compile list — CMakeLists.txt deliberately omits
+// added to the build's compile list  --  CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
 std::vector<std::pair<mlir::Value, std::string>> &indexStack() {
@@ -63,15 +63,15 @@ std::string resolveIndex(mlir::Value idx) {
 // ``CONTAINS``), the operand of an inner-scope ``is_present`` walks
 // back through one or more inlined ``hlfir.declare`` aliases until it
 // roots at either:
-//   * ``fir.absent`` — the caller passed nothing → constant ``0``;
+//   * ``fir.absent``  --  the caller passed nothing -> constant ``0``;
 //   * a host block-arg whose declare carries ``fortran_attrs<optional>``
-//     → emit the companion ``<name>_present`` symbol that
+//     -> emit the companion ``<name>_present`` symbol that
 //     ``extract_vars`` registers alongside every host-scope OPTIONAL
 //     dummy; the caller binds it to 0 / 1 at SDFG-call time;
-//   * any other root (mandatory dummy, local alloca) → constant ``1``,
+//   * any other root (mandatory dummy, local alloca) -> constant ``1``,
 //     since the storage is unconditionally bound.
 // Only the host-scope declare (the one whose memref IS the block-arg)
-// decides between ``_present`` and ``1`` — inner-scope inlined
+// decides between ``_present`` and ``1``  --  inner-scope inlined
 // aliases all carry ``optional`` from the callee's signature, but
 // that's bookkeeping, not whether the caller actually passed storage.
 // Returns ``""`` when the chain breaks before a recognisable root, so
@@ -91,7 +91,7 @@ std::string lowerIsPresent(mlir::Value operand) {
             }
             break;
         }
-        // Block argument — that's the storage root.  The declare we
+        // Block argument  --  that's the storage root.  The declare we
         // most recently walked through is the host-scope alias; its
         // OPTIONAL attribute tells us whether to emit the companion
         // symbol or fold to ``1``.
@@ -125,7 +125,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 ///   * elementwise math.* ops (math.sin, math.cos, math.sqrt, math.exp,
 ///     math.log, math.log10, math.tan, math.sinh, math.cosh, math.tanh,
 ///     math.absf, math.floor, math.ceil, math.erf, math.erfc, math.powf,
-///     math.atan, math.atan2, math.asin, math.acos) — emitted as a bare
+///     math.atan, math.atan2, math.asin, math.acos)  --  emitted as a bare
 ///     Python call so DaCe's tasklet codegen can resolve the name.
 ///   * fir.load of hlfir.designate (named variable read)
 ///   * arith.constant integer / float literals
@@ -144,7 +144,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 ///     outer_fortran_index = inner_fortran_index + outer_lbound - 1
 ///
 /// so ``arr(i)`` with ``i`` in the callee's 1-based frame becomes
-/// ``outer(i + outer_lbound - 1)`` — downstream ``build_memlet_index``
+/// ``outer(i + outer_lbound - 1)``  --  downstream ``build_memlet_index``
 /// then subtracts ``outer_lbound``, net result ``i - 1``, the same
 /// Emit a Fortran 1-based index expression for one dim of a designate.
 /// In the symbolic offset-symbol architecture, every memlet subtracts
@@ -214,7 +214,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                     else if (adjust < 0)
                         raw = "(" + raw + " - " + std::to_string(-adjust) + ")";
                 } else {
-                    // Section ``lo`` isn't a compile-time constant — typical
+                    // Section ``lo`` isn't a compile-time constant  --  typical
                     // shape is ``a(pos(1):pos(2))`` where ``pos(1)`` minted
                     // the symbol ``__sym_pos_1`` via ``buildIndexExpr``'s
                     // load-of-designate path.  Use that closed-form so the
@@ -300,7 +300,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 //                        stores of an unnamed alloca have something to
 //                        reference in the AST.
 //                        Counter:  kAllocaCounter.
-//   __sc_<n>            scf.if synthetic scalar — a sink for the i-th
+//   __sc_<n>            scf.if synthetic scalar  --  a sink for the i-th
 //                        ``scf.if`` result so downstream reads of the
 //                        result Value resolve to a single name instead
 //                        of recursing into both arms.
@@ -313,7 +313,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 //                        same shape as count mask, terminated by a
 //                        DaCe Reduce node instead of a libcall.
 //                        Counter:  kSynthTransientCounter.
-//   _libtmp_<n>         Libcall result transient inside an elemental —
+//   _libtmp_<n>         Libcall result transient inside an elemental  --
 //                        ``hlfir.matmul`` / ``hlfir.transpose`` /
 //                        ``hlfir.dot_product`` materialised ahead of
 //                        the elemental that consumes it via
@@ -345,7 +345,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 
 /// Look up or mint the SDFG symbol name that stands in for
 /// ``<array>(<one_based_idx>)`` (both arguments are Fortran-side
-/// names / values).  Same key always yields the same symbol — callers
+/// names / values).  Same key always yields the same symbol  --  callers
 /// can safely use this anywhere the load result was needed before.
  std::string internPosSymbol(const std::string &array,
                                    int64_t one_based_idx) {
@@ -361,7 +361,7 @@ std::string lowerIsPresent(mlir::Value operand) {
     if (d > limits::kBuildExprDepth) return "?";
     // Synthetic scalars minted for scf.if results: every downstream read of
     // the result Value resolves to the scalar's name, not to walking into
-    // the scf.if itself (which has no single defining expression — the
+    // the scf.if itself (which has no single defining expression  --  the
     // value comes from one of two arms).
     {
         auto it = kScfValueMap.find(val);
@@ -372,12 +372,12 @@ std::string lowerIsPresent(mlir::Value operand) {
 
     auto nm = def->getName().getStringRef();
 
-    // ``ALLOCATED(arr)`` — Flang lowers as
+    // ``ALLOCATED(arr)``  --  Flang lowers as
     //   %addr = fir.box_addr (fir.load arr_box) -> heap<...>
     //   %i64  = fir.convert %addr : heap<...> -> i64
     //   %r    = arith.cmpi ne, %i64, %c0_i64
     // Recognise that exact shape (cmpi-ne against constant-zero of a
-    // box_addr→convert chain) and read the per-allocatable companion
+    // box_addr->convert chain) and read the per-allocatable companion
     // ``<arr>_allocated`` scalar that ``extract_vars`` registers and
     // the AST builder maintains at ALLOCATE / DEALLOCATE sites.
     if (nm == "arith.cmpi" && def->getNumOperands() == 2) {
@@ -385,7 +385,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         constexpr int64_t kPredNe = 1;   // mlir::arith::CmpIPredicate::ne
         if (pred && pred.getInt() == kPredNe) {
             // Operand 1 must be a constant int 0 (the null pointer
-            // sentinel after the heap-addr→i64 cast).
+            // sentinel after the heap-addr->i64 cast).
             bool rhsZero = false;
             if (auto c = traceConstInt(def->getOperand(1)))
                 rhsZero = (*c == 0);
@@ -418,23 +418,23 @@ std::string lowerIsPresent(mlir::Value operand) {
         }
     }
 
-    // ``fir.box_dims %arr_decl, %dim`` — Flang's lowering for SIZE /
+    // ``fir.box_dims %arr_decl, %dim``  --  Flang's lowering for SIZE /
     // LBOUND / UBOUND / SHAPE on assumed-shape (and other boxed)
     // arrays.  Produces a 3-tuple ``(lower_bound, extent, stride)``;
     // each result is read out via an OpResult index, so we map per
     // result number to the corresponding bridge-synthesised symbol.
     //
     // For the underlying array's K-th dim:
-    //   * ``#0`` (lower bound) → declared lb if present (``fir.shape_shift``),
+    //   * ``#0`` (lower bound) -> declared lb if present (``fir.shape_shift``),
     //                            otherwise Fortran-default ``1``.
-    //   * ``#1`` (extent)      → ``<arr>_d<K>`` symbol the bridge mints
+    //   * ``#1`` (extent)      -> ``<arr>_d<K>`` symbol the bridge mints
     //                            for assumed-shape arrays in extract_vars
     //                            (line 426-429).  For explicit-shape arrays
     //                            (``dimension(N)``), the declare's ``fir.shape``
     //                            already carries the constant / symbol; we
     //                            recover it via ``buildIndexExpr`` on the
     //                            extent operand.
-    //   * ``#2`` (stride)      → ``1`` (assume contiguous; section
+    //   * ``#2`` (stride)      -> ``1`` (assume contiguous; section
     //                            designates with non-1 stride don't reach
     //                            this path).
     if (nm == "fir.box_dims" && def->getNumOperands() >= 2) {
@@ -461,7 +461,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         // Try to get the extent / lb from the declare's shape operand.
         // For inlined assumed-shape callee aliases (no shape on the
         // inner declare), walk to the outer declare via
-        // ``asAssumedShapeAlias`` — it shares storage with the caller
+        // ``asAssumedShapeAlias``  --  it shares storage with the caller
         // and carries the actual shape/lb info.
         mlir::Value shapeVal;
         if (auto *adef = arrayVal.getDefiningOp()) {
@@ -485,7 +485,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         // bound via ``allocate(arr(lo:hi))`` should resolve to the
         // user-supplied bounds, not the Fortran-default ``1`` /
         // synthetic ``<arr>_d<dim>`` symbol.  Walk the allocate site
-        // (single-allocate case only — multi-allocate would need
+        // (single-allocate case only  --  multi-allocate would need
         // per-access-site selection) and constant-fold the
         // shape_shift operands.
         auto resolveAllocShapeShift = [&]() -> fir::ShapeShiftOp {
@@ -572,7 +572,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                     if (auto c = traceConstInt(ops[extIdx]))
                         return std::to_string(*c);
             }
-            // Assumed-shape (no declare shape) — the bridge synthesised
+            // Assumed-shape (no declare shape)  --  the bridge synthesised
             // ``<arr>_d<dim>`` in extract_vars.  Same string convention.
             return arrName + "_d" + std::to_string(dim);
         }
@@ -586,7 +586,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         {"arith.subf", " - "}, {"arith.divf", " / "},
         {"arith.muli", " * "}, {"arith.addi", " + "},
         {"arith.subi", " - "}, {"arith.divsi", " // "}, {"arith.divui", " // "},
-        // Fortran COMPLEX arithmetic — flang emits dedicated ops on
+        // Fortran COMPLEX arithmetic  --  flang emits dedicated ops on
         // ``complex<f32>`` / ``complex<f64>`` operands.
         {"fir.addc", " + "}, {"fir.subc", " - "},
         {"fir.mulc", " * "}, {"fir.divc", " / "},
@@ -664,7 +664,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                                 if (auto a = mlir::dyn_cast<mlir::IntegerAttr>(extCoords[0]))
                                     extIsImag = (a.getInt() == 1);
                             if (extIsImag && ext.getAdt() == adt) {
-                                // Emit ``conj(<expr>)`` — DaCe's tasklet
+                                // Emit ``conj(<expr>)``  --  DaCe's tasklet
                                 // codegen routes the bare name through
                                 // ``dace::math::conj`` (defined in
                                 // ``runtime/include/dace/math.h``) which
@@ -679,7 +679,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         }
     }
 
-    // Elementwise min / max — arith.minimumf / maximumf produce IEEE-min/max
+    // Elementwise min / max  --  arith.minimumf / maximumf produce IEEE-min/max
     // (NaN-propagating); arith.minnumf / maxnumf are the numeric variants.
     static const std::map<llvm::StringRef, std::string> minmax_ops = {
         {"arith.minimumf", "min"}, {"arith.maximumf", "max"},
@@ -694,10 +694,10 @@ std::string lowerIsPresent(mlir::Value operand) {
              + buildExpr(def->getOperand(1), d + 1) + ")";
     }
 
-    // Elementwise math intrinsics → bare Python names.  DaCe's tasklet
+    // Elementwise math intrinsics -> bare Python names.  DaCe's tasklet
     // codegen maps ``sin``/``cos``/... to ``dace::math::sin`` etc. via
     // ``_ALLOWED_MODULES`` in ``dace/dtypes.py``.  The ``f`` suffix Flang
-    // uses (absf / powf / …) is stripped because the runtime wrappers
+    // uses (absf / powf / ...) is stripped because the runtime wrappers
     // overload on the operand's type.
     static const std::map<llvm::StringRef, std::string> unary_math = {
         {"math.sin",   "sin"},   {"math.cos",   "cos"},
@@ -712,9 +712,9 @@ std::string lowerIsPresent(mlir::Value operand) {
         {"math.absf",  "abs"},   {"math.absi",  "abs"},
         {"math.floor", "floor"}, {"math.ceil",  "ceil"},
         {"math.erf",   "erf"},   {"math.erfc",  "erfc"},
-        // ``llvm.intr.<op>`` — LLVM-dialect intrinsic ops Flang uses
-        // for some unary math (ANINT → ``llvm.intr.round``, AINT
-        // → ``llvm.intr.trunc`` on some kinds, etc.).  These are
+        // ``llvm.intr.<op>``  --  LLVM-dialect intrinsic ops Flang uses
+        // for some unary math (ANINT -> ``llvm.intr.round``, AINT
+        // -> ``llvm.intr.trunc`` on some kinds, etc.).  These are
         // OPS, not function calls; the ``fir::CallOp`` table below
         // handles the ``fir.call @llvm.<op>.f{32,64}`` shape.
         {"llvm.intr.round", "round"},
@@ -739,7 +739,7 @@ std::string lowerIsPresent(mlir::Value operand) {
     // ``math.powi`` / ``math.ipowi`` int**int) all surface as the
     // Python ``**`` operator.  A downstream SDFG-level simplify pass
     // recognises ``**`` and rewrites it based on the tasklet's
-    // input/output types — no variant marker needed at this layer.
+    // input/output types  --  no variant marker needed at this layer.
     static const std::set<llvm::StringRef> pow_ops = {
         "math.fpowi", "math.powf", "math.powi", "math.ipowi",
     };
@@ -752,7 +752,7 @@ std::string lowerIsPresent(mlir::Value operand) {
     // ``hlfir.no_reassoc`` is a transparency wrapper Flang emits around
     // parenthesised subexpressions to prevent the optimizer from
     // reassociating them across ``**`` / ``+`` boundaries.  For our
-    // purposes it's a passthrough — recurse into its single operand so
+    // purposes it's a passthrough  --  recurse into its single operand so
     // we don't strand ``pow`` / ``addf`` results as ``?``.
     if (nm == "hlfir.no_reassoc" && def->getNumOperands() == 1) {
         return buildExpr(def->getOperand(0), d + 1);
@@ -782,7 +782,7 @@ std::string lowerIsPresent(mlir::Value operand) {
     //
     // Notable cases:
     //   * ``math.sinh`` / ``math.cosh`` / ``math.tanh`` exist but Flang
-    //     occasionally still emits ``fir.call @sinh`` — recognise both.
+    //     occasionally still emits ``fir.call @sinh``  --  recognise both.
     //   * Fortran ``MOD`` / ``MODULO`` lower to ``_FortranAMod*Real{4,8}``
     //     runtime calls; the Python ``math.fmod`` matches Fortran ``MOD``
     //     (truncated quotient) and a ``(a - b * floor(a/b))`` formula
@@ -814,7 +814,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 {"sinf", "sin"}, {"cosf", "cos"}, {"tanf", "tan"},
                 {"expf", "exp"}, {"logf", "log"}, {"log10f", "log10"},
                 {"sqrtf", "sqrt"}, {"fabsf", "abs"},
-                // C99 complex math runtime — flang lowers Fortran
+                // C99 complex math runtime  --  flang lowers Fortran
                 // SIN/COS/EXP/LOG/SQRT/ABS on COMPLEX(8) to ``c<func>``
                 // and on COMPLEX(4) to ``c<func>f``.  DaCe's tasklet
                 // codegen has Python ``cmath``-equivalent dispatch via
@@ -829,7 +829,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 {"casinf", "asin"}, {"cacosf", "acos"}, {"catanf", "atan"},
                 {"cexpf", "exp"}, {"clogf", "log"},
                 {"csqrtf", "sqrt"}, {"cabsf", "abs"},
-                // AINT / ANINT — same-kind real return, value-only round/trunc.
+                // AINT / ANINT  --  same-kind real return, value-only round/trunc.
                 {"llvm.trunc.f64", "trunc"}, {"llvm.trunc.f32", "trunc"},
                 {"llvm.floor.f64", "floor"}, {"llvm.floor.f32", "floor"},
                 {"llvm.ceil.f64", "ceil"}, {"llvm.ceil.f32", "ceil"},
@@ -841,7 +841,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 return it->second + "("
                      + buildExpr(call.getOperand(0), d + 1) + ")";
             }
-            // Type-converting casts — Fortran NINT(x) / INT(x).
+            // Type-converting casts  --  Fortran NINT(x) / INT(x).
             // Flang emits ``llvm.lround.i{32,64}.f{32,64}`` for NINT
             // (rounded-to-nearest, then truncating cast).  Render as
             // ``dace.int{32,64}(round(x))`` so the rounding stays
@@ -860,7 +860,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 return it->second + "(round("
                      + buildExpr(call.getOperand(0), d + 1) + "))";
             }
-            // Complex division — flang lowers ``a / b`` on COMPLEX(8) to
+            // Complex division  --  flang lowers ``a / b`` on COMPLEX(8) to
             // ``__divdc3(re_a, im_a, re_b, im_b)`` (and ``__divsc3`` for
             // COMPLEX(4)) for overflow-safe Smith's algorithm.  The 4
             // reals come from ``fir.extract_value`` ops on the loaded
@@ -888,7 +888,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 return "atan2(" + buildExpr(call.getOperand(0), d + 1) + ", "
                                 + buildExpr(call.getOperand(1), d + 1) + ")";
             }
-            // Fortran MOD on real operands — truncated-quotient
+            // Fortran MOD on real operands  --  truncated-quotient
             // remainder.  Maps directly to ``std::fmod`` (in ``<cmath>``,
             // pulled in via ``<dace/dace.h>``); integer MOD lowers to
             // ``arith.remsi`` and never reaches this fir.call branch.
@@ -897,17 +897,17 @@ std::string lowerIsPresent(mlir::Value operand) {
                 return "fmod(" + buildExpr(call.getOperand(0), d + 1) + ", "
                                 + buildExpr(call.getOperand(1), d + 1) + ")";
             }
-            // Fortran SCALE(x, n) — returns ``x * 2^n``.  Maps to
+            // Fortran SCALE(x, n)  --  returns ``x * 2^n``.  Maps to
             // ``dace::math::ldexp`` (templated; ``std::ldexp``
             // internally).  Runtime-call signature is ``(x, n,
-            // src_file_ptr, src_line)`` — first two operands are
+            // src_file_ptr, src_line)``  --  first two operands are
             // semantic.
             if ((cname == "_FortranAScale4" || cname == "_FortranAScale8")
                     && call.getNumOperands() >= 2) {
                 return "ldexp(" + buildExpr(call.getOperand(0), d + 1) + ", "
                                 + buildExpr(call.getOperand(1), d + 1) + ")";
             }
-            // Fortran EXPONENT(x) — returns ``e`` such that
+            // Fortran EXPONENT(x)  --  returns ``e`` such that
             // ``x = mantissa * 2^e`` with ``0.5 <= |mantissa| < 1``.
             // ``dace::math::ilogb`` provides this via ``std::frexp``
             // (returns ``int`` directly so callers can use the result
@@ -918,7 +918,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                     && call.getNumOperands() >= 1) {
                 return "ilogb(" + buildExpr(call.getOperand(0), d + 1) + ")";
             }
-            // Fortran MODULO — floored-quotient remainder.
+            // Fortran MODULO  --  floored-quotient remainder.
             // ``dace::math::floor_mod`` is the templated helper (uses
             // ``py_mod`` internally; ``floor`` for floats, sign-aware
             // ``((a%b)+b)%b`` for ints).  Required because Python's
@@ -932,10 +932,10 @@ std::string lowerIsPresent(mlir::Value operand) {
         }
     }
 
-    // fir.convert: same-family kind casts (i32→i64, f32→f64, i64→f64)
-    // are transparent — Fortran's KIND coercion semantics flow through
+    // fir.convert: same-family kind casts (i32->i64, f32->f64, i64->f64)
+    // are transparent  --  Fortran's KIND coercion semantics flow through
     // the tasklet's operand types so the C++ codegen widens for free.
-    // Cross-family casts (float ↔ int) are NOT transparent: Fortran's
+    // Cross-family casts (float <-> int) are NOT transparent: Fortran's
     // INT(x) / NINT(x) / DBLE(x) / REAL(x) carry semantic intent (cast
     // truncates, NINT rounds, DBLE widens) that the bridge must
     // surface as an explicit ``dace.<ty>(...)`` call so the codegen
@@ -949,14 +949,14 @@ std::string lowerIsPresent(mlir::Value operand) {
                         || outT.isInteger(32) || outT.isInteger(64);
         bool inIsFloat = mlir::isa<mlir::FloatType>(inT);
         bool outIsFloat = mlir::isa<mlir::FloatType>(outT);
-        // Float → integer: explicit truncating cast.  Use ``dace.intN``
+        // Float -> integer: explicit truncating cast.  Use ``dace.intN``
         // so the C++ codegen lowers via ``static_cast<int{32,64}>``.
         if (inIsFloat && outIsInt) {
             const char *cast = outT.isInteger(64) ? "dace.int64" : "dace.int32";
             return std::string(cast) + "("
                  + buildExpr(conv.getValue(), d + 1) + ")";
         }
-        // Integer → float: same shape — codegen will widen at the
+        // Integer -> float: same shape  --  codegen will widen at the
         // arithmetic site.  Tag with ``float64`` / ``float32`` so the
         // intent is explicit when the surrounding op is integer too.
         if (inIsInt && outIsFloat) {
@@ -965,16 +965,16 @@ std::string lowerIsPresent(mlir::Value operand) {
             return std::string(cast) + "("
                  + buildExpr(conv.getValue(), d + 1) + ")";
         }
-        // Float → wider float (f32 → f64): wrap in an explicit
+        // Float -> wider float (f32 -> f64): wrap in an explicit
         // ``dace.float32(...)`` BEFORE the widening so the inner
         // expression's f32 arithmetic rounds at f32 precision.  In
         // C++ codegen, ``static_cast<float>(double_val)`` rounds to
         // the nearest f32, which matches Fortran's ``real(4)``
-        // semantics — ``5.5 + epsilon(1.0)`` evaluates to ``5.5``
+        // semantics  --  ``5.5 + epsilon(1.0)`` evaluates to ``5.5``
         // exactly because the epsilon is below f32's ulp at 5.5.
         // Without this wrap the C++ promotes both operands to double
         // and gives ``5.5 + 1.19e-7 = 5.5000001192...``.  Same-width
-        // converts (f64 → f64) stay transparent.
+        // converts (f64 -> f64) stay transparent.
         if (inIsFloat && outIsFloat) {
             auto inW = mlir::cast<mlir::FloatType>(inT).getWidth();
             auto outW = mlir::cast<mlir::FloatType>(outT).getWidth();
@@ -986,7 +986,7 @@ std::string lowerIsPresent(mlir::Value operand) {
             if (inW < outW)
                 return buildExpr(conv.getValue(), d + 1);
         }
-        // Same width or float → narrower float (truncating cast) —
+        // Same width or float -> narrower float (truncating cast)  --
         // transparent (the underlying expression already has the
         // narrower type, or the narrowing is desired).
         return buildExpr(conv.getValue(), d + 1);
@@ -1001,9 +1001,9 @@ std::string lowerIsPresent(mlir::Value operand) {
             return buildExpr(def->getOperand(0), d + 1);
     }
 
-    // ``fir.is_present`` — Fortran's ``present(x)`` on an OPTIONAL dummy.
+    // ``fir.is_present``  --  Fortran's ``present(x)`` on an OPTIONAL dummy.
     // Used as an integer (``res(1) = present(a)`` after the implicit
-    // i1→i32 widening) as well as inside a guarding condition (handled
+    // i1->i32 widening) as well as inside a guarding condition (handled
     // by buildBoolExpr).  Both sites trace through the same helper.
     if (auto isp = mlir::dyn_cast<fir::IsPresentOp>(def)) {
         auto e = lowerIsPresent(isp.getVal());
@@ -1017,7 +1017,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         auto b = buildBoolExpr(val, d + 1);
         if (b != "?") return b;
     }
-    // ``xori %x, true`` → logical NOT; any other i1 xori → Python ``!=``.
+    // ``xori %x, true`` -> logical NOT; any other i1 xori -> Python ``!=``.
     // For non-i1 operands, ``xori`` is the Fortran ``ieor(a,b)`` bitwise op
     // and lowers to Python ``^``.  MLIR's ``arith.constant true`` stores
     // the i1 value as -1 (all-bits set) on most targets, so match 1 / -1.
@@ -1041,7 +1041,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                    + buildExpr(def->getOperand(1), d + 1) + ")";
     }
 
-    // Bitwise AND / OR — for non-i1 operands these are ``iand`` / ``ior``
+    // Bitwise AND / OR  --  for non-i1 operands these are ``iand`` / ``ior``
     // (and the building blocks of ``ibclr`` / ``ibset`` / ``ibits`` /
     // ``btest``).  i1 versions are Fortran ``.AND.`` / ``.OR.`` chains;
     // route through ``buildBoolExpr`` so they render as Python
@@ -1070,7 +1070,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         }
     }
 
-    // Bit shifts — Fortran ``ishft`` (and the building blocks of
+    // Bit shifts  --  Fortran ``ishft`` (and the building blocks of
     // ``ibset`` / ``ibclr`` / ``ibits``).  Map shli / shrsi / shrui to
     // Python ``<<`` / ``>>``; Python's ``>>`` is signed by default, so
     // ``shrsi`` and ``shrui`` both render the same on the integer types
@@ -1082,7 +1082,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                    + buildExpr(def->getOperand(1), d + 1) + ")";
     }
 
-    // Integer remainder — ``arith.remsi`` / ``arith.remui`` — used by some
+    // Integer remainder  --  ``arith.remsi`` / ``arith.remui``  --  used by some
     // Fortran ``mod`` lowerings on integers.
     if ((nm == "arith.remsi" || nm == "arith.remui") && def->getNumOperands() == 2) {
         return "(" + buildExpr(def->getOperand(0), d + 1) + " % "
@@ -1125,7 +1125,7 @@ std::string lowerIsPresent(mlir::Value operand) {
         //
         //   r  = arith.remsi a, b              ; truncated remainder
         //   x  = arith.xori  a, b              ; signed-XOR (sign test)
-        //   c1 = arith.cmpi slt, x, 0          ; (a^b) < 0  → signs differ
+        //   c1 = arith.cmpi slt, x, 0          ; (a^b) < 0  -> signs differ
         //   c2 = arith.cmpi ne, r, 0           ; r != 0
         //   c  = arith.andi c1, c2
         //   ab = arith.addi r, b               ; (r + b)
@@ -1173,7 +1173,7 @@ std::string lowerIsPresent(mlir::Value operand) {
             return "floor_mod(" + buildExpr(a, d + 1) + ", "
                                 + buildExpr(b, d + 1) + ")";
         } while (false);
-        // Generic ternary fallback — Fortran ``MERGE(t, f, mask)`` lowers
+        // Generic ternary fallback  --  Fortran ``MERGE(t, f, mask)`` lowers
         // to a bare ``arith.select`` (and the SIZE/LBOUND/UBOUND clamps
         // Flang inlines as ``(0 > n) ? 0 : n`` use ``arith.select`` on a
         // cmpi whose operand order doesn't match the min/max idiom).
@@ -1205,7 +1205,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                 return traceToDecl(dg.getMemref());
         auto n = traceToDecl(mem);
         if (!n.empty()) return n;
-        // Bare fir.alloca without a hlfir.declare — mint a synthetic
+        // Bare fir.alloca without a hlfir.declare  --  mint a synthetic
         // scalar name.  Flang uses these as scratch counters for
         // lift-cf-to-scf's lowered DO / DO-WHILE / DO+EXIT shapes.
         if (auto *md = mem.getDefiningOp())
@@ -1215,7 +1215,7 @@ std::string lowerIsPresent(mlir::Value operand) {
 
     if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
         if (auto f = mlir::dyn_cast<mlir::FloatAttr>(cst.getValue())) {
-            // 17 digits round-trips IEEE-754 binary64 exactly — anything
+            // 17 digits round-trips IEEE-754 binary64 exactly  --  anything
             // less truncates the mantissa and Flang-folded constants
             // (module ``parameter`` literals etc.) come out at f32
             // precision in tasklet code.
@@ -1223,7 +1223,7 @@ std::string lowerIsPresent(mlir::Value operand) {
             o << std::setprecision(17) << f.getValueAsDouble();
             std::string lit = o.str();
             // ``ostringstream`` drops the decimal point for integer-valued
-            // doubles (e.g. ``0.0`` → ``"0"``).  That makes the C++ code
+            // doubles (e.g. ``0.0`` -> ``"0"``).  That makes the C++ code
             // emit a plain ``int`` literal in a float context, so
             // ``max(0.0, double_expr)`` becomes ``max(0, expr)`` and
             // compiler-side overload resolution can pick the wrong ``max``.
@@ -1240,8 +1240,8 @@ std::string lowerIsPresent(mlir::Value operand) {
             // of a double literal.  Without this, DaCe upgrades every
             // float constant to f64 and a Fortran ``real(4)`` chain
             // like ``5.5 + epsilon(1.0)`` evaluates in double precision
-            // — producing ``5.5000001192...`` instead of the f32-rounded
-            // ``5.5``.  Pairs with the ``fir.convert f32→f64`` wrap so
+            //  --  producing ``5.5000001192...`` instead of the f32-rounded
+            // ``5.5``.  Pairs with the ``fir.convert f32->f64`` wrap so
             // both the literal and the widening cast preserve the
             // intended precision.
             if (auto ft = mlir::dyn_cast<mlir::FloatType>(cst.getType())) {
@@ -1254,13 +1254,13 @@ std::string lowerIsPresent(mlir::Value operand) {
             return std::to_string(i.getInt());
     }
 
-    // hlfir.apply %elem, %i — read one element of an hlfir.elemental expr
+    // hlfir.apply %elem, %i  --  read one element of an hlfir.elemental expr
     // at a given index.  Inline the referenced elemental's body at the
     // apply site by mapping its block args to the apply's index operands
     // via indexStack(), then recursing into the yield_element operand.
     if (auto apply = mlir::dyn_cast<hlfir::ApplyOp>(def)) {
         auto src = apply.getExpr();
-        // Materialised libcall result (``matmul`` / ``transpose`` / …):
+        // Materialised libcall result (``matmul`` / ``transpose`` / ...):
         // ``buildElementalAssign`` has already queued the libcall AST
         // node that writes the result to a synthetic transient; render
         // the apply as just the transient's bare name so emit_tasklet
@@ -1280,7 +1280,7 @@ std::string lowerIsPresent(mlir::Value operand) {
                     auto &block = region.front();
                     auto apply_idxs = apply.getIndices();
                     unsigned pushed = 0;
-                    // Push the apply indices onto the index stack — as
+                    // Push the apply indices onto the index stack  --  as
                     // synthetic names if we have them, otherwise pass the
                     // Value through resolveIndex so callers see the same
                     // iter names the outer elemental already set up.

@@ -1,5 +1,5 @@
 // ============================================================================
-// DefaultIntent.cpp — Fill in ``intent_inout`` for dummies that lack an intent.
+// DefaultIntent.cpp  --  Fill in ``intent_inout`` for dummies that lack an intent.
 // ============================================================================
 // Problem:
 //     Fortran lets a subroutine declare a dummy argument without any INTENT
@@ -8,7 +8,7 @@
 //         hlfir.declare %arg0 dummy_scope %0 {uniq_name = ...} : ...
 //     with no ``fortran_attrs`` attribute at all.  Downstream consumers
 //     (our extract_vars, code that chooses between transient/non-transient
-//     SDFG descriptors, …) can't tell the difference between "a local"
+//     SDFG descriptors, ...) can't tell the difference between "a local"
 //     and "a dummy without explicit intent" from the attribute alone.
 //
 // What this pass does:
@@ -20,7 +20,7 @@
 // Why it's safe:
 //     The standard requires a dummy to be treated like intent_inout when
 //     no intent is given, so canonicalising the IR to say so doesn't
-//     change semantics — it just makes the subsequent passes / extract
+//     change semantics  --  it just makes the subsequent passes / extract
 //     code trivially correct.
 // ============================================================================
 

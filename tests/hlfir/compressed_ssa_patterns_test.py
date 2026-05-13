@@ -9,7 +9,7 @@ subscripts on inner loads when an IF-condition lifts the expression
 to an interstate edge.
 
 Both the SDFG and the reference are compiled from the SAME Fortran
-source — f2py-built reference per ``feedback_e2e_numerical``.
+source  --  f2py-built reference per ``feedback_e2e_numerical``.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ END SUBROUTINE wrap_mod
 
 
 def test_power_squared(tmp_path):
-    """``a(i) ** 2`` → ``a*a``: two textual mul operands share one
+    """``a(i) ** 2`` -> ``a*a``: two textual mul operands share one
     load SSA value.  Sanity check that 1:1 occurrence-to-connector
     contract still holds for the simple shared-load case.
     """
@@ -157,7 +157,7 @@ END SUBROUTINE which_bigger
 
 
 def test_sqrt_in_if_condition(tmp_path):
-    """``SQRT(a(i)) > thr`` — sibling of ABS, exercises math.sqrt
+    """``SQRT(a(i)) > thr``  --  sibling of ABS, exercises math.sqrt
     in the unary-intrinsic IF-condition peel.
     """
     src = """
@@ -191,7 +191,7 @@ END SUBROUTINE flag_sqrt
 
 
 def test_exp_in_if_condition(tmp_path):
-    """``EXP(a(i)) > thr`` — math.exp peel through buildExprWithSubscripts."""
+    """``EXP(a(i)) > thr``  --  math.exp peel through buildExprWithSubscripts."""
     src = """
 SUBROUTINE flag_exp(a, thr, out, n)
 integer :: n
@@ -223,7 +223,7 @@ END SUBROUTINE flag_exp
 
 
 def test_log_in_if_condition(tmp_path):
-    """``LOG(a(i)) > 0`` — math.log peel."""
+    """``LOG(a(i)) > 0``  --  math.log peel."""
     src = """
 SUBROUTINE flag_log(a, out, n)
 integer :: n
@@ -251,7 +251,7 @@ END SUBROUTINE flag_log
 
 
 def test_sin_cos_arith_in_if(tmp_path):
-    """``SIN(a(i)) + COS(b(i)) > 0`` — two unary intrinsics on
+    """``SIN(a(i)) + COS(b(i)) > 0``  --  two unary intrinsics on
     different array reads combined by addf, all inside an IF
     condition.  Both subscripts must survive the peel.
     """
@@ -283,7 +283,7 @@ END SUBROUTINE flag_trig
 
 
 def test_same_element_two_arith_uses(tmp_path):
-    """``a(i) + 2.0 * a(i)`` — CSE-shared load, 2 textual occurrences.
+    """``a(i) + 2.0 * a(i)``  --  CSE-shared load, 2 textual occurrences.
     Sanity that 1:1 mapping works without dedup.
     """
     src = """
@@ -309,7 +309,7 @@ END SUBROUTINE triple
 
 def test_nested_max_with_shared_load(tmp_path):
     """``MAX(RCOVPMIN, ZCOVPTOT(jl) - MAX(0.0, ZCOVPTOT(jl) - ZA(jl, jk)))``
-    Cloudsc line 2844 shape — nested MAX where the SAME load
+    Cloudsc line 2844 shape  --  nested MAX where the SAME load
     ``ZCOVPTOT(jl)`` appears in the OUTER MAX's subtraction operand AND
     in the INNER MAX's first sub-arg.  Probes whether collectReads's
     cmp-skip handles nested cmp+select chains.
@@ -350,7 +350,7 @@ def test_complex_division(tmp_path):
     """Complex division: ``z = a / b`` on COMPLEX(KIND=8) operands.
     Flang lowers to ``__divdc3(re_a, im_a, re_b, im_b)`` via fir.call.
     The bridge pattern-matches that shape (expressions.cpp:870-885)
-    and emits ``(a / b)`` — 2 textual operands.  But the SSA tree
+    and emits ``(a / b)``  --  2 textual operands.  But the SSA tree
     has 4 ``fir.extract_value`` ops walking the same 2 complex
     loads, so collectReads could over-count.
     """
@@ -377,7 +377,7 @@ END SUBROUTINE complex_div
 
 
 def test_subexpr_cse_repeated_product(tmp_path):
-    """``(a(i) + b(i)) * (a(i) + b(i))`` — same sub-expression
+    """``(a(i) + b(i)) * (a(i) + b(i))``  --  same sub-expression
     textually twice.  Flang's CSE may share the inner ``addf`` SSA
     value across both ``mulf`` operands, while the textual emission
     still has 2 occurrences of ``a(i)`` and ``b(i)`` (one per
@@ -411,7 +411,7 @@ def test_merge_intrinsic(tmp_path):
     a non-cmp condition (bare i1 mask, not the cmpf/cmpi predicate
     shape the bridge's MIN/MAX pattern-matches).  buildExpr falls
     through to the generic ternary ``(t if cond else f)`` rendering.
-    cond's text comes from buildBoolExpr — its array refs should
+    cond's text comes from buildBoolExpr  --  its array refs should
     match collectReads visits exactly.
     """
     src = """
@@ -439,7 +439,7 @@ END SUBROUTINE merge_arrays
 
 
 def test_max_neighbor_pairs(tmp_path):
-    """``MAX(a(i-1), a(i))`` — shared loads with potentially-swapped
+    """``MAX(a(i-1), a(i))``  --  shared loads with potentially-swapped
     cmp operand order for stride-2 indexing.
     """
     src = """

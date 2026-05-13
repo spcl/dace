@@ -8,7 +8,7 @@ and exits 0 iff their outputs match within 1e-12 (or bit-exactly for
 the logical mask of loopnest 6).
 
 The pytest here compiles each driver with ``gfortran`` (the only
-Fortran compiler with a runtime on this box — ``flang-new-21`` lacks
+Fortran compiler with a runtime on this box  --  ``flang-new-21`` lacks
 ``libflang_rt.runtime``), runs the binary, and asserts exit 0.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""``_Ctx`` — per-region emission context.
+"""``_Ctx``  --  per-region emission context.
 
 Tracks the "current" SDFG state, pending scalar assignments that need
 flushing as tasklets, and the active DO-loop iterator renames.
@@ -16,7 +16,7 @@ class _Ctx:
         self.builder = builder
         self.cur = None
         self.pending = []
-        # Active DO-loop iterator renames (Fortran name → unique DaCe name).
+        # Active DO-loop iterator renames (Fortran name -> unique DaCe name).
         # Populated by ``emit_loop`` for the duration of each loop body so
         # downstream emitters (``emit_cond`` / ``emit_tasklet``) can
         # substitute iterators referenced in conditions or RHS expressions.

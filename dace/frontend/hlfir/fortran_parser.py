@@ -17,7 +17,7 @@ from pathlib import Path
 
 from dace import SDFG
 
-from build_bridge import hb  # noqa: F401  — ensures the bridge is built
+from build_bridge import hb  # noqa: F401   --  ensures the bridge is built
 from hlfir_to_sdfg import DEFAULT_PIPELINE, SDFGBuilder
 
 
@@ -30,15 +30,15 @@ def _find_flang() -> str:
 
 
 def create_sdfg_from_string(source: str, name: str = "sdfg", pipeline: str = DEFAULT_PIPELINE, **_ignored) -> SDFG:
-    """Compile Fortran source string → HLFIR → SDFG.
+    """Compile Fortran source string -> HLFIR -> SDFG.
 
     :param source: Fortran source as a single string.  Program units that
                    mix a ``PROGRAM`` with a ``SUBROUTINE`` are not yet
-                   lowered cleanly — prefer single-subroutine sources.
+                   lowered cleanly  --  prefer single-subroutine sources.
     :param name: basename used for the scratch ``.f90`` / ``.hlfir`` files.
     :param pipeline: MLIR pass pipeline to run before AST extraction.
     :param _ignored: legacy kwargs (``normalize_offsets``, ``use_explicit_cf``,
-                     ``entry_point``, …) accepted for drop-in compatibility.
+                     ``entry_point``, ...) accepted for drop-in compatibility.
     """
     flang = _find_flang()
     with tempfile.TemporaryDirectory(prefix=f"hlfir_{name}_") as td:
@@ -51,6 +51,6 @@ def create_sdfg_from_string(source: str, name: str = "sdfg", pipeline: str = DEF
 
 
 def create_singular_sdfg_from_string(source, entry_point="main", **kw):
-    """Legacy alias — ``entry_point`` is currently ignored (the HLFIR
+    """Legacy alias  --  ``entry_point`` is currently ignored (the HLFIR
     extractor emits the first func.func it finds)."""
     return create_sdfg_from_string(source, name=entry_point, **kw)

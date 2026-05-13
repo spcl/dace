@@ -24,22 +24,22 @@ namespace hlfir_bridge {
 //
 // MERGE-libcall + buildElementalAssign + comparison primitives + scf.if
 // helpers.  Owns:
-//   * buildMergeLibcall — recognises Flang's hlfir.elemental shape
+//   * buildMergeLibcall  --  recognises Flang's hlfir.elemental shape
 //     for MERGE(t, f, mask) and routes to MergeLibraryNode.
-//   * buildElementalAssign — the general elemental walker (where
+//   * buildElementalAssign  --  the general elemental walker (where
 //     non-MERGE elementals land).
-//   * cmpiPredStr / cmpfPredStr — Python-syntax predicate strings.
-//   * buildExprWithSubscripts — like buildExpr but keeps explicit
+//   * cmpiPredStr / cmpfPredStr  --  Python-syntax predicate strings.
+//   * buildExprWithSubscripts  --  like buildExpr but keeps explicit
 //     a[i-1] subscripts (interstate-edge condition mode).
-//   * buildBoolExpr — Python bool expression for arith.cmp* /
+//   * buildBoolExpr  --  Python bool expression for arith.cmp* /
 //     andi/ori/xori chains, used by both elemental walks and conditionals.
-//   * scfSynthName / isScfIfResult / yieldedExpr — helpers for
+//   * scfSynthName / isScfIfResult / yieldedExpr  --  helpers for
 //     the synthetic-scalar scf.if-result machinery.
 //
 // This file is included verbatim from extract_ast.cpp via
 // #include "bridge/ast/control_flow.cpp" and shares that translation
 // unit's namespace, includes, and file-static state.  It MUST NOT be
-// added to the build's compile list — CMakeLists.txt deliberately omits
+// added to the build's compile list  --  CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
 std::vector<ASTNode>
@@ -59,12 +59,12 @@ buildMergeLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
     // Each of the three operands must trace back to a fir.load of an
     // hlfir.designate of an hlfir.declare.  ``fir.convert`` wrappers
-    // (e.g. ``logical<4> → i1`` for the mask) are transparent.  Bail
+    // (e.g. ``logical<4> -> i1`` for the mask) are transparent.  Bail
     // on anything more elaborate (those go through the generic
     // per-element tasklet path via ``buildElementalAssign``).
     // Operands can be:
-    //   * ``fir.load %designate`` — array element (Flang's array path)
-    //   * ``fir.load %declare``   — scalar dummy (Flang hoists scalar
+    //   * ``fir.load %designate``  --  array element (Flang's array path)
+    //   * ``fir.load %declare``    --  scalar dummy (Flang hoists scalar
     //                                loads outside the elemental for
     //                                broadcast variants 3, 4, 5)
     // Either form resolves to a declared array / scalar by name; the
@@ -112,9 +112,9 @@ buildMergeLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     return {std::move(lib)};
 }
 
-/// ``b = elementwise_expr(a)`` — the ``hlfir.assign``'s source is an
+/// ``b = elementwise_expr(a)``  --  the ``hlfir.assign``'s source is an
 /// ``hlfir.elemental``.  Synthesise one ``kind="loop"`` ASTNode per shape
-/// dimension (synthetic iter names ``ei0``, ``ei1``, …) wrapping a single
+/// dimension (synthetic iter names ``ei0``, ``ei1``, ...) wrapping a single
 /// ``kind="assign"`` child whose RHS is the elemental's body expression
 /// with the block args replaced by the synthetic iter names.
 ///
@@ -145,7 +145,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     for (unsigned i = 0; i < rank; ++i)
         iter_names.push_back("ei" + std::to_string(i));
 
-    // Push block-arg → synthetic-name pairs so resolveIndex sees them
+    // Push block-arg -> synthetic-name pairs so resolveIndex sees them
     // everywhere we walk the body.
     unsigned pushed = 0;
     for (unsigned i = 0; i < rank; ++i) {
@@ -160,14 +160,14 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // ``buildDesignateIndexExpr`` for reads through nested section
     // designates).  When the designate mixes triplet + scalar dims
     // (e.g. ``res(:, pos(1)+2) = input1 + input2``) the per-array-dim
-    // index list is one-per-dim of the underlying array — triplet dims
+    // index list is one-per-dim of the underlying array  --  triplet dims
     // contribute their ``ei_<tDim>`` iter, scalar dims contribute the
     // scalar's Fortran 1-based index expression.  The elemental's rank
     // matches the triplet count, NOT the underlying array's rank.
     //
     // ``LowerAdj`` keeps the constant-fold and symbolic-fallback paths
-    // in one place: ``expr`` non-empty → ``(iter + expr - 1)`` form;
-    // ``value != 0`` → integer offset; both empty / zero → bare iter.
+    // in one place: ``expr`` non-empty -> ``(iter + expr - 1)`` form;
+    // ``value != 0`` -> integer offset; both empty / zero -> bare iter.
     struct LowerAdj {
         int64_t value = 0;
         std::string expr;
@@ -203,7 +203,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                     cursor += 3;
                     tDim++;
                 } else if (!isT && cursor < idxOps.size()) {
-                    // Scalar dim — thread its (Fortran 1-based) index
+                    // Scalar dim  --  thread its (Fortran 1-based) index
                     // expression directly into the write memlet so the
                     // memlet rank matches the underlying array.
                     auto sc = buildIndexExpr(idxOps[cursor], 0);
@@ -219,7 +219,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
                 }
             }
         } else {
-            // Bare ``hlfir.declare`` — write across the elemental's full
+            // Bare ``hlfir.declare``  --  write across the elemental's full
             // rank (every dim is a triplet covering the array's extent).
             for (unsigned i = 0; i < rank; ++i) {
                 wa.index_vars.push_back(iter_names[i]);
@@ -242,7 +242,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
     // Pre-walk: any ``hlfir.apply <libcall_expr>`` we encounter inside
     // the elemental body needs the libcall (``hlfir.matmul`` /
-    // ``hlfir.transpose`` / …) materialised into a real transient
+    // ``hlfir.transpose`` / ...) materialised into a real transient
     // BEFORE the elemental itself runs.  Without this, ``buildExpr``
     // sees an apply whose source isn't an inner elemental and returns
     // ``?``, producing tasklet bodies like ``2 - ?``.  Each libcall op
@@ -260,12 +260,12 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
             if (auto apply = mlir::dyn_cast<hlfir::ApplyOp>(op)) {
                 auto src = apply.getExpr();
                 if (auto *srcOp = src.getDefiningOp()) {
-                    // Inner elemental → existing path inlines the body.
+                    // Inner elemental -> existing path inlines the body.
                     if (mlir::isa<hlfir::ElementalOp>(srcOp)) {
                         findApplies(src, depth + 1);
                         return;
                     }
-                    // Recognised libcall expr-producer → materialise.
+                    // Recognised libcall expr-producer -> materialise.
                     if (const char *callee = libcallNameForExprOp(srcOp)) {
                         if (!kHlfirExprToTransient.count(srcOp)) {
                             std::string tmp =
@@ -335,7 +335,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // comparisons (``a .eq. b`` inside a MERGE mask, etc.) must produce
     // bare names so emit_tasklet's per-occurrence connector wiring
     // matches.  Without this the bool path emits ``a[ei0-1] == b`` and
-    // the bare-name path emits just ``a`` — same array, two different
+    // the bare-name path emits just ``a``  --  same array, two different
     // forms in one tasklet body, which leaks ``ei0`` as a free symbol.
     {
         NoSubscriptGuard g;
@@ -344,7 +344,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
     // Read accesses.  Unlike plain assigns we must follow hlfir.apply into
     // the referenced hlfir.elemental's body (where the real designate
-    // lives) — pushing the apply's index mapping onto indexStack() so the
+    // lives)  --  pushing the apply's index mapping onto indexStack() so the
     // designate sees the same synthetic iter names as the outer elemental.
     if (yielded) {
         // Per-occurrence AccessInfo (depth-limited, no op-identity dedup).
@@ -416,7 +416,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 /// Like ``buildExpr`` but keeps explicit array subscripts (``a[(i) - 1]``)
 /// when the value is a ``fir.load`` of a ``hlfir.designate``.  Used by
 /// ``buildBoolExpr`` so interstate-edge conditions can reference array
-/// elements directly — they're evaluated in the caller's frame, not by a
+/// elements directly  --  they're evaluated in the caller's frame, not by a
 /// tasklet, so they can't rely on memlet-wired connectors.
  std::string buildExprWithSubscripts(mlir::Value val, int d) {
     if (d > limits::kBuildExprDepth || !val) return "?";
@@ -434,7 +434,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // ``hlfir.no_reassoc`` is Fortran's reassociation-blocker wrapper
     // Flang inserts around expressions whose order the standard says
     // must be preserved (parenthesised expressions like
-    // ``(1.0 - ZA(JL, JK))``).  It's pure structural metadata — peel
+    // ``(1.0 - ZA(JL, JK))``).  It's pure structural metadata  --  peel
     // through so the inner subf / load / designate chain stays
     // subscript-aware.  Without this peel, the bridge bottoms out to
     // ``buildExpr`` and emits bare ``za`` (no subscript) in the cond,
@@ -445,7 +445,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 
     // fir.load of hlfir.designate: emit 0-based subscripts.  Peel
     // through any ``fir.convert`` (kind coercion, ref-shape rebox)
-    // between the load and the designate — without this peel a chain
+    // between the load and the designate  --  without this peel a chain
     // like ``%2 = fir.convert %designate ; %v = fir.load %2`` falls
     // out of the designate branch and ends up bottoming out to
     // ``buildExpr``, which strips the subscript and leaves a bare
@@ -482,7 +482,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
             }
     }
 
-    // Unary math intrinsics — recurse so the inner array reference
+    // Unary math intrinsics  --  recurse so the inner array reference
     // keeps its subscript.  Without this, ``ABS(a(i)) > eps`` in an
     // IF condition gets lifted to an interstate-edge expression that
     // C++ renders as ``abs(a) > eps`` (bare array pointer), which
@@ -504,7 +504,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         return it->second + "("
              + buildExprWithSubscripts(def->getOperand(0), d + 1) + ")";
 
-    // Binary arith — recurse through the subscript-aware builder.
+    // Binary arith  --  recurse through the subscript-aware builder.
     static const std::map<llvm::StringRef, std::string> bin_ops = {
         {"arith.mulf", " * "}, {"arith.addf", " + "},
         {"arith.subf", " - "}, {"arith.divf", " / "},
@@ -519,7 +519,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         return "(-" + buildExprWithSubscripts(def->getOperand(0), d + 1) + ")";
 
     // Fall through to the plain expression builder for anything else
-    // (constants, math intrinsics, …).
+    // (constants, math intrinsics, ...).
     return buildExpr(val, d + 1);
 }
 
@@ -542,20 +542,20 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         if (it != kScfValueMap.end()) return it->second;
     }
 
-    // ``fir.is_present %x : (!fir.ref<T>) -> i1`` — the runtime query
+    // ``fir.is_present %x : (!fir.ref<T>) -> i1``  --  the runtime query
     // Flang emits for Fortran's ``present(x)`` on an OPTIONAL dummy.
     // ``lowerIsPresent`` (in expressions.inc) walks the operand back
-    // through inlined declare aliases to one of: ``fir.absent`` → 0,
-    // a host OPTIONAL dummy → its companion ``<name>_present`` symbol,
-    // or a mandatory root → 1.
+    // through inlined declare aliases to one of: ``fir.absent`` -> 0,
+    // a host OPTIONAL dummy -> its companion ``<name>_present`` symbol,
+    // or a mandatory root -> 1.
     if (auto isp = mlir::dyn_cast<fir::IsPresentOp>(def)) {
         auto e = lowerIsPresent(isp.getVal());
         if (!e.empty()) return e;
         return "?";
     }
 
-    // fir.convert (i1 <-> i1 kind, i8 -> i1, …) and arith.trunci / extui
-    // are transparent here — DaCe codegen treats any non-zero integer as
+    // fir.convert (i1 <-> i1 kind, i8 -> i1, ...) and arith.trunci / extui
+    // are transparent here  --  DaCe codegen treats any non-zero integer as
     // True inside a Python condition, so the cast is a no-op.
     if (auto conv = mlir::dyn_cast<fir::ConvertOp>(def))
         return buildBoolExpr(conv.getValue(), d + 1);
@@ -636,7 +636,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
         return "(" + buildBoolExpr(def->getOperand(0), d + 1) + " or "
                    + buildBoolExpr(def->getOperand(1), d + 1) + ")";
     // ``xori %x, true`` is Flang's lowering of ``.not. x``.  Otherwise
-    // boolean xor — Python has no operator, use ``!=``.
+    // boolean xor  --  Python has no operator, use ``!=``.
     if (nm == "arith.xori" && def->getNumOperands() == 2) {
         auto *rhsDef = def->getOperand(1).getDefiningOp();
         if (auto c = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(rhsDef))
@@ -662,17 +662,17 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
 /// Rather than pattern-matching the shape ``lift-cf-to-scf`` produces, we
 /// copy every structural op in the before-region into the AST one-for-one:
 ///
-///   * ``scf.if`` (void)     → ``kind="conditional"`` with recursively walked arms.
-///   * ``scf.if -> T``       → same, but we allocate a ``__sc_<id>`` synthetic
+///   * ``scf.if`` (void)     -> ``kind="conditional"`` with recursively walked arms.
+///   * ``scf.if -> T``       -> same, but we allocate a ``__sc_<id>`` synthetic
 ///                             int scalar per result; each arm ends with a
 ///                             ``kind="assign"`` writing the yielded value to
 ///                             that scalar so downstream reads of the result
 ///                             find a real SDFG data descriptor.
-///   * ``scf.condition(%c)`` → ``if not (%c): break``.
-///   * ``hlfir.assign``       → existing ``buildAssignNode`` path.
+///   * ``scf.condition(%c)`` -> ``if not (%c): break``.
+///   * ``hlfir.assign``       -> existing ``buildAssignNode`` path.
 ///
 /// Pure-value ops (``arith.cmp*``, ``fir.load``, ``arith.xori``, ``arith.trunci``,
-/// ``arith.extui``, ``fir.convert``, …) don't become AST nodes — their values
+/// ``arith.extui``, ``fir.convert``, ...) don't become AST nodes  --  their values
 /// are inlined by ``buildExpr`` / ``buildBoolExpr`` when downstream ops read
 /// them.
 ///
@@ -699,7 +699,7 @@ static bool isScfIfResult(mlir::Value v) {
 std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block);
 
 /// Helper: convert a yielded value to a string for writing into a synthetic
-/// scalar.  scf.yield of an i32 constant / boolean / computed expression —
+/// scalar.  scf.yield of an i32 constant / boolean / computed expression  --
 /// just reuse buildExpr, which traces through arith ops and cast chains.
 std::string yieldedExpr(mlir::Value v) {
     auto s = buildExpr(v, 0);

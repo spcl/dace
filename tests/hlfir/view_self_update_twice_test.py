@@ -5,7 +5,7 @@ slice INOUT dummy gets two back-to-back self-updates in the same
 inlined-callee block.  Without the Phase I split + view-writeback
 cache reset the second update reads through the write-side view,
 giving the view ``in=1 (tasklet) + out=2 (writeback + downstream
-read)`` — which DaCe's ``get_view_edge`` can't disambiguate.
+read)``  --  which DaCe's ``get_view_edge`` can't disambiguate.
 
 Two variants:
 * plain back-to-back self-updates
@@ -61,7 +61,7 @@ def _run(tmp_path, src, name, klon=4, klev=5, nb=3, seed=7):
 
 
 def test_fortran_frontend_view_self_update_twice(tmp_path):
-    """Plain back-to-back self-updates on a view dummy — no IF wrap."""
+    """Plain back-to-back self-updates on a view dummy  --  no IF wrap."""
     src = _DRIVER_PROLOGUE_HEAD + """
 SUBROUTINE accumulate(x, klon, klev)
 integer :: klon, klev
@@ -80,7 +80,7 @@ END SUBROUTINE accumulate
 
 def test_fortran_frontend_view_self_update_twice_in_if(tmp_path):
     """Same back-to-back self-updates, this time wrapped in an IF
-    — exactly the cloudsc lines 1364-1385 shape."""
+     --  exactly the cloudsc lines 1364-1385 shape."""
     src = _DRIVER_PROLOGUE_HEAD + """
 SUBROUTINE accumulate(x, klon, klev)
 integer :: klon, klev

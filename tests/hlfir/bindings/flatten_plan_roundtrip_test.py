@@ -1,4 +1,4 @@
-"""Pass→bridge→FlattenPlan round-trip.  Verifies that
+"""Pass->bridge->FlattenPlan round-trip.  Verifies that
 ``hlfir-flatten-structs`` stamps a structurally correct
 ``hlfir.flatten_plan`` attribute that the bridge decodes back into a
 usable ``FlattenPlan`` dataclass.
@@ -51,7 +51,7 @@ end subroutine
 
 
 def test_two_real_array_struct_emits_aliased_recipe(tmp_path: Path):
-    """Static-shape struct with two real members → one FlattenEntry,
+    """Static-shape struct with two real members -> one FlattenEntry,
     aliasable, rank-2 shape exprs."""
     plan = _plan_from_fortran(
         """
@@ -154,7 +154,7 @@ subroutine kernel(A, n, m, out)
   out = A(1)%w(1)
 end subroutine
 """, tmp_path)
-    # Exactly one entry — the allocatable member.  No regular entry
+    # Exactly one entry  --  the allocatable member.  No regular entry
     # (every member excluded from the regular path).  Flang lowercases
     # all identifiers, so the outer name comes out as ``a`` and the
     # flat companion as ``a_w``.
@@ -175,7 +175,7 @@ end subroutine
 
 def test_mixed_aos_alloc_and_plain_member_split_into_two_entries(tmp_path: Path):
     """A struct with both an allocatable and a plain (static-shape)
-    member — Phase 5c-B emits a separate ``aos_alloc=True`` recipe
+    member  --  Phase 5c-B emits a separate ``aos_alloc=True`` recipe
     per allocatable member, AND a regular aliasable recipe covering
     the non-allocatable members.
     """
@@ -206,7 +206,7 @@ subroutine kernel(A, n, m, out)
 end subroutine
 """, tmp_path)
     # Two entries: one aos_alloc for w, one regular for tag.  Flang
-    # lowercases identifiers — the flat companions are ``a_w`` / ``a_tag``.
+    # lowercases identifiers  --  the flat companions are ``a_w`` / ``a_tag``.
     aos_entries = [e for e in plan.entries if e.recipe.aos_alloc]
     plain_entries = [e for e in plan.entries if not e.recipe.aos_alloc]
     assert len(aos_entries) == 1

@@ -4,7 +4,7 @@ When a Fortran scalar dummy carries ``intent(inout)`` (or ``intent(out)``),
 the Scalar I/O convention surfaces it on the SDFG signature as a
 length-1 ``Array`` (so the caller has a writable slot).  The bridge's
 symbol-staging path emits an interstate-edge assignment from that
-dummy into a struct-field-promoted symbol — but the C ABI binds a
+dummy into a struct-field-promoted symbol  --  but the C ABI binds a
 length-1 Array as ``T*``, so the bare-name RHS would render as
 ``indices_end = endidx`` (``int = int*``) and fail to compile.
 
@@ -64,13 +64,13 @@ end subroutine fun
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
 
     res = np.zeros(6, order="F", dtype=np.int32)
-    # ``intent(inout)`` scalar dummies → length-1 Arrays on the
+    # ``intent(inout)`` scalar dummies -> length-1 Arrays on the
     # signature; pass them boxed.
     startidx = np.array([2], dtype=np.int32)
     endidx = np.array([5], dtype=np.int32)
     sdfg(res=res, startidx=startidx, endidx=endidx)
 
-    # Section ``res(2:5) = 42`` writes positions 2..5 (1-based) → 1..4 in
+    # Section ``res(2:5) = 42`` writes positions 2..5 (1-based) -> 1..4 in
     # 0-based numpy.  Positions 0 and 5 stay zero.
     assert res[0] == 0
     assert all(res[1:5] == 42)

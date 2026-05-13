@@ -1,5 +1,5 @@
 // ============================================================================
-// FoldElementAliases.cpp — erase declare-over-designate aliases.
+// FoldElementAliases.cpp  --  erase declare-over-designate aliases.
 // ============================================================================
 //
 // Motivation:
@@ -13,13 +13,13 @@
 //         hlfir.assign %val to %d#0 : f64, ref<f64>
 //
 //     The declare exists only to carry the callee's Fortran name into the
-//     inlined body — it aliases one element of the outer array and adds
+//     inlined body  --  it aliases one element of the outer array and adds
 //     no semantics the caller didn't already have.
 //
 //     For the SDFG builder this second declare is active poison:
 //       * ``extract_vars`` sees a second VarInfo with the callee's name
 //         over a scalar ref, and the SDFG arglist grows a stray ``x`` /
-//         ``od`` / ``g`` / … scalar that the caller never needs to supply.
+//         ``od`` / ``g`` / ... scalar that the caller never needs to supply.
 //       * The write ``hlfir.assign %val to %d#0`` looks like a plain
 //         scalar-store, so our frontend never connects the write back
 //         to the outer array at the outer's loop index.
@@ -29,14 +29,14 @@
 //     is ``hlfir.designate`` of *another* declare, replace every use of
 //     the alias's results with the designate itself and erase the
 //     alias.  After this, ``hlfir.assign %val to %d#0`` collapses to
-//     ``hlfir.assign %val to %designate`` — a regular indexed store the
+//     ``hlfir.assign %val to %designate``  --  a regular indexed store the
 //     SDFG builder already handles.
 //
 // Scope:
 //     Only element-alias declares are folded.  Assumed-shape aliases
 //     (memref via ``fir.convert`` of a box) are left to the bridge's
 //     runtime rebase path (``trace_utils::asAssumedShapeAlias`` +
-//     ``extract_ast::buildDesignateIndexExpr``) — their semantics
+//     ``extract_ast::buildDesignateIndexExpr``)  --  their semantics
 //     require an index rewrite, not a straight replacement.
 // ============================================================================
 
@@ -72,7 +72,7 @@ struct FoldElementAliasesPass
         llvm::SmallVector<hlfir::DeclareOp, 16> toErase;
 
         getOperation().walk([&](hlfir::DeclareOp decl) {
-            if (decl.getShape()) return;  // has shape — not an alias
+            if (decl.getShape()) return;  // has shape  --  not an alias
             auto memref = decl.getMemref();
             auto *mrd = memref.getDefiningOp();
             if (!mrd) return;
@@ -80,7 +80,7 @@ struct FoldElementAliasesPass
             if (!designate) return;
 
             // Confirm the designate's base ultimately resolves to a
-            // declare — without that anchor we don't have a "real"
+            // declare  --  without that anchor we don't have a "real"
             // outer storage to point uses at.  (Designates nested
             // inside designates would be handled transitively as each
             // outer round erases another layer.)
@@ -99,7 +99,7 @@ struct FoldElementAliasesPass
             //     %alias = hlfir.declare %elem ...
             //
             // We only need to confirm a declare exists at the chain
-            // root — the replacement target stays the element
+            // root  --  the replacement target stays the element
             // designate ``memref``, regardless of intermediate hops.
             auto *base = designate.getMemref().getDefiningOp();
             for (int hop = 0; hop < 8 && base; ++hop) {

@@ -1,5 +1,5 @@
 // ============================================================================
-// FlattenStructs.cpp — Array-of-Structs → Struct-of-Arrays at the HLFIR level.
+// FlattenStructs.cpp  --  Array-of-Structs -> Struct-of-Arrays at the HLFIR level.
 // ============================================================================
 //
 // Goal
@@ -26,9 +26,9 @@
 //
 // 2. **Array-of-struct (AoS) with array members.**
 //    ``type(t), dimension(K) :: A`` where each member is itself an
-//    array shape concatenates outer × inner: ``A_u`` of shape
+//    array shape concatenates outer x inner: ``A_u`` of shape
 //    ``(K, M)``, ``A_v`` of shape ``(K, N)``.  ``A(i)%u(j)`` rewrites
-//    to ``A_u(i, j)`` — outer + inner indices merged in
+//    to ``A_u(i, j)``  --  outer + inner indices merged in
 //    ``rewriteDesignate``.  ``A(i)%u`` (whole-member access without
 //    inner indices) rewrites to a triplet section ``A_u(i, 1:M:1)``.
 //
@@ -47,7 +47,7 @@
 // function signature and renames the function with ``_soa`` suffix.
 // Inlined callee dummy declares that alias the outer struct via
 // ``hlfir-inline-all`` are followed via ``collectFrom`` recursing
-// through ``hlfir.declare`` users — the inlined alias chain is
+// through ``hlfir.declare`` users  --  the inlined alias chain is
 // transparent to the rewrite.  ``recordStructArgEntry`` writes a
 // ``hlfir.flatten_plan`` attribute the bindings emitter consumes to
 // generate caller-side pack/unpack wrappers.
@@ -55,13 +55,13 @@
 // Static-shape assumption
 // -----------------------
 // Every member shape and outer-array extent must fold to a
-// compile-time constant — except for the allocatable-array member
+// compile-time constant  --  except for the allocatable-array member
 // case (Phase 5a) below.  Pointer members and AoS-with-allocatable
 // members are still out of scope and surface as
 // loud-failure throws at ``extract_vars`` (``fir.RecordType``
 // reaches a declare).
 //
-// Phase 5a — allocatable scalar-struct local member
+// Phase 5a  --  allocatable scalar-struct local member
 // -------------------------------------------------
 // ``type t :: real, allocatable :: w(:)`` paired with a LOCAL
 // ``type(t) :: s`` instance flattens to a flat top-level
@@ -69,7 +69,7 @@
 // #fir.var_attrs<allocatable>``) plus per-allocate-site renames so
 // flang's ``fir.allocmem`` op (originally named after the member's
 // module scope, e.g. ``_QMlibEw.alloc``) appears under
-// ``s_w.alloc`` — the convention the bridge's ``collectAllocSites``
+// ``s_w.alloc``  --  the convention the bridge's ``collectAllocSites``
 // walks.  Companion change: ``extract_vars.cpp`` pass 2b also walks
 // every ``fir.allocmem``'s shape operands and promotes the traced
 // declares to symbols, so ``allocate(s%w(n))`` (without any
@@ -82,14 +82,14 @@
 // reallocation-inside-kernel for AoS members are still deferred to
 // Phase 5c.
 //
-// Phase 5c — AoS + allocatable members
+// Phase 5c  --  AoS + allocatable members
 // ------------------------------------
-// ``type t :: real, allocatable :: w(:); type(t) :: A(N)`` — each
+// ``type t :: real, allocatable :: w(:); type(t) :: A(N)``  --  each
 // batch instance ``A(i)`` owns its own runtime descriptor for
 // ``A(i)%w``.  Two sub-cases share one logical contract
 // (padding-to-max), but the IR shape and helpers differ.
 //
-// 5c-A — local instance, kernel-internal allocate (compile-time uniform)
+// 5c-A  --  local instance, kernel-internal allocate (compile-time uniform)
 //   When ``A`` is a local ``fir.alloca`` and every
 //   ``allocate(A(i)%w(M))`` site uses the same compile-time constant
 //   ``M``, ``aosAllocUniformConstSize`` returns ``M`` and we synthesise
@@ -103,22 +103,22 @@
 //   (``A_w(i, 1:M:1) = ...``) by ``rewriteAosWholeMemberAssign`` so
 //   the existing concat path doesn't broadcast across all rows.
 //
-// 5c-B (inlined) — module-contained kernel after ``hlfir-inline-all``
+// 5c-B (inlined)  --  module-contained kernel after ``hlfir-inline-all``
 //   When the AoS+allocatable struct is the dummy of a module-contained
 //   subroutine, ``hlfir-inline-all`` splices the body in and the
 //   inlined dummy becomes an alias declare carrying ``dummy_scope``.
 //   ``collapseAosAllocReads`` follows the alias chain
-//   (``hlfir.declare`` → ``fir.embox`` / ``fir.convert``) back to the
+//   (``hlfir.declare`` -> ``fir.embox`` / ``fir.convert``) back to the
 //   original declare so reads inside the inlined body are still
 //   collapsed.
 //
-// 5c-B (true SDFG-boundary) — ``intent(inout)`` AoS struct dummy
+// 5c-B (true SDFG-boundary)  --  ``intent(inout)`` AoS struct dummy
 //   When the AoS+allocatable struct is the dummy of the SDFG entry
 //   itself, the per-instance sizes are runtime-determined and
 //   generally differ.  ``replaceStructArg`` inserts two block args
 //   per allocatable member:
-//     * ``cap_<base>_<m>`` of type ``ref<index>`` — runtime cap
-//     * ``<base>_<m>`` of type ``ref<array<N x ?xT>>`` — 2D buffer
+//     * ``cap_<base>_<m>`` of type ``ref<index>``  --  runtime cap
+//     * ``<base>_<m>`` of type ``ref<array<N x ?xT>>``  --  2D buffer
 //   It synthesises a declare for each, with ``uniq_name = "cap_..."``
 //   on the cap declare so ``traceToDecl`` resolves the data declare's
 //   inner extent to ``cap_<base>_<m>`` on the SDFG signature.
@@ -138,13 +138,13 @@
 //   5. On intent(out)/(inout) and per allocated row: copy back
 //      A(i)%w = A_w(i, 1:size(A(i)%w)).
 //   6. deallocate(A_w).
-// Saved policy: NO runtime ``allocated()`` checks inside the SDFG —
+// Saved policy: NO runtime ``allocated()`` checks inside the SDFG  --
 // the bindings handle every allocation query.  Mixed allocation
 // states are allowed; unallocated rows stay zero-padded and the
 // user's program logic must avoid reading them.  Empty-batch
-// sentinel (``cap == 0 → 1``) keeps the buffer non-degenerate.
+// sentinel (``cap == 0 -> 1``) keeps the buffer non-degenerate.
 //
-// 5c-C — kernel-internal reallocation (NOT YET SUPPORTED)
+// 5c-C  --  kernel-internal reallocation (NOT YET SUPPORTED)
 //   When the kernel itself runs ``allocate(A(i)%w(N_i))`` (e.g. the
 //   struct comes in ``intent(out)`` with no live data), the
 //   bindings-time max is unknown.  Two follow-up directions:
@@ -159,13 +159,13 @@
 //
 // Things this pass deliberately does NOT do
 // -----------------------------------------
-// * Truly virtual polymorphic dispatch — handled separately by
+// * Truly virtual polymorphic dispatch  --  handled separately by
 //   ``fir-polymorphic-op`` (devirtualises) and
 //   ``hlfir-reject-polymorphism`` (loud-fails on residuals).  This
 //   pass peels ``fir.class<T>`` like ``fir.box<T>`` so monomorphic
 //   CLASS receivers flatten through the same path as TYPE.
 // * Nested struct with allocatable members at depth > 1
-//   (``outer%inner%w(:)``) — needs the nested-record path to also
+//   (``outer%inner%w(:)``)  --  needs the nested-record path to also
 //   recognise allocatables on inner records.
 // * Reallocation inside the kernel for AoS-allocatable companions
 //   (Phase 5c-C TODO-1 / TODO-2 above).
@@ -174,7 +174,7 @@
 // -------------
 // Per-leaf names join the path with ``_``: ``base_member1_member2``.
 // This is ambiguous if user code happens to name a struct field
-// ``inner_x`` AND another field ``inner`` with subfield ``x`` —
+// ``inner_x`` AND another field ``inner`` with subfield ``x``  --
 // both would map to ``base_inner_x``.  Fortran style discourages
 // underscores in field names so the collision risk is small in
 // practice.  DaCe's container-groups pass uses delimited prefixes
@@ -214,7 +214,7 @@ namespace {
 
 /// Strip one layer of fir.box / fir.class / fir.ref / fir.heap /
 /// fir.pointer.  ``fir.box<T>`` and ``fir.class<T>`` share the
-/// ``fir::BaseBoxType`` base — peeling either via that common base
+/// ``fir::BaseBoxType`` base  --  peeling either via that common base
 /// lets monomorphic CLASS declares flatten through the same rewrite
 /// path as non-polymorphic TYPE declares.  Surviving virtual
 /// dispatch is caught by ``hlfir-reject-polymorphism``, not here.
@@ -242,21 +242,21 @@ static bool isSimpleScalar(mlir::Type t) {
     if (t.isInteger(8) || t.isInteger(16)
             || t.isInteger(32) || t.isInteger(64))
         return true;
-    // Fortran ``LOGICAL(KIND=N)`` lowers to ``fir.logical<N>`` — a
+    // Fortran ``LOGICAL(KIND=N)`` lowers to ``fir.logical<N>``  --  a
     // distinct MLIR type from IntegerType.  Storage is N bytes (1, 2,
     // 4, 8); ``extract_vars.cpp`` maps each kind to the matching
     // ``int<N*8>`` dtype.  The kind-preserving mapping is required at
     // the SDFG layer because the flat companion's array stride /
     // total_size depend on element bytes; the bindings wrapper does
-    // ``.TRUE.``/``.FALSE.`` ↔ ``1``/``0`` conversion at the Fortran
+    // ``.TRUE.``/``.FALSE.`` <-> ``1``/``0`` conversion at the Fortran
     // caller boundary.
     if (mlir::isa<fir::LogicalType>(t)) return true;
     return false;
 }
 
 /// Recognise an allocatable-array OR pointer-array struct member:
-///   * ``real, allocatable :: w(:)``  → ``fir.box<fir.heap<fir.array<?xT>>>``
-///   * ``real, pointer     :: w(:)``  → ``fir.box<fir.ptr<fir.array<?xT>>>``
+///   * ``real, allocatable :: w(:)``  -> ``fir.box<fir.heap<fir.array<?xT>>>``
+///   * ``real, pointer     :: w(:)``  -> ``fir.box<fir.ptr<fir.array<?xT>>>``
 ///
 /// Both share the same outer wrapper shape (a runtime descriptor on
 /// the struct slot); only the inner indirection type differs (``heap``
@@ -284,8 +284,8 @@ static bool isAllocatableArrayMember(mlir::Type t) {
 }
 
 /// Recognise an allocatable-scalar OR pointer-scalar struct member:
-///   * ``real, allocatable :: a``  → ``fir.box<fir.heap<T>>``
-///   * ``real, pointer     :: a``  → ``fir.box<fir.ptr<T>>``
+///   * ``real, allocatable :: a``  -> ``fir.box<fir.heap<T>>``
+///   * ``real, pointer     :: a``  -> ``fir.box<fir.ptr<T>>``
 /// Sibling of ``isAllocatableArrayMember`` for rank-0 allocatables /
 /// pointers.  These appear in nested struct hierarchies (e.g. an
 /// inner record holds a scalar allocatable field); admitting them to
@@ -339,7 +339,7 @@ static fir::RecordType peelToRecord(mlir::Type declaredTy, bool &outerIsArray,
 /// concatenate the two shape vectors into a single fir.array<N, M1, M2,
 /// ...>.  Fortran derived types have a SINGLE declared shape per member
 /// that applies to every instance, so per-instance offset uniformity is
-/// automatic — no per-element check needed.
+/// automatic  --  no per-element check needed.
 static mlir::Type companionPointee(bool outerIsArray,
                                    llvm::ArrayRef<int64_t> outerShape,
                                    mlir::Type memberTy) {
@@ -378,8 +378,8 @@ static mlir::Type rewrapWith(mlir::Type shell, mlir::Type newInner) {
 }
 
 /// Emit a fir.shape for a static extent list, inserting arith.constant ops
-/// for each extent.  Returns the shape SSA value.  Empty extents → null
-/// (scalar — no shape needed).
+/// for each extent.  Returns the shape SSA value.  Empty extents -> null
+/// (scalar  --  no shape needed).
 static mlir::Value emitStaticShape(mlir::OpBuilder &b, mlir::Location loc,
                                    llvm::ArrayRef<int64_t> extents) {
     if (extents.empty()) return {};
@@ -409,7 +409,7 @@ static llvm::SmallVector<int64_t, 4> staticArrayExtents(mlir::Type t) {
 /// Build the operandSegmentSizes attribute expected on hlfir.declare.
 /// hlfir.declare has four operand segments in this order: memref, shape,
 /// typeparams, dummy_scope.  We only ever construct declares with a memref
-/// (and optionally a shape) in this pass — the remaining two segments are
+/// (and optionally a shape) in this pass  --  the remaining two segments are
 /// always zero.
 static mlir::NamedAttribute declareSegments(mlir::OpBuilder &b, bool hasShape) {
     llvm::SmallVector<int32_t, 4> sizes{1, hasShape ? 1 : 0, 0, 0};
@@ -419,7 +419,7 @@ static mlir::NamedAttribute declareSegments(mlir::OpBuilder &b, bool hasShape) {
 
 /// True if every member is flat (scalar or array-of-scalar) and we can
 /// synthesise a companion pointee for every (outer, member) pair.  AoS
-/// outers concatenate outer × inner extents in ``companionPointee``.
+/// outers concatenate outer x inner extents in ``companionPointee``.
 static bool allMembersFlattenable(fir::RecordType rec, bool /*outerIsArray*/) {
     for (auto &pair : rec.getTypeList()) {
         if (!isFlatMemberType(pair.second)) return false;
@@ -440,10 +440,10 @@ static bool allMembersFlattenable(fir::RecordType rec, bool /*outerIsArray*/) {
 // component selectors that we walk in ``rewriteDesignateChain``.
 //
 // FlatLeaf records one such leaf:
-//   * ``path``    — successive component names from the outermost
+//   * ``path``     --  successive component names from the outermost
 //                   record down to the leaf.  Joined with ``_`` for
 //                   the synthesised declare's uniq_name suffix.
-//   * ``leafTy``  — the leaf's type (scalar or fir.array<scalar>).
+//   * ``leafTy``   --  the leaf's type (scalar or fir.array<scalar>).
 struct FlatLeaf {
     llvm::SmallVector<std::string, 4> path;
     mlir::Type                         leafTy;
@@ -465,14 +465,14 @@ static constexpr int kFlattenMaxDepth = 12;
 /// loud failure downstream.
 ///
 /// Three member shapes are recognised at each level:
-///   * **flat member** (scalar / static-shape array of scalar) —
+///   * **flat member** (scalar / static-shape array of scalar)  --
 ///     contributes one leaf with its intrinsic shape preserved
 ///     (the ``outerDims`` accumulated above are prepended so
 ///     intermediate ``array<N x RecordType>`` levels concat into
 ///     the leaf's flat companion shape).
-///   * **pure record** (``RecordType`` directly) — recurses with
+///   * **pure record** (``RecordType`` directly)  --  recurses with
 ///     no shape contribution.
-///   * **array of records** (``array<N x RecordType>``) — recurses
+///   * **array of records** (``array<N x RecordType>``)  --  recurses
 ///     into the inner record after pushing ``N`` onto
 ///     ``outerDims``; every leaf produced by that recursion
 ///     inherits ``N`` as a leading dim.  This is what enables
@@ -482,7 +482,7 @@ static constexpr int kFlattenMaxDepth = 12;
 /// Recognise a pointer/allocatable-to-record member (``type(t),
 /// pointer :: p`` / ``type(t), allocatable :: p`` with scalar
 /// pointee).  Used only by ``collectFlatLeaves``'s cycle handling
-/// — the bridge cannot navigate through such a pointer to its
+///  --  the bridge cannot navigate through such a pointer to its
 /// pointee (would require concrete pointer-aliasing analysis), but
 /// it can safely IGNORE the field when the user code never reads
 /// through it.  Returns the pointed-to RecordType when matched,
@@ -501,7 +501,7 @@ static fir::RecordType pointerToRecordMember(mlir::Type t) {
 }
 
 /// Recognise ``type(T), allocatable :: f(:)`` or ``type(T), pointer ::
-/// f(:)`` — i.e. an alloc/pointer wrapper over an array of records.
+/// f(:)``  --  i.e. an alloc/pointer wrapper over an array of records.
 /// Companion of ``pointerToRecordMember`` for the array-shaped case.
 /// Returns the inner element ``RecordType`` when matched.
 ///
@@ -539,7 +539,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
     // { type(b_t), pointer :: b }; type b_t { type(a_t) :: a }``) is
     // recognised as a parent pointer rather than infinite-recursed
     // through.  Pointers to records that close a cycle through any
-    // ancestor are treated as opaque — no leaf emitted, no failure
+    // ancestor are treated as opaque  --  no leaf emitted, no failure
     // raised.  Code that actually navigates through such a pointer
     // (``s%b%a%w``) is out of scope for this admission path; the user
     // contract is that the pointer is either unused or points back to
@@ -549,7 +549,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
     for (auto &pair : rec.getTypeList()) {
         prefix.push_back(pair.first);
         // ``type(T), pointer :: f`` / ``type(T), allocatable :: f`` is
-        // opaque to the leaf walker — we don't have a flat
+        // opaque to the leaf walker  --  we don't have a flat
         // representation for "all the records reachable through this
         // pointer".  Skip silently rather than fail the whole
         // flatten; downstream the only code paths that navigate
@@ -563,7 +563,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
             continue;
         }
         // Admit allocatable/pointer scalars alongside the regular flat
-        // shapes — ``replaceStructArgNested``'s BoxType leaf branch
+        // shapes  --  ``replaceStructArgNested``'s BoxType leaf branch
         // already produces the right declare for either rank.
         if (isFlatMemberType(pair.second)
             || isAllocatableScalarMember(pair.second)) {
@@ -589,7 +589,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
                 leafEle = seq.getEleTy();
             }
             if (outerDims.empty() && memberDims.empty()) {
-                // Pure scalar leaf — no array wrapper.
+                // Pure scalar leaf  --  no array wrapper.
                 leaf.leafTy = leafEle;
             } else {
                 llvm::SmallVector<int64_t, 6> shape(outerDims.begin(),
@@ -607,7 +607,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
         } else if (auto seq = mlir::dyn_cast<fir::SequenceType>(pair.second)) {
             // Array-of-record member: recurse INTO the inner record
             // with the outer extents pushed on so each leaf inherits
-            // them as leading dims.  Bail on dynamic extents — those
+            // them as leading dims.  Bail on dynamic extents  --  those
             // would need a runtime-shape companion the synth path
             // doesn't yet emit.
             auto innerRec = mlir::dyn_cast<fir::RecordType>(seq.getEleTy());
@@ -632,7 +632,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
                 return false;
             }
         } else {
-            // Member is e.g. allocatable / pointer — not flattenable
+            // Member is e.g. allocatable / pointer  --  not flattenable
             // through this path.  Bail so the pass leaves the
             // struct untouched and the loud-failure throw in
             // extract_vars points at the right gap.
@@ -672,7 +672,7 @@ static bool collectFlatLeaves(fir::RecordType rec,
 /// scalar element type, and at least two members have different extents.
 ///
 /// When true, the struct is packed into a single 2-D companion of shape
-/// ``[numMembers x max(extents)]`` — an ELLPACK-style padded representation
+/// ``[numMembers x max(extents)]``  --  an ELLPACK-style padded representation
 /// used when per-member flattening would produce differently-shaped siblings.
 /// Scalar and non-1-D members are reported unsupported, so the caller falls
 /// back to the per-member path.
@@ -697,19 +697,19 @@ static bool isJaggedScalarStruct(fir::RecordType rec, mlir::Type &eleTy,
 
     for (size_t i = 1; i < extents.size(); ++i)
         if (extents[i] != extents[0]) return true;
-    return false;  // all uniform — per-member path handles it cleanly
+    return false;  // all uniform  --  per-member path handles it cleanly
 }
 
 // ---------------------------------------------------------------------------
-// Fortran-name helpers — drive FlattenPlan construction in the pass
+// Fortran-name helpers  --  drive FlattenPlan construction in the pass
 // ---------------------------------------------------------------------------
 
 /// Extract the user-visible Fortran variable name from a Flang uniq_name.
 ///
 /// Flang's mangled uniq_name carries the enclosing scope:
-///     ``_QF<sub>E<var>``          — dummy/local in subroutine ``<sub>``
-///     ``_QM<mod>F<sub>E<var>``    — in module ``<mod>``, subroutine ``<sub>``
-///     ``_QF<sub>E<var>_component``  — nested cases exist but keep the ``E``
+///     ``_QF<sub>E<var>``           --  dummy/local in subroutine ``<sub>``
+///     ``_QM<mod>F<sub>E<var>``     --  in module ``<mod>``, subroutine ``<sub>``
+///     ``_QF<sub>E<var>_component``   --  nested cases exist but keep the ``E``
 ///                                    as the last separator for the outer
 ///                                    user name.
 ///
@@ -724,7 +724,7 @@ static std::string demangleVarName(llvm::StringRef uniqName) {
 
 /// Map a Flang intent flag to the writeback_intent string the binding
 /// emitter expects (``in`` / ``out`` / ``inout`` / ``""``).  The
-/// emitter uses ``inout`` and ``out`` to gate copy-out code — ``in``
+/// emitter uses ``inout`` and ``out`` to gate copy-out code  --  ``in``
 /// and empty are both read-only.
 static std::string extractIntent(
     std::optional<fir::FortranVariableFlagsEnum> flagsOpt) {
@@ -751,7 +751,7 @@ static std::string dtypeName(mlir::Type t) {
     return "";
 }
 
-/// Element type of a member — unwraps fir.array to its element, or
+/// Element type of a member  --  unwraps fir.array to its element, or
 /// returns the scalar itself.  Used to pick the recipe dtype.
 static mlir::Type memberElementType(mlir::Type memTy) {
     if (auto seq = mlir::dyn_cast<fir::SequenceType>(memTy))
@@ -781,8 +781,8 @@ static int memberRank(mlir::Type memTy) {
 /// empty string if the chain doesn't end in pure component selectors.
 /// Walk a chain of ``hlfir.designate`` ops back from the leaf up
 /// to the underlying ``hlfir.declare``, collecting:
-///   * ``path``                  — outer-first list of component names.
-///   * ``intermediateIndices``   — outer-first list of indices that
+///   * ``path``                   --  outer-first list of component names.
+///   * ``intermediateIndices``    --  outer-first list of indices that
 ///                                 appeared on NON-LEAF designates
 ///                                 (i.e. on intermediate steps of
 ///                                 the chain).  Empty for the
@@ -794,7 +794,7 @@ static int memberRank(mlir::Type memTy) {
 ///   1. **Leaf-only indices** (the original case): every
 ///      intermediate designate is a pure ``{component}`` selector,
 ///      and any indices live on the leaf itself.  Caller clones
-///      the leaf and swaps its memref to the flat companion —
+///      the leaf and swaps its memref to the flat companion  --
 ///      preserving triplet sections, shape operands, and any
 ///      other leaf-side attributes.
 ///
@@ -832,7 +832,7 @@ static std::string walkDesignateChain(
             // (e.g. ``p_prog%pprog(2:5)%w(j)``); not in scope.
             //
             // ``getIsTriplet()`` returns a nullable
-            // ``DenseBoolArrayAttr`` — iterating a null attr (when
+            // ``DenseBoolArrayAttr``  --  iterating a null attr (when
             // the designate carries no isTriplet, the common case
             // for component-only or scalar-index designates) is a
             // crash, so guard via the raw attr accessor first.
@@ -861,7 +861,7 @@ static std::string walkDesignateChain(
 }
 
 /// Backwards-compatible wrapper used by callers that only need the
-/// path (no merged indices) — keeps the original entry point shape
+/// path (no merged indices)  --  keeps the original entry point shape
 /// while ``walkDesignateChain`` is the canonical implementation.
 static std::string designateChainPath(hlfir::DesignateOp leaf,
                                       hlfir::DesignateOp &outAnchor) {
@@ -874,7 +874,7 @@ static std::string designateChainPath(hlfir::DesignateOp leaf,
 /// Path-prefix accumulated while tracing an alias declare back to its
 /// underlying decl: outermost component first.  Surfaces when an
 /// inlined-callee dummy aliases ``decl`` through
-/// ``hlfir.declare → fir.convert → fir.embox → hlfir.designate*``
+/// ``hlfir.declare -> fir.convert -> fir.embox -> hlfir.designate*``
 /// chains.  ``rewriteDesignateChain`` prepends this prefix so a leaf
 /// rooted at the alias designs into the same flat companion as a
 /// leaf rooted directly at ``decl``.
@@ -886,7 +886,7 @@ struct AliasPrefix {
 /// Rewrite a multi-level ``hlfir.designate`` chain ending at ``leaf``
 /// (e.g. ``designate{"x"}.designate{"inner"} %o`` for ``o%inner%x``)
 /// to read directly from the path-flattened declare named in
-/// ``leafBase``.  ``leaf`` may carry indices (``a(i,j)``) — those are
+/// ``leafBase``.  ``leaf`` may carry indices (``a(i,j)``)  --  those are
 /// preserved.  ``aliasPrefixes`` lets the rewriter prepend a buried
 /// prefix when the chain bottoms out at an inlined-callee alias
 /// declare whose source threads through embox/convert into a
@@ -941,8 +941,8 @@ static bool rewriteDesignateChain(
     auto newBase = it->second;
 
     // Leaf-only path (no intermediate indices).  Preserves the
-    // leaf's full shape — including triplet sections, shape
-    // operand, complex_part, etc. — by cloning and rewiring just
+    // leaf's full shape  --  including triplet sections, shape
+    // operand, complex_part, etc.  --  by cloning and rewiring just
     // the memref + clearing the component attrs.  Whole-leaf
     // access (``base{"a"}{"b"}`` with no indices) just RAUWs.
     if (intermediateIndices.empty()) {
@@ -966,8 +966,8 @@ static bool rewriteDesignateChain(
     // designate over the flat companion with intermediate +
     // leaf indices merged in outer-first order.  No triplets at
     // intermediate levels (walker bails on that).  Whether the
-    // leaf itself has triplets is rare in this shape — a section
-    // on the innermost array of a record-of-record-of-... — and
+    // leaf itself has triplets is rare in this shape  --  a section
+    // on the innermost array of a record-of-record-of-...  --  and
     // is also out of scope; bail to keep the contract narrow.
     if (auto leafTrip = leaf.getIsTripletAttr())
         for (bool t : leafTrip.asArrayRef()) if (t) return false;
@@ -978,7 +978,7 @@ static bool rewriteDesignateChain(
     // The flat companion is a higher-rank array (intermediate dims
     // ++ inner dims).  Replacing the leaf with a plain N-index
     // designate where N = #intermediates only would crash the
-    // verifier (rank mismatch) — instead emit a section designate
+    // verifier (rank mismatch)  --  instead emit a section designate
     // ``flat(idx_1, ..., 1:M_1:1, 1:M_2:1)`` so the result keeps
     // the leaf's array shape while the outer scalar indices pin
     // the record element.
@@ -1065,7 +1065,7 @@ traceAliasPrefixToDecl(hlfir::DeclareOp other, hlfir::DeclareOp decl) {
                 return info;
             }
             // Intermediate declare (a previously-inlined alias).
-            // Continue walking from its source — declares act as
+            // Continue walking from its source  --  declares act as
             // identity wrappers around their memref operand for the
             // purposes of alias tracking.
             mr = outer.getMemref();
@@ -1082,7 +1082,7 @@ traceAliasPrefixToDecl(hlfir::DeclareOp other, hlfir::DeclareOp decl) {
         // Inlined-callee alias declares: the alias's memref is a
         // ``fir.load`` of the parent declare's address (possibly
         // through one or more ``fir.rebox`` reshapes for CLASS<heap<T>>
-        // → CLASS<T> peels in OOP code, or POINTER box reshapes).
+        // -> CLASS<T> peels in OOP code, or POINTER box reshapes).
         // Walking through both is the minimum to recognise these as
         // aliases of the parent.
         if (auto ld = mlir::dyn_cast<fir::LoadOp>(d)) {
@@ -1119,7 +1119,7 @@ traceAliasPrefixToDecl(hlfir::DeclareOp other, hlfir::DeclareOp decl) {
 /// inlined-callee alias of it) and rewrite each leaf to the matching
 /// flat companion in ``leafBase``.  Shared between the local-declare
 /// path (``splitLocal``) and the dummy-arg path
-/// (``replaceStructArgNested``) — both produce the same ``leafBase``
+/// (``replaceStructArgNested``)  --  both produce the same ``leafBase``
 /// shape and need the same rewrite logic.
 static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
                                   const llvm::StringMap<mlir::Value> &leafBase) {
@@ -1145,9 +1145,9 @@ static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
         }
     });
 
-    // Find each chain's leaf — a designate whose users are NOT
+    // Find each chain's leaf  --  a designate whose users are NOT
     // themselves designates (otherwise we'd rewrite a parent and
-    // lose the inner part of the chain) — then verify the chain
+    // lose the inner part of the chain)  --  then verify the chain
     // bottoms out at one of the equivalent roots.
     llvm::SmallVector<hlfir::DesignateOp, 16> chainLeaves;
     func.walk([&](hlfir::DesignateOp dg) {
@@ -1161,7 +1161,7 @@ static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
         // Walk the memref chain back to an equivalent root.  Peel
         // through ``hlfir.designate`` (intermediate component / index
         // selects), ``fir.load`` (loaded box from an allocatable /
-        // pointer declare slot), ``fir.rebox`` (class<heap<T>> →
+        // pointer declare slot), ``fir.rebox`` (class<heap<T>> ->
         // class<T> and similar peels), and ``fir.convert``.  The
         // load + rebox peels are what catch direct-access reads on
         // a CLASS-allocatable in main scope:
@@ -1194,7 +1194,7 @@ static void rewriteDesignate(
     const llvm::StringSet<> &concatMembers = {}) {
 
     // The hlfir.designate op prints the component as ``{"name"}`` but stores
-    // it under the attribute key ``component_name`` — depending on the HLFIR
+    // it under the attribute key ``component_name``  --  depending on the HLFIR
     // tablegen spelling.  Tolerate either key so we don't silently no-op.
     mlir::StringAttr compAttr;
     for (auto nm : {"component_name", "component"}) {
@@ -1230,7 +1230,7 @@ static void rewriteDesignate(
             if (!parentHasComponent && !parentDg.getIndices().empty()) {
                 mlir::OpBuilder rb(dg);
                 if (!dg.getIndices().empty()) {
-                    // Element access: ``A(i)%w(j, k)`` → flat
+                    // Element access: ``A(i)%w(j, k)`` -> flat
                     // designate ``A_w(i, j, k)``.
                     llvm::SmallVector<mlir::Value, 8> mergedIndices;
                     for (auto idx : parentDg.getIndices()) mergedIndices.push_back(idx);
@@ -1245,14 +1245,14 @@ static void rewriteDesignate(
                     if (parentDg.getResult().use_empty()) parentDg.erase();
                     return;
                 }
-                // Whole-component access: ``A(i)%w`` → flat section
-                // ``A_w(i, 1:M:1, 1:M:1, ...)`` — scalar outer index,
+                // Whole-component access: ``A(i)%w`` -> flat section
+                // ``A_w(i, 1:M:1, 1:M:1, ...)``  --  scalar outer index,
                 // triplet over every inner dim.  The result type
                 // stays the original member type (``ref<array<M, ...>>``).
                 auto memberSeqTy = mlir::dyn_cast<fir::SequenceType>(
                     fir::unwrapRefType(dg.getResult().getType()));
                 if (!memberSeqTy) {
-                    // Whole scalar component (rare) — same as
+                    // Whole scalar component (rare)  --  same as
                     // empty-indices old behaviour: replace use.
                     dg.getResult().replaceAllUsesWith(newBase);
                     dg.erase();
@@ -1271,7 +1271,7 @@ static void rewriteDesignate(
                 }
                 for (auto d : memberSeqTy.getShape()) {
                     if (d == fir::SequenceType::getUnknownExtent()) {
-                        // Cannot construct a static-bound triplet —
+                        // Cannot construct a static-bound triplet  --
                         // bail to the safe fallback.
                         return;
                     }
@@ -1303,7 +1303,7 @@ static void rewriteDesignate(
                 return;
             }
         }
-        // Parent isn't an indexed designate — fall through to the
+        // Parent isn't an indexed designate  --  fall through to the
         // single-rewrite path (probably a whole-array reference).
     }
 
@@ -1336,12 +1336,12 @@ struct FlattenStructsPass
     }
     llvm::StringRef getDescription() const final {
         return "Flatten derived types with flat members into per-member "
-               "companions (AoS → SoA), rewriting struct-typed dummy "
+               "companions (AoS -> SoA), rewriting struct-typed dummy "
                "arguments, renaming the function, and splitting local "
                "allocations.";
     }
 
-    /// Collected FlattenEntry dicts — stamped on the module at the end
+    /// Collected FlattenEntry dicts  --  stamped on the module at the end
     /// of ``runOnOperation`` as the ``hlfir.flatten_plan`` attribute.
     llvm::SmallVector<mlir::Attribute, 4> planEntries;
 
@@ -1366,7 +1366,7 @@ struct FlattenStructsPass
     /// Append one FlattenEntry dict to ``planEntries`` describing the
     /// just-performed struct-dummy split.  Covers the *per-member* path
     /// (``replaceStructArg``); the jagged-ELLPACK path is omitted from
-    /// the plan — callers of that path fall back to the looped copy-in
+    /// the plan  --  callers of that path fall back to the looped copy-in
     /// emission without plan metadata.
     ///
     /// ``excludeMembers`` lists member names already covered by a
@@ -1386,7 +1386,7 @@ struct FlattenStructsPass
         };
 
         std::string outerName = demangleVarName(argDecl.getUniqName());
-        // Outer type: dump the declared type as MLIR text — the Python
+        // Outer type: dump the declared type as MLIR text  --  the Python
         // side uses it only for commentary, so round-tripping the MLIR
         // form is sufficient.
         std::string outerType;
@@ -1399,7 +1399,7 @@ struct FlattenStructsPass
         llvm::SmallVector<mlir::Attribute, 4> readExprs;
         // All members of one recipe share a dtype in the current model.
         // Record the element dtype of the first flat member (they match
-        // by construction — the per-member path rejects ragged member
+        // by construction  --  the per-member path rejects ragged member
         // dtypes upstream in ``allMembersFlattenable``).
         std::string scratchDtype = "float64";
         int64_t maxRank = 0;
@@ -1454,7 +1454,7 @@ struct FlattenStructsPass
                 scratchDtype = dt;
         }
 
-        // Nothing to record when every member was excluded — the
+        // Nothing to record when every member was excluded  --  the
         // companion entries already cover them.
         if (flatNames.empty()) return;
 
@@ -1550,7 +1550,7 @@ struct FlattenStructsPass
 
         // read_expr: ``<outer>($i1, ..., $iOR)%<member>($i_OR+1)``.
         // We always treat the allocatable member as 1-D for now (the
-        // inner extent is the cap symbol — runtime-determined).
+        // inner extent is the cap symbol  --  runtime-determined).
         std::string read = outerName;
         read += "(";
         for (unsigned i = 1; i <= outerRank; ++i) {
@@ -1667,7 +1667,7 @@ struct FlattenStructsPass
     ///
     /// Out of scope: array-of-struct copies (whole-AoS-to-AoS).  Those
     /// would need to wrap each per-leaf assign in an outer-dim DO loop
-    /// — separate work.
+    ///  --  separate work.
     void decomposeStructAssigns(mlir::func::FuncOp func) {
         llvm::SmallVector<hlfir::AssignOp, 16> targets;
         func.walk([&](hlfir::AssignOp op) {
@@ -1692,7 +1692,7 @@ struct FlattenStructsPass
             rec = peelToRecord(src.getType(), outerIsArray, outerShape);
             if (!rec) return;
         }
-        // AoS → AoS struct copy is out of scope (would need an outer
+        // AoS -> AoS struct copy is out of scope (would need an outer
         // index loop wrapping each leaf assign).  Leave the assign
         // alone; downstream gates flag it.
         if (outerIsArray) return;
@@ -1724,7 +1724,7 @@ struct FlattenStructsPass
                 // Array-valued field needs a fir.shape operand for the
                 // hlfir.designate verifier ("shape must be provided if
                 // and only if the result is an array that is not a box
-                // address").  Static extents only — dynamic-extent
+                // address").  Static extents only  --  dynamic-extent
                 // record members aren't reachable through
                 // ``collectFlatLeaves`` anyway.
                 mlir::Value fieldShape;
@@ -1756,7 +1756,7 @@ struct FlattenStructsPass
             mlir::Value rhsLeaf = buildLeafDesignate(src, leaf);
             if (!lhsLeaf || !rhsLeaf) {
                 // One of the chains failed to resolve a component;
-                // bail out for this assign — leave it intact and let
+                // bail out for this assign  --  leave it intact and let
                 // downstream gates flag it loudly.
                 return;
             }
@@ -1818,7 +1818,7 @@ struct FlattenStructsPass
             // AoS dummy args: the local rewrite already handles the
             // concat shape; the dummy-arg path needs the per-member
             // block-arg insertion + recipe entry to match.  Static
-            // outer extent only — dynamic-extent AoS dummies require
+            // outer extent only  --  dynamic-extent AoS dummies require
             // a fresh symbol per padded dim (out of scope).
             if (outerIsArray) {
                 for (auto d : outerShape)
@@ -1842,7 +1842,7 @@ struct FlattenStructsPass
                 // a flat type with static extents we can replace the
                 // single struct dummy with one block arg per leaf.
                 // Outer-array nested (``type(t)::s(N)`` where ``t`` is
-                // nested) is left for a follow-up — the dummy-arg block-
+                // nested) is left for a follow-up  --  the dummy-arg block-
                 // arg shape would need extra outer-dim handling.
                 if (outerIsArray) continue;
                 llvm::SmallVector<std::string, 4> prefix;
@@ -1852,7 +1852,7 @@ struct FlattenStructsPass
                 p.leaves = std::move(leaves);
             }
             // Phase 5b: dummy struct args with allocatable members
-            // flatten the same way as local instances — each
+            // flatten the same way as local instances  --  each
             // allocatable member becomes a flat top-level allocatable
             // companion (``<base>_<member>``) and the bindings layer
             // marshals it across the call boundary.
@@ -1890,7 +1890,7 @@ struct FlattenStructsPass
                 // Phase 2 dummy-arg extension: replace the nested struct
                 // dummy with one block arg per leaf.  Bindings-side
                 // ``FlattenEntry`` emission for ``outer_kind="dummy_nested"``
-                // is a separate follow-up — Python-side callers can pass
+                // is a separate follow-up  --  Python-side callers can pass
                 // the flat companions directly via kwargs today; the
                 // Fortran caller wrapper needs the recipe to pack the
                 // nested struct's path-form members on its end.
@@ -1900,7 +1900,7 @@ struct FlattenStructsPass
             // Record the entry BEFORE the declare is erased.  If
             // ``replaceStructArg`` bails out (dangling users on the
             // old declare), the entry still describes the intended
-            // recipe — but the SDFG won't carry the flat members so
+            // recipe  --  but the SDFG won't carry the flat members so
             // the emitter will just skip it downstream.
             std::string intentStr = extractIntent(p.argDecl.getFortranAttrs());
             llvm::StringSet<> aosAllocSet;
@@ -1939,7 +1939,7 @@ struct FlattenStructsPass
 
         // Insert new block args right after the old one so the argument order
         // tracks the original member order.  Insertion shifts indices >= pos
-        // by 1, so we insert sequentially at argIdx+1, argIdx+2, …
+        // by 1, so we insert sequentially at argIdx+1, argIdx+2, ...
         llvm::StringMap<mlir::Value> memberBase;
         llvm::StringMap<mlir::Value> aosAllocFlatBase;
         llvm::StringSet<> concatMembers;
@@ -1949,7 +1949,7 @@ struct FlattenStructsPass
             auto memTy   = pair.second;
 
             // Phase 5c-B (true SDFG boundary): AoS + allocatable member.
-            // Insert two block args — the runtime cap (``index``) then a
+            // Insert two block args  --  the runtime cap (``index``) then a
             // 2D data buffer ``ref<array<N x ?xT>>``.  Build a declare
             // for each, with the cap declare's name = ``cap_<base>_<m>``
             // so ``traceToDecl`` resolves the inner extent to that
@@ -1967,7 +1967,7 @@ struct FlattenStructsPass
                 else
                     continue;
 
-                // Pointee shape: outer extents (static) × {?} (cap, runtime).
+                // Pointee shape: outer extents (static) x {?} (cap, runtime).
                 llvm::SmallVector<int64_t, 4> exts(outerShape.begin(), outerShape.end());
                 exts.push_back(fir::SequenceType::getUnknownExtent());
                 auto pointee = fir::SequenceType::get(exts, eleTy);
@@ -1976,7 +1976,7 @@ struct FlattenStructsPass
                 // dynamic extent must be a ``!fir.box``; flang itself
                 // emits the same shape for explicit-shape dummies whose
                 // last extent comes from a runtime ``n`` (see how
-                // ``real(8), intent(inout) :: x(3, n)`` lowers — the
+                // ``real(8), intent(inout) :: x(3, n)`` lowers  --  the
                 // declare returns ``(!fir.box<!fir.array<3x?xf64>>,
                 // !fir.ref<!fir.array<3x?xf64>>)``).  Match that pair so
                 // the verifier accepts the synthesised declare.
@@ -2109,7 +2109,7 @@ struct FlattenStructsPass
                 designates.push_back(dg);
                 continue;
             }
-            // Pure indexed designate (A(i) on AoS dummy) — collect children.
+            // Pure indexed designate (A(i) on AoS dummy)  --  collect children.
             for (auto *cu : dg.getResult().getUsers())
                 if (auto cdg = mlir::dyn_cast<hlfir::DesignateOp>(cu))
                     designates.push_back(cdg);
@@ -2130,7 +2130,7 @@ struct FlattenStructsPass
     /// Replace a NESTED struct dummy arg with one block arg per flat
     /// leaf.  Mirrors ``replaceStructArg`` for the single-level case
     /// but consumes ``collectFlatLeaves`` output to handle arbitrary
-    /// nesting depth.  Static-shape leaves only — dynamic-extent or
+    /// nesting depth.  Static-shape leaves only  --  dynamic-extent or
     /// allocatable leaves are left for the Phase 5b nested follow-up
     /// (the leaf walker bails on those upstream).
     ///
@@ -2180,7 +2180,7 @@ struct FlattenStructsPass
             // dynamic-extent leaves were filtered upstream by
             // ``collectFlatLeaves``.  Allocatable / pointer leaves
             // (``box<heap<array<?>>>`` / ``box<ptr<array<?>>>``) carry
-            // their shape in the descriptor at runtime — no explicit
+            // their shape in the descriptor at runtime  --  no explicit
             // shape op, but the Fortran ``allocatable`` / ``pointer``
             // attr must be set so ``extract_vars`` peels through every
             // wrapper to find the inner SequenceType (rank > 0
@@ -2195,7 +2195,7 @@ struct FlattenStructsPass
                 }
                 leafShape = emitStaticShape(b, loc, exts);
             } else if (auto box = mlir::dyn_cast<fir::BoxType>(leafTy)) {
-                // Allocatable / pointer leaf — the box wraps a
+                // Allocatable / pointer leaf  --  the box wraps a
                 // ``fir.heap`` (allocatable) or ``fir.ptr`` (pointer).
                 bool isPointer = mlir::isa<fir::PointerType>(box.getEleTy());
                 fortranAttrs = fir::FortranVariableFlagsAttr::get(
@@ -2240,7 +2240,7 @@ struct FlattenStructsPass
     /// Pack a jagged scalar-struct argument (1-D array members of same scalar
     /// type with differing extents) into a single 2-D companion of shape
     /// ``[numMembers x max(extents)]``.  Access to member `m` at index `j`
-    /// becomes ``combined(rowIdx(m), j)`` — an ELLPACK-style padded view.
+    /// becomes ``combined(rowIdx(m), j)``  --  an ELLPACK-style padded view.
     void replaceStructArgJagged(mlir::func::FuncOp func, unsigned argIdx,
                                 hlfir::DeclareOp argDecl, fir::RecordType rec,
                                 mlir::Type eleTy,
@@ -2328,7 +2328,7 @@ struct FlattenStructsPass
     // top-level allocatable ``s_w``, the user's ``allocate(s%w(N))``
     // statement still lowers via flang to a ``fir.allocmem`` op whose
     // ``uniq_name`` attribute points at the MEMBER's namespace
-    // (``_QMlibEw.alloc``) — independent of the enclosing struct's
+    // (``_QMlibEw.alloc``)  --  independent of the enclosing struct's
     // declare scope.  The bridge's ``collectAllocSites`` matches
     // allocate sites by ``<declUniqName>.alloc``, so without renaming,
     // the flat declare's allocate site is invisible and the SDFG
@@ -2350,7 +2350,7 @@ struct FlattenStructsPass
     // * Multiple allocate sites for the same member (an allocate +
     //   deallocate + re-allocate cycle, for example) all get the
     //   same flat name.  ``allocAliasName`` in extract_vars.cpp then
-    //   mints ``<flat>_alloc1``, ``<flat>_alloc2``, … per site.
+    //   mints ``<flat>_alloc1``, ``<flat>_alloc2``, ... per site.
     void renameMemberAllocmems(hlfir::DeclareOp decl,
                                llvm::StringRef memName,
                                llvm::StringRef flatName) {
@@ -2453,19 +2453,19 @@ struct FlattenStructsPass
     // -------
     // * Element-form designate of ``decl`` (``A(i)`` with a SCALAR
     //   index per outer dim) is the only path we walk.  Section-form
-    //   designates of the AoS outer (``A(1:N)``) wouldn't match —
+    //   designates of the AoS outer (``A(1:N)``) wouldn't match  --
     //   they'd be compiler-generated whole-array assigns, not
     //   per-instance allocates.
     // * Sites whose size operand isn't a constant (e.g.
-    //   ``allocate(A(i)%w(some_runtime_var))``) cause us to bail —
+    //   ``allocate(A(i)%w(some_runtime_var))``) cause us to bail  --
     //   that's the variable-runtime-size case (5c-B / 5c-C).
-    /// Collapse the ``fir.load (designate of A(i){memName}) →
+    /// Collapse the ``fir.load (designate of A(i){memName}) ->
     /// hlfir.designate (loaded, j)`` read pattern into a direct
     /// 2-index ``hlfir.designate flatBase (i, j)`` over the Phase
     /// 5c-A companion.
     ///
     /// Why: the original IR threads every read of ``A(i)%w(j)``
-    /// through the box descriptor — flang emits ``fir.load %ref``
+    /// through the box descriptor  --  flang emits ``fir.load %ref``
     /// to fetch the descriptor, then ``hlfir.designate %loaded
     /// (j)`` to index inside the box.  After flatten replaces
     /// ``%ref`` with a plain ``ref<array<NxMxT>>``, ``fir.load``
@@ -2490,7 +2490,7 @@ struct FlattenStructsPass
     ///   separate section-rewrite path that's not yet wired.
     /// * If any reader is a ``fir.box_addr`` rather than a
     ///   designate (the path the existing pointer rewrite
-    ///   handles), the chain is left alone — the bridge's
+    ///   handles), the chain is left alone  --  the bridge's
     ///   downstream handling for ``box_addr`` returns a
     ///   ``fir.ptr<...>`` that doesn't match the static 2D
     ///   companion.  Future TODO if real code hits this.
@@ -2503,7 +2503,7 @@ struct FlattenStructsPass
         // ``A`` dummy becomes a fresh ``hlfir.declare %caller_A_decl
         // dummy_scope %dsc {uniq_name="..."}`` aliasing the same
         // storage.  Designates inside the inlined kernel body are
-        // rooted at the alias's results, not ``decl``'s — without
+        // rooted at the alias's results, not ``decl``'s  --  without
         // following alias chains we'd miss every read inside the
         // inlined call.
         auto isDeclOrAlias = [&](mlir::Value v) -> bool {
@@ -2530,9 +2530,9 @@ struct FlattenStructsPass
         };
         if (auto func = decl->getParentOfType<mlir::func::FuncOp>()) {
             // Two-stage erase so dependencies tear down cleanly:
-            // (1) eraseInner — the rewritten inner designates
+            // (1) eraseInner  --  the rewritten inner designates
             //     (still hold a use on ``load`` until erased)
-            // (2) eraseRest  — load, memDg, parent (sweep after the
+            // (2) eraseRest   --  load, memDg, parent (sweep after the
             //     inner designates are gone so the use_empty checks
             //     trigger)
             llvm::SmallVector<mlir::Operation*, 16> eraseInner;
@@ -2614,11 +2614,11 @@ struct FlattenStructsPass
     /// the flat 2D companion: ``A_<member>(i, 1:M:1) = rhs``.
     /// Without this, the existing concat path replaces the LHS with
     /// the bare flat declare (the whole 2D), and the scalar ``rhs``
-    /// gets broadcast across ALL rows — silently corrupting
+    /// gets broadcast across ALL rows  --  silently corrupting
     /// previously-written rows.
     ///
     /// Element-form assigns (``A(i)%w(j) = ...``) are NOT in scope
-    /// here — those go through the element designate + the
+    /// here  --  those go through the element designate + the
     /// existing concat path, which already merges parent + inner
     /// indices correctly.  Only whole-component assigns
     /// (``A(i)%w = scalar`` or ``A(i)%w = src(:)``) need the
@@ -2628,7 +2628,7 @@ struct FlattenStructsPass
     /// ``allocate(A(i)%<member>(N_i))`` when ``i`` matches
     /// ``targetIdx`` and the size is a compile-time constant.
     /// Returns ``nullopt`` if the matching allocate isn't found or
-    /// its size isn't constant — in which case the caller falls back
+    /// its size isn't constant  --  in which case the caller falls back
     /// to the global cap ``M``.
     static std::optional<int64_t> aosAllocSizeAt(
             hlfir::DeclareOp decl, llvm::StringRef memName,
@@ -2713,7 +2713,7 @@ struct FlattenStructsPass
                 // Per-instance section bound.  When the outer index
                 // is a compile-time constant we can match it to a
                 // specific allocate site and use that site's size as
-                // the section bound — needed for the jagged case
+                // the section bound  --  needed for the jagged case
                 // (``A(1)%val(3)`` vs ``A(2)%val(4)``) so each row
                 // assign writes only its live region instead of
                 // splatting up to the global cap.  Falls back to the
@@ -2751,7 +2751,7 @@ struct FlattenStructsPass
                 indices.push_back(c1.getResult());
                 tripletFlags.push_back(true);
 
-                // Result type: box<array<sectionBound x T>> — a row
+                // Result type: box<array<sectionBound x T>>  --  a row
                 // view shaped to match the per-instance live region.
                 auto flatTy = mlir::cast<fir::ReferenceType>(
                     flatBase.getType()).getEleTy();
@@ -2820,13 +2820,13 @@ struct FlattenStructsPass
     /// AoS allocatable member after Phase 5c-A flattening.  The 2D
     /// buffer is now pre-allocated at static shape, so each
     /// ``allocate(A(i)%<member>(M))`` becomes a no-op:
-    ///   * ``fir.store (embox(allocmem)) to <designate>`` — erase.
-    ///   * ``fir.allocmem`` itself — erase if dead (no other users).
-    ///   * ``fir.embox`` — erase if dead.
-    ///   * ``fir.freemem`` (matching deallocate) — erase.
+    ///   * ``fir.store (embox(allocmem)) to <designate>``  --  erase.
+    ///   * ``fir.allocmem`` itself  --  erase if dead (no other users).
+    ///   * ``fir.embox``  --  erase if dead.
+    ///   * ``fir.freemem`` (matching deallocate)  --  erase.
     ///   * Any subsequent ``fir.zero_bits`` + ``fir.embox`` + store
     ///     pattern (the post-deallocate "set descriptor to null"
-    ///     sequence flang inserts) — erase.
+    ///     sequence flang inserts)  --  erase.
     void eraseAosAllocDeallocChain(hlfir::DeclareOp decl,
                                    llvm::StringRef memName) {
         llvm::SmallVector<mlir::Operation*, 16> deadOps;
@@ -2883,7 +2883,7 @@ struct FlattenStructsPass
         // dead and get swept by canonicalisation downstream.  The
         // wrapping do-loop's body (e.g. the per-instance
         // ``deallocate`` loop) becomes a stub of just iv bookkeeping
-        // and dead box-load ops — but the IR-level loop op stays.
+        // and dead box-load ops  --  but the IR-level loop op stays.
         // We don't try to erase the loop here (its result types
         // don't trivially substitute into init args).  Instead the
         // SDFGBuilder's post-gen sweep adds a single empty state to
@@ -2918,8 +2918,8 @@ struct FlattenStructsPass
         // accesses (``A(i)%val(j)``) work uniformly because ``j``
         // never exceeds the per-instance live size by program logic;
         // the padding columns stay unread.  Whole-component assigns
-        // (``A(i)%w = scalar``) still fire the section-rewrite path —
-        // see ``rewriteAosWholeMemberAssign`` — but only when the
+        // (``A(i)%w = scalar``) still fire the section-rewrite path  --
+        // see ``rewriteAosWholeMemberAssign``  --  but only when the
         // result is uniform (otherwise the per-instance live size
         // differs from the cap and the simple ``1:M:1`` triplet
         // would over-write padding with stale data).
@@ -2988,7 +2988,7 @@ struct FlattenStructsPass
         auto *def = decl.getMemref().getDefiningOp();
         auto alloca = mlir::dyn_cast_or_null<fir::AllocaOp>(def);
         if (!alloca) return false;
-        // Static shape only — building a companion fir.alloca for a runtime-
+        // Static shape only  --  building a companion fir.alloca for a runtime-
         // sized array would need the original shape operands threaded through.
         if (alloca.getNumOperands() != 0) return false;
 
@@ -3111,7 +3111,7 @@ struct FlattenStructsPass
             // any inlined-callee alias of it) and rewrite each leaf to
             // the matching flat companion in ``leafBase``.  Shared
             // helper with the dummy-arg nested path
-            // (``replaceStructArgNested``) — both sides build the same
+            // (``replaceStructArgNested``)  --  both sides build the same
             // ``leafBase`` and need the same chain-rewrite logic.
             rewriteChainsRootedAt(decl, leafBase);
 
@@ -3124,7 +3124,7 @@ struct FlattenStructsPass
             return;
         }
 
-        // Single-level path — every member is flat directly.
+        // Single-level path  --  every member is flat directly.
         llvm::StringMap<mlir::Value> memberBase;
         // Track which members are AoS-with-array-members so the
         // designate rewriter knows to merge outer + inner indices.
@@ -3154,7 +3154,7 @@ struct FlattenStructsPass
                 else
                     continue;
 
-                // Concat shape: outerShape × {M}.
+                // Concat shape: outerShape x {M}.
                 llvm::SmallVector<int64_t, 4> exts(outerShape.begin(), outerShape.end());
                 exts.push_back(M);
                 auto pointee = fir::SequenceType::get(exts, eleTy);
@@ -3228,7 +3228,7 @@ struct FlattenStructsPass
             // synthesis path (Phase 5a + 5b).  The companion is a
             // top-level allocatable / pointer: ``fir.alloca
             // <box<heap|ptr<array<?xT>>>>`` plus a declare carrying
-            // the matching fortran_attr.  Skipped for AoS outers —
+            // the matching fortran_attr.  Skipped for AoS outers  --
             // those go through the Phase 5c-A path above.
             if (isAllocatableArrayMember(memTy) && !outerIsArray) {
                 auto allocaTy = memTy;  // box<heap|ptr<array<?xT>>>
@@ -3236,8 +3236,8 @@ struct FlattenStructsPass
                 auto newAlloca = b.create<fir::AllocaOp>(loc, allocaTy);
 
                 // Pick the right fortran_attr based on the member's
-                // inner indirection: ``fir.heap`` → ALLOCATABLE,
-                // ``fir.ptr`` → POINTER.  Downstream queries
+                // inner indirection: ``fir.heap`` -> ALLOCATABLE,
+                // ``fir.ptr`` -> POINTER.  Downstream queries
                 // (extract_vars peel-through, the bridge's
                 // allocatable / pointer handling) key on this flag.
                 auto box = mlir::cast<fir::BoxType>(memTy);
@@ -3290,7 +3290,7 @@ struct FlattenStructsPass
             bool concat = outerIsArray && memberIsArray;
             mlir::Type res1Ty = fir::ReferenceType::get(pointee);
             // For the concat case, both result types must be the flat
-            // ref — using ``rewrapWith`` would produce the nested form
+            // ref  --  using ``rewrapWith`` would produce the nested form
             // ``ref<array<N x array<M, ...>>>`` which the verifier
             // rejects against the alloca's flat ref.
             mlir::Type res0Ty = concat
@@ -3298,7 +3298,7 @@ struct FlattenStructsPass
                 : rewrapWith(decl.getResult(0).getType(), memTy);
 
             // Pick the shape operand.  Concat members need a fresh
-            // ``fir.shape`` over the concatenated extent list — the
+            // ``fir.shape`` over the concatenated extent list  --  the
             // original ``decl.getShape()`` only carries the outer
             // dim(s).
             mlir::Value memberShape = shape;
@@ -3323,7 +3323,7 @@ struct FlattenStructsPass
                 // ``type(t) :: x``, so without a fresh ``fir.shape``
                 // the synthesised ``hlfir.declare`` for
                 // ``x_arr_field`` would have a raw address base AND
-                // no shape operand — which the verifier rejects with
+                // no shape operand  --  which the verifier rejects with
                 // "must have a shape operand that is a shape or
                 // shapeshift".
                 auto memSeq = mlir::cast<fir::SequenceType>(memTy);
@@ -3362,9 +3362,9 @@ struct FlattenStructsPass
         // the direct user is an INDEXED designate (no component) on
         // the outer array; the actual component-designate is its
         // child.  We also walk transparently through:
-        //   * ``hlfir.declare`` aliases — inlined-callee dummy declares
+        //   * ``hlfir.declare`` aliases  --  inlined-callee dummy declares
         //     that share the outer's storage.
-        //   * ``fir.embox`` / ``fir.convert`` chains — the wrapping
+        //   * ``fir.embox`` / ``fir.convert`` chains  --  the wrapping
         //     flang inserts when an inlined callee takes a
         //     ``CLASS(t)`` (or assumed-shape ``TYPE(t)``) dummy.  The
         //     outer concrete declare gets emboxed to ``fir.box<t>``,

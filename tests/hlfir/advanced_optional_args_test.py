@@ -66,7 +66,7 @@ end subroutine main
     # as a plain Scalar on the SDFG signature; pass a plain int.
     sdfg(res=res, res2=res2, a=5, a_present=1)
 
-    # Safe path only — second internal ``call fun(res2)`` reads
+    # Safe path only  --  second internal ``call fun(res2)`` reads
     # OPTIONAL ``a`` without checking PRESENT and is UB per Fortran;
     # res2 is left unchecked.  The ``get_indices_c`` call exercises
     # the present-guarded path and stays implicit.

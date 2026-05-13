@@ -1,5 +1,5 @@
 // ============================================================================
-// trace_utils.h — Shared SSA tracing utilities
+// trace_utils.h  --  Shared SSA tracing utilities
 // ============================================================================
 // Walks backward through the def-use chains that Flang emits
 // (fir.convert, fir.load, arith.select, hlfir.declare) to recover
@@ -22,7 +22,7 @@ namespace hlfir_bridge {
 /// Recursion and walk-length budgets for the bridge's SSA tracing and
 /// expression reconstruction.  All are defensive guards against
 /// pathological IR shapes (malformed input, cyclic defs, runaway
-/// inlining) — bumping them never changes semantics on well-formed
+/// inlining)  --  bumping them never changes semantics on well-formed
 /// HLFIR, only reduces false-``?`` fallbacks on deep chains.
 namespace limits {
 
@@ -65,17 +65,17 @@ inline constexpr int kAliasMemrefWalkDepth = 32;
 inline constexpr const char *kShapeHintAttr = "hlfir_bridge.shape_hint";
 
 /// Extract the short Fortran name from Flang's mangled unique name.
-///   "_QFcompute_z_v_grad_wEnproma" → "nproma"
+///   "_QFcompute_z_v_grad_wEnproma" -> "nproma"
 ///
 /// May consult a thread-local override map populated by ``extract_vars``
 /// for inlined-callee dummy-arg declares whose default short name would
 /// collide with a caller-scope declare (``_QFmainEinp`` vs
-/// ``_QFinner_loopsEinp`` both → ``inp``).  Without the override the
+/// ``_QFinner_loopsEinp`` both -> ``inp``).  Without the override the
 /// view-alias edge that links the inlined dummy back to the caller's
 /// storage self-loops.
 std::string extractName(const std::string &mangled);
 
-/// Register ``mangled → shortName`` so subsequent ``extractName`` calls
+/// Register ``mangled -> shortName`` so subsequent ``extractName`` calls
 /// for that exact mangled name return ``shortName`` instead of the
 /// default ``E``-stripped tail.  Used by ``extract_vars`` to break
 /// short-name collisions between a caller declare and an inlined-
@@ -89,16 +89,16 @@ void setManglingOverride(const std::string &mangled, const std::string &shortNam
 void clearManglingOverrides();
 
 /// Trace an SSA value backwards to the hlfir.declare / fir.declare that
-/// introduced it.  Peels fir.convert → fir.load → arith.select transparently.
+/// introduced it.  Peels fir.convert -> fir.load -> arith.select transparently.
 /// Returns the Fortran name, or "" if the chain breaks before a declare.
 ///
 /// For Fortran ``ALLOCATABLE`` variables that get re-allocated, every
 /// ALLOCATE site materialises a fresh SDFG transient.  The bridge keeps
 /// a thread-local "current alias" map (see ``allocAliasFor`` /
 /// ``setAllocAlias``) that maps the raw Fortran name (``x``) to the
-/// active alias (``x``, ``x_alloc1``, ``x_alloc2``, …) at the current
+/// active alias (``x``, ``x_alloc1``, ``x_alloc2``, ...) at the current
 /// IR position.  ``traceToDecl`` consults this map and returns the
-/// alias when set — every read / write site downstream then routes to
+/// alias when set  --  every read / write site downstream then routes to
 /// the correct per-allocation transient without further wiring.
 std::string traceToDecl(mlir::Value val, int max = limits::kTraceToDeclMax);
 
@@ -124,21 +124,21 @@ std::optional<int64_t> traceConstInt(mlir::Value v);
 /// Fortran scalar names + literals + arithmetic operators.  Used by
 /// ``resolveShapeSyms`` to surface a dynamic gather-temp extent
 /// (``arith.select(cmpi sgt, addi(subi(load_ub, load_lb), 1), 0)``
-/// — Flang's clamped "ub - lb + 1") as e.g. ``"max((endcol - startcol)
+///  --  Flang's clamped "ub - lb + 1") as e.g. ``"max((endcol - startcol)
 /// + 1, 0)"`` for use as a symbolic SDFG-array shape dim.  The leaf
 /// scalar names must be promoted to SDFG symbols separately (via
 /// ``symbolNames`` in extract_vars) for the resulting expression to
 /// resolve.
 ///
 /// Returns the empty string on any pattern the helper doesn't
-/// recognise, so callers fall back to their existing ``"?"`` →
+/// recognise, so callers fall back to their existing ``"?"`` ->
 /// synthetic-symbol path.
 std::string traceExtentExpr(mlir::Value v);
 
 /// Walk the same SSA chain ``traceExtentExpr`` recognises and append
 /// every leaf scalar-declare name encountered to ``out``.  Used by
 /// extract_vars Pass 2 to promote the scalars (``startcol``,
-/// ``endcol``, …) that appear in a gather-temp's shape extent
+/// ``endcol``, ...) that appear in a gather-temp's shape extent
 /// expression -- without this, the leaves stay as length-1 Array
 /// scalars and the expression string from ``traceExtentExpr``
 /// references undeclared SDFG names.

@@ -2,7 +2,7 @@
 SDFG symbol, so writes to it emit an interstate-edge assignment that
 bumps the state machine forward.
 
-This is a stricter classification than the current bridge uses — shape
+This is a stricter classification than the current bridge uses  --  shape
 and loop-bound scalars already land as symbols, but an "index-only
 scalar" like ``ix`` in a ``b(i) = a(ix); ix = ix + 1`` pattern does not.
 """

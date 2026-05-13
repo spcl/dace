@@ -6,7 +6,7 @@ intrinsics through the HLFIR frontend.
   table); integer operands lower to an ``arith.select`` predicate
   pattern handled by the generic ternary fallback.
 - ``DIM(a, b)`` returns ``MAX(a - b, 0)``.  Lowered as ``arith.cmp* +
-  arith.select`` — same idiom as the existing min/max fallback.
+  arith.select``  --  same idiom as the existing min/max fallback.
 - ``SHAPE(arr)`` returns a rank-1 integer array of the source's per-dim
   extents (clamped to ``>= 0``).  Lowered as per-element scalar
   assigns; existing assign machinery handles it.
@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_sign_float(tmp_path: Path):
-    """``SIGN(a, b)`` on real(8) — ``math.copysign``."""
+    """``SIGN(a, b)`` on real(8)  --  ``math.copysign``."""
     src = """
 subroutine main(a, b, out)
   real(8), intent(in)  :: a, b
@@ -44,7 +44,7 @@ end subroutine main
 
 
 def test_sign_integer(tmp_path: Path):
-    """``SIGN(a, b)`` on integer — predicate-driven select."""
+    """``SIGN(a, b)`` on integer  --  predicate-driven select."""
     src = """
 subroutine main(a, b, out)
   integer, intent(in)  :: a, b
@@ -121,7 +121,7 @@ end subroutine main
 
 
 def test_shape_3d(tmp_path: Path):
-    """``SHAPE(arr)`` on rank-3 array — output is rank-1 length 3."""
+    """``SHAPE(arr)`` on rank-3 array  --  output is rank-1 length 3."""
     src = """
 subroutine main(arr, n, m, p, out)
   integer, intent(in)  :: n, m, p

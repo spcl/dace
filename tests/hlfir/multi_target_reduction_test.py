@@ -3,7 +3,7 @@
 Regression coverage for the bridge bug where ``buildReduceNode`` only
 captured the destination's array name and dropped the
 ``hlfir.designate`` index, so two ``MINVAL``s in a row both emitted a
-Reduce that wrote through the whole destination — last one won.
+Reduce that wrote through the whole destination  --  last one won.
 
 Each test wires ``res(i) = REDUCE(...)`` for two distinct ``i`` values
 and checks both elements end up correctly populated.
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_minval_two_targets(tmp_path: Path):
-    """``res(1) = MINVAL(d); res(2) = MINVAL(d(:))`` — both emit a
+    """``res(1) = MINVAL(d); res(2) = MINVAL(d(:))``  --  both emit a
     whole-array Reduce; without the destination-index fix both Reduces
     write to ``res[0:2]`` and ``res[1]`` ends up at the identity (inf).
     """
@@ -41,7 +41,7 @@ end subroutine main
 
 
 def test_sum_two_targets(tmp_path: Path):
-    """``res(1) = SUM(d); res(2) = SUM(d(:))`` — same shape, different
+    """``res(1) = SUM(d); res(2) = SUM(d(:))``  --  same shape, different
     LHS index.  SUM has wcr ``a+b`` and identity ``0``."""
     src = """
 subroutine main(d, res)
@@ -77,7 +77,7 @@ end subroutine main
 
 
 def test_mixed_reductions(tmp_path: Path):
-    """Min and max into distinct elements — different wcr lambdas /
+    """Min and max into distinct elements  --  different wcr lambdas /
     identities, so any leakage between them shows up immediately."""
     src = """
 subroutine main(d, res)

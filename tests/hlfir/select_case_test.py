@@ -1,4 +1,4 @@
-"""Fortran SELECT CASE → chain of nested kind="conditional" AST nodes.
+"""Fortran SELECT CASE -> chain of nested kind="conditional" AST nodes.
 
 Exercises every case-label shape the bridge recognises:
 
@@ -62,7 +62,7 @@ def test_select_case_all_shapes(tmp_path, x, expected):
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
     # lift-cf-to-scf refuses to walk past fir.select_case ("terminator with
-    # side effects"), so stick to the minimal pipeline — buildSelectCaseChain
+    # side effects"), so stick to the minimal pipeline  --  buildSelectCaseChain
     # consumes the op directly without needing CFG lifting.
     sdfg = build_sdfg(_SRC_PATH.read_text(), sdfg_dir, name="sel_all", pipeline="hlfir-propagate-shapes").build()
     sdfg.validate()

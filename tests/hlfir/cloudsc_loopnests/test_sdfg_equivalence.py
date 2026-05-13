@@ -8,7 +8,7 @@ then assert numerical equivalence.
 
 Unlike the icon_loopnests bundle (which carries both struct-typed and
 flat versions for cross-checking at the gfortran level), the cloudsc
-loopnests are bare flat subroutines — the SDFG-vs-f2py comparison is
+loopnests are bare flat subroutines  --  the SDFG-vs-f2py comparison is
 the only meaningful correctness check.
 """
 from __future__ import annotations
@@ -126,7 +126,7 @@ def test_cloudsc_saturation_sdfg_matches_f2py(tmp_path: Path):
     pap = np.asfortranarray(1e3 + 1e5 * rng.random((klon, klev), dtype=np.float64))
 
     # Physical constants from CLOUDSC defaults (won't change the
-    # equivalence — both backends see the same numbers).
+    # equivalence  --  both backends see the same numbers).
     consts = dict(rtt=273.16,
                   retv=0.608,
                   r2es=611.21,
@@ -178,7 +178,7 @@ def test_cloudsc_autoconversion_snow_sdfg_matches_f2py(tmp_path: Path):
     zsolqb_ref = np.zeros((klon, ncldqs, ncldqi), order="F")
     zsolqb_sdfg = np.zeros_like(zsolqb_ref, order="F")
 
-    # f2py: zsnowaut (OUT) → return; zsolqb (INOUT) → positional.
+    # f2py: zsnowaut (OUT) -> return; zsolqb (INOUT) -> positional.
     zsnowaut_ref = ref.autoconversion_snow(kidia,
                                            kfdia,
                                            ztp1,

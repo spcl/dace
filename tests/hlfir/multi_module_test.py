@@ -1,16 +1,16 @@
 """Tests covering multiple Fortran modules, ``use`` chains, and
 module-level constants.
 
-The HLFIR frontend doesn't re-parse Fortran in Python — Flang already
+The HLFIR frontend doesn't re-parse Fortran in Python  --  Flang already
 folds module imports during ``-emit-hlfir``, so by the time the bridge
 sees the IR every cross-module reference has been resolved to a global
 symbol or an inlined constant.  These tests pin that contract:
 
 - Single-module ``use`` works (one module + ``use`` from main).
-- Chained ``use`` (``module a → module b uses a → main uses b``) works.
+- Chained ``use`` (``module a -> module b uses a -> main uses b``) works.
 - Module ``parameter`` constants land as inlined literals in the SDFG,
   not as runtime arguments.
-- Multiple modules each contributing a procedure to ``main`` — each
+- Multiple modules each contributing a procedure to ``main``  --  each
   procedure can be inlined or left as a fir.call (the inline-all pass
   collapses both into a single function-scope HLFIR for the bridge).
 """
@@ -125,7 +125,7 @@ end subroutine main
 
 def test_module_parameter_in_loop_bound(tmp_path):
     """Module ``parameter`` used as a DO loop upper bound + a runtime
-    array argument — Flang folds the parameter into a literal during
+    array argument  --  Flang folds the parameter into a literal during
     ``-emit-hlfir`` so the LoopRegion's condition becomes a constant
     expression.  RHS uses indexed array reads (which thread through
     ``iter_map``) rather than the loop iter as a scalar (a known
@@ -156,7 +156,7 @@ end subroutine main
 
 def test_use_only_renamed_symbol(tmp_path):
     """``use mod, only : local_name => mod_name`` renames the imported
-    symbol — the rename happens entirely in Flang's symbol resolution
+    symbol  --  the rename happens entirely in Flang's symbol resolution
     and the bridge sees the canonical name."""
     src = """
 module trig_consts

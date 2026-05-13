@@ -100,7 +100,7 @@ struct NoSubscriptGuard {
 };
 
 /// When true, suppress the ``dace.float32(...)`` wrap around f32
-/// constants and f32→f64 converts.  Set inside ``buildBoolExpr`` /
+/// constants and f32->f64 converts.  Set inside ``buildBoolExpr`` /
 /// ``buildExprWithSubscripts`` -- the resulting string lands in an
 /// interstate-edge condition or ConditionalBlock guard, parsed by
 /// DaCe's symbolic engine which treats ``dace.float32`` as a free

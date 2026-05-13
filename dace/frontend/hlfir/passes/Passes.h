@@ -1,5 +1,5 @@
 // ============================================================================
-// Passes.h — Public API for the hlfir_bridge pass library.
+// Passes.h  --  Public API for the hlfir_bridge pass library.
 // ============================================================================
 // Each pass gets a constructor function here and a registration line in
 // Passes.cpp's registerAllBridgePasses().  That single registration call

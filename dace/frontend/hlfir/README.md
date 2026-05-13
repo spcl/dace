@@ -1,4 +1,4 @@
-# HLFIR → DaCe frontend
+# HLFIR -> DaCe frontend
 
 ## Design rationale
 
@@ -14,18 +14,18 @@ invariant; the Python walker only has to understand one narrow IR
 shape because the earlier stages normalised away the irregularities.
 
 ```
-.f90 ── flang -fc1 -emit-hlfir ──▶ .hlfir file(s)
-                                       │
+.f90 -- flang -fc1 -emit-hlfir --> .hlfir file(s)
+                                       |
                             (1) parse + snapshot interface
-                                       │
+                                       |
                         (2) inline + verify + DCE
-                                       │
+                                       |
                        (3) normalise (HLFIR rewrites)
-                                       │
+                                       |
                             (4) build SDFG
-                                       │
+                                       |
                           (5) regen binding
-                                       ▼
+                                       v
               <entry>_bindings.f90  +  compiled SDFG .so
 ```
 
@@ -33,12 +33,12 @@ shape because the earlier stages normalised away the irregularities.
 
 **(0, optional) Pre-process source.** `dace.frontend.hlfir.preprocess.preprocess_fortran`
 rewrites `IF (intvar)` to `IF (intvar /= 0)` for any INTEGER scalar
-declared in the source. Off by default — flang-new-21 rejects bare
+declared in the source. Off by default  --  flang-new-21 rejects bare
 INTEGER as an IF condition (only LOGICAL is legal), and the rewrite
 must happen at the source layer because the parser fails before HLFIR
 is even produced. Real codebases that need it: ECRAD radiation kernels,
 parts of CloudSC microphysics (`IF (laericeauto)`), ICON tendency
-scaffolding. We dislike adding it — it's a SED-style regex, not a
+scaffolding. We dislike adding it  --  it's a SED-style regex, not a
 Fortran parser, so it's brittle by construction. Opt in per call site
 (`compile_to_hlfir(..., preprocess=True)`); leave off when feeding
 clean source so we don't paper over real issues.
@@ -46,7 +46,7 @@ clean source so we don't paper over real issues.
 **(1) Parse.** One or more `.hlfir` files are loaded into a shared
 `MLIRContext` and merged into a single `ModuleOp` via
 `SymbolTable::insert`. A pre-pass snapshot of the caller-visible
-`hlfir.declare`s — dummy names, intents, derived-type layouts — is
+`hlfir.declare`s  --  dummy names, intents, derived-type layouts  --  is
 captured as `FortranInterface`. Entry points: `HLFIRModule.parse_files`,
 `HLFIRModule.get_fortran_interface`.
 
@@ -58,7 +58,7 @@ C-stdlib allowlist. Inlining requires the `DialectInlinerInterface`
 extensions for `fir` / `func` / `LLVM` to be attached to the context;
 the bridge constructor does this once.
 
-**(3) Normalise.** HLFIR rewrites in strict order — each depends on
+**(3) Normalise.** HLFIR rewrites in strict order  --  each depends on
 its predecessors having reshaped the IR.  This is the actual
 `DEFAULT_PIPELINE` order (see `builder/__init__.py`); stage (2)'s
 `hlfir-inline-all` is the second entry in the same pipeline, listed
@@ -73,17 +73,17 @@ separately above only to keep the conceptual flow readable:
 | `hlfir-expand-vector-subscript-scatter` | Replace `hlfir.region_assign` with an `hlfir.elemental_addr` destination (vector-subscripted scatter `d(cols) = source`) by an explicit DO loop |
 | `symbol-dce` | Drop private callee bodies once `hlfir-inline-all` has folded them in |
 | `fir-polymorphic-op` | Statically devirtualise resolvable `fir.dispatch` / `fir.select_type`; lowers the rest to an indirect-call shape that the next pass catches |
-| `hlfir-reject-polymorphism` | Loud-fail on any surviving `fir.dispatch`, `fir.select_type`, or `fir.box_tdesc` (residual indirect dispatch from `fir-polymorphic-op`) — the bridge supports CLASS-as-monomorphic-box only |
-| `hlfir-flatten-structs` | AoS → SoA; emits `hlfir.flatten_plan` module attribute. Peels `fir.class<T>` via `BaseBoxType` so monomorphic CLASS receivers flatten through the same path as TYPE |
+| `hlfir-reject-polymorphism` | Loud-fail on any surviving `fir.dispatch`, `fir.select_type`, or `fir.box_tdesc` (residual indirect dispatch from `fir-polymorphic-op`)  --  the bridge supports CLASS-as-monomorphic-box only |
+| `hlfir-flatten-structs` | AoS -> SoA; emits `hlfir.flatten_plan` module attribute. Peels `fir.class<T>` via `BaseBoxType` so monomorphic CLASS receivers flatten through the same path as TYPE |
 | `hlfir-propagate-shapes` | Assumed-shape dummies acquire real extent symbols |
 | `hlfir-default-intent` | Intent-less dummies default to `intent_inout` |
-| `lift-cf-to-scf` | Raw-CFG loops (`DO WHILE`, `DO…EXIT`) → `scf.while` + `scf.if` |
-| `sccp` → `canonicalize` → `cse` | Fold + simplify + dedupe after HLFIR exposed its constants |
+| `lift-cf-to-scf` | Raw-CFG loops (`DO WHILE`, `DO...EXIT`) -> `scf.while` + `scf.if` |
+| `sccp` -> `canonicalize` -> `cse` | Fold + simplify + dedupe after HLFIR exposed its constants |
 
 **(4) Build SDFG.** `bridge/extract_vars.cpp` classifies every
 `hlfir.declare` as `array`, `symbol`, or `scalar` (rules below).
 `bridge/extract_ast.cpp` is the dispatcher; the AST extraction itself
-is split into focused translation units under `bridge/ast/` —
+is split into focused translation units under `bridge/ast/`  --
 `expressions.cpp` (RHS rendering), `assigns.cpp` (assignment-shape
 builders), `elementals.cpp` (reductions + libcall + select-case),
 `control_flow.cpp` (cmp / boolean / scf-while / merge), `dispatch.cpp`
@@ -99,7 +99,7 @@ literal) and every non-trivial IF condition is materialised as an SDFG
 symbol on a state-change before the block. Names follow a global
 counter: `loopbegin_<N>` / `loopend_<N>` for loop bounds and
 `if_cond_<N>` for branch guards. The `LoopRegion` / `ConditionalBlock`
-itself then references **only** the symbol — no expression rewriting
+itself then references **only** the symbol  --  no expression rewriting
 in the bound or condition. This:
   * keeps the bridge's emitters small (no iter-rename plumbing in
     bound expressions, no ad-hoc `[0]` subscripting in IF conditions);
@@ -125,12 +125,12 @@ built SDFG, in order:
    each loop that re-asserts `<original_var> = <loop_end>` so
    downstream code reading the un-renamed name sees the correct
    post-loop value.  Skips while-shape loops (no induction variable).
-   Renders the reconstruction RHS via `dace.symbolic.symstr(arrayexprs=…)`
+   Renders the reconstruction RHS via `dace.symbolic.symstr(arrayexprs=...)`
    so an array-subscripted bound like `row_ptr[i+1] - 1` renders with
    `[]` (not `()`, which sympy would print and the C++ codegen would
    reject).  The bridge consequently emits each `LoopRegion` using the
-   source-Fortran iter name (`jk`, `je`, …) verbatim and lets this
-   pass handle the uniquification — no `iter_map` plumbing in the
+   source-Fortran iter name (`jk`, `je`, ...) verbatim and lets this
+   pass handle the uniquification  --  no `iter_map` plumbing in the
    emitters.
 
 2. **`replace_length_one_arrays_with_scalars`**
@@ -141,7 +141,7 @@ built SDFG, in order:
    expressions.  Runs with **`transient_only=True`** at the top
    level: only LOCAL 1-element transients (loop accumulators left as
    length-1 arrays) get folded.  Signature scalars follow the bridge's
-   I/O convention — `intent(in)` / `VALUE` are emitted directly as
+   I/O convention  --  `intent(in)` / `VALUE` are emitted directly as
    `Scalar` by `descriptors.py`, while `intent(out)` / `intent(inout)`
    stay as length-1 ``Array`` so callers can pass a numpy 1-element
    buffer to receive the value.  Recurses into nested SDFGs (their
@@ -157,8 +157,8 @@ via `init_expr` / `update_expr`; mutating it elsewhere races with
 that machinery and breaks the SSA invariant the iter pass relies on.
 
 **(5) Regen binding.** `bindings/emit_bindings` reads three artefacts
-— `FortranInterface` (outer caller surface), `FrozenSignature`
-(inner SDFG surface), and the `FlattenPlan` from stage 3 — and writes
+ --  `FortranInterface` (outer caller surface), `FrozenSignature`
+(inner SDFG surface), and the `FlattenPlan` from stage 3  --  and writes
 `<entry>_bindings.f90`: a ref-counted Fortran module that preserves
 the caller's original signature, populates SDFG symbols via
 `size` / `lbound`, and for each struct member picks between a zero-copy
@@ -168,16 +168,16 @@ recipe.
 ## Data artefacts
 
 These are the structured records that flow between stages. They are
-the frontend's stable contract surface — new features extend them,
+the frontend's stable contract surface  --  new features extend them,
 they do not invent parallel channels.
 
 | Artefact | Produced at | Consumed at | Role |
 | --- | --- | --- | --- |
 | `FortranInterface` | (1) snapshot | (5) emit | Caller-facing dummy list + derived-type layouts |
-| `FlattenPlan` (MLIR attr) | (3) `hlfir-flatten-structs` | (5) emit | Per-dummy AoS→SoA unpack recipe (`flat_names`, `read_exprs`, `shape_exprs`, `aliasable`, `aos_alloc`+`cap_symbol` for padding-to-max) |
+| `FlattenPlan` (MLIR attr) | (3) `hlfir-flatten-structs` | (5) emit | Per-dummy AoS->SoA unpack recipe (`flat_names`, `read_exprs`, `shape_exprs`, `aliasable`, `aos_alloc`+`cap_symbol` for padding-to-max) |
 | `VarInfo[]` | (4) `extract_vars` | (4) `SDFGBuilder` | Classification + shape + intent per variable |
 | `ASTNode` tree | (4) `extract_ast` | (4) `SDFGBuilder` | Normalised CFG + assigns + library-op references |
-| `FrozenSignature` | (4) end of `build()` | codegen, (5) emit | SDFG arglist snapshot — drift check at codegen time |
+| `FrozenSignature` | (4) end of `build()` | codegen, (5) emit | SDFG arglist snapshot  --  drift check at codegen time |
 
 ## Mechanisms
 
@@ -186,7 +186,7 @@ iff it's a DO induction variable, an array shape extent, a DO bound
 (upper or lower), an `hlfir.designate` index, or feeds a control-flow
 condition. Everything else integer is a *scalar*. Writes to symbols
 become interstate-edge assignments; writes to scalars become
-tasklets. Only symbols can appear as array indices — so classification
+tasklets. Only symbols can appear as array indices  --  so classification
 drives whether a write changes the state machine or mutates data in
 place.
 
@@ -194,17 +194,17 @@ place.
 `shape_symbols` and `lower_bounds`. Memlet subsets use Fortran-native
 indices; `access.py::build_memlet_index` folds the lbound offset
 once at subset-build time. DaCe's own descriptor `offset` field stays
-at zero — keeping a single-site offset arithmetic so downstream
+at zero  --  keeping a single-site offset arithmetic so downstream
 transformations don't have to reason about two conventions.
 
 **Assumed-shape alias re-basing.** After `hlfir-inline-all` splices
 an assumed-shape callee (`arr(:)`) into a caller whose actual has
-custom bounds (`x(-2:2)`), Flang emits a second `hlfir.declare` —
+custom bounds (`x(-2:2)`), Flang emits a second `hlfir.declare`  --
 no shape operand, memref via `fir.convert` of the outer declare.
 The bridge detects this (`trace_utils::asAssumedShapeAlias`), skips
 it in `extract_vars` (one SDFG descriptor per storage), walks
 through it in `traceToDecl` (accesses resolve to the outer name),
-and rewrites each access's index by `outer_lbound − inner_lbound` at
+and rewrites each access's index by `outer_lbound - inner_lbound` at
 `buildDesignateIndexExpr`. The caller-side lbound fold then fires
 uniformly.
 
@@ -216,12 +216,12 @@ barrier) is transparent in `buildExpr`.
 
 **Section reductions.** Whole-array `SUM` / `PRODUCT` / `ANY` / `ALL`
 lower to DaCe's `standard.Reduce`. Section reductions
-(`ANY(mask(lo:hi, jk))`) synthesise a loop-accumulator AST — an
+(`ANY(mask(lo:hi, jk))`) synthesise a loop-accumulator AST  --  an
 init-to-identity assign plus a `kind="loop"` whose body accumulates
 via the appropriate Python operator. DaCe's Reduce can't express a
 dynamic-section input directly.
 
-**ELEMENTAL procedures → loop + scalar tasklet.** A Fortran
+**ELEMENTAL procedures -> loop + scalar tasklet.** A Fortran
 `elemental` procedure is a scalar body that, when called on array
 actuals, Flang lowers as `fir.do_loop { hlfir.designate per-arg;
 fir.call scalar_body }` for the subroutine form, or as
@@ -230,7 +230,7 @@ the function form. `hlfir-inline-all` splices the callee's body in;
 the per-element `hlfir.declare`s that remain (callee dummies named
 after outer array elements) are semantic no-ops that carry the
 callee's Fortran names into the body. `hlfir-fold-element-aliases`
-erases those — whatever reads them rewires to the outer array's
+erases those  --  whatever reads them rewires to the outer array's
 `hlfir.designate`, so the SDFG builder sees the same shape as a
 hand-written per-element loop. `fir.do_loop` block args with no
 store-to-alloca sibling (produced by this fold) get a synthetic
@@ -238,32 +238,32 @@ iter name (`_doit_N`) pushed onto `indexStack()` so `resolveIndex`
 still resolves raw block-arg uses inside the body.
 
 **Sibling-assign RAW hazards in loop bodies.** When a `fir.do_loop`
-body contains multiple assigns (`f = c*c; a = a - b*f; …`) into
-`hlfir.declare`-backed storage, the naïve "one tasklet per assign,
+body contains multiple assigns (`f = c*c; a = a - b*f; ...`) into
+`hlfir.declare`-backed storage, the naive "one tasklet per assign,
 all in one body state" wiring races: non-transient access nodes
 share the underlying SDFG array, so a second tasklet's write can
 clobber a first tasklet's read even with distinct access nodes. The
 loop emitter detects any read-write name overlap across siblings
 and serialises them into a chain of states (one tasklet per state,
 interstate edges between). Siblings with no hazard still share a
-single state — the check is per-loop-body, not a blanket pessimisation.
+single state  --  the check is per-loop-body, not a blanket pessimisation.
 
-**OPTIONAL dummies → companion present-flag.** Fortran `OPTIONAL`
+**OPTIONAL dummies -> companion present-flag.** Fortran `OPTIONAL`
 args compile to `hlfir.declare` with `fortran_attrs = optional`, and
 `present(x)` lowers to `fir.is_present %x : (!fir.ref<T>) -> i1`.
 The bridge's `buildBoolExpr` renders that op as the identifier
 `<name>_present`, and `extract_vars` registers a corresponding
 `int32` symbol `VarInfo` right after each optional declare. The
-flag lands on the SDFG signature alongside its host (`sdfg(a=…,
-a_present=…)`); non-zero = present, zero = absent. The existing
+flag lands on the SDFG signature alongside its host (`sdfg(a=...,
+a_present=...)`); non-zero = present, zero = absent. The existing
 if/else lowering reads the flag exactly like any other scalar
-condition — no new AST kind. Intent-less optionals default to
+condition  --  no new AST kind. Intent-less optionals default to
 `intent_in` so `descriptors.py` doesn't misclassify them as
 transients. Correctness relies on Fortran's guarantee that every
 non-`present()` use of an absent optional is dominated by a
 `present` check; the SDFG simply threads that check through.
 
-**AoS → SoA flattening.** `hlfir-flatten-structs` is the bridge's
+**AoS -> SoA flattening.** `hlfir-flatten-structs` is the bridge's
 answer to Fortran derived types: DaCe has no record/struct data
 descriptor, so every member is hoisted out as its own top-level
 dummy. Each struct-typed `hlfir.declare` is replaced by one
@@ -279,17 +279,17 @@ type. Stage (5) re-assembles the AoS view on the caller side:
 member, either a zero-copy `c_f_pointer` alias (contiguous +
 lifetime-compatible) or an explicit Fortran `do`-loop copy into a
 scratch member-typed array. The original caller's signature stays
-intact — the binding module is the AoS↔SoA boundary, the SDFG only
+intact  --  the binding module is the AoS<->SoA boundary, the SDFG only
 ever sees SoA.
 
-**AoS + allocatable members — padding-to-max contract (Phase 5c).**
+**AoS + allocatable members  --  padding-to-max contract (Phase 5c).**
 A struct with allocatable / pointer array members on an AoS dummy
 (`type t :: real, allocatable :: w(:); type(t) :: A(N)`) can't
 flatten to a single static-shape companion: each instance owns its
 own descriptor with a runtime size, and the sizes generally differ.
 Two sub-cases, one shared contract:
 
-  * **5c-A — local instance, kernel-internal allocate.**  When `A`
+  * **5c-A  --  local instance, kernel-internal allocate.**  When `A`
     is a local `fir.alloca` and every `allocate(A(i)%w(M))` site
     uses the same compile-time constant `M`, the pass synthesises a
     fully static 2D companion `A_w(N, M)` and erases the per-instance
@@ -300,12 +300,12 @@ Two sub-cases, one shared contract:
     `stripReallocOnAosMember` together turn the original IR into a
     flat 2-index designate over `A_w`.
 
-  * **5c-B — true SDFG-boundary dummy.**  When `A` is an
+  * **5c-B  --  true SDFG-boundary dummy.**  When `A` is an
     `intent(inout)` (or `intent(in)`) AoS dummy on the SDFG entry
     itself, per-instance sizes are caller-determined and may differ
     at runtime.  The pass emits one FlattenEntry per allocatable
     member with `aos_alloc=True` and `cap_symbol="cap_<base>_<m>"`,
-    and inserts two block args per member — a runtime cap (`index`
+    and inserts two block args per member  --  a runtime cap (`index`
     ref) and a 2D data buffer `ref<array<N x ?xT>>`.  The cap declare's
     `uniq_name = cap_<base>_<m>` makes `traceToDecl` resolve the
     inner extent to that symbol on the SDFG signature.  Stage (5)'s
@@ -314,9 +314,9 @@ Two sub-cases, one shared contract:
     `cap = max_i(merge(size(A(i)%w), 0, allocated(A(i)%w)))`,
     allocates `A_w(N, cap)`, packs each allocated row's live region
     in, and (for `out`/`inout`) unpacks back on return.  Mixed
-    allocation states are allowed — unallocated rows stay as the
+    allocation states are allowed  --  unallocated rows stay as the
     zero-padded default and the user's program logic is responsible
-    for not reading them.  An empty-batch sentinel (`cap == 0 → 1`)
+    for not reading them.  An empty-batch sentinel (`cap == 0 -> 1`)
     keeps the buffer non-degenerate.  Mixed structs (one allocatable
     + one plain member) split into one `aos_alloc=True` entry per
     allocatable plus one regular aliasable entry covering the rest;
@@ -340,49 +340,49 @@ post-optimiser chains.
 
 ```
 dace/frontend/hlfir/
-├── bridge/            C++ — HLFIR parser + classifier + walker (nanobind)
-│   ├── bridge.cpp              MLIRContext, pass pipeline, Python exports
-│   ├── extract_vars.cpp        hlfir.declare → VarInfo[]
-│   ├── extract_ast.cpp         entry point; calls into ast/dispatch.cpp
-│   ├── trace_utils.cpp         SSA tracing + alias helpers + depth limits
-│   └── ast/                    AST extraction split per-responsibility (real TUs)
-│       ├── ast_helpers.h         cross-TU public API + inline thread_local state
-│       ├── ast_internal.h        cross-TU internal helper declarations
-│       ├── expressions.cpp       buildExpr, buildIndexExpr, lowerIsPresent
-│       ├── assigns.cpp           buildAssignNode, copy/memset/libcall, sections
-│       ├── elementals.cpp        reductions, elemental walks, select-case chains
-│       ├── control_flow.cpp      cmp predicates, buildBoolExpr, scf.while/if walkers
-│       └── dispatch.cpp          top-level walker; calls into the others
-├── passes/            C++ — HLFIR → HLFIR rewrites
-│   ├── LowerFirSelectCase.cpp  fir.select_case → cf.cond_br (pre-inline)
-│   ├── InlineAll.cpp
-│   ├── FoldElementAliases.cpp  erase elemental-body alias declares
-│   ├── ExpandVectorSubscriptGather.cpp  hlfir.associate(elemental) → alloca + gather loop
-│   ├── ExpandVectorSubscriptScatter.cpp  hlfir.region_assign(elemental_addr) → scatter loop
-│   ├── RejectPolymorphism.cpp  loud-fail on residual virtual dispatch / SELECT TYPE
-│   ├── FlattenStructs.cpp      stamps hlfir.flatten_plan
-│   ├── PropagateShapes.cpp
-│   ├── DefaultIntent.cpp
-│   ├── VerifyNoUnresolvedCalls.cpp
-│   └── Passes.cpp              registerAllBridgePasses()
-├── builder/           Python — SDFG emission (stage 4)
-│   ├── __init__.py             SDFGBuilder, _emit dispatch, pipelines
-│   ├── context.py              _Ctx (state, pending assigns, iter_map)
-│   ├── descriptors.py          add_descriptors, DTYPE mapping
-│   ├── access.py               build_memlet_index, indirect-symbol lifting
-│   ├── emit_tasklet.py         per-occurrence tasklet + emit_scalar_assign
-│   ├── emit_cfg.py             assign / loop / while / conditional
-│   └── emit_library.py         copy / memset / libcall / reduce / break / return
-├── intrinsics/        Python — Fortran intrinsic registry (consumed by bindings)
-├── bindings/          Python — Fortran wrapper emitter (stage 5)
-│   ├── frozen_signature.py     FrozenArg + FrozenSignature + drift check
-│   ├── fortran_interface.py    OriginalInterface (outer surface)
-│   ├── flatten_plan.py         FlattenPlan + to_dict / from_dict
-│   ├── block_builders.py       per-Fortran-section emitters
-│   ├── loop_copy.py            alias vs deep-copy renderers
-│   └── emit_bindings.py        → <entry>_bindings.f90
-├── hlfir_to_sdfg.py   compat shim — re-exports from builder/
-└── fortran_parser.py  top-level entry: generate_sdfg(...)
+|--- bridge/            C++  --  HLFIR parser + classifier + walker (nanobind)
+|   |--- bridge.cpp              MLIRContext, pass pipeline, Python exports
+|   |--- extract_vars.cpp        hlfir.declare -> VarInfo[]
+|   |--- extract_ast.cpp         entry point; calls into ast/dispatch.cpp
+|   |--- trace_utils.cpp         SSA tracing + alias helpers + depth limits
+|   \--- ast/                    AST extraction split per-responsibility (real TUs)
+|       |--- ast_helpers.h         cross-TU public API + inline thread_local state
+|       |--- ast_internal.h        cross-TU internal helper declarations
+|       |--- expressions.cpp       buildExpr, buildIndexExpr, lowerIsPresent
+|       |--- assigns.cpp           buildAssignNode, copy/memset/libcall, sections
+|       |--- elementals.cpp        reductions, elemental walks, select-case chains
+|       |--- control_flow.cpp      cmp predicates, buildBoolExpr, scf.while/if walkers
+|       \--- dispatch.cpp          top-level walker; calls into the others
+|--- passes/            C++  --  HLFIR -> HLFIR rewrites
+|   |--- LowerFirSelectCase.cpp  fir.select_case -> cf.cond_br (pre-inline)
+|   |--- InlineAll.cpp
+|   |--- FoldElementAliases.cpp  erase elemental-body alias declares
+|   |--- ExpandVectorSubscriptGather.cpp  hlfir.associate(elemental) -> alloca + gather loop
+|   |--- ExpandVectorSubscriptScatter.cpp  hlfir.region_assign(elemental_addr) -> scatter loop
+|   |--- RejectPolymorphism.cpp  loud-fail on residual virtual dispatch / SELECT TYPE
+|   |--- FlattenStructs.cpp      stamps hlfir.flatten_plan
+|   |--- PropagateShapes.cpp
+|   |--- DefaultIntent.cpp
+|   |--- VerifyNoUnresolvedCalls.cpp
+|   \--- Passes.cpp              registerAllBridgePasses()
+|--- builder/           Python  --  SDFG emission (stage 4)
+|   |--- __init__.py             SDFGBuilder, _emit dispatch, pipelines
+|   |--- context.py              _Ctx (state, pending assigns, iter_map)
+|   |--- descriptors.py          add_descriptors, DTYPE mapping
+|   |--- access.py               build_memlet_index, indirect-symbol lifting
+|   |--- emit_tasklet.py         per-occurrence tasklet + emit_scalar_assign
+|   |--- emit_cfg.py             assign / loop / while / conditional
+|   \--- emit_library.py         copy / memset / libcall / reduce / break / return
+|--- intrinsics/        Python  --  Fortran intrinsic registry (consumed by bindings)
+|--- bindings/          Python  --  Fortran wrapper emitter (stage 5)
+|   |--- frozen_signature.py     FrozenArg + FrozenSignature + drift check
+|   |--- fortran_interface.py    OriginalInterface (outer surface)
+|   |--- flatten_plan.py         FlattenPlan + to_dict / from_dict
+|   |--- block_builders.py       per-Fortran-section emitters
+|   |--- loop_copy.py            alias vs deep-copy renderers
+|   \--- emit_bindings.py        -> <entry>_bindings.f90
+|--- hlfir_to_sdfg.py   compat shim  --  re-exports from builder/
+\--- fortran_parser.py  top-level entry: generate_sdfg(...)
 ```
 
 ## Entry point
@@ -404,7 +404,7 @@ sdfg = generate_sdfg("code.hlfir", pipeline="hlfir-propagate-shapes")
 
 ## Extending the frontend
 
-| If you're adding… | Change here | Then cover in |
+| If you're adding... | Change here | Then cover in |
 | --- | --- | --- |
 | a new `math.*` intrinsic | `extract_ast.cpp` `unary_math` / `binary_math` tables | `tests/hlfir/elemwise_intrinsics_test.py` |
 | a new reducer | `extract_ast.cpp::kRedTable` (+ `buildSectionReduceAssign` for section form) | `tests/hlfir/reduce_intrinsics_test.py` |
@@ -414,97 +414,97 @@ sdfg = generate_sdfg("code.hlfir", pipeline="hlfir-propagate-shapes")
 
 ## Future support map
 
-Current status by feature.  ✅ supported, 🟡 planned (tracked in
-xfails), ❌ never (out of scope).
+Current status by feature.  [OK] supported, [!] planned (tracked in
+xfails), [X] never (out of scope).
 
 ### Types
 
 | Feature | Status | Notes |
 |---|---|---|
-| `INTEGER(1/2/4/8)` | ✅ | mapped to `int8/16/32/64` |
-| `REAL(4/8)` | ✅ | mapped to `float32/64` |
-| `LOGICAL(1/4/8)` | ✅ | surfaced as `uint8/int32/int64` for f2py ABI |
-| `COMPLEX(4/8)` | ✅ | arrays only (Python 3.12 ctypes lacks `c_double_complex`; scalar by-value is a DaCe-core gap) |
-| `CHARACTER(*)` | ❌ | string handling out of scope |
-| Module-level derived type, flat members | ✅ | Phase 1, lowered by `hlfir-flatten-structs` |
-| Module-level derived type, nested | ✅ Phase 2 | recursive `collectFlatLeaves` synthesises one declare per leaf with path-flattened name `base_m1_m2_..._leaf` |
-| Array-of-struct with array members (`A(N)%w(M,M)`) | ✅ Phase 1.5 | shape concatenation; designate chains `A(i)%w(j,k)` rewrite to `A_w(i,j,k)` |
-| Whole-member access on AoS (`A(i)%w = ...`) | ✅ Phase 1.5 | rewriter emits triplet section `A_w(i, 1:M:1, ...)` |
-| Cross-subroutine struct args (incl. AoS) | ✅ Phase 2.2 | function signature rewrite + per-member block args + `hlfir.flatten_plan` attribute carries the recipe |
-| Module-level derived type, allocatable members | ✅ Phase 5a/5b | scalar struct + 1-D allocatable / pointer member — flat top-level allocatable companion + per-allocate-site rename |
-| AoS + allocatable, uniform compile-time size (`type(t) :: A(N); allocate(A(i)%w(M))` with constant `M`) | ✅ Phase 5c-A | static 2D companion `A_w(N, M)`; allocate / freemem chain erased post-flatten |
-| AoS + allocatable as inlined-kernel dummy | ✅ Phase 5c-B (inlined) | `collapseAosAllocReads` follows alias chains through `hlfir-inline-all`'s declare aliases |
-| AoS + allocatable as true SDFG-boundary dummy | ✅ Phase 5c-B | padding-to-max contract: bindings layer computes `cap = max_i(size(A(i)%w))`, packs/unpacks live regions; runtime cap symbol on SDFG signature |
-| AoS + allocatable, kernel-internal reallocation (`intent(out)` first allocation inside kernel) | 🟡 Phase 5c-C | needs an HLFIR shape-discovery pre-pass + caller-side stub interface |
-| Batched CSR (jagged AoS with per-instance allocatable members of differing sizes) | 🟡 Phase 5c+ | xfailed contract test pins the design; padding-to-max works mechanically but the two-different-members `(rowptr, colidx, val)` shape needs separate cap symbols (in scope but not yet exercised) |
-| Derived type with parametric array dim from struct field | 🟡 Phase 4 | 1 xfail |
-| Circular type definitions | ❌ | recursion through pointer chain — out of scope |
+| `INTEGER(1/2/4/8)` | [OK] | mapped to `int8/16/32/64` |
+| `REAL(4/8)` | [OK] | mapped to `float32/64` |
+| `LOGICAL(1/4/8)` | [OK] | surfaced as `uint8/int32/int64` for f2py ABI |
+| `COMPLEX(4/8)` | [OK] | arrays only (Python 3.12 ctypes lacks `c_double_complex`; scalar by-value is a DaCe-core gap) |
+| `CHARACTER(*)` | [X] | string handling out of scope |
+| Module-level derived type, flat members | [OK] | Phase 1, lowered by `hlfir-flatten-structs` |
+| Module-level derived type, nested | [OK] Phase 2 | recursive `collectFlatLeaves` synthesises one declare per leaf with path-flattened name `base_m1_m2_..._leaf` |
+| Array-of-struct with array members (`A(N)%w(M,M)`) | [OK] Phase 1.5 | shape concatenation; designate chains `A(i)%w(j,k)` rewrite to `A_w(i,j,k)` |
+| Whole-member access on AoS (`A(i)%w = ...`) | [OK] Phase 1.5 | rewriter emits triplet section `A_w(i, 1:M:1, ...)` |
+| Cross-subroutine struct args (incl. AoS) | [OK] Phase 2.2 | function signature rewrite + per-member block args + `hlfir.flatten_plan` attribute carries the recipe |
+| Module-level derived type, allocatable members | [OK] Phase 5a/5b | scalar struct + 1-D allocatable / pointer member  --  flat top-level allocatable companion + per-allocate-site rename |
+| AoS + allocatable, uniform compile-time size (`type(t) :: A(N); allocate(A(i)%w(M))` with constant `M`) | [OK] Phase 5c-A | static 2D companion `A_w(N, M)`; allocate / freemem chain erased post-flatten |
+| AoS + allocatable as inlined-kernel dummy | [OK] Phase 5c-B (inlined) | `collapseAosAllocReads` follows alias chains through `hlfir-inline-all`'s declare aliases |
+| AoS + allocatable as true SDFG-boundary dummy | [OK] Phase 5c-B | padding-to-max contract: bindings layer computes `cap = max_i(size(A(i)%w))`, packs/unpacks live regions; runtime cap symbol on SDFG signature |
+| AoS + allocatable, kernel-internal reallocation (`intent(out)` first allocation inside kernel) | [!] Phase 5c-C | needs an HLFIR shape-discovery pre-pass + caller-side stub interface |
+| Batched CSR (jagged AoS with per-instance allocatable members of differing sizes) | [!] Phase 5c+ | xfailed contract test pins the design; padding-to-max works mechanically but the two-different-members `(rowptr, colidx, val)` shape needs separate cap symbols (in scope but not yet exercised) |
+| Derived type with parametric array dim from struct field | [!] Phase 4 | 1 xfail |
+| Circular type definitions | [X] | recursion through pointer chain  --  out of scope |
 
 ### Control flow
 
 | Feature | Status | Notes |
 |---|---|---|
-| `DO`, `DO WHILE`, `DO CONCURRENT` | ✅ | LoopRegion + scf.while |
-| `IF` / `ELSE IF` / `ELSE` | ✅ | scf.if |
-| `SELECT CASE` | ✅ | `lower-fir-select-case` lifts to cf.cond_br |
-| `SELECT TYPE` | ❌ | requires polymorphic dispatch — never |
-| `EXIT`, `CYCLE` | ✅ | |
-| `GOTO` | ❌ | rely on flang's `lift-cf-to-scf`; unstructured GOTO won't lift |
-| Statement functions (`f(x) = ...`) | 🟡 | 1 xfail, [function_statement](../../../tests/hlfir/ported/fortran_language_test.py) |
+| `DO`, `DO WHILE`, `DO CONCURRENT` | [OK] | LoopRegion + scf.while |
+| `IF` / `ELSE IF` / `ELSE` | [OK] | scf.if |
+| `SELECT CASE` | [OK] | `lower-fir-select-case` lifts to cf.cond_br |
+| `SELECT TYPE` | [X] | requires polymorphic dispatch  --  never |
+| `EXIT`, `CYCLE` | [OK] | |
+| `GOTO` | [X] | rely on flang's `lift-cf-to-scf`; unstructured GOTO won't lift |
+| Statement functions (`f(x) = ...`) | [!] | 1 xfail, [function_statement](../../../tests/hlfir/ported/fortran_language_test.py) |
 
 ### Subprograms / linkage
 
 | Feature | Status | Notes |
 |---|---|---|
-| Module-contained `SUBROUTINE` / `FUNCTION` | ✅ | inlined by `hlfir-inline-all` |
-| Internal subprograms (`CONTAINS` inside subroutine) | ✅ | needs `fir.embox` peeling in alias walk (added 2026-04-28) |
-| `INTERFACE` blocks | ✅ | resolved at flang time |
-| `EXTERNAL` statements | ❌ | use modules |
-| `USE`, `USE ... ONLY:` | ✅ | flang resolves at lowering |
-| `OPTIONAL` dummy + `PRESENT` | ✅ | folded statically post-inline |
-| `ALLOCATABLE`, `ALLOCATE`, `DEALLOCATE` | ✅ | local + dummy |
-| `POINTER` | ❌ probably | requires SSA-breaking aliasing |
-| BLAS/LAPACK via `EXTERNAL` | ❌ | use module-contained or DaCe libnodes |
+| Module-contained `SUBROUTINE` / `FUNCTION` | [OK] | inlined by `hlfir-inline-all` |
+| Internal subprograms (`CONTAINS` inside subroutine) | [OK] | needs `fir.embox` peeling in alias walk (added 2026-04-28) |
+| `INTERFACE` blocks | [OK] | resolved at flang time |
+| `EXTERNAL` statements | [X] | use modules |
+| `USE`, `USE ... ONLY:` | [OK] | flang resolves at lowering |
+| `OPTIONAL` dummy + `PRESENT` | [OK] | folded statically post-inline |
+| `ALLOCATABLE`, `ALLOCATE`, `DEALLOCATE` | [OK] | local + dummy |
+| `POINTER` | [X] probably | requires SSA-breaking aliasing |
+| BLAS/LAPACK via `EXTERNAL` | [X] | use module-contained or DaCe libnodes |
 
 ### Polymorphism
 
 | Feature | Status | Notes |
 |---|---|---|
-| `CLASS(t)` as a monomorphic box (no virtual dispatch) | ✅ | `FlattenStructs` peels `fir.class<T>` via `BaseBoxType` |
-| Type-bound procedure with statically-known receiver (`c%area()` where `c : type(circle_t)`) | ✅ | `fir-polymorphic-op` devirtualises before flatten; tested in `derived_type_test::test_static_polymorphism_devirtualised` |
-| Truly virtual dispatch (`class(shape_t) :: p; p%area()` where the receiver type is set by a caller) | ❌ | `fir-polymorphic-op` lowers the dispatch to an indirect `fir.call` through the type-info table; `hlfir-reject-polymorphism` fires loudly on the residual `fir.box_tdesc`.  Tested in `noncontig_unsupported_test::test_virtual_dispatch_bails_loudly`. |
-| `SELECT TYPE` / runtime type discrimination | ❌ | rejected by `hlfir-reject-polymorphism` |
+| `CLASS(t)` as a monomorphic box (no virtual dispatch) | [OK] | `FlattenStructs` peels `fir.class<T>` via `BaseBoxType` |
+| Type-bound procedure with statically-known receiver (`c%area()` where `c : type(circle_t)`) | [OK] | `fir-polymorphic-op` devirtualises before flatten; tested in `derived_type_test::test_static_polymorphism_devirtualised` |
+| Truly virtual dispatch (`class(shape_t) :: p; p%area()` where the receiver type is set by a caller) | [X] | `fir-polymorphic-op` lowers the dispatch to an indirect `fir.call` through the type-info table; `hlfir-reject-polymorphism` fires loudly on the residual `fir.box_tdesc`.  Tested in `noncontig_unsupported_test::test_virtual_dispatch_bails_loudly`. |
+| `SELECT TYPE` / runtime type discrimination | [X] | rejected by `hlfir-reject-polymorphism` |
 
 ### Slicing / array ops
 
 | Feature | Status | Notes |
 |---|---|---|
-| Contiguous slice `a(i:j, k:l)` | ✅ | |
-| Whole-array assign `a = b` | ✅ | hlfir.elemental + emit_library |
-| Elementwise intrinsics (sin/cos/exp/sqrt/...) on real/complex | ✅ | added complex variants 2026-04-28 |
-| Reductions (sum/product/min/max/all/any/count/minval/maxval) | ✅ | |
-| BLAS/LAPACK (matmul, transpose) | ✅ | dense → libnode, strided → explicit DO loop |
-| Noncontiguous slice via index array `a(idx, :)` — rank-1, **constant** gather extent | ✅ | Lowered by `hlfir-expand-vector-subscript-gather` (replaces flang's `hlfir.associate` of an `hlfir.elemental` with an explicit `fir.alloca` + gather DO loop, then reuses DaCe indirection memlets `<arr>_at<gid>`).  See pass header for shape constraints. |
-| Noncontiguous slice — rank-2+ gather (`d(cols2, cols)`) | 🟡 Phase 2 | 5 xfails — pass currently bails with a clear error |
-| Noncontiguous slice — **symbolic** extent | ❌ | DaCe can't express runtime-sized symbol arrays.  Pass aborts loudly via `op.emitError`; covered by [noncontig_unsupported_test.py](../../../tests/hlfir/noncontig_unsupported_test.py) |
-| Noncontiguous slice — INTENT(out) scatter-back | 🟡 | rare in real code; not yet modelled (the i1 must-finalise flag is hard-coded to false) |
-| `ASSOCIATE` block | 🟡 | not currently exercised; relative indexing only |
+| Contiguous slice `a(i:j, k:l)` | [OK] | |
+| Whole-array assign `a = b` | [OK] | hlfir.elemental + emit_library |
+| Elementwise intrinsics (sin/cos/exp/sqrt/...) on real/complex | [OK] | added complex variants 2026-04-28 |
+| Reductions (sum/product/min/max/all/any/count/minval/maxval) | [OK] | |
+| BLAS/LAPACK (matmul, transpose) | [OK] | dense -> libnode, strided -> explicit DO loop |
+| Noncontiguous slice via index array `a(idx, :)`  --  rank-1, **constant** gather extent | [OK] | Lowered by `hlfir-expand-vector-subscript-gather` (replaces flang's `hlfir.associate` of an `hlfir.elemental` with an explicit `fir.alloca` + gather DO loop, then reuses DaCe indirection memlets `<arr>_at<gid>`).  See pass header for shape constraints. |
+| Noncontiguous slice  --  rank-2+ gather (`d(cols2, cols)`) | [!] Phase 2 | 5 xfails  --  pass currently bails with a clear error |
+| Noncontiguous slice  --  **symbolic** extent | [X] | DaCe can't express runtime-sized symbol arrays.  Pass aborts loudly via `op.emitError`; covered by [noncontig_unsupported_test.py](../../../tests/hlfir/noncontig_unsupported_test.py) |
+| Noncontiguous slice  --  INTENT(out) scatter-back | [!] | rare in real code; not yet modelled (the i1 must-finalise flag is hard-coded to false) |
+| `ASSOCIATE` block | [!] | not currently exercised; relative indexing only |
 
 ### Codegen targets
 
 | Feature | Status | Notes |
 |---|---|---|
-| CPU C++ tasklets | ✅ | |
-| GPU CUDA | ❌ | would need OpenACC-style shim emission |
-| OpenMP / `!$OMP` directives | ❌ | DaCe handles parallelism |
-| COARRAY | ❌ | |
+| CPU C++ tasklets | [OK] | |
+| GPU CUDA | [X] | would need OpenACC-style shim emission |
+| OpenMP / `!$OMP` directives | [X] | DaCe handles parallelism |
+| COARRAY | [X] | |
 
 ## Non-goals
 
 - Re-parsing Fortran in Python. Flang is authoritative.
 - GPU target bindings (would need OpenACC shim emission).
 - Fortran SIMD / COARRAY semantics.
-- Cross-kernel fusion across translation-unit boundaries — inline-all
+- Cross-kernel fusion across translation-unit boundaries  --  inline-all
   handles intra-TU fusion; cross-TU is the binding emitter's problem.
 
 ## Testing

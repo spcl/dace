@@ -1,4 +1,4 @@
-"""Linear-algebra Fortran intrinsics → DaCe library nodes.
+"""Linear-algebra Fortran intrinsics -> DaCe library nodes.
 
 Exercises the four ``hlfir.*`` linalg ops that bypass the elemental
 path and go straight to dedicated library nodes:
@@ -55,7 +55,7 @@ def test_linalg_ops_numerical(tmp_path):
     v = rng.standard_normal(m)
     u = rng.standard_normal(n)
 
-    # Reference — gfortran-compiled.
+    # Reference  --  gfortran-compiled.
     c_ref = np.zeros((n, k), order="F")
     at_ref = np.zeros((m, n), order="F")
     w_ref = np.zeros(n, order="F")
@@ -63,7 +63,7 @@ def test_linalg_ops_numerical(tmp_path):
     mod.linalg_ops(np.asfortranarray(a), np.asfortranarray(b), c_ref, at_ref, np.asfortranarray(v), w_ref,
                    np.asfortranarray(u), s_ref)
 
-    # SDFG — frontend now emits Fortran-order strides for rank>1
+    # SDFG  --  frontend now emits Fortran-order strides for rank>1
     # descriptors, so pass F-order arrays to the matmul/transpose ops
     # to match the caller-side convention.
     c_sdfg = np.zeros((n, k), dtype=np.float64, order="F")
@@ -99,7 +99,7 @@ end subroutine probe
 
 
 def test_transpose_of_elemental(tmp_path):
-    """Regression: ``transpose(<inline elementwise expr>)`` — the
+    """Regression: ``transpose(<inline elementwise expr>)``  --  the
     transpose's operand is an ``hlfir.expr`` produced by an inline
     ``hlfir.elemental`` (here ``1.0d0 - d``), not a named array.  Without
     the libcall-over-elemental materialise path, ``buildLibCallNode``'s
@@ -108,7 +108,7 @@ def test_transpose_of_elemental(tmp_path):
     ``KeyError: ''``.
 
     Triggers Phase 2's ``materialiseElementalForLibcall`` at the direct
-    libcall dispatch site (``dispatch.cpp``).  Pure isolation — no
+    libcall dispatch site (``dispatch.cpp``).  Pure isolation  --  no
     gather, no triplet, so the test fails iff the elemental-source
     materialise specifically regresses."""
     if shutil.which("gfortran") is None:
@@ -132,7 +132,7 @@ def test_transpose_of_elemental(tmp_path):
 
 def test_linalg_ops_structure(tmp_path):
     """The SDFG should carry two MatMul, one Transpose, and one Dot
-    library node — one per intrinsic call."""
+    library node  --  one per intrinsic call."""
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(_SRC_PATH.read_text(), sdfg_dir, name="linalg_ops", pipeline="hlfir-propagate-shapes").build()

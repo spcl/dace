@@ -1,6 +1,6 @@
 """Memlet subset construction + access-node caching + indirect-index lifting.
 
-The key helper is ``acc`` — a per-state cached access-node factory that keeps
+The key helper is ``acc``  --  a per-state cached access-node factory that keeps
 the "live sink" for a given data name, so reads and writes across multiple
 tasklets in the same state thread through one connected graph.
 
@@ -9,15 +9,15 @@ DaCe-style subset, offsetting Fortran 1-based indices to 0-based and
 resolving indirect-index expressions (``edge_idx[jc,1]``) against the
 symbols minted by ``collect_indirect``.
 
-Three small primitives anchor the Fortran→DaCe subscript conversion and
+Three small primitives anchor the Fortran->DaCe subscript conversion and
 are reused everywhere that emits a subset string:
 
-  * ``rename_iters(expr, iter_map)`` — whole-word substitution of Fortran
+  * ``rename_iters(expr, iter_map)``  --  whole-word substitution of Fortran
     iter names with their uniquified DaCe counterparts.
-  * ``_remap_token(token, iter_map)`` — single-subscript rewrite that
+  * ``_remap_token(token, iter_map)``  --  single-subscript rewrite that
     handles literal / arithmetic / bare-identifier tokens uniformly.
-  * ``_format_offset_subset(arr, parts)`` — wrap a per-dim list in the
-    uniform ``arr[(p0) - offset_arr_d0, …]`` form.
+  * ``_format_offset_subset(arr, parts)``  --  wrap a per-dim list in the
+    uniform ``arr[(p0) - offset_arr_d0, ...]`` form.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import re
 # Process-level monotonic counter used to mint stable, grep-able names for
 # inline indirection loads (``<arr>_at<gid>``).  Kept process-level rather
 # than per-SDFG so multi-file runs don't re-issue the same name in two
-# unrelated kernels — each lift gets a unique tag, easy to find in
+# unrelated kernels  --  each lift gets a unique tag, easy to find in
 # transcripts and SDFG dumps.
 _INDIRECTION_GID_COUNTER = 0
 
@@ -40,7 +40,7 @@ def _next_indirection_gid() -> int:
 
 def resolve_section_alias(builder, array_name: str, access):
     """If ``array_name`` is a ``section_alias`` dummy (trivial section
-    slice — full-range triplets + scalar drops only), return
+    slice  --  full-range triplets + scalar drops only), return
     ``(source_name, spliced_access)`` where ``spliced_access`` carries
     the source's full index list (the dummy's ``index_exprs`` spliced
     into the dim-map placeholders).  Otherwise return
@@ -89,15 +89,15 @@ def acc(builder, state, name: str):
     its own disconnected access node, so a later read could not see the
     value produced by an earlier write in the same state.
 
-    View-alias entries (Fortran storage-association reshape — see
+    View-alias entries (Fortran storage-association reshape  --  see
     ``extract_vars::view_source`` / ``view_subset``) get an additional
-    source→view linking memlet auto-installed the first time they're
+    source->view linking memlet auto-installed the first time they're
     accessed in a state.  The link tells DaCe codegen which slab of
     the source array the view points at; subsequent reads / writes
     of the view in the same state pass through to the source.
     """
     # Trivial section-slice dummies (``role == 'section_alias'``) have
-    # no SDFG descriptor — every access routes through the source array
+    # no SDFG descriptor  --  every access routes through the source array
     # with indices spliced via ``view_dim_map``.  Redirect the access-
     # node lookup to the source.
     v_alias = builder.arrays.get(name)
@@ -164,14 +164,14 @@ def _remap_token(token, iter_map):
 
 def _format_offset_subset(arr, parts):
     """Wrap a per-dim expression list in the uniform offset-symbol
-    form: ``arr[(p0) - offset_arr_d0, (p1) - offset_arr_d1, …]``."""
+    form: ``arr[(p0) - offset_arr_d0, (p1) - offset_arr_d1, ...]``."""
     items = ", ".join(f"({p}) - {_offset_token(arr, d)}" for d, p in enumerate(parts))
     return f"{arr}[{items}]"
 
 
 def find_array_subscripts(expr, names):
     """Generator yielding ``(start, end, arr_name, parts)`` for each
-    top-level ``<arr>[…]`` substring in ``expr`` whose ``<arr>`` is in
+    top-level ``<arr>[...]`` substring in ``expr`` whose ``<arr>`` is in
     ``names``.  Walks brackets balanced (handles nested subscripts
     like ``a[idx[i],j]``) and splits the inner range on top-level
     commas only.  Replaces the brittle ``^(\\w+)\\[([^\\]]*)\\]$``
@@ -279,7 +279,7 @@ def array_read_to_dace_expr(builder, assign_node, iter_map: dict) -> str:
     """Render a scalar-target assign whose RHS is a single array read
     (``ci0 = icidx(je, jb, 1)``) as a DaCe-style indexed expression
     with the uniform offset-symbol form
-    (``arr[(idx) - offset_arr_d<i>, …]``).  Used to lift the assign
+    (``arr[(idx) - offset_arr_d<i>, ...]``).  Used to lift the assign
     onto an interstate-edge so the loaded value becomes a live SDFG
     symbol the consuming tasklet's memlet can index by.  Falls back
     to ``assign_node.expr`` if there's no array read."""
@@ -375,7 +375,7 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
     """Build a memlet subset using the uniform offset-symbol form.
 
     For every dim of ``array_name``, the resulting subset token is
-    ``(<fortran-1-based-expr>) - offset_<arr>_d<i>`` — the offset symbol
+    ``(<fortran-1-based-expr>) - offset_<arr>_d<i>``  --  the offset symbol
     was declared in ``add_descriptors`` and gets folded by
     ``sdfg.specialize`` at the end of ``build()`` (default value ``1``
     collapses the form to ``expr - 1``).  Indirect-index symbols are
@@ -387,7 +387,7 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
 
     Arrays not in ``builder.arrays`` (struct members the bridge
     synthesises ad hoc, etc.) fall back to a literal ``- 1`` so the
-    memlet still validates — this matches the pre-symbolic behaviour
+    memlet still validates  --  this matches the pre-symbolic behaviour
     for those cases and avoids a missing-symbol crash at specialise
     time.
     """
@@ -427,13 +427,13 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
 
         # Bare iter name: remap through iter_map, then offset.
         #
-        # ``v`` is the bridge-side ``index_vars[dim]`` value —
+        # ``v`` is the bridge-side ``index_vars[dim]`` value  --
         # produced by ``resolveIndex(idx)`` which returns:
         #   * the loop-iter name for a tracked block-arg iter
-        #     (``i``, ``je``, …); ``iter_map`` folds the SSA rename.
+        #     (``i``, ``je``, ...); ``iter_map`` folds the SSA rename.
         #   * ``traceToDecl(idx)`` as a fallback for everything
         #     else, including ``fir.load %dgt(%c)`` where ``%dgt``
-        #     designates a flattened struct-member array — that
+        #     designates a flattened struct-member array  --  that
         #     trace returns the WHOLE array's name (``ind_indices``
         #     for ``fir.load %ind_indices_decl(%c1)``).
         #
@@ -445,11 +445,11 @@ def build_memlet_index(builder, array_name: str, access, iter_map: dict, indirec
         # caller has further folded via the indirect machinery).
         #
         # Defaulting the iter_map fallback to ``expr`` instead of
-        # ``v`` keeps tracked iters working (iter_map.get(v, …)
+        # ``v`` keeps tracked iters working (iter_map.get(v, ...)
         # finds them) while letting non-iter v values fall through
         # to the richer ``expr`` rendering.  See the matching
         # ``internPosSymbol`` mutability gate in
-        # ``bridge/ast/assigns.cpp`` — the two together close the
+        # ``bridge/ast/assigns.cpp``  --  the two together close the
         # ``arr(struct_member(const))`` indirect-index path
         # exercised by ``long_tasklet_test``.
         uid = iter_map.get(v, expr)

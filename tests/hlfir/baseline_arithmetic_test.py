@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — straight-line scalar / array arithmetic.
+"""Baseline HLFIR coverage  --  straight-line scalar / array arithmetic.
 
 Pulled out of the original ``ported_from_f2dace_windmill_test.py`` so
 each feature lives in a focused file.  Every test here builds the SDFG
@@ -52,7 +52,7 @@ end subroutine daxpy_lite
 
 
 def test_two_tasklets_raw(tmp_path):
-    """Two statements in the same body, the second consuming the first —
+    """Two statements in the same body, the second consuming the first  --
     exercises the single-access-node-per-state invariant numerically."""
     src = """
 subroutine raw_chain(a, out, n)

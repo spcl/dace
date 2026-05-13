@@ -1,32 +1,32 @@
-"""``SDFGBuilder`` — walks the HLFIR AST to directly construct a DaCe SDFG.
+"""``SDFGBuilder``  --  walks the HLFIR AST to directly construct a DaCe SDFG.
 
 Pipeline:
     flang-20 -fc1 -emit-hlfir code.f90 -o code.hlfir
-    sdfg = generate_sdfg("code.hlfir")   # → dace.SDFG, validated
+    sdfg = generate_sdfg("code.hlfir")   # -> dace.SDFG, validated
 
 Architecture:
     The builder parses the HLFIR via the C++ bridge (``hlfir_bridge.so``),
     runs the default pass pipeline, then walks the recursive ASTNode tree
     and emits DaCe constructs:
 
-        kind="assign"      → Tasklet / interstate-edge assignment
-        kind="loop"        → LoopRegion (nested for-loop)
-        kind="while"       → LoopRegion (while form, post lift-cf-to-scf)
-        kind="conditional" → ConditionalBlock + ControlFlowRegion per branch
-        kind="copy"        → CopyLibraryNode
-        kind="memset"      → MemsetLibraryNode
-        kind="libcall"     → BLAS / standard library node (MatMul, Dot, …)
-        kind="reduce"      → standard.Reduce
-        kind="break"       → BreakBlock
-        kind="return"      → ReturnBlock
+        kind="assign"      -> Tasklet / interstate-edge assignment
+        kind="loop"        -> LoopRegion (nested for-loop)
+        kind="while"       -> LoopRegion (while form, post lift-cf-to-scf)
+        kind="conditional" -> ConditionalBlock + ControlFlowRegion per branch
+        kind="copy"        -> CopyLibraryNode
+        kind="memset"      -> MemsetLibraryNode
+        kind="libcall"     -> BLAS / standard library node (MatMul, Dot, ...)
+        kind="reduce"      -> standard.Reduce
+        kind="break"       -> BreakBlock
+        kind="return"      -> ReturnBlock
 
 Per-emitter implementations live in sibling modules under this package.
-``SDFGBuilder`` itself keeps only orchestration — ``__init__``, ``build``,
+``SDFGBuilder`` itself keeps only orchestration  --  ``__init__``, ``build``,
 ``nid``, and the ``_emit`` dispatch.
 
 State-change rules:
-    - Write to a symbol → interstate edge with assignment (emit_assign).
-    - Every other write → tasklet in the current state.
+    - Write to a symbol -> interstate edge with assignment (emit_assign).
+    - Every other write -> tasklet in the current state.
     - LoopRegion / ConditionalBlock open a fresh region; their children
       run in a nested ``_Ctx``.
 
@@ -46,11 +46,11 @@ from build_bridge import hb
 
 # intrinsics/ lives alongside this file but uses absolute imports
 # (``dace.frontend.hlfir.intrinsics``).  hlfir_to_sdfg is usually imported
-# via the ``sys.path.insert(<hlfir_dir>, …)`` pattern in build_bridge.py,
+# via the ``sys.path.insert(<hlfir_dir>, ...)`` pattern in build_bridge.py,
 # which does not expose the full ``dace.frontend.hlfir`` package.  Add the
 # DaCe source root so the package import resolves either way.
 _BUILDER_DIR = _Path(__file__).resolve().parent
-# parents: builder/ → hlfir/ → frontend/ → dace/ → <repo root>.
+# parents: builder/ -> hlfir/ -> frontend/ -> dace/ -> <repo root>.
 _REPO_ROOT = _BUILDER_DIR.parents[3]
 if str(_REPO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_REPO_ROOT))
@@ -81,9 +81,9 @@ from dace.frontend.hlfir.builder.emit_cfg import (
 )
 from dace.frontend.hlfir.builder.emit_tasklet import emit_scalar_assign, emit_tasklet
 
-# Default bridge pass pipeline.  Order matters — see ``README.md``.
+# Default bridge pass pipeline.  Order matters  --  see ``README.md``.
 DEFAULT_PIPELINE = (
-    # Lower fir.select_case → arith.cmp + cf.cond_br BEFORE inline-all.
+    # Lower fir.select_case -> arith.cmp + cf.cond_br BEFORE inline-all.
     # The upstream ``mlir::inlineCall`` mishandles fir.select_case's
     # block-operand remap and segfaults when a callee containing one is
     # inlined.  Pre-lowering side-steps the inliner crash and produces
@@ -92,7 +92,7 @@ DEFAULT_PIPELINE = (
     "lower-fir-select-case,"
     "hlfir-inline-all,"
     # Erase element-scoped alias declares left by inlining scalar-arg
-    # procedures (elemental subroutines, most commonly) — runs before
+    # procedures (elemental subroutines, most commonly)  --  runs before
     # flatten-structs so the rewrite's designate chains are already
     # single-declare rooted.
     "hlfir-fold-element-aliases,"
@@ -106,12 +106,12 @@ DEFAULT_PIPELINE = (
     # carries an ``hlfir.elemental_addr`` (Fortran ``d(cols) = source``)
     # into an explicit DO loop of per-element scalar assigns.
     "hlfir-expand-vector-subscript-scatter,"
-    # Drop private callee bodies once inlined — otherwise their
+    # Drop private callee bodies once inlined  --  otherwise their
     # declares leak into extract_vars as stray scalars.
     "symbol-dce,"
     # Statically devirtualise resolvable ``fir.dispatch`` /
     # ``fir.select_type`` ops.  The bridge supports CLASS-as-
-    # monomorphic-box only — surviving polymorphic ops are caught
+    # monomorphic-box only  --  surviving polymorphic ops are caught
     # by ``hlfir-reject-polymorphism`` immediately after.
     "fir-polymorphic-op,"
     "hlfir-reject-polymorphism,"
@@ -123,7 +123,7 @@ DEFAULT_PIPELINE = (
     # (so the section view feeds into the usual designate-rewrite).
     "hlfir-rewrite-sequence-association,"
     # Lift ``type(t), allocatable :: f(:)`` struct members (alloc-array
-    # of records — ICON's ``p_patch%pprog(jg)`` shape) into top-level
+    # of records  --  ICON's ``p_patch%pprog(jg)`` shape) into top-level
     # companions with a leading runtime-extent dim.  Runs BEFORE
     # flatten-structs so the outer struct sees clean top-level arrays
     # after the lift.  Bails silently when no such member is present;
@@ -145,7 +145,7 @@ DEFAULT_PIPELINE = (
     # Lift array-reducing intrinsics (sum/maxval/minval/product/any/all)
     # that appear as INLINE expression operands into a preceding
     # scalar-temp assign.  ``buildExpr`` can't render reductions in a
-    # tasklet expression — ``out = max(x, MAXVAL(slice))`` would otherwise
+    # tasklet expression  --  ``out = max(x, MAXVAL(slice))`` would otherwise
     # surface as ``_out = max(_in_x, ?)`` and crash Python ast.parse.
     # After this pass, the lifted ``temp = MAXVAL(slice)`` is a top-
     # level assign the existing reduce-emit dispatch handles, and the
@@ -212,11 +212,11 @@ class SDFGBuilder:
         sdfg    = builder.build()
 
     After construction:
-        self.variables  — full VarInfo list from the bridge.
-        self.arrays     — {name: VarInfo} for rank>0 variables.
-        self.symbols    — {name: VarInfo} for scalars used in shapes / bounds /
-                          control-flow conditions (pass 2b–2d of extract_vars).
-        self.scalars    — {name: VarInfo} for remaining scalars.
+        self.variables   --  full VarInfo list from the bridge.
+        self.arrays      --  {name: VarInfo} for rank>0 variables.
+        self.symbols     --  {name: VarInfo} for scalars used in shapes / bounds /
+                          control-flow conditions (pass 2b-2d of extract_vars).
+        self.scalars     --  {name: VarInfo} for remaining scalars.
     """
 
     DTYPE = DTYPE
@@ -252,7 +252,7 @@ class SDFGBuilder:
         the rewrite chain.
 
         Use this when the entry subroutine and its dependencies live in
-        separate ``.hlfir`` files — e.g. the ICON multi-module flow where
+        separate ``.hlfir`` files  --  e.g. the ICON multi-module flow where
         each module compiles to its own HLFIR.  ``parse_files`` dedups
         by symbol name so shared external declarations don't conflict.
 
@@ -295,7 +295,7 @@ class SDFGBuilder:
         # Populated by ``add_descriptors`` from each VarInfo's
         # ``lower_bounds``.  Values are int (constant-folded by
         # ``sdfg.specialize``), str (substituted with another symbol
-        # name), or ``None`` (unknown — symbol stays free, caller
+        # name), or ``None`` (unknown  --  symbol stays free, caller
         # passes it).
         self.offset_values: dict[str, int | str | None] = {}
 
@@ -304,7 +304,7 @@ class SDFGBuilder:
         specialisation pass, and attach a frozen-signature snapshot.
 
         The snapshot is later verified by ``codegen.generate_code``
-        before any C++ header gets emitted — any downstream
+        before any C++ header gets emitted  --  any downstream
         transformation that drifts the argument list will then raise
         rather than silently invalidate a generated Fortran binding.
         """
@@ -320,7 +320,7 @@ class SDFGBuilder:
         # ``add_descriptors``); the constant table just attaches the
         # initial-value tuple to it.
         self._register_constants(sdfg)
-        # Stage source → view-alias copy-in states ahead of the body
+        # Stage source -> view-alias copy-in states ahead of the body
         # so reads on the alias see live source data.  After the body
         # we stage the reverse copy-out so writes propagate back.
         # The pre state becomes the SDFG's start block; the post state
@@ -343,7 +343,7 @@ class SDFGBuilder:
         # for ``dimension(50:54)``) and symbol aliases (``offset_d_d0 =
         # "arrsize"`` for ``dimension(arrsize:arrsize+4)``).  They take
         # different paths because ``sdfg.specialize`` only handles
-        # constants — feeding it a string would land on ``add_constant``
+        # constants  --  feeding it a string would land on ``add_constant``
         # and downstream casting tries ``int64("arrsize")`` and
         # ValueError-s.
         # TODO(future): replace the ``specialize`` call with
@@ -387,7 +387,7 @@ class SDFGBuilder:
         """Attach Flang's constant-pool data to the SDFG.
 
         Every ``VarInfo`` with non-empty ``const_data`` represents a
-        ``_QQro.<shape>x<dtype>.<counter>`` global — the read-only
+        ``_QQro.<shape>x<dtype>.<counter>`` global  --  the read-only
         backing for an array or scalar literal in the source.  The
         bridge has already added a transient descriptor for it via
         ``add_descriptors``; this hook attaches the dense values so
@@ -396,9 +396,9 @@ class SDFGBuilder:
         The data widens to ``double`` on the bridge side for
         transport; we narrow to the descriptor's actual dtype here
         and reshape back to the rank-N companion shape.  Scalar
-        constants (rank 0, single value) are uncommon — Fortran
+        constants (rank 0, single value) are uncommon  --  Fortran
         ``parameter`` scalars typically inline as ``arith.constant``
-        — but the path supports them with a trivial 1-element array.
+         --  but the path supports them with a trivial 1-element array.
         """
         import numpy as np
         from dace.data import Scalar as _Scalar
@@ -410,8 +410,8 @@ class SDFGBuilder:
             desc = sdfg.arrays[v.fortran_name]
             np_dtype = desc.dtype.as_numpy_dtype()
             arr = np.asarray(v.const_data, dtype=np.float64).astype(np_dtype)
-            # Scalar (rank 0) globals — e.g. ``real :: bob = 1`` at
-            # module scope — pass through as a Python scalar so DaCe's
+            # Scalar (rank 0) globals  --  e.g. ``real :: bob = 1`` at
+            # module scope  --  pass through as a Python scalar so DaCe's
             # ``framecode.generate_constants`` writes a
             # ``constexpr <T> name = <val>`` (not the array form which
             # tries to ``sym2cpp`` a numpy array and chokes with
@@ -454,7 +454,7 @@ class SDFGBuilder:
         # state added.  Validation requires every CFG region to
         # have a defined start block; an empty region triggers
         # "Ambiguous starting block".  Such empties arise legitimately
-        # from Fortran source — a ``do i = 1, N; <only-stripped-by-
+        # from Fortran source  --  a ``do i = 1, N; <only-stripped-by-
         # flatten>; end do`` whose body became a no-op after
         # AoS+allocatable flattening, an empty IF branch, etc.
         # The empty state is semantically equivalent to the source
@@ -530,7 +530,7 @@ class SDFGBuilder:
 
     def nid(self) -> int:
         """Globally unique integer.  Shared across ``_Ctx`` instances so
-        loop variable names (``jk_0``, ``jc_1``, ``jk_2``, …) never
+        loop variable names (``jk_0``, ``jc_1``, ``jk_2``, ...) never
         collide.
         """
         i = self._id_counter
@@ -553,12 +553,12 @@ class SDFGBuilder:
     }
 
     def _emit(self, ctx: '_Ctx', nodes: list, region):
-        """Recursive dispatcher — maps each ASTNode.kind to its emitter."""
+        """Recursive dispatcher  --  maps each ASTNode.kind to its emitter."""
         for n in nodes:
             fn = self._EMIT_DISPATCH.get(n.kind)
             if fn is not None:
                 fn(self, ctx, n, region)
-            # "call" currently has no emitter — nested SDFG / library node
+            # "call" currently has no emitter  --  nested SDFG / library node
             # is a future feature (Phase 4).
 
     # Scalar-assign is called from _Ctx.flush; keep it as a method on the
@@ -571,10 +571,10 @@ def generate_sdfg(path: str = None, *, pipeline: str = None, entry: str = None, 
     """Build an SDFG from one or several HLFIR files.
 
     Single-file form (back-compat):
-        ``generate_sdfg("code.hlfir")`` — parses + DEFAULT_PIPELINE.
+        ``generate_sdfg("code.hlfir")``  --  parses + DEFAULT_PIPELINE.
 
     Multi-file form (ICON-style linked entry):
-        ``generate_sdfg(entry="_QPkernel", hlfir_files=[...])`` — parses
+        ``generate_sdfg(entry="_QPkernel", hlfir_files=[...])``  --  parses
         every file, merges them, drops non-entry siblings, errors on
         unresolved calls, then runs the HLFIR rewrite chain.
     """

@@ -6,12 +6,12 @@ Flang lowers these intrinsics inline at the call site:
   on a comparison of the dummy's shape symbol against zero.  ``size(a)``
   (no ``dim``) is the product of all per-dim ``max(0, extent)``s.
 - ``lbound(a, dim)`` is the dim's lower bound from the ``fir.shape`` /
-  ``fir.shape_shift`` operand — usually a literal ``1`` for explicit-shape
+  ``fir.shape_shift`` operand  --  usually a literal ``1`` for explicit-shape
   dummies, or the offset for ``a(50:54)`` style declares.
 - ``ubound(a, dim)`` is the dim's upper bound, computed similarly.
 
 The bridge handles all three through the generic ``arith.select`` ternary
-fallback in ``buildExpr`` — no dedicated intrinsic op exists in the
+fallback in ``buildExpr``  --  no dedicated intrinsic op exists in the
 HLFIR dialect for them.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ end subroutine
 
 
 def test_lbound_ubound_custom_lower_bound(tmp_path: Path):
-    """Custom Fortran lbound (``a(-2:2)``) — ``lbound`` must return ``-2``,
+    """Custom Fortran lbound (``a(-2:2)``)  --  ``lbound`` must return ``-2``,
     ``ubound`` ``2``, ``size`` 5."""
     src = """
 subroutine probe(a, lb, ub, sz)

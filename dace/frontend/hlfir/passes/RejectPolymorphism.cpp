@@ -1,12 +1,12 @@
 // ============================================================================
-// RejectPolymorphism.cpp — refuse programs that exercise runtime polymorphism.
+// RejectPolymorphism.cpp  --  refuse programs that exercise runtime polymorphism.
 // ============================================================================
 //
 // What it rejects:
-//   * ``fir.dispatch``    — virtual method call ``obj%method()`` whose
+//   * ``fir.dispatch``     --  virtual method call ``obj%method()`` whose
 //                           target depends on the runtime type of
 //                           ``obj``.
-//   * ``fir.select_type`` — ``SELECT TYPE`` block dispatching on
+//   * ``fir.select_type``  --  ``SELECT TYPE`` block dispatching on
 //                           runtime type.
 //
 // Why we don't try to lower these:
@@ -14,7 +14,7 @@
 //   statically devirtualises some cases.  Linking it pulls in
 //   ``libFIRTransforms.a`` + ``libFIRCodeGenDialect.a`` +
 //   ``libFIRCodeGen.a`` + ``libFIROpenACCSupport.a`` +
-//   ``libFortranSupport.a`` — the LLVMTypeConverter machinery and a
+//   ``libFortranSupport.a``  --  the LLVMTypeConverter machinery and a
 //   transitive OpenACC dialect-registration hook.  Several MB and a
 //   sprawling dependency for a feature the bridge doesn't actually
 //   want: even with the lowering, surviving dispatches are still
@@ -26,7 +26,7 @@
 //   error message points at the source location of the dispatch.
 //
 // What's still supported:
-//   * Non-polymorphic ``CLASS(t)`` declares — ``hlfir.designate
+//   * Non-polymorphic ``CLASS(t)`` declares  --  ``hlfir.designate
 //     %obj{"field"}`` style member access without virtual dispatch.
 //     Flang represents these as ``fir.class<T>`` type wrappers; the
 //     bridge's ``BaseBoxType`` peel in ``FlattenStructs`` walks
@@ -68,7 +68,7 @@ struct RejectPolymorphismPass
                     "hlfir-reject-polymorphism: ``fir.dispatch`` op "
                     "(virtual method call ``obj%method()``).  The "
                     "HLFIR bridge does not lower runtime polymorphic "
-                    "dispatch — every call site must resolve to a "
+                    "dispatch  --  every call site must resolve to a "
                     "concrete subroutine at compile time.  Replace "
                     "``call obj%method(...)`` with a direct call "
                     "``call concrete_method(obj, ...)`` or restructure "

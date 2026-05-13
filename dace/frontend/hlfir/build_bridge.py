@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_bridge.py — Auto-build and import hlfir_bridge.
+build_bridge.py  --  Auto-build and import hlfir_bridge.
 
 Usage from other modules:
     from build_bridge import hb          # builds on first import if needed
@@ -23,7 +23,7 @@ import sysconfig
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Configuration — override via environment variables if needed.
+# Configuration  --  override via environment variables if needed.
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).resolve().parent
@@ -34,7 +34,7 @@ _LLVM_VERSION = os.environ.get("LLVM_VERSION", "21")
 
 # LLVM cmake dir.  Override with env var; CMakeLists.txt also has its own
 # defaults, so this is only needed if cmake's auto-detection misses.
-# NOTE: we do NOT need MLIR_DIR — CMakeLists.txt locates MLIR through
+# NOTE: we do NOT need MLIR_DIR  --  CMakeLists.txt locates MLIR through
 # LLVM's install prefix using find_library, bypassing MLIR's broken cmake.
 _LLVM_DIR = os.environ.get("LLVM_DIR", "")
 

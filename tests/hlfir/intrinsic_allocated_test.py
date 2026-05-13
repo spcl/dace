@@ -1,4 +1,4 @@
-"""ALLOCATED intrinsic — Flang lowers ``ALLOCATED(arr)`` to
+"""ALLOCATED intrinsic  --  Flang lowers ``ALLOCATED(arr)`` to
 ``box_addr(load arr_box) != 0`` (a null-pointer check on the
 allocatable's heap descriptor).  The bridge:
 
@@ -90,7 +90,7 @@ end subroutine main
 
 def test_allocated_state_sequence(tmp_path: Path):
     """Read ALLOCATED before, between, and after ALLOCATE/DEALLOCATE
-    in the same subroutine — exercises the per-state ordering
+    in the same subroutine  --  exercises the per-state ordering
     guarantees that motivate using a SYMBOL (not a transient scalar)
     for ``<arr>_allocated``."""
     src = """
@@ -115,7 +115,7 @@ end subroutine main
 
 
 def test_allocated_two_arrays_independent(tmp_path: Path):
-    """Two allocatables track state independently — the ``a_allocated``
+    """Two allocatables track state independently  --  the ``a_allocated``
     and ``b_allocated`` symbols mustn't collide."""
     src = """
 subroutine main(out)

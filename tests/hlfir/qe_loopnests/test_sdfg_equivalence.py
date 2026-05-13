@@ -1,18 +1,18 @@
 """End-to-end tests for the QE / SC26-Layout-AD experiment kernels
-(E1–E5) translated to Fortran.
+(E1-E5) translated to Fortran.
 
 Each kernel is in ``tests/hlfir/qe_loopnests/qe_eN_*.f90``;
 this harness compiles it through the bridge AND through ``f2py``,
 then asserts numerical equivalence on a small random input.
 
 Source experiments (without the NUMA / multi-allocator harness):
-  * E1 MatrixAdd  — ``C(i,j) = C(i,j) + A(i,j) + B(i,j)``
-  * E2 Conjugate  — ``b(i) = conjg(b(i))`` complex(8)
-  * E3 Transpose  — ``B(j,i) = A(i,j)``
-  * E4 GAS/zaxpy  — ``Y(i) = a*X(i) + Y(i)`` complex(8)
-  * E5 USXX scatter — ``rhoc(nl(i)) = rhoc(nl(i)) + aux2(i)``
+  * E1 MatrixAdd   --  ``C(i,j) = C(i,j) + A(i,j) + B(i,j)``
+  * E2 Conjugate   --  ``b(i) = conjg(b(i))`` complex(8)
+  * E3 Transpose   --  ``B(j,i) = A(i,j)``
+  * E4 GAS/zaxpy   --  ``Y(i) = a*X(i) + Y(i)`` complex(8)
+  * E5 USXX scatter  --  ``rhoc(nl(i)) = rhoc(nl(i)) + aux2(i)``
                        (the addusxx_g hot inner loop)
-  * E5 USXX phase   — ``eigqts(na) = cos(arg) - i*sin(arg)``
+  * E5 USXX phase    --  ``eigqts(na) = cos(arg) - i*sin(arg)``
                        (the per-atom phase factor)
 
 Each test compares SDFG output against gfortran/f2py reference
@@ -40,7 +40,7 @@ def _src(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# E1 — MatrixAdd
+# E1  --  MatrixAdd
 # ---------------------------------------------------------------------------
 
 
@@ -56,7 +56,7 @@ def test_e1_matrix_add(tmp_path: Path):
     a = np.asfortranarray(rng.random((m, n))).astype(np.float64)
     b = np.asfortranarray(rng.random((m, n))).astype(np.float64)
     c = np.asfortranarray(rng.random((m, n))).astype(np.float64)
-    # f2py auto-derives m, n from ``a`` — they're intent(hide).  ``c``
+    # f2py auto-derives m, n from ``a``  --  they're intent(hide).  ``c``
     # is intent(inout) so we have to pass a Fortran-contiguous copy.
     c_ref = np.asfortranarray(c.copy())
     mod.kernel(a, b, c_ref)
@@ -65,7 +65,7 @@ def test_e1_matrix_add(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# E2 — Conjugate
+# E2  --  Conjugate
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +86,7 @@ def test_e2_conjugate_inplace(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# E3 — Transpose
+# E3  --  Transpose
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +108,7 @@ def test_e3_transpose(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# E4 — GAS / zaxpy
+# E4  --  GAS / zaxpy
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +121,7 @@ def test_e4_zaxpy(tmp_path: Path):
 
     rng = np.random.default_rng(3)
     n = 32
-    # ``a`` as length-1 array — see comment in the kernel source.
+    # ``a`` as length-1 array  --  see comment in the kernel source.
     a = np.array([0.7 - 0.3j], dtype=np.complex128)
     x = (rng.random(n) + 1j * rng.random(n)).astype(np.complex128)
     y = (rng.random(n) + 1j * rng.random(n)).astype(np.complex128)
@@ -132,7 +132,7 @@ def test_e4_zaxpy(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# E5 — USXX scatter (the addusxx_g hot inner loop)
+# E5  --  USXX scatter (the addusxx_g hot inner loop)
 # ---------------------------------------------------------------------------
 
 
@@ -146,7 +146,7 @@ def test_e5_usxx_scatter(tmp_path: Path):
     rng = np.random.default_rng(4)
     blocksize = 8
     nrxxs = 32
-    # ``nl`` is 1-based and may have repeats — the kernel ACCUMULATES
+    # ``nl`` is 1-based and may have repeats  --  the kernel ACCUMULATES
     # into rhoc, so duplicate indices must add multiple aux2 values
     # into the same slot.  We don't repeat here for simplicity.
     nl = rng.permutation(nrxxs)[:blocksize].astype(np.int32) + 1
@@ -159,7 +159,7 @@ def test_e5_usxx_scatter(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# E5 — USXX phase factor (per-atom)
+# E5  --  USXX phase factor (per-atom)
 # ---------------------------------------------------------------------------
 
 

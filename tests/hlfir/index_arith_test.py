@@ -2,12 +2,12 @@
 
 Flang lowers ``arr(..., nlev-1, ...)`` as ``arith.subi %nlev, %c1``
 + ``fir.convert`` before handing the value to ``hlfir.designate``.
-``buildIndexExpr`` has to recognise those integer arith ops — without
+``buildIndexExpr`` has to recognise those integer arith ops  --  without
 it the subscript surfaces as ``?`` in the memlet and DaCe picks up
 ``?`` as a free symbol at call time (``KeyError: '?'`` from the
 argslist resolver).
 
-These tests are intentionally minimal — one pattern per test — so a
+These tests are intentionally minimal  --  one pattern per test  --  so a
 regression immediately points at the arith op that broke.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _f2py_ref(src: str, out_dir: Path, name: str):
 
 
 def test_literal_integer_subscript(tmp_path: Path):
-    """``arr(i, 1, jb)`` — a literal integer in the mid dim.  Flang
+    """``arr(i, 1, jb)``  --  a literal integer in the mid dim.  Flang
     emits this as a plain ``arith.constant 1 : index``, which
     ``buildIndexExpr`` must render as ``1``."""
     src = """
@@ -75,7 +75,7 @@ end subroutine lit_mid
 
 
 def test_subi_in_subscript(tmp_path: Path):
-    """``arr(i, k-1, jb)`` — subtract-from-loop-iter.  Exercises the
+    """``arr(i, k-1, jb)``  --  subtract-from-loop-iter.  Exercises the
     ``arith.subi`` branch of ``buildIndexExpr``."""
     src = """
 subroutine sub_idx(a, b, n, m)
@@ -106,7 +106,7 @@ end subroutine sub_idx
 
 
 def test_subi_from_symbol_in_subscript(tmp_path: Path):
-    """``arr(i, nlev-1)`` — subtract-constant-from-symbol.  The
+    """``arr(i, nlev-1)``  --  subtract-constant-from-symbol.  The
     ``nlev`` dummy's presence in the subscript (not just as a loop
     bound) is the pattern velocity loopnest 5 hits."""
     src = """
@@ -136,7 +136,7 @@ end subroutine sym_sub
 
 
 def test_addi_in_subscript(tmp_path: Path):
-    """``arr(i+1, k)`` — add-constant-to-loop-iter.  Sibling of the
+    """``arr(i+1, k)``  --  add-constant-to-loop-iter.  Sibling of the
     subi case; guards the ``arith.addi`` branch."""
     src = """
 subroutine add_idx(a, b, n, m)

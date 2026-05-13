@@ -1,10 +1,10 @@
 // ============================================================================
-// LowerFirSelectCase.cpp — Lower fir.select_case to arith.cmp + cf.cond_br.
+// LowerFirSelectCase.cpp  --  Lower fir.select_case to arith.cmp + cf.cond_br.
 // ============================================================================
 // Problem:
 //     ``fir.select_case`` is a multi-successor terminator that the upstream
 //     ``mlir::inlineCall`` API mishandles when cloning a callee with one
-//     into the caller — the inliner segfaults during block-operand remap.
+//     into the caller  --  the inliner segfaults during block-operand remap.
 //     This blocks the bridge's ``hlfir-inline-all`` pass on any module
 //     where a ``contains``-nested subroutine uses ``SELECT CASE`` (e.g.
 //     ``module/contains/subroutine foo: select case (v) case(a) ... end``).
@@ -20,14 +20,14 @@
 //
 // Per-tag lowering (matches the bridge's existing ``buildSelectCaseChain``
 // in extract_ast.cpp so the resulting SDFG is identical):
-//     #fir.point %v          → ``selector == v``
-//     #fir.interval %lo %hi  → ``(selector >= lo) and (selector <= hi)``
-//     #fir.lower %lo         → ``selector >= lo``
-//     #fir.upper %hi         → ``selector <= hi``
-//     unit                   → fall-through (default arm)
+//     #fir.point %v          -> ``selector == v``
+//     #fir.interval %lo %hi  -> ``(selector >= lo) and (selector <= hi)``
+//     #fir.lower %lo         -> ``selector >= lo``
+//     #fir.upper %hi         -> ``selector <= hi``
+//     unit                   -> fall-through (default arm)
 //
 // Float selectors fall back to ``arith.cmpf oeq`` / ``oge`` / ``ole``.
-// String selectors are not handled — Fortran ``CHARACTER`` is not on the
+// String selectors are not handled  --  Fortran ``CHARACTER`` is not on the
 // FaCe roadmap and ``fir.select_case`` over CHARACTER would have arrived
 // here as a runtime-call lowering anyway.
 // ============================================================================
@@ -49,7 +49,7 @@ namespace hlfir_bridge {
 namespace {
 
 /// Build the boolean condition for one non-``unit`` case attribute.
-/// Returns nullptr if the tag shape isn't recognised — callers should
+/// Returns nullptr if the tag shape isn't recognised  --  callers should
 /// then leave the original ``fir.select_case`` in place.
 mlir::Value buildCaseCondition(mlir::OpBuilder &b, mlir::Location loc,
                                mlir::Value selector, mlir::Attribute tag,
@@ -88,7 +88,7 @@ mlir::Value buildCaseCondition(mlir::OpBuilder &b, mlir::Location loc,
 }
 
 /// Rewrite one ``fir.select_case`` into ``cmp + cf.cond_br`` blocks.
-/// Returns ``failure()`` if any case shape is unrecognised — leaves the
+/// Returns ``failure()`` if any case shape is unrecognised  --  leaves the
 /// op untouched so the existing in-bridge ``buildSelectCaseChain``
 /// fallback can still handle it (or the next pipeline stage can fail
 /// loudly with a useful error rather than silent miscompilation).
@@ -112,7 +112,7 @@ mlir::LogicalResult rewriteSelectCase(fir::SelectCaseOp sel) {
     // op was the block's terminator, so "after" it is whatever comes
     // next in the parent function's CFG; if the user wrote no default,
     // Fortran semantics is "no-op when nothing matches".  Use the
-    // default (which Flang always emits) — bail otherwise.
+    // default (which Flang always emits)  --  bail otherwise.
     if (!defaultDest) return mlir::failure();
 
     mlir::Block *parentBlock = sel->getBlock();

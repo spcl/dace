@@ -3,17 +3,17 @@
 Flang lowers each of these to a small ``arith.*`` op tree on the integer
 operand types:
 
-- ``IBSET(x, p)``  → ``x | (1 << p)``         (set bit p).
-- ``IBCLR(x, p)``  → ``x & ~(1 << p)``         (clear bit p; the ``~``
+- ``IBSET(x, p)``  -> ``x | (1 << p)``         (set bit p).
+- ``IBCLR(x, p)``  -> ``x & ~(1 << p)``         (clear bit p; the ``~``
   comes out as ``arith.xori a, -1``).
-- ``IEOR(a, b)``   → ``a ^ b``                 (bitwise XOR).
-- ``ISHFT(x, n)``  → ``x << n`` for ``n>0``,
+- ``IEOR(a, b)``   -> ``a ^ b``                 (bitwise XOR).
+- ``ISHFT(x, n)``  -> ``x << n`` for ``n>0``,
                      ``x >> -n`` for ``n<0``   (Flang inlines via shli /
                                                 shrsi + a sign select).
-- ``IAND(a, b)``   → ``a & b``.
-- ``IOR(a, b)``    → ``a | b``.
-- ``BTEST(x, p)``  → ``(x >> p) & 1`` (returned as i1 / .true.).
-- ``IBITS(x, p, n)`` → ``(x >> p) & ((1 << n) - 1)``.
+- ``IAND(a, b)``   -> ``a & b``.
+- ``IOR(a, b)``    -> ``a | b``.
+- ``BTEST(x, p)``  -> ``(x >> p) & 1`` (returned as i1 / .true.).
+- ``IBITS(x, p, n)`` -> ``(x >> p) & ((1 << n) - 1)``.
 
 The bridge's ``buildExpr`` recognises the underlying ``arith.shli`` /
 ``arith.shrsi`` / ``arith.andi`` / ``arith.ori`` / ``arith.xori`` ops on
@@ -57,7 +57,7 @@ end subroutine
 
 
 def test_bit_query_and_extract(tmp_path: Path):
-    """``btest(x, p)`` and ``ibits(x, p, n)`` — bit query + slice extract."""
+    """``btest(x, p)`` and ``ibits(x, p, n)``  --  bit query + slice extract."""
     src = """
 subroutine probe(x, out_ibits, out_btest)
   integer, intent(in)  :: x

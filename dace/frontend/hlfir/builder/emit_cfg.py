@@ -1,6 +1,6 @@
 """Control-flow-graph emission: assign, loop, while, conditional.
 
-These produce the SDFG's CFG skeleton — LoopRegions, ConditionalBlocks,
+These produce the SDFG's CFG skeleton  --  LoopRegions, ConditionalBlocks,
 and interstate-edge state-change assignments for symbol writes.  The
 actual per-element compute lives in ``emit_tasklet``; this module only
 stitches states and regions together.
@@ -31,13 +31,13 @@ def _anchor_views_referenced_in_expr(builder, expr: str, region, pre, sdfg):
 
     DaCe's framecode scans interstate-edge free_symbols and synthesises
     a bare ``AccessNode`` if the symbol is an array name with no real
-    node yet — which then trips ``allocate_view -> get_view_edge ->
+    node yet  --  which then trips ``allocate_view -> get_view_edge ->
     state.in_edges`` because the synthetic node isn't in any state.
     The anchor state's call to ``acc()`` registers the view's
     ``src -> view`` linking memlet, so framecode finds a real instance
     first in topological order.
 
-    Section-alias dummies are excluded — they have no SDFG descriptor
+    Section-alias dummies are excluded  --  they have no SDFG descriptor
     and ``expr`` should have already been rewritten through
     ``_rewrite_section_aliases_in_expr`` before this runs.
 
@@ -64,7 +64,7 @@ def _rewrite_section_aliases_in_expr(builder, expr: str) -> str:
     section_alias dummy referenced in ``expr``.
 
     Used by emit_cond / emit_loop when condition / bound expressions
-    get lifted onto interstate-edge assignments — the dummy itself has
+    get lifted onto interstate-edge assignments  --  the dummy itself has
     no SDFG descriptor, so a bare ``dummy`` symbol in the edge's free
     symbols would trip ``sdfg.arglist`` (KeyError) and DaCe's
     allocation-lifetime tracker.
@@ -105,14 +105,14 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     """Scalar or symbol assignment.
 
     Routes by target kind:
-      * ``symbols``    → interstate-edge assignment that forces a new state.
-      * ``array``      → tasklet via ``emit_tasklet`` with per-occurrence
+      * ``symbols``    -> interstate-edge assignment that forces a new state.
+      * ``array``      -> tasklet via ``emit_tasklet`` with per-occurrence
                          array-read connectors.
       * ``scalar`` whose RHS reads an array element (``s = d(2,1) + 1.0``)
-                         → same tasklet path; the subscripted read needs a
+                         -> same tasklet path; the subscripted read needs a
                          real memlet so the codegen sees a connector, not
                          a bare array-pointer identifier.
-      * plain ``scalar`` (``i = i + 1``, ``c = 0.5``) → queued on
+      * plain ``scalar`` (``i = i + 1``, ``c = 0.5``) -> queued on
                          ``ctx.pending`` for ``emit_scalar_assign`` at
                          flush time.
     """
@@ -121,10 +121,10 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
     # ``add_descriptors`` never saw them.  Register on first assign.
     auto_declare_synth(builder, n.target, ctx)
     if n.target in builder.symbols:
-        # Symbol-target reads of an array (``ci0 = icidx(je, jb, 1)`` —
+        # Symbol-target reads of an array (``ci0 = icidx(je, jb, 1)``  --
         # the scalar-staged indirection load) need the bridge's bare-name
         # ``n.expr`` (just ``"icidx"``) reconstructed into a full DaCe
-        # subscript expression with Fortran→0-based offsets and
+        # subscript expression with Fortran->0-based offsets and
         # iter_map remap; otherwise the interstate edge would assign the
         # whole array to a scalar symbol.  Plain symbol writes
         # (``i = i + 1``) keep ``n.expr`` verbatim.
@@ -181,7 +181,7 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
 
 
 def emit_symbol_init(builder, ctx: '_Ctx', n, region):
-    """Stage a position-array → SDFG-symbol read at SDFG entry.
+    """Stage a position-array -> SDFG-symbol read at SDFG entry.
 
     The bridge mints one of these for every ``arr(constant)`` it sees
     used as an array index or section bound (e.g. ``a(pos(1):pos(2))``).
@@ -214,8 +214,8 @@ def emit_symbol_init(builder, ctx: '_Ctx', n, region):
 
 
 def _fortran_subs_to_dace(expr, builder):
-    """Rewrite every ``<arr>[<idx>, …]`` substring in ``expr`` to
-    DaCe 0-based form ``<arr>[(<idx>) - offset_<arr>_d<i>, …]`` for
+    """Rewrite every ``<arr>[<idx>, ...]`` substring in ``expr`` to
+    DaCe 0-based form ``<arr>[(<idx>) - offset_<arr>_d<i>, ...]`` for
     each known array.  Used by ``emit_loop`` to convert Fortran-form
     bound expressions (e.g. ``row_ptr[(i_0+1)]``) into valid DaCe
     subscripts before they land in a LoopRegion's init / cond.
@@ -256,10 +256,10 @@ def _is_trivial_bound(expr: str) -> bool:
 
 
 def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
-    """Fortran DO loop → LoopRegion with exact Fortran bounds."""
+    """Fortran DO loop -> LoopRegion with exact Fortran bounds."""
     # Flush any pending scalar assigns from earlier siblings INTO the
     # parent region.  Without ``region`` here, ``ctx.flush`` would land
-    # them in ``ctx.sdfg`` (the top-level SDFG) — disconnected from the
+    # them in ``ctx.sdfg`` (the top-level SDFG)  --  disconnected from the
     # nested loop and orphaned: e.g. ``acc = 0.0d0`` ahead of an inner
     # ``do j = ...`` would surface as a duplicate top-level ``s_*``
     # state with no incoming edge, making the parent CFG's start block
@@ -278,7 +278,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
 
     uid = n.loop_iter
 
-    # ``arr[idx]`` (Fortran 1-based) → DaCe 0-based form so the
+    # ``arr[idx]`` (Fortran 1-based) -> DaCe 0-based form so the
     # LoopRegion's init / cond hit the correct element.
     bound = _fortran_subs_to_dace(n.loop_bound, builder)
     lower_expr = (_fortran_subs_to_dace(n.loop_lower_expr, builder) if n.loop_lower_expr else '')
@@ -314,8 +314,8 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
     iter_map = {**iter_map, n.loop_iter: uid}
 
     # ``DO i = a, b, step`` semantics.  Flang's ``fir.do_loop``
-    # carries (lower, upper, step) literally — for forward step the
-    # iter walks lower→upper inclusive; for negative step the
+    # carries (lower, upper, step) literally  --  for forward step the
+    # iter walks lower->upper inclusive; for negative step the
     # MLIR-level lower is actually the START (e.g. NCLV-1 for ``DO
     # JN = NCLV-1, 1, -1``) and upper is the END (1).  The bridge
     # passes them through as ``loop_lower`` and ``loop_bound`` without
@@ -347,14 +347,14 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
         region.add_edge(ctx.cur, loop, InterstateEdge())
     ctx.cur = loop
 
-    # Cache .children once — nanobind copies on every access.
+    # Cache .children once  --  nanobind copies on every access.
     children = n.children
 
     child_loops = [c for c in children if c.kind == "loop"]
     child_assigns = [c for c in children if c.kind == "assign"]
     # Anything beyond nested DO loops and plain assignments (IF/ELSE,
-    # WHILE, reductions, library-node calls, …) forces the generic
-    # state-machine walk — the flat ``body`` tasklet path can't host
+    # WHILE, reductions, library-node calls, ...) forces the generic
+    # state-machine walk  --  the flat ``body`` tasklet path can't host
     # interstate edges.
     has_structured = any(c.kind not in ("loop", "assign") for c in children)
 
@@ -384,15 +384,15 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
         # Scalar-staged indirection (``ci0 = icidx(je, jb, 1); w(ci0,...)``):
         # the bridge classifies ``ci0`` as a symbol (it feeds an
         # ``hlfir.designate`` index downstream), so the assign cannot land
-        # as a tasklet — DaCe has no array named ``ci0``.  Lift each such
-        # assign onto the same pre→body interstate edge that hosts the
+        # as a tasklet  --  DaCe has no array named ``ci0``.  Lift each such
+        # assign onto the same pre->body interstate edge that hosts the
         # inline indirect symbols; the consuming tasklet then reads the
         # symbol value uniformly.  The compute tasklets run on the
         # remaining (array-target) child assigns.
         symbol_assigns = [a for a in child_assigns if a.target in builder.symbols]
         compute_assigns = [a for a in child_assigns if a.target not in builder.symbols]
 
-        # Serialise sibling assigns that share an array as RW — an inlined
+        # Serialise sibling assigns that share an array as RW  --  an inlined
         # elemental body like ``f = g*g; g = g/(1+g)`` puts both tasklets
         # in one state with no dataflow edge between them; because both
         # access nodes back the same non-transient storage, the scheduler
@@ -408,7 +408,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
                     if ac.is_write:
                         write_names_so_far.add(ac.array_name)
                     if ac.is_read and ac.array_name in {ac2.array_name for ac2 in a.accesses if ac2.is_write}:
-                        # self-update within one assign — fine (handled by
+                        # self-update within one assign  --  fine (handled by
                         # the write-sink logic in emit_tasklet), but any
                         # later sibling that reads the same name must be
                         # in a new state so it sees the updated value.
@@ -483,7 +483,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
 
 
 def emit_while(builder, ctx: '_Ctx', n, region):
-    """Fortran ``DO WHILE`` — lifted by ``lift-cf-to-scf`` into scf.while
+    """Fortran ``DO WHILE``  --  lifted by ``lift-cf-to-scf`` into scf.while
     and extracted as ``kind="while"``.  Emit a DaCe LoopRegion whose
     condition is ``True`` (the bridge's faithful walker folds any
     break-on-false into a ``break`` child node inside the body).
@@ -507,7 +507,7 @@ def emit_while(builder, ctx: '_Ctx', n, region):
 
 
 def emit_cond(builder, ctx: '_Ctx', n, region):
-    """``if (cond) then ... else ... end if`` → ``ConditionalBlock`` with
+    """``if (cond) then ... else ... end if`` -> ``ConditionalBlock`` with
     a ``ControlFlowRegion`` per branch.  Subsequent statements land in a
     fresh successor state wired from the block.
     """
@@ -517,7 +517,7 @@ def emit_cond(builder, ctx: '_Ctx', n, region):
 
     cond = n.condition if n.condition and n.condition != "?" else "True"
     # Section-alias dummies (trivial section slices) have no SDFG
-    # descriptor — rewrite ``dummy[i, j]`` references in the condition
+    # descriptor  --  rewrite ``dummy[i, j]`` references in the condition
     # to ``source[i, j, k_const]`` via the view_dim_map.  Without this,
     # the interstate-edge assignment carries the dummy name as a free
     # symbol and ``sdfg.arglist`` raises a KeyError when scanning.

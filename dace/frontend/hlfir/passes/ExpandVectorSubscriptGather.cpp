@@ -1,5 +1,5 @@
 // ============================================================================
-// ExpandVectorSubscriptGather.cpp — replace hlfir.associate of an elemental with an
+// ExpandVectorSubscriptGather.cpp  --  replace hlfir.associate of an elemental with an
 // explicit gather temp.
 // ============================================================================
 //
@@ -28,7 +28,7 @@
 //         %dst = hlfir.designate %decl#0 (%i_idx)
 //         hlfir.assign %v to %dst
 //     }
-//     // %a#0 and %a#1 → %decl#0; %a#2 → false (no heap copy)
+//     // %a#0 and %a#1 -> %decl#0; %a#2 -> false (no heap copy)
 //
 // After the rewrite the inlined dummy declare aliasing the temp resolves
 // through the same ``hlfir.designate``-of-declare path the bridge already
@@ -37,15 +37,15 @@
 // any other elemental.
 //
 // ----------------------------------------------------------------------------
-// SCOPE / DESIGN CONSTRAINTS — see also dace/frontend/hlfir/README.md
+// SCOPE / DESIGN CONSTRAINTS  --  see also dace/frontend/hlfir/README.md
 // "Future support map" for user-facing status.
 // ----------------------------------------------------------------------------
 //
-// 1. **Static extent only — IR-rewrite limitation, not a DaCe one.**
+// 1. **Static extent only  --  IR-rewrite limitation, not a DaCe one.**
 //    The DaCe-side model permits symbolic extent: inside the gather
 //    loop each iteration reassigns the SAME indirection symbol slot
 //    (``<arr>_at<gid>``), so we only need ONE slot per syntactic
-//    access site — never an "array of N symbols".  N can be runtime.
+//    access site  --  never an "array of N symbols".  N can be runtime.
 //
 //    The static-only restriction is here in the local IR rewrite:
 //    emitting a dynamic-extent ``hlfir.declare`` requires careful
@@ -53,15 +53,15 @@
 //    verifier rule).  When extent isn't a compile-time constant the
 //    pass aborts with a clear error pointing at the source location.
 //
-// 2. **Rank-N elementals supported (N ≥ 1).**  Higher-rank gathers
-//    (``d(cols2, cols)`` → 2-D elemental, ``d(:, cols)`` → 2-D
+// 2. **Rank-N elementals supported (N >= 1).**  Higher-rank gathers
+//    (``d(cols2, cols)`` -> 2-D elemental, ``d(:, cols)`` -> 2-D
 //    range+index gather) build a nested ``fir.do_loop`` tree
 //    matching the elemental's ``fir.shape<N>``.  The elemental body
 //    takes one ``index`` block-arg per dim; ``hlfir.apply`` and the
 //    destination ``hlfir.designate`` consume all N IVs.
 //
 // 3. **INTENT(in) gathers only.**  The i1 ``must finalise`` flag from
-//    ``hlfir.end_associate`` is hard-coded to ``false`` — i.e. no
+//    ``hlfir.end_associate`` is hard-coded to ``false``  --  i.e. no
 //    scatter-back after the inlined callee returns.  INTENT(out) /
 //    INTENT(inout) gathers (rare in real code) would need a paired
 //    scatter loop after the call.
@@ -116,7 +116,7 @@ struct ExpandVectorSubscriptGatherPass
                 return;
             }
             // Scalar value-by-reference associate.  Common shape:
-            // ``call f(s, 0.5d0)`` — flang emits
+            // ``call f(s, 0.5d0)``  --  flang emits
             // ``%a:3 = hlfir.associate %cst {adapt.valuebyref}`` so
             // the inlined callee's by-ref dummy can take ``%a#0``.
             // The result type is a plain ``fir.ref<T>`` (rank 0); the
@@ -188,13 +188,13 @@ struct ExpandVectorSubscriptGatherPass
         if (!shapeOper) {
             return assoc.emitError(
                 "hlfir-expand-vector-subscript-gather: elemental has no shape "
-                "operand — cannot determine gather extent");
+                "operand  --  cannot determine gather extent");
         }
         auto shapeOp = mlir::dyn_cast_or_null<fir::ShapeOp>(shapeOper.getDefiningOp());
         if (!shapeOp) {
             return assoc.emitError(
                 "hlfir-expand-vector-subscript-gather: shape operand is not a "
-                "fir.shape op — unsupported elemental form");
+                "fir.shape op  --  unsupported elemental form");
         }
 
         // Per-dim extent values + static-or-dynamic classification.
@@ -221,7 +221,7 @@ struct ExpandVectorSubscriptGatherPass
         mlir::OpBuilder b(assoc);
 
         // 1) fir.alloca + hlfir.declare for the temp.  Static-shape
-        //    when every dim is a compile-time constant (preferred —
+        //    when every dim is a compile-time constant (preferred  --
         //    easier on downstream passes and the bridge's seq-extent
         //    fallback in ``extract_vars``); dynamic otherwise, with
         //    extent operands threaded through ``shape``.
@@ -240,12 +240,12 @@ struct ExpandVectorSubscriptGatherPass
         // parse it like any other local: ``_QF<encl>E<src>_gather_<n>``.
         // Including the source array name in the temp gives the SDFG a
         // self-documenting transient ("d_gather_0" instead of
-        // "__assoc_0") — the inlined-callee tasklet body becomes
+        // "__assoc_0")  --  the inlined-callee tasklet body becomes
         // readable.
         std::string enclName = "anon";
         if (auto fn = assoc->getParentOfType<mlir::func::FuncOp>()) {
             auto sym = fn.getSymName().str();
-            // ``_QPmain`` → ``main``; ``_QMmodPfn`` → ``mod_fn`` (best effort).
+            // ``_QPmain`` -> ``main``; ``_QMmodPfn`` -> ``mod_fn`` (best effort).
             if (sym.rfind("_QP", 0) == 0) enclName = sym.substr(3);
             else if (sym.rfind("_QM", 0) == 0) {
                 auto p = sym.find('P', 3);
@@ -310,7 +310,7 @@ struct ExpandVectorSubscriptGatherPass
                 /*data_attr=*/cuf::DataAttributeAttr{});
         }
 
-        // 2) Build the nested gather DO loop tree — one ``fir.do_loop``
+        // 2) Build the nested gather DO loop tree  --  one ``fir.do_loop``
         //    per dim from outermost (dim 0) to innermost (dim N-1).
         //    Collect the per-dim induction variables; the inner body
         //    applies the elemental and stores into the temp at the
@@ -339,10 +339,10 @@ struct ExpandVectorSubscriptGatherPass
 
         // 3) Replace associate uses.  Match the result-type convention
         //    flang itself uses for ``hlfir.associate``:
-        //      result#0 (HLFIR variable, box for dynamic)  → decl#0
-        //      result#1 (raw memref ref) → decl#1 for dynamic, decl#0
+        //      result#0 (HLFIR variable, box for dynamic)  -> decl#0
+        //      result#1 (raw memref ref) -> decl#1 for dynamic, decl#0
         //                                  for static (where both are ref)
-        //      result#2 (must-finalise i1) → false (no heap allocation)
+        //      result#2 (must-finalise i1) -> false (no heap allocation)
         b.setInsertionPointAfter(assoc);
         auto falseI1 = b.create<mlir::arith::ConstantOp>(
             loc, b.getBoolAttr(false));
@@ -359,14 +359,14 @@ struct ExpandVectorSubscriptGatherPass
         // Clean up cleanup ops that became no-ops.
         getOperation().walk([&](mlir::Operation *op) {
             if (auto endA = mlir::dyn_cast<hlfir::EndAssociateOp>(op)) {
-                // After RAUW, end_associate's operand is decl#0 — not a temp
+                // After RAUW, end_associate's operand is decl#0  --  not a temp
                 // it owns.  Erase it; finalisation is handled by SDFG
                 // transient lifetime.
                 if (endA.getVar().getDefiningOp() == declOp.getOperation())
                     endA.erase();
             }
         });
-        // ``hlfir.destroy`` of the elemental can stay — DCE drops it later.
+        // ``hlfir.destroy`` of the elemental can stay  --  DCE drops it later.
         return mlir::success();
     }
 };

@@ -1,4 +1,4 @@
-"""Whole-array scalar reductions → DaCe ``standard.Reduce`` library node.
+"""Whole-array scalar reductions -> DaCe ``standard.Reduce`` library node.
 
 Checks that ``sum``, ``product``, ``minval``, ``maxval`` each lower
 through Flang's dedicated HLFIR op into an SDFG Reduce node, and that
@@ -52,7 +52,7 @@ def test_scalar_reductions_numerical(tmp_path):
                                     np.zeros(1, order="F"))
     mod.reduce_scalar(np.asfortranarray(a), t_ref, p_ref, lo_ref, hi_ref)
 
-    # SDFG — ``intent(inout)`` scalar parameters land as size-1 Array
+    # SDFG  --  ``intent(inout)`` scalar parameters land as size-1 Array
     # descriptors (DaCe can't put Scalars on the external signature), so
     # the caller binds size-1 numpy arrays.
     t_sdfg = np.zeros(1, dtype=np.float64)

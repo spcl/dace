@@ -24,21 +24,21 @@ namespace hlfir_bridge {
 
 //
 // Per-op dispatcher.  Owns:
-//   * buildScfIfAsConditional — scf.if → ASTNode kind=conditional.
-//   * walkSCFBeforeRegion — the faithful scf.while walker.
-//   * buildWhileNode — scf.while → ASTNode kind=while.
-//   * traceLoopIter — find a fir.do_loop's induction var.
-//   * buildAST(Block&) — the per-op switch that walks an MLIR block,
+//   * buildScfIfAsConditional  --  scf.if -> ASTNode kind=conditional.
+//   * walkSCFBeforeRegion  --  the faithful scf.while walker.
+//   * buildWhileNode  --  scf.while -> ASTNode kind=while.
+//   * traceLoopIter  --  find a fir.do_loop's induction var.
+//   * buildAST(Block&)  --  the per-op switch that walks an MLIR block,
 //     picks the right shape builder for each hlfir.assign /
 //     fir.do_loop / fir.if / etc., and wires alloc-alias
 //     binds for fir.allocmem-bound stores.
-//   * extractAST(ModuleOp) — public entry point; calls buildAST
+//   * extractAST(ModuleOp)  --  public entry point; calls buildAST
 //     on the first func.func body and returns the AST.
 //
 // This file is included verbatim from extract_ast.cpp via
 // #include "bridge/ast/dispatch.cpp" and shares that translation
 // unit's namespace, includes, and file-static state.  It MUST NOT be
-// added to the build's compile list — CMakeLists.txt deliberately omits
+// added to the build's compile list  --  CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
 static ASTNode buildScfIfAsConditional(mlir::scf::IfOp ifOp) {
@@ -129,7 +129,7 @@ std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
             // always Flang's implicit IV writeback at the end of a
             // ``fir.do_loop`` body: the stored value is a block arg of the
             // surrounding do-loop that buildExpr can't express on its own
-            // — and the regular do-loop emitter already handles the IV
+            //  --  and the regular do-loop emitter already handles the IV
             // through ``initialize_expr`` / ``update_expr``.
             if (expr == "?") continue;
             ASTNode a;
@@ -140,7 +140,7 @@ std::vector<ASTNode> walkSCFBeforeRegion(mlir::Block &block) {
             out.push_back(std::move(a));
             continue;
         }
-        // Pure-value ops — no AST node, their values flow inline.
+        // Pure-value ops  --  no AST node, their values flow inline.
     }
     return out;
 }
@@ -176,7 +176,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
     // a ``fir.store (fir.embox-of-fir.allocmem) to <decl_box_ref>``;
     // first store keeps the original Fortran name (site 0 alias =
     // identity), subsequent ones bind ``x_alloc1`` / ``x_alloc2`` /
-    // … via setAllocAlias so every downstream traceToDecl picks up
+    // ... via setAllocAlias so every downstream traceToDecl picks up
     // the per-allocation transient name.  Uses the block-local map
     // keyed by raw declare name so two separate allocatables in the
     // same scope don't share counters.
@@ -194,7 +194,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
         auto allocmem = mlir::dyn_cast_or_null<fir::AllocMemOp>(
             embox.getMemref().getDefiningOp());
         if (!allocmem) return {};
-        // Only the user-visible allocs we model — skip embox-of-zero_bits
+        // Only the user-visible allocs we model  --  skip embox-of-zero_bits
         // (the empty-init store the bridge already filters out elsewhere).
         auto un = allocmem.getUniqName();
         if (!un || !un->ends_with(".alloc")) return {};
@@ -221,21 +221,21 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
         // emit a state-change ``<name>_allocated = 1`` so downstream
         // ``ALLOCATED(arr)`` reads see the right value.  The ALLOCATE
         // store itself produces no other observable side effect in the
-        // SDFG model — we treat allocatables as live for the whole
+        // SDFG model  --  we treat allocatables as live for the whole
         // scope.
         if (auto allocName = bindAllocSite(&op); !allocName.empty()) {
             emitAllocStateChange(allocName, 1);
             continue;
         }
 
-        // Standalone ``fir.freemem`` — Flang's DEALLOCATE expansion at
-        // top level (the trailing ``fir.if (alloc_status != 0) { … }``
+        // Standalone ``fir.freemem``  --  Flang's DEALLOCATE expansion at
+        // top level (the trailing ``fir.if (alloc_status != 0) { ... }``
         // is the implicit end-of-scope cleanup, handled separately as
         // ``isAllocCleanup``).  Trace through ``fir.box_addr`` and
         // ``fir.load`` to find the underlying ``hlfir.declare`` and
         // emit ``<rawname>_allocated = 0`` against the declare's RAW
         // Fortran name (NOT the current alloc-alias) so multi-site
-        // allocatables ``x → x_alloc1 → x_alloc2`` still funnel state
+        // allocatables ``x -> x_alloc1 -> x_alloc2`` still funnel state
         // updates through the original ``x_allocated`` symbol.
         if (auto fm = mlir::dyn_cast<fir::FreeMemOp>(&op)) {
             mlir::Value cur = fm.getHeapref();
@@ -292,7 +292,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             n.loop_lower = traceLB(doLoop.getLowerBound());
             if (n.loop_lower < 0) {
                 // Non-constant lower bound (``DO jk = nflatlev, nlev`` /
-                // ``DO j = row_ptr(i), …``).  Capture the symbolic form
+                // ``DO j = row_ptr(i), ...``).  Capture the symbolic form
                 // so emit_loop can thread it through instead of silently
                 // defaulting to 1.
                 if (!isArrayElementLoad(doLoop.getLowerBound())) {
@@ -305,7 +305,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // Step.  Reverse-direction ``DO i = N, 1, -1`` (LU
             // back-substitution) carries step -1; the bridge needs
             // this to flip init/cond/update in emit_loop.  Constant
-            // steps only — symbolic-step loops would silently default
+            // steps only  --  symbolic-step loops would silently default
             // to step=1 and produce a wrong-direction iteration if
             // the symbol is actually negative, so throw loudly when
             // the step is non-constant AND non-trivial (i.e. not the
@@ -314,7 +314,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                 n.loop_step = *stepC;
             } else {
                 throw std::runtime_error(
-                    "fir.do_loop with non-constant step — bridge "
+                    "fir.do_loop with non-constant step  --  bridge "
                     "currently lowers only constant-step loops. The "
                     "step's sign decides forward-vs-reverse codegen; "
                     "with a symbolic step we'd silently default to +1 "
@@ -322,8 +322,8 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                     "symbol is negative.");
             }
             // Elemental-inlined bodies use the fir.do_loop block arg
-            // directly as the hlfir.designate index — no fir.store →
-            // alloca → fir.load indirection.  traceLoopIter returns ""
+            // directly as the hlfir.designate index  --  no fir.store ->
+            // alloca -> fir.load indirection.  traceLoopIter returns ""
             // for that shape; push the block arg onto indexStack() with
             // a synthetic name so resolveIndex() can recover it when the
             // inner designate's index is the raw block arg.
@@ -369,8 +369,8 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // ``hlfir.expr``-valued sources (any HLFIR op whose result
             // type peels to ``!hlfir.expr<...>``: ``hlfir.elemental``,
             // ``hlfir.matmul``, ``hlfir.transpose``, ``hlfir.dot_product``,
-            // ``hlfir.count``, ``hlfir.sum``, …) are array-typed but
-            // NOT array refs — they have no memory backing.
+            // ``hlfir.count``, ``hlfir.sum``, ...) are array-typed but
+            // NOT array refs  --  they have no memory backing.
             // ``buildCopyNode`` would call ``traceToDecl`` on them and
             // get an empty name; route them to the elemental / libcall
             // handlers below instead.  This is what makes
@@ -383,7 +383,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                     src_is_hlfir_expr = true;
             }
 
-            // Section-to-section assign — both sides are non-trivial
+            // Section-to-section assign  --  both sides are non-trivial
             // ``hlfir.designate``s with at least one triplet dim.  Walk
             // the structure explicitly because ``buildCopyNode`` would
             // otherwise treat it as a whole-array copy and silently
@@ -392,7 +392,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             if (dst_is_array && src_is_array && !src_is_hlfir_expr) {
                 bool dstIsSection = (bool)asSectionDesignate(dst);
                 bool srcIsSection = (bool)asSectionDesignate(src);
-                // Either side carrying section info is enough — the
+                // Either side carrying section info is enough  --  the
                 // helper handles bare-decl on whichever side is plain
                 // whole-array.  Without this the dst-bare-decl form
                 // (``t0_w = p_prog_pprog_w(1, 1:5:1, 1:5:1)`` produced
@@ -414,13 +414,13 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                 nodes.push_back(buildCopyNode(assign));
                 continue;
             }
-            // Scalar-zero → array fill: MemsetLibraryNode.
+            // Scalar-zero -> array fill: MemsetLibraryNode.
             if (dst_is_array && !src_is_array && isConstantZero(src)) {
                 nodes.push_back(buildMemsetNode(assign));
                 continue;
             }
 
-            // Array-section ``res(a:b) = <scalar>`` — detect the LHS
+            // Array-section ``res(a:b) = <scalar>``  --  detect the LHS
             // hlfir.designate with triplet operands and synthesise a
             // nested loop over the section bounds.  Handled before the
             // elemental dispatch below because Flang emits a plain
@@ -434,7 +434,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                         continue;
                     }
                 }
-                // ``res = <non-zero scalar>`` — broadcast across the whole
+                // ``res = <non-zero scalar>``  --  broadcast across the whole
                 // array.  Memset already handled zero above; synthesise a
                 // nested loop here for any other constant / scalar RHS.
                 if (dst_is_array) {
@@ -447,7 +447,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                 }
             }
 
-            // b = <elementwise-expression>  — Flang wraps the RHS in one or
+            // b = <elementwise-expression>   --  Flang wraps the RHS in one or
             // more composed hlfir.elemental ops, the outermost of which is
             // the assign's source.  Synthesise a nested loop over the shape
             // instead of treating it as a scalar assign.
@@ -456,7 +456,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // ``hlfir.elemental { hlfir.designate; arith.select;
             // yield_element }``.  Detect that exact shape and route to
             // ``MergeLibraryNode`` directly so the per-element select
-            // stays inside the library node's expansion (modular —
+            // stays inside the library node's expansion (modular  --
             // bridge doesn't inline).  Anything more elaborate falls
             // through to ``buildElementalAssign``'s per-element tasklet
             // path (which uses the generic select/cmp fallback).
@@ -588,8 +588,8 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                     {"hlfir.matmul",      "matmul"},
                     {"hlfir.transpose",   "transpose"},
                     {"hlfir.dot_product", "dot_product"},
-                    // Fortran ``COUNT(mask [, dim])`` — routed through
-                    // ``CountLibraryNode`` so its ``cast → Reduce``
+                    // Fortran ``COUNT(mask [, dim])``  --  routed through
+                    // ``CountLibraryNode`` so its ``cast -> Reduce``
                     // expansion handles the integer-cast and the
                     // per-target reduction lowering.  ``buildLibCallNode``
                     // picks up the optional ``dim`` operand and threads
@@ -674,26 +674,26 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                     llvm::StringRef identity;  // initial accumulator value
                     llvm::StringRef py_op;     // Python binary op for
                                                // section-reduce loop body;
-                                               // empty → fall back to
+                                               // empty -> fall back to
                                                // buildReduceNode (whole-array)
                 };
                 static const RedEntry kRedTable[] = {
                     {"hlfir.sum",     "lambda a, b: a + b",    "0",     "+"},
                     {"hlfir.product", "lambda a, b: a * b",    "1",     "*"},
                     // Identity strings use the bare ``inf`` token (not
-                    // ``math.inf``) so DaCe's cppunparse — which maps
-                    // ``inf`` → ``INFINITY`` via _py2c_reserved — emits
+                    // ``math.inf``) so DaCe's cppunparse  --  which maps
+                    // ``inf`` -> ``INFINITY`` via _py2c_reserved  --  emits
                     // a valid C++ literal in the section-reduce init
                     // tasklet.  The whole-array Reduce path's eval()
                     // namespace is patched with ``inf=math.inf`` for
                     // the same string.
                     {"hlfir.minval",  "lambda a, b: min(a, b)", "inf",  "min"},
                     {"hlfir.maxval",  "lambda a, b: max(a, b)", "-inf", "max"},
-                    // Logical reductions — ANY / ALL on ``fir.logical``
+                    // Logical reductions  --  ANY / ALL on ``fir.logical``
                     // arrays (ICON's levelmask / maskflag patterns).
                     {"hlfir.any",     "lambda a, b: a or b",   "False",     "or"},
                     {"hlfir.all",     "lambda a, b: a and b",  "True",      "and"},
-                    // ``hlfir.count`` is intentionally absent — handled
+                    // ``hlfir.count`` is intentionally absent  --  handled
                     // in ``kLibTable`` above as a ``CountLibraryNode``
                     // libcall (covers Fortran COUNT's int-cast semantics
                     // and the optional ``dim`` argument).
@@ -703,7 +703,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                     if (opName == e.op) {
                         // If the reduction source is a section designate
                         // (``mask(lo:hi, jk)``) we can't use DaCe's Reduce
-                        // node directly — it reduces whole arrays.  Fall
+                        // node directly  --  it reduces whole arrays.  Fall
                         // back to a loop-accumulator lowering when a
                         // Python op is available.
                         bool emitted = false;
@@ -712,11 +712,11 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                             // Peel ``fir.convert`` chains so a section
                             // designate hidden behind a box rebox (the
                             // shape canonicalisation that shows up after
-                            // ``hlfir-rewrite-sequence-association`` —
-                            // ``box<array<NxT>>`` → ``box<array<?xT>>``)
+                            // ``hlfir-rewrite-sequence-association``  --
+                            // ``box<array<NxT>>`` -> ``box<array<?xT>>``)
                             // still matches the section-reduce path.
                             // Safe because at this point ``srcVal`` is
-                            // a box/ref of an array element type — the
+                            // a box/ref of an array element type  --  the
                             // converts here are shape-bookkeeping only,
                             // never value-altering casts (which only
                             // appear at scalar value sites).
@@ -781,7 +781,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // Allocatable deallocate-guard: ``fir.if (alloc_status != 0) {
             // fir.freemem, reset box to zero }``.  Carries no observable
             // side effect in the SDFG model (we treat allocatables as
-            // single-allocation transients) — skip the whole construct.
+            // single-allocation transients)  --  skip the whole construct.
             auto isAllocCleanup = [](mlir::Region &region) {
                 if (region.empty()) return false;
                 bool hasFreemem = false;
@@ -845,7 +845,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
             // Top-level ``fir.store`` is Flang's lowering for lifted
             // DO / DO-WHILE init (``fir.store %c1 to %i``) and internal
             // scratch counters.  Emit as a plain scalar assign.  Regular
-            // ``fir.do_loop``s' internal IV stores never reach here —
+            // ``fir.do_loop``s' internal IV stores never reach here  --
             // they live inside the loop's body region, which we walk
             // with the existing do-loop handler that takes care of the
             // IV through ``init_expr`` / ``update_expr``.
@@ -857,7 +857,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
                         target = allocaSynthName(memref);
             if (target.empty()) continue;
             auto expr = buildExpr(st.getValue(), 0);
-            // Drop stores with unresolvable RHS — see note in
+            // Drop stores with unresolvable RHS  --  see note in
             // ``walkSCFBeforeRegion``'s fir.store handler.
             if (expr == "?") continue;
             ASTNode a;
@@ -931,7 +931,7 @@ std::vector<ASTNode> extractAST(mlir::ModuleOp module) {
             std::string raw = extractName(op.getUniqName().str());
             if (raw.empty()) return;
             // Skip allocatables with neither ALLOCATE writes nor
-            // ALLOCATED(...) reads — the tracker would be dead weight
+            // ALLOCATED(...) reads  --  the tracker would be dead weight
             // (Phase H).  ``needsAllocatedTracker`` keys on the
             // declare's full uniq_name.
             if (!needsAllocatedTracker(op.getUniqName().str(), module))

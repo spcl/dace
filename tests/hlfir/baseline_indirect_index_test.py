@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — indirect / nested array indexing
+"""Baseline HLFIR coverage  --  indirect / nested array indexing
 (``out(i) = src(idx(i))``).  Pulled out of the original
 ``ported_from_f2dace_windmill_test.py`` per-feature split.
 """
@@ -20,7 +20,7 @@ def _build(src: str, tmp: Path, name: str):
 
 
 def test_nested_array_indirect(tmp_path):
-    """An index array feeds another array read — classic indirect access."""
+    """An index array feeds another array read  --  classic indirect access."""
     src = """
 subroutine nested_idx(out, idx, src, n)
   implicit none

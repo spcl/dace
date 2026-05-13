@@ -51,11 +51,11 @@ def add_descriptors(builder, sdfg: SDFG):
     non-transient ``dace.data.Scalar`` so callers pass plain ``int`` /
     ``float`` and the C++ codegen reads ``x`` directly.
     """
-    # Named Fortran symbols (nproma, nlev, …).
+    # Named Fortran symbols (nproma, nlev, ...).
     for v in builder.symbols.values():
         sdfg.add_symbol(v.fortran_name, dt(v.dtype))
 
-    # Per-dim ``?`` entries (e.g. ``vn_ie(nproma, nlev+1, nblks_e)`` —
+    # Per-dim ``?`` entries (e.g. ``vn_ie(nproma, nlev+1, nblks_e)``  --
     # ``resolveShapeSyms`` returns ``"?"`` for the arith-derived middle
     # extent) become a synthetic ``<arr>_d<dim>`` name so DaCe sees a
     # legal symbol; the caller-side binding emitter still passes the real
@@ -104,7 +104,7 @@ def add_descriptors(builder, sdfg: SDFG):
         """Column-major strides: stride[i] = product of dims[0..i-1].
         Fortran's declaration ``real :: a(nproma, nlev, nblks_e)`` has
         nproma as the fastest-varying index (stride 1), matching what
-        Flang's HLFIR expects — so the SDFG descriptor must advertise
+        Flang's HLFIR expects  --  so the SDFG descriptor must advertise
         the same layout or DaCe's C-order default will mis-index when
         called with numpy F-order inputs."""
         strides = []
@@ -120,7 +120,7 @@ def add_descriptors(builder, sdfg: SDFG):
     # ``.dt.<type>`` for type-info records on derived-type uses).
     # DaCe's ``NestedDict`` treats dots as nesting separators and
     # rejects them as keys.  Skip these declares at descriptor time
-    # — the bridge's accesses still reference the original
+    #  --  the bridge's accesses still reference the original
     # dummy/declare names, so dropping the internals is safe.
     def _is_flang_internal(nm: str) -> bool:
         return nm.startswith(".")
@@ -152,14 +152,14 @@ def add_descriptors(builder, sdfg: SDFG):
         if _is_flang_internal(v.fortran_name):
             continue
         if v.role == 'section_alias':
-            # Trivial section slice — no SDFG descriptor, no offset
+            # Trivial section slice  --  no SDFG descriptor, no offset
             # symbols.  Accesses through the inlined-body dummy rewrite
             # to source-array memlets via ``view_dim_map`` in
             # ``access.py`` / ``emit_tasklet.py``.
             continue
         dims = [_dim(s) for s in shape_syms[v.fortran_name]]
         if v.role == 'view_alias':
-            # Pointer alias of ``v.view_source`` — no separate storage.
+            # Pointer alias of ``v.view_source``  --  no separate storage.
             # ``sdfg.add_view`` registers a static reference that DaCe
             # codegen lowers to a typed pointer into the source's
             # buffer; per-state linking memlets (added by the ``acc``
@@ -181,7 +181,7 @@ def add_descriptors(builder, sdfg: SDFG):
             if src_strides is not None and len(v.view_subset) == len(src_strides):
                 for src_d, sub in enumerate(v.view_subset):
                     if ':' not in sub:
-                        continue  # scalar dim — drops out of the view
+                        continue  # scalar dim  --  drops out of the view
                     parts = sub.split(':')
                     sec_stride = int(parts[2]) if len(parts) >= 3 else 1
                     view_strides.append(src_strides[src_d] * sec_stride)
@@ -236,7 +236,7 @@ def add_descriptors(builder, sdfg: SDFG):
             view_aliases.append(v)
 
     # Record view aliases on the builder; ``build()`` stages the
-    # source ↔ view-alias copy states (one copy-in at SDFG entry, one
+    # source <-> view-alias copy states (one copy-in at SDFG entry, one
     # copy-out at SDFG exit) around the AST-emitted body.
     builder._view_aliases = view_aliases
     builder._view_shape_strs = {
@@ -291,7 +291,7 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
             if s_str not in ctx.sdfg.symbols:
                 ctx.sdfg.add_symbol(s_str, dace.int64)
             dims.append(dace.symbol(s_str))
-    # Fortran-style transient: rank > 1 → column-major strides so the
+    # Fortran-style transient: rank > 1 -> column-major strides so the
     # matmul / transpose / dot_product library nodes (which inherit
     # layout from the source operands' strides) write the result in the
     # same layout the bridge-declared dummy arrays use.  Single-rank
@@ -323,7 +323,7 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
         lower_bounds=['1'] * len(shape),
     )
     # Per-axis offset symbols + values (always 1 for bridge-synthesised
-    # transients — they're allocated fresh with Fortran's default lb).
+    # transients  --  they're allocated fresh with Fortran's default lb).
     for d in range(len(shape)):
         sym_name = f"offset_{name}_d{d}"
         if sym_name not in ctx.sdfg.symbols:
@@ -349,7 +349,7 @@ def auto_declare_synth(builder, name: str, ctx):
     lift-cf-to-scf uses as scratch counters.  Both need an SDFG
     descriptor + an entry in ``builder.scalars`` so ``emit_assign``'s
     existing dispatch (scalar pending, or symbol state-change) can
-    fire normally.  Treated as transient ints — they only live for
+    fire normally.  Treated as transient ints  --  they only live for
     the loop's lifetime and are read only by downstream generated
     conditions.
     """
@@ -358,7 +358,7 @@ def auto_declare_synth(builder, name: str, ctx):
     if not (name.startswith("__sc_") or name.startswith("__al_")):
         return
     # Fake a VarInfo-like record so _add_descriptors-consistent paths work.
-    # A ``SimpleNamespace`` is enough — scalar dispatch only reads
+    # A ``SimpleNamespace`` is enough  --  scalar dispatch only reads
     # ``.intent`` and ``.dtype``.
     v = SimpleNamespace(fortran_name=name,
                         intent='',

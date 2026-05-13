@@ -3,11 +3,11 @@
 Peer of ``builder/`` / ``intrinsics/`` under ``dace/frontend/hlfir/``.
 Runs AFTER the SDFG is built, consuming three inputs:
 
-- ``FrozenSignature`` — the SDFG's argument list snapshotted at
+- ``FrozenSignature``  --  the SDFG's argument list snapshotted at
   build time (drift-checked at codegen).
-- ``OriginalInterface`` — the caller-facing Fortran surface of the
+- ``OriginalInterface``  --  the caller-facing Fortran surface of the
   entry subroutine.
-- ``FlattenPlan`` — record of every AoS → SoA unpack performed by
+- ``FlattenPlan``  --  record of every AoS -> SoA unpack performed by
   ``hlfir-flatten-structs``.
 
 And producing one ``<entry>_bindings.f90`` module that preserves the
@@ -16,13 +16,13 @@ generates do-loop copy-in / copy-out where recipes demand it.
 
 Public surface:
     FrozenArg / FrozenSignature / SignatureDriftError
-        — signature freezing + drift check
+         --  signature freezing + drift check
     OriginalInterface / OriginalArg / DerivedType / Member
-        — outer Fortran-facing surface
+         --  outer Fortran-facing surface
     FlattenRecipe / FlattenEntry / FlattenPlan
-        — the AoS→SoA plan from hlfir-flatten-structs
+         --  the AoS->SoA plan from hlfir-flatten-structs
     emit_bindings(frozen, iface, plan, out_path)
-        — the top-level emitter
+         --  the top-level emitter
 """
 from __future__ import annotations
 

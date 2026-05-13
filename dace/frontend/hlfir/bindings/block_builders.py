@@ -1,4 +1,4 @@
-"""Named block builders — one function per Fortran section of the
+"""Named block builders  --  one function per Fortran section of the
 generated wrapper module.  Each takes the canonical bundle
 ``(frozen, iface, plan)`` (or a subset) and returns one string
 representing that block.
@@ -44,8 +44,8 @@ def build_c_interface(frozen: FrozenSignature, iface: OriginalInterface) -> str:
     three C entry points that the compiled SDFG exports.
 
     Args:
-        frozen:  Frozen signature — drives the per-arg declarations.
-        iface:   Outer interface — only ``iface.entry`` is read,
+        frozen:  Frozen signature  --  drives the per-arg declarations.
+        iface:   Outer interface  --  only ``iface.entry`` is read,
                  used in the ``bind(c, name='...')`` attribute.
 
     Returns:
@@ -134,7 +134,7 @@ def build_handle_state(iface: OriginalInterface) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Wrapper head — dummy decls, flat pointer / scratch decls, symbol / iter locals
+# Wrapper head  --  dummy decls, flat pointer / scratch decls, symbol / iter locals
 # ---------------------------------------------------------------------------
 
 
@@ -143,8 +143,8 @@ def build_wrapper_head(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     section.
 
     Walks ``plan.entries``:
-        * aliasable recipes → ``<type>, pointer :: <flat>(:,:,...)``
-        * non-aliasable     → ``<type>, allocatable, target :: <flat>(:,:)``
+        * aliasable recipes -> ``<type>, pointer :: <flat>(:,:,...)``
+        * non-aliasable     -> ``<type>, allocatable, target :: <flat>(:,:)``
     Free symbols that aren't already outer dummies become local
     ``integer(c_int)`` scalars; ``i1..iN`` loop iters are declared
     whenever any non-aliasable recipe exists.
@@ -211,12 +211,12 @@ def build_wrapper_head(frozen: FrozenSignature, iface: OriginalInterface, plan: 
 
 
 # ---------------------------------------------------------------------------
-# Wrapper body — per-entry alias calls / copy-in loops, symbol population
+# Wrapper body  --  per-entry alias calls / copy-in loops, symbol population
 # ---------------------------------------------------------------------------
 
 
 def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: FlattenPlan) -> str:
-    """Render the between-declaration-and-SDFG-call block — for each
+    """Render the between-declaration-and-SDFG-call block  --  for each
     ``FlattenEntry`` either alias it (zero-copy) or allocate + copy
     in, then populate SDFG free symbols from ``size(...)`` on the
     outer storage.
@@ -234,7 +234,7 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     body: List[str] = ["    ! ----- Copy-in / alias per flatten entry -----"]
     for entry in plan.entries:
         r = entry.recipe
-        # Three mutually exclusive emitter shapes — see FlattenRecipe
+        # Three mutually exclusive emitter shapes  --  see FlattenRecipe
         # for the flag matrix.
         if r.aos_alloc:
             body.extend(render_aos_alloc_pack_in(r, entry.outer_expr))
@@ -246,7 +246,7 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     _, copy_in_lines, _, _ = _build_logical_bridges(frozen, iface)
     if copy_in_lines:
         body.append("")
-        body.append("    ! ----- LOGICAL → logical(c_bool) bridge (copy-in) -----")
+        body.append("    ! ----- LOGICAL -> logical(c_bool) bridge (copy-in) -----")
         body.extend(copy_in_lines)
 
     sym_lines = _build_symbol_assigns(frozen, plan, outer_dummy_set)
@@ -258,7 +258,7 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
 
 
 # ---------------------------------------------------------------------------
-# Wrapper tail — init-count bump, SDFG call, copy-back, deallocate, end sub
+# Wrapper tail  --  init-count bump, SDFG call, copy-back, deallocate, end sub
 # ---------------------------------------------------------------------------
 
 
@@ -324,7 +324,7 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
 
     bridge_block = ""
     if bridge_copy_out:
-        bridge_block = "\n    ! ----- logical(c_bool) → LOGICAL bridge (copy-out + dealloc) -----\n" + "\n".join(
+        bridge_block = "\n    ! ----- logical(c_bool) -> LOGICAL bridge (copy-out + dealloc) -----\n" + "\n".join(
             bridge_copy_out)
 
     if not copy_out_lines and not bridge_copy_out:
@@ -344,13 +344,13 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
 
 
 def build_finalize(iface: OriginalInterface) -> str:
-    """Placeholder — the finalize subroutine is baked into
+    """Placeholder  --  the finalize subroutine is baked into
     ``templates/wrapper_call.f90.in`` and emitted together with the
     main wrapper tail.  Kept as a named function so the coordinator
     has a uniform shape.
 
     Args:
-        iface:  Unused today — kept for API symmetry.
+        iface:  Unused today  --  kept for API symmetry.
 
     Returns:
         Empty string.  Reserved for a future split that moves the
@@ -372,13 +372,13 @@ def assemble_module(iface: OriginalInterface, frozen: FrozenSignature, blocks: d
         iface:   For ``iface.used_modules`` (use-only statements).
         frozen:  For the schema_version stamped in the header.
         blocks:  Dict of ``'c_interface' / 'handle_state' / 'wrapper_head'
-                 / 'wrapper_body' / 'wrapper_tail' / 'finalize'`` → str.
+                 / 'wrapper_body' / 'wrapper_tail' / 'finalize'`` -> str.
 
     Returns:
         Complete Fortran module source.
 
     Template:
-        ``templates/module.f90.in`` — three placeholders (use
+        ``templates/module.f90.in``  --  three placeholders (use
         statements, c-interface, handle state, wrapper body,
         finalize body) plus the entry name + schema version.
     """
@@ -425,7 +425,7 @@ def _is_default_logical(fortran_type: str) -> bool:
 
     Default ``logical`` is 4 bytes (``LOGICAL(KIND=4)``); ``logical(1)``
     /  ``logical(8)`` are different sizes again.  Only ``logical(c_bool)``
-    matches the SDFG's bool storage directly — every other LOGICAL kind
+    matches the SDFG's bool storage directly  --  every other LOGICAL kind
     needs a copy-via-Fortran-intrinsic-cast at the wrapper boundary so
     the SDFG sees the correct 1-byte ``bool`` layout.
     """
@@ -445,7 +445,7 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
     dummy to a ``T*`` whose elements are 4 bytes wide; the SDFG expects
     1-byte ``bool*``.  Passing the outer dummy's address straight
     through corrupts every other element's read.  The fix is a
-    ``logical(c_bool)`` scratch buffer with the same shape — Fortran's
+    ``logical(c_bool)`` scratch buffer with the same shape  --  Fortran's
     intrinsic LOGICAL-kind-conversion (``cbool_buf = outer``) handles
     the bit-fiddling, and ``c_loc(cbool_buf)`` is then safely passed
     to the SDFG.
@@ -463,7 +463,7 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
               outer dummy when this dummy needs bridging.
 
     Bool dummies whose outer Fortran declaration is already
-    ``logical(c_bool)`` need no bridge — pass-through is correct.
+    ``logical(c_bool)`` need no bridge  --  pass-through is correct.
     Bool ``intent(in)`` scalars are pass-by-value; the C interface
     builder takes a ``logical(c_bool), value`` so the Fortran
     intrinsic cast happens at the call site instead of through a
@@ -483,7 +483,7 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
             continue
         if not _is_default_logical(oa.fortran_type):
             continue
-        # Array dummy — explicit scratch buffer + element-wise cast.
+        # Array dummy  --  explicit scratch buffer + element-wise cast.
         if fa.rank > 0:
             scratch = f"{fa.fortran_name}_cbool"
             shape_dim = "(" + ",".join(":" for _ in range(fa.rank)) + ")"
@@ -534,7 +534,7 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
     """
     # Cap symbols of aos_alloc recipes are populated by the pack-in
     # code (``render_aos_alloc_pack_in`` writes ``cap_<m> = max_i(...)``)
-    # before the SDFG call — skip them here so we don't emit a stray
+    # before the SDFG call  --  skip them here so we don't emit a stray
     # TODO line or duplicate assignment.
     aos_cap_syms = {
         entry.recipe.cap_symbol
@@ -550,7 +550,7 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
         for entry in plan.entries:
             r = entry.recipe
             for d, shape in enumerate(r.shape_exprs):
-                # Cheap substring check — ``size(st%a, dim=1)`` doesn't
+                # Cheap substring check  --  ``size(st%a, dim=1)`` doesn't
                 # mention the symbol directly; we'd need the shape to be
                 # recorded symbolically ("n") for this to match.  Left as
                 # a simple heuristic for now; future work: extend recipes

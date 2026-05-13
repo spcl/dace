@@ -1,13 +1,13 @@
 """End-to-end tests for the Fortran ``COUNT`` intrinsic flowing through
-the HLFIR frontend → ``CountLibraryNode``.
+the HLFIR frontend -> ``CountLibraryNode``.
 
 Three lowering modes:
 
-- **Mode A** — ``COUNT(mask)`` over a plain logical / integer mask
+- **Mode A**  --  ``COUNT(mask)`` over a plain logical / integer mask
   (whole-array reduce; output is a scalar).
-- **Mode B** — ``COUNT(mask, dim=k)`` per-dim reduction (output is a
+- **Mode B**  --  ``COUNT(mask, dim=k)`` per-dim reduction (output is a
   rank-(N-1) array).
-- **Mode C** — ``COUNT(<expression>)`` where the source is an inline
+- **Mode C**  --  ``COUNT(<expression>)`` where the source is an inline
   ``hlfir.elemental`` (typically a comparison ``arr1 .eq. arr2`` or a
   compound boolean).  The bridge synthesises a transient int32 mask via
   a per-element loop, then routes it through ``CountLibraryNode``.
@@ -27,7 +27,7 @@ from _util import build_sdfg, have_flang
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 # ---------------------------------------------------------------------------
-# Mode A — plain mask
+# Mode A  --  plain mask
 # ---------------------------------------------------------------------------
 
 
@@ -53,7 +53,7 @@ end subroutine main
 
 
 def test_count_mode_a_integer_mask_2d_whole(tmp_path: Path):
-    """``COUNT(mask)`` on a 2-D integer mask — same path as 1-D, just
+    """``COUNT(mask)`` on a 2-D integer mask  --  same path as 1-D, just
     a different rank.  Whole-array reduce; output is a scalar."""
     src = """
 subroutine main(mask, n, m, res)
@@ -73,12 +73,12 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# Mode B — with explicit ``dim`` argument
+# Mode B  --  with explicit ``dim`` argument
 # ---------------------------------------------------------------------------
 
 
 def test_count_mode_b_with_dim_2(tmp_path: Path):
-    """``COUNT(mask, dim=2)`` on a 2-D mask — output is rank-1 (collapses
+    """``COUNT(mask, dim=2)`` on a 2-D mask  --  output is rank-1 (collapses
     the second dim).  Bridge traces the dim operand via traceConstInt
     and stamps it on the ASTNode's reduce_axes; emit_libcall converts
     back to Fortran 1-based for CountLibraryNode's constructor."""
@@ -100,7 +100,7 @@ end subroutine main
 
 
 def test_count_mode_b_with_dim_1(tmp_path: Path):
-    """``COUNT(mask, dim=1)`` on a 2-D mask — output is rank-1 along
+    """``COUNT(mask, dim=1)`` on a 2-D mask  --  output is rank-1 along
     the second axis."""
     src = """
 subroutine main(mask, n, m, res)
@@ -120,12 +120,12 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# Mode C — inline elemental source (comparison-as-mask)
+# Mode C  --  inline elemental source (comparison-as-mask)
 # ---------------------------------------------------------------------------
 
 
 def test_count_mode_c_array_comparison(tmp_path: Path):
-    """``COUNT(a .eq. b)`` — comparison inline.  Flang lowers the mask
+    """``COUNT(a .eq. b)``  --  comparison inline.  Flang lowers the mask
     as ``hlfir.elemental { arith.cmpi eq; yield_element }``; the bridge
     walks the body, materialises a transient int32 mask, and routes
     through CountLibraryNode."""
@@ -148,7 +148,7 @@ end subroutine main
 
 
 def test_count_mode_c_compound_boolean(tmp_path: Path):
-    """``COUNT((a .gt. lo) .and. (a .lt. hi))`` — nested elemental
+    """``COUNT((a .gt. lo) .and. (a .lt. hi))``  --  nested elemental
     wrapping two comparisons combined by ``and``.  Same Mode C path."""
     src = """
 subroutine main(a, n, lo, hi, res)

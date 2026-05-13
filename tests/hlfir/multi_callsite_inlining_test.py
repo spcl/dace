@@ -3,7 +3,7 @@
 Reduces the cloudsc shape that broke view_test_2 (multi-callsite
 section-slice dummies) to a minimal form.  Both variants compile the
 SAME Fortran source via f2py for the reference and via the bridge
-for the SDFG — e2e per ``feedback_e2e_numerical``.
+for the SDFG  --  e2e per ``feedback_e2e_numerical``.
 
 1. ``..._whole_array``: bar receives a whole array.  Routes through
    the bridge's per-SSA alias trace; no view-alias machinery
@@ -37,7 +37,7 @@ END SUBROUTINE bar
 
 
 def test_fortran_frontend_multi_callsite_whole_array(tmp_path):
-    """Two ``bar`` calls, one against ``a``, one against ``b`` — whole arrays."""
+    """Two ``bar`` calls, one against ``a``, one against ``b``  --  whole arrays."""
     src = """
 MODULE kernel_mod
 CONTAINS

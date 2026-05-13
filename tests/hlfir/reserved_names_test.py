@@ -1,4 +1,4 @@
-"""Sympy-collision rename pass — direct coverage.
+"""Sympy-collision rename pass  --  direct coverage.
 
 The bridge renames Fortran identifiers that match a sympy module-level
 ``LazyFunction`` attribute (``test``, ``doctest``) to ``program_<name>``
@@ -28,7 +28,7 @@ def _build(src: str, tmp: Path, name: str = "main", entry: str | None = None):
 
 
 def test_reserved_name_test_as_local_array(tmp_path: Path):
-    """Local array named ``test`` — the indexed-load case that
+    """Local array named ``test``  --  the indexed-load case that
     triggered the original ``LazyFunction`` SympifyError."""
     src = """
 subroutine main(d)
@@ -72,7 +72,7 @@ end subroutine main
 def test_reserved_name_is_renamed_in_sdfg(tmp_path: Path):
     """Sanity-check the rename: the SDFG should advertise the
     ``program_test`` array and the builder should record the
-    ``test → program_test`` mapping for the binding emitter."""
+    ``test -> program_test`` mapping for the binding emitter."""
     src = """
 subroutine main(d)
   double precision d(2)
@@ -95,7 +95,7 @@ end subroutine main
 
 
 def test_reserved_name_test_as_dummy_argument(tmp_path: Path):
-    """``test`` as a subroutine dummy argument — exercises the SDFG
+    """``test`` as a subroutine dummy argument  --  exercises the SDFG
     signature side and the FrozenSignature build that the binding
     emitter consumes.  The SDFG-level kwarg uses the renamed form
     (``program_test``) since that's what DaCe registers; the
@@ -134,7 +134,7 @@ end subroutine main
 def test_reserved_name_binding_wrapper_emits(tmp_path: Path):
     """The binding emitter should consume the renamed FrozenSignature
     without crashing and produce a wrapper file.  This is the surface
-    that downstream Fortran callers see — without it the rename pass
+    that downstream Fortran callers see  --  without it the rename pass
     has fixed the SDFG side but left the binding side broken."""
     from dace.frontend.hlfir.bindings import emit_bindings
     from dace.frontend.hlfir.bindings.frozen_signature import FrozenArg, FrozenSignature

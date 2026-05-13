@@ -1,6 +1,6 @@
 """End-to-end test for elementwise Fortran intrinsics.
 
-Builds ``elemwise_sin(a, b, n)`` as an SDFG through the HLFIR frontend —
+Builds ``elemwise_sin(a, b, n)`` as an SDFG through the HLFIR frontend  --
 Flang lowers ``b = sin(a) + 2.0d0 * a`` into composed ``hlfir.elemental``
 ops, our bridge walks them into a nested ``kind="loop"`` + ``kind="assign"``
 AST, and the SDFG emitter produces a DaCe ``LoopRegion`` whose tasklet
@@ -51,7 +51,7 @@ def test_elemwise_sin_numerical(tmp_path):
     n = 16
     a = rng.standard_normal(n)
 
-    # f2py reads Fortran-order; DaCe default is C — same logical data, one
+    # f2py reads Fortran-order; DaCe default is C  --  same logical data, one
     # layout-matching copy each.
     b_ref = np.zeros(n, order="F")
     mod.elemwise_sin(np.asfortranarray(a), b_ref)

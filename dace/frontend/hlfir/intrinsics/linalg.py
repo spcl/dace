@@ -1,11 +1,11 @@
-"""Linear-algebra Fortran intrinsics → dedicated DaCe library nodes.
+"""Linear-algebra Fortran intrinsics -> dedicated DaCe library nodes.
 
 Each lowers directly from a first-class HLFIR op, no post-SDFG
 pattern-match pass needed:
 
-    hlfir.matmul       → dace.libraries.blas.nodes.matmul.MatMul
-    hlfir.transpose    → dace.libraries.standard.nodes.transpose.Transpose
-    hlfir.dot_product  → dace.libraries.blas.nodes.dot.Dot
+    hlfir.matmul       -> dace.libraries.blas.nodes.matmul.MatMul
+    hlfir.transpose    -> dace.libraries.standard.nodes.transpose.Transpose
+    hlfir.dot_product  -> dace.libraries.blas.nodes.dot.Dot
 
 ``MatMul`` is a meta-node: its ``SpecializeMatMul`` expansion dispatches
 to ``Gemm``, ``BatchedMatMul``, ``Gemv``, or ``Dot`` depending on the

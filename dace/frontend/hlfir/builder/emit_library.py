@@ -35,7 +35,7 @@ _LIBCALL_CONNECTORS = {
 
 
 def emit_copy(builder, ctx, n, region):
-    """Whole-array ``b = a`` → ``CopyLibraryNode`` with ``_in`` / ``_out``
+    """Whole-array ``b = a`` -> ``CopyLibraryNode`` with ``_in`` / ``_out``
     memlets covering the full source / destination arrays."""
     from dace.libraries.standard.nodes import CopyLibraryNode
     ctx.flush(builder)
@@ -57,7 +57,7 @@ def emit_copy(builder, ctx, n, region):
 
 
 def emit_memset(builder, ctx, n, region):
-    """Scalar-zero → array fill → ``MemsetLibraryNode`` with a single
+    """Scalar-zero -> array fill -> ``MemsetLibraryNode`` with a single
     ``_out`` memlet covering the destination.  The memset transitions
     to a fresh successor state so any later element write to the same
     array lands in a new state (and on a new access node) instead of
@@ -160,7 +160,7 @@ def emit_libcall(builder, ctx, n, region):
     # the bridge populates ``n.accesses[0]`` with the per-dim write
     # index so the output memlet covers a single element instead of
     # the whole array (which would fail validation for scalar-output
-    # libcalls like dot_product, count, …).
+    # libcalls like dot_product, count, ...).
     write_acc = next((ac for ac in n.accesses if ac.is_write), None)
     if write_acc is not None:
         from dace.frontend.hlfir.builder.access import build_memlet_index
@@ -181,7 +181,7 @@ def emit_reduce(builder, ctx, n, region):
 
     When ``n.target_is_array`` is true and ``n.accesses[0]`` carries a
     write AccessInfo (LHS was ``res(i) = MINVAL(...)``), the output
-    memlet covers only that element — otherwise multiple reductions
+    memlet covers only that element  --  otherwise multiple reductions
     in the same routine all write through the whole destination and
     the last one wins.
     """
@@ -205,7 +205,7 @@ def emit_reduce(builder, ctx, n, region):
     #
     # Fortran spec: ``MINVAL`` / ``MAXVAL`` on an empty array returns
     # ``HUGE(x)`` / ``-HUGE(x)`` (the dtype's representable extreme),
-    # not ``±inf``.  Substitute the identity per destination dtype so
+    # not ``+/-inf``.  Substitute the identity per destination dtype so
     # the empty-array case matches gfortran exactly and the integer
     # path doesn't truncate ``inf`` to a garbage int.
     import numpy as _np
@@ -238,7 +238,7 @@ def emit_reduce(builder, ctx, n, region):
 
 
 def emit_break(builder, ctx, n, region):
-    """Fortran ``EXIT`` → ``BreakBlock`` added to the current region.
+    """Fortran ``EXIT`` -> ``BreakBlock`` added to the current region.
     The block is a leaf and implicitly transfers control to the nearest
     enclosing loop's exit edge at codegen time.  When the break is the
     region's first block (a branch body whose only statement is
@@ -255,7 +255,7 @@ def emit_break(builder, ctx, n, region):
 
 
 def emit_return(builder, ctx, n, region):
-    """Fortran ``RETURN`` → ``ReturnBlock``.  Added to the current region
+    """Fortran ``RETURN`` -> ``ReturnBlock``.  Added to the current region
     so RETURNs nested inside a loop or conditional get placed correctly;
     codegen still emits a plain ``return`` that bails out of the whole
     subroutine.

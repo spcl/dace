@@ -1,4 +1,4 @@
-"""Fortran intrinsic → DaCe lowering registry for the HLFIR frontend.
+"""Fortran intrinsic -> DaCe lowering registry for the HLFIR frontend.
 
 Public surface:
     is_elementwise(name)
@@ -13,10 +13,10 @@ Emitter code should only talk to this module, never import the per-family
 registries directly.  Adding a new intrinsic means editing one file under
 this package and nothing else.  The families live in flat siblings:
 
-    elementwise.py    — sin, cos, exp, sqrt, abs, min, max, ...
-    reduction.py      — sum, product, minval, maxval
-    linalg.py         — matmul, transpose, dot_product
-    direct.py         — SIZE / LBOUND / UBOUND / ... (Phase 4 stub)
+    elementwise.py     --  sin, cos, exp, sqrt, abs, min, max, ...
+    reduction.py       --  sum, product, minval, maxval
+    linalg.py          --  matmul, transpose, dot_product
+    direct.py          --  SIZE / LBOUND / UBOUND / ... (Phase 4 stub)
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def is_intrinsic(name: str) -> bool:
 
 
 def render_call(name: str, args: list[str]) -> str:
-    """Return ``name(arg0, arg1, …)`` verbatim.
+    """Return ``name(arg0, arg1, ...)`` verbatim.
 
     Only validates elementwise arity today; reduction / libnode callers
     will gain their own render helpers as those phases come online.

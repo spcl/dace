@@ -1,4 +1,4 @@
-"""Whole-array scalar reductions → DaCe ``standard.Reduce``.
+"""Whole-array scalar reductions -> DaCe ``standard.Reduce``.
 
 ``sum(a)`` / ``product(a)`` / ``minval(a)`` / ``maxval(a)`` each lower
 through Flang into a dedicated HLFIR op (``hlfir.sum``, ``hlfir.product``,

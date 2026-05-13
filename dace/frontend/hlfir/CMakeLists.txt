@@ -1,15 +1,15 @@
 # ============================================================================
-# CMakeLists.txt — hlfir_bridge
+# CMakeLists.txt  --  hlfir_bridge
 # ============================================================================
 # Build targets:
-#   hlfir_bridge_core    — static lib  (trace/extract)
-#   hlfir_bridge_passes  — static lib  (MLIR passes)
-#   hlfir_bridge         — Python ext  (nanobind; links both above)
+#   hlfir_bridge_core     --  static lib  (trace/extract)
+#   hlfir_bridge_passes   --  static lib  (MLIR passes)
+#   hlfir_bridge          --  Python ext  (nanobind; links both above)
 #
 # MLIR linking strategy (cf. pixel-druid.com/articles/how-to-link-against-mlir-with-cmake):
 #   Debian/Ubuntu MLIR cmake configs are often broken (missing tool binaries
 #   cause CMake export-set errors).  We avoid find_package(MLIR) entirely.
-#   Instead we use find_package(LLVM) — which works — and locate MLIR
+#   Instead we use find_package(LLVM)  --  which works  --  and locate MLIR
 #   headers and libraries through LLVM's install prefix.  MLIR is always
 #   co-installed alongside LLVM.
 # ============================================================================
@@ -94,7 +94,7 @@ include(AddLLVM)
 set(MLIR_INCLUDE_DIRS "${LLVM_INCLUDE_DIRS}" CACHE PATH "MLIR include dirs")
 
 # Helper: find one MLIR (or Flang) library and create an imported target.
-# Usage: find_mlir_lib(MLIRIR) → creates target MLIRIR if libMLIRIR.a exists.
+# Usage: find_mlir_lib(MLIRIR) -> creates target MLIRIR if libMLIRIR.a exists.
 macro(find_mlir_lib name)
     if(NOT TARGET ${name})
         find_library(_${name}_LIB ${name} HINTS ${LLVM_LIBRARY_DIR} NO_DEFAULT_PATH)
@@ -144,7 +144,7 @@ set(FLANG_DIALECT_LIBS
     # noted with the symbol that pulls it in:
     #   FIRTransforms       fir::createPolymorphicOpConversion
     #   FIRCodeGenDialect   fir.cg.XDeclareOp (used by select_type
-    #                                          → cf branch lowering)
+    #                                          -> cf branch lowering)
     #   FIRCodeGen          fir::LLVMTypeConverter::convertBoxTypeAsStruct
     #   FortranSupport      Fortran::common::getFlangFullVersion (codegen
     #                                                              produced-by metadata)

@@ -122,10 +122,10 @@ def test_fortran_frontend_type_pardecl(tmp_path):
     Originally xfailed claiming "parametric array dimension not lowered",
     but the actual blocker was test-side bugs: the test passed
     ``np.full([4, 5])`` for a ``d(5, 5)`` dummy (shape mismatch) AND
-    wrote ``d(:, 1) = bob(1) + bob2`` — illegal Fortran since LHS is
+    wrote ``d(:, 1) = bob(1) + bob2``  --  illegal Fortran since LHS is
     rank-1 length 5 and RHS broadcasts to length 10 (the size of
     ``bob2``).  Flang lowered the illegal assign by writing 10
-    elements column-major, spilling into column 2 of ``d`` — undefined
+    elements column-major, spilling into column 2 of ``d``  --  undefined
     behaviour that made the assertion ``a[1, 1] == 42`` fail (the
     value got overwritten to 5.5).
 
@@ -270,7 +270,7 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@xfail("parent-pointer round-trip (s%b%a%w === s%w) not collapsed — needs a "
+@xfail("parent-pointer round-trip (s%b%a%w === s%w) not collapsed  --  needs a "
        "CollapseParentPointer pre-pass that rewrites the designate chain "
        "before FlattenStructs.  Structural-candidacy detection: `a_t.b: "
        "pointer<b_t>` is a candidate because b_t's embedded-field closure "
@@ -280,7 +280,7 @@ end subroutine main
 def test_fortran_frontend_circular_type_parent_pointer_chase(tmp_path):
     """End-to-end correctness for the parent-pointer round-trip.
 
-    Contract the (deferred) rewrite would enforce: ``s%b%a === s`` —
+    Contract the (deferred) rewrite would enforce: ``s%b%a === s``  --
     the pointer-chase through ``b`` followed by the embedded
     back-reference ``a`` returns to the same ``a_t`` instance.  Under
     that contract, ``s%b%a%w(...) === s%w(...)``.
@@ -324,11 +324,11 @@ subroutine kernel(d, x, y, z)
   d(3) = s%b%a%w(1, 2, 1)
 end subroutine kernel
 """
-    # SDFG via HLFIR bridge — xfails today at build (no rewrite pass).
+    # SDFG via HLFIR bridge  --  xfails today at build (no rewrite pass).
     (tmp_path / "sdfg").mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(src, tmp_path / "sdfg", name='kernel').build()
 
-    # f2py reference — always builds; serves as the oracle once the
+    # f2py reference  --  always builds; serves as the oracle once the
     # bridge clears the rewrite.
     ref = f2py_compile(src, tmp_path / "ref", "parent_pointer_ref")
 
@@ -524,7 +524,7 @@ end subroutine main
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     # ``my_arr_d0``/``my_arr_d1`` are inherited from an inlined-callee alias
-    # declare on the pointer member ``p_prog%pprog(1)%w`` — its assumed-shape
+    # declare on the pointer member ``p_prog%pprog(1)%w``  --  its assumed-shape
     # dims surface as SDFG free symbols.  Test source neither allocates nor
     # rebinds the pointer, so any non-zero value works; the bridge has done
     # the structural lowering and the runtime contract is "caller supplies
@@ -595,7 +595,7 @@ end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main', entry='_QPmain').build()
     a = np.full([4, 5], 42, order="F", dtype=np.float32)
-    # Should NOT need to bind ``sta_d0`` / ``sta_d1`` — ``st_z`` is
+    # Should NOT need to bind ``sta_d0`` / ``sta_d1``  --  ``st_z`` is
     # concretely (3, 3) and ``sta`` is just an inlined alias.  The
     # SDFG signature surfaces these synth symbols today only because
     # ``asAssumedShapeAlias`` doesn't trace through a flattened-field
@@ -668,7 +668,7 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# Alloc-array-of-records member — the `LiftAllocArrayOfRecords` pre-pass
+# Alloc-array-of-records member  --  the `LiftAllocArrayOfRecords` pre-pass
 # target.  Both tests below xfail today; flip to passing when the pass lands.
 # ---------------------------------------------------------------------------
 

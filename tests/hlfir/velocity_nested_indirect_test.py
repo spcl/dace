@@ -11,7 +11,7 @@ arrays (``cell_idx`` / ``cell_blk``) are themselves used as the OUTER
 dim 0 / dim 2 indices into another array (``w``).  The bridge's
 struct-flatten pass currently bails on dummy-arg structs whose
 members include a nested record (``allMembersFlattenable`` is false)
-— the nested designate chain survives into the AST extractor, and
+ --  the nested designate chain survives into the AST extractor, and
 ``build_memlet_index`` produces a memlet string with a raw
 sub-subscript ``arr[other[i]]``.  ``Memlet._parse_from_subexpr``
 splits on the outermost ``[`` and crashes with
@@ -81,7 +81,7 @@ def test_velocity_nested_struct_indirection(tmp_path: Path):
     cell_blk = np.asfortranarray(rng.integers(1, 32, size=(nproma, nblks, 2), dtype=np.int32))
     out_sdfg = np.zeros((nproma, nlev, nblks), dtype=np.float64, order='F')
 
-    # Reference: NumPy gather (Fortran 1-based → 0-based on the indirect
+    # Reference: NumPy gather (Fortran 1-based -> 0-based on the indirect
     # axes).  This is the exact arithmetic ``kernel`` performs for every
     # ``(je, jk, jb)``.
     cell_i = cell_idx[..., 0] - 1

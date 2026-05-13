@@ -38,7 +38,7 @@ end subroutine
 
 
 def test_merge_comparison_as_mask(tmp_path: Path):
-    """``merge(a, b, a > b)`` — an inline comparison as the mask."""
+    """``merge(a, b, a > b)``  --  an inline comparison as the mask."""
     src = """
 subroutine probe(a, b, out)
   real(8), intent(in)  :: a, b
@@ -54,7 +54,7 @@ end subroutine
 
 
 def test_merge_array_via_library_node(tmp_path: Path):
-    """Array ``merge(t, f, mask)`` — Flang lowers to ``hlfir.elemental {
+    """Array ``merge(t, f, mask)``  --  Flang lowers to ``hlfir.elemental {
     hlfir.designate; arith.select; yield_element }``; the bridge
     detects the simple shape (three loaded designates of declared
     arrays) and routes through ``MergeLibraryNode`` directly.  Verify
@@ -81,7 +81,7 @@ end subroutine main
 
 def test_merge_array_verifies_libnode_present(tmp_path: Path):
     """Same as above, but also asserts a ``MergeLibraryNode`` is present
-    in the built SDFG — pins the bridge → library-node routing
+    in the built SDFG  --  pins the bridge -> library-node routing
     structurally so a future regression (e.g. a refactor that quietly
     falls back to the per-element-tasklet path) trips this test."""
     from dace.libraries.standard.nodes import MergeLibraryNode

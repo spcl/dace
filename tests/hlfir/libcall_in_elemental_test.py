@@ -1,5 +1,5 @@
 """Bridge support for libcall results consumed by an enclosing
-``hlfir.elemental`` body — the ``2.0 - matmul(a, b)`` /
+``hlfir.elemental`` body  --  the ``2.0 - matmul(a, b)`` /
 ``1.0 - transpose(a)`` pattern.
 
 Flang's HLFIR lowers ``res = expr_with_libcall(args)`` to:
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_one_minus_transpose(tmp_path: Path):
-    """``res = 1.0 - transpose(a)`` — exercise the libcall-in-elemental
+    """``res = 1.0 - transpose(a)``  --  exercise the libcall-in-elemental
     materialisation for ``hlfir.transpose``."""
     src = """
 subroutine main(a, res)
@@ -53,7 +53,7 @@ end subroutine main
 
 
 def test_two_minus_matmul(tmp_path: Path):
-    """``res = 2.0 - matmul(a, b)`` — same pattern, ``hlfir.matmul``."""
+    """``res = 2.0 - matmul(a, b)``  --  same pattern, ``hlfir.matmul``."""
     src = """
 subroutine main(a, b, res)
   double precision, dimension(5,3) :: a

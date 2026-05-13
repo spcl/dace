@@ -91,7 +91,7 @@ END SUBROUTINE intrinsic_bound_test_function2
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     # ``input`` is declared 4x7 in the outer subroutine and passed to
-    # an interface that takes ``dimension(:,:)`` — the bridge surfaces
+    # an interface that takes ``dimension(:,:)``  --  the bridge surfaces
     # the assumed-shape extents on the SDFG signature so the caller
     # binds them to the actual dims.
     sdfg(res=res, input_d0=4, input_d1=7)
@@ -139,7 +139,7 @@ END SUBROUTINE intrinsic_bound_test_function2
     # Outer ``input`` is declared ``dimension(42:45, 13:19)`` (4 elements
     # in dim0, 7 in dim1, with non-default lower bounds 42 / 13).  When
     # passed to an INTERFACE that takes ``dimension(:,:)`` the assumed-
-    # shape callee re-bases everything to lb=1 — Fortran spec — so the
+    # shape callee re-bases everything to lb=1  --  Fortran spec  --  so the
     # callee's ``LBOUND`` returns 1 and ``UBOUND`` returns the extent.
     sdfg(res=res, input_d0=4, input_d1=7)
 

@@ -1,6 +1,6 @@
 """Ported from f2dace/dev:tests/fortran/view_test.py.
 
-Exercises Fortran array-slice arguments to subroutines — the
+Exercises Fortran array-slice arguments to subroutines  --  the
 caller passes ``aa(:, :, k)`` (a 2-D view into a 3-D parent), the
 callee operates on it as if it were a contiguous 2-D array.
 """
@@ -18,7 +18,7 @@ def test_fortran_frontend_view_test(tmp_path):
     """Single-view: caller passes one 2-D slice into a 3-D parent.
 
     The original test declared the callee's dummy ``aa`` rank-3
-    (``aa(10,11,23)``) but indexed it rank-2 (``aa(JK,JL)``) —
+    (``aa(10,11,23)``) but indexed it rank-2 (``aa(JK,JL)``)  --
     invalid Fortran that the old Python parser silently accepted.
     Fixed by declaring the dummy rank-2 to match the access shape;
     the caller still passes a rank-2 slice ``a(:, :, 1)`` of its

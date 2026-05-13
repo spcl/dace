@@ -1,7 +1,7 @@
-// extract_ast.cpp — public entry point ``extractAST(ModuleOp)``.
+// extract_ast.cpp  --  public entry point ``extractAST(ModuleOp)``.
 //
 // AST extraction is split across five sibling translation units under
-// ``ast/`` — expressions, assigns, elementals, control_flow, dispatch.
+// ``ast/``  --  expressions, assigns, elementals, control_flow, dispatch.
 // They share state through ``ast/ast_helpers.h`` (cross-file function
 // declarations + thread-locals).  This file holds only the includes
 // that pull the dialect headers in once for the whole bundle.

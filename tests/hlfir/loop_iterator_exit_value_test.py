@@ -1,18 +1,18 @@
 """Iterator value after a Fortran DO loop must match gfortran's convention.
 
 After a counted `DO i = lo, hi[, step]` loop completes normally (no EXIT),
-gfortran leaves ``i`` at the value that failed the bound check —
+gfortran leaves ``i`` at the value that failed the bound check  --
 **one stride past the last attained value**:
 
-* forward  ``DO i = 1, N``    →  exit value ``N + 1``
-* reverse  ``DO i = N, 1, -1`` →  exit value ``0``
-* strided  ``DO i = 1, N, 2`` →  exit value ``(N | N+1) + 2`` depending
+* forward  ``DO i = 1, N``    ->  exit value ``N + 1``
+* reverse  ``DO i = N, 1, -1`` ->  exit value ``0``
+* strided  ``DO i = 1, N, 2`` ->  exit value ``(N | N+1) + 2`` depending
   on parity, again last attained + step
 
 The Fortran 2018+ standard says the iterator is technically undefined
 after the loop, but every mainstream compiler (gfortran, ifort, flang)
 leaves it at ``last + step``.  The bridge's SSA loop-iterator
-reconstruction pass therefore has to match this convention — any kernel
+reconstruction pass therefore has to match this convention  --  any kernel
 that reads the iterator past the loop end would otherwise diverge from
 its f2py reference (no current cloudsc loop nest does this, but it is a
 real class of subtle off-by-one bugs and worth pinning).

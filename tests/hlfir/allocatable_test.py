@@ -1,11 +1,11 @@
-"""End-to-end tests for ``ALLOCATABLE`` arrays — single-allocation
+"""End-to-end tests for ``ALLOCATABLE`` arrays  --  single-allocation
 scope (no reallocation).
 
 Pinned scope:
   * ``allocate(x(n))`` once per scope, ``deallocate(x)`` at the end.
   * Reads / writes through the box descriptor (``x(i)``, ``x(:)``,
     whole-array assigns).
-  * ``deallocate`` is treated as a no-op — the bridge skips the
+  * ``deallocate`` is treated as a no-op  --  the bridge skips the
     matching ``fir.if`` cleanup guard so the SDFG just lets the
     transient die at end-of-scope.
 
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_alloc_then_whole_array_copy(tmp_path: Path):
-    """``allocate(x(n)); x = src; out = x; deallocate(x)`` — verifies the
+    """``allocate(x(n)); x = src; out = x; deallocate(x)``  --  verifies the
     allocatable round-trip end to end.  No loop-iter reads, so this only
     exercises the alloc/dealloc plumbing."""
     src = """
@@ -52,7 +52,7 @@ end subroutine main
 
 def test_alloc_then_section_copy(tmp_path: Path):
     """Section assigns into / out of an allocatable land on the right
-    elements — sanity-checks designate-paths through the box."""
+    elements  --  sanity-checks designate-paths through the box."""
     src = """
 subroutine main(n, src, out)
   integer, intent(in) :: n

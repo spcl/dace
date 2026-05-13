@@ -9,16 +9,16 @@ the Vectra paper artifacts.  Five kernels:
 
 Each kernel ships two checks:
 
-* ``..._builds`` — the bridge parses the kernel and produces a valid
+* ``..._builds``  --  the bridge parses the kernel and produces a valid
   SDFG.  Always asserted; this is the user's primary contract.
-* ``..._numerical`` — the SDFG output matches a gfortran/f2py reference
+* ``..._numerical``  --  the SDFG output matches a gfortran/f2py reference
   at small-sweep sizes (``KLON = nproma = 32``, ``KLEV = nlev = 32``,
   ``NCLV = 5`` for microphysics species).  Inputs come from a seeded
   RNG with values inside physically-sensible ranges; integer indices
   used for indirect access (``NCLDQ*``) stay within their declared
   bounds.
 
-Sources read from the ``cloudsc_*.f90`` siblings in the artifacts dir —
+Sources read from the ``cloudsc_*.f90`` siblings in the artifacts dir  --
 those are the canonical clean variants (no ``BIND(C)``, no
 ``ISO_C_BINDING``, no leftover ``SYSTEM_CLOCK`` calls), which both
 the bridge and ``f2py`` can consume directly without preprocessing.
@@ -49,7 +49,7 @@ def _kernel_source(name: str) -> str:
     in place to:
       * normalise ``IF (laericeauto)`` (the source declares
         ``laericeauto`` as ``INTEGER(KIND=4)``, so flang rejects the
-        bare-LOGICAL guard) → ``IF (laericeauto /= 0)``.
+        bare-LOGICAL guard) -> ``IF (laericeauto /= 0)``.
     """
     src = _LOOPNESTS_DIR / f"cloudsc_{name}.f90"
     if not src.is_file():
@@ -63,7 +63,7 @@ def _build(src: str, tmp: Path, *, name: str, entry: str | None = None):
     return build_sdfg(src, sdfg_dir, name=name, entry=entry).build()
 
 
-# Sweep sizes — small enough to keep individual tests under a few
+# Sweep sizes  --  small enough to keep individual tests under a few
 # seconds, large enough that single-iter loop corner-cases don't mask
 # vectorisation / unrolling bugs.
 KLON = 32
@@ -79,7 +79,7 @@ NCLDQR = 4
 NCLDQS = 5
 
 # ===========================================================================
-# 1. autoconversion_snow — temperature- and ice-content-gated snow rate
+# 1. autoconversion_snow  --  temperature- and ice-content-gated snow rate
 # ===========================================================================
 
 
@@ -116,7 +116,7 @@ def test_cloudsc_autoconversion_snow_numerical(tmp_path: Path):
     mod = f2py_compile(src, tmp_path / "ref", "autoconv_snow_ref")
     ZSOLQB_ref = ZSOLQB.copy(order="F")
     # f2py signature: ``zsnowaut = autoconversion_snow(kidia, kfdia,
-    # ztp1, zicecld, pnice, zsolqb, rtt, …, laericeauto)``; ``klon /
+    # ztp1, zicecld, pnice, zsolqb, rtt, ..., laericeauto)``; ``klon /
     # ncldqs / ncldqi`` are inferred from array shapes.
     ZSNOWAUT_ref = mod.autoconversion_snow(1, KLON, ZTP1, ZICECLD, PNICE, ZSOLQB_ref, consts["rtt"],
                                            consts["rlcritsnow"], consts["rsnowlin1"], consts["rsnowlin2"],
@@ -207,7 +207,7 @@ def test_cloudsc_ice_supersaturation_adjustment_numerical(tmp_path: Path):
 
 
 # ===========================================================================
-# 3. lu_solver_microphysics — column-wise dense LU
+# 3. lu_solver_microphysics  --  column-wise dense LU
 # ===========================================================================
 
 
@@ -221,7 +221,7 @@ def test_cloudsc_lu_solver_numerical(tmp_path: Path):
     src = _kernel_source("lu_solver")
     rng = np.random.default_rng(44)
 
-    # Diagonally-dominant random (NCLV × NCLV) per-column matrices —
+    # Diagonally-dominant random (NCLV x NCLV) per-column matrices  --
     # guarantees no pivoting needed and no near-singular columns.
     ZQLHS = np.zeros((KLON, NCLV, NCLV), order="F")
     for jl in range(KLON):
@@ -300,7 +300,7 @@ def test_cloudsc_rain_evaporation_numerical(tmp_path: Path):
     ZCOVPTOT_ref = ZCOVPTOT.copy(order="F")
     ZCOVPCLR_ref = ZCOVPCLR.copy(order="F")
     # f2py: zevap_out = rain_evap(...).  ``klon`` and ``nclv`` are
-    # inferred from arrays.  ``ZEVAP_OUT`` is intent(out) → return.
+    # inferred from arrays.  ``ZEVAP_OUT`` is intent(out) -> return.
     ZEVAP_OUT_ref = mod.rain_evaporation_abel_boutle(
         1, KLON, ZTP1, ZQX_NCLDQV, ZA, ZQSLIQ, ZQXFG_ref, ZCOVPTOT_ref, ZCOVPCLR_ref, ZCOVPMAX, ZRHO, PAP, ZSOLQA_ref,
         consts["rtt"], consts["rv"], consts["rd"], consts["rprecrhmax"], consts["rcovpmin"], consts["rdensref"],
@@ -339,7 +339,7 @@ def test_cloudsc_rain_evaporation_numerical(tmp_path: Path):
 
 
 # ===========================================================================
-# 5. compute_saturation_values — saturation pressure / mixing ratio
+# 5. compute_saturation_values  --  saturation pressure / mixing ratio
 # ===========================================================================
 
 

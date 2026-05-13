@@ -1,12 +1,12 @@
 // ============================================================================
-// VerifyNoUnresolvedCalls.cpp — fail fast on missing HLFIR inputs.
+// VerifyNoUnresolvedCalls.cpp  --  fail fast on missing HLFIR inputs.
 // ============================================================================
 // Motivation:
 //     The multi-file driver parses several ``.hlfir`` files, merges them,
 //     and runs ``hlfir-inline-all`` to collapse cross-file call trees into
 //     a single flat body.  If the caller forgot to pass one of the
 //     dependencies, inlining silently leaves a fir.call to an external
-//     declaration — the SDFG builder then produces something wrong
+//     declaration  --  the SDFG builder then produces something wrong
 //     (or fails deep in extraction).
 //
 //     This pass runs right after ``hlfir-inline-all`` and errors out if
@@ -16,7 +16,7 @@
 //
 // Allowlist:
 //     We tolerate callees that clearly come from the Flang runtime or
-//     libm (mathematical intrinsics) — these are resolved at link time
+//     libm (mathematical intrinsics)  --  these are resolved at link time
 //     against libFortranRuntime / libm and are not expected to have an
 //     HLFIR body.
 // ============================================================================
@@ -39,7 +39,7 @@ namespace hlfir_bridge {
 namespace {
 
 /// True if ``name`` names a runtime / intrinsic entry we don't expect to
-/// ship as HLFIR.  Intentionally conservative — we want real unresolved
+/// ship as HLFIR.  Intentionally conservative  --  we want real unresolved
 /// calls to ICON-level kernels to show up, not be swallowed here.
 static bool isAllowedCallee(llvm::StringRef name) {
     // Flang runtime: ``_FortranA...`` / ``_Fortran...``.
@@ -85,7 +85,7 @@ struct VerifyNoUnresolvedCallsPass
             if (auto sym = call.getCallee())
                 checkCallee(sym->getLeafReference().getValue());
         });
-        // func.call is the canonical form too — belt-and-suspenders.
+        // func.call is the canonical form too  --  belt-and-suspenders.
         module.walk([&](mlir::func::CallOp call) {
             checkCallee(call.getCallee());
         });

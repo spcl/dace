@@ -51,7 +51,7 @@ def test_fortran_frontend_optional(tmp_path):
     res2 = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, a=5, a_present=1)
 
-    # Safe path only — second internal call reads OPTIONAL ``a`` without
+    # Safe path only  --  second internal call reads OPTIONAL ``a`` without
     # checking PRESENT and is UB per Fortran (we accept the read may
     # produce garbage; res2 is left unchecked).
     assert res[0] == 5
@@ -112,7 +112,7 @@ def test_fortran_frontend_optional_complex(tmp_path):
     # warning.  Stick to the dtype convention.
     sdfg(res=res, res2=res2, a=5, a_present=1, b=7.0, b_present=1, c=True, c_present=0)
 
-    # Safe path only — caller passed ``a`` and ``b`` to the first
+    # Safe path only  --  caller passed ``a`` and ``b`` to the first
     # internal call; ``c`` was not passed and is UB if read.  The
     # second internal call passes none of them and is UB throughout
     # (res2 left unchecked, per the saved "let it crash" policy).

@@ -24,11 +24,11 @@ namespace hlfir_bridge {
 //
 // Reduction + elemental-libcall builders.  Owns:
 //   * buildReduceNode (sum / product / minval / maxval / any / all).
-//   * buildElementalCountLibcall — the Mode-C COUNT path that
+//   * buildElementalCountLibcall  --  the Mode-C COUNT path that
 //     synthesises a transient mask from a comparison-as-elemental.
-//   * buildSelectCaseChain — fir.select_case → nested conditionals.
+//   * buildSelectCaseChain  --  fir.select_case -> nested conditionals.
 //   * resolveExtent, libcallNameForExprOp, exprResultShape,
-//     exprDtypeString — small helpers used by reductions /
+//     exprDtypeString  --  small helpers used by reductions /
 //     libcall-in-elemental materialisation.
 //   * Thread-local counters: kSynthTransientCounter, kLibTmpCounter,
 //     kBoolExprNoSubscripts.
@@ -36,7 +36,7 @@ namespace hlfir_bridge {
 // This file is included verbatim from extract_ast.cpp via
 // #include "bridge/ast/elementals.cpp" and shares that translation
 // unit's namespace, includes, and file-static state.  It MUST NOT be
-// added to the build's compile list — CMakeLists.txt deliberately omits
+// added to the build's compile list  --  CMakeLists.txt deliberately omits
 // it.  The split is purely for readability: the AST builder used to
 // be a single 2800-line file.
 ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
@@ -47,13 +47,13 @@ ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
 
     captureElementDesignateWrite(assign.getOperand(1), n);
 
-    // Source array — operand 0 of the reduction op.
+    // Source array  --  operand 0 of the reduction op.
     if (redOp->getNumOperands() > 0)
         n.reduce_src = traceToDecl(redOp->getOperand(0));
     n.reduce_wcr = wcr;
     n.reduce_identity = identity;
 
-    // ``hlfir.sum %arr dim %d`` — trace the second operand.  When absent
+    // ``hlfir.sum %arr dim %d``  --  trace the second operand.  When absent
     // (whole-array reduction) leave reduce_axes empty.
     if (redOp->getNumOperands() >= 2) {
         auto d = redOp->getOperand(1);
@@ -64,7 +64,7 @@ ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
     return n;
 }
 
-/// Forward declare — called from buildWhileNode to recurse into the body.
+/// Forward declare  --  called from buildWhileNode to recurse into the body.
  std::vector<ASTNode> buildAST(mlir::Block &block);
 
 /// Synthesise a chain of nested ``kind="conditional"`` AST nodes from a
@@ -73,11 +73,11 @@ ASTNode buildReduceNode(hlfir::AssignOp assign, mlir::Operation *redOp,
 /// label into a boolean guard and nest the rest in the ``else`` branch.
 ///
 /// Case labels supported (from FIROps.td):
-///   - ``#fir.point %v``       → ``x == v``
-///   - ``#fir.interval %l %h`` → ``(x >= l) and (x <= h)``
-///   - ``#fir.lower %l``       → ``x >= l``
-///   - ``#fir.upper %h``       → ``x <= h``
-///   - ``unit``                → default (else at the innermost nesting)
+///   - ``#fir.point %v``       -> ``x == v``
+///   - ``#fir.interval %l %h`` -> ``(x >= l) and (x <= h)``
+///   - ``#fir.lower %l``       -> ``x >= l``
+///   - ``#fir.upper %h``       -> ``x <= h``
+///   - ``unit``                -> default (else at the innermost nesting)
 ///
 /// Adjacent cases targeting the same successor block (``case (2, 3, 5)``
 /// lowers to three ``fir.point`` cases all pointing at the same ``^bb``)
@@ -119,7 +119,7 @@ ASTNode buildSelectCaseChain(fir::SelectCaseOp sel) {
             ci.guard = "(" + xExpr + " <= "
                      + buildExprWithSubscripts((*cmpOps)[0], 0) + ")";
         } else {
-            // Unknown shape — emit ``False`` so the case is never taken,
+            // Unknown shape  --  emit ``False`` so the case is never taken,
             // keeping the rest of the chain well-formed.
             ci.guard = "False";
         }
@@ -127,7 +127,7 @@ ASTNode buildSelectCaseChain(fir::SelectCaseOp sel) {
     }
 
     // Merge runs of non-default cases sharing the same destination block
-    // (Fortran ``case (2, 3, 5)`` → three fir.point cases all targeting
+    // (Fortran ``case (2, 3, 5)`` -> three fir.point cases all targeting
     // the same successor).
     struct Group {
         std::string guard;     // OR-joined guards
@@ -200,7 +200,7 @@ std::string resolveExtent(mlir::Value shape, unsigned d) {
     if (!n.empty()) return n;
     if (auto c = traceConstInt(ext)) return std::to_string(*c);
     // Flang lowers a section ``a(lo:hi)``'s materialised extent as
-    // ``select(sgt(hi - lo + 1, 0), hi - lo + 1, 0)`` — peel that
+    // ``select(sgt(hi - lo + 1, 0), hi - lo + 1, 0)``  --  peel that
     // clamp so we recover the closed-form ``(hi - lo + 1)``, which
     // itself becomes a closed-form expression after ``buildIndexExpr``
     // promotes ``hi`` / ``lo`` to position symbols (``__sym_pos_N``).
@@ -215,7 +215,7 @@ std::string resolveExtent(mlir::Value shape, unsigned d) {
 
 /// Walk an innermost ``hlfir.designate``'s parent chain and produce
 /// a per-original-dim (var, expr) list keyed to the underlying array's
-/// rank — not to the innermost designate's rank.  Required when Flang
+/// rank  --  not to the innermost designate's rank.  Required when Flang
 /// materialises a section as an intermediate fixed-shape designate
 /// (``%inner = designate %m (%c1:%c7:%c1, %pos1)``) and an inner
 /// elemental indexes only the surviving triplet dim
@@ -225,9 +225,9 @@ std::string resolveExtent(mlir::Value shape, unsigned d) {
 /// parent's ``pos1`` scalar to occupy dim 1.
 ///
 /// Per parent level:
-///   * triplet dim → consume one inner-iter entry (already rebased
+///   * triplet dim -> consume one inner-iter entry (already rebased
 ///     by ``buildDesignateIndexExpr`` against the parent's lo);
-///   * scalar dim  → render the parent's scalar via ``buildIndexExpr``
+///   * scalar dim  -> render the parent's scalar via ``buildIndexExpr``
 ///     and insert at the parent's dim position.
 std::pair<std::string, std::vector<DimEntry>>
 expandDesignateChain(hlfir::DesignateOp innermost) {
@@ -253,7 +253,7 @@ expandDesignateChain(hlfir::DesignateOp innermost) {
         if (!parent) break;
         auto triplets = parent.getIsTriplet();
         if (triplets.empty()) {
-            // Element designate (every dim is a scalar) — collapse
+            // Element designate (every dim is a scalar)  --  collapse
             // back to scalar dims.
             std::vector<DimEntry> new_entries;
             auto pidxOps = parent.getIndices();
@@ -301,23 +301,23 @@ expandDesignateChain(hlfir::DesignateOp innermost) {
 /// Walk a yielded SSA value tree and append one ``AccessInfo`` per
 /// data read.  Shared between ``buildElementalAssign``,
 /// ``buildElementalCountLibcall`` and ``buildElementalAnyAllReduce``
-/// so all three see the same index expansion — in particular,
+/// so all three see the same index expansion  --  in particular,
 /// ``hlfir.designate`` reads always go through ``expandDesignateChain``
 /// so a parent-section's scalar dim (``m(:, pos1)`` where ``pos1``
 /// occupies dim 1) is not silently dropped.
 ///
 /// Cases:
-///   * ``hlfir.designate`` → expandDesignateChain → AccessInfo of
+///   * ``hlfir.designate`` -> expandDesignateChain -> AccessInfo of
 ///     full underlying-array rank; recurse into the inner indices so
 ///     nested designates / loads register their own reads.
-///   * ``fir.load %declare`` (scalar dummy without designate) →
+///   * ``fir.load %declare`` (scalar dummy without designate) ->
 ///     emit a no-subscript AccessInfo so ``build_memlet_index``
 ///     falls through to subset ``0`` for the 1-element-array dummy.
 ///   * ``hlfir.apply %elem, %i`` whose elemental was earlier
-///     materialised into a transient (kHlfirExprToTransient hit) →
+///     materialised into a transient (kHlfirExprToTransient hit) ->
 ///     register a read against the transient at the apply iters
 ///     (Fortran 1-based form, no ``+1`` adjustment).
-///   * ``hlfir.apply %elem, %i`` whose source elemental is in scope →
+///   * ``hlfir.apply %elem, %i`` whose source elemental is in scope ->
 ///     push the apply-iter mapping onto indexStack and recurse into
 ///     the inner elemental's yield.
 ///   * fallback: recurse on every operand.
@@ -428,7 +428,7 @@ std::vector<std::string> exprResultShape(mlir::Type ty) {
 }
 
 /// Map an ``hlfir.expr<...>`` element type to FaCe's dtype string.
-/// Defaults to ``float64`` to keep callers simple — the caller would
+/// Defaults to ``float64`` to keep callers simple  --  the caller would
 /// otherwise have to fall back to it anyway.
 std::string exprDtypeString(mlir::Type ty) {
     if (auto e = mlir::dyn_cast<hlfir::ExprType>(ty)) {
@@ -442,11 +442,11 @@ std::string exprDtypeString(mlir::Type ty) {
 }
 
 /// Build the AST-node sequence for a Fortran reduction whose source is
-/// an inline ``hlfir.elemental`` — the "Mode C" path for COUNT (and the
+/// an inline ``hlfir.elemental``  --  the "Mode C" path for COUNT (and the
 /// shape that generalises to SUM / ANY / ALL on comparison sources).
 ///
 /// Emits three ASTNodes in order:
-///   1. ``kind="declare_transient"`` — a fresh int32 transient sized to
+///   1. ``kind="declare_transient"``  --  a fresh int32 transient sized to
 ///      the elemental's shape.  ``descriptors.emit_declare_transient``
 ///      registers the array on the SDFG and in ``builder.arrays``.
 ///   2. nested ``kind="loop"`` (rank-deep) wrapping a ``kind="assign"``
@@ -456,7 +456,7 @@ std::string exprDtypeString(mlir::Type ty) {
 ///   3. ``kind="libcall"`` to ``CountLibraryNode`` reading the transient
 ///      and writing the original ``hlfir.assign`` destination.
 ///
-/// The for-loop body has no WCR — the reduction stays inside the
+/// The for-loop body has no WCR  --  the reduction stays inside the
 /// library node's expansion (which uses a ``Reduce`` library node, not
 /// a WCR-on-tasklet).  When the user's elemental body is more elaborate
 /// than a single comparison, the chain-of-tasklets shape still lands
@@ -680,7 +680,7 @@ buildElementalCountLibcall(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     return nodes;
 }
 
-/// ``ANY(arr1 .eq. arr2)`` / ``ALL(...)`` — same materialise-then-reduce
+/// ``ANY(arr1 .eq. arr2)`` / ``ALL(...)``  --  same materialise-then-reduce
 /// shape as ``buildElementalCountLibcall``, but the final node is a
 /// ``kind="reduce"`` over the transient rather than the
 /// ``CountLibraryNode`` libcall.

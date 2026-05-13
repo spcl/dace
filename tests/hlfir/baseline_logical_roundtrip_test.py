@@ -3,7 +3,7 @@
 Contract: Fortran ``LOGICAL(KIND=N)`` (any kind) surfaces on the SDFG
 signature as ``np.bool_`` (= C++ ``bool``, 1 byte).  Callers hand a
 NumPy bool array; element-wise boolean ops in tasklets render as
-``bool`` operations directly — no ``(x != 0)`` truthiness coercion
+``bool`` operations directly  --  no ``(x != 0)`` truthiness coercion
 needed.  The caller-side bindings wrapper translates between the
 original Fortran ``LOGICAL(KIND=N)`` image (e.g. 4-byte ``int32``
 with ``-1``/``0`` encoding) and the SDFG's bool layout at the
@@ -46,7 +46,7 @@ end subroutine roundtrip
 
 
 def test_logical_invert_per_element(tmp_path: Path):
-    """``b(i) = .not. a(i)`` — per-element logical NOT over a LOGICAL
+    """``b(i) = .not. a(i)``  --  per-element logical NOT over a LOGICAL
     array.  Verifies the bridge lowers boolean unary ops through the
     bool-typed SDFG path."""
     src = """

@@ -24,7 +24,7 @@ class ElementwiseIntrinsic:
 @dataclass(frozen=True)
 class ReductionIntrinsic:
     """Whole-array reduction that becomes a ``standard.Reduce`` library
-    node via ``state.add_reduce(wcr, axes, identity)``.  Not used yet —
+    node via ``state.add_reduce(wcr, axes, identity)``.  Not used yet  --
     Phase 2."""
 
     name: str
@@ -36,7 +36,7 @@ class ReductionIntrinsic:
 class LibNodeIntrinsic:
     """Intrinsic that becomes a direct DaCe library-node emission
     (``blas.Matmul``, ``standard.Transpose``, ``blas.Dot``, ``fft.FFT``).
-    Not used yet — Phase 3."""
+    Not used yet  --  Phase 3."""
 
     name: str
     module: str  # e.g. "blas", "standard", "fft"

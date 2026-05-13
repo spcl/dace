@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 def test_bool_logical_array_pass_through(tmp_path):
     """``LOGICAL`` 1-D input read element-by-element + written to a
-    numeric output.  Alternating True/False — any byte-stride bug
+    numeric output.  Alternating True/False  --  any byte-stride bug
     surfaces here.
     """
     src = """

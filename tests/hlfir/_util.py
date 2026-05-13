@@ -53,7 +53,7 @@ def _ensure_on_path():
 
 def f2py_compile(src, out_dir: Path, mod_name: str):
     """Build the given Fortran source via gfortran/f2py and return the
-    compiled module.  ``src`` may be a file path or an inline string —
+    compiled module.  ``src`` may be a file path or an inline string  --
     inline sources are written to ``<out_dir>/<mod_name>.f90`` first.
 
     Skips the calling test (via pytest.skip) when gfortran or meson is
@@ -62,7 +62,7 @@ def f2py_compile(src, out_dir: Path, mod_name: str):
     Used by the e2e numerical tests to compare an SDFG's output against
     the same code compiled with gfortran (the reference implementation).
     Saved policy: HLFIR-frontend tests must compare against this kind of
-    non-transformed reference — hand-tuned literal expectations are not
+    non-transformed reference  --  hand-tuned literal expectations are not
     a substitute.
     """
     if shutil.which("gfortran") is None:
@@ -115,7 +115,7 @@ def _per_test_suffix() -> str:
 
     Used by ``build_sdfg`` to ensure each test produces a uniquely-named
     SDFG.  Without this, multiple tests in the same file all produce an
-    SDFG named e.g. ``main`` — under pytest-xdist they share the same
+    SDFG named e.g. ``main``  --  under pytest-xdist they share the same
     ``.so`` filename within a worker, the OS dynamic loader returns a
     cached handle bound to the previous test's compiled symbols, and
     the second test silently runs stale code.
@@ -142,13 +142,13 @@ class _TestBuilder:
     """Thin proxy around ``SDFGBuilder`` for tests:
 
       * Renames the produced SDFG with a per-test hash suffix so two
-        tests using ``name='main'`` end up with distinct ``.so`` files —
+        tests using ``name='main'`` end up with distinct ``.so`` files  --
         a hard requirement for ``pytest-xdist`` parallel runs.
       * Optionally dumps the built SDFG to disk when
         ``__DACE_HLFIR_GEN_TEST_SDFGS`` is set.
 
     Everything else flows through to the wrapped builder unchanged
-    (``.arrays`` / ``.scalars`` / … still work the same way for tests
+    (``.arrays`` / ``.scalars`` / ... still work the same way for tests
     that inspect them).
     """
 
@@ -182,7 +182,7 @@ def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None, ent
     :param entry: mangled Flang symbol name of the subroutine the SDFG
                   should represent (e.g. ``_QPapply_delta``).  Needed
                   when the source declares additional public functions
-                  in a module — those would otherwise leak their dummy
+                  in a module  --  those would otherwise leak their dummy
                   declares into the variable extraction.
     :return: ``SDFGBuilder`` with variables classified and the AST extracted.
     """
@@ -201,7 +201,7 @@ def run_passes_dump(source: str, out_dir: Path, name: str = "src", pipeline: str
     """Compile Fortran to HLFIR, run the given pipeline, return the IR dump.
 
     Use this when the test inspects post-pass MLIR directly rather than going
-    through SDFG extraction — handy for passes whose downstream tracing is
+    through SDFG extraction  --  handy for passes whose downstream tracing is
     still being wired in.
     """
     _ensure_on_path()

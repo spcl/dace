@@ -1,4 +1,4 @@
-"""Phase I — read-then-writeback to the same scalar/length-1 array
+"""Phase I  --  read-then-writeback to the same scalar/length-1 array
 should produce two distinct access nodes in one state, never a cycle.
 
 The velocity_tendencies pattern that surfaced this bug:
@@ -11,7 +11,7 @@ the lifted reduction temp, both assigns land in the same state.  The
 second assign's writeback target was the first assign's RHS read; the
 bridge's ``emit_scalar_assign`` was previously reusing the cached read
 node for the write, producing a state where ONE access node had both
-incoming and outgoing edges — invalid SDFG topology.
+incoming and outgoing edges  --  invalid SDFG topology.
 
 This test fixes the pattern at minimal scale (no MAXVAL, no struct,
 no inlined callee) so a regression here surfaces independently of
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_read_then_writeback_no_cycle(tmp_path: Path):
-    """``out = max(out, x); ... ; out = out + 1`` — every state that
+    """``out = max(out, x); ... ; out = out + 1``  --  every state that
     contains both a read of ``out`` and a write to ``out`` must have
     TWO distinct access nodes for ``out`` (one input, one output)."""
     src = """
@@ -51,7 +51,7 @@ end subroutine kernel
 
     # Walk every state; for any state that touches ``out``, count the
     # number of ``out`` access nodes.  Whenever the state has BOTH an
-    # in-edge AND an out-edge on data ``out``, the count must be ≥ 2.
+    # in-edge AND an out-edge on data ``out``, the count must be >= 2.
     from dace.sdfg import nodes as nd
     bad = []
     for state in sdfg.all_states():

@@ -1,4 +1,4 @@
-    ! Ref-counted init — first call allocates, subsequent calls reuse.
+    ! Ref-counted init -- first call allocates, subsequent calls reuse.
     if (init_count == 0) then
       dace_handle = dace_init_{entry}()
     end if

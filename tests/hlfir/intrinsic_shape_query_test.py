@@ -1,12 +1,12 @@
-"""SIZE / LBOUND / UBOUND / SHAPE intrinsics — Flang lowers these to
+"""SIZE / LBOUND / UBOUND / SHAPE intrinsics  --  Flang lowers these to
 ``fir.box_dims`` on the array's box, and the bridge maps each
 ``fir.box_dims`` result number to the right shape symbol:
 
-* ``#0`` (lower bound) → declared lb (``fir.shape_shift`` 1st operand)
+* ``#0`` (lower bound) -> declared lb (``fir.shape_shift`` 1st operand)
    or Fortran-default ``1`` for plain ``fir.shape``.
-* ``#1`` (extent)      → declare's extent operand or the assumed-shape
+* ``#1`` (extent)      -> declare's extent operand or the assumed-shape
    synthesised symbol ``<arr>_d<dim>``.
-* ``#2`` (stride)      → ``1`` (contiguous).
+* ``#2`` (stride)      -> ``1`` (contiguous).
 
 Each test compares an SDFG run against an f2py / gfortran reference so
 the lowering matches Fortran semantics bit-for-bit.
@@ -75,7 +75,7 @@ end subroutine main
 
 
 def test_lbound_assumed_shape(tmp_path: Path):
-    """Assumed-shape arrays default to lower bound 1 on every dim — the
+    """Assumed-shape arrays default to lower bound 1 on every dim  --  the
     callee receives a plain box without lb metadata.  ``LBOUND`` returns
     1 regardless of what the caller's array looked like."""
     src = """
@@ -99,7 +99,7 @@ end subroutine main
 
 
 def test_lbound_explicit_offset(tmp_path: Path):
-    """``dimension(L:U)`` syntax — Flang lowers via ``fir.shape_shift``
+    """``dimension(L:U)`` syntax  --  Flang lowers via ``fir.shape_shift``
     so ``LBOUND(arr, K)`` returns ``L`` (not the default 1)."""
     src = """
 subroutine main(arr, out)
@@ -121,7 +121,7 @@ end subroutine main
 
 
 def test_ubound_default_lb(tmp_path: Path):
-    """Default lower bound 1 → ``UBOUND(arr, K) == SIZE(arr, K)``."""
+    """Default lower bound 1 -> ``UBOUND(arr, K) == SIZE(arr, K)``."""
     src = """
 subroutine main(arr, out, n, m)
   integer, intent(in)  :: n, m
@@ -144,7 +144,7 @@ end subroutine main
 
 
 def test_ubound_explicit_offset(tmp_path: Path):
-    """``dimension(L:U)`` → ``UBOUND(arr, K) == U`` (lb + size - 1)."""
+    """``dimension(L:U)`` -> ``UBOUND(arr, K) == U`` (lb + size - 1)."""
     src = """
 subroutine main(arr, out)
   integer, intent(in)  :: arr(20:24, 7:10)
@@ -165,7 +165,7 @@ end subroutine main
 
 
 def test_size_assumed_shape_3d(tmp_path: Path):
-    """3-D assumed-shape — exercises the per-dim symbol path with rank>2."""
+    """3-D assumed-shape  --  exercises the per-dim symbol path with rank>2."""
     src = """
 subroutine main(arr, out)
   integer, intent(in)  :: arr(:, :, :)

@@ -1,10 +1,10 @@
-"""Smoke tests for the HLFIR → SDFG frontend.
+"""Smoke tests for the HLFIR -> SDFG frontend.
 
 Mirrors a narrow slice of ``tests/fortran/``'s style (inline Fortran source,
 build an SDFG, validate) but exercises the new flang-based pipeline.
 
 Per the project's E2E-numerical rule, every test that builds an SDFG also
-compares its output against a non-transformed reference — here a numpy
+compares its output against a non-transformed reference  --  here a numpy
 equivalent, which is sufficient for these arithmetic-only kernels (no
 structs, no intrinsics).  The structural assertions are kept as a
 guard against silent-regressions in the SDFG shape on top of the
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not avail
 
 
 def test_elementwise_loop(tmp_path):
-    """One tasklet, one state — c(i) = a(i) + b(i)."""
+    """One tasklet, one state  --  c(i) = a(i) + b(i)."""
     src = """
 subroutine elementwise_add(a, b, c, n)
   implicit none
@@ -50,7 +50,7 @@ end subroutine elementwise_add
 def test_read_after_write_shares_access_node(tmp_path):
     """Two tasklets in the same loop body: the second consumes what the first
     writes.  With the single-access-node rule, exactly one AccessNode for
-    ``tmp`` must appear in the innermost state — anything else would mean the
+    ``tmp`` must appear in the innermost state  --  anything else would mean the
     RAW dataflow edge was dropped.  Numerical check confirms the dataflow is
     actually wired (a dropped edge would leave ``out`` reading uninitialised
     transient and the result would diverge from the closed-form expectation)."""

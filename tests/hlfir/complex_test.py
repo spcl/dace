@@ -1,7 +1,7 @@
 """End-to-end tests for Fortran ``COMPLEX(4)`` / ``COMPLEX(8)`` through
 the HLFIR bridge.
 
-All tests use 1-D arrays even for "scalar" cases — Python 3.12 ctypes has
+All tests use 1-D arrays even for "scalar" cases  --  Python 3.12 ctypes has
 no ``c_double_complex``, so DaCe currently cannot pass a complex value
 by-value (would silently drop the imaginary part).  Length-1 arrays
 match the existing scalar-output convention and keep the test surface
@@ -19,7 +19,7 @@ from _util import build_sdfg, have_flang
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
 # ---------------------------------------------------------------------------
-# Arithmetic — parametrised over (kind, op, numpy-equivalent)
+# Arithmetic  --  parametrised over (kind, op, numpy-equivalent)
 # ---------------------------------------------------------------------------
 
 _COMPLEX_BIN_OPS = [
@@ -68,7 +68,7 @@ end subroutine main
 
 
 # ---------------------------------------------------------------------------
-# Transcendentals — Fortran intrinsic vs numpy
+# Transcendentals  --  Fortran intrinsic vs numpy
 # ---------------------------------------------------------------------------
 
 _COMPLEX_UNARY_FUNCS = [
@@ -105,7 +105,7 @@ end subroutine main
     n = 6
     rng = np.random.default_rng(1)
     # Restrict to a tame domain so principal-branch funcs match numpy
-    # bit-for-bit (avoid imag(a) ≈ ±π/2 for tan, real(a) ≤ 0 for log, etc.)
+    # bit-for-bit (avoid imag(a) ~= +/-pi/2 for tan, real(a) <= 0 for log, etc.)
     a = (0.1 + 0.5 * rng.random(n) + 1j * (0.1 + 0.4 * rng.random(n))).astype(np_dtype)
     out = np.zeros(n, dtype=np_dtype)
     sdfg(n=n, a=a, out=out)
@@ -114,7 +114,7 @@ end subroutine main
 
 
 def test_complex8_abs_returns_real(tmp_path: Path):
-    """``ABS(complex(8))`` returns ``real(8)`` — lowered as ``cabs``."""
+    """``ABS(complex(8))`` returns ``real(8)``  --  lowered as ``cabs``."""
     src = """
 subroutine main(n, a, out)
   integer,    intent(in)  :: n

@@ -1,5 +1,5 @@
 // ============================================================================
-// LiftAllocArrayOfRecords.cpp — lift alloc-array-of-records struct members
+// LiftAllocArrayOfRecords.cpp  --  lift alloc-array-of-records struct members
 // into direct accesses on the pointer-rebind target storage.
 // ============================================================================
 //
@@ -34,20 +34,20 @@
 //
 // What the pass does:
 //
-//     1. **Discovery** — walk for ``hlfir.designate %X{"<member>"}``
+//     1. **Discovery**  --  walk for ``hlfir.designate %X{"<member>"}``
 //        where the result's element type peels to
 //        ``box<heap|ptr<seq<? x record>>>``.  Collect every distinct
 //        ``(parent_decl, member_name)`` pair.
 //
-//     2. **Rebind tracking** — walk for ``fir.store %embox to
+//     2. **Rebind tracking**  --  walk for ``fir.store %embox to
 //        %dest`` where ``%dest`` is the per-element-pointer field
 //        ``hlfir.designate (hlfir.designate (load %parent_member))(%idx){"<inner>"}``.
 //        Parse the embox source (a designate over an existing storage
 //        declare).  Record:
 //           ``(parent_decl, member_name, element_idx_value, inner_member_name)
-//             → (storage_decl, slice_chain)``
+//             -> (storage_decl, slice_chain)``
 //
-//     3. **Access rewrite** — walk for ``fir.load %addr`` where
+//     3. **Access rewrite**  --  walk for ``fir.load %addr`` where
 //        ``%addr`` is the same per-element-pointer field shape as in
 //        Phase 2.  For each load of the box, find downstream
 //        ``hlfir.designate %loaded_box (<access_indices>)`` ops.
@@ -55,7 +55,7 @@
 //        designate with a new designate over the storage parent that
 //        merges the slice indices with the access indices.
 //
-//     4. **Cleanup** — erase the now-orphan setup ops:
+//     4. **Cleanup**  --  erase the now-orphan setup ops:
 //          * ``fir.call @_FortranAAllocatableAllocate / Deallocate``
 //            whose first arg traces back to the parent member.
 //          * The rebind ``fir.store`` ops (their target designates
@@ -74,7 +74,7 @@
 //     Each element's inner pointer-member must be rebound (the
 //     pattern requires the user to perform the rebind before any
 //     access).  Non-uniform per-element shape is not statically
-//     verified — trust the user-side contract.
+//     verified  --  trust the user-side contract.
 //
 // Out of scope:
 //     - Multiple rebinds for the same `(idx, inner)` slot interleaved
@@ -156,7 +156,7 @@ struct RebindInfo {
     hlfir::DeclareOp storageDecl;       // The backing storage declare.
     hlfir::DesignateOp sliceOp;         // Designate of the slice (may be null).
     // When the rebind store is inside a ``fir.do_loop`` whose induction
-    // variable feeds ``elemIdx``, this rebind is a "wildcard" — it
+    // variable feeds ``elemIdx``, this rebind is a "wildcard"  --  it
     // symbolically establishes the equivalence
     //   ``parent%member(<I>)%inner === storage(<slice with I substituted>)``
     // for ANY value of ``I``.  Access sites with a runtime elemIdx
@@ -171,7 +171,7 @@ struct RebindInfo {
 };
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Discovery
+// Phase 1  --  Discovery
 // ---------------------------------------------------------------------------
 
 /// Walk a function and collect every distinct ``(parent_decl, member)``
@@ -242,7 +242,7 @@ static ElemMatch matchElementSelect(mlir::Value v,
                                     hlfir::DeclareOp parent,
                                     llvm::StringRef memberName) {
     ElemMatch r{};
-    // Peel through any intermediate ``hlfir.declare`` aliases — inlined
+    // Peel through any intermediate ``hlfir.declare`` aliases  --  inlined
     // callees materialise these on per-element selections (e.g. the
     // inlined ``stuff`` alias declare between ``designate(elem_idx)``
     // and ``designate{"<inner>"}``).
@@ -347,7 +347,7 @@ parseEmboxSource(mlir::Value emboxVal) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Rebind tracking
+// Phase 2  --  Rebind tracking
 // ---------------------------------------------------------------------------
 
 /// Walk a value back through ``fir.convert`` / ``fir.load`` peels and
@@ -419,7 +419,7 @@ static void collectRebinds(mlir::func::FuncOp func,
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Access rewrite
+// Phase 3  --  Access rewrite
 // ---------------------------------------------------------------------------
 
 /// Try to look up a rebind matching ``(elemIdx, innerMemberName)``.
@@ -450,7 +450,7 @@ static RebindInfo *findRebind(
                         if (ia.getInt() == *needed) return &r;
         }
     }
-    // Wildcard (loop-iter template) fallback — symbolic match.
+    // Wildcard (loop-iter template) fallback  --  symbolic match.
     //
     // When a rebind is inside a ``fir.do_loop`` whose iter feeds the
     // rebind's elemIdx, the rebind establishes a symbolic template
@@ -470,11 +470,11 @@ static RebindInfo *findRebind(
 /// designate over the rebind's storage parent.
 ///
 /// Inputs:
-///   * ``accessDg`` — the user-side designate selecting one element
+///   * ``accessDg``  --  the user-side designate selecting one element
 ///     of the rebound pointer-array (e.g. ``%w_box(%c1, %c1)``).  Its
 ///     result type is ``ref<T>`` for some scalar T.
-///   * ``rebind`` — the matching rebind site.
-///   * ``elemIdx`` — the per-access element index value (matches the
+///   * ``rebind``  --  the matching rebind site.
+///   * ``elemIdx``  --  the per-access element index value (matches the
 ///     rebind's same-element).
 ///
 /// Returns a fresh ``hlfir::DesignateOp`` whose result has the SAME
@@ -533,20 +533,20 @@ static mlir::Value buildLiftedAccess(mlir::OpBuilder &b,
         unsigned accessCursor = 0;
         for (unsigned k = 0; k < sliceTriplets.size(); ++k) {
             if (sliceTriplets[k]) {
-                // Triplet — consume one access index.
+                // Triplet  --  consume one access index.
                 if (accessCursor >= accessIdxs.size())
                     return {};  // Shape mismatch: bail.
                 newIdxs.push_back(accessIdxs[accessCursor++]);
                 cursor += 3;
             } else {
-                // Scalar — pass through from the slice, unless this is
+                // Scalar  --  pass through from the slice, unless this is
                 // a wildcard rebind and the scalar references the loop
                 // counter (in which case substitute access elemIdx).
                 newIdxs.push_back(substIfLoopIter(sliceIdxs[cursor]));
                 cursor += 1;
             }
         }
-        // Any remaining access indices (shouldn't happen — the slice
+        // Any remaining access indices (shouldn't happen  --  the slice
         // should have one triplet per access index): bail.
         if (accessCursor != accessIdxs.size())
             return {};
@@ -625,11 +625,11 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3b — alias-without-rebind redirection
+// Phase 3b  --  alias-without-rebind redirection
 // ---------------------------------------------------------------------------
 //
 // Some test patterns (notably ``type_arg`` with callee inlining) have
-// NO explicit rebind in scope — the user calls a subroutine that takes
+// NO explicit rebind in scope  --  the user calls a subroutine that takes
 // the inner pointer-array as an assumed-shape dummy.  After
 // ``hlfir-inline-all``, Flang materialises an alias declare on the
 // loaded pointer box (``%my_arr = hlfir.declare (fir.rebox (fir.load
@@ -638,9 +638,9 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
 //
 // But Flang also emits a SECOND access through the bare designate
 // chain (the original Fortran-source-author's read in main).  That
-// chain doesn't go through the inlined alias — it walks the
-// ``designate{member} → load → designate(idx) → designate{inner_member}
-// → load → designate(access_indices)`` shape directly.  ``traceToDecl``
+// chain doesn't go through the inlined alias  --  it walks the
+// ``designate{member} -> load -> designate(idx) -> designate{inner_member}
+// -> load -> designate(access_indices)`` shape directly.  ``traceToDecl``
 // on its terminal element returns the OUTER struct's name (``p_prog``)
 // instead of the inlined alias's name (``my_arr``), and the bridge
 // emits an access against ``p_prog`` which isn't a registered array.
@@ -648,7 +648,7 @@ static bool rewriteAccesses(mlir::func::FuncOp func,
 // Fix: walk the function for inlined-callee alias declares whose
 // memref chain matches ``rebox?(load(designate(elemSelect, member)))``
 // on a known (parent, member) target.  Record
-// ``(parent, member, elemIdx_const, inner_member) → alias_decl``.
+// ``(parent, member, elemIdx_const, inner_member) -> alias_decl``.
 // Then walk for access chains matching the same shape but ending
 // at the bare ``fir.load`` (no alias declare).  Rewrite the terminal
 // designate to use the alias declare's result instead.
@@ -675,7 +675,7 @@ static void collectAliases(mlir::func::FuncOp func,
             if (auto rb = mlir::dyn_cast<fir::ReboxOp>(mdef))   { mr = rb.getBox(); continue; }
             if (auto cv = mlir::dyn_cast<fir::ConvertOp>(mdef)) { mr = cv.getValue(); continue; }
             if (auto ld = mlir::dyn_cast<fir::LoadOp>(mdef)) {
-                // Got the load — the load's memref is an inner-member
+                // Got the load  --  the load's memref is an inner-member
                 // designate.
                 auto innerDg = matchInnerMember(ld.getMemref());
                 if (!innerDg) return;
@@ -770,7 +770,7 @@ static bool redirectAccessesToAliases(mlir::func::FuncOp func,
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Cleanup
+// Phase 4  --  Cleanup
 // ---------------------------------------------------------------------------
 
 /// After rewrites, the rebind store / embox / inner-member designate /
@@ -848,7 +848,7 @@ struct LiftAllocArrayOfRecordsPass
                     cleanup(func, t, rebinds);
                     continue;
                 }
-                // No explicit rebind in scope — fall back to alias
+                // No explicit rebind in scope  --  fall back to alias
                 // redirection.  This handles the callee-inlining case
                 // where Flang materialises an alias declare on the
                 // loaded pointer-array; redirect direct-chain accesses

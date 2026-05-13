@@ -4,7 +4,7 @@ precision (17 digits for binary64).
 Fortran ``parameter`` constants and ``arith.constant`` literals are
 folded by Flang into ``arith.constant`` ops; the bridge formats them as
 strings for the tasklet code.  At default ``ostream`` precision (6
-digits) the bottom of the mantissa is lost — multiplying a folded
+digits) the bottom of the mantissa is lost  --  multiplying a folded
 ``3.14159265358979d0`` by 2 produces ``6.28319`` instead of
 ``6.283185307179586`` and the result has effective f32 precision in a
 nominally-f64 SDFG.
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 def test_module_parameter_keeps_f64_precision(tmp_path: Path):
     """Module ``parameter`` real(8) constant flows through Flang's
     constant folding into the tasklet expression.  The bridge must emit
-    enough digits to round-trip — 17 for double — so the tasklet's
+    enough digits to round-trip  --  17 for double  --  so the tasklet's
     folded multiplication matches the f64 reference exactly."""
     src = """
 module pi_consts
@@ -50,7 +50,7 @@ end subroutine main
 
 def test_inline_double_literal_keeps_precision(tmp_path: Path):
     """Inline double-precision literal (``1.0d0 / 3.0d0`` style) folded
-    by Flang at compile time into a single constant — same precision
+    by Flang at compile time into a single constant  --  same precision
     requirement, no module ``parameter`` involved."""
     src = """
 subroutine main(out)
@@ -69,7 +69,7 @@ end subroutine main
 
 
 def test_compound_constant_expression_keeps_precision(tmp_path: Path):
-    """Multiple folded constants in a single expression — each
+    """Multiple folded constants in a single expression  --  each
     ``arith.constant`` carries its own FloatAttr through buildExpr; the
     serialisation must be precise for every one of them."""
     src = """

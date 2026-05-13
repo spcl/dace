@@ -1,6 +1,6 @@
 """Same array+subset read multiple times in one RHS -> one input connector.
 
-The bridge used to mint one connector per *occurrence* — so
+The bridge used to mint one connector per *occurrence*  --  so
 ``B(i) = A(i) * A(i) * A(i)`` produced three identical ``_in_A_0/1/2``
 connectors plus three identical memlets, all loading the same scalar.
 After the dedup pass in ``emit_tasklet.py``, occurrences that share an

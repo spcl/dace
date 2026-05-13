@@ -2,14 +2,14 @@
 (no intrinsics).  Pin the bridge's coverage of the three primitives that
 matter for sparse linear algebra:
 
-  * **Vector gather** — ``output(i) = input(idx(i))``.
-  * **Vector scatter** — ``output(idx(i)) = input(i)``.
-  * **CSR SpMV** — ``y(i) = sum_j values(j) * x(col_idx(j))`` over the
+  * **Vector gather**  --  ``output(i) = input(idx(i))``.
+  * **Vector scatter**  --  ``output(idx(i)) = input(i)``.
+  * **CSR SpMV**  --  ``y(i) = sum_j values(j) * x(col_idx(j))`` over the
     row range ``row_ptr(i):row_ptr(i+1)-1``.
 
 Gather and scatter exercise loop-variable indirection through a single
 ``hlfir.designate``.  CSR SpMV additionally needs variable-bound inner
-loops whose bounds are themselves array-element loads — the harder
+loops whose bounds are themselves array-element loads  --  the harder
 case the bridge does not yet lower (currently xfailed).
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_vector_gather(tmp_path: Path):
-    """``output(i) = input(idx(i))`` — read from a permuted view."""
+    """``output(i) = input(idx(i))``  --  read from a permuted view."""
     src = """
 SUBROUTINE gather_kernel(input, idx, output, n)
   integer, intent(in) :: n
@@ -50,7 +50,7 @@ END SUBROUTINE gather_kernel
 
 
 def test_vector_scatter(tmp_path: Path):
-    """``output(idx(i)) = input(i)`` — write through a permutation.
+    """``output(idx(i)) = input(i)``  --  write through a permutation.
 
     Caller is responsible for ensuring ``idx`` is a permutation
     (Fortran scatter semantics on non-injective indices are

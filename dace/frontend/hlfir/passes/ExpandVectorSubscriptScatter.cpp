@@ -1,9 +1,9 @@
 // ============================================================================
-// ExpandVectorSubscriptScatter.cpp — replace hlfir.region_assign with elemental_addr
+// ExpandVectorSubscriptScatter.cpp  --  replace hlfir.region_assign with elemental_addr
 // destination (Fortran array-based scatter) by an explicit DO loop.
 // ============================================================================
 //
-// Pattern matched (Fortran ``d(cols) = source`` — array-based scatter):
+// Pattern matched (Fortran ``d(cols) = source``  --  array-based scatter):
 //
 //     hlfir.region_assign {
 //         hlfir.yield %source : !fir.ref<!fir.array<NxT>>
@@ -27,13 +27,13 @@
 //     fir.do_loop %i = 1 to N step 1 {
 //         %src_addr = hlfir.designate %source (%i)
 //         %src_v    = fir.load %src_addr
-//         // ... destination region body, with block arg → %i ...
+//         // ... destination region body, with block arg -> %i ...
 //         hlfir.assign %src_v to %dest_addr
 //     }
 //
 // Why a separate pass from ExpandVectorSubscriptGather:
 //     The gather case (rhs ``d(cols)``) flows through ``hlfir.associate`` of an
-//     ``hlfir.elemental`` — a value-producing expression that the bridge's
+//     ``hlfir.elemental``  --  a value-producing expression that the bridge's
 //     read path can hook into via the synth temp's ``hlfir.declare``.
 //     The scatter case is destination-side: there's no value to materialise,
 //     just a sequence of stores to a noncontiguous set of addresses.  The two
@@ -45,7 +45,7 @@
 //     (a contiguous source).  Strided sources need a more careful walk;
 //     defer.
 //   * Destination ``hlfir.elemental_addr`` must be rank-1 with a constant
-//     extent.  Same constraint as the gather pass — see
+//     extent.  Same constraint as the gather pass  --  see
 //     ExpandVectorSubscriptGather.cpp's header for the full DaCe-side rationale.
 // ============================================================================
 
@@ -88,7 +88,7 @@ struct ExpandVectorSubscriptScatterPass
         getOperation().walk([&](hlfir::RegionAssignOp op) {
             // Per Flang's TableGen, ``hlfir.region_assign``'s regions
             // are ``rhs_region`` (first, the source/value) and
-            // ``lhs_region`` (second, the destination — where
+            // ``lhs_region`` (second, the destination  --  where
             // ``hlfir.elemental_addr`` lives for vector-subscripted
             // assignments).  We only fire on the elemental_addr shape.
             bool found = false;
@@ -135,7 +135,7 @@ struct ExpandVectorSubscriptScatterPass
         // scatter-source temp (the ``hlfir.expr`` path); dynamic-extent
         // allocas need fiddly type plumbing.  When the source is a
         // contiguous ``fir.ref``, the loop bound can be a runtime
-        // symbol — each iteration reassigns one indirection-symbol
+        // symbol  --  each iteration reassigns one indirection-symbol
         // slot, exactly the pattern DaCe LoopRegions support natively.
         auto cstExt = mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(
             extent.getDefiningOp());
@@ -152,12 +152,12 @@ struct ExpandVectorSubscriptScatterPass
         }
         // Source can be:
         //   * a contiguous ``fir.ref<!fir.array<NxT>>`` (constant-shape
-        //     dummy ``source(N)`` — ``designate + load`` per iter)
+        //     dummy ``source(N)``  --  ``designate + load`` per iter)
         //   * a ``fir.box<!fir.array<?xT>>`` (assumed-shape dummy
-        //     ``source(:)`` — same per-iter pattern; ``hlfir.designate``
+        //     ``source(:)``  --  same per-iter pattern; ``hlfir.designate``
         //     reads through the box)
         //   * a ``!hlfir.expr<NxT>`` from an ``hlfir.elemental`` (the
-        //     ``a(write_idx) = c(read_idx)`` round-trip — gather
+        //     ``a(write_idx) = c(read_idx)`` round-trip  --  gather
         //     expression directly consumed by the scatter).  Read
         //     per-element via ``hlfir.apply``.
         bool srcIsExpr = false;
@@ -185,7 +185,7 @@ struct ExpandVectorSubscriptScatterPass
 
         // --- Step 1: clone every op preceding the terminator out of
         //     each region (rhs first if the source is an expr, then
-        //     lhs).  Records original→clone in ``map`` so cloned uses
+        //     lhs).  Records original->clone in ``map`` so cloned uses
         //     inside loops resolve to the new ops.
         if (srcIsExpr) {
             auto &rhsBlock = op.getRhsRegion().front();
@@ -207,7 +207,7 @@ struct ExpandVectorSubscriptScatterPass
         //     gather like ``c(read_idx)`` consumed directly by the
         //     scatter), Fortran 2003 semantics REQUIRE the RHS to be
         //     evaluated to a temporary BEFORE any LHS element is
-        //     written — otherwise overlapping ``a(write_idx) =
+        //     written  --  otherwise overlapping ``a(write_idx) =
         //     a(read_idx)`` produces wrong results when ``read_idx``
         //     and ``write_idx`` aliase.  Materialise into a transient
         //     scatter-source temp ``<dst>_scatter_<id>`` here.  When
@@ -216,7 +216,7 @@ struct ExpandVectorSubscriptScatterPass
         mlir::Value srcRefBase;
         // Aliasing analysis: the scatter-source temp is only needed
         // when the LHS and RHS root declares are the SAME variable
-        // (Fortran 2003 evaluation-order semantics — overlapping
+        // (Fortran 2003 evaluation-order semantics  --  overlapping
         // ``a(write_idx) = a(read_idx)``).  Distinct declares (the
         // strict-no-aliasing assumption applies to distinct names)
         // can use the fused single-loop scatter directly, with any
@@ -235,7 +235,7 @@ struct ExpandVectorSubscriptScatterPass
             return {};
         };
         // LHS root: the elemental_addr body yields a designate of the
-        // destination — chase through to its declare.
+        // destination  --  chase through to its declare.
         hlfir::DeclareOp lhsRoot;
         for (auto &inner : eaddr.getBody().front())
             if (auto y = mlir::dyn_cast<hlfir::YieldOp>(inner)) {
@@ -282,7 +282,7 @@ struct ExpandVectorSubscriptScatterPass
             // Walk the elemental_addr body to find the destination
             // array name (mirrors ExpandVectorSubscriptGather' source name
             // walk; the arg roles are reversed but the chain shape is
-            // identical: yield → designate → declare).
+            // identical: yield -> designate -> declare).
             std::string dstName = "expr";
             {
                 auto &eblock = eaddr.getBody().front();
@@ -309,7 +309,7 @@ struct ExpandVectorSubscriptScatterPass
                 }
             }
             // Static vs dynamic extent.  The fresh shape is built from
-            // the cloned ``mappedExtent`` regardless — only the alloca
+            // the cloned ``mappedExtent`` regardless  --  only the alloca
             // and declare differ.  ``shapeOper`` from the original
             // ``elemental_addr`` still lives in the about-to-be-erased
             // lhs region; using it would dangle the new declare.
@@ -374,7 +374,7 @@ struct ExpandVectorSubscriptScatterPass
         } else {
             // Either the source is already a contiguous ref (no
             // aliasing risk by ABI) or the gather expression and the
-            // scatter destination are distinct variables — under the
+            // scatter destination are distinct variables  --  under the
             // strict-no-aliasing assumption the fused single-loop
             // scatter is correct.  ``srcRefBase`` stays the original
             // source value; the scatter loop below reads it
@@ -392,11 +392,11 @@ struct ExpandVectorSubscriptScatterPass
 
         // Source read.  Three shapes converge here:
         //   * scatter-source temp materialised above (aliased gather
-        //     case) — ``srcRefBase`` is a fresh ``fir.ref<array<NxT>>``
+        //     case)  --  ``srcRefBase`` is a fresh ``fir.ref<array<NxT>>``
         //     declare; read by designate + load.
-        //   * non-aliased gather expression — ``srcRefBase`` is the
+        //   * non-aliased gather expression  --  ``srcRefBase`` is the
         //     original ``hlfir.expr`` value; read by ``hlfir.apply``.
-        //   * contiguous source ref — ``srcRefBase`` is the original
+        //   * contiguous source ref  --  ``srcRefBase`` is the original
         //     ``fir.ref<array<...>>``; read by designate + load.
         bool readByApply = srcIsExpr && !aliases;
         mlir::Value srcLoadVal;

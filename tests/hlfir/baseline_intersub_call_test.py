@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — inter-subroutine calls (caller→callee
+"""Baseline HLFIR coverage  --  inter-subroutine calls (caller->callee
 inlining) and ``OPTIONAL`` scalar dummies with ``PRESENT()`` companion.
 Pulled out of the original ``ported_from_f2dace_windmill_test.py``
 per-feature split.
@@ -21,7 +21,7 @@ def _build(src: str, tmp: Path, name: str):
 
 
 def test_intersub_call(tmp_path):
-    """Two subroutines in one file, outer calls inner — exercises
+    """Two subroutines in one file, outer calls inner  --  exercises
     ``hlfir-inline-all`` writeback.  f2py wraps every subroutine in
     the file; we pick ``outer``."""
     src = """

@@ -1,13 +1,13 @@
-"""Flatten plan — the single source of truth for AoS→SoA unpacking.
+"""Flatten plan  --  the single source of truth for AoS->SoA unpacking.
 
 Produced by ``hlfir-flatten-structs`` (as an MLIR module attribute)
 and consumed by the binding emitter.  One ``FlattenRecipe`` per
 outer storage path that was unpacked; the recipe carries both the
-forward element expressions (outer → flat) and the inverse
-expression (flats → outer) so the binding emitter can emit copy-in
+forward element expressions (outer -> flat) and the inverse
+expression (flats -> outer) so the binding emitter can emit copy-in
 and copy-out without knowing which specific flattening scheme fired.
 
-Arbitrary struct hierarchies fall out naturally — the outer
+Arbitrary struct hierarchies fall out naturally  --  the outer
 expression in a recipe is a free-form Fortran expression (e.g.
 ``st%a%b%c``), threaded verbatim into the generated wrapper's
 ``c_loc(...)`` or ``do``-loop body.
@@ -74,7 +74,7 @@ class FlattenRecipe:
             == cap_symbol``.
         aliasable:
             ``True`` iff the recipe is pure element identity with
-            matching storage layout — the emitter can skip
+            matching storage layout  --  the emitter can skip
             allocate/copy and emit one ``c_f_pointer`` per
             ``flat_names[i]`` aliasing ``read_exprs[i]`` (with
             index placeholders stripped).  The pass sets this
@@ -97,7 +97,7 @@ class FlattenRecipe:
                 deallocate(A_w)
 
             The companion buffer is always ``A_<member>(N, cap)``
-            (single flat per recipe — multi-flat layouts like
+            (single flat per recipe  --  multi-flat layouts like
             complex-split don't combine with ``aos_alloc``).  Mixed
             structs (one allocatable + one plain member) split
             across two recipes: one ``aos_alloc=True`` per
@@ -144,11 +144,11 @@ class FlattenEntry:
 
     Args:
         outer_expr:
-            Fortran expression the user passes — ``st`` or
+            Fortran expression the user passes  --  ``st`` or
             ``st%a%b%c`` for arbitrary hierarchy depth.  Threaded
             verbatim into generated ``c_loc`` / loop bodies.
         outer_type:
-            Fortran type of ``outer_expr`` — ``type(t_state)`` or
+            Fortran type of ``outer_expr``  --  ``type(t_state)`` or
             ``real(c_double), dimension(:,:)``.  Used in
             auto-generated comments.
         writeback_intent:
@@ -200,7 +200,7 @@ class FlattenPlan:
 
     @classmethod
     def from_dict(cls, d: dict) -> 'FlattenPlan':
-        """Rehydrate a plan from a plain dict — used by the bridge,
+        """Rehydrate a plan from a plain dict  --  used by the bridge,
         which returns the MLIR-side ``hlfir.flatten_plan`` attribute as
         a nested dict of the same shape."""
         return cls(entries=tuple(FlattenEntry.from_dict(e) for e in d.get('entries', [])))
@@ -230,8 +230,8 @@ def substitute_indices(expr: str, names: Tuple[str, ...]) -> str:
         expr:
             Source expression with ``$iN`` placeholders.
         names:
-            Tuple of concrete loop-index names.  ``$i1`` → ``names[0]``,
-            ``$i2`` → ``names[1]``, etc.
+            Tuple of concrete loop-index names.  ``$i1`` -> ``names[0]``,
+            ``$i2`` -> ``names[1]``, etc.
 
     Returns:
         The expression with every placeholder substituted.  Raises

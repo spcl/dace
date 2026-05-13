@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — Fortran ``ALLOCATABLE`` standalone arrays.
+"""Baseline HLFIR coverage  --  Fortran ``ALLOCATABLE`` standalone arrays.
 
 Pinned coverage (already supported by the bridge):
   * Local allocatable, ``ALLOCATE`` + element write/read.
@@ -6,14 +6,14 @@ Pinned coverage (already supported by the bridge):
 
 What this file does NOT yet exercise (deferred):
   * Allocatable / pointer struct MEMBERS (``type t :: real, allocatable :: w(:)``)
-    — covered by ``derived_type_test.py``, currently xfailed pending the
+     --  covered by ``derived_type_test.py``, currently xfailed pending the
     "allocatable + pointer struct member support" feature.
   * Array-of-struct + allocatable member with per-instance shapes
     (the padding-to-max story).  Saved memory pins the design:
     ``A_csr_rowptr[N, X1]`` with X1 = max over instances; bindings
     layer pads-to-max at the SDFG boundary.
 
-The baseline assumes the program correctly tracks allocation state —
+The baseline assumes the program correctly tracks allocation state  --
 no runtime ``ALLOCATED`` checks are inserted by the bridge.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ end subroutine main
 
 
 def test_allocate_whole_array_copy_roundtrip(tmp_path: Path):
-    """``allocate(x(n)); x = src; out = x; deallocate(x)`` — verifies the
+    """``allocate(x(n)); x = src; out = x; deallocate(x)``  --  verifies the
     allocatable round-trip end to end."""
     src = """
 subroutine main(n, src, out)

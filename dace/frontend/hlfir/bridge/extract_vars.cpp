@@ -1,5 +1,5 @@
 // ============================================================================
-// extract_vars.cpp — Collect and classify every hlfir.declare.
+// extract_vars.cpp  --  Collect and classify every hlfir.declare.
 // ============================================================================
 
 #include "bridge/extract_vars.h"
@@ -26,7 +26,7 @@ namespace hlfir_bridge {
 /// Per-dim extent symbol names.  Resolution order:
 ///   1. hlfir_bridge.shape_hint attribute (populated by PropagateShapes)
 ///   2. fir.shape / fir.shape_shift operand (traced via SSA)
-///   3. empty — caller fills with synthetics
+///   3. empty  --  caller fills with synthetics
 static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     std::vector<std::string> syms;
 
@@ -48,18 +48,18 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     // the DaCe descriptor (which rejects negative extents with
     // "Found negative shape in Data"):
     //
-    //   * ``fir::SequenceType::getUnknownExtent()`` (= INT64_MIN) —
+    //   * ``fir::SequenceType::getUnknownExtent()`` (= INT64_MIN)  --
     //     the canonical "this dim is dynamic" marker on
     //     ``fir.array<?xT>`` types.
-    //   * ``-1`` — the convention flang uses on the shape op of an
+    //   * ``-1``  --  the convention flang uses on the shape op of an
     //     assumed-size dummy (``arr(*)``).  See the IR
     //     ``%shape = fir.shape %c-1 : (index) -> !fir.shape<1>``
-    //     emitted for ``real, intent(in) :: src(*)`` — flang picks
+    //     emitted for ``real, intent(in) :: src(*)``  --  flang picks
     //     ``-1`` rather than ``INT64_MIN`` here because the operand
     //     is an ``index`` value the runtime would otherwise treat as
     //     a real extent.
     //
-    // Either case → push ``"?"`` so the per-dim synthetic-name
+    // Either case -> push ``"?"`` so the per-dim synthetic-name
     // fallback at the caller site mints ``<name>_d<i>``.  Any other
     // negative integer is genuinely invalid and we let it surface
     // (flang shouldn't emit such a thing for legal programs).
@@ -79,7 +79,7 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
         // (``arith.select(cmpi_sgt, addi(subi(load_ub, load_lb), 1),
         // 0)``).  Render the SSA expression directly so the descriptor
         // gets a closed-form shape over already-promoted scalar
-        // symbols, instead of the ``?`` → synthetic
+        // symbols, instead of the ``?`` -> synthetic
         // ``<arr>_d<i>`` fallback (which mints an unbound SDFG symbol
         // and surfaces as a missing program-arg at runtime).
         auto expr = traceExtentExpr(ext);
@@ -118,7 +118,7 @@ static std::vector<fir::AllocMemOp> collectAllocSites(
 
 /// Resolve the runtime shape of one ``fir.allocmem`` site to a symbol
 /// name list, the same way ``resolveShapeSyms`` resolves a static
-/// declare's shape — trace each size operand to its host declare
+/// declare's shape  --  trace each size operand to its host declare
 /// (preferred), fall back to a constant literal, then to ``?``.
 static std::vector<std::string> shapeFromAllocSite(fir::AllocMemOp alloc) {
     std::vector<std::string> syms;
@@ -153,7 +153,7 @@ static bool hasAllocatedReader(const std::string &shortName,
         if (auto *sd = src.getDefiningOp())
             if (auto ld = mlir::dyn_cast<fir::LoadOp>(sd))
                 src = ld.getMemref();
-        // ``traceToDecl`` returns the short (extracted) name — match
+        // ``traceToDecl`` returns the short (extracted) name  --  match
         // against ``shortName``, not the full mangled uniq_name.
         if (traceToDecl(src) == shortName) found = true;
     });
@@ -161,7 +161,7 @@ static bool hasAllocatedReader(const std::string &shortName,
 }
 
 /// True iff the allocatable / pointer ``declUniqName`` needs the
-/// ``<short>_allocated`` tracker scalar — either because some
+/// ``<short>_allocated`` tracker scalar  --  either because some
 /// kernel-body code writes it (an ALLOCATE / DEALLOCATE site exists,
 /// keyed on the full mangled uniq_name) OR because some kernel-body
 /// code reads it (an ``ALLOCATED(arr)`` / ``ASSOCIATED(ptr)`` reader
@@ -178,7 +178,7 @@ bool needsAllocatedTracker(const std::string &declUniqName,
 /// First ALLOCATE keeps the allocatable's original Fortran name (so
 /// every existing single-allocation test stays green); subsequent
 /// allocations mint fresh transient names ``<x>_alloc1``,
-/// ``<x>_alloc2``, … one per re-allocation site.
+/// ``<x>_alloc2``, ... one per re-allocation site.
 std::string allocAliasName(const std::string &fortran, unsigned site) {
     if (site == 0) return fortran;
     return fortran + "_alloc" + std::to_string(site);
@@ -225,7 +225,7 @@ static std::string traceLoopIter(fir::DoLoopOp loop) {
 /// branch-condition scalars to symbols.
 ///
 /// Recognised shape: ``arith.cmp*`` (the leaf comparison), and the
-/// transparent wrappers lift-cf-to-scf emits around it —
+/// transparent wrappers lift-cf-to-scf emits around it  --
 /// ``arith.xori/andi/ori/trunci/extui/extsi`` and ``fir.convert``.
 /// Stops when it hits a ``fir.load`` (hands off to ``traceToDecl``) or
 /// an op it doesn't recognise.
@@ -272,8 +272,8 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
         return;
     }
 
-    // Anything else (constants, arith.addi used as index arithmetic, …)
-    // — trace through traceToDecl as a last resort; it already handles
+    // Anything else (constants, arith.addi used as index arithmetic, ...)
+    //  --  trace through traceToDecl as a last resort; it already handles
     // several pass-through ops.  Same integer-only filter so non-integer
     // scalars don't get promoted to symbols here either.
     if (v.getType().isIntOrIndex()) {
@@ -292,7 +292,7 @@ static void collectConditionReads(mlir::Value v, std::set<std::string> &out,
 // a ``dense<[...]>`` attribute, addressed via ``fir.address_of``.
 // We surface the data on the corresponding VarInfo so the SDFG
 // builder can synthesise an init state writing those values into
-// the transient — the kernel's reads then see the right data
+// the transient  --  the kernel's reads then see the right data
 // instead of zeros.
 //
 // All values widen to ``double`` for transport; the Python side
@@ -302,8 +302,8 @@ static std::vector<double> extractGlobalInitData(fir::GlobalOp gop) {
     std::vector<double> out;
     if (!gop) return out;
     // Path 1: ``fir.global ... constant`` arrays / scalars whose
-    // initialiser lives on the op as a ``DenseElementsAttr`` —
-    // Flang's encoding for ``parameter, dimension(...) :: x = (/ … /)``
+    // initialiser lives on the op as a ``DenseElementsAttr``  --
+    // Flang's encoding for ``parameter, dimension(...) :: x = (/ ... /)``
     // and ``parameter :: x = <literal>``.  Restricted to globals
     // marked ``constant`` because the dense attribute is the
     // canonical static data.
@@ -333,7 +333,7 @@ static std::vector<double> extractGlobalInitData(fir::GlobalOp gop) {
     // Path 2: scalar ``fir.global`` (e.g. ``real :: bob = 1`` declared
     // at module scope without ``parameter``).  The initialiser lives
     // in the body as an ``arith.constant`` feeding a ``fir.has_value``
-    // terminator — extract the constant attribute, narrowing to a
+    // terminator  --  extract the constant attribute, narrowing to a
     // single-element ``out`` vector.
     if (gop.getRegion().empty()) return out;
     for (auto &op : gop.getRegion().front()) {
@@ -404,7 +404,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             if (auto f = mlir::dyn_cast_or_null<mlir::func::FuncOp>(fn))
                 if (f.isPrivate()) return;
             // Only disambiguate declares backed by a fresh
-            // ``fir.alloca`` — those are real own-storage locals
+            // ``fir.alloca``  --  those are real own-storage locals
             // (the inlined function-result variable shape we care
             // about).  Aliases (declare-of-declare, embox/convert
             // chain, ``fir.absent``-backed optional dummies, and
@@ -426,7 +426,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         for (auto &kv : byShort) {
             auto &group = kv.second;
             if (group.size() < 2) continue;
-            // Only rename if duplicates span DIFFERENT F-scopes — that's
+            // Only rename if duplicates span DIFFERENT F-scopes  --  that's
             // the inlined-callee collision shape.  Two declares with
             // matching short name AND matching F-scope (one func
             // making two declares for one variable, e.g. shape-hint
@@ -531,7 +531,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
 
 
     // Pass 1: collect every hlfir.declare.  Skip assumed-shape alias
-    // declares inserted by ``hlfir-inline-all`` — they share storage
+    // declares inserted by ``hlfir-inline-all``  --  they share storage
     // with the caller's outer declare, and downstream SDFG emission
     // routes accesses to the outer name via traceToDecl.  Registering
     // both would give DaCe two non-transient arrays over one buffer.
@@ -542,8 +542,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // were already inlined into it leave behind their original
         // bodies as private siblings (kept alive only by a
         // dispatch_table after ``fir-polymorphic-op`` resolved the
-        // callsites).  Their dummy declares — typed e.g.
-        // ``fir.class<T>`` — would otherwise surface as phantom
+        // callsites).  Their dummy declares  --  typed e.g.
+        // ``fir.class<T>``  --  would otherwise surface as phantom
         // top-level program args at SDFG-build time.
         auto *parentOp = op->getParentOfType<mlir::func::FuncOp>().getOperation();
         if (auto fn = mlir::dyn_cast_or_null<mlir::func::FuncOp>(parentOp))
@@ -556,7 +556,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // would surface ``.tmp.arrayctor`` on the SDFG and downstream
         // memlet parsing rejects the dotted name.
         if (op.getUniqName().str().find(".tmp.") != std::string::npos) return;
-        // Skip Flang-internal type-info metadata declares — these are
+        // Skip Flang-internal type-info metadata declares  --  these are
         // string descriptors emitted for every derived type and its
         // components (``.n.<typename>``, ``.n.<field>``, ``.b.<type>``,
         // ``.di.<type>``).  They never represent user variables and
@@ -609,7 +609,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     });
 
     // Pass 2a: loop iterators.  A Fortran DO induction variable is
-    // always a symbol downstream — the LoopRegion uses it as
+    // always a symbol downstream  --  the LoopRegion uses it as
     // ``loop_var`` in its init / update / condition expressions, and
     // any ``a(i)`` body uses it as an index (which only symbols may
     // be).  Add to symbolNames directly; there's no reason to keep a
@@ -623,7 +623,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
 
     // Pass 2b: shape symbols + do-loop bounds (both lower and upper).
     // Lower bounds are promoted symmetrically with upper bounds so
-    // ``DO jk = nflatlev, nlev`` recognises ``nflatlev`` as a symbol —
+    // ``DO jk = nflatlev, nlev`` recognises ``nflatlev`` as a symbol  --
     // otherwise codegen generates an int*-vs-int64_t mismatch in the
     // loop initialiser.
     for (auto &op : decls) {
@@ -660,7 +660,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (!lb.empty()) symbolNames.insert(lb);
     });
     // Allocatable shape sources: every ``fir.allocmem`` site's shape
-    // operands are runtime extents of the resulting array — promote
+    // operands are runtime extents of the resulting array  --  promote
     // their traced declares to symbols so ``allocate(x(n))``
     // (without any surrounding do-loop) still flips ``n`` from scalar
     // to symbol.  Bug fix for Phase 5a (allocatable struct members):
@@ -779,7 +779,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Plain dummy / local arrays surface a single layer (Box, Ref,
         // Heap, or Ptr) over the SequenceType, so a single sequential
         // unwrap suffices.  Allocatable declares add two extra layers
-        // (``ref<box<heap<array<…>>>>``); loop through the wrappers
+        // (``ref<box<heap<array<...>>>>``); loop through the wrappers
         // only when the declare is allocatable so POINTER and other
         // box-typed dummies stay rank-0 (scalar passthrough).
         auto ty = op.getResult(0).getType();
@@ -797,13 +797,13 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // descriptor.  Without peeling, a top-level ``real, pointer
         // :: w(:)`` (or a Phase 5b flat companion ``s_w`` for a
         // pointer struct member) ends up classified as a scalar of
-        // dtype ``!fir.box<!fir.ptr<...>>`` — useless to the SDFG.
+        // dtype ``!fir.box<!fir.ptr<...>>``  --  useless to the SDFG.
         //
         // Guard: only peel pointer declares whose results are
         // actually USED downstream.  Pointer declares with all-empty
         // results survive ``hlfir-rewrite-pointer-assigns`` only as
-        // dangling artifacts (rebind successfully collapsed → all
-        // reads forwarded → declare is dead but not yet erased) or
+        // dangling artifacts (rebind successfully collapsed -> all
+        // reads forwarded -> declare is dead but not yet erased) or
         // as cross-procedure / unsupported-target leftovers.  Peel
         // always exposes a phantom rank>0 array on the SDFG
         // signature; without the guard, even a successfully-collapsed
@@ -832,7 +832,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // for a per-field array carries the shape only in the type
         // (``!fir.array<5x5x5xf32>``), not as an explicit ``fir.shape``
         // operand.  Without this, ``resolveShapeSyms`` returns empty
-        // and the fallback assumed-shape ``<name>_d<i>`` synth fires —
+        // and the fallback assumed-shape ``<name>_d<i>`` synth fires  --
         // but those synth symbols would be unwired because the extent
         // is statically known.
         std::vector<std::string> seqExtents;
@@ -869,7 +869,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // MLIR ``i1`` and Fortran ``LOGICAL(KIND=N)`` (any kind) both
         // surface as ``bool`` on the SDFG signature (= ``np.bool_`` =
         // C++ ``bool``, 1 byte).  Element-wise boolean ops in tasklets
-        // render as ``bool`` operations directly — no ``(x != 0)``
+        // render as ``bool`` operations directly  --  no ``(x != 0)``
         // truthiness coercion needed.  The caller-side bindings
         // wrapper translates between the original ``LOGICAL(KIND=N)``
         // image and the SDFG's bool layout at the Fortran boundary.
@@ -882,7 +882,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             //
             //   1. Flang-internal type-info metadata
             //      (``_QM__fortran_type_info...`` tables, component
-            //      descriptors named ``.b.<type>.<field>``) — never
+            //      descriptors named ``.b.<type>.<field>``)  --  never
             //      user-visible.
             //   2. User struct that escaped ``hlfir-flatten-structs``
             //      (the pass handles flat-member structs and nested
@@ -921,11 +921,11 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         }
 
         // Allocatable: hlfir.declare has no shape; pull it from the
-        // matching ``fir.allocmem`` site(s).  One ALLOCATE → use the
+        // matching ``fir.allocmem`` site(s).  One ALLOCATE -> use the
         // first site for ``x``'s shape.  Multiple ALLOCATEs (re-
-        // allocation across an explicit DEALLOCATE) → register one
+        // allocation across an explicit DEALLOCATE) -> register one
         // extra synthetic VarInfo per additional site, named
-        // ``x_alloc1``, ``x_alloc2``, … (allocAliasName); the bridge's
+        // ``x_alloc1``, ``x_alloc2``, ... (allocAliasName); the bridge's
         // alias map (see extract_ast.cpp) will route per-site reads /
         // writes to the right transient at AST-build time.
         bool isAllocatable = false;
@@ -950,10 +950,10 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Assumed-shape fallback: synthesise per-dim symbol names.
         // Two entry shapes:
         //   * ``shape_symbols`` is empty entirely (no shape op on the
-        //     declare) — synthesize all dims.
+        //     declare)  --  synthesize all dims.
         //   * ``shape_symbols`` has per-dim ``"?"`` slots (an
         //     unknown-extent sentinel reached us, e.g. assumed-size
-        //     ``arr(*)``) — replace just the unresolved slots, keep
+        //     ``arr(*)``)  --  replace just the unresolved slots, keep
         //     the resolved ones.
         if (v.shape_symbols.empty() && v.rank > 0)
             for (int dim = 0; dim < v.rank; ++dim)
@@ -970,8 +970,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         else if (symbolNames.count(v.fortran_name)) v.role = "symbol";
         else                                        v.role = "scalar";
 
-        // View-alias detection.  Fortran storage-association reshape —
-        // ``call cb(d(:, :, 1))`` where ``cb`` declares ``dd(16)`` — has
+        // View-alias detection.  Fortran storage-association reshape  --
+        // ``call cb(d(:, :, 1))`` where ``cb`` declares ``dd(16)``  --  has
         // Flang emit:
         //   %sec = hlfir.designate %d (1:4, 1:4, 1) shape <4,4>
         //   %flat = fir.convert %sec : ref<4x4xf64> -> ref<16xf64>
@@ -985,10 +985,10 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (v.role == "array") {
             mlir::Value m = op.getMemref();
             // Peel through:
-            //   * ``fir.convert``  — same-type rebox or shape-changing
+            //   * ``fir.convert``   --  same-type rebox or shape-changing
             //     reinterpret (Fortran storage-association reshape).
-            //   * ``fir.box_addr`` — extract a raw ref from a box.
-            //   * ``hlfir.copy_in`` — Flang's contiguous-buffer
+            //   * ``fir.box_addr``  --  extract a raw ref from a box.
+            //   * ``hlfir.copy_in``  --  Flang's contiguous-buffer
             //     materialisation when a non-contiguous section is
             //     passed to a callee whose dummy is declared
             //     contiguous.  Treating the buffer as a view of the
@@ -1013,13 +1013,13 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                     auto secIdx = sec.getIndices();
                     if (!srcName.empty() && !triplets.empty()) {
                         // Walk the section's per-dim spec.  For each
-                        // parent dim: triplet → 3 operands (lo, hi,
+                        // parent dim: triplet -> 3 operands (lo, hi,
                         // stride) collapsed to ``"lo-1:hi"`` DaCe form
-                        // (or ``"lo-1:hi:stride"`` if stride != 1 — the
+                        // (or ``"lo-1:hi:stride"`` if stride != 1  --  the
                         // non-contiguous slice variant Flang lowers
-                        // ``a(1:7:2)`` to);  scalar → 1 operand
+                        // ``a(1:7:2)`` to);  scalar -> 1 operand
                         // collapsed to ``"k-1"``.  When a bound is a
-                        // runtime value (loop iter, dummy scalar, …)
+                        // runtime value (loop iter, dummy scalar, ...)
                         // fall back to a small symbol renderer so the
                         // subset stays expressible.
                         auto renderSym = [](mlir::Value v) -> std::string {
@@ -1061,7 +1061,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                         // (dropped scalar dim).  ``is_trivial_section``
                         // tracks whether the section is just a name +
                         // index-suffix alias (every triplet has lo=1,
-                        // stride=1) — for those we route accesses through
+                        // stride=1)  --  for those we route accesses through
                         // the source array instead of registering a view.
                         std::vector<std::string> dim_map;
                         bool is_trivial_section = !triplets.empty();
@@ -1108,7 +1108,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                                     else
                                         zero_based = "(" + k + ")-1";
                                     subset.push_back(zero_based);
-                                    // ``dim_map`` stays 1-based — it's
+                                    // ``dim_map`` stays 1-based  --  it's
                                     // spliced into index_exprs which
                                     // build_memlet_index offsets uniformly.
                                     dim_map.push_back(k);
@@ -1164,14 +1164,14 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                             // dims.  Storage-association reshape
                             // (``call sub(d(:, :, 1))`` with callee
                             // ``dd(16)``) has dummy rank 1 but two
-                            // surviving triplets — that's an actual
+                            // surviving triplets  --  that's an actual
                             // shape change Flang inserts a
                             // ``fir.convert`` to re-shape, and needs
                             // the view_alias path's stride remapping.
                             bool rank_matches = ((int)surviving == v.rank);
                             if (is_trivial_section && rank_matches) {
                                 // Trivial section: name + index suffix
-                                // alias.  No SDFG view registration —
+                                // alias.  No SDFG view registration  --
                                 // every dummy access rewrites to a
                                 // source-array memlet via dim_map.
                                 v.role = "section_alias";
@@ -1186,13 +1186,13 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             }
         }
 
-        // OPTIONAL dummy → companion presence flag.  Fortran's
+        // OPTIONAL dummy -> companion presence flag.  Fortran's
         // ``present(x)`` lowers to ``fir.is_present %x -> i1``, and the
         // bridge renders that as the name ``<x>_present``.  Register a
         // symbol VarInfo for that name here so callers see it on the
         // SDFG signature (non-zero = present, 0 = absent).  We register
         // it BEFORE pushing v, since the caller position should follow
-        // the Fortran dummy order — the flag sits alongside its host.
+        // the Fortran dummy order  --  the flag sits alongside its host.
         bool isOptional = false;
         if (auto a = op.getFortranAttrs()) {
             if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::optional))
@@ -1212,8 +1212,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // Companion ``<arr>_allocated`` int32 transient for every
         // allocatable.  The AST builder writes ``1`` at each ALLOCATE
         // site and ``0`` at each DEALLOCATE site so the Fortran
-        // ``ALLOCATED(arr)`` intrinsic — which Flang lowers to
-        // ``box_addr(load arr_box) != 0`` — can read this scalar
+        // ``ALLOCATED(arr)`` intrinsic  --  which Flang lowers to
+        // ``box_addr(load arr_box) != 0``  --  can read this scalar
         // instead of inspecting the descriptor's heap pointer (which
         // DaCe's data model doesn't surface).  Initial value is 0
         // (DaCe default for transient scalars).
@@ -1239,7 +1239,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
 
         // For an allocatable with N ALLOCATE sites, register N-1
         // additional synthetic transients alongside the primary
-        // VarInfo.  Each gets the per-site shape (n1, n2, …) and the
+        // VarInfo.  Each gets the per-site shape (n1, n2, ...) and the
         // ``x_allocK`` alias name; the AST builder will redirect reads
         // / writes after the K-th ALLOCATE through this name.
         if (allocSites.size() > 1) {
@@ -1262,7 +1262,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
 
         // Init-value detection.  Two shapes feed the same path:
         //   * ``parameter`` declares pointing at ``fir.global ... constant``
-        //     — the read-only constant pool Flang synthesises for array
+        //      --  the read-only constant pool Flang synthesises for array
         //     / scalar literals.
         //   * Plain module-data declares pointing at ``fir.global`` with
         //     a ``fir.has_value`` body init (Fortran's ``real :: bob = 1``

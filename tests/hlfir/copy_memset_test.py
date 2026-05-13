@@ -1,4 +1,4 @@
-"""Whole-array copy → ``CopyLibraryNode`` and zero-fill → ``MemsetLibraryNode``.
+"""Whole-array copy -> ``CopyLibraryNode`` and zero-fill -> ``MemsetLibraryNode``.
 
 Exercises the two ``hlfir.assign`` shapes that skip the tasklet/loop path
 and go straight to library nodes on FaCe.  Compared numerically against
@@ -54,7 +54,7 @@ def test_copy_and_memset_numerical(tmp_path):
 
     sdfg(a=np.ascontiguousarray(a), b=b_sdfg, c=c_sdfg, n=n)
 
-    # Reference — gfortran-compiled whole-array assign / zero-fill.
+    # Reference  --  gfortran-compiled whole-array assign / zero-fill.
     b_ref = np.full(n, 7.25, order="F", dtype=np.float64)
     c_ref = np.full(n, 7.25, order="F", dtype=np.float64)
     mod.copy_and_memset(np.asfortranarray(a), b_ref, c_ref)

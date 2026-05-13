@@ -9,10 +9,10 @@ Coverage:
   ``math.cosh`` / ``math.tanh`` dialect ops).
 - Inverse trig: ``asin``, ``acos``, ``atan``, ``atan2`` (``math.*`` ops).
 - Conversion: ``int(x)``, ``nint(x)``, ``aint(x)``, ``anint(x)``,
-  ``floor(x)`` — Flang routes ``nint`` through ``llvm.lround``, ``aint``
+  ``floor(x)``  --  Flang routes ``nint`` through ``llvm.lround``, ``aint``
   through ``llvm.trunc``; bridge maps them to ``dace::int{32,64}`` casts
   and ``trunc`` / ``round`` Python calls.
-- Modulo: ``mod(a,b)`` (truncated) and ``modulo(a,b)`` (floored) — both
+- Modulo: ``mod(a,b)`` (truncated) and ``modulo(a,b)`` (floored)  --  both
   lower to ``fir.call @_FortranAMod*Real8``; bridge maps both to the
   Python ``%`` operator and the C++ codegen picks the right semantics
   for the operand type.
@@ -65,7 +65,7 @@ end subroutine
 
 
 def test_floor_aint(tmp_path: Path):
-    """floor / aint — both round toward -inf / 0 respectively, return
+    """floor / aint  --  both round toward -inf / 0 respectively, return
     real of the same kind."""
     src = """
 subroutine probe(x, out)
@@ -103,7 +103,7 @@ end subroutine
 
 
 def test_mod_modulo(tmp_path: Path):
-    """Fortran MOD (truncated) and MODULO (floored) — both are the
+    """Fortran MOD (truncated) and MODULO (floored)  --  both are the
     Python ``%`` at the bridge level; the C++ codegen does the right
     thing per type."""
     src = """
@@ -124,7 +124,7 @@ end subroutine
     # bridge expression matches MODULO.  The C++ codegen lowers ``%`` on
     # double to ``fmod`` (truncated) for Fortran-MOD positions and to a
     # floor-rounded helper for MODULO positions, but at this layer both
-    # come through as the same operator — verify against the floored
+    # come through as the same operator  --  verify against the floored
     # numpy result, which is what Python and DaCe's float-`%` produce.
     np.testing.assert_allclose(out[0], np.fmod(-7.0, 3.0), rtol=1e-12)
     np.testing.assert_allclose(out[1], -7.0 - 3.0 * np.floor(-7.0 / 3.0), rtol=1e-12)

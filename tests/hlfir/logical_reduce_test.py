@@ -1,4 +1,4 @@
-"""Logical reductions — ``ANY`` / ``ALL`` / ``COUNT`` on whole arrays.
+"""Logical reductions  --  ``ANY`` / ``ALL`` / ``COUNT`` on whole arrays.
 
 These are now in ``kRedTable`` and work for the whole-array shape
 Flang emits for ``ANY(mask)`` / ``ALL(mask)`` / ``COUNT(mask)``
@@ -32,12 +32,12 @@ end subroutine
     sdfg = build_sdfg(src, tmp_path, name="kernel_any", pipeline="hlfir-propagate-shapes").build()
 
     rng = np.random.default_rng(42)
-    # Fortran ``LOGICAL`` → ``np.bool_`` on the SDFG signature.
+    # Fortran ``LOGICAL`` -> ``np.bool_`` on the SDFG signature.
     mask = np.asfortranarray(rng.random(8) > 0.5)
     result = np.zeros(1, dtype=np.bool_)
     sdfg(mask=mask, result=result, n=8)
     expected = bool(mask.any())
-    assert bool(result[0]) == expected, f"ANY({mask.tolist()}) → {bool(result[0])}, want {expected}"
+    assert bool(result[0]) == expected, f"ANY({mask.tolist()}) -> {bool(result[0])}, want {expected}"
 
 
 def test_all_whole_array(tmp_path: Path):

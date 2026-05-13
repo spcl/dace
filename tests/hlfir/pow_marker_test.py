@@ -1,14 +1,14 @@
-"""Exponentiation lowering — Flang's ``**`` becomes a Python ``**``
+"""Exponentiation lowering  --  Flang's ``**`` becomes a Python ``**``
 in the tasklet body.
 
 All four Flang variants (``math.fpowi`` / ``math.powf`` / ``math.powi``
 / ``math.ipowi``) collapse to the same ``a ** b`` form.  A downstream
 SDFG-level simplify pass rewrites ``**`` based on the tasklet's
-input / output types — no extra variant markers are propagated at
+input / output types  --  no extra variant markers are propagated at
 this layer.  These tests assert that the bridge surfaces ``**`` and
 that ``hlfir.no_reassoc`` passes through transparently (otherwise
 the inner ``math.fpowi`` would be stranded as ``?``).  Each test is
-also paired with an e2e numerical check against a numpy reference —
+also paired with an e2e numerical check against a numpy reference  --
 the structural ``**``-in-tasklet check guards the lowering shape;
 the numerical check guards that ``**`` evaluates to the right value
 at run time.

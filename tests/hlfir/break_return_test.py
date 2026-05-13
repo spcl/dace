@@ -2,7 +2,7 @@
 
 Flang drops Fortran ``exit`` / ``return`` to raw ``cf.cond_br`` /
 ``cf.br`` before any of our bridge passes run, and ``lift-cf-to-scf``
-either absorbs them into an ``scf.while`` condition or gives up — so
+either absorbs them into an ``scf.while`` condition or gives up  --  so
 bridge-side detection is a separate workstream.  This test covers the
 other side of that future pipe: given a ``SDFGBuilder`` seeded with an
 AST that contains ``kind="break"`` / ``kind="return"`` nodes, the
@@ -10,7 +10,7 @@ emitted SDFG must be structurally correct, validate, compile, and run
 end-to-end.
 
 The AST is a stub class (not the nanobind-bound ASTNode) since we
-can't construct those from Python — it just needs the fields the
+can't construct those from Python  --  it just needs the fields the
 emitters read.
 
 Each emitted SDFG also gets called with concrete inputs and the
@@ -62,7 +62,7 @@ def test_return_block_wired_at_top_level(tmp_path):
     """An SDFG whose AST contains a top-level RETURN emits a
     ``ReturnBlock`` that codegen turns into an early ``return`` from
     the generated C++ entry point.  Calling the resulting SDFG must
-    leave its inputs untouched — the body has no compute before the
+    leave its inputs untouched  --  the body has no compute before the
     return."""
     import dace
     from dace import SDFG
@@ -86,7 +86,7 @@ def test_return_block_wired_at_top_level(tmp_path):
     ctx.flush(builder, sdfg)
     sdfg.validate()
 
-    # Numerical check: the SDFG is a bare top-level RETURN — calling it
+    # Numerical check: the SDFG is a bare top-level RETURN  --  calling it
     # must compile, run, and leave ``a`` element-wise unchanged.
     a_init = np.array([1.5, -2.5, 3.5, 4.5], dtype=np.float64)
     a = a_init.copy()
@@ -142,7 +142,7 @@ def test_break_block_inside_loop_region(tmp_path):
 
     sdfg.validate()
 
-    # Numerical check — the loop body has no writes.  Whether the break
+    # Numerical check  --  the loop body has no writes.  Whether the break
     # fires (a[3] > 100 below) or not, ``a`` must come back unchanged.
     a_init = np.array([1.0, 2.0, 3.0, 200.0, 5.0], dtype=np.float64)
     a = a_init.copy()

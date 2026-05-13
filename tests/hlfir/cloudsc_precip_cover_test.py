@@ -26,7 +26,7 @@ PCOVPTOT pattern A (~1e-3 decreasing offset at consecutive JKs):
 
 Combines the cumulative IF/ELSE pattern, the kind-mixed
 ``1.0 - 1.E-06`` constant (REAL(4) lowered to f32 arithmetic then
-promoted to f64), and 6 cell writes per branch — all in one
+promoted to f64), and 6 cell writes per branch  --  all in one
 self-contained loop.  The test sweeps multiple JK values inside
 a column-by-column driver so ZA(JL, JK-1) reads carry across JKs.
 

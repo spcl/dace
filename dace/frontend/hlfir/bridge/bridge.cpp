@@ -1,5 +1,5 @@
 // ============================================================================
-// bridge.cpp — nanobind Python boundary for the HLFIR bridge.
+// bridge.cpp  --  nanobind Python boundary for the HLFIR bridge.
 // ============================================================================
 // Thin layer: owns an MLIRContext and a ModuleOp; delegates extraction to
 // extract_vars.cpp and extract_ast.cpp; delegates passes to the pass library
@@ -22,7 +22,7 @@
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/HLFIR/HLFIRDialect.h"
 
-// DialectInlinerInterface registration — without these, mlir::inlineCall
+// DialectInlinerInterface registration  --  without these, mlir::inlineCall
 // segfaults inside InlinerInterface::handleArgument because no per-dialect
 // interface is attached.  The func / LLVM / FIR extensions each supply the
 // dialect-side hooks (legality, arg handling, terminator handling) that
@@ -55,7 +55,7 @@ namespace nb = nanobind;
 using namespace hlfir_bridge;
 
 // ============================================================================
-// HLFIRModule — Python-facing container for one parsed HLFIR module.
+// HLFIRModule  --  Python-facing container for one parsed HLFIR module.
 // ============================================================================
 
 class HLFIRModule {
@@ -71,7 +71,7 @@ public:
             mlir::acc::OpenACCDialect, mlir::LLVM::LLVMDialect>();
         // Attach DialectInlinerInterface for every dialect we may need to
         // inline across.  Flang's InitFIR.h makes the same three calls in
-        // ``registerNonCodegenDialects`` + ``addFIRExtensions`` — without
+        // ``registerNonCodegenDialects`` + ``addFIRExtensions``  --  without
         // them ``mlir::inlineCall`` dereferences a null dialect interface.
         mlir::func::registerInlinerExtension(registry_);
         mlir::LLVM::registerInlinerInterface(registry_);
@@ -194,7 +194,7 @@ public:
     /// Read back the ``hlfir.flatten_plan`` module attribute stamped by
     /// ``hlfir-flatten-structs`` into a plain Python dict that mirrors
     /// ``FlattenPlan.to_dict()``.  Returns ``None``-shaped dict (empty
-    /// entries list) when no plan is present — callers can trust the
+    /// entries list) when no plan is present  --  callers can trust the
     /// shape regardless of whether the pass ran.
     ///
     /// Shape:

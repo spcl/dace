@@ -5,7 +5,7 @@ Each test keeps the original numerical assertions and uses the HLFIR
 ``create_sdfg_from_string`` so that swapping the import line is the only
 change required to run the existing test against the new frontend.
 
-We port the tests one at a time — this file picks up the very short
+We port the tests one at a time  --  this file picks up the very short
 ones; more intricate cases (``allocate``-based entry points, PROGRAM
 wrappers, etc.) wait until the matching HLFIR lowerings land.
 """
@@ -27,7 +27,7 @@ if str(_HLFIR_DIR) not in sys.path:
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 
 # ---------------------------------------------------------------------------
-# tests/fortran/fortran_loops_test.py — simplest nested-loop case.
+# tests/fortran/fortran_loops_test.py  --  simplest nested-loop case.
 # ---------------------------------------------------------------------------
 
 

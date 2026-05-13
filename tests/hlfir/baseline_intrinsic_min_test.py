@@ -1,4 +1,4 @@
-"""Baseline HLFIR coverage — ``MIN`` intrinsic with mixed scalar /
+"""Baseline HLFIR coverage  --  ``MIN`` intrinsic with mixed scalar /
 array reads.  Pulled out of the original
 ``ported_from_f2dace_windmill_test.py`` per-feature split.
 """

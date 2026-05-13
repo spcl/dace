@@ -4,10 +4,10 @@ These mirror the helpers used in the FaCe-native ports
 (``baseline_*_test.py``) so a single canonical
 implementation is reused across every ported file:
 
-- ``_f2py(src, out_dir, mod_name)``   — gfortran-backed reference build.
-- ``_sdfg_call_args(sdfg, int_vals)`` — route int args to scalar vs
+- ``_f2py(src, out_dir, mod_name)``    --  gfortran-backed reference build.
+- ``_sdfg_call_args(sdfg, int_vals)``  --  route int args to scalar vs
   length-1-Array based on what ``sdfg.arglist()`` classifies them as.
-- ``_xfail(reason, *, strict=True)``  — uniform strict-xfail marker.
+- ``_xfail(reason, *, strict=True)``   --  uniform strict-xfail marker.
 """
 from __future__ import annotations
 
@@ -61,6 +61,6 @@ def sdfg_call_args(sdfg, int_values: dict) -> dict:
 
 
 def xfail(reason: str, *, strict: bool = True):
-    """Uniform strict-xfail marker — any silent xpass should fire so
+    """Uniform strict-xfail marker  --  any silent xpass should fire so
     flipped-green tests get a deliberate, visible un-marking."""
     return pytest.mark.xfail(strict=strict, reason=reason)

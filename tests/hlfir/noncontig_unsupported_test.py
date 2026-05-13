@@ -1,4 +1,4 @@
-"""Negative tests — patterns the HLFIR bridge deliberately refuses to
+"""Negative tests  --  patterns the HLFIR bridge deliberately refuses to
 lower.  Each case below produces a clear error message naming the
 failing source location and the reason.  Documenting these as live
 tests (rather than just READMEs) keeps the contract enforced in CI;
@@ -25,8 +25,8 @@ from _util import build_sdfg, have_flang
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
-# All scatter / gather variants — including symbolic extents and
-# symbolic-extent calls — are now supported in Phase 1.5.  Positive
+# All scatter / gather variants  --  including symbolic extents and
+# symbolic-extent calls  --  are now supported in Phase 1.5.  Positive
 # tests in noncontig_gather_scatter_test.py.  The single remaining
 # unsupported case is ALIASED self-assignments where source and
 # destination are the same array (Fortran 2003 RHS-to-temp
@@ -41,7 +41,7 @@ def test_placeholder_for_future_unsupported_cases(tmp_path: Path):
 
 
 def test_virtual_dispatch_bails_loudly(tmp_path: Path):
-    """Genuinely runtime-polymorphic ``fir.dispatch`` — a polymorphic
+    """Genuinely runtime-polymorphic ``fir.dispatch``  --  a polymorphic
     dummy ``class(t)`` that the function itself dispatches on.  Flang's
     static devirtualisation can't resolve this case because the
     concrete type only becomes known at the call site (which is
@@ -50,7 +50,7 @@ def test_virtual_dispatch_bails_loudly(tmp_path: Path):
     ``hlfir-reject-polymorphism`` pass.
 
     The test asserts that the pipeline raises ``RuntimeError`` with
-    a message naming polymorphism — the bridge's contract that
+    a message naming polymorphism  --  the bridge's contract that
     runtime polymorphic dispatch is unsupported.
     """
     src = """

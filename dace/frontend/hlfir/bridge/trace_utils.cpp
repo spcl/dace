@@ -1,5 +1,5 @@
 // ============================================================================
-// trace_utils.cpp — Shared SSA tracing utilities
+// trace_utils.cpp  --  Shared SSA tracing utilities
 // ============================================================================
 
 #include "bridge/trace_utils.h"
@@ -21,7 +21,7 @@ namespace hlfir_bridge {
 // trailing short name (``inp``).  Without disambiguation,
 // ``builder.arrays`` keys collide and view-alias linking edges
 // self-loop.  ``extract_vars`` populates this map with
-// ``mangled → unique_short_name`` for the colliding entries; every
+// ``mangled -> unique_short_name`` for the colliding entries; every
 // subsequent ``extractName`` call resolves to the unique form.
 static thread_local std::unordered_map<std::string, std::string> kManglingOverride;
 
@@ -36,14 +36,14 @@ std::string extractName(const std::string &m) {
     if (it != kManglingOverride.end()) return it->second;
     auto p = m.rfind('E');
     std::string name = p != std::string::npos ? m.substr(p + 1) : m;
-    // Sanitize dots — flang emits compiler-generated globals like
+    // Sanitize dots  --  flang emits compiler-generated globals like
     // ``_QQro.4xi4.0`` (read-only constant pool for array literals)
     // whose names contain ``.``.  DaCe's ``NestedDict`` reserves
     // ``.`` as a nested-key separator and rejects dotted keys
     // outright.  Fortran identifiers can't contain ``.``, so
     // replacing every ``.`` with ``_`` is collision-free w.r.t.
     // user names.  Done at the boundary (extractName is the
-    // canonical "MLIR mangled → Python-side name" helper) so the
+    // canonical "MLIR mangled -> Python-side name" helper) so the
     // raw mangled names in the IR stay intact.
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
@@ -91,7 +91,7 @@ std::string traceToDecl(mlir::Value val, int max) {
         if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d))
             { val = co.getRef(); continue; }
         // ``fir.rebox`` retypes an existing box (e.g. section view box
-        // → ``box<ptr<...>>`` for a Fortran ``ptr => slice`` rebind);
+        // -> ``box<ptr<...>>`` for a Fortran ``ptr => slice`` rebind);
         // it doesn't change the underlying storage.  Walk through so a
         // downstream designate over the reboxed value still resolves
         // to the parent's name.  Same role as the
@@ -107,7 +107,7 @@ std::string traceToDecl(mlir::Value val, int max) {
         // name is the box's source declare, so we walk through.
         if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(d))
             { val = ba.getVal(); continue; }
-        // Section / element designates (``a(lo:hi)``, ``a(i)``) — walk
+        // Section / element designates (``a(lo:hi)``, ``a(i)``)  --  walk
         // through to the underlying memref so a reduce over an
         // ``hlfir.any %levmask(i_startblk:i_endblk, jk)`` resolves its
         // source array to ``levmask``.
@@ -186,7 +186,7 @@ std::string traceExtentExpr(mlir::Value v) {
     //   %r   = arith.select %cmp, %ext, %c0
     // Array extents are non-negative by construction in valid Fortran,
     // so the clamp is dead defensive code at runtime.  Drop the wrap
-    // and return the underlying extent expression directly — keeps
+    // and return the underlying extent expression directly  --  keeps
     // SDFG shapes and view subsets readable (``klon`` not
     // ``max(klon, 0)``) and lets sympy fold downstream arithmetic.
     if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
@@ -264,7 +264,7 @@ hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
     // Signature: memref produced by another ``hlfir.declare`` (possibly
     // behind ``fir.convert`` rebox ops).  This is precisely what Flang
     // emits for the callee's dummy_scope declare after
-    // ``hlfir-inline-all`` splices the callee's body into the caller —
+    // ``hlfir-inline-all`` splices the callee's body into the caller  --
     // the callee declare aliases the caller's outer declare for
     // both assumed-shape (no shape operand on the inner declare) and
     // fixed-shape (the inner declare carries its own copy of the
@@ -291,7 +291,7 @@ hlfir::DeclareOp asAssumedShapeAlias(hlfir::DeclareOp decl) {
         // Inlined-callee aliases on CLASS-allocatable / box-typed
         // dummies: the alias's memref comes from a ``fir.load`` of the
         // caller's box-slot declare, possibly preceded by ``fir.rebox``
-        // peels (CLASS<heap<T>> → CLASS<T>).  Walking through both is
+        // peels (CLASS<heap<T>> -> CLASS<T>).  Walking through both is
         // what catches monomorphic CLASS subroutine dummies as
         // aliases of their caller-side allocatable.
         if (auto ld = mlir::dyn_cast<fir::LoadOp>(d)) {
@@ -339,7 +339,7 @@ llvm::SmallVector<mlir::Value, 4> extractExtents(mlir::Value shape) {
         for (auto e : sh.getExtents()) result.push_back(e);
 
     if (auto ss = mlir::dyn_cast<fir::ShapeShiftOp>(def)) {
-        // shape_shift: alternating (lb, extent) — we want odd indices.
+        // shape_shift: alternating (lb, extent)  --  we want odd indices.
         auto ops = ss->getOperands();
         for (unsigned i = 1; i < ops.size(); i += 2)
             result.push_back(ops[i]);

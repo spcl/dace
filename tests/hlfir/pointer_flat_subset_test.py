@@ -1,4 +1,4 @@
-"""Pointer-to-flat-subset tests — POINTER rebound to a slice of an
+"""Pointer-to-flat-subset tests  --  POINTER rebound to a slice of an
 array that came out of ``hlfir-flatten-structs``.
 
 The rewriter (``RewritePointerAssigns.cpp``) collapses
@@ -6,7 +6,7 @@ The rewriter (``RewritePointerAssigns.cpp``) collapses
 After ``hlfir-flatten-structs``, struct-member targets like ``s%w``
 get rewritten to top-level flat companion declares (``s_w``), so a
 rebind chain ``ptr => s%w(2:5)`` reaches the rewriter as
-``ptr => s_w(2:5)`` — a section over a flat-companion declare.  The
+``ptr => s_w(2:5)``  --  a section over a flat-companion declare.  The
 slice-target arm that handles ``ptr => store(1:n)`` for a top-level
 TARGET should handle this case the same way (trace the rebox/embox
 chain back to the parent ``hlfir.designate``, forward every read of
@@ -19,7 +19,7 @@ surfaces instead of an SDFG-builds-but-wrong-result silent failure.
 Note on Fortran ``TARGET`` placement: gfortran's f2py rejects the
 ``target`` attribute on derived-type components (Fortran 2003+ feature
 that f2py's harness doesn't accept here), so the tests apply ``target``
-to the variable as a whole — Fortran promotes the attribute to every
+to the variable as a whole  --  Fortran promotes the attribute to every
 component automatically.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _build(src: str, tmp: Path, name: str = "main", entry: str | None = None):
 
 
 def test_pointer_to_full_struct_member(tmp_path: Path):
-    """Rank-1 struct member (no slice) — pointer to the whole flat
+    """Rank-1 struct member (no slice)  --  pointer to the whole flat
     companion.  Baseline that the embox(declare) shape works after
     flatten: ``p => s%w`` rebinds onto the flat ``s_w`` declare and
     the rewriter forwards every ``p(i)`` to ``s_w(i)``.

@@ -1,6 +1,6 @@
 """Verbatim port of f2dace/dev:tests/fortran/tasklet_test.py.
 
-The PROGRAM wrapper is stripped — FaCe runs on the SUBROUTINE directly.
+The PROGRAM wrapper is stripped  --  FaCe runs on the SUBROUTINE directly.
 """
 from __future__ import annotations
 

@@ -1,11 +1,11 @@
 // ============================================================================
-// RewriteSequenceAssociation.cpp — collapse Fortran's sequence-association
+// RewriteSequenceAssociation.cpp  --  collapse Fortran's sequence-association
 // adapter (scalar element passed to an array dummy) into an explicit slice.
 // ============================================================================
 //
-// The Fortran 2003 standard (§12.4.1.5) lets a caller pass a single
+// The Fortran 2003 standard (section12.4.1.5) lets a caller pass a single
 // element of an array where the formal expects an explicit-shape or
-// assumed-size array — the formal then sees ``N`` consecutive elements
+// assumed-size array  --  the formal then sees ``N`` consecutive elements
 // starting at the given element.  Flang lowers this with a deterministic
 // IR shape:
 //
@@ -15,7 +15,7 @@
 //   ... uses of %decl#0 / #1 ...
 //
 // The ``fir.convert`` from a rank-0 ref to a rank-1 ref is the
-// sequence-association marker — flang inserts it ONLY for this case;
+// sequence-association marker  --  flang inserts it ONLY for this case;
 // other rank changes lower through ``fir.embox`` / ``fir.rebox`` /
 // ``hlfir.designate`` triplet sections, never through
 // ``fir.convert``.  The scalar source's defining op is always an
@@ -43,8 +43,8 @@
 // Supported variants
 // ------------------
 // The Fortran-language patterns below all surface as the same IR
-// adapter shape (rank-0 → rank-1 ``fir.convert`` of an element designate)
-// — the variants differ only in how the formal's *extent* and the
+// adapter shape (rank-0 -> rank-1 ``fir.convert`` of an element designate)
+//  --  the variants differ only in how the formal's *extent* and the
 // *parent rank* travel into the IR.  Each row corresponds to a unit
 // test in ``tests/hlfir/rewrite_sequence_association_test.py``.
 //
@@ -91,7 +91,7 @@
 // ``fir.convert`` chains BEFORE pattern-matching ``hlfir.sum`` /
 // ``minval`` / ``any`` / ``all`` / etc. against an ``hlfir.designate``.
 // After this pass fires, the section it emits is sometimes wrapped in
-// a box-shape canonicalisation convert (``box<array<NxT>>`` →
+// a box-shape canonicalisation convert (``box<array<NxT>>`` ->
 // ``box<array<?xT>>``) before the reduction op consumes it.  Without
 // the peel, the bridge would fall back to the whole-array reduce path
 // instead of the section-aware one and produce wrong results.
@@ -102,7 +102,7 @@
 //   required for the runtime-symbolic case (variant 4): the extent
 //   Value is defined inside the inlined callee and dominates only
 //   uses below the declare.  The constant-N path inserts there too
-//   for symmetry — constants don't have dominance issues anyway.
+//   for symmetry  --  constants don't have dominance issues anyway.
 //
 // * Out-of-bounds slices are NOT validated.  A program like
 //   ``f(d(2, j), 10)`` with ``d(8, N)`` requests 10 elements starting
@@ -119,18 +119,18 @@
 //   the rewritten section designate is in triplet form, which
 //   ``matchSeqAdapter`` rejects up-front.
 //
-// * CHARACTER substring sequence association — ``call sub(s(i:j))``
-//   passing a substring slice — is a DIFFERENT IR shape (uses the
+// * CHARACTER substring sequence association  --  ``call sub(s(i:j))``
+//   passing a substring slice  --  is a DIFFERENT IR shape (uses the
 //   ``substring`` operand on ``hlfir.designate``).  We don't handle
 //   it; it surfaces as the un-rewritten convert and the bridge's
 //   downstream gate flags it.
 //
-// * Stride > 1 at the call site is impossible — Fortran call sites
+// * Stride > 1 at the call site is impossible  --  Fortran call sites
 //   can only pass a single element ``d(idx)``, not a strided
 //   reference.  Triplet-form actuals (``d(lo:hi:s)``) are NOT
-//   sequence association — they're real array sections that flang
+//   sequence association  --  they're real array sections that flang
 //   lowers through ``hlfir.designate`` triplet without a convert.
-//   Handled by the ``isTriplet → reject`` early-out in
+//   Handled by the ``isTriplet -> reject`` early-out in
 //   ``matchSeqAdapter``.
 //
 // * ``N == 0`` (constant): pass bails (returns without rewriting) so
@@ -141,22 +141,22 @@
 //
 // * The pass requires a ``fir.shape`` defining op on the formal
 //   declare's shape operand.  Programs whose extent comes from a
-//   non-``fir.shape`` source (extremely rare — typically the
+//   non-``fir.shape`` source (extremely rare  --  typically the
 //   canonicaliser has already produced ``fir.shape``) are left
 //   alone.
 //
 // References
 // ----------
 // * HLFIR design overview, ``hlfir.designate`` / ``hlfir.associate``
-//   semantics — https://flang.llvm.org/docs/HighLevelFIR.html
-// * Current HLFIR spec (main) — https://github.com/llvm/llvm-project/blob/main/flang/docs/HighLevelFIR.md
-// * Variable / Expression value concepts (LLVM 18.1.0) —
+//   semantics  --  https://flang.llvm.org/docs/HighLevelFIR.html
+// * Current HLFIR spec (main)  --  https://github.com/llvm/llvm-project/blob/main/flang/docs/HighLevelFIR.md
+// * Variable / Expression value concepts (LLVM 18.1.0)  --
 //   https://releases.llvm.org/18.1.0/tools/flang/docs/HighLevelFIR.html
-// * Fortran Discourse: explicit-shape and assumed-size arrays + sequence association —
+// * Fortran Discourse: explicit-shape and assumed-size arrays + sequence association  --
 //   https://fortran-lang.discourse.group/t/explicit-shape-and-assumed-size-arrays-and-sequence-association/2783
-// * FIR Language Reference (``fir.convert`` operand-shape rules) —
+// * FIR Language Reference (``fir.convert`` operand-shape rules)  --
 //   https://flang.llvm.org/docs/FIRLangRef.html
-// * Representation of Fortran function calls (LLVM 13.0.0) —
+// * Representation of Fortran function calls (LLVM 13.0.0)  --
 //   https://releases.llvm.org/13.0.0/tools/flang/docs/Calls.html
 // ============================================================================
 
@@ -229,7 +229,7 @@ static std::optional<int64_t> traceStoredConstant(mlir::Value memref) {
 }
 
 /// Walk a ``fir.global`` to its initialiser constant.  Used to fold
-/// ``integer, parameter :: NMAX = 50`` references — flang lowers
+/// ``integer, parameter :: NMAX = 50`` references  --  flang lowers
 /// these to a ``fir.address_of @<global>`` + ``fir.load`` chain.  The
 /// global's body is a tiny region whose terminating ``fir.has_value``
 /// op carries the initial value.
@@ -253,15 +253,15 @@ static std::optional<int64_t> traceGlobalInitialiser(mlir::SymbolRefAttr name,
 /// extent operand on a sequence-association adapter:
 ///
 ///   * ``arith.constant`` (terminal).
-///   * ``fir.convert`` (transparent — same value, different ABI type).
-///   * ``arith.addi`` / ``subi`` / ``muli`` / ``divsi`` of constants —
+///   * ``fir.convert`` (transparent  --  same value, different ABI type).
+///   * ``arith.addi`` / ``subi`` / ``muli`` / ``divsi`` of constants  --
 ///     covers ``real :: arr(2*K+1)`` etc. when the operands fold.
-///   * ``arith.select sgt(x,0), x, 0`` — flang's nonneg-extent clamp
+///   * ``arith.select sgt(x,0), x, 0``  --  flang's nonneg-extent clamp
 ///     wrapping every dynamic-shape operand.
 ///   * ``fir.load`` of an alloca with a single dominating ``fir.store``
-///     of a foldable value — the ``__assoc_scalar`` literal adapter
+///     of a foldable value  --  the ``__assoc_scalar`` literal adapter
 ///     and the ``parameter`` constant address-of pattern.
-///   * ``fir.address_of @global`` followed by ``fir.load`` — module-
+///   * ``fir.address_of @global`` followed by ``fir.load``  --  module-
 ///     level ``parameter`` constants whose initialiser is itself a
 ///     constant.  The initialiser is read from the global's
 ///     ``fir.has_value`` terminator.
@@ -308,7 +308,7 @@ static std::optional<int64_t> traceConstIndex(mlir::Value v) {
             return std::nullopt;
         }
         if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
-            // Both branches agree → done.
+            // Both branches agree -> done.
             auto t = traceConstIndex(sel.getTrueValue());
             auto f = traceConstIndex(sel.getFalseValue());
             if (t && f && *t == *f) return *t;
@@ -375,7 +375,7 @@ static hlfir::DesignateOp matchSeqAdapter(fir::ConvertOp conv) {
     auto dg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
         conv.getValue().getDefiningOp());
     if (!dg) return {};
-    // Must be element form (any-triplet → already a section, skip).
+    // Must be element form (any-triplet -> already a section, skip).
     for (bool b : dg.getIsTriplet()) if (b) return {};
     if (dg.getIndices().empty()) return {};
     return dg;
@@ -421,7 +421,7 @@ struct RewriteSequenceAssociationPass
 
         // Step 2: pull the formal's declared length from the declare's
         // shape.  Folds to a compile-time constant when possible (the
-        // common case — literal extent, ``parameter`` constant,
+        // common case  --  literal extent, ``parameter`` constant,
         // constant arithmetic); otherwise we fall back to the runtime
         // extent value and emit a ``box<array<?xT>>`` section.
         auto shapeVal = formalDecl.getShape();
@@ -437,7 +437,7 @@ struct RewriteSequenceAssociationPass
         // scalar operand per parent dimension.  For a rank-K parent
         // (the QE / BLAS pattern: ``f(d(1, j), ldd)`` with ``d``
         // rank-2) we place the triplet on the FIRST dimension and
-        // pass the remaining indices through unchanged — Fortran's
+        // pass the remaining indices through unchanged  --  Fortran's
         // column-major contiguity makes that the dimension the formal
         // strides over.
         if (eltDg.getIndices().empty()) return;
@@ -446,7 +446,7 @@ struct RewriteSequenceAssociationPass
         mlir::Value lo = eltDg.getIndices()[0];
 
         // Step 4: build the section designate over the parent array.
-        // Insert AFTER the formal declare — for the runtime-symbolic
+        // Insert AFTER the formal declare  --  for the runtime-symbolic
         // path the extent Value is only defined inside the inlined
         // callee scope (typically as ``arith.select sgt(load(dz), 0),
         // load(dz), 0``) which dominates the declare but not the

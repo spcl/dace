@@ -30,7 +30,7 @@ def _hlfir(src: str, out: Path) -> Path:
 
 def test_two_files_merge_drops_dead_helper(tmp_path: Path):
     """Entry in file B, unused helper in file A.  After the multi-file
-    pipeline only the entry should remain — symbol-dce drops the
+    pipeline only the entry should remain  --  symbol-dce drops the
     helper since nothing references it."""
     _hlfir(
         """
@@ -88,7 +88,7 @@ end subroutine
 
 def test_entry_missing_raises(tmp_path: Path):
     """Passing an entry name that isn't in any loaded file must
-    raise — the driver relies on set_entry_symbol to find it."""
+    raise  --  the driver relies on set_entry_symbol to find it."""
     _hlfir(
         """
 subroutine foo(x, n)
@@ -151,7 +151,7 @@ end subroutine
 def test_parse_files_declaration_loses_to_definition(tmp_path: Path):
     """When two files both expose a symbol, the real definition must
     win over an external declaration so the full body (x(1)=99) ends
-    up inlined into the entry — not a verify-no-unresolved-calls error."""
+    up inlined into the entry  --  not a verify-no-unresolved-calls error."""
     _hlfir(
         """
 subroutine kernel(x, n)
@@ -177,7 +177,7 @@ end subroutine
     b = SDFGBuilder.from_files([str(tmp_path / "caller.hlfir"), str(tmp_path / "shared.hlfir")], entry="_QPkernel")
     # Once the definition wins, inline-all folds shared into kernel and
     # symbol-dce drops the helper.  The 99.0 constant must land inside
-    # kernel's body as proof the real definition was used — if the
+    # kernel's body as proof the real definition was used  --  if the
     # declaration had won, verify-no-unresolved-calls would have errored.
     assert b.module.list_functions() == ["_QPkernel"]
     assert "9.900000e+01" in b.module.dump()

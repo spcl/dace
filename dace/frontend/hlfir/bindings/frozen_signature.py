@@ -1,4 +1,4 @@
-"""Frozen SDFG signature — snapshotted at build time, verified at codegen.
+"""Frozen SDFG signature  --  snapshotted at build time, verified at codegen.
 
 At the moment the kernel SDFG leaves ``SDFGBuilder.build()``, we
 capture its argument list + free symbols into a ``FrozenSignature``
@@ -9,7 +9,7 @@ generated ``.f90`` wrapper.
 
 At codegen time (see ``dace/codegen/codegen.py``), before the C++
 header is emitted, we call ``fs.verify_against(sdfg)``.  Any drift
-from the snapshot raises ``SignatureDriftError`` — the contract is
+from the snapshot raises ``SignatureDriftError``  --  the contract is
 compile-time, not SDFG-time.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ class FrozenArg:
     Fields:
         fortran_name: name as declared in the user's Fortran source.
         sdfg_name:    name DaCe sees (may differ after struct
-                      flattening — e.g. ``st%u`` becomes ``st_u``).
+                      flattening  --  e.g. ``st%u`` becomes ``st_u``).
         kind:         ``'array'`` | ``'scalar'`` | ``'symbol'``.
         dtype:        ``'float64'`` | ``'int32'`` | ``'complex128'`` | ...
         rank:         tensor rank (0 for scalars).
@@ -41,7 +41,7 @@ class FrozenArg:
         from_struct_member: when this arg was extracted from a struct
                       dummy by ``hlfir-flatten-structs``, the original
                       Fortran expression (``st%u``).  ``None`` otherwise.
-        layout:       ``'same'`` (caller + callee share layout — alias
+        layout:       ``'same'`` (caller + callee share layout  --  alias
                       via ``c_loc``) | ``'complex_split'`` (Fortran
                       complex split into two reals) | ``'transpose'`` /
                       similar.  The binding emitter picks its copy
@@ -77,7 +77,7 @@ class FrozenSignature:
 
     ``args`` is ordered to match the generated C function
     ``__program_<entry>``'s parameter order (data args sorted, then
-    scalars, then free symbols — the order DaCe's
+    scalars, then free symbols  --  the order DaCe's
     ``generate_headers`` emits).
     """
 
@@ -137,7 +137,7 @@ class FrozenSignature:
             raise SignatureDriftError(f"signature drift on {self.entry!r}: "
                                       f"expected args {snap_names}, got {live_names}")
 
-        # dtype per arg — guard against silent type change.
+        # dtype per arg  --  guard against silent type change.
         for a in self.args:
             desc = live_arglist[a.sdfg_name]
             live_dtype = _dtype_string(desc)
@@ -157,7 +157,7 @@ def _dtype_string(desc) -> str:
     t = getattr(desc, 'dtype', None)
     if t is None:
         return '?'
-    # dace.typeclass instances have a ``to_string`` — fall back to repr.
+    # dace.typeclass instances have a ``to_string``  --  fall back to repr.
     return getattr(t, 'to_string', lambda: str(t))()
 
 

@@ -1,9 +1,9 @@
-"""Outer Fortran interface — the caller-facing surface of the entry
+"""Outer Fortran interface  --  the caller-facing surface of the entry
 subroutine, snapshotted from HLFIR BEFORE any normalising pass
 (``hlfir-flatten-structs`` in particular) runs.
 
 We populate these from the bridge's new
-``HLFIRModule.get_fortran_interface(entry)`` entry point — it walks
+``HLFIRModule.get_fortran_interface(entry)`` entry point  --  it walks
 ``hlfir.declare`` ops on the entry function in the untransformed
 module and pulls out:
 
@@ -14,7 +14,7 @@ module and pulls out:
 - the module each derived type is defined in (so the generated
   wrapper can emit ``use <mod>, only: <type_name>``).
 
-No fparser dependency — HLFIR's types carry all of this; mangled
+No fparser dependency  --  HLFIR's types carry all of this; mangled
 names like ``_QM<mod>T<tname>`` let us recover module origins.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ class DerivedType:
 @dataclass(frozen=True)
 class OriginalArg:
     """One dummy argument of the entry subroutine, outer view."""
-    name: str  # 'st' — Fortran-source name
+    name: str  # 'st'  --  Fortran-source name
     fortran_type: str  # 'real(c_double)' / 'type(t_state)' / 'logical' / ...
     rank: int
     shape: Tuple[str, ...] = field(default_factory=tuple)

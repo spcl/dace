@@ -1,10 +1,10 @@
-"""ELEMENTAL procedures → loop-over-array + scalar-body tasklet.
+"""ELEMENTAL procedures -> loop-over-array + scalar-body tasklet.
 
 Flang lowers a call to an elemental subroutine on an array argument as a
 ``fir.do_loop`` that per-element invokes the scalar procedure.  After
 ``hlfir-inline-all`` splices the callee's body in, the remaining
 ``hlfir.declare`` ops whose memref is an ``hlfir.designate`` of the outer
-array are element-scoped aliases — they carry the callee's Fortran name
+array are element-scoped aliases  --  they carry the callee's Fortran name
 into the inlined body but add no semantics.  ``hlfir-fold-element-aliases``
 erases them so the SDFG builder sees the loop body as plain indexed
 access into the outer array, i.e. a loop + scalar tasklet shape
@@ -12,7 +12,7 @@ identical to any hand-written per-element loop.
 
 Tests cover the subroutine form (explicit inout update) and the function
 form (via an ``hlfir.elemental`` block) on the same source so both
-Flang-emitted shapes are exercised.  References are NumPy — f2py's
+Flang-emitted shapes are exercised.  References are NumPy  --  f2py's
 module-contained-elemental parsing is shaky, so we check against a
 hand-rolled per-element implementation instead.
 """
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PA
 
 
 def test_elemental_subroutine_with_inout(tmp_path: Path):
-    """Elemental subroutine with inout scalars applied to three arrays —
+    """Elemental subroutine with inout scalars applied to three arrays  --
     Flang emits ``fir.do_loop`` + ``fir.call`` to the scalar body;
     inline-all + fold-element-aliases collapse the body into indexed
     updates on the outer arrays."""
@@ -71,7 +71,7 @@ end subroutine apply_delta
 
 
 def test_elemental_function_via_hlfir_elemental(tmp_path: Path):
-    """Pointwise expression on arrays — Flang wraps the RHS in
+    """Pointwise expression on arrays  --  Flang wraps the RHS in
     ``hlfir.elemental`` + ``hlfir.yield_element``, the exact shape
     ``buildElementalAssign`` consumes.  This test guards that
     ``FoldElementAliases`` (which targets inlined-scalar-body aliases)
@@ -127,7 +127,7 @@ end subroutine driver
 
 def test_elemental_body_with_intrinsic(tmp_path: Path):
     """Elemental subroutine whose scalar body invokes an intrinsic
-    (``exp``) — after ``hlfir-inline-all`` + ``FoldElementAliases``
+    (``exp``)  --  after ``hlfir-inline-all`` + ``FoldElementAliases``
     the intrinsic must survive and land in the tasklet code as a
     Python call (``exp``)."""
     src = """
@@ -157,7 +157,7 @@ end subroutine apply_soft
 
 def test_elemental_subroutine_relu(tmp_path: Path):
     """Elemental subroutine implementing ReLU via a Fortran if/else on
-    each element — exercises conditional control flow *inside* the
+    each element  --  exercises conditional control flow *inside* the
     inlined scalar body, on top of the loop-over-array shape."""
     src = """
 subroutine apply_relu(x, n)
@@ -186,7 +186,7 @@ end subroutine apply_relu
 
 def test_elemental_subroutine_softmax_step(tmp_path: Path):
     """Elemental subroutine implementing one step of a softmax-style
-    normalisation — exercises a two-statement body where the first
+    normalisation  --  exercises a two-statement body where the first
     statement's write feeds the second (``t = exp(x); x = t / s``).
     Drives the RAW-hazard serialisation in ``emit_loop``'s child-
     assigns path: without a fresh state per statement, the second
