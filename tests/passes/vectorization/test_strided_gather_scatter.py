@@ -1282,3 +1282,61 @@ def test_strided_store_fp32_stride_3_nondiv(remainder_strategy):
         remainder_strategy=remainder_strategy,
         lower_to_intrinsics=(remainder_strategy == "masked"),
     )
+
+
+# Multi-dim strided (diagonal A[i,i]) + masked-remainder is a known gap.
+# Slice 1's ``_setup_strided_inside_nsdfg`` detects strided via the
+# stride-1 dim's bbox-volume formula ``(W-1)*stride+1``. For the
+# diagonal pattern the stride-1 dim's bbox volume is exactly W, so the
+# detector does NOT classify it as strided — but the row dim ALSO
+# varies with the lane index, giving an effective stride of N+1 that
+# the current handling doesn't see. Result: ``CopyND<1>`` loads one
+# element instead of W. Existing ``test_diagonal_gather_load`` /
+# ``test_diagonal_scatter_store`` only pass because they default to
+# ``lower_to_intrinsics=False`` and the C++ compiler auto-vectorizes
+# the per-lane fanout. The masked path requires ``True``, where the
+# auto-vectorize escape hatch isn't available.
+
+_MULTIDIM_MASKED_XFAIL = pytest.mark.xfail(
+    strict=True,
+    reason="multi-dim strided (diagonal A[i,i]) + lower_to_intrinsics=True is unhandled; "
+    "_setup_strided_inside_nsdfg detects 1D strided only. Needs multi-dim aware extension."
+)
+
+
+@pytest.mark.parametrize("remainder_strategy", [
+    pytest.param("scalar", marks=_MULTIDIM_MASKED_XFAIL),
+    pytest.param("masked", marks=_MULTIDIM_MASKED_XFAIL),
+])
+def test_diagonal_gather_load_masked(remainder_strategy):
+    N_val = 22
+    A = numpy.random.rand(N_val, N_val)
+    dst = numpy.zeros(N_val)
+    run_vectorization_test(
+        dace_func=diagonal_gather_load,
+        arrays={"A": A, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
+        vector_width=8,
+        sdfg_name=f"diag_gather_masked_{remainder_strategy}",
+        remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=True,
+    )
+
+
+@pytest.mark.parametrize("remainder_strategy", [
+    pytest.param("scalar", marks=_MULTIDIM_MASKED_XFAIL),
+    pytest.param("masked", marks=_MULTIDIM_MASKED_XFAIL),
+])
+def test_diagonal_scatter_store_masked(remainder_strategy):
+    N_val = 22
+    src = numpy.random.rand(N_val)
+    A = numpy.zeros((N_val, N_val))
+    run_vectorization_test(
+        dace_func=diagonal_scatter_store,
+        arrays={"src": src, "A": A},
+        params={"N": N_val, "scale": 1.5},
+        vector_width=8,
+        sdfg_name=f"diag_scatter_masked_{remainder_strategy}",
+        remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=True,
+    )
