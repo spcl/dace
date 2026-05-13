@@ -9,13 +9,20 @@ deeply-nested ELEMENTAL expressions, rank-4 ``PCLV(:, :, :, JKGLO)``
 per-block slicing  --  and serves as the gate for the full-ICON
 integration test that comes next.
 
-**Source:** ``cloudscexp2_simplified.F90`` (3541 LoC).  Single
-``MODULE PARKIND1`` + ``SUBROUTINE CLOUDSCOUTER`` (block-loop
-wrapper) + ``SUBROUTINE CLOUDSC`` (physics core).  Every physical
-constant passes as a scalar argument  --  no
-``YDCST``/``YDTHF``/``YDECLDP`` derived-type bundling.  This is the
-bridge-friendly variant; the verification_pipeline's struct-args
-variant is harder until DT-of-constants lowers.
+**Source:** ``cloudsc.F90`` (single-file: PARKIND1 / YOMCST /
+YOETHF / YOECLDP type-only modules + ``CLOUDSCOUTER`` wrapper +
+upstream ECMWF dwarf-p-cloudsc ``CLOUDSC`` body verbatim).  The
+``#include "fcttre.ycst.h" / "fccld.ydthf.h" / "abor1.intfb.h"``
+preprocessor directives are pre-expanded inline so flang-new-21
+``-fc1 -emit-hlfir`` (no ``-cpp``) can ingest the source as a
+flat .F90.  The wrapper accepts the same flat-scalar arg list
+``_registries.py`` already provides (no per-arg rewiring); inside, it packs every constant into
+local ``TYPE(TOMCST) :: YDCST`` / ``TYPE(TOETHF) :: YDTHF`` /
+``TYPE(TECLDP) :: YDECLDP`` and calls upstream ``CLOUDSC`` per
+block.  This is the DT-of-constants pattern the bridge's
+``hlfir-flatten-structs`` pass now handles end-to-end (see
+``tests/hlfir/bindings/struct_of_scalars_test.py`` for the
+minimal pinned version).
 
 **Reference:** ``f2py``-compiled Fortran from the same source.  Per
 ``feedback_e2e_numerical``: SDFG-producing tests compare against a
@@ -156,9 +163,19 @@ def _f2py_ref(tmp_path_factory):
     cascading divergence through the LU solver into the flux outputs.
     Zero-initialising both pins the bit pattern across both runtimes.
     """
-    src = (_HERE / "cloudscexp2_simplified.F90").read_text()
+    src = (_HERE / "cloudsc.F90").read_text()
     ref_dir = tmp_path_factory.mktemp("cloudsc_ref")
-    return f2py_compile(src, ref_dir, "cloudsc_ref", extra_f90flags="-finit-local-zero")
+    # ``only=('cloudscouter',)`` hides the inner ``CLOUDSC`` subroutine
+    # from crackfortran -- its ``TYPE(TOMCST/TOETHF/TECLDP)`` dummies
+    # map to ``'void'`` and crash f2py with ``KeyError: 'void'`` (same
+    # crash documented in tests/hlfir/bindings/struct_of_scalars_test.py).
+    return f2py_compile(
+        src,
+        ref_dir,
+        "cloudsc_ref",
+        extra_f90flags="-finit-local-zero -ffree-line-length-none",
+        only=("cloudscouter", ),
+    )
 
 
 @pytest.mark.xfail(
@@ -176,7 +193,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     Same Fortran source through both paths, seeded random inputs,
     per-output ``assert_allclose(rtol=1e-12, atol=1e-12)``.
     """
-    src = (_HERE / "cloudscexp2_simplified.F90").read_text()
+    src = (_HERE / "cloudsc.F90").read_text()
 
     # SDFG via HLFIR bridge.  Use the DEFAULT_PIPELINE (the full
     # bridge pipeline including inline-all / flatten-structs /

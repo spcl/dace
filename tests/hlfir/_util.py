@@ -51,7 +51,13 @@ def _ensure_on_path():
         sys.path.insert(0, p)
 
 
-def f2py_compile(src, out_dir: Path, mod_name: str, extra_f90flags: str | None = None):
+def f2py_compile(
+    src,
+    out_dir: Path,
+    mod_name: str,
+    extra_f90flags: str | None = None,
+    only: tuple[str, ...] | None = None,
+):
     """Build the given Fortran source via gfortran/f2py and return the
     compiled module.  ``src`` may be a file path or an inline string  --
     inline sources are written to ``<out_dir>/<mod_name>.f90`` first.
@@ -64,6 +70,14 @@ def f2py_compile(src, out_dir: Path, mod_name: str, extra_f90flags: str | None =
     flags like ``-finit-local-zero`` when the Fortran source has known
     UB (uninitialized-local reads) that must agree with the bridge's
     zero-init behavior.
+
+    ``only``: optional tuple of subroutine names that f2py should
+    expose; everything else in the source is compiled but not
+    wrapped.  Needed when the source contains an inner subroutine
+    whose dummies use a derived type that crackfortran cannot map
+    (TYPE(t) -> ``'void'`` -> ``KeyError`` in ``getpydocsign``).
+    Hiding the inner subroutine behind ``only:`` lets f2py wrap
+    just the public wrapper.
 
     Used by the e2e numerical tests to compare an SDFG's output against
     the same code compiled with gfortran (the reference implementation).
@@ -85,6 +99,9 @@ def f2py_compile(src, out_dir: Path, mod_name: str, extra_f90flags: str | None =
     cmd = [sys.executable, "-m", "numpy.f2py", "-c", str(src_file), "-m", mod_name, "--quiet"]
     if extra_f90flags:
         cmd.append(f"--f90flags={extra_f90flags}")
+    if only:
+        # f2py's filter form is ``only: name1 name2 :`` as trailing positional args.
+        cmd += ["only:", *only, ":"]
     subprocess.check_call(cmd, cwd=out_dir)
     if str(out_dir) not in sys.path:
         sys.path.insert(0, str(out_dir))
