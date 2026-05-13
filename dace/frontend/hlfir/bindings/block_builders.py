@@ -388,11 +388,20 @@ def assemble_module(iface: OriginalInterface, frozen: FrozenSignature, blocks: d
 
 def _dim_spec(shape) -> str:
     """Render the dimension spec suffix for an outer dummy's
-    declaration.  Assumed-shape dummies use ``:``; explicit extents
-    pass through."""
+    declaration as a *postfix* shape (``name(d1,d2)``), not a
+    ``dimension(...)`` attribute.  Postfix is the only form that
+    works when the suffix lands after the ``::`` -- a leading comma
+    plus ``dimension(...)`` after the ``::`` is read by Fortran as
+    a SECOND variable declaration (so ``:: mask, dimension(n)``
+    silently declares ``mask`` AND ``dimension`` of unknown rank).
+
+    Assumed-shape dummies render the surviving ``?`` placeholders as
+    ``:``; explicit extents pass through.  An empty shape leaves the
+    declaration as a scalar (no suffix).
+    """
     if not shape:
         return ""
-    return f", dimension({','.join(s if s != '?' else ':' for s in shape)})"
+    return f"({','.join(s if s != '?' else ':' for s in shape)})"
 
 
 def _is_default_logical(fortran_type: str) -> bool:
