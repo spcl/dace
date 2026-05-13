@@ -529,3 +529,88 @@ def test_cloudsc_jk_precip_chain_sdfg_matches_f2py(tmp_path: Path):
     np.testing.assert_allclose(zpfplsx_sdfg, zpfplsx_ref, atol=1e-15, rtol=1e-15, err_msg="ZPFPLSX diverges")
     np.testing.assert_allclose(zqpretot_sdfg, zqpretot_ref, atol=1e-15, rtol=1e-15, err_msg="ZQPRETOT diverges")
     np.testing.assert_allclose(zcovptot_sdfg, zcovptot_ref, atol=1e-15, rtol=1e-15, err_msg="ZCOVPTOT diverges")
+
+
+def test_cloudsc_pow_kernel_sdfg_matches_f2py(tmp_path: Path):
+    """Minimal `x ** non_integer_exponent` reproducer for cloudsc 4.5a
+    rain evap.  CLOUDSC uses ``(RDENSREF / ZRHO) ** 0.4`` and similar
+    constructs that invoke libm pow().  If the bridge lowers this on a
+    different code path than gfortran (or C++ runtime pow has different
+    rounding than gfortran's libm pow), drift propagates through the
+    rain-evap chain.
+
+    Hypothesis: pow() with non-integer exponent does NOT produce bit-
+    exact results between gfortran (Fortran intrinsic) and DaCe-emitted
+    C++ (libm).  This test pins the magnitude of that drift on its own.
+    """
+    src = (_HERE / "cloudsc_pow_kernel.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "pow_kernel_ref")
+    sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="pow_kernel")
+
+    rng = np.random.default_rng(108)
+    n = 32
+    x = np.asfortranarray(0.3 + 1.2 * rng.random(n, dtype=np.float64))
+    exponent = 0.78  # cloudsc 4.5a uses 0.78 and 0.4
+
+    y_ref = ref.pow_kernel(x, exponent)
+    y_sdfg = np.zeros(n, dtype=np.float64, order="F")
+    kw = dict(x=x, exponent_val=exponent, y=y_sdfg)
+    kw.update(_sdfg_call_args(sdfg, dict(n=n)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(y_sdfg,
+                               y_ref,
+                               atol=1e-15,
+                               rtol=1e-15,
+                               err_msg="pow_kernel: SDFG x**0.78 diverges from gfortran x**0.78")
+
+
+def test_cloudsc_zsolqa_accumulator_sdfg_matches_f2py(tmp_path: Path):
+    """Minimal `ZSOLQA = ZSOLQA + EVAP` accumulator reproducer.
+
+    In CLOUDSC 4.5a/4.5b dozens of statements have the form
+    ``ZSOLQA(JL, A, B) = ZSOLQA(JL, A, B) + expr``.  Hypothesis: the
+    bridge lowers this LHS=LHS+expr pattern as a Python ``+=`` tasklet
+    that DaCe turns into a WCR (write-conflict-resolution / atomic-add)
+    edge instead of an explicit read+add+write.  WCR may accumulate in
+    non-deterministic order vs gfortran's strict left-to-right,
+    producing ulp-level drift.
+
+    If this fails at rtol=atol=1e-15, the WCR-vs-RMW hypothesis is
+    confirmed.  Fix: emit explicit read+tasklet+write for any
+    ``A(i,j) = A(i,j) + expr`` pattern with a single producer (no
+    contention to resolve).
+    """
+    src = (_HERE / "cloudsc_zsolqa_accumulator.f90").read_text()
+    ref = _f2py_build(src, tmp_path / "ref", "zsolqa_accum_ref")
+    sdfg = _sdfg_from_src(src, tmp_path / "sdfg", name="zsolqa_accumulator")
+
+    rng = np.random.default_rng(109)
+    n, nclv = 16, 5
+    ncldqv, ncldqr, ncldqs = 5, 3, 4
+    kidia, kfdia = 1, n
+
+    zevap = np.asfortranarray(rng.standard_normal(n).astype(np.float64) * 1e-4)
+    zsnowsrc = np.asfortranarray(rng.standard_normal(n).astype(np.float64) * 1e-4)
+    zsolqa_ref = np.asfortranarray(rng.standard_normal((n, nclv, nclv)).astype(np.float64) * 1e-3)
+    zsolqa_sdfg = np.array(zsolqa_ref, order="F")
+
+    ref.zsolqa_accumulator(kidia, kfdia, ncldqv, ncldqr, ncldqs, zevap, zsnowsrc, zsolqa_ref)
+
+    kw = dict(zevap=zevap, zsnowsrc=zsnowsrc, zsolqa=zsolqa_sdfg)
+    kw.update(
+        _sdfg_call_args(sdfg, dict(n=n,
+                                   nclv=nclv,
+                                   kidia=kidia,
+                                   kfdia=kfdia,
+                                   ncldqv=ncldqv,
+                                   ncldqr=ncldqr,
+                                   ncldqs=ncldqs)))
+    sdfg(**kw)
+
+    np.testing.assert_allclose(zsolqa_sdfg,
+                               zsolqa_ref,
+                               atol=1e-15,
+                               rtol=1e-15,
+                               err_msg="zsolqa_accumulator: SDFG += diverges from gfortran "
+                               "(suggests WCR-instead-of-RMW lowering)")
