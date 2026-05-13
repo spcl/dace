@@ -365,19 +365,13 @@ end subroutine run_nested
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FlattenStructs.cpp replaceStructArgNested does not emit a "
-    "FlattenEntry recipe for dummy_nested (see comment at line ~1889). "
-    "get_flatten_plan() returns empty entries so the bindings wrapper "
-    "skips alias emission and the SDFG call passes uninitialised flat "
-    "pointers.",
-)
 def test_e2e_nested_struct(tmp_path: Path):
     """``type(t_outer)`` containing two ``type(t_inner)`` members, each
     with a static ``real(c_double)`` array.  The kernel does
-    ``st%a%v = st%a%v + st%b%v``.  Pinned xfail until FlattenStructs.cpp
-    records a FlattenEntry for the dummy_nested case."""
+    ``st%a%v = st%a%v + st%b%v``.  ``recordNestedStructArgEntry`` in
+    ``FlattenStructs.cpp`` emits one FlattenEntry whose recipe carries
+    a flat name + a dotted read_expr per leaf, so the bindings emitter
+    aliases each leaf via ``c_f_pointer(c_loc(st%a%v), st_a_v, [...])``."""
     iface = OriginalInterface(
         entry="kernel_nested",
         args=(OriginalArg(name="st", fortran_type="type(t_outer)", rank=0, intent="inout", struct_type="t_outer"), ),

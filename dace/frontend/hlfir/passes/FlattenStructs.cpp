@@ -1510,6 +1510,125 @@ struct FlattenStructsPass
         planEntries.push_back(entry);
     }
 
+    /// Nested-DT companion of ``recordStructArgEntry``: emit a single
+    /// FlattenEntry whose recipe carries one flat name + one read_expr
+    /// per leaf, with the leaf's full ``%``-path preserved.
+    ///
+    /// Example  --  ``type(t_outer)`` whose ``a%v`` and ``b%v`` are
+    /// scalar-record members containing ``v(NX, NY)`` produces:
+    ///     outer_expr = "st"
+    ///     recipe = {
+    ///       flat_names  = ["st_a_v", "st_b_v"],
+    ///       read_exprs  = ["st%a%v($i1, $i2)", "st%b%v($i1, $i2)"],
+    ///       rank        = max(leaf rank),
+    ///       shape_exprs = ["size(st%a%v, dim=1)", "size(st%a%v, dim=2)"],
+    ///       aliasable   = true,
+    ///       scratch_dtype = "float64",
+    ///     }
+    ///
+    /// The bindings emitter then renders one ``c_f_pointer(c_loc(st%a%v),
+    /// st_a_v, [...])`` alias per leaf -- zero-copy, same shape as the
+    /// non-nested ``recordStructArgEntry`` output.  Static-shape leaves
+    /// only; ``collectFlatLeaves`` rejects dynamic-extent leaves
+    /// upstream so we never see them here.
+    void recordNestedStructArgEntry(hlfir::DeclareOp argDecl,
+                                    llvm::ArrayRef<FlatLeaf> leaves,
+                                    llvm::StringRef intentStr) {
+        auto *ctx = argDecl.getContext();
+        mlir::Builder b(ctx);
+        auto mkStr = [&](llvm::StringRef s) -> mlir::Attribute {
+            return b.getStringAttr(s);
+        };
+
+        std::string outerName = demangleVarName(argDecl.getUniqName());
+        std::string outerType;
+        {
+            llvm::raw_string_ostream os(outerType);
+            argDecl.getResult(0).getType().print(os);
+        }
+
+        llvm::SmallVector<mlir::Attribute, 4> flatNames;
+        llvm::SmallVector<mlir::Attribute, 4> readExprs;
+        std::string scratchDtype = "float64";
+        int64_t maxRank = 0;
+        // First leaf's dotted path -- used as the shape_exprs sample
+        // (every leaf has its own shape but the recipe carries one
+        // shape tuple, so we pick the first leaf as canonical;
+        // mismatched ranks across leaves would be a recipe-level
+        // violation and the per-leaf shape would be needed instead).
+        std::string firstLeafPath;
+        int firstLeafRank = 0;
+
+        for (auto &leaf : leaves) {
+            // Joined ``a_v`` style suffix (same convention as
+            // ``replaceStructArgNested``'s declare uniq_name).
+            std::string joined;
+            for (unsigned i = 0; i < leaf.path.size(); ++i) {
+                if (i) joined += "_";
+                joined += leaf.path[i];
+            }
+            std::string flat = outerName + "_" + joined;
+            flatNames.push_back(mkStr(flat));
+
+            int leafRank = memberRank(leaf.leafTy);
+            if (leafRank > maxRank) maxRank = leafRank;
+
+            // Dotted path ``st%a%v`` for the read_expr / shape_expr.
+            std::string dotted = outerName;
+            for (auto &p : leaf.path) {
+                dotted += "%";
+                dotted += p;
+            }
+            std::string read = dotted;
+            if (leafRank > 0) {
+                read += "(";
+                for (int i = 1; i <= leafRank; ++i) {
+                    if (i > 1) read += ", ";
+                    read += "$i" + std::to_string(i);
+                }
+                read += ")";
+            }
+            readExprs.push_back(mkStr(read));
+
+            if (firstLeafPath.empty()) {
+                firstLeafPath = dotted;
+                firstLeafRank = leafRank;
+            }
+            if (std::string dt = dtypeName(memberElementType(leaf.leafTy));
+                !dt.empty())
+                scratchDtype = dt;
+        }
+
+        if (flatNames.empty()) return;
+
+        llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
+        for (int i = 1; i <= firstLeafRank; ++i) {
+            std::string s = "size(" + firstLeafPath
+                            + ", dim=" + std::to_string(i) + ")";
+            shapeExprs.push_back(mkStr(s));
+        }
+
+        auto recipe = b.getDictionaryAttr({
+            b.getNamedAttr("flat_names",    b.getArrayAttr(flatNames)),
+            b.getNamedAttr("read_exprs",    b.getArrayAttr(readExprs)),
+            b.getNamedAttr("write_expr",    mkStr("")),
+            b.getNamedAttr("rank",          b.getI64IntegerAttr(maxRank)),
+            b.getNamedAttr("shape_exprs",   b.getArrayAttr(shapeExprs)),
+            b.getNamedAttr("aliasable",     b.getBoolAttr(true)),
+            b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
+            b.getNamedAttr("aos_alloc",     b.getBoolAttr(false)),
+            b.getNamedAttr("cap_symbol",    mkStr("")),
+        });
+
+        auto entry = b.getDictionaryAttr({
+            b.getNamedAttr("outer_expr",       mkStr(outerName)),
+            b.getNamedAttr("outer_type",       mkStr(outerType)),
+            b.getNamedAttr("writeback_intent", mkStr(intentStr)),
+            b.getNamedAttr("recipe",           recipe),
+        });
+        planEntries.push_back(entry);
+    }
+
     /// Phase 5c-B (true SDFG-boundary): emit one FlattenEntry per
     /// AoS+allocatable member.  The bindings layer pads to max
     /// per-instance size, populates ``cap_<base>_<member>`` from the
@@ -1888,12 +2007,13 @@ struct FlattenStructsPass
             }
             if (p.nested) {
                 // Phase 2 dummy-arg extension: replace the nested struct
-                // dummy with one block arg per leaf.  Bindings-side
-                // ``FlattenEntry`` emission for ``outer_kind="dummy_nested"``
-                // is a separate follow-up  --  Python-side callers can pass
-                // the flat companions directly via kwargs today; the
-                // Fortran caller wrapper needs the recipe to pack the
-                // nested struct's path-form members on its end.
+                // dummy with one block arg per leaf and record the
+                // matching FlattenEntry so the bindings emitter can
+                // alias every leaf via its full ``%``-path.
+                std::string intentStrNested =
+                    extractIntent(p.argDecl.getFortranAttrs());
+                recordNestedStructArgEntry(p.argDecl, p.leaves,
+                                           intentStrNested);
                 replaceStructArgNested(func, idx, p.argDecl, p.leaves);
                 continue;
             }
