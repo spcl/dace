@@ -593,6 +593,69 @@ def test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_nam
     _assert_copy_storages(sdfg, src_storage, dst_storage)
 
 
+_N = dace.symbol('_N')
+
+
+@pytest.mark.xfail(strict=True, reason='IEC currently lifts AccessNode<->View edges; the View is an alias and '
+                   'lifting changes semantics (rank, dtype, or which slice is written).')
+def test_iec_does_not_lift_array_view_edges():
+    sdfg = dace.SDFG('view_lift_policy')
+    sdfg.add_array('A', [4, 5, 6], dace.float64)
+    sdfg.add_view('Av', [5, 6], dace.float64)
+    sdfg.add_array('sink', [5, 6], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('A')
+    v = state.add_access('Av')
+    out = state.add_access('sink')
+    state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
+    state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0
+    in_e = list(state.in_edges(v))
+    out_e = list(state.out_edges(v))
+    assert len(in_e) == 1 and in_e[0].src is a, 'A->Av edge must remain direct'
+    assert len(out_e) == 1 and out_e[0].dst is out, 'Av->sink edge must remain direct'
+
+
+@dace.program
+def _iec_pin_reshape_rank_change(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
+    C = np.reshape(A, [8, 3])
+    B[:] += C
+
+
+@pytest.mark.xfail(strict=True, reason='Rank-changing View lift produces mismatched-rank memlets; codegen IndexError.')
+def test_iec_reshape_rank_change_codegen_indexerror():
+    sdfg = _iec_pin_reshape_rank_change.to_sdfg(simplify=True)
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    A = np.random.rand(2, 3, 4)
+    B = np.random.rand(8, 3)
+    expected = np.reshape(A, [8, 3]) + B
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected)
+
+
+@dace.program
+def _iec_pin_reinterpret_dtype(A: dace.int32[_N]):
+    C = A.view(dace.int16)
+    C[:] += 1
+
+
+@pytest.mark.xfail(strict=True,
+                   reason='Dtype-reinterpret View lift produces a CopyLibraryNode with mismatched element types.')
+def test_iec_reinterpret_dtype_change_invalid_node():
+    sdfg = _iec_pin_reinterpret_dtype.to_sdfg(simplify=True)
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    A = np.random.randint(0, 262144, size=[10], dtype=np.int32)
+    expected = np.copy(A)
+    expected.view(np.int16)[:] += 1
+    sdfg(A=A, _N=10)
+    assert np.array_equal(A, expected)
+
+
 # Part 2: Polybench-derived numerical correctness tests. Pattern 1 (direct
 # AccessNode->AccessNode edges) is not present in polybench; Pattern 2
 # (map-boundary staging) may or may not fire. Either way, output must match
