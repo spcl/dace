@@ -112,35 +112,31 @@ def test_symbol_assumption_roundtrip_preserves_bool_metadata():
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_inferred_symbol_dtype_is_not_serialized():
-    inferred = symbolic.symbol('i', dtype=dace.int64, explicit_dtype=False)
+def test_same_name_symbols_with_different_dtypes_serialize_independently():
+    typed = symbolic.symbol('i', dtype=dace.int64)
+    default = symbolic.symbol('i')
 
-    assert symbolic.serialize_symbolic(inferred) == '$i'
-
-
-def test_explicit_symbol_dtype_is_serialized():
-    explicit = symbolic.symbol('i', dtype=dace.int64)
-
-    assert symbolic.serialize_symbolic(explicit) == 'symbol($i, dtype=dace.int64)'
+    assert symbolic.serialize_symbolic(typed) == 'symbol($i, dtype=dace.int64)'
+    assert symbolic.serialize_symbolic(default) == '$i'
 
 
-def test_list_property_pystr_to_symbolic_json_roundtrip_supports_plain_names():
-    prop = ListProperty(element_type=symbolic.pystr_to_symbolic)
+def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
+    prop = ListProperty(element_type=sympy.Basic)
 
     assert prop.to_json(['START']) == ['$START']
 
-    restored = prop.from_json(['START'])
+    restored = prop.from_json(prop.to_json(['START']))
 
     assert len(restored) == 1
     assert restored[0] == symbolic.symbol('START')
 
 
-def test_dict_property_pystr_to_symbolic_json_roundtrip_supports_plain_names():
-    prop = DictProperty(key_type=str, value_type=symbolic.pystr_to_symbolic)
+def test_dict_property_symbolic_type_json_roundtrip_supports_plain_names():
+    prop = DictProperty(key_type=str, value_type=sympy.Basic)
 
     assert prop.to_json({'N': 'N'}) == {'N': '$N'}
 
-    restored = prop.from_json({'N': 'N'})
+    restored = prop.from_json(prop.to_json({'N': 'N'}))
 
     assert restored == {'N': symbolic.symbol('N')}
 

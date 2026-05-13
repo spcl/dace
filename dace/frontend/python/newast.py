@@ -31,7 +31,6 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 from dace.utils import until
 
@@ -1642,7 +1641,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 datatype = self.sdfg.arrays[val.data].dtype
             else:
                 datatype = self.scope_arrays[val.data].dtype
-            dyn_inputs[name] = symbolic.symbol(name, datatype, explicit_dtype=False)
+            dyn_inputs[name] = symbolic.symbol(name, datatype)
         result.update(dyn_inputs)
 
         for name, val in params:
@@ -1650,35 +1649,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 1:
-                    result[name] = symbolic.symbol(name,
-                                                   infer_expr_type(values[0], {
-                                                       **self.defined,
-                                                       **dyn_inputs
-                                                   }),
-                                                   explicit_dtype=False)
-                elif len(values) == 2:
-                    result[name] = symbolic.symbol(name,
-                                                   dtypes.result_type_of(
-                                                       infer_expr_type(values[0], {
-                                                           **self.defined,
-                                                           **dyn_inputs
-                                                       }), infer_expr_type(values[1], {
-                                                           **self.defined,
-                                                           **dyn_inputs
-                                                       })),
-                                                   explicit_dtype=False)
-                elif len(values) == 3:
-                    result[name] = symbolic.symbol(name,
-                                                   infer_expr_type(values[0], {
-                                                       **self.defined,
-                                                       **dyn_inputs
-                                                   }),
-                                                   explicit_dtype=False)
-                else:
+                if len(values) > 3:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
                         "You may use up to 3 arguments (start:stop:step).")
+                result[name] = symbolic.symbol(name)
 
         return result
 
@@ -2486,14 +2461,7 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 pass
 
-            sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
-                                      explicit_dtype=False,
-                                      integer=integer,
-                                      nonnegative=nonnegative,
-                                      positive=positive)
+            sym_obj = symbolic.symbol(indices[0], integer=integer, nonnegative=nonnegative, positive=positive)
 
             if sym_name not in self.sdfg.symbols:
                 sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
