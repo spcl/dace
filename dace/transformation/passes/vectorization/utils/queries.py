@@ -216,8 +216,21 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     # vectorize (they are already W-wide) nor pack (they are not strided).
     # Their fill memlet is ``[0:W]`` which would fail the point-access
     # assert below; their packing path crashes on tasklet edges.
+    # Same treatment for ``__strided_buf_*`` arrays + the bbox-shaped
+    # connector arrays they alias inside the NSDFG body: both are emitted
+    # by ``_setup_strided_inside_nsdfg`` and carry full-array memlets in
+    # the prep / finish state (subset ``[0:W]`` / ``[0:bbox-1]``) that
+    # similarly fail the point-access assert.  The body itself only ever
+    # accesses these arrays point-wise via ``__strided_buf_*`` already.
+    strided_buf_aliases: set = set()
+    for arr_name in list(all_accesses_to_arrays.keys()):
+        if arr_name.startswith("__strided_buf_"):
+            strided_buf_aliases.add(arr_name[len("__strided_buf_"):])
     for arr_name in list(all_accesses_to_arrays.keys()):
         if arr_name == "_iter_mask" or arr_name.startswith("_iter_mask_"):
+            del all_accesses_to_arrays[arr_name]
+            continue
+        if arr_name.startswith("__strided_buf_") or arr_name in strided_buf_aliases:
             del all_accesses_to_arrays[arr_name]
 
     array_is_vectorizable = {k: True for k in all_accesses_to_arrays}

@@ -300,7 +300,29 @@ class BranchElimination(transformation.MultiStateTransformation):
         sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
         for sym_name in sym_inputs:
             if sym_name not in state.sdfg.symbols:
-                state.sdfg.add_symbol(sym_name, dace.int32, False)
+                # Infer dtype from any interstate edge that assigns to
+                # ``sym_name`` from a single array read (e.g.,
+                # ``d_index_0 = d[i]``).  Falling back to int32 silently
+                # types ``d_index_0`` wrong for float arrays and corrupts
+                # the elif arm of multi-arm branches (s441-shape kernels)
+                # once it propagates through demote_symbol_to_scalar.
+                inferred_dtype = dace.int32
+                for cfg in state.sdfg.all_control_flow_regions():
+                    for ie in cfg.edges():
+                        ie_assigns = ie.data.assignments
+                        if sym_name in ie_assigns:
+                            rhs_expr = ie_assigns[sym_name]
+                            try:
+                                rhs_sym = dace.symbolic.SymExpr(rhs_expr)
+                                rhs_arr_atoms = {str(f.func) for f in rhs_sym.atoms(Function)} & set(state.sdfg.arrays.keys())
+                            except Exception:
+                                rhs_arr_atoms = set()
+                            if len(rhs_arr_atoms) == 1:
+                                inferred_dtype = state.sdfg.arrays[next(iter(rhs_arr_atoms))].dtype
+                                break
+                    if inferred_dtype is not dace.int32:
+                        break
+                state.sdfg.add_symbol(sym_name, inferred_dtype, False)
             assert sym_name in state.sdfg.symbols, f"{sym_name} not in {state.sdfg.symbols}: assignment is {rhs}"
 
         # Generate the scalar for the float constant

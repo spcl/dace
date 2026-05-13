@@ -16,6 +16,7 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.utils import *
+from dace.transformation.passes.vectorization.utils.nsdfg_reshape import _setup_strided_inside_nsdfg
 import dace.sdfg.tasklet_utils as tutil
 
 
@@ -193,49 +194,19 @@ class Vectorize(ppl.Pass):
             nsdfg_node = next(iter(nodes))
             # Strided NSDFG edges (bbox in the stride-1 dim wider than
             # ``vector_width`` *because* the begin scales with the map
-            # param at coefficient > 1) need the strided-load /
-            # strided-store rewrite inside the NSDFG body that
-            # ``_setup_strided_inside_nsdfg`` implements — wired only into
-            # ``add_copies_before_and_after_nsdfg``, which runs solely
-            # when ``insert_copies=True``.  Without that rewrite the W
-            # lanes silently write the same contiguous bbox instead of
-            # stride-N scattered locations, producing wrong output for
-            # kernels like TSVC s127 / s1111.  A contiguous full-slice
-            # like ``A[0:32]`` (begin doesn't reference the map param)
-            # is NOT strided — the NSDFG just reads/writes the whole
-            # fixed window per iteration and the existing reshape path
-            # handles it.  Detect the strided shape narrowly so the
-            # contiguous-slice path keeps working.
+            # param at coefficient > 1) get the strided-load /
+            # strided-store rewrite inside the NSDFG body via
+            # ``_setup_strided_inside_nsdfg``.  Two routes wire it in:
+            # ``insert_copies=True`` runs ``add_copies_before_and_after_nsdfg``
+            # later in this method which calls into ``_process_edges``;
+            # ``insert_copies=False`` instead routes here so kernels
+            # like TSVC s127 / s1111 with stride-2 writes inside a
+            # P1-wrapped body still vectorize correctly under scalar /
+            # masked remainder.  A contiguous full-slice ``A[0:32]``
+            # (begin doesn't reference the map param) is NOT strided
+            # and is left for the standard reshape path to handle.
             if not self.insert_copies:
-                param_sym_str = vector_map_param
-                for ie in state.in_edges(nsdfg_node) + state.out_edges(nsdfg_node):
-                    if ie.data.data is None or ie.data.subset is None:
-                        continue
-                    arr = state.sdfg.arrays[ie.data.data]
-                    stride_one_dims = [d for d, st in enumerate(arr.strides) if st == 1]
-                    if len(stride_one_dims) != 1:
-                        continue
-                    b, e, s = ie.data.subset[stride_one_dims[0]]
-                    if s != 1:
-                        continue
-                    try:
-                        bbox = int(e - b + 1)
-                    except (TypeError, ValueError):
-                        continue
-                    if bbox <= self.vector_width:
-                        continue
-                    # Require begin to depend on map_param: a fixed
-                    # contiguous window doesn't.
-                    if not hasattr(b, "free_symbols"):
-                        continue
-                    if param_sym_str not in {str(s) for s in b.free_symbols}:
-                        continue
-                    raise NotImplementedError(
-                        f"Vectorize: NSDFG edge on {ie.data.data} has strided bbox "
-                        f"{bbox} > vector_width {self.vector_width} in the stride-1 dim "
-                        f"with map_param {param_sym_str} in begin — strided-store / "
-                        f"strided-load rewrite inside the NSDFG is needed; only "
-                        f"available with insert_copies=True today.")
+                self._setup_strided_nsdfg_edges_inline(state, nsdfg_node, vector_map_param)
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
@@ -262,6 +233,54 @@ class Vectorize(ppl.Pass):
                     return True
         raise Exception("Parent connect is scalar called but the scalar is not found in the connectors"
                         )  # Shouldn't happen but whatever
+
+    def _setup_strided_nsdfg_edges_inline(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                          map_param: str):
+        """For each NSDFG boundary edge whose stride-1-dim bbox exceeds
+        ``vector_width`` *and* whose begin scales with the map param
+        (so the W lanes land at stride > 1), call
+        ``_setup_strided_inside_nsdfg`` so the strided load/store
+        happens inside the NSDFG body.
+
+        Runs independently of ``insert_copies`` — the strided body
+        rewrite is required for correctness when an outer scatter /
+        gather pattern is wrapped in an NSDFG (TSVC s127 / s1111).
+        Contiguous full-slice edges (begin without the map param) are
+        not strided and pass through to the standard reshape path."""
+        inner_sdfg = nsdfg_node.sdfg
+        for direction in ("in", "out"):
+            edges = (list(state.in_edges(nsdfg_node)) if direction == "in"
+                     else list(state.out_edges(nsdfg_node)))
+            for e in edges:
+                if e.data.data is None or e.data.subset is None:
+                    continue
+                arr = state.sdfg.arrays[e.data.data]
+                stride_one_dims = [d for d, st in enumerate(arr.strides) if st == 1]
+                if len(stride_one_dims) != 1:
+                    continue
+                b, ee, s = e.data.subset[stride_one_dims[0]]
+                if s != 1:
+                    continue
+                try:
+                    bbox_vol = int(ee - b + 1)
+                except (TypeError, ValueError):
+                    continue
+                if bbox_vol <= self.vector_width or self.vector_width <= 1:
+                    continue
+                if not hasattr(b, "free_symbols"):
+                    continue
+                if map_param not in {str(sym) for sym in b.free_symbols}:
+                    continue
+                if (bbox_vol - 1) % (self.vector_width - 1) != 0:
+                    raise NotImplementedError(
+                        f"Vectorize: strided NSDFG edge on {e.data.data} has bbox "
+                        f"volume {bbox_vol}; (W-1)*stride+1 doesn't yield an "
+                        f"integer stride for vector_width={self.vector_width}.")
+                stride_value = (bbox_vol - 1) // (self.vector_width - 1)
+                inner_conn = e.dst_conn if direction == "in" else e.src_conn
+                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                            e.data.data, arr, self.vector_width, stride_value,
+                                            direction=direction)
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
