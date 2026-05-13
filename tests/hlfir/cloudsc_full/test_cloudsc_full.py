@@ -67,7 +67,7 @@ def _strict_fp_cpu_args():
         'compiler',
         'cpu',
         'args',
-        value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off '
+        value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off -frounding-math '
         '-Wno-unused-parameter -Wno-unused-label',
     )
     try:
@@ -173,7 +173,7 @@ def _f2py_ref(tmp_path_factory):
         src,
         ref_dir,
         "cloudsc_ref",
-        extra_f90flags="-finit-local-zero -ffree-line-length-none",
+        extra_f90flags="-O0 -fno-fast-math -ffp-contract=off -frounding-math -finit-local-zero -ffree-line-length-none",
         only=("cloudscouter", ),
     )
 

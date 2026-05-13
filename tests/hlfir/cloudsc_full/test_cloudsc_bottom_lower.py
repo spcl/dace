@@ -36,7 +36,7 @@ def _strict_fp_cpu_args():
     dace.Config.set('compiler',
                     'cpu',
                     'args',
-                    value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off '
+                    value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off -frounding-math '
                     '-Wno-unused-parameter -Wno-unused-label')
     try:
         yield
@@ -85,11 +85,12 @@ def _f2py_argnames(fn):
 def _f2py_lo(tmp_path_factory):
     src = (_HERE / "cloudsc_bottom_lower.F90").read_text()
     ref_dir = tmp_path_factory.mktemp("cloudsc_bottom_lower_ref")
-    return f2py_compile(src,
-                        ref_dir,
-                        "cloudsc_bottom_lower_ref",
-                        extra_f90flags="-finit-local-zero -ffree-line-length-none",
-                        only=("cloudscouter", ))
+    return f2py_compile(
+        src,
+        ref_dir,
+        "cloudsc_bottom_lower_ref",
+        extra_f90flags="-O0 -fno-fast-math -ffp-contract=off -frounding-math -finit-local-zero -ffree-line-length-none",
+        only=("cloudscouter", ))
 
 
 def test_cloudsc_bottom_lower_numerical(tmp_path, _f2py_lo, _strict_fp_cpu_args):
