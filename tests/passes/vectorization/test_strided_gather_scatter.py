@@ -1147,3 +1147,46 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
         remainder_strategy=remainder_strategy,
         lower_to_intrinsics=(remainder_strategy == "masked"),
     )
+
+
+# Non-divisible-N coverage for strides 3 / 4 / 5 / 8. Stride 2 already
+# exercised above (test_strided_*_stride_2_nondiv). The strided-inside-
+# NSDFG path (Slice 1 ``_setup_strided_inside_nsdfg``) handles the
+# ``bbox = (W-1)*stride + 1`` formula for any integer stride that
+# divides cleanly.
+@pytest.mark.parametrize("stride", [3, 4, 5, 8])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
+def test_strided_load_stride_n_nondiv(stride, remainder_strategy):
+    N_val = 22  # non-divisible by W=8, R=6 lanes active in the remainder
+    src = numpy.random.rand(stride * N_val)
+    dst = numpy.zeros(N_val)
+    prog = {3: strided_load_stride_3, 4: strided_load_stride_4,
+            5: strided_load_stride_5, 8: strided_load_stride_8}[stride]
+    run_vectorization_test(
+        dace_func=prog,
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
+        vector_width=8,
+        sdfg_name=f"sl_stride_{stride}_nondiv_{remainder_strategy}",
+        remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
+    )
+
+
+@pytest.mark.parametrize("stride", [3, 4, 5, 8])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
+def test_strided_store_stride_n_nondiv(stride, remainder_strategy):
+    N_val = 22
+    src = numpy.random.rand(N_val)
+    dst = numpy.zeros(stride * N_val)
+    prog = {3: strided_store_stride_3, 4: strided_store_stride_4,
+            5: strided_store_stride_5, 8: strided_store_stride_8}[stride]
+    run_vectorization_test(
+        dace_func=prog,
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
+        vector_width=8,
+        sdfg_name=f"ss_stride_{stride}_nondiv_{remainder_strategy}",
+        remainder_strategy=remainder_strategy,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
+    )
