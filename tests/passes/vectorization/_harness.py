@@ -63,6 +63,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            param_tag: str = None,
                            lower_to_intrinsics: bool = False):
 
+    # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
+    # plan decision (the masked path emits merge tasklets / iter_mask blends
+    # that fp-factor lowering can't combine cleanly). Skip rather than
+    # propagate a hard error through every (fp_factor, masked, *) parametrize.
+    import pytest as _pytest
+    if branch_mode == "fp_factor" and remainder_strategy == "masked":
+        _pytest.skip("fp_factor is incompatible with masked remainder (locked plan rule)")
+
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}

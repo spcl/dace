@@ -191,6 +191,51 @@ class Vectorize(ppl.Pass):
 
         if has_single_nested_sdfg:
             nsdfg_node = next(iter(nodes))
+            # Strided NSDFG edges (bbox in the stride-1 dim wider than
+            # ``vector_width`` *because* the begin scales with the map
+            # param at coefficient > 1) need the strided-load /
+            # strided-store rewrite inside the NSDFG body that
+            # ``_setup_strided_inside_nsdfg`` implements — wired only into
+            # ``add_copies_before_and_after_nsdfg``, which runs solely
+            # when ``insert_copies=True``.  Without that rewrite the W
+            # lanes silently write the same contiguous bbox instead of
+            # stride-N scattered locations, producing wrong output for
+            # kernels like TSVC s127 / s1111.  A contiguous full-slice
+            # like ``A[0:32]`` (begin doesn't reference the map param)
+            # is NOT strided — the NSDFG just reads/writes the whole
+            # fixed window per iteration and the existing reshape path
+            # handles it.  Detect the strided shape narrowly so the
+            # contiguous-slice path keeps working.
+            if not self.insert_copies:
+                param_sym_str = vector_map_param
+                for ie in state.in_edges(nsdfg_node) + state.out_edges(nsdfg_node):
+                    if ie.data.data is None or ie.data.subset is None:
+                        continue
+                    arr = state.sdfg.arrays[ie.data.data]
+                    stride_one_dims = [d for d, st in enumerate(arr.strides) if st == 1]
+                    if len(stride_one_dims) != 1:
+                        continue
+                    b, e, s = ie.data.subset[stride_one_dims[0]]
+                    if s != 1:
+                        continue
+                    try:
+                        bbox = int(e - b + 1)
+                    except (TypeError, ValueError):
+                        continue
+                    if bbox <= self.vector_width:
+                        continue
+                    # Require begin to depend on map_param: a fixed
+                    # contiguous window doesn't.
+                    if not hasattr(b, "free_symbols"):
+                        continue
+                    if param_sym_str not in {str(s) for s in b.free_symbols}:
+                        continue
+                    raise NotImplementedError(
+                        f"Vectorize: NSDFG edge on {ie.data.data} has strided bbox "
+                        f"{bbox} > vector_width {self.vector_width} in the stride-1 dim "
+                        f"with map_param {param_sym_str} in begin — strided-store / "
+                        f"strided-load rewrite inside the NSDFG is needed; only "
+                        f"available with insert_copies=True today.")
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
@@ -978,10 +1023,13 @@ class Vectorize(ppl.Pass):
                             f"Vectorize: param-bearing dim {d} has non-1 step {ls} on memlet {memlet} "
                             f"(edge {edge}, state {state.label})")
 
-                    if lb == le:
-                        new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
-                    else:
-                        new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1"))
+                    # Extend the upper bound forward by ``W - 1`` lanes
+                    # via ``i -> i + (W - 1)``. Works uniformly for both
+                    # point (``lb == le``) accesses like ``a[2*i]`` and
+                    # ranged (``lb != le``) accesses like ``a[2*i:2*i+1]``
+                    # — in either case the bbox spans the W consecutive
+                    # ``i``-iterations the vectorizer is about to compute.
+                    new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
                     new_range_list[d] = (lb, new_le, ls)
 
                 new_memlet = dace.memlet.Memlet(

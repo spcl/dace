@@ -233,14 +233,21 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             # Evaluate the expression (b == e)
             access_expr = b  # use b since b==e
             if isinstance(access_expr, (dace.symbolic.SymExpr, sympy.Expr)):
-                # Check for multipliers
-                # If map_param appears multiplied in the expression, it is strided
-                free_syms = {str(s) for s in access_expr.free_symbols}
-                if len({
-                        term
-                        for term in access_expr.atoms(sympy.Mul)
-                        if isinstance(term, sympy.Mul) and map_param in free_syms
-                }) > 0:
+                # Strided iff the map_param is a *direct* factor of some Mul
+                # term — e.g. ``2*i``.  Expressions like ``i + LEN_1D // 2``
+                # contain a Mul atom ``LEN_1D / 2`` whose free symbols don't
+                # include the map_param; subset-propagation can also leave
+                # ``i - Min(i, i + LEN_1D // 2)``, whose Mul atom
+                # ``-Min(i, i + LEN_1D // 2)`` carries ``i`` transitively via
+                # ``Min`` but doesn't make the access strided.  Inspect the
+                # Mul's direct args so neither case is misclassified.
+                def _is_strided_mul(term: sympy.Mul) -> bool:
+                    for f in term.args:
+                        if isinstance(f, sympy.Symbol) and str(f) == map_param:
+                            return True
+                    return False
+
+                if any(_is_strided_mul(term) for term in access_expr.atoms(sympy.Mul)):
                     array_is_vectorizable[arr_name] = False
                     raise Exception("TODO - I have not analyzed this case yet")
 

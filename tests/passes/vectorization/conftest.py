@@ -23,16 +23,19 @@ def branch_mode(request) -> str:
     return request.param
 
 
-@pytest.fixture(params=["divides_evenly", "scalar"])
+@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
 def remainder_strategy(request) -> str:
     """Parametrise tests over the remainder-handling strategies wired into
     VectorizeCPU. ``"divides_evenly"`` is today's default (assumes the
     range is %% W == 0). ``"scalar"`` enables P2(mode='scalar') so non-
-    divisible ranges get a step-1 sequential postamble. ``"masked"`` and
-    ``"full_loop_mask"`` are queued (R2 / R3) and not yet exercised.
+    divisible ranges get a step-1 sequential postamble. ``"masked"``
+    enables P2(mode='masked') + P3 (iter_mask attach) + Slice 1
+    (strided-inside-NSDFG) + C.2-b (mask-aware emitter) for full
+    SIMD-width execution of the trailing R<W elements. ``"full_loop_mask"``
+    is queued (R3) and not yet exercised.
 
     Tests that go through ``run_vectorization_test`` and want to cover
-    both strategies declare a ``remainder_strategy`` parameter. Tests
+    every strategy declare a ``remainder_strategy`` parameter. Tests
     that pin a specific strategy can ignore the fixture and pass the
     knob directly to ``run_vectorization_test``."""
     return request.param

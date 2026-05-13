@@ -13,6 +13,24 @@ LEN_1D = dace.symbol("LEN_1D")
 ITERATIONS = dace.symbol("ITERATIONS")
 
 
+@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+def remainder_strategy(request) -> str:
+    """Parametrise TSVC tests over the remainder-handling strategies wired
+    into ``VectorizeCPU``. Matches the per-directory ``conftest.py`` fixture
+    defined under ``tests/passes/vectorization/`` (this file lives one level
+    up so it needs its own fixture)."""
+    return request.param
+
+
+@pytest.fixture(params=["merge"])
+def branch_mode(request) -> str:
+    """TSVC kernels here have no branches; pinned to ``merge`` (the default)
+    rather than the full ``[fp_factor, merge]`` matrix to avoid pointless
+    fan-out. Tests that exercise branches can declare a local parametrize
+    to override."""
+    return request.param
+
+
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
                            params,
@@ -27,13 +45,22 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            from_sdfg=False,
                            no_inline=False,
                            exact=None,
-                           apply_loop_to_map=False):
+                           apply_loop_to_map=False,
+                           remainder_strategy: str = "divides_evenly",
+                           branch_mode: str = "merge",
+                           lower_to_intrinsics: bool = False):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
 
     # Original SDFG
+    # Suffix sdfg_name with parametrisation keys so parallel pytest workers
+    # don't race on a shared .dacecache/<name>/ build dir when the same
+    # kernel is exercised under multiple variants.
+    if sdfg_name is not None:
+        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}"
+
     if not from_sdfg:
         sdfg: dace.SDFG = dace_func.to_sdfg(simplify=False)
         sdfg.name = sdfg_name
@@ -41,6 +68,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
     else:
         sdfg: dace.SDFG = dace_func
+        if sdfg_name is not None:
+            sdfg.name = sdfg_name
 
     if apply_loop_to_map:
         sdfg.apply_transformations_repeated(LoopToMap())
@@ -81,12 +110,22 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         filter_map = None
 
+    if branch_mode == "fp_factor":
+        branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
+    elif branch_mode == "merge":
+        branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
+    else:
+        raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
+
     VectorizeCPU(vector_width=vector_width,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
                  apply_on_maps=filter_map,
                  no_inline=no_inline,
-                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+                 fail_on_unvectorizable=True,
+                 remainder_strategy=remainder_strategy,
+                 lower_to_intrinsics=lower_to_intrinsics,
+                 **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()
@@ -131,13 +170,15 @@ def dace_s317(q: dace.float64[1]):
             q[0] *= 0.99
 
 
-def test_s317():
+def test_s317(remainder_strategy, branch_mode):
     q = np.zeros(1, dtype=np.float64)
     run_vectorization_test(dace_func=dace_s317,
                            arrays={"q": q},
                            params={"LEN_1D": 64},
                            sdfg_name="dace_s317",
-                           apply_loop_to_map=True)
+                           apply_loop_to_map=True,
+                           remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode)
 
 
 @dace.program
@@ -158,7 +199,7 @@ def dace_s491(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             a[ip[i]] = b[i] + c[i] * d[i]
 
 
-def test_s491():
+def test_s491(remainder_strategy, branch_mode):
     LEN_1D_val = 64
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -168,6 +209,8 @@ def test_s491():
 
     ip = np.random.permutation(LEN_1D_val).astype(np.int32)
 
+    # s491 has indirect access (a[ip[i]]) so masked-remainder requires
+    # lower_to_intrinsics=True per the locked Option B contract.
     run_vectorization_test(
         dace_func=dace_s491,
         arrays={
@@ -180,6 +223,9 @@ def test_s491():
         params={"LEN_1D": LEN_1D_val},
         sdfg_name="dace_s491",
         apply_loop_to_map=True,
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+        lower_to_intrinsics=(remainder_strategy == "masked"),
     )
 
     return a
@@ -194,7 +240,7 @@ def dace_s293(a: dace.float64[LEN_1D]):
             a[i] = a0
 
 
-def test_s293():
+def test_s293(remainder_strategy, branch_mode):
     LEN_1D_val = 64  # example, adjust as needed
 
     # Allocate array a
@@ -210,12 +256,14 @@ def test_s293():
         params={"LEN_1D": LEN_1D_val},  # or your iteration count
         sdfg_name="dace_s293",
         apply_loop_to_map=True,
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
     )
 
     return a
 
 
-def test_s3251():
+def test_s3251(remainder_strategy, branch_mode):
     LEN_1D_val = 64
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -236,6 +284,8 @@ def test_s3251():
         params={"LEN_1D": LEN_1D_val},
         sdfg_name="dace_s3251",
         apply_loop_to_map=True,
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
     )
 
     return a, b, c, d, e
@@ -264,7 +314,7 @@ def dace_s441_v2(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float
             a[i] = a[i] + c[i] * c[i]
 
 
-def test_s441():
+def test_s441(remainder_strategy):
     LEN_1D_val = 64  # example length
 
     # Allocate random inputs
@@ -278,7 +328,12 @@ def test_s441():
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441"
 
-    # Run DaCe test harness (your helper function)
+    # s441 has EliminateBranches applied manually → use_fp_factor=True is
+    # the matching branch-lowering knob in VectorizeCPU. masked-remainder is
+    # not compatible with fp_factor (locked plan decision), so pin to
+    # branch_mode='fp_factor' and skip the masked variant.
+    if remainder_strategy == "masked":
+        pytest.skip("s441 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization (locked plan rule)")
     run_vectorization_test(
         dace_func=dace_s441,
         arrays={
@@ -293,12 +348,14 @@ def test_s441():
         },
         sdfg_name="dace_s441",
         apply_loop_to_map=True,
+        remainder_strategy=remainder_strategy,
+        branch_mode="fp_factor",
     )
 
     return a
 
 
-def test_s441_v2():
+def test_s441_v2(remainder_strategy):
     LEN_1D_val = 64  # example length
 
     # Allocate random inputs
@@ -312,7 +369,8 @@ def test_s441_v2():
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branches) == 0, f"EliminateBranches left {len(branches)} ConditionalBlock(s) in dace_s441_v2"
 
-    # Run DaCe test harness (your helper function)
+    if remainder_strategy == "masked":
+        pytest.skip("s441_v2 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization")
     run_vectorization_test(
         dace_func=dace_s441_v2,
         arrays={
@@ -324,6 +382,8 @@ def test_s441_v2():
         params={"LEN_1D": LEN_1D_val},
         sdfg_name="dace_s441_v2",
         apply_loop_to_map=True,
+        remainder_strategy=remainder_strategy,
+        branch_mode="fp_factor",
     )
 
     return a
