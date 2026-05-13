@@ -201,13 +201,27 @@ def add_descriptors(builder, sdfg: SDFG):
                 strides=view_strides,
             )
         else:
-            sdfg.add_array(
-                v.fortran_name,
-                shape=dims,
-                dtype=dt(v.dtype),
-                transient=(v.intent == ''),
-                strides=_fortran_strides(dims) if len(dims) > 1 else None,
-            )
+            # Length-1 transient arrays become Scalars for better
+            # compatibility with DaCe transformations (which often
+            # recognise ``Scalar`` natively but skip ``Array(shape=(1,))``).
+            # Caller-provided length-1 args stay ``Array(1,)`` -- the
+            # caller owns the buffer and the pass-by-pointer ABI needs
+            # a real array descriptor.  Rank-0 source vars don't hit
+            # this branch (they live in ``builder.scalars``); this only
+            # triggers for explicit ``REAL :: x(1)`` declarations whose
+            # source already names a length-1 array.
+            transient = (v.intent == '')
+            is_length_one = len(dims) == 1 and dims[0] == 1
+            if transient and is_length_one:
+                sdfg.add_scalar(v.fortran_name, dtype=dt(v.dtype), transient=True)
+            else:
+                sdfg.add_array(
+                    v.fortran_name,
+                    shape=dims,
+                    dtype=dt(v.dtype),
+                    transient=transient,
+                    strides=_fortran_strides(dims) if len(dims) > 1 else None,
+                )
         # Declare an offset symbol per dim, sized from the SDFG array's
         # rank (not ``v.lower_bounds`` which may be shorter for some
         # synth shapes).  Unknown lower bounds default to ``1``.
@@ -289,7 +303,12 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
         for d in dims:
             strides.append(acc)
             acc = acc * d
-    ctx.sdfg.add_array(name, shape=dims, dtype=dt(dtype), transient=True, strides=strides)
+    # Length-1 synthesised transient -> Scalar (same rule as the
+    # outer add_descriptors path).  Better DaCe-pass compatibility.
+    if len(dims) == 1 and dims[0] == 1:
+        ctx.sdfg.add_scalar(name, dtype=dt(dtype), transient=True)
+    else:
+        ctx.sdfg.add_array(name, shape=dims, dtype=dt(dtype), transient=True, strides=strides)
     # Mirror the entry into ``builder.arrays`` so subsequent emit_assign
     # / emit_libcall calls find it via the existing arrays-dict lookups.
     from types import SimpleNamespace

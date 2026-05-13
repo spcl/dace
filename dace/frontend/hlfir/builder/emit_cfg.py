@@ -198,7 +198,18 @@ def emit_symbol_init(builder, ctx: '_Ctx', n, region):
     ctx.flush(builder)
     ctx.ensure(region)
     dst = region.add_state(f"sym_init_{sym}_{builder.nid()}")
-    region.add_edge(ctx.cur, dst, InterstateEdge(assignments={sym: f"{arr}[{one_based - 1}]"}))
+    # If ``arr`` is a Scalar on the SDFG (the bridge folds length-1
+    # transients to Scalar), ``arr[0]`` is invalid -- a Scalar has no
+    # subscript.  Drop the subscript so the interstate edge reads the
+    # Scalar value directly.  Non-scalar arrays keep the usual 0-based
+    # Fortran-to-DaCe index conversion.
+    from dace.data import Scalar as _Scalar
+    src_desc = ctx.sdfg.arrays.get(arr)
+    if isinstance(src_desc, _Scalar):
+        read_expr = arr
+    else:
+        read_expr = f"{arr}[{one_based - 1}]"
+    region.add_edge(ctx.cur, dst, InterstateEdge(assignments={sym: read_expr}))
     ctx.cur = dst
 
 
