@@ -1758,8 +1758,8 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
         if len(flat_args) > 1:
             flat_args = [
-                arg for arg in flat_args if not ((isinstance(arg, TypedConstant) and equal_valued(arg.value, 1)) or
-                                                 (getattr(arg, 'is_Number', False) and equal_valued(arg, 1)))
+                arg for arg in flat_args if not (isinstance(arg, TypedConstant) and equal_valued(arg.value, 1)
+                                                 or getattr(arg, 'is_Number', False) and equal_valued(arg, 1))
             ]
 
         numeric_args = []
