@@ -105,7 +105,12 @@ def test_fortran_frontend_optional_complex(tmp_path):
     size = 5
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res, res2=res2, a=5, a_present=1, b=7.0, b_present=1, c=1, c_present=0)
+    # ``c`` is Fortran ``LOGICAL`` -- pass ``True`` (not ``1``).
+    # ``c_present=0`` says the inner call won't read ``c``, so the
+    # actual value doesn't matter, but routing the bool through as
+    # a Python int triggers the runtime int32->bool* reinterpret
+    # warning.  Stick to the dtype convention.
+    sdfg(res=res, res2=res2, a=5, a_present=1, b=7.0, b_present=1, c=True, c_present=0)
 
     # Safe path only — caller passed ``a`` and ``b`` to the first
     # internal call; ``c`` was not passed and is UB if read.  The

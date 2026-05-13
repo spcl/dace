@@ -78,11 +78,15 @@ subroutine main(d)
 end subroutine main
 """
     sdfg = build_sdfg(src, tmp_path, name='main').build()
-    d = np.full([3, 4, 5], 1, order="F", dtype=np.int32)
+    # ``d`` is Fortran ``LOGICAL`` -- pass ``np.bool_`` (1 byte / elem)
+    # so the C ABI dtype matches the SDFG's ``bool *`` declaration.
+    # Initial fill of ``True`` so the assertions can distinguish
+    # SDFG writes (False / True) from the initial value.
+    d = np.full([3, 4, 5], True, order="F", dtype=np.bool_)
     sdfg(d=d, a=0, jk=0, jl=0, jm=0)
-    # Fortran ``LOGICAL(KIND=4)`` encodes ``.true.`` as -1 (all bits set
-    # in the int32 image), not 1.  The bridge follows that convention.
-    assert d[0, 0, 0] == 0
+    # LLFALL(1) == .false. (no positive ZVQX entry at JM=1) ->
+    # ``d(1,1,1) = .false.``; LLFALL(2) == .true. (ZVQX(2)=1.0).
+    assert d[0, 0, 0] == False
     assert bool(d[0, 0, 1])
 
 

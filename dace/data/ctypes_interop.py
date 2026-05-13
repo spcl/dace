@@ -80,6 +80,17 @@ def make_ctypes_argument(arg: Any,
         if (isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype):
             pass
         else:
+            # Auto-casting at this layer is unsafe for intent(inout) /
+            # intent(out) args: ``np.ascontiguousarray(arg, dtype=target)``
+            # would allocate a fresh buffer; the SDFG's writes land in
+            # that buffer and never make it back to the caller's
+            # original ``arg``.  ``ctypes_interop`` cannot see Fortran
+            # intents at this layer, so the safe contract is to keep the
+            # warn-and-reinterpret behavior here and let the
+            # bridge-emitted Python wrapper (separate todo) do the cast
+            # at a layer that knows intent.  Pinning test for the
+            # value-semantics bug-shape lives in
+            # ``tests/hlfir/bool_int_arg_dtype_test.py``.
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
     elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
         raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '

@@ -75,7 +75,9 @@ END SUBROUTINE any_parent_dg
 
     m = np.zeros((5, 3), order='F', dtype=np.int32)
     m[2, 1] = 7
-    res = np.zeros(2, order='F', dtype=np.int32)
+    # ``res`` is Fortran ``LOGICAL`` -- pass ``np.bool_`` so the C ABI
+    # dtype matches the SDFG's ``bool *`` declaration.
+    res = np.zeros(2, order='F', dtype=np.bool_)
 
     sdfg(m=m, pos1=2, res=res)
     assert res[0] != 0
@@ -99,7 +101,8 @@ END SUBROUTINE all_parent_dg
     sdfg = build_sdfg(src, tmp_path, name='all_parent_dg').build()
 
     m = np.ones((4, 3), order='F', dtype=np.int32)
-    res = np.zeros(2, order='F', dtype=np.int32)
+    # ``res`` is Fortran ``LOGICAL`` -- pass ``np.bool_``.
+    res = np.zeros(2, order='F', dtype=np.bool_)
 
     sdfg(m=m, pos1=2, res=res)
     assert res[0] != 0

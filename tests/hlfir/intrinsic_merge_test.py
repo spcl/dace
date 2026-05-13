@@ -282,7 +282,13 @@ END SUBROUTINE merge_test_function
 
     first = np.full([size], 13, order="F", dtype=np.float64)
     second = np.full([size], 42, order="F", dtype=np.float64)
-    mask = np.full([size], 0, order="F", dtype=np.int32)
+    # ``mask`` is Fortran ``LOGICAL`` -- pass it as ``np.bool_`` (1
+    # byte / elem) so the C ABI dtype matches the SDFG's ``bool *``
+    # declaration.  Previously this was ``np.int32`` and the runtime
+    # reinterpret-cast the LSB of each int32 as a bool, which worked
+    # for ``{0, 1}`` values by coincidence but corrupted any int
+    # whose bit-0 was zero (256, -2, ...).
+    mask = np.full([size], False, order="F", dtype=np.bool_)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     sdfg(input1=first, input2=second, mask=mask, res=res)
@@ -291,7 +297,7 @@ END SUBROUTINE merge_test_function
     for val in res[1:]:
         assert val == 40
 
-    mask[0] = 1
+    mask[0] = True
     sdfg(input1=first, input2=second, mask=mask, res=res)
     assert res[0] == 13
     for val in res[1:]:
@@ -319,13 +325,14 @@ END SUBROUTINE merge_test_function
 
     first = np.full([size], 13, order="F", dtype=np.float64)
     second = np.full([size], 42, order="F", dtype=np.float64)
-    mask = np.full([size], 0, order="F", dtype=np.int32)
+    # See merge_scalar above -- ``mask`` is LOGICAL, pass ``np.bool_``.
+    mask = np.full([size], False, order="F", dtype=np.bool_)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     sdfg(input1=first, input2=second, mask=mask, res=res)
     assert res[0] == 0
 
-    mask[:] = 1
+    mask[:] = True
     sdfg(input1=first, input2=second, mask=mask, res=res)
     assert res[0] == 13
 

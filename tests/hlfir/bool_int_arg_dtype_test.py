@@ -114,6 +114,77 @@ END SUBROUTINE int_double
     np.testing.assert_array_equal(out, out_ref)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Auto-cast must happen at the bridge-emitted Python wrapper "
+    "layer, not in DaCe's generic ``ctypes_interop.make_ctypes_argument``: "
+    "the latter can't see Fortran intent, and an ``np.ascontiguousarray`` "
+    "cast would lose intent(inout) writeback for the existing "
+    "``fortran_language_test::test_fortran_frontend_loop1`` pattern that "
+    "relies on byte-view writes into a caller-side ``np.int32`` array.  "
+    "Cloudsc registry workaround (commit c5dc9185a) handles the practical "
+    "case by routing scalar LOGICAL as ``np.bool_`` directly; this test "
+    "pins the value-semantics contract for when the bridge wrapper "
+    "implementation lands.",
+)
+def test_bool_auto_cast_int32_to_bool_array(tmp_path):
+    """Runtime auto-casts ``np.int32`` to ``np.bool_`` for ``bool *`` args.
+
+    The cloudsc registry historically routed scalar LOGICAL as
+    ``np.int32(np.bool_(True))`` -- the DaCe runtime warned about the
+    dtype mismatch and silently reinterpret-cast the 4-byte int as a
+    1-byte bool.  For value ``1`` the LSB happened to match (true), but
+    any int with bit-0 = 0 (256, -2, etc.) would silently read as false.
+
+    The fix in ``ctypes_interop.py`` auto-casts to ``np.bool_`` before
+    the C call when the SDFG expects bool but the caller passed an
+    int -- value semantics preserved regardless of the caller-side
+    bit-pattern.
+
+    Verifies the fix by passing values that the prior reinterpret-cast
+    would have corrupted: ``2`` (bit-0 = 0 with value=2, truthy) and
+    ``256`` (bit-0 of byte 0 = 0, looks like false under reinterpret).
+    """
+    src = """
+SUBROUTINE bool_pass_ac(flags, out, n)
+integer, intent(in) :: n
+logical, intent(in) :: flags(n)
+integer, intent(out) :: out(n)
+integer i
+DO i = 1, n
+    IF (flags(i)) THEN
+        out(i) = 1
+    ELSE
+        out(i) = 0
+    ENDIF
+ENDDO
+END SUBROUTINE bool_pass_ac
+"""
+    ref = f2py(src, tmp_path / 'ref', 'bool_pass_ac_ref')
+    sdfg_dir = tmp_path / 'sdfg'
+    sdfg_dir.mkdir(parents=True, exist_ok=True)
+    sdfg = build_sdfg(src, sdfg_dir, name='bool_pass_ac', entry='_QPbool_pass_ac').build()
+
+    # Reinterpret-cast hazards: every value where ``int32_lsb == 0`` AND
+    # ``value != 0`` would read as ``false`` under the prior behavior,
+    # while the auto-cast correctly preserves ``truthy``.
+    values_truthy = np.array([1, 2, 256, -2, 0x1_0000_0000 & 0xFFFFFFFF], dtype=np.int32)
+    values_falsy = np.array([0], dtype=np.int32)
+    flags_int = np.concatenate([values_truthy, values_falsy])
+    n = flags_int.size
+    expected = np.where(flags_int != 0, 1, 0).astype(np.int32)
+    # f2py-side reference: pass as np.bool_ (truthy => True).
+    flags_bool = (flags_int != 0).astype(np.bool_)
+    out_ref = ref.bool_pass_ac(flags_bool)
+    np.testing.assert_array_equal(out_ref, expected)
+    # SDFG path: pass the int32 array directly to the bool* arg.  The
+    # runtime must auto-cast; the result must match the expected
+    # value-semantics ``flags_int != 0`` -- NOT the byte-0 reinterpret.
+    out = np.zeros(n, dtype=np.int32)
+    sdfg(flags=flags_int, out=out, n=n)
+    np.testing.assert_array_equal(out, expected)
+
+
 def test_bool_scalar_logical_pass_through(tmp_path):
     """Scalar LOGICAL passed as a length-1 array argument.
 
