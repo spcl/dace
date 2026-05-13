@@ -284,7 +284,22 @@ def build_wrapper_tail(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     """
     tpl = _load("wrapper_call.f90.in")
     _, _, bridge_copy_out, name_override = _build_logical_bridges(frozen, iface)
-    call_args = ",  &\n".join(f"      {name_override.get(a.sdfg_name, a.sdfg_name)}" for a in frozen.args)
+
+    # The C interface declares every array arg as ``type(c_ptr), value``
+    # (see ``build_c_interface``).  Wrap each array actual with
+    # ``c_loc(...)`` so Fortran's bind(c) conversion is explicit -- the
+    # implicit conversion from a Fortran pointer / target array to
+    # ``c_ptr`` only kicks in for ``intent``-typed dummies, NOT for
+    # ``type(c_ptr), value`` dummies (gfortran rejects with "type
+    # mismatch ... passed REAL/LOGICAL to TYPE(c_ptr)").  Scalars and
+    # symbols pass by value -- no wrapping.
+    def _call_actual(a) -> str:
+        actual = name_override.get(a.sdfg_name, a.sdfg_name)
+        if a.kind == 'array' or a.rank > 0:
+            return f"c_loc({actual})"
+        return actual
+
+    call_args = ",  &\n".join(f"      {_call_actual(a)}" for a in frozen.args)
     call_block = tpl.format(entry=iface.entry, call_arg_list=call_args)
 
     copy_out_lines: List[str] = []

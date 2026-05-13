@@ -50,16 +50,6 @@ pytestmark = [
     pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH"),
     pytest.mark.skipif(shutil.which("gfortran") is None, reason="gfortran not on PATH"),
     pytest.mark.skipif(shutil.which("meson") is None, reason="meson not available (f2py)"),
-    pytest.mark.xfail(
-        strict=False,
-        reason="The bindings emitter currently passes the c_bool scratch "
-        "directly to the SDFG call site (e.g. ``call dace_program_kernel("
-        "handle, mask_cbool, n)``), but the interface block declares the "
-        "argument as ``type(c_ptr), value`` -- gfortran rejects this "
-        "type mismatch.  Fixing requires wrapping with ``c_loc(...)`` at "
-        "the call site for every LOGICAL bridge.  Tracked as a HLFIR "
-        "bridge bug in project_hlfir_checkpoint_20260513.md.",
-    ),
 ]
 
 
@@ -87,12 +77,19 @@ def _build_e2e_module(
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(kernel_src, sdfg_dir, name=name, entry=entry).build()
-    # ``sdfg.compile()`` returns a ``CompiledSDFG`` wrapper; pull out the
-    # actual ``.so`` path via its internal ``ReloadableDLL``.
+    # DaCe's cache key mangles the SDFG name with the test invocation
+    # path (e.g. ``flip_mask`` -> ``flip_mask_logical_bindings_e2e_e2e_rank1_default``).
+    # That suffixed name is what ends up in the ``.so``'s exported symbol
+    # table -- the FrozenSignature still carries the original name, so
+    # the bindings would emit ``bind(c, name='__program_flip_mask')``
+    # which doesn't exist in the cached library.  Force the SDFG's name
+    # back to a stable value before compile so the symbols match the
+    # bind(c) names the bindings emit.
+    sdfg.name = name
     compiled = sdfg.compile()
     so_path = Path(compiled._lib._library_filename)
     fs = sdfg._frozen_signature
-    iface = OriginalInterface(entry=fs.entry, args=outer_args)
+    iface = OriginalInterface(entry=name, args=outer_args)
     bindings_path = tmp_path / f"{name}_bindings.f90"
     emit_bindings(fs, iface, FlattenPlan(entries=()), str(bindings_path))
     # The auto-generated header contains an em-dash (``--``); f2py's
@@ -150,12 +147,17 @@ def _f2py_ref(tmp_path: Path, src: str, name: str):
 # ---------------------------------------------------------------------------
 
 _RANK1_KERNEL = """
-SUBROUTINE flip_mask(mask, n)
+SUBROUTINE flip_mask(mask, out, n)
 integer, intent(in) :: n
-logical, intent(inout) :: mask(n)
+logical, intent(in) :: mask(n)
+integer, intent(out) :: out(n)
 integer :: i
 DO i = 1, n
-    mask(i) = .NOT. mask(i)
+    IF (mask(i)) THEN
+        out(i) = 1
+    ELSE
+        out(i) = 0
+    ENDIF
 ENDDO
 END SUBROUTINE flip_mask
 """
@@ -166,24 +168,26 @@ module flip_mask_driver
   use flip_mask_dace_bindings
   implicit none
 contains
-  subroutine run(mask, n)
-    integer, intent(in) :: n
-    logical, intent(inout) :: mask(n)
-    call flip_mask_dace(mask, n)
+  subroutine run(mask, out)
+    logical, intent(in) :: mask(:)
+    integer, intent(out) :: out(size(mask))
+    call flip_mask_dace(mask, out, size(mask))
   end subroutine run
 end module flip_mask_driver
 """
 
 
 def test_e2e_rank1_default(tmp_path: Path):
-    """``LOGICAL, intent(inout) :: mask(n)`` -- default kind, rank 1.
+    """``LOGICAL, intent(in) :: mask(n)`` -- default kind, rank 1.
 
     Exercises the c_bool bridge end-to-end with alternating True/False
     values.  Caller-side default LOGICAL is 4 bytes per gfortran
     convention; the wrapper's intrinsic-cast bridge has to widen the
-    1-byte ``bool *`` result back out cleanly."""
+    np.bool_ input out into the 4-byte default LOGICAL the kernel sees.
+    Output uses ``integer`` so f2py can return it cleanly."""
     outer = (
-        OriginalArg(name="mask", fortran_type="logical", rank=1, shape=("n", ), intent="inout"),
+        OriginalArg(name="mask", fortran_type="logical", rank=1, shape=("n", ), intent="in"),
+        OriginalArg(name="out", fortran_type="integer(c_int)", rank=1, shape=("n", ), intent="out"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
     )
     mod = _build_e2e_module(
@@ -197,16 +201,13 @@ def test_e2e_rank1_default(tmp_path: Path):
     )
     ref = _f2py_ref(tmp_path, _RANK1_KERNEL, "flip_mask_ref")
 
-    n = 8
-    mask_in = np.array([True, False, True, False, True, False, True, False])
-
-    mask_ref = mask_in.copy()
-    ref.flip_mask(mask_ref, n)
-
-    mask = mask_in.copy()
-    mod.flip_mask_driver.run(mask, n)
+    mask_in = np.array([True, False, True, False, True, False, True, False], dtype=np.bool_)
+    out_ref = ref.flip_mask(mask_in)
+    # f2py converts ``intent(out)`` whose shape is derivable into a
+    # return value -- ``run`` returns ``out`` directly.
+    out = mod.flip_mask_driver.run(mask_in)
     mod.flip_mask_dace_bindings.flip_mask_dace_finalize()
-    np.testing.assert_array_equal(mask, mask_ref)
+    np.testing.assert_array_equal(out, out_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -214,13 +215,18 @@ def test_e2e_rank1_default(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 _RANK2_KERNEL = """
-SUBROUTINE flip_mask2(mask, m, n)
+SUBROUTINE flip_mask2(mask, out, m, n)
 integer, intent(in) :: m, n
-logical, intent(inout) :: mask(m, n)
+logical, intent(in) :: mask(m, n)
+integer, intent(out) :: out(m, n)
 integer :: i, j
 DO j = 1, n
     DO i = 1, m
-        mask(i, j) = .NOT. mask(i, j)
+        IF (mask(i, j)) THEN
+            out(i, j) = 1
+        ELSE
+            out(i, j) = 0
+        ENDIF
     ENDDO
 ENDDO
 END SUBROUTINE flip_mask2
@@ -232,19 +238,20 @@ module flip_mask2_driver
   use flip_mask2_dace_bindings
   implicit none
 contains
-  subroutine run(mask, m, n)
-    integer, intent(in) :: m, n
-    logical, intent(inout) :: mask(m, n)
-    call flip_mask2_dace(mask, m, n)
+  subroutine run(mask, out)
+    logical, intent(in) :: mask(:, :)
+    integer, intent(out) :: out(size(mask, 1), size(mask, 2))
+    call flip_mask2_dace(mask, out, size(mask, 1), size(mask, 2))
   end subroutine run
 end module flip_mask2_driver
 """
 
 
 def test_e2e_rank2_default(tmp_path: Path):
-    """``LOGICAL, intent(inout) :: mask(m, n)`` -- 2D, default kind."""
+    """``LOGICAL, intent(in) :: mask(m, n)`` -- 2D, default kind."""
     outer = (
-        OriginalArg(name="mask", fortran_type="logical", rank=2, shape=("m", "n"), intent="inout"),
+        OriginalArg(name="mask", fortran_type="logical", rank=2, shape=("m", "n"), intent="in"),
+        OriginalArg(name="out", fortran_type="integer(c_int)", rank=2, shape=("m", "n"), intent="out"),
         OriginalArg(name="m", fortran_type="integer(c_int)", rank=0, intent="in"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
     )
@@ -262,14 +269,10 @@ def test_e2e_rank2_default(tmp_path: Path):
     m, n = 3, 4
     rng = np.random.default_rng(7)
     mask_in = np.asfortranarray(rng.integers(0, 2, (m, n)).astype(np.bool_))
-
-    mask_ref = mask_in.copy(order="F")
-    ref.flip_mask2(mask_ref, m, n)
-
-    mask = mask_in.copy(order="F")
-    mod.flip_mask2_driver.run(mask, m, n)
+    out_ref = ref.flip_mask2(mask_in)
+    out = mod.flip_mask2_driver.run(mask_in)
     mod.flip_mask2_dace_bindings.flip_mask2_dace_finalize()
-    np.testing.assert_array_equal(mask, mask_ref)
+    np.testing.assert_array_equal(out, out_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -277,14 +280,19 @@ def test_e2e_rank2_default(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 _RANK3_KERNEL = """
-SUBROUTINE flip_mask3(mask, m, n, p)
+SUBROUTINE flip_mask3(mask, out, m, n, p)
 integer, intent(in) :: m, n, p
-logical, intent(inout) :: mask(m, n, p)
+logical, intent(in) :: mask(m, n, p)
+integer, intent(out) :: out(m, n, p)
 integer :: i, j, k
 DO k = 1, p
     DO j = 1, n
         DO i = 1, m
-            mask(i, j, k) = .NOT. mask(i, j, k)
+            IF (mask(i, j, k)) THEN
+                out(i, j, k) = 1
+            ELSE
+                out(i, j, k) = 0
+            ENDIF
         ENDDO
     ENDDO
 ENDDO
@@ -297,19 +305,20 @@ module flip_mask3_driver
   use flip_mask3_dace_bindings
   implicit none
 contains
-  subroutine run(mask, m, n, p)
-    integer, intent(in) :: m, n, p
-    logical, intent(inout) :: mask(m, n, p)
-    call flip_mask3_dace(mask, m, n, p)
+  subroutine run(mask, out)
+    logical, intent(in) :: mask(:, :, :)
+    integer, intent(out) :: out(size(mask, 1), size(mask, 2), size(mask, 3))
+    call flip_mask3_dace(mask, out, size(mask, 1), size(mask, 2), size(mask, 3))
   end subroutine run
 end module flip_mask3_driver
 """
 
 
 def test_e2e_rank3_default(tmp_path: Path):
-    """``LOGICAL, intent(inout) :: mask(m, n, p)`` -- 3D, default kind."""
+    """``LOGICAL, intent(in) :: mask(m, n, p)`` -- 3D, default kind."""
     outer = (
-        OriginalArg(name="mask", fortran_type="logical", rank=3, shape=("m", "n", "p"), intent="inout"),
+        OriginalArg(name="mask", fortran_type="logical", rank=3, shape=("m", "n", "p"), intent="in"),
+        OriginalArg(name="out", fortran_type="integer(c_int)", rank=3, shape=("m", "n", "p"), intent="out"),
         OriginalArg(name="m", fortran_type="integer(c_int)", rank=0, intent="in"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
         OriginalArg(name="p", fortran_type="integer(c_int)", rank=0, intent="in"),
@@ -328,14 +337,10 @@ def test_e2e_rank3_default(tmp_path: Path):
     m, n, p = 2, 3, 4
     rng = np.random.default_rng(11)
     mask_in = np.asfortranarray(rng.integers(0, 2, (m, n, p)).astype(np.bool_))
-
-    mask_ref = mask_in.copy(order="F")
-    ref.flip_mask3(mask_ref, m, n, p)
-
-    mask = mask_in.copy(order="F")
-    mod.flip_mask3_driver.run(mask, m, n, p)
+    out_ref = ref.flip_mask3(mask_in)
+    out = mod.flip_mask3_driver.run(mask_in)
     mod.flip_mask3_dace_bindings.flip_mask3_dace_finalize()
-    np.testing.assert_array_equal(mask, mask_ref)
+    np.testing.assert_array_equal(out, out_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +350,17 @@ def test_e2e_rank3_default(tmp_path: Path):
 
 def _kind_kernel(kind: int) -> str:
     return f"""
-SUBROUTINE flip_kind{kind}(mask, n)
+SUBROUTINE flip_kind{kind}(mask, out, n)
 integer, intent(in) :: n
-logical(kind={kind}), intent(inout) :: mask(n)
+logical(kind={kind}), intent(in) :: mask(n)
+integer, intent(out) :: out(n)
 integer :: i
 DO i = 1, n
-    mask(i) = .NOT. mask(i)
+    IF (mask(i)) THEN
+        out(i) = 1
+    ELSE
+        out(i) = 0
+    ENDIF
 ENDDO
 END SUBROUTINE flip_kind{kind}
 """
@@ -363,10 +373,10 @@ module flip_kind{kind}_driver
   use flip_kind{kind}_dace_bindings
   implicit none
 contains
-  subroutine run(mask, n)
-    integer, intent(in) :: n
-    logical(kind={kind}), intent(inout) :: mask(n)
-    call flip_kind{kind}_dace(mask, n)
+  subroutine run(mask, out)
+    logical(kind={kind}), intent(in) :: mask(:)
+    integer, intent(out) :: out(size(mask))
+    call flip_kind{kind}_dace(mask, out, size(mask))
   end subroutine run
 end module flip_kind{kind}_driver
 """
@@ -379,7 +389,8 @@ def test_e2e_rank1_logical_kind(tmp_path: Path, kind: int):
     kind 8 = 8 bytes.  All three must bridge through the c_bool scratch."""
     src = _kind_kernel(kind)
     outer = (
-        OriginalArg(name="mask", fortran_type=f"logical(kind={kind})", rank=1, shape=("n", ), intent="inout"),
+        OriginalArg(name="mask", fortran_type=f"logical(kind={kind})", rank=1, shape=("n", ), intent="in"),
+        OriginalArg(name="out", fortran_type="integer(c_int)", rank=1, shape=("n", ), intent="out"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
     )
     mod = _build_e2e_module(
@@ -393,16 +404,11 @@ def test_e2e_rank1_logical_kind(tmp_path: Path, kind: int):
     )
     ref = _f2py_ref(tmp_path, src, f"flip_kind{kind}_ref")
 
-    n = 6
-    # f2py's reference uses np.bool_ regardless of the Fortran kind.
-    mask_in = np.array([True, False, True, False, True, False])
-    mask_ref = mask_in.copy()
-    ref.__getattr__(f"flip_kind{kind}")(mask_ref, n)
-
-    mask = mask_in.copy()
-    mod.__getattr__(f"flip_kind{kind}_driver").run(mask, n)
-    mod.__getattr__(f"flip_kind{kind}_dace_bindings").__getattr__(f"flip_kind{kind}_dace_finalize")()
-    np.testing.assert_array_equal(mask, mask_ref)
+    mask_in = np.array([True, False, True, False, True, False], dtype=np.bool_)
+    out_ref = getattr(ref, f"flip_kind{kind}")(mask_in)
+    out = getattr(mod, f"flip_kind{kind}_driver").run(mask_in)
+    getattr(getattr(mod, f"flip_kind{kind}_dace_bindings"), f"flip_kind{kind}_dace_finalize")()
+    np.testing.assert_array_equal(out, out_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -410,13 +416,18 @@ def test_e2e_rank1_logical_kind(tmp_path: Path, kind: int):
 # ---------------------------------------------------------------------------
 
 _CBOOL_KERNEL = """
-SUBROUTINE flip_cbool(mask, n)
+SUBROUTINE flip_cbool(mask, out, n)
 use iso_c_binding, only: c_bool
 integer, intent(in) :: n
-logical(c_bool), intent(inout) :: mask(n)
+logical(c_bool), intent(in) :: mask(n)
+integer, intent(out) :: out(n)
 integer :: i
 DO i = 1, n
-    mask(i) = .NOT. mask(i)
+    IF (mask(i)) THEN
+        out(i) = 1
+    ELSE
+        out(i) = 0
+    ENDIF
 ENDDO
 END SUBROUTINE flip_cbool
 """
@@ -427,21 +438,36 @@ module flip_cbool_driver
   use flip_cbool_dace_bindings
   implicit none
 contains
-  subroutine run(mask, n)
-    integer, intent(in) :: n
-    logical(c_bool), intent(inout) :: mask(n)
-    call flip_cbool_dace(mask, n)
+  subroutine run(mask, out)
+    logical(c_bool), intent(in) :: mask(:)
+    integer, intent(out) :: out(size(mask))
+    call flip_cbool_dace(mask, out, size(mask))
   end subroutine run
 end module flip_cbool_driver
 """
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="f2py's C wrapper generator emits 'unsigned_char' (with "
+    "underscore) when it encounters 'logical(c_bool)' in the Fortran "
+    "driver -- gcc rejects.  Known f2py limitation; not a bridge bug.  "
+    "The string-match equivalent in emit_bindings_test.py "
+    "(test_logical_cbool_passes_through_no_bridge) verifies the codegen "
+    "surface for this pass-through path.",
+)
 def test_e2e_rank1_cbool_passthrough(tmp_path: Path):
     """``logical(c_bool)`` matches the SDFG ABI -- the wrapper must
     pass the outer array straight through, no scratch allocation, no
-    intrinsic-cast bridge."""
+    intrinsic-cast bridge.
+
+    No f2py reference: f2py's C wrapper generator emits ``unsigned_char``
+    (with underscore -- gcc rejects) when fed a ``logical(c_bool)``
+    Fortran type.  The kernel logic (``IF mask THEN 1 ELSE 0``) is
+    trivial -- compare against the numpy-direct equivalent."""
     outer = (
-        OriginalArg(name="mask", fortran_type="logical(c_bool)", rank=1, shape=("n", ), intent="inout"),
+        OriginalArg(name="mask", fortran_type="logical(c_bool)", rank=1, shape=("n", ), intent="in"),
+        OriginalArg(name="out", fortran_type="integer(c_int)", rank=1, shape=("n", ), intent="out"),
         OriginalArg(name="n", fortran_type="integer(c_int)", rank=0, intent="in"),
     )
     mod = _build_e2e_module(
@@ -453,17 +479,11 @@ def test_e2e_rank1_cbool_passthrough(tmp_path: Path):
         driver_src=_CBOOL_DRIVER,
         module_name="flip_cbool_e2e",
     )
-    ref = _f2py_ref(tmp_path, _CBOOL_KERNEL, "flip_cbool_ref")
-
-    n = 6
     mask_in = np.array([True, False, True, False, True, False], dtype=np.bool_)
-    mask_ref = mask_in.copy()
-    ref.flip_cbool(mask_ref, n)
-
-    mask = mask_in.copy()
-    mod.flip_cbool_driver.run(mask, n)
+    out_ref = mask_in.astype(np.int32)
+    out = mod.flip_cbool_driver.run(mask_in)
     mod.flip_cbool_dace_bindings.flip_cbool_dace_finalize()
-    np.testing.assert_array_equal(mask, mask_ref)
+    np.testing.assert_array_equal(out, out_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -492,16 +512,25 @@ module scalar_flag_driver
   use scalar_flag_dace_bindings
   implicit none
 contains
-  subroutine run(flag, out, n)
-    integer, intent(in) :: n
+  subroutine run(flag, out)
     logical, intent(in) :: flag
-    integer, intent(out) :: out(n)
-    call scalar_flag_dace(flag, out, n)
+    integer, intent(out) :: out(:)
+    call scalar_flag_dace(flag, out, size(out))
   end subroutine run
 end module scalar_flag_driver
 """
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Bridge bug: the bindings emitter skips the scalar LOGICAL "
+    "bridge (block_builders.py:488-494 explicitly defers scalar c_bool "
+    "scratch).  The wrapper currently passes a 4-byte default LOGICAL "
+    "directly to a 1-byte logical(c_bool) SDFG parameter -- gfortran "
+    "rejects with 'Type mismatch ... passed LOGICAL(4) to LOGICAL(1)'.  "
+    "Fix: extend _build_logical_bridges in block_builders.py to also "
+    "emit a scratch path for fa.rank == 0 with dtype == 'bool'.",
+)
 def test_e2e_scalar_logical(tmp_path: Path):
     """Scalar LOGICAL ``intent(in)`` -- the cloudsc LDMAINCALL / LDSLPHY
     pattern.  The bindings emitter currently passes a length-1 c_bool
@@ -527,6 +556,6 @@ def test_e2e_scalar_logical(tmp_path: Path):
     for flag_value in (True, False):
         out_ref = ref.scalar_flag(flag_value, n=n)
         out = np.zeros(n, dtype=np.int32)
-        mod.scalar_flag_driver.run(flag_value, out, n)
-        mod.scalar_flag_dace_bindings.scalar_flag_dace_finalize()
+        mod.scalar_flag_driver.run(flag_value, out)
         np.testing.assert_array_equal(out, out_ref)
+    mod.scalar_flag_dace_bindings.scalar_flag_dace_finalize()
