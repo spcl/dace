@@ -15,6 +15,21 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
 
+def _resolve_subset_for(memlet, an_node):
+    # Return the subset of ``an_node`` referenced by ``memlet``.
+    # If memlet.data targets ``an_node`` directly: subset is the canonical side.
+    # If memlet.data is something else (e.g. a View on the same edge), other_subset
+    # carries the non-view-side range; otherwise default to a 0-anchored placement
+    # matching the volume shape (same convention as DaCe memlet propagation).
+    import dace.subsets as _ss
+    if memlet.data == an_node.data:
+        return memlet.subset
+    if memlet.other_subset is not None:
+        return memlet.other_subset
+    sizes = memlet.subset.size()
+    return _ss.Range([(0, s - 1, 1) for s in sizes])
+
+
 def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     """Pick a destination subset for a memlet that omits ``other_subset``/``dst_subset``.
 
@@ -199,82 +214,54 @@ class InsertExplicitCopies(ppl.Pass):
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                # Pre-pass: rewrite AN<->View edges as `AN -> AN_inter -> View`
-                # (or `View -> AN_inter -> AN`) so the View aliases a fresh
-                # transient and the real data movement becomes a copy on the
-                # AN side that the next step lifts normally.
-                self._rewrite_view_edges(nsdfg, state)
+                self._collapse_round_trip_views(nsdfg, state)
                 count += self._replace_direct_copies(nsdfg, state)
         return count if count > 0 else None
 
-    _VIEW_BUF_PREFIX = "_view_buf_"
-
-    def _rewrite_view_edges(self, sdfg: SDFG, state: SDFGState):
-        """Insert a packed transient between a direct AN<->View edge so the
-        data-movement side becomes an AN<->AN edge that ``_replace_direct_copies``
-        can lift to a ``CopyLibraryNode``. Idempotent across repeated calls
-        and a no-op for non-packed views (which the codegen handles as
-        pointer-offset aliases)."""
+    def _collapse_round_trip_views(self, sdfg: SDFG, state: SDFGState):
+        # AN_src -> View -> AN_dst is an implicit copy through the View's alias.
+        # Replace the two edges with a single AN_src -> AN_dst edge carrying the
+        # composed memlet (underlying-side subset, access-side subset); the View
+        # AccessNode stays in the state but is detached from this dataflow path.
+        # _replace_direct_copies then lifts the new direct edge to a CopyLibraryNode.
         from dace import data as dt
-        from dace import subsets as _subsets
+        from dace.sdfg.utils import get_view_edge
 
-        for edge in list(state.edges()):
-            if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+        for view_node in list(state.nodes()):
+            if not isinstance(view_node, nodes.AccessNode):
                 continue
-            if edge.data.is_empty():
+            if not isinstance(sdfg.arrays[view_node.data], dt.View):
                 continue
-            src_desc = sdfg.arrays[edge.src.data]
-            dst_desc = sdfg.arrays[edge.dst.data]
-            src_is_view = isinstance(src_desc, dt.View)
-            dst_is_view = isinstance(dst_desc, dt.View)
-            if src_is_view == dst_is_view:
-                # Both Views or neither — nothing to do here. (Both-View
-                # is an unusual nested-view pattern we leave alone.)
+            in_edges = [e for e in state.in_edges(view_node) if not e.data.is_empty()]
+            out_edges = [e for e in state.out_edges(view_node) if not e.data.is_empty()]
+            if len(in_edges) != 1 or len(out_edges) != 1:
                 continue
-
-            non_view_node = edge.src if dst_is_view else edge.dst
-            if non_view_node.data.startswith(self._VIEW_BUF_PREFIX):
+            in_e, out_e = in_edges[0], out_edges[0]
+            if not isinstance(in_e.src, nodes.AccessNode) or not isinstance(out_e.dst, nodes.AccessNode):
                 continue
-
-            view_node = edge.dst if dst_is_view else edge.src
-            view_desc = dst_desc if dst_is_view else src_desc
-
-            if not view_desc.is_packed_c_strides():
+            src_node, dst_node = in_e.src, out_e.dst
+            if isinstance(sdfg.arrays[src_node.data], dt.View) or isinstance(sdfg.arrays[dst_node.data], dt.View):
+                continue
+            view_edge = get_view_edge(state, view_node)
+            if view_edge is None:
                 continue
 
-            if dst_is_view:
-                if not self._storage_allowed(src_desc.storage, view_desc.storage):
-                    continue
-            else:
-                if not self._storage_allowed(view_desc.storage, dst_desc.storage):
-                    continue
+            src_subset = _resolve_subset_for(in_e.data, src_node)
+            dst_subset = _resolve_subset_for(out_e.data, dst_node)
+            if src_subset is None or dst_subset is None:
+                continue
 
-            inter_name, inter_desc = sdfg.add_array(
-                f"{self._VIEW_BUF_PREFIX}{view_node.data}",
-                shape=view_desc.shape,
-                dtype=view_desc.dtype,
-                storage=view_desc.storage,
-                transient=True,
-                find_new_name=True,
-            )
-            inter_node = state.add_access(inter_name)
-
-            # The new alias-side memlet (intermediate <-> View) carries
-            # the intermediate's full range; the original memlet stays on
-            # the data-movement side (AN_orig <-> intermediate).
-            inter_full_subset = _subsets.Range.from_array(inter_desc)
-            alias_memlet = Memlet(data=inter_name, subset=_copy.deepcopy(inter_full_subset))
-            alias_memlet.dynamic = edge.data.dynamic
-
-            state.remove_edge(edge)
-            if dst_is_view:
-                # AN_orig -> View  =>  AN_orig -> AN_inter -> View
-                state.add_edge(edge.src, edge.src_conn, inter_node, None, edge.data)
-                state.add_edge(inter_node, None, view_node, edge.dst_conn, alias_memlet)
-            else:
-                # View -> AN_orig  =>  View -> AN_inter -> AN_orig
-                state.add_edge(view_node, edge.src_conn, inter_node, None, alias_memlet)
-                state.add_edge(inter_node, None, edge.dst, edge.dst_conn, edge.data)
+            new_memlet = Memlet(data=src_node.data,
+                                subset=_copy.deepcopy(src_subset),
+                                other_subset=_copy.deepcopy(dst_subset))
+            new_memlet.dynamic = in_e.data.dynamic or out_e.data.dynamic
+            state.remove_edge(in_e)
+            state.remove_edge(out_e)
+            state.add_edge(src_node, in_e.src_conn, dst_node, out_e.dst_conn, new_memlet)
+            # The View is now disconnected from this dataflow path; drop it if
+            # nothing else references it (SDFG validation rejects isolated nodes).
+            if state.degree(view_node) == 0:
+                state.remove_node(view_node)
 
     def _replace_direct_copies(self, sdfg: SDFG, state: SDFGState) -> int:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances."""
