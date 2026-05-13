@@ -306,11 +306,9 @@ def test_insert_validates_after_pass():
     sdfg.validate()
 
 
-def test_insert_view_dst_inserts_intermediate():
-    """``Array -> View``: pass should rewrite to ``Array -> Copy -> AN_inter -> View``
-    so the View aliases a fresh transient that's been populated by the copy.
-    Mirrors the doitgen post-``apply_gpu_transformations`` shape.
-    """
+def test_insert_view_dst_round_trip_lifts_source_edge():
+    # AN_src -> View -> AN_dst round-trip collapses to a single AN_src -> Copy -> AN_dst.
+    # Asserts the src side: A has its out-edge going to the CopyLibraryNode (not to the View).
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_dst_intermediate")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -327,27 +325,14 @@ def test_insert_view_dst_inserts_intermediate():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    in_e = list(st.in_edges(v))
-    assert len(in_e) == 1
-    assert isinstance(in_e[0].src, nodes.AccessNode), (
-        f"View in-edge src must be an AccessNode (the intermediate buffer); got {type(in_e[0].src).__name__}")
-    inter_name = in_e[0].src.data
-    assert inter_name != "A", "intermediate must be a fresh transient, not the original source"
-    inter_desc = sdfg.arrays[inter_name]
-    assert inter_desc.transient and not isinstance(inter_desc, dace.data.View)
-    assert tuple(inter_desc.shape) == (5,
-                                       6), (f"intermediate shape should match the View; got {tuple(inter_desc.shape)}")
-
-    # The data movement A -> AN_inter must have been lifted into a CopyLibraryNode.
-    inter_node = in_e[0].src
-    inter_in = list(st.in_edges(inter_node))
-    assert len(inter_in) == 1 and isinstance(inter_in[0].src, CopyLibraryNode)
+    out_edges = list(st.out_edges(a))
+    assert len(out_edges) == 1 and isinstance(out_edges[0].dst, CopyLibraryNode)
+    assert v not in st.nodes()
 
 
-def test_insert_view_src_inserts_intermediate():
-    """``View -> Array``: pass should rewrite to ``View -> AN_inter -> Copy -> Array``
-    so the View aliases the intermediate (which is then copied out).
-    """
+def test_insert_view_src_round_trip_lifts_destination_edge():
+    # Symmetric: asserts the dst side after the round-trip collapse.
+    # sink has its in-edge coming from the CopyLibraryNode (not from the View).
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_src_intermediate")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -358,33 +343,20 @@ def test_insert_view_src_inserts_intermediate():
     a = st.add_access("A")
     v = st.add_access("A_view")
     out = st.add_access("sink")
-    # Establish the View's underlying via the in-edge from `a`, then drive
-    # the rewrite-under-test on the *out* edge `v -> sink`.
     st.add_edge(a, None, v, None, Memlet("A[1, 0:5, 0:6]"))
     st.add_edge(v, None, out, None, Memlet("A_view[0:5, 0:6]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    out_e = list(st.out_edges(v))
-    assert len(out_e) == 1
-    assert isinstance(out_e[0].dst, nodes.AccessNode), (
-        f"View out-edge dst must be an AccessNode (the intermediate buffer); got {type(out_e[0].dst).__name__}")
-    inter_name = out_e[0].dst.data
-    assert inter_name != "sink"
-    inter_desc = sdfg.arrays[inter_name]
-    assert inter_desc.transient and not isinstance(inter_desc, dace.data.View)
-
-    # The data movement AN_inter -> sink must have been lifted into a CopyLibraryNode.
-    inter_node = out_e[0].dst
-    inter_out = list(st.out_edges(inter_node))
-    assert len(inter_out) == 1 and isinstance(inter_out[0].dst, CopyLibraryNode)
+    in_edges = list(st.in_edges(out))
+    assert len(in_edges) == 1 and isinstance(in_edges[0].src, CopyLibraryNode)
+    assert v not in st.nodes()
 
 
-def test_insert_view_round_trip_inserts_two_intermediates():
-    """``Array -> View -> Array``: both edges get rewritten -> two
-    intermediates and two CopyLibraryNodes. The View sits between them
-    and aliases one (per ``get_view_edge``'s in-edge precedence)."""
+def test_insert_view_round_trip_collapses_to_single_copy():
+    # AN_src -> View -> AN_dst yields exactly one CopyLibraryNode (not two);
+    # the View is removed once it has no remaining consumers.
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_round_trip")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -401,16 +373,8 @@ def test_insert_view_round_trip_inserts_two_intermediates():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    # Two CopyLibraryNodes inserted: one for A -> AN_inter1, one for
-    # AN_inter2 -> sink.
-    assert _count_copy_nodes(sdfg) == 2
-
-    in_e = list(st.in_edges(v))
-    out_e = list(st.out_edges(v))
-    assert len(in_e) == 1 and len(out_e) == 1
-    assert isinstance(in_e[0].src, nodes.AccessNode)
-    assert isinstance(out_e[0].dst, nodes.AccessNode)
-    assert in_e[0].src.data != out_e[0].dst.data, ("the two intermediates must be distinct fresh transients")
+    assert _count_copy_nodes(sdfg) == 1
+    assert v not in st.nodes()
 
 
 def test_insert_self_copy_subset_is_dst_side():
@@ -538,12 +502,9 @@ def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
 
 
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
-    """Repeated ``apply_pass`` invocations on the same SDFG must not
-    accumulate ``_view_buf_*`` transients. The GPU pipeline calls this pass
-    six times per ``preprocess`` (CPU->GPU, GPU->CPU, GPU->GPU × pre/post
-    library expansion); without idempotency each call would create another
-    intermediate per view edge, ballooning device allocation by 6×.
-    """
+    # Repeated apply_pass invocations must not accumulate extra CopyLibraryNodes.
+    # First call collapses the round-trip; subsequent calls have no AN -> View -> AN
+    # pattern left to act on, so they are no-ops.
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_rewrite_idempotent")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -559,18 +520,13 @@ def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
 
     p = InsertExplicitCopies()
     p.apply_pass(sdfg, {})
-    n_after_first = sum(1 for arr in sdfg.arrays if arr.startswith("_view_buf_"))
-    assert n_after_first == 2, (
-        f"first run should create exactly 2 view buffers (one per direction); got {n_after_first}")
+    n_after_first = _count_copy_nodes(sdfg)
+    assert n_after_first == 1
 
-    # Re-run 5 more times (matches the GPU wrapper × pre/post-expansion fan-out).
     for _ in range(5):
         p.apply_pass(sdfg, {})
 
-    n_after_repeat = sum(1 for arr in sdfg.arrays if arr.startswith("_view_buf_"))
-    assert n_after_repeat == n_after_first, (
-        f"repeated apply_pass calls must not accumulate view buffers; "
-        f"saw {n_after_first} after first call but {n_after_repeat} after 6 total calls")
+    assert _count_copy_nodes(sdfg) == n_after_first
     sdfg.validate()
 
 
@@ -596,10 +552,24 @@ def test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_nam
 _N = dace.symbol('_N')
 
 
-@pytest.mark.xfail(strict=True, reason='IEC currently lifts AccessNode<->View edges; the View is an alias and '
-                   'lifting changes semantics (rank, dtype, or which slice is written).')
-def test_iec_does_not_lift_array_view_edges():
-    sdfg = dace.SDFG('view_lift_policy')
+# AccessNode<->View edges must remain direct after IEC.
+
+def test_iec_skips_array_to_view_edge():
+    sdfg = dace.SDFG('skip_array_to_view')
+    sdfg.add_array('A', [4, 5, 6], dace.float64)
+    sdfg.add_view('Av', [5, 6], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('A')
+    v = state.add_access('Av')
+    state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    assert _count_copy_nodes(sdfg) == 0
+    in_e = list(state.in_edges(v))
+    assert len(in_e) == 1 and in_e[0].src is a
+
+
+def test_iec_collapses_round_trip_view():
+    sdfg = dace.SDFG('collapse_round_trip_view')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
     sdfg.add_array('sink', [5, 6], dace.float64)
@@ -609,14 +579,123 @@ def test_iec_does_not_lift_array_view_edges():
     out = state.add_access('sink')
     state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
     state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
-
     InsertExplicitCopies().apply_pass(sdfg, {})
+    # Round-trip collapsed: one CopyLibraryNode from A to sink, View removed
+    # (would be isolated; no other consumer kept it alive).
+    assert _count_copy_nodes(sdfg) == 1
+    assert v not in state.nodes()
+    sdfg.validate()
+    A = np.copy(np.arange(120, dtype=np.float64).reshape(4, 5, 6))
+    sink = np.zeros((5, 6), dtype=np.float64)
+    sdfg(A=A, sink=sink)
+    assert np.array_equal(sink, A[1])
 
+
+def test_iec_collapse_keeps_view_with_other_consumers():
+    sdfg = dace.SDFG('collapse_keeps_view_with_other_consumers')
+    sdfg.add_array('A', [4, 5, 6], dace.float64)
+    sdfg.add_view('Av', [5, 6], dace.float64)
+    sdfg.add_array('sink', [5, 6], dace.float64)
+    sdfg.add_array('also_reads', [5, 6], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('A')
+    v = state.add_access('Av')
+    out = state.add_access('sink')
+    other = state.add_access('also_reads')
+    state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
+    state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
+    state.add_edge(v, None, other, None, Memlet('Av[0:5, 0:6]'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    # Round-trip is collapsed for v->sink, but v still has v->also_reads, so it
+    # stays in the SDFG (and its incoming view-aliasing edge is preserved).
+    assert v in state.nodes()
+    sdfg.validate()
+
+
+def test_iec_skips_reshape_view_edge():
+    sdfg = dace.SDFG('skip_reshape_view')
+    sdfg.add_array('A', [2, 3, 4], dace.float64)
+    sdfg.add_view('Av', [8, 3], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('A')
+    v = state.add_access('Av')
+    state.add_edge(a, None, v, None, Memlet(data='A', subset='0:2, 0:3, 0:4', other_subset='0:8, 0:3'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
     assert _count_copy_nodes(sdfg) == 0
-    in_e = list(state.in_edges(v))
-    out_e = list(state.out_edges(v))
-    assert len(in_e) == 1 and in_e[0].src is a, 'A->Av edge must remain direct'
-    assert len(out_e) == 1 and out_e[0].dst is out, 'Av->sink edge must remain direct'
+
+
+# Array<->Array copies with rank-mismatched subsets where the extra rank is a constant index.
+# After ``collapse_shape_and_strides`` the singleton dims drop out and both sides have
+# matching rank; the lifted CopyLibraryNode expansion must produce per-side access
+# expressions of the right rank.
+
+
+def test_iec_array_to_array_constant_first_dim():
+    sdfg = dace.SDFG('const_first_dim_copy')
+    sdfg.add_array('src', [5, 4, 3], dace.float64)
+    sdfg.add_array('dst', [4, 3], dace.float64)
+    state = sdfg.add_state()
+    s = state.add_access('src')
+    d = state.add_access('dst')
+    state.add_edge(s, None, d, None, Memlet(data='src', subset='2, 0:4, 0:3', other_subset='0:4, 0:3'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    src = np.copy(np.arange(60, dtype=np.float64).reshape(5, 4, 3))
+    dst = np.zeros((4, 3), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src[2])
+
+
+def test_iec_array_to_array_constant_middle_dim():
+    sdfg = dace.SDFG('const_middle_dim_copy')
+    sdfg.add_array('src', [4, 5, 3], dace.float64)
+    sdfg.add_array('dst', [4, 3], dace.float64)
+    state = sdfg.add_state()
+    s = state.add_access('src')
+    d = state.add_access('dst')
+    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:4, 2, 0:3', other_subset='0:4, 0:3'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    src = np.copy(np.arange(60, dtype=np.float64).reshape(4, 5, 3))
+    dst = np.zeros((4, 3), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src[:, 2, :])
+
+
+# Rank-changing volume-equal copies (no constant dim) take the CopyNDTemplate
+# fallback: both sides flatten to a 1D pointer walk when C-packed contiguous.
+
+
+def test_iec_array_to_array_rank_change_uses_copynd():
+    sdfg = dace.SDFG('rank_change_copynd')
+    sdfg.add_array('src', [2, 3, 4], dace.float64)
+    sdfg.add_array('dst', [8, 3], dace.float64)
+    state = sdfg.add_state()
+    s = state.add_access('src')
+    d = state.add_access('dst')
+    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:2, 0:3, 0:4', other_subset='0:8, 0:3'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    src = np.copy(np.arange(24, dtype=np.float64).reshape(2, 3, 4))
+    dst = np.zeros((8, 3), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.reshape(8, 3))
+
+
+def test_iec_array_to_array_flatten_uses_copynd():
+    sdfg = dace.SDFG('flatten_copynd')
+    sdfg.add_array('src', [4, 3], dace.float64)
+    sdfg.add_array('dst', [12], dace.float64)
+    state = sdfg.add_state()
+    s = state.add_access('src')
+    d = state.add_access('dst')
+    state.add_edge(s, None, d, None, Memlet(data='src', subset='0:4, 0:3', other_subset='0:12'))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+    src = np.copy(np.arange(12, dtype=np.float64).reshape(4, 3))
+    dst = np.zeros(12, dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.reshape(12))
 
 
 @dace.program
@@ -625,8 +704,7 @@ def _iec_pin_reshape_rank_change(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]
     B[:] += C
 
 
-@pytest.mark.xfail(strict=True, reason='Rank-changing View lift produces mismatched-rank memlets; codegen IndexError.')
-def test_iec_reshape_rank_change_codegen_indexerror():
+def test_iec_reshape_does_not_lift_view():
     sdfg = _iec_pin_reshape_rank_change.to_sdfg(simplify=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
@@ -643,9 +721,7 @@ def _iec_pin_reinterpret_dtype(A: dace.int32[_N]):
     C[:] += 1
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Dtype-reinterpret View lift produces a CopyLibraryNode with mismatched element types.')
-def test_iec_reinterpret_dtype_change_invalid_node():
+def test_iec_reinterpret_does_not_lift_view():
     sdfg = _iec_pin_reinterpret_dtype.to_sdfg(simplify=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()

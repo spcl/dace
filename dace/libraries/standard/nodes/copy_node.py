@@ -126,6 +126,20 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
         if refined is not None:
             impl = refined
 
+    # 6. Rank-mismatched volume-equal copies (e.g. reshape between arrays of
+    # different rank). MappedTasklet emits a single access expression for both
+    # endpoints and would write a rank-N memlet against a rank-M descriptor;
+    # route to CopyNDTemplate which flattens to a 1D pointer walk when both
+    # sides are C-packed contiguous.
+    if impl is None or impl == 'MappedTasklet':
+        in_shape_c, _ = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_c, _ = collapse_shape_and_strides(out_subset, out.strides)
+        if len(in_shape_c) != len(out_shape_c):
+            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and inp.is_packed_c_strides()
+                    and out.is_packed_c_strides() and in_subset.is_contiguous_subset(inp)
+                    and out_subset.is_contiguous_subset(out)):
+                return 'CopyNDTemplate'
+
     return impl or 'MappedTasklet'
 
 
@@ -550,9 +564,22 @@ class ExpandCopyNDTemplate(ExpandTransformation):
                                       "use MappedTasklet if dynamic copy sizes are needed.")
 
         in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-        _, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
+        if len(in_shape_collapsed) != len(out_shape_collapsed):
+            # Rank-mismatched but volume-equal (e.g. reshape between
+            # (2,3,4) and (8,3)). Both sides are C-packed contiguous by the
+            # picker's preconditions, so a 1D pointer walk over the total
+            # element count copies them correctly.
+            total = reduce(operator.mul, in_shape_collapsed, 1)
+            copy_shape = [total]
+            in_strides_collapsed = [1]
+            out_strides_collapsed = [1]
+        else:
+            copy_shape = in_shape_collapsed
+
         code = _build_copynd_call(inp.dtype.ctype,
-                                  in_shape_collapsed,
+                                  copy_shape,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
                                   in_arg=_INPUT_CONNECTOR_NAME,
