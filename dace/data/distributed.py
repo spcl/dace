@@ -16,6 +16,10 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 class DistributedDescriptor(Data):
     """Base class for distributed communication descriptors stored in an SDFG."""
 
+    @property
+    def state_field_dtype(self):
+        return self.dtype
+
     def clone(self):
         return copy.deepcopy(self)
 
@@ -269,6 +273,10 @@ class SubArray(DistributedDescriptor):
         super().__init__(dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Persistent,
                          None)
 
+    @property
+    def state_field_dtype(self):
+        return dtypes.opaque('MPI_Datatype')
+
     def validate(self):
         """ Validate the correctness of this object.
             Raises an exception on error. """
@@ -412,6 +420,10 @@ class RedistrArray(DistributedDescriptor):
         self.array_b = array_b
         super().__init__(dtypes.opaque('dace::comm::RedistrArray'), [], True, dtypes.StorageType.Default, None,
                          dtypes.AllocationLifetime.Persistent, None)
+
+    @property
+    def state_field_dtype(self):
+        return dtypes.opaque('MPI_Datatype')
 
     def validate(self):
         """ Validate the correctness of this object.

@@ -57,8 +57,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     _visit_structure(desc, args, name)
 
         for name, arg_type in args.items():
-            if isinstance(arg_type, data.DistributedDescriptor):
-                continue
             if isinstance(arg_type, data.Scalar):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow
@@ -991,9 +989,6 @@ class CPUCodeGen(TargetCodeGenerator):
         for edge in dfg.out_edges(node):
             _, uconn, v, _, memlet = edge
             if skip_wcr and memlet.wcr is not None:
-                continue
-            if (memlet.data is not None and memlet.data in sdfg.arrays
-                    and isinstance(sdfg.arrays[memlet.data], data.DistributedDescriptor)):
                 continue
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst

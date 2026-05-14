@@ -41,7 +41,7 @@ class Dummy(MPINode):
     fields = dace.properties.ListProperty(default=[], element_type=str)
 
     def __init__(self, name, fields=[], *args, **kwargs):
-        super().__init__(name, *args, outputs={'__out'}, **kwargs)
+        super().__init__(name, *args, outputs={}, **kwargs)
         self.fields = fields
 
     def validate(self, sdfg, state):
