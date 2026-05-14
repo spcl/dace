@@ -95,7 +95,7 @@ class OffloadToAccelerator(ppl.Pass):
                 map gpu
                     library node -> Seq
 
-        let user set the schedule to anything else than Device -> stays that way
+        TODO: let user set the schedule to anything else than Device -> stays that way
         if user set to GPU device, then map cannot be offloaded (known limitation)
         """
 
@@ -104,36 +104,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
-        
-
-        """
-        make new branch
-        organise test suite
-        
-        1) use Yakup's sfgds as unit test cases
-        2) implement my own test suite, check in with Yakup
-        3) implement copy pass
-
-        heat3d everything on GPU
-        assume inputs on CPU, then copy in beginning -> implement two options, all on GPU, all on CPU -> check non transient, copy if mismatch
-        
-        copying:
-            access node connected to other access node is a copy
-
-            node needs A on GPU
-                    |
-            access node A_gpu, GPU storage  <-- ADD TODO
-                    |
-            access node A_cpu, CPU storage
-                    |
-            node needs A on CPU
-
-        copy in beginning, now there is A and A_gpu
-        node by node, set to use A_gpu
-
-        track before and after in linegraph
-        """
-        
+            
 
     ### STEP 1 ###
     def set_toplevel_to_GPU(self, sdfg: SDFG, type:Type):

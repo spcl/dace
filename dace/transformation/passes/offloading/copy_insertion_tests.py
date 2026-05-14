@@ -234,24 +234,30 @@ def test_two_state_sdfg(input:float):
 test_two_state_sdfg(17.0)
 
 
-# TODO: create testcases with numerical correctness
+# TODO:
+# look through previous testcases, see what still applies
+# collect in automatic test suite
+# add new test cases to suite
+#   simple for all 4 scenarios
+#   more involved for all 4 scenarios
+# before you fix the bugs:
+#   add yakups test cases to the suite
+#   add big sdfgs to the suite
+#   add heat3d & npbench to the suite
+# goal of tomorrow: have a fully functional suite, even if some test don't pass yet
+# goal for weekend: get all test cases to run
+
 
 # TODO: scalars have pass by copy right now -> if map writes to single scalar, detect and raise error or convert to array of length one and properly offload
 # curently not offloaded -> incorrect -> run "replace_all_length1_arrays_with_scalars" at start, then replace back iff written to by GPU / map
 
+# todo(?): make interstate edge copy method also work with controlflowblocks 
+
 # TODO: dace rep -> tests -> npbench -> polybench -> copy2d, copy1d, heat3d, ... -> lib nodes, wcr edges etc. -> use as test cases
 # views, subset and wcr edges might create problems -> if they do, discuss with Yakup, might not need to handle this
+# use npbench -> polybench and s-cases
 
 # TODO: clean up -> PR branch -> write thesis!
 
-# create showcases for all four base cases
-# test and get to work
-#   -> todo: make interstate edge copy method also work with controlflowblocks (?)
-# create mixed test cases
-# run on big sdfg
-# tidy up code, move to offloading pass
 
-
-# next meeting
-# use npbench -> polybench and s-cases
 
