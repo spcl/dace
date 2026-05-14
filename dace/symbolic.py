@@ -28,6 +28,11 @@ _SERIALIZED_TYPED_CONSTANT = re.compile(
     rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
 
+
+def _is_sympy_number(expr) -> bool:
+    return bool(getattr(expr, 'is_Number', False) or getattr(expr, 'is_number', False))
+
+
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
@@ -1462,7 +1467,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def _binop_mul(a, b):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
         if len(args) > 1:
-            args = [arg for arg in args if not getattr(arg, 'is_number', False) or not equal_valued(arg, 1)]
+            args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
         if not args:
             return sympy.Integer(1)
         return _SerializedSymbolicParser._mul(*args)
@@ -1747,12 +1752,12 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
         _flatten(expr)
         if len(flat_args) > 1:
-            flat_args = [arg for arg in flat_args if not getattr(arg, 'is_number', False) or not equal_valued(arg, 1)]
+            flat_args = [arg for arg in flat_args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
 
         coeff = sympy.S.One
         nonnumeric_args = []
         for arg in flat_args:
-            if not isinstance(arg, TypedConstant) and getattr(arg, 'is_number', False):
+            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
                 coeff *= arg
             else:
                 nonnumeric_args.append(arg)
