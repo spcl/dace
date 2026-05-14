@@ -104,13 +104,13 @@ class ExpandBlockScatterMPI(ExpandTransformation):
 
         code = f"""
             if (__state->{scatter_grid}_valid) {{
-                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{scatter_grid}_comm);
+                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
             }}
         """
         if bcast_grid:
             code += f"""
                 if (__state->{bcast_grid}_valid) {{
-                    MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{bcast_grid}_comm);
+                    MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
                 }}
             """
 

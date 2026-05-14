@@ -593,6 +593,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
+                self._dispatcher.defined_vars.add_global(f'__state->{name}', disp.DefinedType.Scalar, desc.dtype.ctype)
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
             # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
             # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.

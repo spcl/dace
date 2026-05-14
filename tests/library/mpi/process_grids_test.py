@@ -53,13 +53,14 @@ def test_process_grid():
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet(
-        "MPI_Cart_get", {}, {'d', 'p', 'c', 'v'},
-        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, d, p, c);\nv = __state->{pgrid_name}_valid;", dtypes.Language.CPP)
+    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
+                                 "MPI_Cart_get(g, P, d, p, c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
+    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
     state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
     state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
     state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))
@@ -106,14 +107,14 @@ def test_sub_grid():
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet(
-        "MPI_Cart_get", {}, {'d', 'p', 'c', 'v'},
-        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, &d, &p, &c);\nv = __state->{pgrid_name}_valid;",
-        dtypes.Language.CPP)
+    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
+                                 "MPI_Cart_get(g, P, &d, &p, &c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
+    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
     state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
     state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
     state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))

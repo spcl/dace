@@ -105,16 +105,16 @@ class ExpandBlockGatherMPI(ExpandTransformation):
         if reduce_grid:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, __state->{reduce_grid}_comm);
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, __state->{gather_grid}_comm);
+                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }} else if (__state->{reduce_grid}_valid) {{
-                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, __state->{reduce_grid}_comm);
+                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
                 }}
             """
         else:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, __state->{gather_grid}_comm);
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }}
             """
 

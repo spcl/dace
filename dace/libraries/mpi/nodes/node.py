@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, Optional
 
+from dace import dtypes
 from dace.sdfg import nodes
 
 
@@ -26,6 +27,13 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> Dict[str, Any]:
         if edge.dst_conn is not None:
             connectors.setdefault(edge.dst_conn, None)
     return connectors
+
+
+def validate_integer_descriptor(desc: Any, name: str) -> None:
+    if desc is None:
+        raise ValueError(f"{name} connector is missing")
+    if desc.dtype.base_type not in dtypes.INTEGER_TYPES:
+        raise ValueError(f"{name} must be an integer")
 
 
 class MPINode(nodes.LibraryNode):

@@ -1,6 +1,7 @@
 import copy
 
 import dace
+from dace import dtypes
 from dace.data.distributed import ProcessGrid, RedistrArray, SubArray
 
 
@@ -13,6 +14,7 @@ def test_distributed_descriptors_are_data_descriptors():
     for desc in (pgrid, subgrid, subarray, redistr):
         assert isinstance(desc, dace.data.Data)
         assert desc.transient
+        assert desc.lifetime is dtypes.AllocationLifetime.Persistent
         assert desc.is_equivalent(copy.deepcopy(desc))
 
     assert subgrid.parent_grid == pgrid.name
@@ -63,6 +65,9 @@ def test_distributed_descriptor_json_roundtrip():
     assert loaded.arrays[pgrid].transient
     assert loaded.arrays[subarray].transient
     assert loaded.arrays[redistr].transient
+    assert loaded.arrays[pgrid].lifetime is dtypes.AllocationLifetime.Persistent
+    assert loaded.arrays[subarray].lifetime is dtypes.AllocationLifetime.Persistent
+    assert loaded.arrays[redistr].lifetime is dtypes.AllocationLifetime.Persistent
     assert pgrid in loaded.process_grids
     assert subarray in loaded.subarrays
     assert redistr in loaded.rdistrarrays

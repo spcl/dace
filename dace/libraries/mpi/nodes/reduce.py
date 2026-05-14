@@ -24,20 +24,15 @@ class ExpandReduceMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
-            comm = f"__state->{grid}_comm"
+            comm = "_grid"
 
         code = ""
         if in_place:
-            if comm == "MPI_COMM_WORLD":
-                code += """
-                    int __world_rank;
-                    MPI_Comm_rank(&__world_rank, MPI_COMM_WORLD);
-                    if (__world_rank == _root) {{
-                """
-            else:
-                code += f"""
-                    if (__state->{grid}_rank == _root) {{
-                """
+            code += f"""
+                int __comm_rank;
+                MPI_Comm_rank({comm}, &__comm_rank);
+                if (__comm_rank == _root) {{
+            """
             code += f"""
                     MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});
                 }} else {{

@@ -4,7 +4,8 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, input_descriptor_name,
+                                           validate_integer_descriptor)
 
 
 @dace.library.expansion
@@ -23,7 +24,7 @@ class ExpandIrecvMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
-            comm = f"__state->{grid}_comm"
+            comm = "_grid"
 
         code = ""
         if ddt is not None:
@@ -81,6 +82,9 @@ class Irecv(MPINode):
                 src = sdfg.arrays[e.data.data]
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
+
+        validate_integer_descriptor(src, 'Source')
+        validate_integer_descriptor(tag, 'Tag')
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):

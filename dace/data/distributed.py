@@ -112,7 +112,7 @@ class ProcessGrid(DistributedDescriptor):
             shape = shape or []
         self.root = root
         super().__init__(dtypes.opaque('MPI_Comm'), shape, True, dtypes.StorageType.Default, None,
-                         dtypes.AllocationLifetime.Scope, None)
+                         dtypes.AllocationLifetime.Persistent, None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -145,6 +145,7 @@ class ProcessGrid(DistributedDescriptor):
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.dtype = dtypes.opaque('MPI_Comm')
         ret.transient = True
+        ret.lifetime = dtypes.AllocationLifetime.Persistent
         # Check validity now
         ret.validate()
         return ret
@@ -152,7 +153,7 @@ class ProcessGrid(DistributedDescriptor):
     def init_code(self):
         """ Outputs MPI allocation/initialization code for the process-grid.
             It is assumed that the following variables exist in the SDFG program's state:
-            - MPI_Comm {self.name}_comm
+            - MPI_Comm {self.name}
             - MPI_Group {self.name}_group
             - int {self.name}_rank
             - int {self.name}_size
@@ -173,11 +174,11 @@ class ProcessGrid(DistributedDescriptor):
                 __state->{self.name}_valid = false;
                 if (__state->{self.parent_grid}_valid) {{
                     int {self.name}_remain[{len(self.color)}] = {{{', '.join(['1' if c else '0' for c in self.color])}}};
-                    MPI_Cart_sub(__state->{self.parent_grid}_comm, {self.name}_remain, &__state->{self.name}_comm);
-                    MPI_Comm_group(__state->{self.name}_comm, &__state->{self.name}_group);
-                    MPI_Comm_rank(__state->{self.name}_comm, &__state->{self.name}_rank);
-                    MPI_Comm_size(__state->{self.name}_comm, &__state->{self.name}_size);
-                    MPI_Cart_coords(__state->{self.name}_comm, __state->{self.name}_rank, {len(self.shape)}, __state->{self.name}_coords);
+                    MPI_Cart_sub(__state->{self.parent_grid}, {self.name}_remain, &__state->{self.name});
+                    MPI_Comm_group(__state->{self.name}, &__state->{self.name}_group);
+                    MPI_Comm_rank(__state->{self.name}, &__state->{self.name}_rank);
+                    MPI_Comm_size(__state->{self.name}, &__state->{self.name}_size);
+                    MPI_Cart_coords(__state->{self.name}, __state->{self.name}_rank, {len(self.shape)}, __state->{self.name}_coords);
             """
             if self.exact_grid is not None:
                 tmp += f"""
@@ -199,12 +200,12 @@ class ProcessGrid(DistributedDescriptor):
                 tmp += f"__state->{self.name}_dims[{i}] = {s};\n"
             tmp += f"""
                 int {self.name}_periods[{len(self.shape)}] = {{0}};
-                MPI_Cart_create(MPI_COMM_WORLD, {len(self.shape)}, __state->{self.name}_dims, {self.name}_periods, 0, &__state->{self.name}_comm);
-                if (__state->{self.name}_comm != MPI_COMM_NULL) {{
-                    MPI_Comm_group(__state->{self.name}_comm, &__state->{self.name}_group);
-                    MPI_Comm_rank(__state->{self.name}_comm, &__state->{self.name}_rank);
-                    MPI_Comm_size(__state->{self.name}_comm, &__state->{self.name}_size);
-                    MPI_Cart_coords(__state->{self.name}_comm, __state->{self.name}_rank, {len(self.shape)}, __state->{self.name}_coords);
+                MPI_Cart_create(MPI_COMM_WORLD, {len(self.shape)}, __state->{self.name}_dims, {self.name}_periods, 0, &__state->{self.name});
+                if (__state->{self.name} != MPI_COMM_NULL) {{
+                    MPI_Comm_group(__state->{self.name}, &__state->{self.name}_group);
+                    MPI_Comm_rank(__state->{self.name}, &__state->{self.name}_rank);
+                    MPI_Comm_size(__state->{self.name}, &__state->{self.name}_size);
+                    MPI_Cart_coords(__state->{self.name}, __state->{self.name}_rank, {len(self.shape)}, __state->{self.name}_coords);
                     __state->{self.name}_valid = true;
                 }} else {{
                     __state->{self.name}_group = MPI_GROUP_NULL;
@@ -220,7 +221,7 @@ class ProcessGrid(DistributedDescriptor):
         return f"""
             if (__state->{self.name}_valid) {{
                 MPI_Group_free(&__state->{self.name}_group);
-                MPI_Comm_free(&__state->{self.name}_comm);
+                MPI_Comm_free(&__state->{self.name});
             }}
         """
 
@@ -265,7 +266,8 @@ class SubArray(DistributedDescriptor):
         self.subshape = subshape
         self.pgrid = pgrid
         self.correspondence = correspondence or list(range(len(shape)))
-        super().__init__(dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Scope, None)
+        super().__init__(dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Persistent,
+                         None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -301,6 +303,7 @@ class SubArray(DistributedDescriptor):
         ret = cls('tmp', dtypes.int8, [], [], 'tmp', [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.transient = True
+        ret.lifetime = dtypes.AllocationLifetime.Persistent
         # Check validity now
         ret.validate()
         return ret
@@ -408,7 +411,7 @@ class RedistrArray(DistributedDescriptor):
         self.array_a = array_a
         self.array_b = array_b
         super().__init__(dtypes.opaque('dace::comm::RedistrArray'), [], True, dtypes.StorageType.Default, None,
-                         dtypes.AllocationLifetime.Scope, None)
+                         dtypes.AllocationLifetime.Persistent, None)
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -433,6 +436,7 @@ class RedistrArray(DistributedDescriptor):
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.dtype = dtypes.opaque('dace::comm::RedistrArray')
         ret.transient = True
+        ret.lifetime = dtypes.AllocationLifetime.Persistent
         # Check validity now
         ret.validate()
         return ret

@@ -23,7 +23,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
-            comm = f"__state->{grid}_comm"
+            comm = "_grid"
 
         code = f"""
             int size;

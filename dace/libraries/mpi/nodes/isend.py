@@ -5,7 +5,8 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, input_descriptor_name,
+                                           validate_integer_descriptor)
 
 
 @dace.library.expansion
@@ -24,7 +25,7 @@ class ExpandIsendMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
-            comm = f"__state->{grid}_comm"
+            comm = "_grid"
 
         code = ""
 
@@ -96,8 +97,8 @@ class Isend(MPINode):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
 
-        # TODO: Should we expect any integer type for dst/tag and cast to int32 later?.
-        # TODO: Investigate further in the future.
+        validate_integer_descriptor(dest, 'Destination')
+        validate_integer_descriptor(tag, 'Tag')
 
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):

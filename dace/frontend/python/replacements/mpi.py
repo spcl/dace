@@ -31,7 +31,7 @@ def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeTy
     # Dummy tasklet adds MPI variables to the program's state.
     from dace.libraries.mpi import Dummy
     tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Comm {pgrid_name};',
         f'MPI_Group {pgrid_name}_group;',
         f'int {pgrid_name}_coords[{len(dims)}];',
         f'int {pgrid_name}_dims[{len(dims)}];',
@@ -86,7 +86,7 @@ def _cart_sub(pv: ProgramVisitor,
     # Dummy tasklet adds MPI variables to the program's state.
     from dace.libraries.mpi import Dummy
     tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Comm {pgrid_name};',
         f'MPI_Group {pgrid_name}_group;',
         f'int {pgrid_name}_coords[{pgrid_ndims}];',
         f'int {pgrid_name}_dims[{pgrid_ndims}];',

@@ -22,7 +22,7 @@ class ExpandAllreduceMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         grid = input_descriptor_name(node, parent_state, '_grid')
         if grid:
-            comm = f"__state->{grid}_comm"
+            comm = "_grid"
 
         buffer = '_inbuffer'
         if in_place:
