@@ -368,7 +368,7 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
     # ``utils/__init__.py`` imports ``map_predicates`` AND ``nsdfg_reshape``,
     # and pulling ``nsdfg_reshape`` in at this module's load time confuses
     # the partial-load ordering.
-    from dace.transformation.passes.vectorization.utils.nsdfg_reshape import find_state_of_nsdfg_node
+    from dace.transformation.passes.vectorization.utils.nsdfg_reshape import find_state_containing_node
     checked_map_entries = set()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -382,7 +382,7 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
                     parent_nsdfg = state.sdfg.parent_nsdfg_node
                     if parent_nsdfg is None:
                         continue
-                    parent_state = find_state_of_nsdfg_node(sdfg, node)
+                    parent_state = find_state_containing_node(sdfg, node)
                     parent_scope = parent_state.scope_dict()[parent_nsdfg]
                     if parent_scope is None or not isinstance(parent_scope, dace.nodes.MapEntry):
                         raise Exception(f"No NSDFGs that are not within Map scopes should be left, "

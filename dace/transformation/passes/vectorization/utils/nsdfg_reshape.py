@@ -69,20 +69,27 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
     return param_max_ranges
 
 
-def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG) -> dace.SDFGState:
-    """Return the ``SDFGState`` that contains ``nsdfg_node``.
+def find_state_containing_node(root_sdfg: dace.SDFG, node: dace.nodes.Node) -> dace.SDFGState:
+    """Return the ``SDFGState`` that contains ``node``.
+
+    Works for any node type — Tasklet, NestedSDFG, AccessNode, MapEntry,
+    etc. The only caller today (``map_predicates``) passes a Tasklet, so
+    the function is intentionally typed as general ``dace.nodes.Node``.
 
     Callers that need the containing ``SDFG`` should read it off the
-    returned state via ``state.sdfg``. The previous body returned the
-    root SDFG (not the state) despite the name and return annotation; it
-    was a name-vs-behaviour mismatch. Fixed to honour the signature.
+    returned state via ``state.sdfg``.
+
+    History: previously named ``find_state_of_nsdfg_node`` with a
+    return-type annotation of ``SDFGState`` but a body that returned
+    the root SDFG, then later fixed to return the state. Renamed now
+    so the name + param type reflect the actual contract.
     """
     for n, g in root_sdfg.all_nodes_recursive():
-        if n == nsdfg_node:
+        if n == node:
             if not isinstance(g, dace.SDFGState):
-                raise Exception(f"Expected a SDFGState container for {nsdfg_node}, got {type(g).__name__} ({g})")
+                raise Exception(f"Expected a SDFGState container for {node}, got {type(g).__name__} ({g})")
             return g
-    raise Exception(f"State of the nsdfg node ({nsdfg_node}) not found in the root SDFG ({root_sdfg.label})")
+    raise Exception(f"State containing the node ({node}) not found in the root SDFG ({root_sdfg.label})")
 
 
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
