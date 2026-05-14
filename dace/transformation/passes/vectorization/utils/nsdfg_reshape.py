@@ -192,6 +192,77 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
                                f"    Collapsed strided: {expected_shape_collapsed_strided}")
 
 
+def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tuple, new_shape: tuple,
+                                         expected_full: tuple, expected_strided: tuple,
+                                         expected_collapsed_strided: tuple, *, direction: str) -> None:
+    """Guard for ``fix_nsdfg_connector_array_shapes_mismatch``.
+
+    Three rebuild patterns are legitimate and must be allowed:
+    - **Narrowing**: rank-equal with every new dim ≤ original (cloudsc
+      case: ``(klon, klev) → (5, 9)`` slice).
+    - **Drop dims**: new rank < original (collapsed-full).
+    - **Placeholder expansion**: original has every dim == 1 — the
+      connector was the post-P1 / post-prepare_vectorized_array
+      single-element placeholder being expanded to the actual bbox
+      (strided 1D / multi-dim diagonal paths rely on this).
+
+    Reject only the genuinely-corrupting shape: rank-equal with at
+    least one new dim STRICTLY larger than a non-1 original dim. That
+    is the test-fixture case ``(3, 4) → (5, 9)`` where the inner SDFG
+    was sized for an actual range that the rebuild can't legitimately
+    grow past.
+
+    Raises:
+        ValueError: if the proposed rebuild expands a non-1 original
+            dim past its size, or grows the rank.
+    """
+    # Drop-dims case (new has fewer dims than original) — always
+    # allowed; the helper computes ``dims_to_keep`` separately.
+    if len(new_shape) < len(original_shape):
+        return
+
+    # Placeholder expansion (original is all-1s) — always allowed.
+    try:
+        all_ones = all(int(d) == 1 for d in original_shape)
+    except Exception:
+        all_ones = False
+    if all_ones:
+        return
+
+    def _int_or_none(x):
+        try:
+            return int(x)
+        except Exception:
+            return None
+
+    expands_real_dim = False
+    if len(new_shape) > len(original_shape):
+        # Rank-growth on a non-all-1s original — genuinely corrupting.
+        expands_real_dim = True
+    else:
+        # Rank-equal: flag if any non-1 original dim gets STRICTLY larger.
+        for orig_d, new_d in zip(original_shape, new_shape):
+            orig_int = _int_or_none(orig_d)
+            diff = _int_or_none(new_d - orig_d) if hasattr(new_d, "__sub__") else None
+            if diff is not None and diff > 0 and (orig_int is None or orig_int > 1):
+                expands_real_dim = True
+                break
+
+    if expands_real_dim:
+        raise ValueError(
+            f"fix_nsdfg_connector_array_shapes_mismatch ({direction}): connector "
+            f"{connector_name!r} has original shape {original_shape}; none of the four "
+            f"expected interpretations match and the candidate rebuild "
+            f"({new_shape}) would EXPAND a non-placeholder dim. Inner SDFG accesses "
+            f"can't legitimately address the larger range. Expected shapes considered:\n"
+            f"    Full:              {expected_full}\n"
+            f"    Strided:           {expected_strided}\n"
+            f"    Collapsed full:    {new_shape}\n"
+            f"    Collapsed strided: {expected_collapsed_strided}\n"
+            f"Fix the caller's connector shape or memlet subset to be consistent."
+        )
+
+
 def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
     """
     Automatically fix shape mismatches in nested SDFG connector arrays.
@@ -251,13 +322,25 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
         if shape_matches:
             continue  # No fix needed
 
-        # ===== Mismatch detected - fix it =====
+        # ===== Mismatch detected - decide rebuild vs raise =====
         # Cloudsc-class kernels pass the FULL outer-array shape as the
         # connector (e.g. ``(klon, klev)``) with a smaller memlet subset
         # (e.g. ``arr[8*i, 0:j+1]``); the rebuild to ``collapsed_full``
         # narrows the connector to the actual slice and is legitimate.
-        # A stricter raise here breaks those callers — the planned
-        # pass-through-subsets redesign will replace this whole function.
+        #
+        # The rebuild is ONLY safe when it NARROWS (drops dims or
+        # shrinks each surviving dim). When the rebuild would EXPAND
+        # the connector (any new dim is larger than the corresponding
+        # original dim), the inner SDFG's existing accesses can't
+        # legitimately address the larger range — raise loudly so the
+        # caller fixes its inputs, rather than silently corrupting
+        # downstream codegen.
+        _raise_on_expansion_rebuild_mismatch(connector_name, original_shape,
+                                             expected_shape_collapsed_full,
+                                             expected_shape_full,
+                                             expected_shape_strided,
+                                             expected_shape_collapsed_strided,
+                                             direction="in")
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
@@ -325,8 +408,14 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
         if shape_matches:
             continue  # No fix needed
 
-        # ===== Mismatch detected - fix it =====
+        # ===== Mismatch detected - decide rebuild vs raise =====
         # See input-edge branch above for the rationale.
+        _raise_on_expansion_rebuild_mismatch(connector_name, original_shape,
+                                             expected_shape_collapsed_full,
+                                             expected_shape_full,
+                                             expected_shape_strided,
+                                             expected_shape_collapsed_strided,
+                                             direction="out")
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
