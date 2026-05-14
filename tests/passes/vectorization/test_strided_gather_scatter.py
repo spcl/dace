@@ -1284,30 +1284,20 @@ def test_strided_store_fp32_stride_3_nondiv(remainder_strategy):
     )
 
 
-# Multi-dim strided (diagonal A[i,i]) + masked-remainder is a known gap.
-# Slice 1's ``_setup_strided_inside_nsdfg`` detects strided via the
-# stride-1 dim's bbox-volume formula ``(W-1)*stride+1``. For the
-# diagonal pattern the stride-1 dim's bbox volume is exactly W, so the
-# detector does NOT classify it as strided — but the row dim ALSO
-# varies with the lane index, giving an effective stride of N+1 that
-# the current handling doesn't see. Result: ``CopyND<1>`` loads one
-# element instead of W. Existing ``test_diagonal_gather_load`` /
-# ``test_diagonal_scatter_store`` only pass because they default to
-# ``lower_to_intrinsics=False`` and the C++ compiler auto-vectorizes
-# the per-lane fanout. The masked path requires ``True``, where the
-# auto-vectorize escape hatch isn't available.
-
-_MULTIDIM_MASKED_XFAIL = pytest.mark.xfail(
-    strict=True,
-    reason="multi-dim strided (diagonal A[i,i]) + lower_to_intrinsics=True is unhandled; "
-    "_setup_strided_inside_nsdfg detects 1D strided only. Needs multi-dim aware extension."
-)
+# Multi-dim strided (diagonal A[i,i]) under the NSDFG-wrapped scalar/masked
+# remainder path used to be an unhandled gap: Slice 1's
+# ``_setup_strided_inside_nsdfg`` only detected the 1D-strided shape
+# (single stride-1 dim with bbox > W). The diagonal pattern has bbox W
+# in each param-dim and the inter-lane stride lives in the cross-
+# stride sum (e.g. ``N + 1`` for ``A[i, i]``).  Flipped from xfail
+# after extending both ``_extend_memlets`` (expand each param-dim's
+# end to ``i + W - 1`` when the edge crosses an NSDFG boundary) and
+# ``_process_edges`` / ``_setup_strided_inside_nsdfg`` (recognise
+# wide-bbox multi-dim and emit a linearised-stride ``strided_load``
+# / ``strided_store`` inside the NSDFG body).
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    pytest.param("scalar", marks=_MULTIDIM_MASKED_XFAIL),
-    pytest.param("masked", marks=_MULTIDIM_MASKED_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_diagonal_gather_load_masked(remainder_strategy):
     N_val = 22
     A = numpy.random.rand(N_val, N_val)
@@ -1323,10 +1313,7 @@ def test_diagonal_gather_load_masked(remainder_strategy):
     )
 
 
-@pytest.mark.parametrize("remainder_strategy", [
-    pytest.param("scalar", marks=_MULTIDIM_MASKED_XFAIL),
-    pytest.param("masked", marks=_MULTIDIM_MASKED_XFAIL),
-])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_diagonal_scatter_store_masked(remainder_strategy):
     N_val = 22
     src = numpy.random.rand(N_val)

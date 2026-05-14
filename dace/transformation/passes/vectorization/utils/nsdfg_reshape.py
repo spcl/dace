@@ -513,7 +513,8 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
 
 def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                 inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str,
-                                orig_arr, vector_width: int, stride: int, *, direction: str) -> None:
+                                orig_arr, vector_width: int, stride: int, *, direction: str,
+                                multi_dim_param_dims: tuple = ()) -> None:
     """Wire a strided boundary edge into the NSDFG so the strided load /
     store happens INSIDE the NSDFG body.
 
@@ -526,17 +527,29 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
     Direction "out": symmetric — the body writes to ``<inner_conn>_vec``;
     a finish state runs ``strided_store<T>`` from the transient into the
     bbox-shaped connector; the outer edge carries the bbox subset.
+
+    ``multi_dim_param_dims`` (multi-dim diagonal / linear-combo case):
+    when non-empty, the bbox is expanded across ALL listed dims (each
+    set to ``vector_width``) instead of only the single stride-1 dim.
+    The ``stride`` argument is interpreted as a LINEARISED inter-lane
+    stride (e.g. ``N + 1`` for ``A[i, i]``) and the same
+    ``strided_load`` / ``strided_store`` intrinsic walks the W elements
+    through linear memory.
     """
     assert direction in ("in", "out")
-    # bbox shape: only the stride-1 dim is wider than W. Other dims are
-    # preserved from the original array.
     bbox_shape = list(orig_arr.shape)
-    stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
-    assert len(stride_one_indices) == 1, f"Strided-inside requires a single stride-1 dim; got {orig_arr.strides}"
-    stride_one_idx = stride_one_indices[0]
-    edge_b, edge_e, _ = edge.data.subset[stride_one_idx]
-    bbox_size = edge_e - edge_b + 1
-    bbox_shape[stride_one_idx] = bbox_size
+    if multi_dim_param_dims:
+        for d in multi_dim_param_dims:
+            bbox_shape[d] = vector_width
+    else:
+        # Single-stride-1-dim path (1D strided / s127 / s1111 shape).
+        stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
+        assert len(stride_one_indices) == 1, (
+            f"Strided-inside requires a single stride-1 dim; got {orig_arr.strides}")
+        stride_one_idx = stride_one_indices[0]
+        edge_b, edge_e, _ = edge.data.subset[stride_one_idx]
+        bbox_size = edge_e - edge_b + 1
+        bbox_shape[stride_one_idx] = bbox_size
 
     # Reshape the inner connector array to the bbox shape.
     if inner_conn in inner_sdfg.arrays:
@@ -571,10 +584,23 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
         # states becomes ``vec_name``. The connector's underlying array
         # (still named ``inner_conn``) stays bbox-shaped — only the prep
         # state reads it; the body sees ``vec_name`` instead.
+        #
+        # Multi-dim case: the inner connector array was N-D (bbox-shaped)
+        # and the body's point-access memlets were N-D too (e.g. ``A[0, 0]``).
+        # The W-wide transient ``__strided_buf_A`` is 1-D and holds the
+        # W gathered elements (one per lane), so the rename collapses
+        # the subset to 1-D ``[0 : W-1]`` — the downstream vector tasklet
+        # consumes the full W-wide buffer.
+        _flatten_subset = bool(multi_dim_param_dims)
+        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
+                                              dace.symbolic.SymExpr(vector_width - 1),
+                                              dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
             for inner_edge in inner_state.edges():
                 if inner_edge.data is not None and inner_edge.data.data == inner_conn:
                     inner_edge.data.data = vec_name
+                    if _flatten_subset and inner_edge.data.subset is not None:
+                        inner_edge.data.subset = copy.deepcopy(_flatten_range)
             for node in list(inner_state.nodes()):
                 if isinstance(node, dace.nodes.AccessNode) and node.data == inner_conn:
                     node.data = vec_name
@@ -605,10 +631,19 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
     else:
         # Direction "out": rewrite body's writes from inner_conn → vec_name;
         # add a finish state that strided_stores vec → connector.
+        # Multi-dim case: also collapse the subset to 1-D ``[0:W-1]``
+        # (same reason as the "in" direction above — the W-wide
+        # transient gets a vector-store from the body).
+        _flatten_subset = bool(multi_dim_param_dims)
+        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
+                                              dace.symbolic.SymExpr(vector_width - 1),
+                                              dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
             for inner_edge in inner_state.edges():
                 if inner_edge.data is not None and inner_edge.data.data == inner_conn:
                     inner_edge.data.data = vec_name
+                    if _flatten_subset and inner_edge.data.subset is not None:
+                        inner_edge.data.subset = copy.deepcopy(_flatten_range)
             for node in list(inner_state.nodes()):
                 if isinstance(node, dace.nodes.AccessNode) and node.data == inner_conn:
                     node.data = vec_name
@@ -671,21 +706,39 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
             inner_conn = e.dst_conn if direction == "in" else e.src_conn
 
             # Strided detection: BEFORE prepare_vectorized_array, check the
-            # OUTER edge's subset volume in the array's stride-1 dim. If the
-            # bbox is wider than ``vector_width``, the W lanes are at a fixed
-            # stride > 1 and we route the boundary through a strided_load /
-            # strided_store INSIDE the NSDFG body (not at the map_entry
-            # boundary). Stride formula: bbox = (W-1)*stride + 1.
+            # OUTER edge's subset. Two patterns:
+            #
+            # - 1D strided: a single stride-1 dim has bbox > W. Stride
+            #   is ``(bbox - 1) / (W - 1)``. Catches s127 / s1111 shape.
+            #
+            # - Multi-dim strided (e.g. diagonal ``A[i, i]``): two or
+            #   more dims have a W-wide bbox AND the original subset's
+            #   begin in those dims is per-lane-incrementing. The
+            #   linearised stride is computed from the array's per-dim
+            #   strides. Catches ``A[i, i]``, ``A[2*i, i]``, ``A[i, 2*i]``
+            #   patterns under the NSDFG-wrapped (P1+P2) path.
+            import sympy as _sp
             stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
             is_strided = False
             stride_value = 1
-            if len(stride_one_indices) == 1:
-                edge_b, edge_e, edge_s = e.data.subset[stride_one_indices[0]]
+            multi_dim_dims = ()
+
+            # Wide-bbox dims (per-dim bbox > 1 and step 1).
+            wide_dims = []
+            for d, (b, ee, s) in enumerate(e.data.subset):
+                if s != 1:
+                    continue
                 try:
-                    bbox_vol = int(edge_e - edge_b + 1)
+                    bw = int(ee - b + 1)
                 except (TypeError, ValueError):
-                    bbox_vol = None
-                if bbox_vol is not None and bbox_vol > vector_width and edge_s == 1:
+                    bw = None
+                if bw is not None and bw > 1:
+                    wide_dims.append((d, bw))
+
+            if len(wide_dims) == 1 and len(stride_one_indices) == 1 and wide_dims[0][0] == stride_one_indices[0]:
+                # 1D strided.
+                bbox_vol = wide_dims[0][1]
+                if bbox_vol > vector_width:
                     if vector_width <= 1 or (bbox_vol - 1) % (vector_width - 1) != 0:
                         raise NotImplementedError(
                             f"_process_edges (direction={direction!r}): outer subset on {orig_data} "
@@ -693,6 +746,50 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                             f"stride for vector_width={vector_width}.")
                     is_strided = True
                     stride_value = (bbox_vol - 1) // (vector_width - 1)
+            elif len(wide_dims) >= 2 and vector_width > 1:
+                # Multi-dim strided. Each wide dim must be W-bbox; the
+                # inter-lane stride is the sum of per-dim
+                # ``arr.strides[d] * coeff_of_inner_map_param`` across
+                # the wide dims. The inner map param isn't directly
+                # known to ``_process_edges``, but it's the symbol that
+                # is *common* across the wide dims' begins (every wide
+                # dim begin has the same lane-increment coefficient).
+                if all(bw == vector_width for _, bw in wide_dims):
+                    # Identify candidate map-param symbol: pick the free
+                    # symbol shared by every wide dim's begin expression.
+                    # Critically: pick the ACTUAL sympy/dace symbol
+                    # instance from the begins, not a fresh
+                    # ``_sp.Symbol(name)`` — dace.symbolic.symbol is a
+                    # subclass with its own identity, and
+                    # ``beg.coeff(_sp.Symbol(name))`` returns 0 even
+                    # when the begin contains the same-named dace
+                    # symbol.
+                    shared_syms_by_name = None
+                    begins = [e.data.subset[d][0] for d, _ in wide_dims]
+                    sym_by_name = {}
+                    for beg in begins:
+                        if not hasattr(beg, "free_symbols"):
+                            shared_syms_by_name = set()
+                            break
+                        bnames = set()
+                        for sym in beg.free_symbols:
+                            sym_by_name.setdefault(str(sym), sym)
+                            bnames.add(str(sym))
+                        shared_syms_by_name = bnames if shared_syms_by_name is None else shared_syms_by_name & bnames
+                    if shared_syms_by_name:
+                        map_sym_name = sorted(shared_syms_by_name)[0]
+                        map_sym = sym_by_name[map_sym_name]
+                        linear_stride = 0
+                        try:
+                            for d, _bw in wide_dims:
+                                beg = e.data.subset[d][0]
+                                coeff = beg.coeff(map_sym)
+                                linear_stride = linear_stride + coeff * orig_arr.strides[d]
+                            is_strided = True
+                            stride_value = linear_stride
+                            multi_dim_dims = tuple(d for d, _ in wide_dims)
+                        except Exception:
+                            pass
 
             if is_strided:
                 # Strided boundary (inside the NSDFG): the FULL bbox passes
@@ -706,7 +803,8 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                 # rename (``movable_data`` → ``VecNameScheme.make(movable_data)``)
                 # skips them — the connector keeps the original name.
                 _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn, orig_data,
-                                            orig_arr, vector_width, stride_value, direction=direction)
+                                            orig_arr, vector_width, stride_value, direction=direction,
+                                            multi_dim_param_dims=multi_dim_dims)
                 continue
 
             inout_data_name = None

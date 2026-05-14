@@ -236,17 +236,30 @@ class Vectorize(ppl.Pass):
 
     def _setup_strided_nsdfg_edges_inline(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                           map_param: str):
-        """For each NSDFG boundary edge whose stride-1-dim bbox exceeds
-        ``vector_width`` *and* whose begin scales with the map param
-        (so the W lanes land at stride > 1), call
-        ``_setup_strided_inside_nsdfg`` so the strided load/store
-        happens inside the NSDFG body.
+        """For each NSDFG boundary edge whose lane-fanout produces a
+        non-contiguous access pattern, call ``_setup_strided_inside_nsdfg``
+        so the strided load/store happens inside the NSDFG body.
+
+        Two patterns trigger the rewrite:
+
+        - **1D strided**: a single stride-1 dim with bbox volume > W and
+          ``map_param`` in the begin. Stride is ``(bbox - 1) / (W - 1)``.
+          Catches TSVC s127 / s1111-shape outer-scatter patterns.
+
+        - **Multi-dim strided** (e.g. diagonal ``A[i, i]``): two or more
+          dims of the outer subset have ``map_param`` in their begin and
+          a W-wide bbox (set by ``_extend_memlets``' multi-dim branch).
+          The linearised stride is the sum of ``arr.strides[d] *
+          coeff_of_map_param_in_dim_d`` across the param-dims.  Catches
+          ``A[i, i]``, ``A[2*i, i]``, ``A[i, 2*i]`` under masked /
+          scalar remainder + ``lower_to_intrinsics=True``.
 
         Runs independently of ``insert_copies`` — the strided body
         rewrite is required for correctness when an outer scatter /
-        gather pattern is wrapped in an NSDFG (TSVC s127 / s1111).
-        Contiguous full-slice edges (begin without the map param) are
-        not strided and pass through to the standard reshape path."""
+        gather pattern is wrapped in an NSDFG. Contiguous full-slice
+        edges (begin without the map param) pass through to the
+        standard reshape path."""
+        import sympy as _sp
         inner_sdfg = nsdfg_node.sdfg
         for direction in ("in", "out"):
             edges = (list(state.in_edges(nsdfg_node)) if direction == "in"
@@ -255,32 +268,84 @@ class Vectorize(ppl.Pass):
                 if e.data.data is None or e.data.subset is None:
                     continue
                 arr = state.sdfg.arrays[e.data.data]
+
+                # Classify each dim:
+                # - param_dims_wide: param appears in begin, bbox > 1 (the lanes scatter here)
+                # - any_param_dims: param appears in begin (regardless of bbox)
+                param_dims_wide = []
+                any_param_dims = []
+                map_sym = _sp.Symbol(map_param)
+                for d, (b, ee, s) in enumerate(e.data.subset):
+                    if not hasattr(b, "free_symbols"):
+                        continue
+                    if map_param not in {str(sym) for sym in b.free_symbols}:
+                        continue
+                    any_param_dims.append(d)
+                    try:
+                        bbox_vol_d = int(ee - b + 1)
+                    except (TypeError, ValueError):
+                        bbox_vol_d = None
+                    if s == 1 and bbox_vol_d is not None and bbox_vol_d > 1:
+                        param_dims_wide.append((d, bbox_vol_d))
+
+                if not param_dims_wide:
+                    continue
+
+                # 1D strided path (existing): exactly one stride-1 dim is
+                # the param-bearing wide dim, bbox > W. Stride is
+                # ``(bbox - 1) / (W - 1)``.
                 stride_one_dims = [d for d, st in enumerate(arr.strides) if st == 1]
-                if len(stride_one_dims) != 1:
+                is_single_dim_strided = (len(param_dims_wide) == 1
+                                         and len(stride_one_dims) == 1
+                                         and param_dims_wide[0][0] == stride_one_dims[0]
+                                         and param_dims_wide[0][1] > self.vector_width)
+
+                if is_single_dim_strided and self.vector_width > 1:
+                    bbox_vol = param_dims_wide[0][1]
+                    if (bbox_vol - 1) % (self.vector_width - 1) != 0:
+                        raise NotImplementedError(
+                            f"Vectorize: strided NSDFG edge on {e.data.data} has bbox "
+                            f"volume {bbox_vol}; (W-1)*stride+1 doesn't yield an "
+                            f"integer stride for vector_width={self.vector_width}.")
+                    stride_value = (bbox_vol - 1) // (self.vector_width - 1)
+                    inner_conn = e.dst_conn if direction == "in" else e.src_conn
+                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                                e.data.data, arr, self.vector_width, stride_value,
+                                                direction=direction)
                     continue
-                b, ee, s = e.data.subset[stride_one_dims[0]]
-                if s != 1:
-                    continue
-                try:
-                    bbox_vol = int(ee - b + 1)
-                except (TypeError, ValueError):
-                    continue
-                if bbox_vol <= self.vector_width or self.vector_width <= 1:
-                    continue
-                if not hasattr(b, "free_symbols"):
-                    continue
-                if map_param not in {str(sym) for sym in b.free_symbols}:
-                    continue
-                if (bbox_vol - 1) % (self.vector_width - 1) != 0:
-                    raise NotImplementedError(
-                        f"Vectorize: strided NSDFG edge on {e.data.data} has bbox "
-                        f"volume {bbox_vol}; (W-1)*stride+1 doesn't yield an "
-                        f"integer stride for vector_width={self.vector_width}.")
-                stride_value = (bbox_vol - 1) // (self.vector_width - 1)
-                inner_conn = e.dst_conn if direction == "in" else e.src_conn
-                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                            e.data.data, arr, self.vector_width, stride_value,
-                                            direction=direction)
+
+                # Multi-dim strided path: param-bearing dims expand to bbox W
+                # each, and the linearised inter-lane stride is the sum of
+                # ``arr.strides[d] * coeff(d)`` where ``coeff(d)`` is the
+                # coefficient of ``map_param`` in dim d's begin expression.
+                # For ``A[i, i]``: dim 0 has coeff 1 + stride N; dim 1 has
+                # coeff 1 + stride 1 → linear stride = N + 1.
+                if len(param_dims_wide) >= 2 and self.vector_width > 1:
+                    # Every wide param-dim's bbox must equal W (sanity).
+                    if not all(bw == self.vector_width for _, bw in param_dims_wide):
+                        raise NotImplementedError(
+                            f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} has "
+                            f"non-W bbox per param-dim: {param_dims_wide}; only W per dim is "
+                            f"supported today.")
+                    linear_stride = 0
+                    for d, _bw in param_dims_wide:
+                        b, _ee, _s = e.data.subset[d]
+                        # Coefficient of map_param in b. ``b.coeff(sym)`` returns
+                        # the integer/symbolic coefficient or 0 if absent.
+                        try:
+                            coeff = b.coeff(map_sym)
+                        except Exception:
+                            coeff = None
+                        if coeff is None:
+                            raise NotImplementedError(
+                                f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} dim "
+                                f"{d} has non-linear param dependence ({b}); only linear "
+                                f"begins supported.")
+                        linear_stride = linear_stride + coeff * arr.strides[d]
+                    inner_conn = e.dst_conn if direction == "in" else e.src_conn
+                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                                e.data.data, arr, self.vector_width, linear_stride,
+                                                direction=direction, multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
@@ -1009,12 +1074,21 @@ class Vectorize(ppl.Pass):
                         param_dims.append(d)
 
                 if len(param_dims) > 1:
-                    # Linear-combination access (e.g. A[i,i], A[2*i,i], A[i,2*i]) is
-                    # permitted by the entry-side precondition. Leave the per-iteration
-                    # scalar subset alone here — _generate_strided_loads_to_packed_storage
-                    # (or its store sibling) emits per-lane fan-out, and the post-emit
-                    # strided detector linearises the multi-dim subsets through array
-                    # strides. Verified at entry by map_param_dim_usage_is_linear_combo.
+                    # Linear-combination access (e.g. A[i,i], A[2*i,i], A[i,2*i]).
+                    # Bare-tasklet path: ``_generate_strided_loads_to_packed_storage``
+                    # emits per-lane fan-out, the post-emit ``DetectMultiDimStrided{Load,Store}``
+                    # then collapses to a single ``strided_load`` intrinsic.  In that path
+                    # the subset stays scalar — the per-lane tasklets carry the
+                    # individual ``i`` values via the cloned inner map.
+                    #
+                    # NSDFG-wrapped path (P1+P2 scalar/masked): the bare-tasklet
+                    # fan-out is skipped because ``has_single_nested_sdfg=True``;
+                    # ``_setup_strided_nsdfg_edges_inline`` instead emits a
+                    # multi-dim ``strided_load`` *inside* the NSDFG. For that to
+                    # work the outer memlet must be the **W-lane bbox** so the
+                    # connector array gets reshaped to the full window the
+                    # diagonal walks.  Expand each param-dim's end via
+                    # ``i -> i + (W - 1)`` (same formula as the 1D branch).
                     for d in param_dims:
                         b, e, _ = new_range_list[d]
                         if b != e:
@@ -1022,7 +1096,28 @@ class Vectorize(ppl.Pass):
                                 f"Vectorize: multi-dim param {used_param} on a non-point subset "
                                 f"(dim {d}: {b}..{e}) of memlet {memlet} on edge {edge} "
                                 f"(state {state.label}); only point accesses A[c*i+d, ...] supported")
-                    new_memlet = dace.memlet.Memlet(data=memlet.data, subset=dace.subsets.Range(new_range_list))
+                    # When the edge crosses an NSDFG boundary (multi-dim
+                    # strided rewrite will fire inside the NSDFG), expand
+                    # each param-bearing dim to the W-lane bbox.  For the
+                    # bare-tasklet path (no NSDFG below the map) leave
+                    # subsets scalar so per-lane fan-out keeps working.
+                    edge_crosses_nsdfg = (isinstance(edge.dst, dace.nodes.NestedSDFG)
+                                          or isinstance(edge.src, dace.nodes.NestedSDFG))
+                    if edge_crosses_nsdfg:
+                        new_range_list_expanded = list(new_range_list)
+                        for d in param_dims:
+                            lb, le, ls = new_range_list_expanded[d]
+                            if isinstance(le, int):
+                                le = dace.symbolic.SymExpr(str(le))
+                            new_le = le.subs(
+                                param_sym,
+                                dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
+                            new_range_list_expanded[d] = (lb, new_le, ls)
+                        new_memlet = dace.memlet.Memlet(data=memlet.data,
+                                                        subset=dace.subsets.Range(new_range_list_expanded))
+                    else:
+                        new_memlet = dace.memlet.Memlet(data=memlet.data,
+                                                        subset=dace.subsets.Range(new_range_list))
                     self._assert_no_other_subset(memlet, edge, state)
                     state.remove_edge(edge)
                     state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
