@@ -1,5 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import re
 import dace
 from typing import Any, Dict, Optional, Set, Union
@@ -44,8 +43,7 @@ class LiftTrivialIf(ppl.Pass):
             return False
 
         # Primary: pystr_to_symbolic already handles Python and/or/not and
-        # comparison operators, matching how DeadStateElimination evaluates
-        # branch conditions. We require a concrete literal back -- bool() of
+        # comparison operators, We require a concrete literal back -- bool() of
         # an unevaluated sympy expression (e.g. `A[0]` -> Function(0)) is
         # truthy, which would mis-classify dynamic conditions as trivial.
         try:
@@ -56,9 +54,9 @@ class LiftTrivialIf(ppl.Pass):
         except Exception:
             pass
 
-        # Fallback: Fortran-frontend SDFGs produce nested comparisons like
-        # `(a == 1) == 0` that sympy refuses to compare against an int.
-        # Rewrite boolean ops/literals to arithmetic over 0/1 and let
+        # Fallback: Some SDFGs (e.g. Fortran frontend) produce nested comparisons like
+        # `(a == 1) == 0` that sympy refuses to compare bool against an int.
+        # Try as best effort to rewrite boolean ops/literals to arithmetic over 0/1 and let
         # SymExpr.simplify reduce it.
         try:
             tokens = re.split(r'(\s+|[()\[\]])', code.as_string)
@@ -85,7 +83,7 @@ class LiftTrivialIf(ppl.Pass):
             if isinstance(cfb, ConditionalBlock):
                 # Supported variants:
                 # 1. if (cond) where cond is always true
-                # 2. if (cond) else
+                # 2. if (cond) else ()
                 # 2.1 where cond is always true
                 # 2.2 cond is always false
                 conditions_and_cfgs = cfb.branches
@@ -113,7 +111,6 @@ class LiftTrivialIf(ppl.Pass):
                     elif self._trivially_false(not_none_cond):  #2.2
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
-        # Remove trivial Ifs
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
             move_branch_cfg_up_discard_conditions(cfb, cfg)
             assert cfb not in graph.nodes()

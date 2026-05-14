@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from dace.sdfg.sdfg import ConditionalBlock
 from dace.sdfg.state import ControlFlowRegion
@@ -6,25 +6,9 @@ from dace.sdfg.state import ControlFlowRegion
 
 def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
     """
-    Moves a branch of a conditional block up in the control flow graph (CFG),
-    replacing the conditional with the selected branch, discarding
-    the conditional check and other branches.
-
-    This operation:
-    - Copies all nodes and edges from the selected branch (`body_to_take`) into
-      the parent graph of the conditional.
-    - Connects all incoming edges of the original conditional block to the
-      start of the selected branch.
-    - Connects all outgoing edges of the original conditional block to the
-      end of the selected branch.
-    - Removes the original conditional block from the graph.
-
-    Parameters:
-        -if_block : ConditionalBlock
-            The conditional block in the CFG whose branch is to be promoted.
-        -body_to_take : ControlFlowRegion
-            The branch of the conditional block to be moved up. Must be one of the
-            branches of `if_block`.
+    Moves a branch of a conditional block up in the control flow graph (if_block) (CFG),
+    replacing the conditional with the selected branch (body_to_take), discarding
+    the conditional check and other branches. Connects the body to previous in and out neighbors of the CFG.
     """
     bodies = {b for _, b in if_block.branches}
     assert body_to_take in bodies

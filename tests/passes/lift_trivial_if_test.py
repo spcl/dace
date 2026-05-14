@@ -1,5 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
@@ -35,7 +34,7 @@ cant_eval = ["a < 5", "c == 0", "d >= 1"]
 # Conditions where pystr_to_symbolic yields an unevaluated symbolic
 # expression (Function/Indexed/Symbol). bool() of such an expression is
 # truthy, which would mis-classify dynamic dataflow conditions like
-# `A[0]` as trivially true. Regression guard for that bug.
+# `A[0]` as trivially true.
 dynamic_runtime_cond = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
@@ -203,9 +202,8 @@ def test_cfg_is_a_middle_node():
 
 
 # Fortran frontends emit conditions of the form ``(x == y) == 0/1`` (a
-# comparison of a comparison to an integer). Regression net for the
-# pystr_to_symbolic path: if these ever stop folding to True/False the
-# pass would silently miss real trivial-if cases in Fortran SDFGs.
+# comparison of a comparison to an integer). Sympy fails to evaluate this due to mismatching types.
+# If these ever stop folding to True/False the pass would silently miss real trivial-if cases in Fortran SDFGs.
 @pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(2 == 2) == 1", "(0 == 1) == 0"])
 def test_fortran_style_nested_comparison_true(condition: str):
     sdfg = _get_sdfg(condition)
@@ -215,10 +213,7 @@ def test_fortran_style_nested_comparison_true(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-# Regression: dynamic (runtime-dataflow) conditions must NOT be treated as
-# trivially true/false. Before this guard, pystr_to_symbolic produced an
-# unevaluated sympy expression (Function/Indexed/Symbol) whose bool() was
-# truthy, causing the pass to eliminate live branches.
+# Dynamic (runtime-dataflow) conditions must NOT be treated as trivially true/false.
 @pytest.mark.parametrize("condition", dynamic_runtime_cond)
 def test_dynamic_runtime_cond_not_trivial(condition: str):
     sdfg = _get_sdfg(condition)
