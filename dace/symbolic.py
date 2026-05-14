@@ -1430,8 +1430,20 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         return result
 
     @staticmethod
+    def _add(*args):
+        return sympy.Add._from_args(tuple(args))
+
+    @staticmethod
+    def _mul(*args):
+        return sympy.Mul._from_args(tuple(args))
+
+    @staticmethod
+    def _pow(a, b):
+        return sympy.Pow(a, b, evaluate=False)
+
+    @staticmethod
     def _binop_add(a, b):
-        return sympy.Add(*_SerializedSymbolicParser._flatten_args(sympy.Add, a, b), evaluate=False)
+        return _SerializedSymbolicParser._add(*_SerializedSymbolicParser._flatten_args(sympy.Add, a, b))
 
     @staticmethod
     def _negate(a):
@@ -1439,30 +1451,30 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return TypedConstant(-a.value, dtype=a.dtype)
         if isinstance(a, sympy.Number):
             return -a
-        return sympy.Mul(sympy.S.NegativeOne, a, evaluate=False)
+        return _SerializedSymbolicParser._mul(sympy.S.NegativeOne, a)
 
     @staticmethod
     def _binop_sub(a, b):
-        return sympy.Add(*_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b)),
-                         evaluate=False)
+        return _SerializedSymbolicParser._add(
+            *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b)))
 
     @staticmethod
     def _binop_mul(a, b):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
         if len(args) > 1:
-            args = [arg for arg in args if not getattr(arg, 'is_Number', False) or not equal_valued(arg, 1)]
+            args = [arg for arg in args if not getattr(arg, 'is_number', False) or not equal_valued(arg, 1)]
         if not args:
             return sympy.Integer(1)
-        return sympy.Mul(*args, evaluate=False)
+        return _SerializedSymbolicParser._mul(*args)
 
     @staticmethod
     def _binop_div(a, b):
-        return sympy.Mul(*_SerializedSymbolicParser._flatten_args(sympy.Mul, a, sympy.Pow(b, -1, evaluate=False)),
-                         evaluate=False)
+        return _SerializedSymbolicParser._mul(
+            *_SerializedSymbolicParser._flatten_args(sympy.Mul, a, _SerializedSymbolicParser._pow(b, -1)))
 
     @staticmethod
     def _binop_pow(a, b):
-        return sympy.Pow(a, b, evaluate=False)
+        return _SerializedSymbolicParser._pow(a, b)
 
     @staticmethod
     def _binop_mod(a, b):
@@ -1609,13 +1621,15 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return TypedConstant(value, dtype)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
-            symname = self.visit(node.args[0])
-            if not isinstance(symname, symbol):
-                raise TypeError('symbol(...) expects its first argument to deserialize to a symbol instance, '
-                                f'got {type(symname).__name__}')
+            if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+                raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
+            symname = node.args[0].id
+            if not symname.startswith(_SERIALIZED_SYMBOL_PREFIX):
+                raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
+            symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
-            return symbol(symname.name, dtype=dtype, **kwargs)
+            return symbol(symname, dtype=dtype, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
             args = [self.visit(arg) for arg in node.args]
@@ -1707,10 +1721,13 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         _flatten(expr)
         parts = []
         for i, arg in enumerate(flat_args):
-            negative = isinstance(arg, sympy.Mul) and arg.args and arg.args[0] == -1
-            if negative:
-                arg = arg.args[1] if len(arg.args) == 2 else sympy.Mul(*arg.args[1:], evaluate=False)
-
+            negative = False
+            if isinstance(arg, sympy.Number) and arg < 0:
+                negative = True
+                arg = -arg
+            elif isinstance(arg, sympy.Basic) and arg.could_extract_minus_sign():
+                negative = True
+                arg = -arg
             rendered = self._print(arg)
             if i == 0:
                 parts.append(f'-{rendered}' if negative else rendered)
@@ -1730,7 +1747,19 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
         _flatten(expr)
         if len(flat_args) > 1:
-            flat_args = [arg for arg in flat_args if not getattr(arg, 'is_Number', False) or not equal_valued(arg, 1)]
+            flat_args = [arg for arg in flat_args if not getattr(arg, 'is_number', False) or not equal_valued(arg, 1)]
+
+        coeff = sympy.S.One
+        nonnumeric_args = []
+        for arg in flat_args:
+            if not isinstance(arg, TypedConstant) and getattr(arg, 'is_number', False):
+                coeff *= arg
+            else:
+                nonnumeric_args.append(arg)
+        if coeff != 1 or not nonnumeric_args:
+            flat_args = [coeff] + nonnumeric_args
+        else:
+            flat_args = nonnumeric_args
 
         parts = []
         for arg in flat_args:

@@ -120,6 +120,22 @@ def test_same_name_symbols_with_different_dtypes_serialize_independently():
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
+def test_typed_symbol_deserialization_does_not_strip_dtype():
+    serialized = '2*(1 + symbol($M, dtype=dace.int64))*symbol($M, dtype=dace.int64)'
+
+    restored = symbolic.deserialize_symbolic(serialized)
+
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
+def test_rational_addition_roundtrip_preserves_serialization():
+    serialized = '-10/3 + 1/3*$i'
+
+    restored = symbolic.deserialize_symbolic(serialized)
+
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
 def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
     prop = ListProperty(element_type=sympy.Basic)
 
