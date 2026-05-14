@@ -98,7 +98,17 @@ class SplitMapForVectorRemainder(ppl.Pass):
         # New trailing-edge for the main map. main runs lb..main_end inclusive
         # with step 1 (the vector body is W-wide; emission then takes W-strided
         # care of it). The remainder runs main_end+1..ub.
-        main_end = lb + ((trip // W) * W) - 1
+        #
+        # Use ``dace.symbolic.int_floor`` (NOT sympy's ``//``) so the C++
+        # codegen emits correct integer division.  sympy simplifies
+        # ``(LEN_1D - 1) // 8`` to ``floor(LEN_1D/8 - 1/8)`` which the
+        # codegen prints as ``(LEN_1D / 8) - (1 / 8)`` — in C++ integer
+        # division ``1 / 8`` is 0, so the main bound becomes ``LEN_1D / 8``
+        # instead of ``(LEN_1D - 1) / 8``.  For ``LEN_1D=64, range=63`` the
+        # main loop then iterates one extra W-tile (up to index 63 instead
+        # of stopping at 55), overwriting pre-loop scalar writes to
+        # ``a[LEN_1D - 1]`` (TSVC s2244 failure).
+        main_end = lb + (symbolic.int_floor(trip, W) * W) - 1
         rem_start = main_end + 1
 
         # Replicate the entire scope (entry + body + exit) for the remainder.

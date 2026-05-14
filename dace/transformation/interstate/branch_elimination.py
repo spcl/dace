@@ -800,8 +800,11 @@ class BranchElimination(transformation.MultiStateTransformation):
                     for access in accesses:
                         arr = state.sdfg.arrays[access.data]
                         if arr.dtype not in dace.dtypes.FLOAT_TYPES and arr.dtype not in dace.dtypes.INT_TYPES:
+                            # ``write`` is the dataname string from
+                            # ``state.read_and_write_sets()`` — print it
+                            # directly (not ``write.data``).
                             print(
-                                f"[can_be_applied] Storage of '{write.data}' is not a floating/int point type has type: {arr.dtype}"
+                                f"[can_be_applied] Storage of '{write}' is not a floating/int point type has type: {arr.dtype}"
                             )
                             return False
 
@@ -910,8 +913,11 @@ class BranchElimination(transformation.MultiStateTransformation):
                     for access in accesses:
                         arr = state.sdfg.arrays[access.data]
                         if arr.dtype not in dace.dtypes.FLOAT_TYPES and arr.dtype not in dace.dtypes.INT_TYPES:
+                            # ``write`` is the dataname string from
+                            # ``state.read_and_write_sets()``; it doesn't
+                            # have a ``.data`` attribute. Use it directly.
                             print(
-                                f"[can_be_applied] Storage of '{write.data}' is not a floating/int point type has type: {arr.dtype}"
+                                f"[can_be_applied] Storage of '{write}' is not a floating/int point type has type: {arr.dtype}"
                             )
                             return False
 

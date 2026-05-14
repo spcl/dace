@@ -1439,6 +1439,48 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
+    def _print_floor(self, expr):
+        """sympy ``floor(...)`` printer.
+
+        sympy's ``//`` operator on symbolic integers (e.g. ``(LEN - 1) // 8``)
+        simplifies to ``floor(LEN/8 - 1/8)`` where ``1/8`` becomes a
+        ``Rational(1, 8)``.  Without this override the printer emits a
+        literal ``floor(LEN_1D/8 - 1/8)`` which in C++ becomes
+        ``floor(int / int - int / int)`` — and integer ``1 / 8`` is ``0``
+        so the floor argument collapses to ``LEN_1D / 8`` instead of
+        ``(LEN_1D - 1) / 8``.  TSVC s2244-shape kernels (pre-loop scalar
+        write + ``range(N - 1)`` body) silently overran the loop bound
+        because of this.
+
+        Recombine: if the floor argument is an addition of fractions
+        with a common denominator (sympy's natural simplification),
+        reassemble the numerator and emit a single
+        ``((numerator) / (denominator))`` integer division.  Otherwise
+        fall through to the math-library ``floor(...)`` call.
+        """
+        if not self.cpp_mode:
+            return super()._print_Function(expr) if hasattr(super(), "_print_Function") else super()._print_floor(expr)
+        arg = expr.args[0]
+        # Try to combine to a single ``Rational(num, den)``: when arg is
+        # ``a/b + c/d + ...`` sympy's ``.together()`` rewrites to a
+        # single fraction over a common denominator.  ``as_numer_denom``
+        # then splits it cleanly.
+        try:
+            arg_together = arg.together()
+            num, den = arg_together.as_numer_denom()
+        except Exception:
+            num, den = None, None
+        if num is not None and den is not None:
+            try:
+                den_int = int(den)
+            except (TypeError, ValueError):
+                den_int = None
+            if den_int is not None and den_int != 1 and den_int != 0:
+                return '((%s) / (%s))' % (self._print(num), self._print(den))
+        # Fallback: pure-real floor (e.g. ``floor(sin(x))``); emit the
+        # math-library call.
+        return 'floor(%s)' % self._print(arg)
+
     def _print_Equality(self, expr):
         return '((%s) == (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
