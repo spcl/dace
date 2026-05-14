@@ -150,7 +150,7 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
                     shape = getattr(desc, 'shape', None)
                     if shape is not None and tuple(shape) == (1, ):
                         rhs = f"{rhs_name}[0]"
-        ctx.flush(builder)
+        ctx.flush(builder, region)
         ctx.ensure(region)
         dst = region.add_state(f"post_{n.target}_{builder.nid()}")
         region.add_edge(ctx.cur, dst, InterstateEdge(assignments={n.target: rhs}))
@@ -234,7 +234,7 @@ def emit_symbol_init(builder, ctx: '_Ctx', n, region):
     sym, arr, one_based = n.target, n.expr, int(n.loop_lower)
     if sym not in ctx.sdfg.symbols:
         ctx.sdfg.add_symbol(sym, dace.int64)
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     ctx.ensure(region)
     dst = region.add_state(f"sym_init_{sym}_{builder.nid()}")
     # If ``arr`` is a Scalar on the SDFG (the bridge folds length-1
@@ -413,7 +413,7 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
                 emit_loop(builder, inner_ctx, c, loop, iter_map)
             elif c.kind == "assign":
                 emit_assign(builder, inner_ctx, c, loop)
-        inner_ctx.flush(builder)
+        inner_ctx.flush(builder, loop)
     elif child_assigns:
         # Inline indirect accesses (``z_kin(edge_idx(jc,k), jk)``) mint a
         # fresh ``<arr>_at<gid>`` SDFG symbol per occurrence; the value is
@@ -528,7 +528,7 @@ def emit_while(builder, ctx: '_Ctx', n, region):
     condition is ``True`` (the bridge's faithful walker folds any
     break-on-false into a ``break`` child node inside the body).
     """
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     # ``?`` is the bridge's placeholder for an unextractable condition.
     # Default to ``True`` so ast.parse succeeds and leaves the faithful
     # structure visible in the SDFG for inspection.

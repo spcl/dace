@@ -2200,6 +2200,25 @@ struct FlattenStructsPass
             attrs.append("uniq_name",
                          mlir::StringAttr::get(ctx,
                                                baseName + "_" + memName));
+            // Pointer / allocatable struct member: the declare carries
+            // the shape in its runtime box descriptor, not as a static
+            // shape op.  Without the matching Fortran attr,
+            // ``extract_vars`` won't peel through the box+ptr/heap
+            // wrappers to find the inner SequenceType and the flat
+            // companion ends up classified as a scalar of dtype
+            // ``!fir.box<!fir.ptr<...>>`` -- yielding KeyError on the
+            // synthesised ``<companion>_d<i>`` extent symbol when
+            // ``arglist()`` later collects free symbols.
+            if (auto box = mlir::dyn_cast<fir::BoxType>(memTy)) {
+                if (mlir::isa<fir::PointerType, fir::HeapType>(box.getEleTy())) {
+                    bool isPointer = mlir::isa<fir::PointerType>(box.getEleTy());
+                    attrs.append("fortran_attrs",
+                                 fir::FortranVariableFlagsAttr::get(
+                                     ctx,
+                                     isPointer ? fir::FortranVariableFlagsEnum::pointer
+                                               : fir::FortranVariableFlagsEnum::allocatable));
+                }
+            }
             attrs.append(declareSegments(b, /*hasShape=*/shape != nullptr));
 
             auto newDecl = b.create<hlfir::DeclareOp>(
@@ -2220,29 +2239,42 @@ struct FlattenStructsPass
             collapseAosAllocReads(argDecl, kv.first(), kv.second);
         }
 
-        // Rewrite designates on the struct declare.  For AoS, the
-        // direct user is an indexed designate (no component) on the
-        // outer array; the actual component-designate is its child.
-        llvm::SmallVector<hlfir::DesignateOp, 16> designates;
-        for (auto *u : argDecl.getResult(0).getUsers()) {
-            auto dg = mlir::dyn_cast<hlfir::DesignateOp>(u);
-            if (!dg) continue;
-            bool hasComponent = false;
-            for (auto nm : {"component_name", "component"})
-                if (dg->getAttrOfType<mlir::StringAttr>(nm)) {
-                    hasComponent = true;
-                    break;
+        // Rewrite designates on the struct declare.  AoS dummies (the
+        // outer is an array of struct) carry a concat path: the direct
+        // user is an indexed designate (no component) on the outer
+        // array, and the component-designate is its child.  The simple
+        // walk handles those.  For scalar struct dummies (no AoS), use
+        // ``rewriteChainsRootedAt`` so designates rooted at an inlined-
+        // callee's alias declare ( ``hlfir.declare %p_int#0 ... uniq_name
+        // = "...ptr_int"`` in the body of an inlined ``rot_vertex_ri``
+        // call) also fold to the flat companion -- without this, the
+        // alias declare keeps the original struct declare alive and the
+        // bail at "use_empty" leaves ``p_int`` as a dangling SDFG free
+        // symbol later on.
+        if (outerIsArray) {
+            llvm::SmallVector<hlfir::DesignateOp, 16> designates;
+            for (auto *u : argDecl.getResult(0).getUsers()) {
+                auto dg = mlir::dyn_cast<hlfir::DesignateOp>(u);
+                if (!dg) continue;
+                bool hasComponent = false;
+                for (auto nm : {"component_name", "component"})
+                    if (dg->getAttrOfType<mlir::StringAttr>(nm)) {
+                        hasComponent = true;
+                        break;
+                    }
+                if (hasComponent) {
+                    designates.push_back(dg);
+                    continue;
                 }
-            if (hasComponent) {
-                designates.push_back(dg);
-                continue;
+                // Pure indexed designate (A(i) on AoS dummy)  --  collect children.
+                for (auto *cu : dg.getResult().getUsers())
+                    if (auto cdg = mlir::dyn_cast<hlfir::DesignateOp>(cu))
+                        designates.push_back(cdg);
             }
-            // Pure indexed designate (A(i) on AoS dummy)  --  collect children.
-            for (auto *cu : dg.getResult().getUsers())
-                if (auto cdg = mlir::dyn_cast<hlfir::DesignateOp>(cu))
-                    designates.push_back(cdg);
+            for (auto dg : designates) rewriteDesignate(dg, memberBase, concatMembers);
+        } else {
+            rewriteChainsRootedAt(argDecl, memberBase);
         }
-        for (auto dg : designates) rewriteDesignate(dg, memberBase, concatMembers);
 
         // Erase the old declare; if other ops still reference its results
         // something went sideways and we leave the block arg in place rather

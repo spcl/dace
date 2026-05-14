@@ -38,7 +38,7 @@ def emit_copy(builder, ctx, n, region):
     """Whole-array ``b = a`` -> ``CopyLibraryNode`` with ``_in`` / ``_out``
     memlets covering the full source / destination arrays."""
     from dace.libraries.standard.nodes import CopyLibraryNode
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     ctx.ensure(region)
     state = ctx.cur
 
@@ -63,7 +63,7 @@ def emit_memset(builder, ctx, n, region):
     array lands in a new state (and on a new access node) instead of
     racing with the array-wide write inside one state's DAG."""
     from dace.libraries.standard.nodes import MemsetLibraryNode
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     ctx.ensure(region)
     state = ctx.cur
 
@@ -112,7 +112,7 @@ def emit_libcall(builder, ctx, n, region):
     """
     from dace.frontend.hlfir.intrinsics import libnode_spec
 
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     ctx.ensure(region)
     state = ctx.cur
 
@@ -187,7 +187,7 @@ def emit_reduce(builder, ctx, n, region):
     """
     from dace.frontend.hlfir.builder.access import build_memlet_index
 
-    ctx.flush(builder)
+    ctx.flush(builder, region)
     ctx.ensure(region)
     state = ctx.cur
 
