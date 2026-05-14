@@ -30,7 +30,7 @@ SUBROUTINE zbeta_kernel(n, zqsliq, ztp1, zesatliq, zcorr2, zevap_denom, &
   ! Exact extract of cloudsc.F90 lines 3158-3161 (4.5a RAIN evap,
   ! IEVAPRAIN=2, Abel-Boutle):
   !
-  !   ZBETA = (0.5_JPRB/ZQSLIQ(JL,JK))*ZTP1(JL,JK)**2._JPRB*ZESATLIQ* &
+  !   ZBETA = (0.5_JPRB/ZQSLIQ(JL,JK))*ZTP1(JL,JK)**2*ZESATLIQ* &
   !         RCL_CONST1R*(ZCORR2/ZEVAP_DENOM)*(0.78_JPRB/(ZLAMBDA**RCL_CONST4R)+ &
   !         RCL_CONST2R*(ZRHO(JL)*ZFALLCORR)**0.5_JPRB/ &
   !         (ZCORR2**0.5_JPRB*ZLAMBDA**RCL_CONST3R))
@@ -45,7 +45,7 @@ SUBROUTINE zbeta_kernel(n, zqsliq, ztp1, zesatliq, zcorr2, zevap_denom, &
   REAL(KIND = 8), INTENT(OUT) :: zbeta(n)
   INTEGER(KIND = 4) :: i
   DO i = 1, n
-    zbeta(i) = (0.5_8/zqsliq(i))*ztp1(i)**2._8*zesatliq(i)* &
+    zbeta(i) = (0.5_8/zqsliq(i))*ztp1(i)**2*zesatliq(i)* &
              & rcl_const1r*(zcorr2(i)/zevap_denom(i))*(0.78_8/(zlambda(i)**rcl_const4r)+ &
              & rcl_const2r*(zrho(i)*zfallcorr(i))**0.5_8/ &
              & (zcorr2(i)**0.5_8*zlambda(i)**rcl_const3r))

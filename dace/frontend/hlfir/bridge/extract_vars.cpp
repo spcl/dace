@@ -15,6 +15,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <limits>
 #include <set>
 
 namespace hlfir_bridge {
@@ -134,6 +135,63 @@ static std::vector<std::string> shapeFromAllocSite(fir::AllocMemOp alloc) {
     return syms;
 }
 
+/// Recover per-dim lower bounds from an ``ALLOCATE(arr(lb:ub))``
+/// site.  Flang lowers this to a chain
+///
+///     %alloc = fir.allocmem !fir.array<?xT>, %extent
+///     %ss    = fir.shape_shift %lb, %extent : !fir.shapeshift<1>
+///     %box   = fir.embox %alloc(%ss) : ...
+///     fir.store %box, %decl_box_slot
+///
+/// where the first operand of every (lb, extent) pair on the
+/// ``shape_shift`` is the Fortran-declared lower bound.  Find the
+/// ``embox`` consuming this allocmem, peel through any
+/// ``fir.convert`` wrappers, then read the ``shape_shift``'s
+/// lower-bound operands.  Per-dim values are stringified literal
+/// integers, ``traceToDecl``-mapped symbol names, or ``"?"`` when
+/// neither resolves.
+static std::vector<std::string> lowerBoundsFromAllocSite(fir::AllocMemOp alloc) {
+    std::vector<std::string> lbs;
+
+    // Walk users for an embox.  ``fir.convert`` may sit between the
+    // allocmem result and the embox memref operand; peel it via a
+    // tight worklist (depth bounded).
+    auto peelToEmbox = [](mlir::Value v) -> fir::EmboxOp {
+        for (int i = 0; i < 4 && v; ++i) {
+            for (auto *u : v.getUsers()) {
+                if (auto eb = mlir::dyn_cast<fir::EmboxOp>(u)) return eb;
+            }
+            // ``fir.convert`` produces a fresh value -- check its users.
+            mlir::Value next;
+            for (auto *u : v.getUsers()) {
+                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(u)) { next = cv.getResult(); break; }
+            }
+            if (!next) break;
+            v = next;
+        }
+        return nullptr;
+    };
+    auto embox = peelToEmbox(alloc.getResult());
+    if (!embox) return lbs;
+
+    auto shape = embox.getShape();
+    if (!shape) return lbs;
+    auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp());
+    if (!ss) return lbs;
+
+    // ShapeShift operand layout: (lb_d0, ext_d0, lb_d1, ext_d1, ...).
+    auto ops = ss->getOperands();
+    for (unsigned i = 0; i < ops.size(); i += 2) {
+        if (auto c = traceConstInt(ops[i]))
+            lbs.push_back(std::to_string(*c));
+        else {
+            auto n = traceToDecl(ops[i]);
+            lbs.push_back(n.empty() ? "?" : n);
+        }
+    }
+    return lbs;
+}
+
 /// True iff some ``fir.box_addr`` op in the module reads the
 /// allocatable / pointer descriptor of the declare whose
 /// (short, post-``extractName``) name is ``shortName``.
@@ -206,6 +264,102 @@ static std::vector<std::string> resolveLowerBounds(hlfir::DeclareOp decl) {
     }
 
     return lbs;
+}
+
+/// True iff ``dg``'s memref chain bottoms out at ``decl``'s result.
+/// Walks through the same op set ``traceToDecl`` peels (fir.load,
+/// fir.rebox, fir.convert, fir.box_addr, hlfir.designate as a
+/// chain link).  Bounded depth to keep the walk cheap.
+static bool designateRootedAt(hlfir::DesignateOp dg, hlfir::DeclareOp decl) {
+    mlir::Value v = dg.getMemref();
+    for (int i = 0; i < 8 && v; ++i) {
+        auto *d = v.getDefiningOp();
+        if (!d) return false;
+        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d))
+            return dc == decl;
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))    { v = cv.getValue(); continue; }
+        if (auto ld = mlir::dyn_cast<fir::LoadOp>(d))       { v = ld.getMemref(); continue; }
+        if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d))      { v = rb.getBox(); continue; }
+        if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(d))    { v = ba.getVal(); continue; }
+        if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d)) { v = co.getRef(); continue; }
+        // Don't peel inner DesignateOps -- a chain ``dg2 = designate dg1(i)``
+        // means dg2 is rooted at the SAME source as dg1, not at dg1 itself;
+        // we want to credit the literal indices of every link in the chain
+        // to the SAME underlying declare.  Walk through:
+        if (auto inner = mlir::dyn_cast<hlfir::DesignateOp>(d)) { v = inner.getMemref(); continue; }
+        break;
+    }
+    return false;
+}
+
+/// Static lower-bound inference for deferred-shape allocatable /
+/// pointer arrays whose declare carries no explicit bounds.
+///
+/// Background: ``INTEGER, ALLOCATABLE :: arr(:)`` (or the equivalent
+/// dummy-arg form) leaves the lower bound unknown at extract time --
+/// it's set at runtime by the upstream ``ALLOCATE(arr(lb:ub))``,
+/// which the bridge generally can't see.  ``resolveLowerBounds``
+/// returns empty; the caller (line 919/946) fills with ``"1"``s,
+/// which is correct iff every access in the body uses an index >= 1.
+///
+/// ICON breaks that assumption: ``p_patch%edges%start_block(:)`` is
+/// declared deferred-shape, allocated upstream with bounds
+/// ``min_rlcell_int:max_rlcell_int`` (= ~``-10:7``), and read in the
+/// kernel body via literal negative indices like ``end_block(-10)``.
+/// Without an offset correction the access lowers to ``end_block[-11]``
+/// -- invalid pointer dereference at runtime.
+///
+/// Inference: a literal index ``N`` appearing on ``arr`` in any
+/// ``hlfir.designate`` is a *lower bound on the array's actual lower
+/// bound*: the array must extend to at least ``N`` for the access to
+/// be valid.  Take the min over all literal indices per dim; if it
+/// drops below the current default, replace.  Symbolic indices
+/// (loop iterators, indirect table reads) don't contribute -- those
+/// are out of scope for this pass.
+///
+/// Backward-compatible: arrays whose body accesses use only literals
+/// ``>= 1`` keep ``lb = "1"`` unchanged.
+///
+/// Populates ``seenLit`` (out): per-dim flag for whether ANY literal
+/// index was observed.  Used by the dummy-arg-allocatable free-offset
+/// fallback to distinguish "purely symbolic access (need caller-bound
+/// offset)" from "literal-positive access (1-based default is fine)".
+static void inferLowerBoundsFromLiteralAccesses(
+    hlfir::DeclareOp decl, std::vector<std::string> &lbs, int rank,
+    std::vector<bool> *seenLitOut = nullptr) {
+    if (rank <= 0) return;
+    auto func = decl->getParentOfType<mlir::func::FuncOp>();
+    if (!func) return;
+
+    std::vector<int64_t> minLit(rank, std::numeric_limits<int64_t>::max());
+    std::vector<bool>    seenLit(rank, false);
+
+    func.walk([&](hlfir::DesignateOp dg) {
+        if (!designateRootedAt(dg, decl)) return;
+        auto indices = dg.getIndices();
+        unsigned nIdx = std::min<unsigned>(indices.size(), (unsigned)rank);
+        for (unsigned d = 0; d < nIdx; ++d) {
+            if (auto c = traceConstInt(indices[d])) {
+                if (*c < minLit[d]) minLit[d] = *c;
+                seenLit[d] = true;
+            }
+        }
+    });
+
+    if ((int)lbs.size() < rank) lbs.resize(rank, "1");
+    for (int d = 0; d < rank; ++d) {
+        if (!seenLit[d]) continue;
+        // Only adjust the current default ``"1"`` (the bridge's
+        // unknown-bound fallback).  An explicit non-default value
+        // (e.g. extracted from a fir.ShapeShiftOp on the declare)
+        // wins -- it's authoritative source-of-truth.
+        if (lbs[d] != "1") continue;
+        int curr = 1;
+        if (minLit[d] < curr)
+            lbs[d] = std::to_string(minLit[d]);
+    }
+
+    if (seenLitOut) *seenLitOut = std::move(seenLit);
 }
 
 /// Find the fir.do_loop induction variable's Fortran name by looking for
@@ -945,6 +1099,16 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 if (v.lower_bounds.size() != v.shape_symbols.size())
                     v.lower_bounds.assign(v.shape_symbols.size(), "1");
             }
+            // Authoritative lower-bound recovery: read the fir.shape_shift
+            // paired with this allocmem in its consuming fir.embox.  This
+            // captures the runtime ``ALLOCATE(arr(lb:ub))`` bounds even
+            // when no literal index appears in the body.
+            auto lb_from_alloc = lowerBoundsFromAllocSite(allocSites.front());
+            for (size_t d = 0; d < lb_from_alloc.size()
+                                  && d < v.lower_bounds.size(); ++d) {
+                if (lb_from_alloc[d] != "?")
+                    v.lower_bounds[d] = lb_from_alloc[d];
+            }
         }
 
         // Assumed-shape fallback: synthesise per-dim symbol names.
@@ -964,6 +1128,56 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 if (v.shape_symbols[dim] == "?")
                     v.shape_symbols[dim] =
                         v.fortran_name + "_d" + std::to_string(dim);
+
+        // Lower-bound inference from literal designate accesses.
+        // Catches ICON's refined-cell-tag pattern (``end_block(-10)``
+        // on a deferred-shape ALLOCATABLE) by walking every
+        // ``hlfir.designate`` rooted at ``op``'s result and taking
+        // the per-dim min of literal-integer indices.  No-op when
+        // every observed literal index is >= 1.  See the inference
+        // function's docstring for the full rationale.
+        std::vector<bool> seenLit;
+        inferLowerBoundsFromLiteralAccesses(op, v.lower_bounds, v.rank, &seenLit);
+
+        // Dummy-arg deferred-shape ALLOCATABLE/POINTER fallback: the
+        // declare is a function block-arg, its declared type has no
+        // static shape, and the body has no literal-index designate
+        // for some dim (purely symbolic access).  We can't see the
+        // upstream ``ALLOCATE`` that set the bound -- it lives in
+        // the caller.  Leave the per-dim offset as ``"?"`` so the
+        // SDFG signature carries ``offset_<arr>_d<i>`` as a free
+        // symbol; the caller (or the bindings emitter via
+        // ``lbound(arr, dim=...)``) binds it at call time.
+        //
+        // Predicate gate (all must hold):
+        //   * variable is rank > 0 (array, not scalar)
+        //   * Fortran attr carries ALLOCATABLE or POINTER
+        //   * declare's memref is a function block argument
+        //   * no fir.ShapeOp / fir.ShapeShiftOp on the declare
+        //     (resolveLowerBounds returned nothing)
+        //   * literal-index inference saw no literals for that dim
+        bool isDummyArg = false;
+        if (auto blk = mlir::dyn_cast<mlir::BlockArgument>(op.getMemref())) {
+            auto *parent = blk.getOwner()->getParentOp();
+            if (mlir::isa_and_nonnull<mlir::func::FuncOp>(parent))
+                isDummyArg = true;
+        }
+        bool isAllocOrPointerAttr = false;
+        if (auto a = op.getFortranAttrs()) {
+            if (bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::allocatable)
+                || bitEnumContainsAny(*a, fir::FortranVariableFlagsEnum::pointer))
+                isAllocOrPointerAttr = true;
+        }
+        bool declHasNoShape = (op.getShape() == nullptr);
+        if (v.rank > 0 && isDummyArg && isAllocOrPointerAttr && declHasNoShape) {
+            if ((int)v.lower_bounds.size() < v.rank)
+                v.lower_bounds.resize(v.rank, "1");
+            for (int d = 0; d < v.rank; ++d) {
+                bool lit = (d < (int)seenLit.size()) && seenLit[d];
+                if (!lit && v.lower_bounds[d] == "1")
+                    v.lower_bounds[d] = "?";
+            }
+        }
 
         // Classify.
         if (v.rank > 0)                             v.role = "array";
@@ -1274,6 +1488,30 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         if (!sym.empty()) {
             auto gop = module.lookupSymbol<fir::GlobalOp>(sym);
             v.const_data = extractGlobalInitData(gop);
+            // Uninitialised TRUE module-scope global (``MODULE m;
+            // INTEGER :: nrdmax(10); END MODULE`` -- symbol like
+            // ``@_QMmEnrdmax`` with no ``fir.has_value`` body, and not
+            // ``parameter``-attributed).  These are external inputs to
+            // the kernel: the caller is expected to fill them at init
+            // time and the kernel reads them via ``USE m, ONLY: nrdmax``.
+            // Without intent, descriptors.py would register them as
+            // transients and the kernel would read uninitialised memory.
+            // Mark ``inout`` so they surface as non-transient kwargs.
+            //
+            // Gate: only module-scope (``_QM<mod>E<var>``) symbols, NOT
+            // function-scope SAVE-locals (``_QF<func>E<var>``).  A SAVE-
+            // local is private to its function -- the caller can't bind
+            // it and Fortran semantics say it's zero-init on first
+            // entry, which descriptors.py's transient already provides.
+            // ``v.intent.empty()`` keeps dummy-arg shadows (which set
+            // intent above) untouched.
+            if (v.const_data.empty() && v.intent.empty() && gop) {
+                bool isParameter = (gop.getConstant().has_value()
+                                    && *gop.getConstant());
+                bool isModuleScope = llvm::StringRef(sym).starts_with("_QM");
+                if (!isParameter && isModuleScope)
+                    v.intent = "inout";
+            }
         }
 
         vars.push_back(std::move(v));

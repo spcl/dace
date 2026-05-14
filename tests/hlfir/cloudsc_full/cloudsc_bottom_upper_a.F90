@@ -1913,7 +1913,7 @@ DO JK=NCLDTOP,KLEV
           ZRE_ICE=PRE_ICE(JL,JK)
           ! The exponent value is from
           ! Morrison et al. JAS 2005 Appendix
-          ZVQX(NCLDQI) = 0.002_JPRB*ZRE_ICE**1.0_JPRB
+          ZVQX(NCLDQI) = 0.002_JPRB*ZRE_ICE**1
         ENDIF
         ZFALL=ZVQX(JM)*ZRHO(JL)
         !-------------------------------------------------
