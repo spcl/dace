@@ -764,6 +764,163 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
                        dace.memlet.Memlet(data=orig_data, subset=edge.data.subset))
 
 
+def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
+                                               inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str,
+                                               orig_arr, vector_width: int, *, elements_per_iter: int,
+                                               stride: int, direction: str) -> None:
+    """Multi-element-per-iteration strided / contiguous bbox case.
+
+    Generalised K-elements-per-iter pattern: each iteration accesses
+    ``K`` consecutive elements per lane; consecutive lanes are
+    ``stride`` apart. Total bbox spans ``(W-1)*stride + K`` indices.
+
+    - ``stride == K``: contiguous bbox (TSVC s127 — ``a[2*i], a[2*i+1]``).
+    - ``stride > K``: multi-elem scatter/gather with gaps
+      (e.g. ``a[4*i], a[4*i+1]`` writes 2 contiguous elements every 4).
+
+    The body's inner connector is shape ``(K, ...)`` with K separate
+    tasklet writes / reads (one per intra-iter position). Vectorize
+    as K independent stride-``stride`` loads / stores into K W-wide
+    transients, one per phase ``p in [0, K)``:
+
+    - Direction "in":   ``strided_load<T>(_in + p, _out, W, stride)``
+    - Direction "out":  ``strided_store<T>(_in, _out + p, W, stride)``
+    """
+    assert direction in ("in", "out")
+    assert elements_per_iter >= 2, f"multi-element handler requires K >= 2, got {elements_per_iter}"
+    K = int(elements_per_iter)
+    W = int(vector_width)
+    S = int(stride)
+    assert S >= K, f"multi-element handler requires stride >= K; got stride={S}, K={K}"
+
+    bbox_size = (W - 1) * S + K
+
+    # Reshape inner connector to the bbox shape ``((W-1)*stride + K,)``
+    # in its stride-1 dim. Other dims preserved from the original array.
+    bbox_shape = list(orig_arr.shape)
+    stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
+    assert len(stride_one_indices) == 1, (
+        f"Multi-element-per-iter strided requires a single stride-1 dim; got {orig_arr.strides}")
+    stride_one_idx = stride_one_indices[0]
+    bbox_shape[stride_one_idx] = bbox_size
+
+    if inner_conn in inner_sdfg.arrays:
+        prev_arr = inner_sdfg.arrays[inner_conn]
+        inner_sdfg.remove_data(inner_conn, validate=False)
+    else:
+        prev_arr = orig_arr
+    inner_sdfg.add_array(name=inner_conn,
+                         shape=tuple(bbox_shape),
+                         dtype=orig_arr.dtype,
+                         storage=getattr(prev_arr, "storage", orig_arr.storage),
+                         transient=False,
+                         find_new_name=False,
+                         may_alias=False)
+
+    # Allocate K W-wide phase transients.
+    phase_names = []
+    for p in range(K):
+        name = f"__strided_buf_{inner_conn}_p{p}"
+        if name in inner_sdfg.arrays:
+            inner_sdfg.remove_data(name, validate=False)
+        inner_sdfg.add_array(name=name,
+                             shape=(W,),
+                             dtype=orig_arr.dtype,
+                             storage=dace.dtypes.StorageType.Register,
+                             transient=True,
+                             find_new_name=False,
+                             may_alias=False)
+        phase_names.append(name)
+
+    dtype_ctype = orig_arr.dtype.ctype
+    full_buf_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
+                                          dace.symbolic.SymExpr(W - 1),
+                                          dace.symbolic.SymExpr(1))])
+
+    # Rewrite body memlets: each ``<conn>[p]`` reference (single-point
+    # subset whose stride-1-dim begin == p) becomes a ``__strided_buf_<conn>_p{p}[0:W-1]``
+    # reference. The K access nodes for ``<conn>`` get split by phase.
+    for inner_state in list(inner_sdfg.states()):
+        # Edges first — capture old data before nodes are renamed.
+        for inner_edge in inner_state.edges():
+            if inner_edge.data is None or inner_edge.data.data != inner_conn:
+                continue
+            if inner_edge.data.subset is None or len(inner_edge.data.subset) <= stride_one_idx:
+                continue
+            b, ee, _ = inner_edge.data.subset[stride_one_idx]
+            try:
+                # Phase is the integer value of the begin in the stride-1 dim.
+                p = int(b)
+            except Exception:
+                continue
+            if not (0 <= p < K) or int(ee) != p:
+                continue
+            inner_edge.data.data = phase_names[p]
+            inner_edge.data.subset = copy.deepcopy(full_buf_range)
+        # Access nodes: rename based on which edge uses them.  An access
+        # node is connected to ONE edge in the body (write tasklet → AN
+        # or AN → read tasklet); rename to the matching phase.
+        for node in list(inner_state.nodes()):
+            if not (isinstance(node, dace.nodes.AccessNode) and node.data == inner_conn):
+                continue
+            # Find the phase via the connected edge(s).
+            for e2 in list(inner_state.in_edges(node)) + list(inner_state.out_edges(node)):
+                if e2.data is not None and e2.data.data in phase_names:
+                    node.data = e2.data.data
+                    break
+
+    if direction == "in":
+        # Prep state: K ``strided_load`` tasklets, each at stride K with offset p.
+        old_start = inner_sdfg.start_block
+        prep = inner_sdfg.add_state("_multi_elem_load_prep_" + inner_conn, is_start_block=True)
+        bbox_an = prep.add_access(inner_conn)
+        for p in range(K):
+            vec_an = prep.add_access(phase_names[p])
+            tasklet = prep.add_tasklet(
+                name=f"_multi_elem_load_{inner_conn}_p{p}",
+                inputs={"_in"},
+                outputs={"_out"},
+                code=f"strided_load<{dtype_ctype}>(_in + {p}, _out, {W}, {S});",
+                language=dace.dtypes.Language.CPP,
+            )
+            prep.add_edge(bbox_an, None, tasklet, "_in",
+                          dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+            prep.add_edge(tasklet, "_out", vec_an, None,
+                          dace.memlet.Memlet.from_array(phase_names[p], inner_sdfg.arrays[phase_names[p]]))
+        if old_start is not None and old_start is not prep:
+            inner_sdfg.add_edge(prep, old_start, dace.InterstateEdge())
+
+        state.remove_edge(edge)
+        state.add_edge(edge.src, edge.src_conn, nsdfg_node, edge.dst_conn,
+                       dace.memlet.Memlet(data=orig_data, subset=edge.data.subset))
+    else:
+        # Finish state: K ``strided_store`` tasklets.
+        sink_states = [s for s in inner_sdfg.states() if len(inner_sdfg.out_edges(s)) == 0]
+        finish = inner_sdfg.add_state("_multi_elem_store_finish_" + inner_conn)
+        bbox_an = finish.add_access(inner_conn)
+        for p in range(K):
+            vec_an = finish.add_access(phase_names[p])
+            tasklet = finish.add_tasklet(
+                name=f"_multi_elem_store_{inner_conn}_p{p}",
+                inputs={"_in"},
+                outputs={"_out"},
+                code=f"strided_store<{dtype_ctype}>(_in, _out + {p}, {W}, {S});",
+                language=dace.dtypes.Language.CPP,
+            )
+            finish.add_edge(vec_an, None, tasklet, "_in",
+                            dace.memlet.Memlet.from_array(phase_names[p], inner_sdfg.arrays[phase_names[p]]))
+            finish.add_edge(tasklet, "_out", bbox_an, None,
+                            dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+        for sink in sink_states:
+            if sink is finish:
+                continue
+            inner_sdfg.add_edge(sink, finish, dace.InterstateEdge())
+
+        state.remove_edge(edge)
+        state.add_edge(nsdfg_node, edge.src_conn, edge.dst, edge.dst_conn,
+                       dace.memlet.Memlet(data=orig_data, subset=edge.data.subset))
+
+
 def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
                    vector_width: int, vector_storage: dace.dtypes.StorageType, *, direction: str) -> Set[str]:
     """
@@ -824,17 +981,41 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                 if bw is not None and bw > 1:
                     wide_dims.append((d, bw))
 
+            multi_elem_per_iter = 0  # >0 means K-elements-per-iter (with stride_value)
             if len(wide_dims) == 1 and len(stride_one_indices) == 1 and wide_dims[0][0] == stride_one_indices[0]:
-                # 1D strided.
+                # Generalised K-elements-per-iter at inter-lane stride S:
+                # bbox = (W-1)*S + K. ``K`` is the inner connector's
+                # stride-1 dim size.
                 bbox_vol = wide_dims[0][1]
-                if bbox_vol > vector_width:
-                    if vector_width <= 1 or (bbox_vol - 1) % (vector_width - 1) != 0:
+                if bbox_vol > vector_width and vector_width > 1:
+                    inner_arr = inner_sdfg.arrays.get(inner_conn)
+                    inner_dim0 = None
+                    if inner_arr is not None and len(inner_arr.shape) >= 1:
+                        try:
+                            inner_dim0 = int(inner_arr.shape[-1])
+                        except Exception:
+                            inner_dim0 = None
+                    K_candidate = inner_dim0 if (inner_dim0 is not None and inner_dim0 >= 1) else 1
+                    handled = False
+                    if (bbox_vol - K_candidate) % (vector_width - 1) == 0:
+                        S_value = (bbox_vol - K_candidate) // (vector_width - 1)
+                        if S_value >= K_candidate:
+                            is_strided = True
+                            stride_value = S_value
+                            if K_candidate > 1:
+                                multi_elem_per_iter = K_candidate
+                            handled = True
+                    if not handled:
+                        # Fall back to K=1.
+                        if (bbox_vol - 1) % (vector_width - 1) == 0:
+                            is_strided = True
+                            stride_value = (bbox_vol - 1) // (vector_width - 1)
+                            handled = True
+                    if not handled:
                         raise NotImplementedError(
                             f"_process_edges (direction={direction!r}): outer subset on {orig_data} "
-                            f"has bbox volume {bbox_vol}; (W-1)*stride+1 doesn't yield an integer "
-                            f"stride for vector_width={vector_width}.")
-                    is_strided = True
-                    stride_value = (bbox_vol - 1) // (vector_width - 1)
+                            f"has bbox volume {bbox_vol}; doesn't match (W-1)*S+K for any K in "
+                            f"[1, {inner_arr.shape if inner_arr else None}] for vector_width={vector_width}.")
             elif len(wide_dims) >= 2 and vector_width > 1:
                 # Multi-dim strided. Each wide dim must be W-bbox; the
                 # inter-lane stride is the sum of per-dim
@@ -891,9 +1072,17 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                 # to ``vectorized_datanames`` so the downstream connector
                 # rename (``movable_data`` → ``VecNameScheme.make(movable_data)``)
                 # skips them — the connector keeps the original name.
-                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn, orig_data,
-                                            orig_arr, vector_width, stride_value, direction=direction,
-                                            multi_dim_param_dims=multi_dim_dims)
+                if multi_elem_per_iter > 0:
+                    _setup_multi_element_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e,
+                                                              inner_conn, orig_data, orig_arr,
+                                                              vector_width,
+                                                              elements_per_iter=multi_elem_per_iter,
+                                                              stride=stride_value,
+                                                              direction=direction)
+                else:
+                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn, orig_data,
+                                                orig_arr, vector_width, stride_value, direction=direction,
+                                                multi_dim_param_dims=multi_dim_dims)
                 continue
 
             inout_data_name = None

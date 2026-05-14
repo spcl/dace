@@ -222,10 +222,25 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     # the prep / finish state (subset ``[0:W]`` / ``[0:bbox-1]``) that
     # similarly fail the point-access assert.  The body itself only ever
     # accesses these arrays point-wise via ``__strided_buf_*`` already.
+    # Identify the connector arrays the strided handlers aliased.  Two
+    # naming conventions:
+    # - 1D / multi-dim:    ``__strided_buf_<conn>``  → base is ``<conn>``
+    # - Multi-elem (TSVC s127): ``__strided_buf_<conn>_p<N>`` → base
+    #   is ``<conn>`` (strip the ``_p<N>`` suffix too)
+    import re as _re
+    _phase_suffix = _re.compile(r"_p\d+$")
     strided_buf_aliases: set = set()
     for arr_name in list(all_accesses_to_arrays.keys()):
-        if arr_name.startswith("__strided_buf_"):
-            strided_buf_aliases.add(arr_name[len("__strided_buf_"):])
+        if not arr_name.startswith("__strided_buf_"):
+            continue
+        rest = arr_name[len("__strided_buf_"):]
+        # Add the literal rest (covers 1D / multi-dim case).
+        strided_buf_aliases.add(rest)
+        # Also add the rest with any trailing ``_p<N>`` phase suffix
+        # stripped (covers multi-elem-per-iter case).
+        stripped = _phase_suffix.sub("", rest)
+        if stripped != rest:
+            strided_buf_aliases.add(stripped)
     for arr_name in list(all_accesses_to_arrays.keys()):
         if arr_name == "_iter_mask" or arr_name.startswith("_iter_mask_"):
             del all_accesses_to_arrays[arr_name]

@@ -16,7 +16,9 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.utils import *
-from dace.transformation.passes.vectorization.utils.nsdfg_reshape import _setup_strided_inside_nsdfg
+from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
+    _setup_strided_inside_nsdfg, _setup_multi_element_strided_inside_nsdfg,
+)
 import dace.sdfg.tasklet_utils as tutil
 
 
@@ -302,16 +304,61 @@ class Vectorize(ppl.Pass):
 
                 if is_single_dim_strided and self.vector_width > 1:
                     bbox_vol = param_dims_wide[0][1]
-                    if (bbox_vol - 1) % (self.vector_width - 1) != 0:
+                    W = self.vector_width
+                    inner_conn = e.dst_conn if direction == "in" else e.src_conn
+
+                    # Generalised K-elements-per-iter strided: each lane
+                    # accesses K consecutive elements per iter, consecutive
+                    # lanes are ``S`` (inter-lane stride) apart. Total
+                    # bbox = (W-1)*S + K.
+                    #
+                    # - K=1, any S: single-element-per-iter at stride S
+                    #   (TSVC s1111-shape outer scatter / s293 strided).
+                    # - K>1, S=K: K-element contiguous bbox (TSVC s127).
+                    # - K>1, S>K: K-element scatter/gather with gaps.
+                    #
+                    # ``K`` comes from the inner connector's stride-1 dim
+                    # size — this is the per-iter element count carried
+                    # through the NSDFG boundary by ``prepare_vectorized_array``
+                    # / ``fix_nsdfg_connector_array_shapes_mismatch``.
+                    inner_arr = inner_sdfg.arrays.get(inner_conn)
+                    inner_dim0 = None
+                    if inner_arr is not None and len(inner_arr.shape) >= 1:
+                        try:
+                            inner_dim0 = int(inner_arr.shape[-1])
+                        except Exception:
+                            inner_dim0 = None
+                    K_candidate = inner_dim0 if (inner_dim0 is not None and inner_dim0 >= 1) else 1
+                    handled = False
+                    if (bbox_vol - K_candidate) % (W - 1) == 0:
+                        S_value = (bbox_vol - K_candidate) // (W - 1)
+                        if S_value >= K_candidate:
+                            if K_candidate == 1:
+                                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                                            e.data.data, arr, W, S_value,
+                                                            direction=direction)
+                            else:
+                                _setup_multi_element_strided_inside_nsdfg(
+                                    state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                    e.data.data, arr, W,
+                                    elements_per_iter=K_candidate,
+                                    stride=S_value, direction=direction)
+                            handled = True
+                    if not handled:
+                        # Fall back to the older K=1 single-element check
+                        # (some pre-Slice-1 callers don't populate
+                        # ``inner_arr`` with the K value).
+                        if (bbox_vol - 1) % (W - 1) == 0:
+                            stride_value = (bbox_vol - 1) // (W - 1)
+                            _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
+                                                        e.data.data, arr, W, stride_value,
+                                                        direction=direction)
+                            handled = True
+                    if not handled:
                         raise NotImplementedError(
                             f"Vectorize: strided NSDFG edge on {e.data.data} has bbox "
-                            f"volume {bbox_vol}; (W-1)*stride+1 doesn't yield an "
-                            f"integer stride for vector_width={self.vector_width}.")
-                    stride_value = (bbox_vol - 1) // (self.vector_width - 1)
-                    inner_conn = e.dst_conn if direction == "in" else e.src_conn
-                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                                e.data.data, arr, self.vector_width, stride_value,
-                                                direction=direction)
+                            f"volume {bbox_vol}; doesn't match (W-1)*S + K for any K in "
+                            f"[1, {inner_arr.shape if inner_arr else None}] and vector_width={W}.")
                     continue
 
                 # Multi-dim strided path: param-bearing dims expand to bbox W
