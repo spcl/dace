@@ -12,10 +12,15 @@ STREAM_CONN = "__stream"
 
 
 def add_stream_descriptor(sdfg: dace.SDFG, stream_input: Optional[dace.data.Data]):
-    """Add a single-stream Scalar(gpuStream_t) ``stream`` descriptor to the
-    expansion SDFG. The libnode's ``stream`` connector is bound as one
-    ``gpuStream_t`` value regardless of how the parent sources it (e.g. as a
-    slice of ``gpu_streams[id]``)."""
+    """Add a single Scalar(``gpuStream_t``) ``stream`` descriptor to the expansion SDFG.
+
+    The libnode's ``stream`` connector is bound as one ``gpuStream_t`` value
+    regardless of how the parent sources it (e.g. as a slice of
+    ``gpu_streams[id]``). No-op when ``stream_input`` is ``None``.
+
+    :param sdfg: The expansion SDFG to add the descriptor to.
+    :param stream_input: The parent's stream descriptor, or ``None``.
+    """
     if stream_input is None:
         return
     sdfg.add_scalar(STREAM_CONN, dace.dtypes.gpuStream_t, storage=dace.dtypes.StorageType.Register, transient=False)
@@ -23,12 +28,18 @@ def add_stream_descriptor(sdfg: dace.SDFG, stream_input: Optional[dace.data.Data
 
 def wire_stream_to(sdfg: dace.SDFG, state: dace.SDFGState, target: nodes.Node, target_conn: str,
                    stream_input: Optional[dace.data.Data]):
-    """Connect the SDFG-level ``stream`` access node to ``target`` on
-    ``target_conn``. No-op when no stream is wired. For map entries the
-    connector is added on the target typed as ``gpuStream_t`` — type-based
-    detection in :func:`has_stream_connector` relies on this so the
-    post-expansion reconnect pass treats the libnode-wired consumer as
-    already-wired and doesn't re-thread a duplicate edge."""
+    """Connect the SDFG-level ``stream`` access node to ``target`` on ``target_conn``.
+
+    No-op when no stream is wired. For map entries the connector is added on
+    the target typed as ``gpuStream_t`` so a type-based scan can recognize the
+    libnode-wired consumer as already wired and avoid threading a duplicate edge.
+
+    :param sdfg: The expansion SDFG owning the ``stream`` descriptor.
+    :param state: The state to add the connecting edge in.
+    :param target: The node consuming the stream value.
+    :param target_conn: The input connector on ``target`` to wire.
+    :param stream_input: The parent's stream descriptor, or ``None``.
+    """
     if stream_input is None:
         return
     stream_access = state.add_access(STREAM_CONN)
@@ -40,14 +51,21 @@ def wire_stream_to(sdfg: dace.SDFG, state: dace.SDFGState, target: nodes.Node, t
 
 def wire_stream_through_map(sdfg: dace.SDFG, state: dace.SDFGState, map_entry: nodes.MapEntry, target: nodes.Node,
                             target_conn: str):
-    """Wire the SDFG-level ``stream`` access node *through* ``map_entry``
-    into ``target.target_conn``: adds ``IN_stream`` / ``OUT_stream``
-    pass-through connectors on the map and the two memlet edges
-    ``stream → MapEntry.IN_stream`` and ``MapEntry.OUT_stream → target``.
+    """Wire the SDFG-level ``stream`` access node through ``map_entry`` into ``target``.
 
-    Used when a Sequential map encloses a stream-using consumer and the
-    DaCe convention requires the connector to thread through the scope.
-    Caller must have added the ``target_conn`` in-connector on ``target``."""
+    Adds ``IN_stream`` / ``OUT_stream`` pass-through connectors on the map and
+    the two memlet edges ``stream -> MapEntry.IN_stream`` and
+    ``MapEntry.OUT_stream -> target``. Used when a Sequential map encloses a
+    stream-using consumer and the DaCe convention requires the connector to
+    thread through the scope. The caller must have already added the
+    ``target_conn`` in-connector on ``target``.
+
+    :param sdfg: The expansion SDFG owning the ``stream`` descriptor.
+    :param state: The state to add the connecting edges in.
+    :param map_entry: The map scope the stream must thread through.
+    :param target: The node consuming the stream value.
+    :param target_conn: The input connector on ``target`` to wire.
+    """
     stream_access = state.add_access(STREAM_CONN)
     in_conn = f"IN_{STREAM_CONN}"
     out_conn = f"OUT_{STREAM_CONN}"
@@ -67,7 +85,13 @@ def extract_stream_and_dynamic_inputs(
     Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to ``STREAM_CONN`` are skipped,
     as are empty-memlet dependency edges. ``stream_input`` is ``None`` when no stream edge is wired.
 
-    :return: ``(stream_input, dynamic_inputs)``.
+    :param node: The library node whose input edges are inspected.
+    :param sdfg: The SDFG owning the data descriptors.
+    :param state: The state containing ``node``.
+    :param reserved_conns: Connector names that are not dynamic inputs.
+    :returns: ``(stream_input, dynamic_inputs)``.
+    :raises ValueError: If more than one ``stream`` edge is wired, or a dynamic
+        input is not a scalar.
     """
     stream_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == STREAM_CONN]
     if len(stream_ies) > 1:
@@ -81,7 +105,7 @@ def extract_stream_and_dynamic_inputs(
             continue
         datadesc = sdfg.arrays[ie.data.data]
         if not isinstance(datadesc, dace.data.Scalar):
-            raise ValueError("Dynamic inputs (not connected to `_in`) must be scalars.")
+            raise ValueError("Dynamic inputs (not connected to ``_in``) must be scalars.")
         dynamic_inputs[ie.dst_conn] = datadesc
 
     return stream_input, dynamic_inputs
@@ -95,6 +119,10 @@ def collapse_shape_and_strides(
     Surviving strides are scaled by the subset step (``stride * s``) so they describe the access
     pattern as a view into the parent array -- a no-op for unit-step subsets, and the effective
     per-element distance for strided ones.
+
+    :param subset: The access range, one ``(begin, end, step)`` per dimension.
+    :param strides: The parent array strides, aligned with ``subset``.
+    :returns: ``(collapsed_shape, collapsed_strides)`` with singletons removed.
     """
     collapsed_shape = []
     collapsed_strides = []
@@ -115,7 +143,11 @@ def add_dynamic_inputs(dynamic_inputs: Dict[str, dace.data.Data], sdfg: dace.SDF
     a pre-assignment state reads the concrete value into the symbol. No-op when nothing needs
     promoting.
 
-    :return: the collapsed (non-singleton) map lengths after substitution.
+    :param dynamic_inputs: Map from connector name to its data descriptor.
+    :param sdfg: The expansion SDFG to add descriptors to.
+    :param subset: The output access range whose map lengths are derived.
+    :param state: The state before which the pre-assignment state is inserted.
+    :returns: The collapsed (non-singleton) map lengths after substitution.
     """
     pre_assignments = dict()
     map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in subset]

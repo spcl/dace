@@ -28,7 +28,14 @@ def _make_memset_skeleton(
     node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
 ) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any],
            Optional[dace.data.Data]]:
-    """Shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion."""
+    """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
+
+    :param node: The memset library node being expanded.
+    :param parent_state: The state containing ``node``.
+    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :returns: ``(sdfg, state, out_name, out, out_subset, map_lengths,
+        out_shape_collapsed, stream_input)``.
+    """
     out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
     keep = [(e + 1 - b) // s != 1 for (b, e, s) in out_subset]
     out_shape_collapsed = [(e + 1 - b) // s for (b, e, s), k in zip(out_subset, keep) if k]
@@ -46,8 +53,15 @@ def _make_memset_skeleton(
 
 
 def _validate_no_dynamic_inputs(node: "MemsetLibraryNode", dynamic_inputs):
-    """Direct-tasklet memset paths can't bind dynamic scalar inputs (no map
-    around them); use the 'pure' implementation if you need that."""
+    """Reject dynamic scalar inputs on direct-tasklet memset paths.
+
+    Direct-tasklet expansions have no surrounding map to bind dynamic scalar
+    inputs; the ``'pure'`` implementation handles that case instead.
+
+    :param node: The memset library node being expanded.
+    :param dynamic_inputs: Dynamic scalar inputs found on ``node``.
+    :raises NotImplementedError: If any dynamic input is present.
+    """
     if dynamic_inputs:
         raise NotImplementedError(
             f"{type(node).__name__} direct-tasklet expansion does not support dynamic input scalars; "
@@ -56,7 +70,13 @@ def _validate_no_dynamic_inputs(node: "MemsetLibraryNode", dynamic_inputs):
 
 def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
                               parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-    """Tasklet emitting ``cudaMemsetAsync(_out, 0, n)``."""
+    """Build a tasklet emitting ``cudaMemsetAsync(_out, 0, n)``.
+
+    :param node: The memset library node being expanded.
+    :param parent_state: The state containing ``node``.
+    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :returns: The CUDA memset tasklet.
+    """
     out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
@@ -76,7 +96,13 @@ def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFG
 
 def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
                              parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-    """Tasklet emitting ``memset(_out, 0, n)``."""
+    """Build a tasklet emitting ``memset(_out, 0, n)``.
+
+    :param node: The memset library node being expanded.
+    :param parent_state: The state containing ``node``.
+    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :returns: The CPU memset tasklet.
+    """
     out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
@@ -91,18 +117,19 @@ def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGS
 
 
 def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
-    """Single source of truth for resolving ``MemsetLibraryNode.implementation``
-    when set to ``'Auto'``. Returns one of ``'pure'`` / ``'CUDA'`` / ``'CPU'``.
+    """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
-    - In-device scope: ``'pure'`` (a Sequential map of element-zero, the only
-      thing safe inside device code — ``cudaMemsetAsync`` cannot be issued
-      from a kernel).
-    - GPU storage on the destination, host-issued: ``'CUDA'``
-      (``cudaMemsetAsync``).
-    - Else: ``'CPU'`` (``std::memset``).
+    Returns ``'pure'`` (Sequential element-zero map) in device scope or when
+    dynamic scalar inputs are present, since ``cudaMemsetAsync`` cannot be
+    issued from a kernel and only the mapped expansion supports dynamic inputs;
+    ``'CUDA'`` (``cudaMemsetAsync``) for host-issued GPU-destination memsets;
+    otherwise ``'CPU'`` (``std::memset``).
 
-    Falls back to ``'pure'`` whenever dynamic scalar inputs are present —
-    only the mapped expansion supports those."""
+    :param node: The memset library node being expanded.
+    :param parent_state: The state containing ``node``.
+    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
+    """
     from dace.sdfg.scope import is_devicelevel_gpu
 
     out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
@@ -192,10 +219,17 @@ class MemsetLibraryNode(nodes.LibraryNode):
     def validate(
             self, sdfg: dace.SDFG,
             state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict, Optional[dace.data.Data]]:
+        """Validate the node's wiring and resolve its output and inputs.
+
+        :param sdfg: The SDFG owning the data descriptors.
+        :param state: The state containing this node.
+        :returns: ``(out_name, out, out_subset, dynamic_inputs, stream_input)``.
+        :raises ValueError: If the node does not have exactly one output edge.
+        """
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
-                             f"`{_OUTPUT_CONNECTOR_NAME}` output edge.")
+                             f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
 
         oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]

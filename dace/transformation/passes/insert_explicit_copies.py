@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass replacing implicit copy patterns (path between two access nodes without
-and intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
+"""Pass replacing implicit copy patterns (a path between two access nodes
+without an intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
 """
 import copy as _copy
 from typing import Any, Dict, Iterable, Optional
@@ -16,11 +16,15 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
 
 def _resolve_subset_for(memlet, an_node):
-    # Return the subset of ``an_node`` referenced by ``memlet``.
-    # If memlet.data targets ``an_node`` directly: subset is the canonical side.
-    # If memlet.data is something else (e.g. a View on the same edge), other_subset
-    # carries the non-view-side range; otherwise default to a 0-anchored placement
-    # matching the volume shape (same convention as DaCe memlet propagation).
+    """Return the subset of ``an_node`` referenced by ``memlet``.
+
+    :param memlet: The memlet on the edge incident to ``an_node``.
+    :param an_node: The access node whose range is being resolved.
+    :returns: ``memlet.subset`` when ``memlet`` targets ``an_node`` directly;
+        ``memlet.other_subset`` when the memlet targets something else on the
+        same edge (e.g. a View); otherwise a 0-anchored range matching the
+        volume shape (the DaCe memlet-propagation convention).
+    """
     import dace.subsets as _ss
     if memlet.data == an_node.data:
         return memlet.subset
@@ -36,17 +40,22 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     Convention used by implicit copy edges: if the destination array's shape
     matches the source subset's volume shape (either directly, or after
     squeezing singleton dimensions), the implicit destination range is the
-    full destination (offset 0 on every dimension). Otherwise we fall back
-    to ``src_subset`` for backward compatibility — that path is only
-    correct when the two arrays share the same shape.
+    full destination (offset 0 on every dimension). Otherwise it falls back
+    to ``src_subset`` -- correct only when the two arrays share the same shape.
+
+    :param src_subset: The known side of the implicit copy.
+    :param dst_desc: Data descriptor of the side whose subset is being derived.
+    :param src_desc: Data descriptor of the known side (unused; kept for the
+        symmetric call signature with the absent-source case).
+    :returns: A :class:`~dace.subsets.Range` for the destination side.
     """
     from dace import subsets as _subsets
 
     src_size = list(src_subset.size())
     dst_shape = list(dst_desc.shape)
 
-    # DaCe symbols are interned by name but `sympy.simplify` can leave
-    # `N - N` un-simplified when the two `N` instances belong to different
+    # DaCe symbols are interned by name but ``sympy.simplify`` can leave
+    # ``N - N`` un-simplified when the two ``N`` instances belong to different
     # symbol objects. Compare via string repr, which yields a canonical form
     # for symbols sharing a name.
     def _eq(a, b):
@@ -99,9 +108,15 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
 
 
 def _is_consecutive_reshape(src_size, dst_shape):
-    """True iff ``dst_shape`` is reachable from ``src_size`` by collapsing
-    contiguous runs of dimensions (or splitting one dim into a contiguous
-    run). Both inputs are expected to be 1-squeezed."""
+    """Test whether ``dst_shape`` is reachable from ``src_size`` by reshaping.
+
+    Reachable means by collapsing contiguous runs of dimensions, or splitting
+    one dimension into a contiguous run. Both inputs must be 1-squeezed.
+
+    :param src_size: Per-dimension sizes of the source subset.
+    :param dst_shape: Per-dimension sizes of the destination array.
+    :returns: ``True`` iff the running products coincide.
+    """
     i = j = 0
     src_acc = 1
     dst_acc = 1
@@ -130,9 +145,16 @@ def _is_consecutive_reshape(src_size, dst_shape):
 
 
 def _expr_lt(a, b):
-    """``a < b`` for sympy/numeric mixes, falling back to ``False`` on
-    indeterminate symbolic comparisons (which sends both pointers forward
-    in lockstep — safe under the equal-product guard)."""
+    """Compare ``a < b`` for sympy/numeric mixes.
+
+    Falls back to ``False`` on indeterminate symbolic comparisons, which sends
+    both reshape pointers forward in lockstep -- safe under the equal-product
+    guard in :func:`_is_consecutive_reshape`.
+
+    :param a: Left operand (numeric or sympy expression).
+    :param b: Right operand (numeric or sympy expression).
+    :returns: ``True`` iff ``a`` is strictly less than ``b``.
+    """
     try:
         return bool((a - b) < 0)
     except Exception:
@@ -210,7 +232,12 @@ class InsertExplicitCopies(ppl.Pass):
         return True
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Return the number of copy nodes inserted, or ``None`` if nothing changed."""
+        """Lift every implicit copy in ``sdfg`` to a ``CopyLibraryNode``.
+
+        :param sdfg: The SDFG to transform, recursively including nested SDFGs.
+        :param pipeline_results: Results of previously applied passes (unused).
+        :returns: The number of copy nodes inserted, or ``None`` if none.
+        """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -219,11 +246,17 @@ class InsertExplicitCopies(ppl.Pass):
         return count if count > 0 else None
 
     def _collapse_round_trip_views(self, sdfg: SDFG, state: SDFGState):
-        # AN_src -> View -> AN_dst is an implicit copy through the View's alias.
-        # Replace the two edges with a single AN_src -> AN_dst edge carrying the
-        # composed memlet (underlying-side subset, access-side subset); the View
-        # AccessNode stays in the state but is detached from this dataflow path.
-        # _replace_direct_copies then lifts the new direct edge to a CopyLibraryNode.
+        """Collapse ``AN_src -> View -> AN_dst`` aliasing paths into a direct edge.
+
+        Such a path is an implicit copy through the View's alias. The two edges
+        are replaced with a single ``AN_src -> AN_dst`` edge carrying the
+        composed memlet (underlying-side subset, access-side subset); the View
+        access node stays in the state but is detached from this dataflow path.
+        :meth:`_replace_direct_copies` then lifts the new direct edge.
+
+        :param sdfg: The (possibly nested) SDFG owning ``state``.
+        :param state: The state to scan for round-trip View paths.
+        """
         from dace import data as dt
         from dace.sdfg.utils import get_view_edge
 
@@ -264,7 +297,12 @@ class InsertExplicitCopies(ppl.Pass):
                 state.remove_node(view_node)
 
     def _replace_direct_copies(self, sdfg: SDFG, state: SDFGState) -> int:
-        """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances."""
+        """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.
+
+        :param sdfg: The (possibly nested) SDFG owning ``state``.
+        :param state: The state to scan for direct copy edges.
+        :returns: The number of copy nodes inserted in ``state``.
+        """
         edges = list(state.edges())
         count = 0
         for edge in edges:
@@ -278,7 +316,7 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.is_empty():
                 continue
 
-            # WCR edges aren't copies — they're reductions. Lifting them
+            # WCR edges aren't copies -- they're reductions. Lifting them
             # into a ``CopyLibraryNode`` would lose the conflict-resolution
             # semantics (write-without-merge). They're left in place so a
             # later pass can lower them to a proper reduction node.
@@ -291,8 +329,8 @@ class InsertExplicitCopies(ppl.Pass):
             # Views alias their underlying array; an Array<->View edge is an
             # aliasing reference, not a copy. Lifting it into a CopyLibraryNode
             # would (a) emit a memcpy between two pointers into the same buffer
-            # and (b) break `sdutil.get_view_edge`, which requires the View's
-            # neighbor on at least one side to be an AccessNode — it walks the
+            # and (b) break ``sdutil.get_view_edge``, which requires the View's
+            # neighbor on at least one side to be an AccessNode -- it walks the
             # adjacent edge to the underlying buffer.
             if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
                 continue
@@ -301,7 +339,7 @@ class InsertExplicitCopies(ppl.Pass):
             # ``is_packed_fortran_strides`` on both endpoints. ``Array`` and
             # ``Scalar`` both satisfy that contract (Scalar reports ``shape
             # = (1,)``, ``strides = [1]``). ``Stream`` (queue) and other
-            # non-shape data classes do not — leave the natural memlet for
+            # non-shape data classes do not -- leave the natural memlet for
             # the codegen's stream / custom paths.
             if not isinstance(src_desc, (dace.data.Array, dace.data.Scalar)) \
                     or not isinstance(dst_desc, (dace.data.Array, dace.data.Scalar)):
@@ -325,10 +363,10 @@ class InsertExplicitCopies(ppl.Pass):
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # `Memlet` carries `data` (which array `subset` refers to) plus an
-            # optional `other_subset`. For self-copies (src_name == dst_name)
-            # `memlet.data` matches both endpoints; the DaCe convention there
-            # is that `subset` is the destination range, so check dst first.
+            # ``Memlet`` carries ``data`` (which array ``subset`` refers to) plus an
+            # optional ``other_subset``. For self-copies (src_name == dst_name)
+            # ``memlet.data`` matches both endpoints; the DaCe convention there
+            # is that ``subset`` is the destination range, so check dst first.
             if memlet.data == dst_name:
                 dst_subset = memlet.subset
                 src_subset = memlet.other_subset
