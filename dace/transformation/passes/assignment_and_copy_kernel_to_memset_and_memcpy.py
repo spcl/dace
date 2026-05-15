@@ -71,14 +71,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def _subset_param_order(subset, map_params: List[str]) -> List[str]:
         """Per-dimension list of which map parameter (if any) the subset uses
         in that dimension. Dimensions that don't reference any map param drop
-        out. Used to compare in vs. out access orderings — see
+        out. Used to compare in vs. out access orderings -- see
         ``_in_out_subsets_are_pure_copy``.
         """
         param_set = set(map_params)
         order = []
         for (b, e, _s) in subset:
             # Treat a [b, e] dim as using a map param iff exactly one map
-            # param appears anywhere in `b` or `e`. Per-iteration accesses
+            # param appears anywhere in ``b`` or ``e``. Per-iteration accesses
             # encode as (p, p, 1); broadcast slices may encode wider but
             # still reference a single param.
             free = set()
@@ -91,15 +91,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def _in_out_subsets_are_pure_copy(self, in_subset, out_subset, map_params: List[str]) -> bool:
         """Reject permutations (e.g. transpose) but accept broadcasts.
 
-        The tasklet body ``_out = _in`` is identical for a pure copy
-        (``A[i,j] -> B[i,j]``), a broadcast (``A[j] -> B[i,j]``) and a
-        transpose (``A[i,j] -> B[j,i]``). The first two are safe to
-        lower to ``cudaMemcpyAsync``; the third is not.
-
-        Distinguish by looking at the ordering of map parameters in the
-        in- vs. out-subsets. Any map parameter that appears in *both*
-        subsets must appear in the *same relative order*. Transpose
-        swaps it; copy and broadcast preserve it.
+        ``_out = _in`` is identical for a copy, a broadcast and a transpose;
+        only the first two lower safely to ``cudaMemcpyAsync``. A map
+        parameter appearing in both in- and out-subsets must keep the same
+        relative order -- transpose swaps it, copy/broadcast preserve it.
         """
         in_order = self._subset_param_order(in_subset, map_params)
         out_order = self._subset_param_order(out_subset, map_params)
@@ -161,7 +156,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 in_conn = next(iter(tasklet.in_connectors))
                 if tasklet.code.as_string != f"{out_conn} = {in_conn}{suffix}":
                     continue
-                # Reject permutations (e.g. transpose) — the tasklet body
+                # Reject permutations (e.g. transpose) -- the tasklet body
                 # ``_out = _in`` is identical for copy and transpose, so
                 # without this check we'd silently lower a transpose to
                 # ``cudaMemcpyAsync``. See ``_in_out_subsets_are_pure_copy``.
@@ -354,7 +349,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             # Skip when either passthrough connector (entry-side IN_X or
-            # exit-side IN_X) is shared by other tasklets — lifting would
+            # exit-side IN_X) is shared by other tasklets -- lifting would
             # sever the shared edge that the other tasklets still need.
             # See the matching guard in ``remove_memset_from_kernel``.
             entry_in_conn = memcpy_path[0].dst_conn
@@ -367,7 +362,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 if verbose:
                     warnings.warn(
                         f"Skipping memcpy lift in map {map_entry.map.label}: "
-                        f"passthrough connector(s) shared with other tasklets — "
+                        f"passthrough connector(s) shared with other tasklets -- "
                         f"lifting would break their data paths.", UserWarning)
                 continue
 
@@ -376,7 +371,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # (validator rejects connector-vs-array-name collisions).
             # Most common cause: the surrounding SDFG is a CopyLibraryNode
             # expansion wrapper whose parameter arrays are exactly those
-            # names — re-lifting inside it would recreate the clash that
+            # names -- re-lifting inside it would recreate the clash that
             # motivated the original libnode connector rename.
             clashes = ({CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME}
                        & set(state.sdfg.arrays))
@@ -460,19 +455,19 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if self._is_single_element_copy(copy_length):
                 continue
 
-            # Skip when the tasklet→map_exit edge's IN_X passthrough is
+            # Skip when the tasklet->map_exit edge's IN_X passthrough is
             # shared by other tasklets writing the same array (e.g. a
             # boundary memset and a per-thread compute both feeding
             # ``MapExit.IN_y2`` whose ``OUT_y2`` aggregates into a single
             # ``AccessNode(y2)``). Lifting one would sever the shared
-            # ``map_exit → AccessNode`` edge that the other still needs.
+            # ``map_exit -> AccessNode`` edge that the other still needs.
             shared_dst_conn = memset_path[1].dst_conn
             if shared_dst_conn is not None and len(list(state.in_edges_by_connector(map_exit, shared_dst_conn))) > 1:
                 if verbose:
                     warnings.warn(
                         f"Skipping memset lift in map {map_entry.map.label}: "
-                        f"map_exit connector `{shared_dst_conn}` is shared with "
-                        f"other tasklets — lifting would break their data paths.", UserWarning)
+                        f"map_exit connector ``{shared_dst_conn}`` is shared with "
+                        f"other tasklets -- lifting would break their data paths.", UserWarning)
                 continue
 
             # Same connector-vs-array-name clash guard as the memcpy
@@ -482,7 +477,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     warnings.warn(
                         f"Skipping memset lift in map {map_entry.map.label}: parent SDFG "
                         f"already has an array named "
-                        f"`{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}` which would clash "
+                        f"``{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` which would clash "
                         f"with the new MemsetLibraryNode's connector.", UserWarning)
                 continue
 
