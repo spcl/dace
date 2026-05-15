@@ -239,8 +239,19 @@ DACE_VEC_DEFINE_UNOP(neg,   -a[i])
 DACE_VEC_DEFINE_BINOP_W_SCALAR(pow_w_scalar, std::pow(a[i], constant))
 
 // ============================================================================
-// vector_select: 3-input conditional. _pscalar / _av only — masking on top of
-// an already-conditional op is undefined, so no _masked variants.
+// vector_select: 3-input conditional ``out = cond ? t : e``.
+//
+// The masked variant is well-defined and load-bearing for a masked
+// remainder: an active lane performs the select; an INACTIVE lane keeps
+// the ``e`` operand. In every merge emitted by branch-normalization the
+// ``e`` operand is the merge's destination (``&dst[tile_i]``), so an
+// inactive lane yields ``out[i] = dst[i]`` and the W-wide writeback is a
+// value-preserving no-op there — the same RMW semantics the
+// ``*_av_masked`` binops use. Without it a masked remainder over
+// ``R < W`` lanes runs the select on the trailing inactive lanes whose
+// ``cond`` was never filled (stays 0 -> false -> selects ``e``), which
+// is only accidentally OK and OOB-reads/writes past the array (the
+// TSVC s1161 masked-merge-65 failure).
 // ============================================================================
 template<typename T, int vector_width, typename CondT = bool>
 inline void vector_select_pscalar(T* __restrict__ out,
@@ -257,6 +268,16 @@ inline void vector_select_av(T* __restrict__ out,
                              const T* __restrict__ e) {
     _dace_vectorize(vector_width)
     for (int i = 0; i < vector_width; i++) out[i] = cond[i] ? t[i] : e[i];
+}
+
+template<typename T, int vector_width, typename CondT = bool>
+inline void vector_select_av_masked(T* __restrict__ out,
+                                    const CondT* __restrict__ cond,
+                                    const T* __restrict__ t,
+                                    const T* __restrict__ e,
+                                    const bool* __restrict__ mask) {
+    _dace_vectorize(vector_width)
+    for (int i = 0; i < vector_width; i++) out[i] = mask[i] ? (cond[i] ? t[i] : e[i]) : e[i];
 }
 
 // ----------------------------------------------------------------------------

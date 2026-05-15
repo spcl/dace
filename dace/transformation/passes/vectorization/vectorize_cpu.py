@@ -140,6 +140,8 @@ class VectorizeCPU(ppl.Pipeline):
             "==": "vector_eq<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
             "!=": "vector_ne<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
             "merge": "vector_select<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm});",
+            "merge_masked":
+            "vector_select_av_masked<{dtype}, {vector_width}>({lhs}, {cond}, {then_arm}, {else_arm}, {mask});",
             # scalar variants type 1
             "*c": "vector_mult_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",
             "+c": "vector_add_w_scalar<{dtype}, {vector_width}>({lhs}, {rhs1}, {constant});",

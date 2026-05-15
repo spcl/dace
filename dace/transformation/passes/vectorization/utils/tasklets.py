@@ -454,12 +454,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         assert len(out_edges) == 1
         out_data = state.sdfg.arrays[out_edges[0].data.data]
         dtype_ = dace.dtypes.TYPECLASS_TO_STRING[out_data.dtype]
-        code = templates[op].format(lhs=lhs,
-                                    cond=cond_arg,
-                                    then_arm=then_arm,
-                                    else_arm=else_arm,
-                                    vector_width=vw,
-                                    dtype=dtype_)
+        # In a masked remainder the merge must be iter-mask-gated: an
+        # active lane selects, an INACTIVE lane keeps ``else_arm`` (which
+        # branch-normalization always sets to the merge destination), so
+        # the W-wide writeback over R<W lanes is a no-op on the trailing
+        # inactive lanes instead of OOB-reading/writing past the array
+        # with an unfilled ``cond`` (the TSVC s1161 masked-merge-65 bug).
+        sel_op = "merge"
+        if ctx.mask_connector is not None and "merge_masked" in templates:
+            sel_op = "merge_masked"
+        code = templates[sel_op].format(lhs=lhs,
+                                        cond=cond_arg,
+                                        then_arm=then_arm,
+                                        else_arm=else_arm,
+                                        vector_width=vw,
+                                        dtype=dtype_,
+                                        mask=ctx.mask_connector or "")
         node.code = dace.properties.CodeBlock(code=code, language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         arr_name = rhs1 if rhs1 is not None else rhs2
