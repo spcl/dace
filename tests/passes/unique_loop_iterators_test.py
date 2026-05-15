@@ -20,7 +20,7 @@ def test_nested_sdfg_symbol_mapping():
     The map inside the loop body with nested SDFG.
     The loop variable ``i`` must appear in the nested SDFG's symbol_mapping.
     After UniqueLoopIterators, the symbol_mapping should reference the new
-    ``_loop_it_<N>`` name, not the original ``i`` .
+    ``_loop_it_<N>`` name, not the original ``i``.
     """
     UniqueLoopIterators._loop_var_counter = 0
 
@@ -75,9 +75,9 @@ def loop_var_used_after(A: dace.float64[10], B: dace.float64[10]):
 
 def test_loop_var_reconstruction():
     """
-    With ``assign_loop_iterator_post_value=True`` , the pass must stage
+    With ``assign_loop_iterator_post_value=True``, the pass must stage
     a postfix-assignment state that sets the original loop variable to
-    its iterator-after-loop value ( ``init + diff - (diff mod step)`` )
+    its iterator-after-loop value (``init + diff - (diff mod step)``)
     so downstream reads see the same value gfortran / ifort / flang
     leave the iterator at after a counted DO exit.
     """
@@ -201,7 +201,7 @@ def test_loop_var_on_interstate_edge():
     sdfg.add_node(body, is_start_block=True)
     s1 = body.add_state('s1', is_start_block=True)
     s2 = body.add_state('s2')
-    # Interstate edge inside the loop body that reads ``i`` .
+    # Interstate edge inside the loop body that reads ``i``.
     body.add_edge(s1, s2, dace.InterstateEdge(assignments={'k': 'i + 100'}))
 
     t = s2.add_tasklet('write', set(), {'_o'}, '_o = k')
@@ -280,7 +280,7 @@ def test_loop_bound_with_indirect_array():
 
 def test_while_loop_no_induction_var():
     """A LoopRegion that wasn't synthesised from a counted ``for`` (no
-    ``loop_variable`` ) has nothing to rename.  The pass must skip it
+    ``loop_variable``) has nothing to rename.  The pass must skip it
     cleanly even with the postfix-assignment option on (there's no
     induction variable to leave a post-value for)."""
     UniqueLoopIterators._loop_var_counter = 0
@@ -311,7 +311,7 @@ _BIG_N = 4
 def _big_nested_map_for_for_map(A: dace.float64[_BIG_N, _BIG_N], B: dace.float64[_BIG_N, _BIG_N]):
     """11 inline ``map -> for -> for -> map`` nests (22 maps, 22 loops).
 
-    Iterator names ``i`` / ``j`` / ``k`` / ``l`` are reused in every nest on
+    Iterator names ``i`` /``j`` /``k`` /``l`` are reused in every nest on
     purpose, so the pass must independently rename ~44 loop variables.
     """
     for i in dace.map[0:_BIG_N]:

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Give every ``LoopRegion`` 's loop variable a globally-unique name.
+"""Give every ``LoopRegion``'s loop variable a globally-unique name.
 
-Independent source loops can share an iterator name ( ``for i`` in
+Independent source loops can share an iterator name (``for i`` in
 both); once their regions merge into one SDFG the shared name aliases
 and downstream passes mix the two iterator values.  This pass renames
 each loop variable to a unique ``_loop_it_<N>`` symbol and cascades the
@@ -33,7 +33,7 @@ _POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 @dace.properties.make_properties
 @explicit_cf_compatible
 class UniqueLoopIterators(ppl.Pass):
-    """Rename every LoopRegion's loop variable to a unique ``_loop_it_<N>`` ."""
+    """Rename every LoopRegion's loop variable to a unique ``_loop_it_<N>``."""
 
     _loop_var_counter = 0
 
@@ -52,7 +52,7 @@ class UniqueLoopIterators(ppl.Pass):
         return False
 
     def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str) -> None:
-        """Rename ``old_name`` to ``new_name`` inside ``cfg`` .
+        """Rename ``old_name`` to ``new_name`` inside ``cfg``.
 
         ``replace_dict`` cascades the rename through the region's
         states, edges, memlets, tasklets, and nested-SDFG
@@ -84,10 +84,10 @@ class UniqueLoopIterators(ppl.Pass):
         """Counted-DO exit value: one stride past the last attained value.
 
         ``post = init + int_floor(diff, step) * step`` where
-        ``diff = loop_end - init + step`` ; ``int_floor`` stays
+        ``diff = loop_end - init + step``; ``int_floor`` stays
         integer-typed so codegen emits exact integer division.  E.g.
-        ``DO i = 1, N`` -> ``N + 1`` ; ``DO i = N, 1, -1`` -> ``0`` ;
-        ``DO i = 1, 10, 2`` -> ``11`` .
+        ``DO i = 1, N`` -> ``N + 1``; ``DO i = N, 1, -1`` -> ``0``;
+        ``DO i = 1, 10, 2`` -> ``11``.
 
         :param loop: Loop region to analyse.
         :returns: Post-loop iterator value.
