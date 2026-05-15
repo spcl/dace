@@ -1820,13 +1820,23 @@ def deserialize_symbolic(expr) -> SymbolicType:
     return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
 
 
-@lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
-    from dace.frontend.python.astutils import unparse  # Avoid import loops
-
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
+    if symbol_map is None:
+        return _pystr_to_symbolic_cached(expr, simplify)
+    return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
+
+
+@lru_cache(maxsize=16384)
+def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
+    return _pystr_to_symbolic_uncached(expr, None, simplify)
+
+
+def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.Basic:
+    from dace.frontend.python.astutils import unparse  # Avoid import loops
+
     if isinstance(expr, str):
         try:
             return sympy.Integer(int(expr))

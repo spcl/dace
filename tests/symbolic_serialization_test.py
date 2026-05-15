@@ -136,6 +136,32 @@ def test_rational_addition_roundtrip_preserves_serialization():
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
+def test_pystr_to_symbolic_does_not_cache_basic_by_symbol_equality():
+    symbolic.pystr_to_symbolic(symbolic.deserialize_symbolic('-1 + $N'))
+    typed = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
+
+    restored = symbolic.pystr_to_symbolic(typed)
+
+    assert restored is typed
+    assert symbolic.serialize_symbolic(restored) == '-1 + symbol($N, dtype=dace.int64)'
+
+
+def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
+    json_range = {
+        'type': 'Range',
+        'ranges': [{
+            'start': '0',
+            'end': '-1 + symbol($N, dtype=dace.int64)',
+            'step': '1',
+            'tile': '1',
+        }],
+    }
+
+    rng = subsets.Range.from_json(json_range)
+
+    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int64)'
+
+
 def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
     prop = ListProperty(element_type=sympy.Basic)
 
