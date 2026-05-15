@@ -130,9 +130,21 @@ class SplitMapForVectorRemainder(ppl.Pass):
         map_entry.map.range[-1] = (lb, main_end, 1)
         rem_scope.entry.map.range[-1] = (rem_start, ub, 1)
 
+        # The remainder is the trailing tail, never the parallel hot
+        # path. The main / vectorised map keeps its default schedule
+        # (P2 only retightens its range, never its schedule) so its
+        # parallelism is unaffected.
         if self.mode == "scalar":
-            # Scalar remainder must not be vectorised by the downstream pass.
+            # Scalar remainder is forced Sequential: this both keeps it
+            # off the parallel path AND makes the downstream vectorizer
+            # skip it (``vectorize.py`` skips Sequential maps) so it
+            # stays a plain scalar tail loop.
             rem_scope.entry.map.schedule = dace.dtypes.ScheduleType.Sequential
         else:  # "masked"
+            # The masked remainder is NOT a scalar tail — it is a single
+            # masked W-wide iteration the vectorizer must still tile to
+            # step-W. It therefore cannot be ``Sequential`` (the
+            # vectorizer skips Sequential maps); the ``__masked_rem``
+            # label drives P3 + the masked emitter instead.
             rem_scope.entry.map.label = rem_scope.entry.map.label + "__masked_rem"
         return True
