@@ -220,7 +220,7 @@ def _require_contiguous_subset(name: str, subset, desc, side: str):
 @dataclass
 class CopyExpansion:
     """Inputs + collapsed-shape state shared across CopyLibraryNode expansions
-    that build a wrapper SDFG. Returned by :func:``_make_expansion_sdfg``."""
+    that build a wrapper SDFG. Returned by :func:`_make_expansion_sdfg`."""
     sdfg: dace.SDFG
     state: dace.SDFGState
     inp_name: str
@@ -463,7 +463,7 @@ def _build_copynd_call(ctype,
 @library.expansion
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
-    :func:``select_copy_implementation`` from endpoint storages, subset
+    :func:`select_copy_implementation` from endpoint storages, subset
     shapes, and the surrounding scope. Sets ``node.implementation`` to the
     resolved name before delegating so introspection/debug output shows
     what was actually picked."""

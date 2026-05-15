@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:``AssignmentAndCopyKernelToMemsetAndMemcpy``.
+"""Tests for :class:`AssignmentAndCopyKernelToMemsetAndMemcpy`.
 
 Verifies the lifting of in-map memset / element-wise-copy patterns to ``MemsetLibraryNode``
 and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
