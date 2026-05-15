@@ -59,7 +59,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            no_inline=False,
                            exact=None,
                            branch_mode: str = "merge",
-                           remainder_strategy: str = "divides_evenly",
+                           remainder_strategy: str = "scalar",
                            param_tag: str = None,
                            lower_to_intrinsics: bool = False):
 

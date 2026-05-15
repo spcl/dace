@@ -210,7 +210,7 @@ def _allocate(name: str, n: int) -> np.ndarray:
     return np.random.rand(n).astype(np.float64)
 
 
-@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     return request.param
 

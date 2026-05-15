@@ -36,8 +36,8 @@ def strided_load_stride_2(src: dace.float64[2 * N], dst: dace.float64[N], scale:
 
 
 @dace.program
-def strided_load_stride_ssym(src: dace.float64[ssym * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def strided_load_stride_ssym(src: dace.float64[ssym * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = src[i * ssym] * scale
 
 
@@ -96,8 +96,8 @@ def strided_store_stride_2(src: dace.float64[N], dst: dace.float64[2 * N], scale
 
 
 @dace.program
-def strided_store_stride_ssym(src: dace.float64[N], dst: dace.float64[ssym * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def strided_store_stride_ssym(src: dace.float64[8 * N], dst: dace.float64[ssym * 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i * ssym] = src[i] * scale
 
 
@@ -234,7 +234,9 @@ def test_strided_load_stride_ssym():
             "dst": dst
         },
         params={
-            "N": N,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N // 8,
             "scale": 1.5,
             "ssym": _ssym
         },
@@ -431,7 +433,9 @@ def test_strided_store_stride_ssym():
             "dst": dst
         },
         params={
-            "N": N,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N // 8,
             "scale": 1.5,
             "ssym": _ssym
         },
@@ -587,7 +591,9 @@ def test_strided_store_stride_ssym():
             "dst": dst
         },
         params={
-            "N": N,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N // 8,
             "scale": 1.5,
             "ssym": _ssym
         },
@@ -672,26 +678,26 @@ def diagonal_scatter_store(src: dace.float64[N], A: dace.float64[N, N], scale: d
 
 
 @dace.program
-def gather_load_2i_i(A: dace.float64[2 * N, N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def gather_load_2i_i(A: dace.float64[2 * 8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = A[2 * i, i] * scale
 
 
 @dace.program
-def scatter_store_2i_i(src: dace.float64[N], A: dace.float64[2 * N, N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def scatter_store_2i_i(src: dace.float64[8 * N], A: dace.float64[2 * 8 * N, 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         A[2 * i, i] = src[i] * scale
 
 
 @dace.program
-def gather_load_i_2i(A: dace.float64[N, 2 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def gather_load_i_2i(A: dace.float64[8 * N, 2 * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = A[i, 2 * i] * scale
 
 
 @dace.program
-def scatter_store_i_2i(src: dace.float64[N], A: dace.float64[N, 2 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def scatter_store_i_2i(src: dace.float64[8 * N], A: dace.float64[8 * N, 2 * 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         A[i, 2 * i] = src[i] * scale
 
 
@@ -744,7 +750,9 @@ def test_gather_load_2i_i():
             "dst": dst
         },
         params={
-            "N": N_val,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N_val // 8,
             "scale": 1.5
         },
         vector_width=8,
@@ -763,7 +771,9 @@ def test_scatter_store_2i_i():
             "A": A
         },
         params={
-            "N": N_val,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N_val // 8,
             "scale": 1.5
         },
         vector_width=8,
@@ -782,7 +792,9 @@ def test_gather_load_i_2i():
             "dst": dst
         },
         params={
-            "N": N_val,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N_val // 8,
             "scale": 1.5
         },
         vector_width=8,
@@ -801,7 +813,9 @@ def test_scatter_store_i_2i():
             "A": A
         },
         params={
-            "N": N_val,
+            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
+            # and the trip is provably divisible by W=8 (no remainder).
+            "N": N_val // 8,
             "scale": 1.5
         },
         vector_width=8,

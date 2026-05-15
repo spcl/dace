@@ -16,7 +16,7 @@ Reuses:
 from typing import Optional
 
 import dace
-from dace import properties
+from dace import properties, symbolic
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import nest_state_subgraph
@@ -32,14 +32,45 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     NestedSDFG, nest the body into a NestedSDFG in-place. After the pass,
     every innermost map satisfies ``map_consists_of_single_nsdfg_or_no_nsdfg``
     AND contains exactly one NestedSDFG (no bare-tasklet bodies).
+
+    Maps whose innermost trip count is *provably* a multiple of
+    ``vector_width`` are skipped: they need no remainder, so P2 will not
+    split them and the body never has to be cloned.  Wrapping them in an
+    NSDFG would needlessly perturb downstream strided/gather/jacobi
+    detection — this preserves the pre-remainder-refactor behaviour for
+    the divisible case (what the old ``divides_evenly`` mode did by
+    skipping P1/P2 entirely).
     """
 
     CATEGORY: str = "Vectorization Preparation"
+
+    vector_width = properties.Property(dtype=int, default=8, allow_none=False)
+
+    def __init__(self, vector_width: int = 8):
+        super().__init__()
+        self.vector_width = vector_width
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def _trip_is_provably_divisible(self, map_entry: dace.nodes.MapEntry) -> bool:
+        """``True`` iff the innermost dim's trip count is provably a
+        multiple of ``vector_width`` (mirrors the P2 skip check exactly,
+        so the two passes agree on which maps get a remainder)."""
+        if not map_entry.map.range.ranges:
+            return False
+        lb, ub, step = map_entry.map.range[-1]
+        if (step != 1) and (str(step) != "1"):
+            return False
+        trip = symbolic.simplify(ub - lb + 1)
+        try:
+            if bool((trip % self.vector_width).simplify() == 0):
+                return True
+        except Exception:
+            pass
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
@@ -53,6 +84,10 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if not isinstance(g, dace.SDFGState):
                 continue
             if not is_innermost_map(g, n):
+                continue
+            # Provably-divisible maps need no remainder; leave the body
+            # un-nested so the divisible path matches the old behaviour.
+            if self._trip_is_provably_divisible(n):
                 continue
             # Skip if the body already collapses to a single NestedSDFG.
             if get_single_nsdfg_inside_map(g, n) is not None:

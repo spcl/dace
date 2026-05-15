@@ -23,16 +23,24 @@ def branch_mode(request) -> str:
     return request.param
 
 
-@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     """Parametrise tests over the remainder-handling strategies wired into
-    VectorizeCPU. ``"divides_evenly"`` is today's default (assumes the
-    range is %% W == 0). ``"scalar"`` enables P2(mode='scalar') so non-
-    divisible ranges get a step-1 sequential postamble. ``"masked"``
-    enables P2(mode='masked') + P3 (iter_mask attach) + Slice 1
-    (strided-inside-NSDFG) + C.2-b (mask-aware emitter) for full
-    SIMD-width execution of the trailing R<W elements. ``"full_loop_mask"``
-    is queued (R3) and not yet exercised.
+    ``VectorizeCPU``.
+
+    There is no ``"divides_evenly"`` strategy: P2
+    (``SplitMapForVectorRemainder``) always runs and skips the split
+    itself when the trip count is *provably* a multiple of ``W`` (so a
+    provably-divisible map carries no remainder regardless of the
+    strategy below). The strategy only selects the remainder *shape*
+    when divisibility cannot be proven:
+
+    - ``"scalar"`` — P2(mode='scalar'): step-1 ``Sequential`` postamble.
+    - ``"masked"`` — P2(mode='masked') + P3 (iter_mask attach) + the
+      mask-aware emitter, for full SIMD-width execution of the trailing
+      ``R<W`` elements.
+
+    ``"full_loop_mask"`` is queued (R3) and not yet exercised.
 
     Tests that go through ``run_vectorization_test`` and want to cover
     every strategy declare a ``remainder_strategy`` parameter. Tests

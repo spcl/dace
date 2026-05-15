@@ -7,18 +7,19 @@ Kernels are written with plain Python ``for i in range(...)`` loops
 convert the loop into a Map; this matches the typical front-end flow
 (TSVC tests follow the same pattern).
 
-Each test runs under multiple ``remainder_strategy`` values to exercise
-the full pipeline matrix. Today's strategies:
+There is no ``"divides_evenly"`` strategy: P2
+(``SplitMapForVectorRemainder``) always runs and decides for itself
+whether a remainder is needed via symbolic divisibility analysis —
+when ``simplify(ub-lb+1) % W == 0`` is provably true (a constant
+multiple of W, or a symbolic ``8*N``) it skips the split entirely.
+``remainder_strategy`` only selects the remainder *shape* when the
+split does happen:
 
-- ``"divides_evenly"`` (default): assumes the range is divisible by W;
-  produces correct output on non-divisible cases only by accident (the
-  trailing-tile OOB reads/writes happen to land on freshly-allocated
-  zero memory, so ``np.allclose`` against the scalar reference passes).
-- ``"scalar"`` (R1): splits each non-divisible innermost map into a
-  main step-W map + a step-1 sequential scalar postamble. No mask.
-  Robust for any N.
-- ``"masked"`` / ``"full_loop_mask"``: queued (R2 / R3); raise
-  ``NotImplementedError`` from ``VectorizeCPU`` for now.
+- ``"scalar"`` (R1): main step-W map + a step-1 sequential scalar
+  postamble. No mask. Robust for any N.
+- ``"masked"`` (R2): main step-W (no mask) + step-W remainder body
+  with a P3 ``_iter_mask``.
+- ``"full_loop_mask"``: queued (R3); raises ``NotImplementedError``.
 """
 import copy
 import math
@@ -82,10 +83,18 @@ def fused_chain(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], out:
         out[i] = (a[i] + b[i]) * c[i] + 1.5
 
 
-@pytest.fixture(params=["divides_evenly", "scalar"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request):
-    """Parametrise tests across all currently-wired remainder strategies."""
+    """Parametrise tests across the currently-wired remainder strategies."""
     return request.param
+
+
+def _branch_kwargs(remainder_strategy: str) -> dict:
+    """fp_factor is incompatible with the masked remainder (locked rule);
+    these kernels are branchless so branch_normalization is equivalent."""
+    if remainder_strategy == "masked":
+        return dict(use_fp_factor=False, branch_normalization=True)
+    return dict(use_fp_factor=True, branch_normalization=False)
 
 
 def _run(prog, Nv: int, remainder_strategy: str):
@@ -103,9 +112,9 @@ def _run(prog, Nv: int, remainder_strategy: str):
     vsdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_v"
 
     VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=True, branch_normalization=False,
                  insert_copies=False,
-                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+                 remainder_strategy=remainder_strategy,
+                 **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
 
     sdfg(a=a_ref, b=b, N=Nv)
     vsdfg(a=a_vec, b=b, N=Nv)
@@ -114,12 +123,8 @@ def _run(prog, Nv: int, remainder_strategy: str):
 
 
 # Non-divisible iteration counts (force remainder/mask handling).
-#
-# These tests must NOT run under remainder_strategy="divides_evenly":
-# that path tiles to step-W unconditionally and the trailing OOB writes
-# corrupt the heap (per module docstring). The corruption then crashes
-# the NEXT test scheduled on the same pytest-xdist worker, producing
-# misleading "[scalar] crashed" failure reports. Pin to ["scalar"] only.
+# Pinned to ["scalar"] — P2 splits these (divisibility cannot be
+# proven) and the scalar postamble is the robust shape for any N.
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar"])
@@ -184,9 +189,9 @@ def _run3(prog, Nv: int, remainder_strategy: str, in_arrays: list, out_arrays: l
     vsdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_v"
 
     VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=True, branch_normalization=False,
                  insert_copies=False,
-                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+                 remainder_strategy=remainder_strategy,
+                 **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
 
     sdfg(**arrs_ref, N=Nv)
     vsdfg(**arrs_vec, N=Nv)
@@ -194,10 +199,8 @@ def _run3(prog, Nv: int, remainder_strategy: str, in_arrays: list, out_arrays: l
     return arrs_ref, arrs_vec, diffs
 
 
-# For non-divisible N, only the "scalar" strategy is safe. "divides_evenly"
-# unconditionally tiles to step-W and overwrites past the end of the array,
-# corrupting the heap and crashing subsequent tests in the same worker process.
-# These tests therefore pin remainder_strategy="scalar" explicitly.
+# For non-divisible N these pin remainder_strategy="scalar" explicitly
+# (the robust step-1 postamble shape).
 
 
 @pytest.mark.parametrize("Nv", [7, 9, 11, 13, 15, 17])
@@ -271,9 +274,9 @@ def test_constant_range_div_16(remainder_strategy):
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"constant_range_div_16_{remainder_strategy}_v"
     VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=True, branch_normalization=False,
                  insert_copies=False,
-                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+                 remainder_strategy=remainder_strategy,
+                 **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
 
     sdfg(a=a, out=out_ref)
     vsdfg(a=a, out=out_vec)
@@ -295,10 +298,104 @@ def test_constant_range_div_24(remainder_strategy):
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"constant_range_div_24_{remainder_strategy}_v"
     VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=True, branch_normalization=False,
                  insert_copies=False,
-                 remainder_strategy=remainder_strategy).apply_pass(vsdfg, {})
+                 remainder_strategy=remainder_strategy,
+                 **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
 
     sdfg(a=a, out=out_ref)
     vsdfg(a=a, out=out_vec)
     assert np.max(np.abs(out_ref - out_vec)) < 1e-12
+
+
+# Provable symbolic divisibility: a map over ``0 : 8*M`` has a trip
+# count that is a symbolic multiple of W=8, so P2
+# (SplitMapForVectorRemainder) must prove ``trip % 8 == 0`` and SKIP
+# the split — the resulting SDFG carries NO remainder map.  This is the
+# replacement for the old explicit ``divides_evenly`` mode: divisibility
+# is detected, not declared by the caller.
+
+
+_SYMBOLIC_DIV_M = dace.symbol("M")
+
+
+@dace.program
+def symbolic_mult_of_w(a: dace.float64[8 * _SYMBOLIC_DIV_M], out: dace.float64[8 * _SYMBOLIC_DIV_M]):
+    """Trip count ``8*M`` — provably divisible by W=8 for any M."""
+    for i in range(8 * _SYMBOLIC_DIV_M):
+        out[i] = a[i] * 2.0
+
+
+def _count_remainder_maps(sdfg: dace.SDFG) -> int:
+    """Number of P2-emitted remainder maps in ``sdfg``.
+
+    P2's scalar remainder is a ``ScheduleType.Sequential`` map; its
+    masked remainder carries a ``__masked_rem`` label suffix.  Either
+    marks a map that only exists because the split fired.
+
+    :param sdfg: SDFG to scan.
+    :returns: Count of remainder maps (0 when P2 skipped the split).
+    """
+    n = 0
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, dace.nodes.MapEntry):
+            continue
+        if node.map.schedule == dace.dtypes.ScheduleType.Sequential:
+            n += 1
+        elif node.map.label.endswith("__masked_rem"):
+            n += 1
+    return n
+
+
+def test_symbolic_8m_p2_skips_split():
+    """P2 alone: a ``0 : 8*M`` map proves divisibility and does NOT split.
+
+    ``apply_pass`` returns ``None`` (zero applications) and the map
+    count is unchanged — no remainder map is introduced.
+    """
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+    from dace.transformation.passes.vectorization.split_map_for_vector_remainder import SplitMapForVectorRemainder
+
+    sdfg = symbolic_mult_of_w.to_sdfg(simplify=True)
+    sdfg.name = "symbolic_8m_p2_skip"
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
+
+    maps_before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    applied = SplitMapForVectorRemainder(vector_width=8, mode="scalar").apply_pass(sdfg, {})
+    maps_after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+
+    assert applied is None, f"P2 split a provably-divisible 8*M map (applied={applied})"
+    assert maps_after == maps_before, f"map count changed {maps_before} -> {maps_after} (a remainder was emitted)"
+    assert _count_remainder_maps(sdfg) == 0, "a remainder map exists for a provably-divisible 8*M trip"
+
+
+def test_symbolic_8m_no_remainder_end_to_end(remainder_strategy):
+    """Full VectorizeCPU on a ``0 : 8*M`` kernel: no remainder map, and
+    the vectorized output matches the scalar reference for several M."""
+    sdfg = symbolic_mult_of_w.to_sdfg(simplify=True)
+    sdfg.name = f"symbolic_8m_e2e_{remainder_strategy}_ref"
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    vsdfg = copy.deepcopy(sdfg)
+    vsdfg.name = f"symbolic_8m_e2e_{remainder_strategy}_v"
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+                 insert_copies=False,
+                 remainder_strategy=remainder_strategy,
+                 **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
+
+    assert _count_remainder_maps(vsdfg) == 0, (
+        f"VectorizeCPU emitted a remainder map for a provably-divisible "
+        f"8*M trip (strategy={remainder_strategy})")
+
+    for Mv in (1, 2, 5):
+        Nv = 8 * Mv
+        rng = np.random.default_rng(seed=Nv)
+        a = rng.random(Nv)
+        out_ref = np.zeros(Nv)
+        out_vec = np.zeros(Nv)
+        sdfg(a=a, out=out_ref, M=Mv)
+        vsdfg(a=a, out=out_vec, M=Mv)
+        assert np.max(np.abs(out_ref - out_vec)) < 1e-12, f"M={Mv}"

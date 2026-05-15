@@ -3,12 +3,13 @@
 TSVC ``_d_single`` kernels imported in bulk from VectraArtifacts, block 1.
 
 Each kernel is parametrised across:
-- ``LEN_1D`` in ``{64, 65}`` — 64 is divisible-by-W=8 so the
-  ``divides_evenly`` path stays clean; 65 forces a non-empty remainder,
-  exercising the ``scalar`` (step-1 postamble) and ``masked`` (W-wide
-  iter_mask) paths end-to-end.
-- ``remainder_strategy`` in ``{divides_evenly, scalar, masked}`` —
-  ``divides_evenly`` only valid when ``LEN_1D % W == 0``.
+- ``LEN_1D`` in ``{64, 65}`` — 64 is divisible-by-W=8 (P2 proves
+  divisibility and emits no remainder); 65 forces a non-empty
+  remainder, exercising the ``scalar`` (step-1 postamble) and
+  ``masked`` (W-wide iter_mask) paths end-to-end.
+- ``remainder_strategy`` in ``{scalar, masked}`` — selects the
+  remainder *shape*; P2 itself decides whether a remainder is needed
+  via symbolic divisibility analysis.
 - ``branch_mode`` in ``{merge, fp_factor}`` — ``fp_factor`` paired
   with ``masked`` is rejected by VectorizeCPU's locked plan rule and
   skipped.
@@ -393,7 +394,7 @@ def _allocate(name: str, n: int) -> np.ndarray:
     return np.random.rand(n).astype(np.float64)
 
 
-@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     return request.param
 
@@ -413,9 +414,6 @@ def test_tsvc_block1(kernel, argnames, remainder_strategy, branch_mode, len_1d_v
     # Locked-plan-rule skip: fp_factor cannot combine with masked iter_mask.
     if branch_mode == "fp_factor" and remainder_strategy == "masked":
         pytest.skip("fp_factor + masked rejected by VectorizeCPU (locked plan rule)")
-    # divides_evenly requires LEN_1D % W == 0; LEN_1D=65 has remainder 1.
-    if remainder_strategy == "divides_evenly" and (len_1d_val % 8) != 0:
-        pytest.skip(f"divides_evenly requires LEN_1D % W == 0 (got LEN_1D={len_1d_val})")
 
     arrays_ref = {name: _allocate(name, len_1d_val) for name in argnames}
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}

@@ -71,8 +71,8 @@ def _run_and_check(prog, arrays, params, *, has_load: bool, has_store: bool):
 
 
 @dace.program
-def diag_load(A: dace.float64[N, N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def diag_load(A: dace.float64[8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = A[i, i] * scale
 
 
@@ -80,15 +80,15 @@ def test_diagonal_load_collapses_to_strided_intrinsic():
     Nv = 64
     A = np.random.rand(Nv, Nv)
     _run_and_check(diag_load, {"A": A, "dst": np.zeros(Nv)},
-                   {"N": Nv, "scale": 1.5}, has_load=True, has_store=False)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=True, has_store=False)
 
 
 # --- diagonal store ----------------------------------------------------------
 
 
 @dace.program
-def diag_store(src: dace.float64[N], A: dace.float64[N, N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def diag_store(src: dace.float64[8 * N], A: dace.float64[8 * N, 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         A[i, i] = src[i] * scale
 
 
@@ -96,15 +96,15 @@ def test_diagonal_store_collapses_to_strided_intrinsic():
     Nv = 64
     src = np.random.rand(Nv)
     _run_and_check(diag_store, {"src": src, "A": np.zeros((Nv, Nv))},
-                   {"N": Nv, "scale": 1.5}, has_load=False, has_store=True)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=False, has_store=True)
 
 
 # --- A[2*i, i] load ----------------------------------------------------------
 
 
 @dace.program
-def load_2i_i(A: dace.float64[2 * N, N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def load_2i_i(A: dace.float64[2 * 8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = A[2 * i, i] * scale
 
 
@@ -112,15 +112,15 @@ def test_2i_i_load_collapses_to_strided_intrinsic():
     Nv = 64
     A = np.random.rand(2 * Nv, Nv)
     _run_and_check(load_2i_i, {"A": A, "dst": np.zeros(Nv)},
-                   {"N": Nv, "scale": 1.5}, has_load=True, has_store=False)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=True, has_store=False)
 
 
 # --- A[2*i, i] store ---------------------------------------------------------
 
 
 @dace.program
-def store_2i_i(src: dace.float64[N], A: dace.float64[2 * N, N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def store_2i_i(src: dace.float64[8 * N], A: dace.float64[2 * 8 * N, 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         A[2 * i, i] = src[i] * scale
 
 
@@ -128,15 +128,15 @@ def test_2i_i_store_collapses_to_strided_intrinsic():
     Nv = 64
     src = np.random.rand(Nv)
     _run_and_check(store_2i_i, {"src": src, "A": np.zeros((2 * Nv, Nv))},
-                   {"N": Nv, "scale": 1.5}, has_load=False, has_store=True)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=False, has_store=True)
 
 
 # --- A[i, 2*i] load ----------------------------------------------------------
 
 
 @dace.program
-def load_i_2i(A: dace.float64[N, 2 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def load_i_2i(A: dace.float64[8 * N, 2 * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         dst[i] = A[i, 2 * i] * scale
 
 
@@ -144,15 +144,15 @@ def test_i_2i_load_collapses_to_strided_intrinsic():
     Nv = 64
     A = np.random.rand(Nv, 2 * Nv)
     _run_and_check(load_i_2i, {"A": A, "dst": np.zeros(Nv)},
-                   {"N": Nv, "scale": 1.5}, has_load=True, has_store=False)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=True, has_store=False)
 
 
 # --- A[i, 2*i] store ---------------------------------------------------------
 
 
 @dace.program
-def store_i_2i(src: dace.float64[N], A: dace.float64[N, 2 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+def store_i_2i(src: dace.float64[8 * N], A: dace.float64[8 * N, 2 * 8 * N], scale: dace.float64):
+    for i, in dace.map[0:8 * N:1]:
         A[i, 2 * i] = src[i] * scale
 
 
@@ -160,4 +160,4 @@ def test_i_2i_store_collapses_to_strided_intrinsic():
     Nv = 64
     src = np.random.rand(Nv)
     _run_and_check(store_i_2i, {"src": src, "A": np.zeros((Nv, 2 * Nv))},
-                   {"N": Nv, "scale": 1.5}, has_load=False, has_store=True)
+                   {"N": Nv // 8, "scale": 1.5}, has_load=False, has_store=True)

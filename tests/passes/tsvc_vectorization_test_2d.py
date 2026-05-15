@@ -3,9 +3,10 @@
 TSVC ``_d_single`` 2D kernels imported in bulk from VectraArtifacts.
 
 Each kernel is parametrised across:
-- ``LEN_2D`` in ``{16, 17}`` — 16 is divisible-by-W=8 so the
-  ``divides_evenly`` path stays clean; 17 forces a non-empty remainder.
-- ``remainder_strategy`` in ``{divides_evenly, scalar, masked}``.
+- ``LEN_2D`` in ``{16, 17}`` — 16 is divisible-by-W=8 (P2 proves
+  divisibility and emits no remainder); 17 forces a non-empty remainder.
+- ``remainder_strategy`` in ``{scalar, masked}`` — selects the
+  remainder *shape*; P2 itself decides whether a remainder is needed.
 - ``branch_mode`` in ``{merge, fp_factor}``.
 
 Parameter shapes are classified at import time:
@@ -335,7 +336,7 @@ def _allocate(shape_class: str, n: int) -> np.ndarray:
     raise ValueError(f"unknown shape_class: {shape_class}")
 
 
-@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     return request.param
 
@@ -354,8 +355,6 @@ def len_2d_val(request) -> int:
 def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_val):
     if branch_mode == "fp_factor" and remainder_strategy == "masked":
         pytest.skip("fp_factor + masked rejected by VectorizeCPU (locked plan rule)")
-    if remainder_strategy == "divides_evenly" and (len_2d_val % 8) != 0:
-        pytest.skip(f"divides_evenly requires LEN_2D % W == 0 (got LEN_2D={len_2d_val})")
 
     arrays_ref = {name: _allocate(shape_class, len_2d_val) for name, shape_class in params_spec}
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}

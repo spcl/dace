@@ -13,12 +13,13 @@ LEN_1D = dace.symbol("LEN_1D")
 ITERATIONS = dace.symbol("ITERATIONS")
 
 
-@pytest.fixture(params=["divides_evenly", "scalar", "masked"])
+@pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     """Parametrise TSVC tests over the remainder-handling strategies wired
     into ``VectorizeCPU``. Matches the per-directory ``conftest.py`` fixture
     defined under ``tests/passes/vectorization/`` (this file lives one level
-    up so it needs its own fixture)."""
+    up so it needs its own fixture). There is no ``divides_evenly``
+    strategy — P2 proves divisibility itself and skips the split."""
     return request.param
 
 
@@ -46,7 +47,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            no_inline=False,
                            exact=None,
                            apply_loop_to_map=False,
-                           remainder_strategy: str = "divides_evenly",
+                           remainder_strategy: str = "scalar",
                            branch_mode: str = "merge",
                            lower_to_intrinsics: bool = False):
 

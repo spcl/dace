@@ -38,7 +38,7 @@ def _scatter_2_at_stride_4(a: dace.float64[N], b: dace.float64[N]):
         a[4 * i + 1] = b[i] * 3.0
 
 
-@pytest.mark.parametrize("remainder_strategy", ["divides_evenly", "scalar", "masked"])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_multi_elem_scatter_K2_stride4(remainder_strategy):
     """K=2 elements per iter, stride=4 → bbox = (W-1)*4 + 2 = 30.
 
@@ -81,13 +81,6 @@ def _gather_2_at_stride_4(a: dace.float64[N], b: dace.float64[N]):
         a[i] = b[4 * i] + b[4 * i + 1]
 
 
-# ``divides_evenly`` for the gather pattern routes through the bare-
-# tasklet ``_generate_strided_loads_to_packed_storage`` path, which
-# collides the K=2 read tasklets onto a single ``b_packed`` buffer
-# (separate pre-existing bug in the bare-tasklet path, NOT in the
-# NSDFG-wrapped multi-element handler this file is testing). Restrict
-# to the scalar / masked variants where the P1 wrap routes through
-# ``_setup_multi_element_strided_inside_nsdfg``.
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_multi_elem_gather_K2_stride4(remainder_strategy):
     """K=2 reads per iter, stride=4 → bbox = (W-1)*4 + 2 = 30.
