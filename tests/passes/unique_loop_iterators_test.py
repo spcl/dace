@@ -1,20 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the :class:`UniqueLoopIterators` pass."""
-import ctypes
 
 import dace
 import numpy as np
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
-
-# Preload libgomp for runtime calls (omp_get_max_threads) that DaCe's
-# generated dacestub stubs reference but that ctypes' default RTLD_LOCAL
-# load wouldn't satisfy.
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 @dace.program
@@ -26,7 +17,7 @@ def foo(A: dace.float64[10, 10], idx: dace.int32[10, 10], B: dace.float64[5, 10]
 
 def test_nested_sdfg_symbol_mapping():
     """
-    The map inside the loop body becomes a nested SDFG.
+    The map inside the loop body with nested SDFG.
     The loop variable `i` must appear in the nested SDFG's symbol_mapping.
     After UniqueLoopIterators, the symbol_mapping should reference the new
     ``_loop_it_<N>`` name, not the original `i`.
@@ -61,7 +52,6 @@ def test_nested_sdfg_symbol_mapping():
                 assert '_loop_it_0' in node.symbol_mapping, \
                     f"renamed loop var '_loop_it_0' should be in symbol_mapping, got {node.symbol_mapping}"
 
-    # Verify correctness
     A = np.random.rand(10, 10)
     idx = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
     B = np.random.rand(5, 10)
@@ -77,15 +67,10 @@ def test_nested_sdfg_symbol_mapping():
     assert np.allclose(A, A_ref), f"Max error: {np.max(np.abs(A - A_ref))}"
 
 
-# ============================================================================
-# Test 2: Loop variable used after the loop (reconstruction check)
-# ============================================================================
 @dace.program
 def loop_var_used_after(A: dace.float64[10], B: dace.float64[10]):
     for i in range(10):
         A[i] = 2.0 * B[i]
-    # After the loop, i should be 9. The pass should insert
-    # an assignment i = loop_end - 1 so downstream usage is correct.
 
 
 def test_loop_var_reconstruction():
@@ -119,9 +104,7 @@ def test_loop_var_reconstruction():
 
     assignments = out_edges[0].data.assignments
     assert 'i' in assignments, f"Expected assignment to 'i', got {assignments}"
-    # Mod-based post-value formula: init + diff - (diff mod step),
-    # where diff = loop_end - init + step.  For ``for i in range(10)``
-    # (init=0, loop_end=9, step=1): diff=10, mod=0, post=10.
+
     loop_end = loop_analysis.get_loop_end(loop)
     init = loop_analysis.get_init_assignment(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -130,7 +113,6 @@ def test_loop_var_reconstruction():
     assert str(assignments['i']) == f"({expected_post})", \
         f"Expected post-value {expected_post}, got {assignments['i']}"
 
-    # Verify correctness
     A = np.zeros(10)
     B = np.random.rand(10)
     csdfg = sdfg.compile()
@@ -138,9 +120,6 @@ def test_loop_var_reconstruction():
     assert np.allclose(A, 2.0 * B)
 
 
-# ============================================================================
-# Test 3: Nested loops — both variables should be renamed independently
-# ============================================================================
 @dace.program
 def nested_loops(A: dace.float64[8, 8]):
     for i in range(8):
@@ -158,7 +137,6 @@ def test_nested_loops():
 
     sdfg = nested_loops.to_sdfg(simplify=False)
 
-    # Before: should have 2 loop regions
     loops_before = [cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
     assert len(loops_before) == 2
     loop_vars_before = {lr.loop_variable for lr in loops_before}
@@ -167,18 +145,11 @@ def test_nested_loops():
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
-    # Verify correctness
     A = np.random.rand(8, 8)
     A_ref = A.copy() + 1.0
     csdfg = sdfg.compile()
     csdfg(A=A)
     assert np.allclose(A, A_ref), f"Max error: {np.max(np.abs(A - A_ref))}"
-
-
-# ============================================================================
-# Test 4: Loop variable read inside a tasklet body (as a Python symbol).
-# After the pass, the tasklet body should reference the renamed iterator.
-# ============================================================================
 
 
 def test_loop_var_in_tasklet_body():
@@ -216,11 +187,6 @@ def test_loop_var_in_tasklet_body():
     assert (out == 2 * np.arange(10)).all()
 
 
-# ============================================================================
-# Test 5: Loop variable read on an interstate edge (assignment & condition).
-# ============================================================================
-
-
 def test_loop_var_on_interstate_edge():
     """The loop iter is read on an interstate edge inside the loop body.
     The pass must rewrite the edge's assignment / condition to use the
@@ -245,8 +211,6 @@ def test_loop_var_on_interstate_edge():
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
-    # Find the interstate edge inside ``body`` and confirm its assignment
-    # references _loop_it_0, not i.
     found = False
     for e in body.edges():
         for tgt, rhs in e.data.assignments.items():
@@ -259,14 +223,6 @@ def test_loop_var_on_interstate_edge():
     csdfg = sdfg.compile()
     csdfg(out=out)
     assert (out == np.arange(10) + 100).all()
-
-
-# ============================================================================
-# Test 6: Loop bound is an indirect array read (csr_spmv shape).
-# The reconstruction state must render ``arr[idx]`` (Python subscript)
-# rather than ``arr(idx)`` (sympy function call) so the C++ codegen
-# accepts it.
-# ============================================================================
 
 
 def test_loop_bound_with_indirect_array():
@@ -315,19 +271,11 @@ def test_loop_bound_with_indirect_array():
         for e in s.parent_graph.in_edges(s):
             for rhs in e.data.assignments.values():
                 rhs_strings.append(str(rhs))
-    # At least one reconstruction RHS must mention ``row_ptr`` with ``[``
-    # (Python subscript), not ``row_ptr(...)`` (sympy function-call form,
-    # which C++ codegen rejects since ``row_ptr`` is a pointer).
+
     assert any('row_ptr[' in s for s in rhs_strings), \
         f"Reconstruction RHS must use Python subscript form: {rhs_strings}"
     assert all('row_ptr(' not in s for s in rhs_strings), \
         f"Reconstruction RHS must not use function-call form: {rhs_strings}"
-
-
-# ============================================================================
-# Test 7: ``while`` loop (no induction variable). The pass must not
-# error out and must not add a reconstruction state for it.
-# ============================================================================
 
 
 def test_while_loop_no_induction_var():
@@ -348,13 +296,10 @@ def test_while_loop_no_induction_var():
     a = inner.add_access('out')
     inner.add_edge(t, '_o', a, None, dace.Memlet('out[0]'))
 
-    # Should not throw.
     pass_ = UniqueLoopIterators()
     pass_.assign_loop_iterator_post_value = True
     pass_.apply_pass(sdfg, None)
 
-    # No postfix-assignment state should be added (no loop_variable
-    # whose post-value would be assigned).
     recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 

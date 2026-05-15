@@ -1,31 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Give every ``LoopRegion``'s loop variable a globally-unique name.
 
-Two ``LoopRegion``s synthesised from independent source-level loops can
-share the same Python-level iterator name (``for i in ...`` in both).
-Once they merge into a single SDFG -- e.g. through inlining -- the
-shared name turns into an alias and downstream passes (symbol
-propagation, transient promotion, codegen) silently mix the two
-iterator values.  This pass walks every region, renames each loop
-variable to a unique ``_loop_it_<N>`` symbol, and propagates the
-rename through:
+Independent source loops can share an iterator name (``for i`` in
+both); once their regions merge into one SDFG the shared name aliases
+and downstream passes mix the two iterator values.  This pass renames
+each loop variable to a unique ``_loop_it_<N>`` symbol and cascades the
+rename through the region's memlets, interstate edges, tasklet bodies,
+and any nested-SDFG symbol mapping that imports it.
 
-* the cfg's memlets and meta accesses,
-* every interstate-edge assignment / condition inside the region,
-* every tasklet body that mentions the iterator,
-* the symbol mapping of any nested SDFG that imports the iterator.
-
-The ``assign_loop_iterator_post_value`` property opts into a second
-behaviour: a postfix assignment ``<loop_var> = <post_value>`` is
-materialised in a state immediately after the loop region, so any
-downstream reads of the original loop-variable name see the
-"iterator-after-loop" value (gfortran / ifort / flang all leave a
-counted-DO iterator at one stride past the last attained value when
-the loop exits normally; the post-value formula below produces the
-same result).  This is OFF by default because the convention is
-Fortran-specific -- pure Python / dace-frontend callers leave the
-iterator semantically undefined after a loop, so a postfix assignment
-would only add dead state.
+``assign_loop_iterator_post_value`` additionally materializes
+``<loop_var> = <post_value>`` in a state after the loop, so downstream
+reads of the original name see the counted-DO exit value Fortran programs.
+ON by default as it will not affect Python/SDFG API inputs.
 """
 
 from typing import Optional, Union
@@ -38,27 +24,24 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
-# Symbol-name prefix the pass uses for the renamed iterators.  Includes
-# ``loop_it`` so the source of the name is unambiguous in any artifact
-# that surfaces it (codegen output, dumped SDFGs, error messages).
+# Prefix for renamed iterators; self-identifying in codegen / dumped SDFGs.
 _LOOP_ITER_NAME_PREFIX = "_loop_it"
-# State-label prefix for the optional postfix-assignment state added
-# after a LoopRegion when ``assign_loop_iterator_post_value`` is set.
+# State-label prefix for the optional post-value assignment state.
 _POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 
 
 def _rename_symbol_by_name(expr: Union[sp.Basic, str], old_name: str, new_name: str) -> sp.Basic:
-    """Replace every sympy ``Symbol`` with ``.name == old_name`` in
-    ``expr`` with a fresh ``Symbol(new_name)`` -- regardless of the
-    original symbol's assumptions.
+    """Rename a symbol in ``expr`` by name, ignoring sympy assumptions.
 
-    ``sp.subs(old_sym, new_sym)`` and ``sp.replace`` both match by
-    full symbol identity (name + assumptions).  DaCe and the HLFIR
-    bridge can leave several symbols sharing one name but carrying
-    different assumption flags (integer-vs-default), so a strict
-    identity match would miss aliases.  Filtering ``free_symbols`` by
-    name and feeding the matches to sympy's ``xreplace`` (a literal
-    structural substitution) sidesteps that.
+    ``subs``/``replace`` match full symbol identity (name + assumptions),
+    so they miss same-named symbols carrying different assumption flags.
+    Matching ``free_symbols`` by name and ``xreplace``-ing them avoids
+    that.
+
+    :param expr: Expression (or string) to rewrite.
+    :param old_name: Symbol name to replace.
+    :param new_name: Replacement symbol name.
+    :returns: ``expr`` with the rename applied.
     """
     if isinstance(expr, str):
         expr = dace.symbolic.pystr_to_symbolic(expr)
@@ -76,20 +59,14 @@ def _rename_symbol_by_name(expr: Union[sp.Basic, str], old_name: str, new_name: 
 class UniqueLoopIterators(ppl.Pass):
     """Rename every LoopRegion's loop variable to a unique ``_loop_it_<N>``."""
 
-    # Module-wide counter -- one pass instance reused across nested SDFGs
-    # must not reset midway.  Class-level so two top-level apply_pass
-    # calls keep producing fresh names across the whole compilation
-    # (matters when an HLFIR translation generates many small SDFGs that
-    # later compose into one).
     _loop_var_counter = 0
 
     assign_loop_iterator_post_value = dace.properties.Property(
         dtype=bool,
-        default=False,
-        desc=("If True, emit a post-loop assignment state that sets the original loop variable to its "
-              "post-loop value (``init + diff - (diff mod step)``) so downstream reads see the "
-              "iterator-after-loop value.  Required by Fortran callers; pure Python / DaCe semantics "
-              "leave the iterator undefined after a loop and don't need it."),
+        default=True,
+        desc=(
+            "If True, emit a post-loop state assigning the original loop variable its counted "
+            "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"),
     )
 
     def modifies(self) -> ppl.Modifies:
@@ -99,14 +76,17 @@ class UniqueLoopIterators(ppl.Pass):
         return False
 
     def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str) -> None:
-        """Rename ``old_name`` to ``new_name`` inside ``cfg``.  The
-        ControlFlowRegion's own ``replace_dict`` already cascades the
-        rename through every state, interstate edge, memlet, tasklet,
-        and nested region inside the region -- selectively scoped to
-        the region.  Nested SDFG ``symbol_mapping`` *keys* (the inner
-        symbol names) are not handled by that cascade -- the key is
-        owned by the inner SDFG -- so we re-key explicitly and recurse
-        into the inner SDFG when its own symbol table declares the name.
+        """Rename ``old_name`` to ``new_name`` inside ``cfg``.
+
+        ``replace_dict`` cascades the rename through the region's
+        states, edges, memlets, tasklets, and nested regions.  It does
+        not touch nested-SDFG ``symbol_mapping`` keys (owned by the
+        inner SDFG), so those are re-keyed here and the inner SDFG is
+        recursed into when its symbol table declares the name.
+
+        :param cfg: Region (or SDFG) to rename within.
+        :param old_name: Current iterator symbol name.
+        :param new_name: Unique replacement name.
         """
         repl = {old_name: new_name}
         cfg.replace_meta_accesses(repl)
@@ -123,21 +103,16 @@ class UniqueLoopIterators(ppl.Pass):
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
     def _compute_post_value(self, loop: LoopRegion) -> Optional[sp.Basic]:
-        """Return the iterator value matching the convention every
-        mainstream Fortran compiler uses for counted ``DO`` loops:
-        one stride past the last attained value.  Returns ``None`` when
-        the loop's end / stride / init can't be statically recovered.
+        """Counted-DO exit value: one stride past the last attained value.
 
-        Formula: ``post = init + int_floor(diff, step) * step`` with
-        ``diff = loop_end - init + step``.  ``int_floor`` keeps the
-        expression integer-typed so C++ codegen emits exact integer
-        division.
+        ``post = init + int_floor(diff, step) * step`` where
+        ``diff = loop_end - init + step``; ``int_floor`` stays
+        integer-typed so codegen emits exact integer division.  E.g.
+        ``DO i = 1, N`` -> ``N + 1``; ``DO i = N, 1, -1`` -> ``0``;
+        ``DO i = 1, 10, 2`` -> ``11``.
 
-        Worked cases:
-        * ``DO i = 1, N``        (step = 1):  diff = N,    post = N + 1
-        * ``DO i = N, 1, -1``    (step = -1): diff = -N,   post = 0
-        * ``DO i = 1, 10, 2``    (step = 2):  diff = 11,   post = 11
-        * ``DO i = 10, 2, -2``   (step = -2): diff = -10,  post = 0
+        :param loop: Loop region to analyse.
+        :returns: Post-loop iterator value.
         """
         loop_end = loop_analysis.get_loop_end(loop)
         if loop_end is None:
@@ -148,27 +123,19 @@ class UniqueLoopIterators(ppl.Pass):
             diff = loop_end - init + stride
             return init + dace.symbolic.int_floor(diff, stride) * stride
         if stride is not None:
-            # Init unknown -- fall back to last-attained + step
-            # (correct when step == 1 since loop_end already equals
-            # the last attained value).
+            # Init unknown: last-attained + step (exact when step == 1).
             return loop_end + stride
-        # Stride unknown -- fall back to last-attained value.
+        # Stride unknown: fall back to last-attained value.
         return loop_end
 
     def _apply_recursive(self, sdfg: dace.SDFG) -> None:
-        # Names DaCe knows are arrays -- ``symstr`` uses this set to
-        # render array subscripts as ``arr[idx]`` (Python syntax for
-        # interstate-edge assignments) rather than ``arr(idx)`` (sympy
-        # default function-call form, which C++ codegen later rejects
-        # since ``arr`` is a pointer, not callable).
         array_names = frozenset(sdfg.arrays.keys())
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
             old_name = cfg.loop_variable
             if not old_name:
-                # ``while``/``do-while`` loops with no explicit
-                # induction variable have nothing to rename.
+                # while / do-while loops have no induction variable.
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{UniqueLoopIterators._loop_var_counter}"
             self._rename_one_loop_var(cfg, old_name, new_name)
