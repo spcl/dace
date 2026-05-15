@@ -22,14 +22,23 @@ class cuTensor:
     finalize_code = ""
     dependencies = []
 
+    # cuTENSOR v2 type mapping: dtype -> (tensor data type, compute descriptor,
+    # C scalar type for alpha/beta). The scalar type follows the compute
+    # descriptor (real even when the tensors are complex). Only float/complex
+    # are listed: integer descriptors are accepted by the API but crash at
+    # execution, and reinterpreting ints as floats corrupts negatives (their
+    # bit patterns are NaN, which the GPU canonicalizes on multiply). Callers
+    # fall back to the pure expansion for unsupported dtypes.
+    TYPE_MAP = {
+        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
+        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
+        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
+        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
+        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
+    }
+
     @staticmethod
     def handle_setup_code(node):
-        """Emit the C++ that fetches a per-device cuTENSOR handle for ``node``.
-
-        :param node: Library node being expanded; its ``location["gpu"]`` (if set) selects the device.
-        :returns: C++ snippet declaring ``__dace_cutensor_handle``.
-        :raises ValueError: If ``location["gpu"]`` is set but not an integer.
-        """
         location = node.location
         if not location or "gpu" not in node.location:
             location = -1  # -1 means current device

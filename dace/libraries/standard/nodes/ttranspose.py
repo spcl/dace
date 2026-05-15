@@ -98,32 +98,14 @@ class ExpandCuTensor(ExpandTransformation):
     where modesA is the identity [0, 1, ..., n-1] and modesC encodes the
     axis permutation.
 
-    NOTE: beta != 0 is not supported by cutensorPermute. For
-    C = alpha * perm(A) + beta * C, use ExpandPure or implement via
-    cutensorElementwiseBinary.
+    NOTE: beta != 0 is not supported by cutensorPermute (its signature is
+    ``(handle, plan, alpha, A, B, stream)`` -- out-of-place ``B = alpha*op(A)``,
+    no beta term). For C = alpha * perm(A) + beta * C, use ExpandPure or
+    implement via cutensorElementwiseBinary.
+    See https://docs.nvidia.com/cuda/cutensor/latest/api/cutensor.html#cutensorpermute
     """
 
     environments = [environments.cuTensor]
-
-    # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, alpha C type)
-    #
-    # Only floating-point and complex types are supported.
-    # Integer types are NOT supported by cutensorPermute:
-    #   - Native integer descriptors (CUTENSOR_R_32I etc.) are accepted by the
-    #     API but the kernel segfaults at execution time.
-    #   - Reinterpret-casting integers as same-width floats does not work either:
-    #     cutensorPermute computes B = alpha * op(A), and GPU hardware
-    #     canonicalizes NaN bit patterns during float multiplication. Negative
-    #     integers have bit patterns that are NaN when read as float, so
-    #     1.0 * NaN destroys the original bits (e.g., -83 -> 2147483647).
-    # For integer types, we fall back to the pure (map-based) expansion.
-    _TYPE_MAP = {
-        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
-        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-    }
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -141,14 +123,14 @@ class ExpandCuTensor(ExpandTransformation):
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
 
-        if dtype not in ExpandCuTensor._TYPE_MAP:
+        if dtype not in environments.cuTensor.TYPE_MAP:
             # Fall back to pure expansion for unsupported types (integers, etc.).
             # The pure expansion generates a GPU map when data is GPU_Global,
             # so integer transposes still execute on the GPU.
             warnings.warn("CuTensor does not support integer tensors, falling back to pure implementation")
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
 
-        cutensor_dtype, compute_desc, alpha_type = ExpandCuTensor._TYPE_MAP[dtype]
+        cutensor_dtype, compute_desc, alpha_type = environments.cuTensor.TYPE_MAP[dtype]
         alpha_val = f"({alpha_type}){node.alpha}"
 
         # Input modes: identity mapping  [0, 1, …, n-1]

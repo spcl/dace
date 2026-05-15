@@ -268,26 +268,15 @@ class ExpandCuTensor(ExpandTransformation):
 
     environments = [environments.cuTensor]
 
-    # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, scalar type for alpha/beta).
-    # The scalar type follows the compute descriptor: real for real-valued
-    # compute descriptors, even when the tensors themselves are complex.
-    _TYPE_MAP = {
-        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
-        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-    }
-
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        if dtype not in ExpandCuTensor._TYPE_MAP:
+        if dtype not in environments.cuTensor.TYPE_MAP:
             raise NotImplementedError(f"cuTENSOR TensorDot does not support dtype {dtype}; supported: "
-                                      f"{sorted(str(t) for t in ExpandCuTensor._TYPE_MAP)}")
-        cutensor_dtype, compute_desc, scalar_type = ExpandCuTensor._TYPE_MAP[dtype]
+                                      f"{sorted(str(t) for t in environments.cuTensor.TYPE_MAP)}")
+        cutensor_dtype, compute_desc, scalar_type = environments.cuTensor.TYPE_MAP[dtype]
 
         alpha = f"({scalar_type})1.0"
         beta = f"({scalar_type})0.0"
