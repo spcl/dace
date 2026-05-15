@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the :class:`LiftTrivialIf` simplification pass."""
+"""Tests for the ``LiftTrivialIf`` simplification pass."""
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
@@ -40,7 +40,7 @@ _DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
 def _get_sdfg(condition: str):
-    """Build a one-state SDFG inside a single-branch :class:`ConditionalBlock`.
+    """Build a one-state SDFG inside a single-branch ``ConditionalBlock``.
 
     :param condition: Python condition expression for the branch.
     :returns: The SDFG with the conditional as its start block.
