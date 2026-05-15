@@ -140,14 +140,14 @@ def test_pystr_to_symbolic_preserves_typed_symbols():
     # Prime the parser cache with an equal untyped SymPy expression.
     cache_seed_expr = symbolic.deserialize_symbolic('-1 + $N')
     cache_seed_restored = symbolic.pystr_to_symbolic(cache_seed_expr)
-    typed = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
+    typed_expr = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
 
-    restored = symbolic.pystr_to_symbolic(typed)
+    typed_restored = symbolic.pystr_to_symbolic(typed_expr)
 
     assert cache_seed_restored is cache_seed_expr
     assert symbolic.serialize_symbolic(cache_seed_restored) == '-1 + $N'
-    assert restored is typed
-    assert symbolic.serialize_symbolic(restored) == '-1 + symbol($N, dtype=dace.int64)'
+    assert typed_restored is typed_expr
+    assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int64)'
 
 
 @pytest.mark.parametrize('simplify', [None, False])
