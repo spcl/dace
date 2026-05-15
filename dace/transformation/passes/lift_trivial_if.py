@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Simplification pass that removes ``ConditionalBlock``s whose condition is provably constant."""
+"""Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
 import re
 import dace
 from typing import Any, Dict, Optional, Set, Union
@@ -17,7 +17,7 @@ from sympy import pycode
 
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
-    """Remove ``ConditionalBlock``s whose condition statically evaluates to a literal.
+    """Remove ``ConditionalBlock`` nodes whose condition statically evaluates to a literal.
 
     Handles two shapes: a single-branch ``if`` (drop or replace with an empty
     branch depending on the truth value) and an ``if/else`` pair (drop the side
@@ -52,7 +52,7 @@ class LiftTrivialIf(ppl.Pass):
 
         # Primary: pystr_to_symbolic already handles Python and/or/not and
         # comparison operators, We require a concrete literal back -- bool() of
-        # an unevaluated sympy expression (e.g. `A[0]` -> Function(0)) is
+        # an unevaluated sympy expression (e.g. ``A[0]`` -> Function(0)) is
         # truthy, which would mis-classify dynamic conditions as trivial.
         try:
             expr = symbolic.pystr_to_symbolic(code.as_string)
@@ -63,7 +63,7 @@ class LiftTrivialIf(ppl.Pass):
             pass
 
         # Fallback: Some SDFGs (e.g. Fortran frontend) produce nested comparisons like
-        # `(a == 1) == 0` that sympy refuses to compare bool against an int.
+        # ``(a == 1) == 0`` that sympy refuses to compare bool against an int.
         # Try as best effort to rewrite boolean ops/literals to arithmetic over 0/1 and let
         # SymExpr.simplify reduce it.
         try:
