@@ -1825,7 +1825,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     if isinstance(expr, SymExpr):
         return expr
     if isinstance(expr, sympy.Basic):
-        return sympy.simplify(expr) if simplify is True else expr
+        return sympy.simplify(expr) if simplify else expr
     if symbol_map is None:
         return _pystr_to_symbolic_cached(expr, simplify)
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)

@@ -136,7 +136,7 @@ def test_rational_addition_roundtrip_preserves_serialization():
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_pystr_to_symbolic_does_not_cache_basic_by_symbol_equality():
+def test_pystr_to_symbolic_preserves_typed_symbols():
     symbolic.pystr_to_symbolic(symbolic.deserialize_symbolic('-1 + $N'))
     typed = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
 
@@ -144,6 +144,15 @@ def test_pystr_to_symbolic_does_not_cache_basic_by_symbol_equality():
 
     assert restored is typed
     assert symbolic.serialize_symbolic(restored) == '-1 + symbol($N, dtype=dace.int64)'
+
+
+@pytest.mark.parametrize('simplify', [None, False])
+def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default(simplify):
+    expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)
+
+    restored = symbolic.pystr_to_symbolic(expr, simplify=simplify)
+
+    assert restored is expr
 
 
 def test_pystr_to_symbolic_simplifies_basic_when_requested():
