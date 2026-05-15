@@ -664,7 +664,7 @@ class Tensor(Structure):
         num_dims = len(tensor_shape)
         dimension_order = [int(idx) for idx in index_ordering if isinstance(idx, (int, symbolic.sympy.Integer))]
 
-        # all tensor dimensions must occure exactly once in indices
+        # all tensor dimensions must occur exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
             raise TypeError((f"All tensor dimensions must be refferenced exactly once in "
                              f"tensor indices. (referenced dimensions: {dimension_order}; "
