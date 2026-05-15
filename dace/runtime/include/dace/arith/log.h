@@ -4,8 +4,8 @@
 // Based on CERN VDT (VectoriseD maTh) C++ Library for Fast Math
 // It is a C-compatible rewrite of it https://github.com/drbenmorgan/vdt
 
-#include <stdint.h>
 #include <math.h>
+#include <stdint.h>
 
 // ============================================================================
 // HELPER FUNCTIONS FOR MANTISSA/EXPONENT EXTRACTION
@@ -33,170 +33,166 @@ const float PX7logf = 2.0000714765E-1f;
 const float PX8logf = -2.4999993993E-1f;
 const float PX9logf = 3.3333331174E-1f;
 
-const double SQRTH  = 0.70710678118654752440;
-const float  SQRTHF = 0.707106781186547524f;
+const double SQRTH = 0.70710678118654752440;
+const float SQRTHF = 0.707106781186547524f;
 
 /* Extract mantissa and exponent from double */
 static inline double get_mant_exponent_d(double x, double* __restrict__ fe) {
-    union {
-        double d;
-        uint64_t i;
-    } u;
+  union {
+    double d;
+    uint64_t i;
+  } u;
 
-    u.d = x;
+  u.d = x;
 
-    /* Extract exponent */
-    int64_t exp = (int64_t)((u.i >> 52) & 0x7ffULL);
-    exp -= 1023; /* Remove bias */
-    *fe = (double)exp;
+  /* Extract exponent */
+  int64_t exp = (int64_t)((u.i >> 52) & 0x7ffULL);
+  exp -= 1023; /* Remove bias */
+  *fe = (double)exp;
 
-    /* Set exponent to 0 (bias = 1023) to get mantissa in [0.5, 1) */
-    u.i = (u.i & 0x800fffffffffffffULL) | 0x3fe0000000000000ULL;
+  /* Set exponent to 0 (bias = 1023) to get mantissa in [0.5, 1) */
+  u.i = (u.i & 0x800fffffffffffffULL) | 0x3fe0000000000000ULL;
 
-    return u.d;
+  return u.d;
 }
 
 /* Extract mantissa and exponent from float */
 static inline float get_mant_exponent_f(float x, float* __restrict__ fe) {
-    union {
-        float f;
-        uint32_t i;
-    } u;
+  union {
+    float f;
+    uint32_t i;
+  } u;
 
-    u.f = x;
+  u.f = x;
 
-    /* Extract exponent */
-    int32_t exp = (int32_t)((u.i >> 23) & 0xffU);
-    exp -= 127; /* Remove bias */
-    *fe = (float)exp;
+  /* Extract exponent */
+  int32_t exp = (int32_t)((u.i >> 23) & 0xffU);
+  exp -= 127; /* Remove bias */
+  *fe = (float)exp;
 
-    /* Set exponent to 0 (bias = 127) to get mantissa in [0.5, 1) */
-    u.i = (u.i & 0x807fffffU) | 0x3f000000U;
+  /* Set exponent to 0 (bias = 127) to get mantissa in [0.5, 1) */
+  u.i = (u.i & 0x807fffffU) | 0x3f000000U;
 
-    return u.f;
+  return u.f;
 }
 
 // ============================================================================
 // DOUBLE PRECISION LOG
 // ============================================================================
 
-
 /* Polynomial P(x) for log */
 static inline double get_log_px(double x) {
+  double px = PX1log;
+  px *= x;
+  px += PX2log;
+  px *= x;
+  px += PX3log;
+  px *= x;
+  px += PX4log;
+  px *= x;
+  px += PX5log;
+  px *= x;
+  px += PX6log;
 
-
-    double px = PX1log;
-    px *= x;
-    px += PX2log;
-    px *= x;
-    px += PX3log;
-    px *= x;
-    px += PX4log;
-    px *= x;
-    px += PX5log;
-    px *= x;
-    px += PX6log;
-
-    return px;
+  return px;
 }
 
 /* Polynomial Q(x) for log */
 static inline double get_log_qx(double x) {
+  double qx = x;
+  qx += QX1log;
+  qx *= x;
+  qx += QX2log;
+  qx *= x;
+  qx += QX3log;
+  qx *= x;
+  qx += QX4log;
+  qx *= x;
+  qx += QX5log;
 
-    double qx = x;
-    qx += QX1log;
-    qx *= x;
-    qx += QX2log;
-    qx *= x;
-    qx += QX3log;
-    qx *= x;
-    qx += QX4log;
-    qx *= x;
-    qx += QX5log;
-
-    return qx;
+  return qx;
 }
 
 /* Natural logarithm for double precision
    Assumes valid input (x > 0, not NaN, not Inf) */
 static inline double dace_log_d(double x) {
-    double fe;
+  double fe;
 
-    /* Separate mantissa from exponent */
-    x = get_mant_exponent_d(x, &fe);
+  /* Separate mantissa from exponent */
+  x = get_mant_exponent_d(x, &fe);
 
-    /* Blending */
-    if (x > SQRTH) {
-        fe += 1.0;
-    } else {
-        x += x;
-    }
-    x -= 1.0;
+  /* Blending */
+  if (x > SQRTH) {
+    fe += 1.0;
+  } else {
+    x += x;
+  }
+  x -= 1.0;
 
-    /* Rational form P(x)/Q(x) */
-    double px = get_log_px(x);
+  /* Rational form P(x)/Q(x) */
+  double px = get_log_px(x);
 
-    /* For the final formula */
-    const double x2 = x * x;
-    px *= x;
-    px *= x2;
+  /* For the final formula */
+  const double x2 = x * x;
+  px *= x;
+  px *= x2;
 
-    const double qx = get_log_qx(x);
+  const double qx = get_log_qx(x);
 
-    double res = px / qx;
+  double res = px / qx;
 
-    res -= fe * 2.121944400546905827679e-4;
-    res -= 0.5 * x2;
+  res -= fe * 2.121944400546905827679e-4;
+  res -= 0.5 * x2;
 
-    res = x + res;
-    res += fe * 0.693359375;
+  res = x + res;
+  res += fe * 0.693359375;
 
-    return res;
+  return res;
 }
 
 static inline double dace_log_d_safe(double x) {
-    double fe;
-    const double LOG_UPPER_LIMIT = 1e307;
-    const double LOG_LOWER_LIMIT = 0;
-    double original_x = x;
+  double fe;
+  const double LOG_UPPER_LIMIT = 1e307;
+  const double LOG_LOWER_LIMIT = 0;
+  double original_x = x;
 
-    /* Separate mantissa from exponent */
-    x = get_mant_exponent_d(x, &fe);
+  /* Separate mantissa from exponent */
+  x = get_mant_exponent_d(x, &fe);
 
-    /* Blending */
-    if (x > SQRTH) {
-        fe += 1.0;
-    } else {
-        x += x;
-    }
-    x -= 1.0;
+  /* Blending */
+  if (x > SQRTH) {
+    fe += 1.0;
+  } else {
+    x += x;
+  }
+  x -= 1.0;
 
-    /* Rational form P(x)/Q(x) */
-    double px = get_log_px(x);
+  /* Rational form P(x)/Q(x) */
+  double px = get_log_px(x);
 
-    /* For the final formula */
-    const double x2 = x * x;
-    px *= x;
-    px *= x2;
+  /* For the final formula */
+  const double x2 = x * x;
+  px *= x;
+  px *= x2;
 
-    const double qx = get_log_qx(x);
+  const double qx = get_log_qx(x);
 
-    double res = px / qx;
+  double res = px / qx;
 
-    res -= fe * 2.121944400546905827679e-4;
-    res -= 0.5 * x2;
+  res -= fe * 2.121944400546905827679e-4;
+  res -= 0.5 * x2;
 
-    res = x + res;
-    res += fe * 0.693359375;
+  res = x + res;
+  res += fe * 0.693359375;
 
-    if (original_x > LOG_UPPER_LIMIT){
-        res = INFINITY;
-    }
-    if (original_x < LOG_LOWER_LIMIT){   /* THIS IS NAN! */
-        res = -NAN;
-    }
+  if (original_x > LOG_UPPER_LIMIT) {
+    res = INFINITY;
+  }
+  if (original_x < LOG_LOWER_LIMIT) { /* THIS IS NAN! */
+    res = -NAN;
+  }
 
-    return res;
+  return res;
 }
 
 // ============================================================================
@@ -207,91 +203,89 @@ static inline double dace_log_d_safe(double x) {
 
 /* Polynomial for logf */
 static inline float get_log_poly_f(float x) {
+  float y = x * PX1logf;
+  y += PX2logf;
+  y *= x;
+  y += PX3logf;
+  y *= x;
+  y += PX4logf;
+  y *= x;
+  y += PX5logf;
+  y *= x;
+  y += PX6logf;
+  y *= x;
+  y += PX7logf;
+  y *= x;
+  y += PX8logf;
+  y *= x;
+  y += PX9logf;
 
-    float y = x * PX1logf;
-    y += PX2logf;
-    y *= x;
-    y += PX3logf;
-    y *= x;
-    y += PX4logf;
-    y *= x;
-    y += PX5logf;
-    y *= x;
-    y += PX6logf;
-    y *= x;
-    y += PX7logf;
-    y *= x;
-    y += PX8logf;
-    y *= x;
-    y += PX9logf;
-
-    return y;
+  return y;
 }
 
 /* Natural logarithm for single precision
    Assumes valid input (x > 0, not NaN, not Inf) */
 static inline float dace_log_f(float x) {
-    float fe;
+  float fe;
 
-    x = get_mant_exponent_f(x, &fe);
+  x = get_mant_exponent_f(x, &fe);
 
-    if (x > SQRTHF) {
-        fe += 1.0f;
-    } else {
-        x += x;
-    }
-    x -= 1.0f;
+  if (x > SQRTHF) {
+    fe += 1.0f;
+  } else {
+    x += x;
+  }
+  x -= 1.0f;
 
-    const float x2 = x * x;
+  const float x2 = x * x;
 
-    float res = get_log_poly_f(x);
-    res *= x2 * x;
+  float res = get_log_poly_f(x);
+  res *= x2 * x;
 
-    res += -2.12194440e-4f * fe;
-    res += -0.5f * x2;
+  res += -2.12194440e-4f * fe;
+  res += -0.5f * x2;
 
-    res = x + res;
+  res = x + res;
 
-    res += 0.693359375f * fe;
+  res += 0.693359375f * fe;
 
-    return res;
+  return res;
 }
 
-
 static inline float dace_log_f_safe(float x) {
-    float fe;
-    const double original_x = x;
+  float fe;
+  const double original_x = x;
 
-    const double LOG_UPPER_LIMIT = 3.4028234663852885981170418348451692544e38f;
-    const double LOG_LOWER_LIMIT = 0;
+  const double LOG_UPPER_LIMIT = 3.4028234663852885981170418348451692544e38f;
+  const double LOG_LOWER_LIMIT = 0;
 
-    x = get_mant_exponent_f(x, &fe);
+  x = get_mant_exponent_f(x, &fe);
 
-    if (x > SQRTHF) {
-        fe += 1.0f;
-    } else {
-        x += x;
-    }
-    x -= 1.0f;
+  if (x > SQRTHF) {
+    fe += 1.0f;
+  } else {
+    x += x;
+  }
+  x -= 1.0f;
 
-    const float x2 = x * x;
+  const float x2 = x * x;
 
-    float res = get_log_poly_f(x);
-    res *= x2 * x;
+  float res = get_log_poly_f(x);
+  res *= x2 * x;
 
-    res += -2.12194440e-4f * fe;
-    res += -0.5f * x2;
+  res += -2.12194440e-4f * fe;
+  res += -0.5f * x2;
 
-    res = x + res;
+  res = x + res;
 
-    res += 0.693359375f * fe;
+  res += 0.693359375f * fe;
 
-    if (original_x > LOG_UPPER_LIMIT){
-        res = INFINITY;
-    }
-    if (original_x < LOG_LOWER_LIMIT){   /* THIS IS NAN! */
-        res = -NAN;
-    }
+  if (original_x > LOG_UPPER_LIMIT) {
+    res = INFINITY;
+  }
+  if (original_x < LOG_LOWER_LIMIT) { /* THIS IS NAN! */
+    res = -NAN;
+  }
 
-    return res;
+  return res;
 }

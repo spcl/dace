@@ -4,8 +4,8 @@
 // Based on CERN VDT (VectoriseD maTh) C++ Library for Fast Math
 // It is a C-compatible rewrite of it https://github.com/drbenmorgan/vdt
 
-#include <stdint.h>
 #include <math.h>
+#include <stdint.h>
 
 /* Constants for double precision */
 static const double EXP_LIMIT = 708.0;
@@ -42,40 +42,40 @@ static inline float uint32_to_float(uint32_t x);
  * Does not check for NaN inputs
  */
 static inline double dace_exp_d(double initial_x) {
-    double x = initial_x;
-    double px = fpfloor_f64(LOG2E * x + 0.5);
+  double x = initial_x;
+  double px = fpfloor_f64(LOG2E * x + 0.5);
 
-    const int32_t n = (int32_t)px;
-    x -= px * 6.93145751953125E-1;
-    x -= px * 1.42860682030941723212E-6;
+  const int32_t n = (int32_t)px;
+  x -= px * 6.93145751953125E-1;
+  x -= px * 1.42860682030941723212E-6;
 
-    const double xx = x * x;
+  const double xx = x * x;
 
-    /* px = x * P(x**2) */
-    px = PX1exp;
-    px *= xx;
-    px += PX2exp;
-    px *= xx;
-    px += PX3exp;
-    px *= x;
+  /* px = x * P(x**2) */
+  px = PX1exp;
+  px *= xx;
+  px += PX2exp;
+  px *= xx;
+  px += PX3exp;
+  px *= x;
 
-    /* Evaluate Q(x**2) */
-    double qx = QX1exp;
-    qx *= xx;
-    qx += QX2exp;
-    qx *= xx;
-    qx += QX3exp;
-    qx *= xx;
-    qx += QX4exp;
+  /* Evaluate Q(x**2) */
+  double qx = QX1exp;
+  qx *= xx;
+  qx += QX2exp;
+  qx *= xx;
+  qx += QX3exp;
+  qx *= xx;
+  qx += QX4exp;
 
-    /* e**x = 1 + 2x P(x**2)/(Q(x**2) - P(x**2)) */
-    x = px / (qx - px);
-    x = 1.0 + 2.0 * x;
+  /* e**x = 1 + 2x P(x**2)/(Q(x**2) - P(x**2)) */
+  x = px / (qx - px);
+  x = 1.0 + 2.0 * x;
 
-    /* Build 2^n in double */
-    x *= uint64_to_double((((uint64_t)n) + 1023) << 52);
+  /* Build 2^n in double */
+  x *= uint64_to_double((((uint64_t)n) + 1023) << 52);
 
-    return x;
+  return x;
 }
 
 /**
@@ -83,16 +83,16 @@ static inline double dace_exp_d(double initial_x) {
  * Checks for NaN inputs and returns NaN if input is NaN
  */
 static inline double dace_exp_d_safe(double initial_x) {
-    if (isnan(initial_x)){
-        return NAN;
-    }
-    double x = dace_exp_d(initial_x);
-    if (initial_x > EXP_LIMIT){
-        x = INFINITY;
-    }
-    if (initial_x < -EXP_LIMIT){
-        x = 0.0;
-    }
+  if (isnan(initial_x)) {
+    return NAN;
+  }
+  double x = dace_exp_d(initial_x);
+  if (initial_x > EXP_LIMIT) {
+    x = INFINITY;
+  }
+  if (initial_x < -EXP_LIMIT) {
+    x = 0.0;
+  }
 }
 
 /**
@@ -100,33 +100,32 @@ static inline double dace_exp_d_safe(double initial_x) {
  * Does not check for NaN inputs
  */
 static inline float dace_exp_f(float initial_x) {
-    float x = initial_x;
-    float z = fpfloor_f32(LOG2EF * x + 0.5f);
+  float x = initial_x;
+  float z = fpfloor_f32(LOG2EF * x + 0.5f);
 
-    x -= z * C1F;
-    x -= z * C2F;
-    const int32_t n = (int32_t)z;
+  x -= z * C1F;
+  x -= z * C2F;
+  const int32_t n = (int32_t)z;
 
-    const float x2 = x * x;
+  const float x2 = x * x;
 
-    z = x * PX1expf;
-    z += PX2expf;
-    z *= x;
-    z += PX3expf;
-    z *= x;
-    z += PX4expf;
-    z *= x;
-    z += PX5expf;
-    z *= x;
-    z += PX6expf;
-    z *= x2;
-    z += x + 1.0f;
+  z = x * PX1expf;
+  z += PX2expf;
+  z *= x;
+  z += PX3expf;
+  z *= x;
+  z += PX4expf;
+  z *= x;
+  z += PX5expf;
+  z *= x;
+  z += PX6expf;
+  z *= x2;
+  z += x + 1.0f;
 
-    /* multiply by power of 2 */
-    z *= uint32_to_float((n + 0x7f) << 23);
+  /* multiply by power of 2 */
+  z *= uint32_to_float((n + 0x7f) << 23);
 
-
-    return z;
+  return z;
 }
 
 /**
@@ -134,71 +133,72 @@ static inline float dace_exp_f(float initial_x) {
  * Checks for NaN inputs and returns NaN if input is NaN
  */
 static inline float dace_exp_f_safe(float initial_x) {
-    if (isnan(initial_x)){
-        return NAN;
-    }
+  if (isnan(initial_x)) {
+    return NAN;
+  }
 
-    double x = dace_exp_f(initial_x);
+  double x = dace_exp_f(initial_x);
 
-    if (initial_x > MAXLOGF){
-        x = INFINITY;
-    }
-    if (initial_x < MINLOGF) {
-        x = 0.0f;
-    }
+  if (initial_x > MAXLOGF) {
+    x = INFINITY;
+  }
+  if (initial_x < MINLOGF) {
+    x = 0.0f;
+  }
 }
-
 
 /* ============================================================================
  * IEEE754 union for type punning
- * ============================================================================ */
+ * ============================================================================
+ */
 
 union ieee754 {
-    double d;
-    float f[2];
-    uint32_t i[2];
-    uint64_t ll;
-    uint16_t s[4];
+  double d;
+  float f[2];
+  uint32_t i[2];
+  uint64_t ll;
+  uint16_t s[4];
 };
 
 /* ============================================================================
  * Detail functions (conversion and floor operations)
- * ============================================================================ */
+ * ============================================================================
+ */
 
 /**
  * Converts an unsigned 64-bit integer to double
  */
 static inline double uint64_to_double(uint64_t ll) {
-    union ieee754 tmp;
-    tmp.ll = ll;
-    return tmp.d;
+  union ieee754 tmp;
+  tmp.ll = ll;
+  return tmp.d;
 }
 
 /**
  * Converts a double to unsigned 64-bit integer
  */
 static inline uint64_t double_to_uint64(double x) {
-    union ieee754 tmp;
-    tmp.d = x;
-    return tmp.ll;
+  union ieee754 tmp;
+  tmp.d = x;
+  return tmp.ll;
 }
 
 /**
  * Converts an unsigned 32-bit integer to float
  */
 static inline float uint32_to_float(uint32_t x) {
-    union ieee754 tmp;
-    tmp.i[0] = x;
-    return tmp.f[0];
+  union ieee754 tmp;
+  tmp.i[0] = x;
+  return tmp.f[0];
 }
 
 /**
  * Converts a float to unsigned 32-bit integer
  */
 static inline uint32_t float_to_uint32(float x) {
-    union ieee754 tmp;
-    tmp.f[0] = x;
-    return tmp.i[0];
+  union ieee754 tmp;
+  tmp.f[0] = x;
+  return tmp.i[0];
 }
 
 /**
@@ -206,9 +206,9 @@ static inline uint32_t float_to_uint32(float x) {
  * Does not distinguish between -0.0 and 0.0 (not IEC6509 compliant for -0.0)
  */
 static inline double fpfloor_f64(const double x) {
-    int32_t ret = (int32_t)(x);
-    ret -= (float_to_uint32((float)x) >> 31);
-    return (double)ret;
+  int32_t ret = (int32_t)(x);
+  ret -= (float_to_uint32((float)x) >> 31);
+  return (double)ret;
 }
 
 /**
@@ -216,7 +216,7 @@ static inline double fpfloor_f64(const double x) {
  * Does not distinguish between -0.0 and 0.0 (not IEC6509 compliant for -0.0)
  */
 static inline float fpfloor_f32(const float x) {
-    int32_t ret = (int32_t)(x);
-    ret -= (float_to_uint32(x) >> 31);
-    return (float)ret;
+  int32_t ret = (int32_t)(x);
+  ret -= (float_to_uint32(x) >> 31);
+  return (float)ret;
 }

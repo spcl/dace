@@ -3,32 +3,32 @@
 #define __DACE_RUNTIME_H
 
 // Necessary headers
-#include <cstdio>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <numeric>
 #include <tuple>
-#include <cstring>
 
 // The order in which these are included matters - sorting them
 // alphabetically causes compilation to fail.
-#include "types.h"
-#include "vector.h"
+#include "comm.h"
+#include "complex.h"
+#include "copy.h"
 #include "intset.h"
 #include "math.h"
-#include "complex.h"
-#include "pyinterop.h"
-#include "reduction.h"
-#include "copy.h"
-#include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"
-#include "comm.h"
+#include "pyinterop.h"
+#include "reduction.h"
 #include "serialization.h"
+#include "stream.h"
+#include "types.h"
+#include "vector.h"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
-#include "cuda/cudacommon.cuh"
 #include "cuda/copy.cuh"
+#include "cuda/cudacommon.cuh"
 #include "cuda/dynmap.cuh"
 #else
 #include "cudainterop.h"
