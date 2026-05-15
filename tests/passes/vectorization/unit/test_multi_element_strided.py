@@ -22,19 +22,18 @@ import dace
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.interstate import LoopToMap
 
-
 N = dace.symbol("N")
-
 
 # --------------------------------------------------------------------------
 # Scatter: writes K=2 contiguous elements per iter, stride S=4 between iters.
 # --------------------------------------------------------------------------
 
+
 @dace.program
 def _scatter_2_at_stride_4(a: dace.float64[N], b: dace.float64[N]):
     """Each iter writes a[4*i] and a[4*i+1] (2 contiguous, gap of 2 to next)."""
     for i in dace.map[0:N // 4]:
-        a[4 * i]     = b[i] * 2.0
+        a[4 * i] = b[i] * 2.0
         a[4 * i + 1] = b[i] * 3.0
 
 
@@ -60,7 +59,8 @@ def test_multi_elem_scatter_K2_stride4(remainder_strategy):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"scatter2_s4_vec_{remainder_strategy}"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  remainder_strategy=remainder_strategy,
                  use_fp_factor=False,
                  branch_normalization=True if remainder_strategy != "masked" else True).apply_pass(vsdfg, {})
@@ -73,6 +73,7 @@ def test_multi_elem_scatter_K2_stride4(remainder_strategy):
 # --------------------------------------------------------------------------
 # Gather: reads K=2 contiguous elements per iter, stride S=4 between iters.
 # --------------------------------------------------------------------------
+
 
 @dace.program
 def _gather_2_at_stride_4(a: dace.float64[N], b: dace.float64[N]):
@@ -103,7 +104,8 @@ def test_multi_elem_gather_K2_stride4(remainder_strategy):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"gather2_s4_vec_{remainder_strategy}"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  remainder_strategy=remainder_strategy,
                  use_fp_factor=False,
                  branch_normalization=True).apply_pass(vsdfg, {})

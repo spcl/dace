@@ -161,8 +161,8 @@ def parse_int_or_default(value, default=8):
         return default
 
 
-def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
-                                parent_state: dace.SDFGState, invariant_scalars: Set[str]) -> Dict[str, bool]:
+def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: dace.SDFGState,
+                                invariant_scalars: Set[str]) -> Dict[str, bool]:
     """
     Determines which arrays can be vectorized based on their access patterns and symbol usage.
     The symbols used for accessing should not have any indirectness, meaning that they should

@@ -37,21 +37,22 @@ LEN_2D = dace.symbol("LEN_2D")
 VLEN = 8
 _LEN_2D_VAL = 16
 
+
 @dace.program
 def s114_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(LEN_2D // VLEN):
         for j in range(i * VLEN):
             aa[i, j] = aa[j, i] + bb[i, j]
 
+
 @dace.program
-def s122_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64
-):
+def s122_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64):
     j = 1
     k = 0
     for i in range(n1 - 1, LEN_1D, n3):
         k = k + j
         a[i] = a[i] + b[LEN_1D - k]
+
 
 @dace.program
 def s1232_d_single(
@@ -62,6 +63,7 @@ def s1232_d_single(
     for j in range(LEN_2D):
         for i in range(j * VLEN, LEN_2D):
             aa[i, j] = bb[i, j] + cc[i, j]
+
 
 @dace.program
 def s162_d_single(
@@ -74,27 +76,30 @@ def s162_d_single(
         for i in range(0, LEN_1D - k):
             a[i] = a[i + k] + b[i] * c[i]
 
+
 @dace.program
 def s171_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], inc: dace.int64):
     for i in range(LEN_1D):
         a[i * inc] = a[i * inc] + b[i]
 
+
 @dace.program
-def s172_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64
-):
+def s172_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64):
     for i in range(n1 - 1, LEN_1D, n3):
         a[i] = a[i] + b[i]
+
 
 @dace.program
 def s174_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], M: dace.int64):
     for i in range(M):
         a[i + M] = a[i] + b[i]
 
+
 @dace.program
 def s175_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], inc: dace.int64):
     for i in range(0, LEN_1D - inc, inc):
         a[i] = a[i + inc] + b[i]
+
 
 @dace.program
 def s258_d_single(
@@ -112,6 +117,7 @@ def s258_d_single(
         b[i] = s * c[i] + d[i]
         e[i] = (s + 1.0) * aa[0, i]
 
+
 @dace.program
 def s272_d_single(
     a: dace.float64[LEN_1D],
@@ -125,6 +131,7 @@ def s272_d_single(
         if e[i] >= threshold:
             a[i] = a[i] + c[i] * d[i]
             b[i] = b[i] + c[i] * c[i]
+
 
 @dace.program
 def s3110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
@@ -142,6 +149,7 @@ def s3110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
     tmp = tmp
     bb[0, 0] = chksum
 
+
 @dace.program
 def s318_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], inc: dace.int32):
     k = 0
@@ -156,6 +164,7 @@ def s318_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], inc: dace.in
         k = k + inc
     result[0] = maxv + float(index)
 
+
 @dace.program
 def s332_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], threshold: dace.int64):
     index = -2
@@ -166,6 +175,7 @@ def s332_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], threshold: d
             value = a[i]
             break
     result[0] = value + float(index)
+
 
 @dace.program
 def s353_d_single(
@@ -181,6 +191,7 @@ def s353_d_single(
         a[i + 2] = a[i + 2] + alpha * b[ip[i + 2]]
         a[i + 3] = a[i + 3] + alpha * b[ip[i + 3]]
 
+
 @dace.program
 def s4113_d_single(
     a: dace.float64[LEN_1D],
@@ -190,6 +201,7 @@ def s4113_d_single(
 ):
     for i in range(LEN_1D):
         a[ip[i]] = b[ip[i]] + c[i]
+
 
 @dace.program
 def s4114_d_single(
@@ -204,6 +216,7 @@ def s4114_d_single(
         k = ip[i]
         a[i] = b[i] + c[LEN_1D - k - 1] * d_[i]
 
+
 @dace.program
 def s4115_d_single(
     a: dace.float64[LEN_1D],
@@ -216,6 +229,7 @@ def s4115_d_single(
     for i in range(LEN_1D):
         sum_val = sum_val + a[i] * b[ip[i]]
     sum_out[0] = sum_val
+
 
 @dace.program
 def s4116_d_single(
@@ -232,6 +246,7 @@ def s4116_d_single(
         off = inc + i
         sum_val = sum_val + a[off] * aa[j - 1, ip[i]]
     sum_out[0] = sum_val
+
 
 @dace.program
 def s442_d_single(
@@ -252,6 +267,7 @@ def s442_d_single(
         elif indx[i] == 4:
             a[i] = a[i] + (e[i] * e[i])
 
+
 @dace.program
 def s481_d_single(
     a: dace.float64[LEN_1D],
@@ -264,14 +280,14 @@ def s481_d_single(
             break
         a[i] = a[i] + b[i] * c[i]
 
+
 @dace.program
-def s482_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def s482_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * c[i]
         if c[i] > b[i]:
             break
+
 
 @dace.program
 def s491_d_single(
@@ -284,42 +300,174 @@ def s491_d_single(
     for i in range(LEN_1D):
         a[ip[i]] = b[i] + c[i] * d[i]
 
+
 @dace.program
 def vag_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[ip[i]]
+
 
 @dace.program
 def vas_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
         a[ip[i]] = b[i]
 
+
 # (kernel, {argname: kind}, {scalar_param: value}) — N4 = LEN//4
 _KERNELS = [
-    (s114_d_single, {"aa": "F2", "bb": "F2"}, {}),
-    (s122_d_single, {"a": "F1", "b": "F1"}, {"n1": 1, "n3": 2}),
-    (s1232_d_single, {"aa": "F2", "bb": "F2", "cc": "F2"}, {}),
-    (s162_d_single, {"a": "F1", "b": "F1", "c": "F1"}, {"k": 3}),
-    (s171_d_single, {"a": "F1", "b": "F1"}, {"inc": 1}),
-    (s172_d_single, {"a": "F1", "b": "F1"}, {"n1": 1, "n3": 2}),
-    (s174_d_single, {"a": "F1", "b": "F1"}, {"M": "N4"}),
-    (s175_d_single, {"a": "F1", "b": "F1"}, {"inc": 2}),
-    (s258_d_single, {"a": "F2v", "b": "F2v", "c": "F2v", "d": "F2v", "e": "F2v", "aa": "F1L2"}, {}),
-    (s272_d_single, {"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, {"threshold": 0}),
-    (s3110_d_single, {"aa": "F2", "bb": "F22"}, {}),
-    (s318_d_single, {"a": "F1", "result": "R1"}, {"inc": 1}),
-    (s332_d_single, {"a": "F1", "result": "R1"}, {"threshold": 0}),
-    (s353_d_single, {"a": "F1", "b": "F1", "c": "F1", "ip": "I1"}, {}),
-    (s4113_d_single, {"a": "F1", "b": "F1", "c": "F1", "ip": "I1"}, {}),
-    (s4114_d_single, {"a": "F1", "b": "F1", "c": "F1", "d_": "F1", "ip": "I1"}, {"n1": 1}),
-    (s4115_d_single, {"a": "F1", "b": "F1", "ip": "I1", "sum_out": "R1"}, {}),
-    (s4116_d_single, {"a": "F1", "aa": "F2", "ip": "I2", "sum_out": "R1"}, {"j": 1, "inc": 1}),
-    (s442_d_single, {"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1", "indx": "I1"}, {}),
-    (s481_d_single, {"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, {}),
-    (s482_d_single, {"a": "F1", "b": "F1", "c": "F1"}, {}),
-    (s491_d_single, {"a": "F1", "b": "F1", "c": "F1", "d": "F1", "ip": "I1"}, {}),
-    (vag_d_single, {"a": "F1", "b": "F1", "ip": "I1"}, {}),
-    (vas_d_single, {"a": "F1", "b": "F1", "ip": "I1"}, {}),
+    (s114_d_single, {
+        "aa": "F2",
+        "bb": "F2"
+    }, {}),
+    (s122_d_single, {
+        "a": "F1",
+        "b": "F1"
+    }, {
+        "n1": 1,
+        "n3": 2
+    }),
+    (s1232_d_single, {
+        "aa": "F2",
+        "bb": "F2",
+        "cc": "F2"
+    }, {}),
+    (s162_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1"
+    }, {
+        "k": 3
+    }),
+    (s171_d_single, {
+        "a": "F1",
+        "b": "F1"
+    }, {
+        "inc": 1
+    }),
+    (s172_d_single, {
+        "a": "F1",
+        "b": "F1"
+    }, {
+        "n1": 1,
+        "n3": 2
+    }),
+    (s174_d_single, {
+        "a": "F1",
+        "b": "F1"
+    }, {
+        "M": "N4"
+    }),
+    (s175_d_single, {
+        "a": "F1",
+        "b": "F1"
+    }, {
+        "inc": 2
+    }),
+    (s258_d_single, {
+        "a": "F2v",
+        "b": "F2v",
+        "c": "F2v",
+        "d": "F2v",
+        "e": "F2v",
+        "aa": "F1L2"
+    }, {}),
+    (s272_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "d": "F1",
+        "e": "F1"
+    }, {
+        "threshold": 0
+    }),
+    (s3110_d_single, {
+        "aa": "F2",
+        "bb": "F22"
+    }, {}),
+    (s318_d_single, {
+        "a": "F1",
+        "result": "R1"
+    }, {
+        "inc": 1
+    }),
+    (s332_d_single, {
+        "a": "F1",
+        "result": "R1"
+    }, {
+        "threshold": 0
+    }),
+    (s353_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "ip": "I1"
+    }, {}),
+    (s4113_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "ip": "I1"
+    }, {}),
+    (s4114_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "d_": "F1",
+        "ip": "I1"
+    }, {
+        "n1": 1
+    }),
+    (s4115_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "ip": "I1",
+        "sum_out": "R1"
+    }, {}),
+    (s4116_d_single, {
+        "a": "F1",
+        "aa": "F2",
+        "ip": "I2",
+        "sum_out": "R1"
+    }, {
+        "j": 1,
+        "inc": 1
+    }),
+    (s442_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "d": "F1",
+        "e": "F1",
+        "indx": "I1"
+    }, {}),
+    (s481_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "d": "F1"
+    }, {}),
+    (s482_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1"
+    }, {}),
+    (s491_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "c": "F1",
+        "d": "F1",
+        "ip": "I1"
+    }, {}),
+    (vag_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "ip": "I1"
+    }, {}),
+    (vas_d_single, {
+        "a": "F1",
+        "b": "F1",
+        "ip": "I1"
+    }, {}),
 ]
 
 
@@ -353,8 +501,6 @@ def _alloc(kind: str, L1: int, L2: int, rng):
     if kind == "I2":
         return np.arange(L2, dtype=np.int32)
     raise AssertionError(f"unknown arg kind {kind!r}")
-
-
 
 
 _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (64, 65))

@@ -30,6 +30,7 @@ from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 LEN_1D = dace.symbol("LEN_1D")
 
+
 @dace.program
 def s331_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     j = -1
@@ -59,9 +60,7 @@ def s342_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 @dace.program
-def s351_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def s351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     alpha = c[0]
     for i in range(0, LEN_1D, 4):
         a[i] = a[i] + alpha * b[i]
@@ -75,13 +74,8 @@ def s352_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
     dot = 0.0
     dot = 0.0
     for i in range(0, LEN_1D, 4):
-        dot = dot + (
-            a[i] * b[i]
-            + a[i + 1] * b[i + 1]
-            + a[i + 2] * b[i + 2]
-            + a[i + 3] * b[i + 3]
-            + a[i + 4] * b[i + 4]
-        )
+        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
+                     a[i + 4] * b[i + 4])
     c[0] = dot
 
 
@@ -117,9 +111,7 @@ def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
 
 
 @dace.program
-def s424_d_single(
-    a: dace.float64[LEN_1D], xx: dace.float64[LEN_1D], flat: dace.float64[LEN_1D]
-):
+def s424_d_single(a: dace.float64[LEN_1D], xx: dace.float64[LEN_1D], flat: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         xx[i + 1] = flat[i] + a[i]
 
@@ -155,17 +147,13 @@ def s443_d_single(
 
 
 @dace.program
-def s451_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def s451_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = sin(b[i]) + cos(c[i])
 
 
 @dace.program
-def s452_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def s452_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[i] + c[i] * (i + 1)
 
@@ -184,9 +172,7 @@ def s471_d_single(
 
 
 @dace.program
-def vdotr_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot_out: dace.float64[LEN_1D]
-):
+def vdotr_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot_out: dace.float64[LEN_1D]):
     dot_out[0] = 0.0
     dot_out[0] = 0.0
     for i in range(LEN_1D):
@@ -207,17 +193,13 @@ def vpv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 @dace.program
-def vpvpv_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def vpvpv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] + c[i]
 
 
 @dace.program
-def vpvtv_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def vpvtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * c[i]
 
@@ -238,11 +220,10 @@ def vtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 @dace.program
-def vtvtv_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def vtvtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] * b[i] * c[i]
+
 
 _KERNELS = [
     (s331_d_single, ['a', 'b']),
@@ -278,8 +259,6 @@ def _allocate(name: str, n: int) -> np.ndarray:
     if name in ("result", "sum_out", "dot_out", "max_out", "min_out", "prod"):
         return np.zeros(n, dtype=np.float64)
     return np.random.rand(n).astype(np.float64)
-
-
 
 
 _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (64, 65))

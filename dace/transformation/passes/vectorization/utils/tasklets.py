@@ -267,8 +267,7 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
     if rhs_left is None or rhs_right is None:
         if op_ not in UNARY_OPERATORS and op_ in BINARY_OPERATORS:
             raise Exception(
-                f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op_}"
-            )
+                f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op_}")
 
     if rhs_left is None or rhs_right is None:
         rhs = rhs_left if rhs_left is not None else rhs_right
@@ -316,14 +315,18 @@ def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> No
     The dropped ``ttype`` parameter was unused; callers no longer pass it.
     """
     ctx.node.code = dace.properties.CodeBlock(
-        code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_),
-                            _str_to_float_or_str(const2_), lhs_, op_),
+        code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
         language=dace.Language.CPP,
     )
 
 
-def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
-                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass,
+def instantiate_tasklet_from_info(state: dace.SDFGState,
+                                  node: dace.nodes.Tasklet,
+                                  info: dict,
+                                  vector_width: int,
+                                  templates: Dict[str, str],
+                                  vector_map_param: str,
+                                  vector_dtype: typeclass,
                                   mask_connector: Optional[str] = None) -> None:
     """
     Rewrite ``node.code`` into vectorized C++ from ``classify_tasklet`` info.
@@ -640,9 +643,8 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
         touched_nodes.add(t)
         t.add_in_connector("_in")
         t.add_out_connector("_out")
-        e1 = state.add_edge(
-            packed_access, None, t, "_in",
-            dace.memlet.Memlet(data=packed_dataname, subset=dace.subsets.Range([(str(i), str(i), 1)])))
+        e1 = state.add_edge(packed_access, None, t, "_in",
+                            dace.memlet.Memlet(data=packed_dataname, subset=dace.subsets.Range([(str(i), str(i), 1)])))
         touched_edges.add(e1)
 
         new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i), vector_map_param)
@@ -654,8 +656,8 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
 
 
 def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
-                                    vector_storage_type: dace.dtypes.StorageType, vector_width: int,
-                                    *, direction: str) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
+                                    vector_storage_type: dace.dtypes.StorageType, vector_width: int, *,
+                                    direction: str) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
     """
     Splice a ``vector_copy`` tasklet + transient vector access node onto ``edge``.
 

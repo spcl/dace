@@ -30,6 +30,7 @@ from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 LEN_1D = dace.symbol("LEN_1D")
 
+
 @dace.program
 def s116_d_single(a: dace.float64[LEN_1D]):
     for i in range(0, LEN_1D - 4, 4):
@@ -219,9 +220,7 @@ def s161_d_single(
 
 
 @dace.program
-def s176_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
+def s176_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     m = LEN_1D // 2
     for j in range(LEN_1D // 2):
         for i in range(m):
@@ -335,6 +334,7 @@ def s261_d_single(
         a[i] = t + c[i - 1]
         c[i] = c[i] * d[i]
 
+
 _KERNELS = [
     (s116_d_single, ['a']),
     (s1161_d_single, ['a', 'b', 'c', 'd', 'e']),
@@ -371,8 +371,6 @@ def _allocate(name: str, n: int) -> np.ndarray:
     if name in ("result", "sum_out", "dot_out", "max_out", "min_out", "prod"):
         return np.zeros(n, dtype=np.float64)
     return np.random.rand(n).astype(np.float64)
-
-
 
 
 _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (64, 65))

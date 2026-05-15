@@ -79,7 +79,8 @@ def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy):
                            },
                            vector_width=8,
                            sdfg_name="cloudsc_snippet_two",
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy)
 
 
 def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
@@ -111,7 +112,8 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                                              vector_width=8,
                                              fuse_overlapping_loads=True,
                                              sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
-                                             branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                                             branch_mode=branch_mode,
+                                             remainder_strategy=remainder_strategy)
 
     # Should have 1 access node between two maps. Only check vectorized NSDFGs —
     # the ``scalar`` remainder strategy adds a Sequential postamble that has
@@ -157,25 +159,25 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy):
     rlmin = 0.1
     z1 = 1
 
-    run_vectorization_test(
-        dace_func=cloudsc_snippet_one,
-        arrays={
-            'za': za,
-            'zliqfrac': zliqfrac,
-            'zicefrac': zicefrac,
-            'zqx': zqx,
-            'zli': zli,
-        },
-        params={
-            'rlmin': rlmin,
-            'z1': z1,
-            'kfdia': kfdia,
-            'klev': klev,
-        },
-        vector_width=8,
-        sdfg_name="cloudsc_snippet_one",
-        cleanup=True,
-        branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+    run_vectorization_test(dace_func=cloudsc_snippet_one,
+                           arrays={
+                               'za': za,
+                               'zliqfrac': zliqfrac,
+                               'zicefrac': zicefrac,
+                               'zqx': zqx,
+                               'zli': zli,
+                           },
+                           params={
+                               'rlmin': rlmin,
+                               'z1': z1,
+                               'kfdia': kfdia,
+                               'klev': klev,
+                           },
+                           vector_width=8,
+                           sdfg_name="cloudsc_snippet_one",
+                           cleanup=True,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy)
 
 
 def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
@@ -219,7 +221,8 @@ def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy)
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy)
 
 
 @pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
@@ -271,7 +274,8 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy,
                            param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
@@ -325,7 +329,8 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy,
                            param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
@@ -379,7 +384,8 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy,
                            param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
@@ -433,7 +439,8 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
                            no_inline=True,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy,
                            param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
 
 
@@ -487,5 +494,6 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode,
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies,
-                           branch_mode=branch_mode, remainder_strategy=remainder_strategy,
+                           branch_mode=branch_mode,
+                           remainder_strategy=remainder_strategy,
                            param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")

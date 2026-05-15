@@ -58,16 +58,9 @@ from .source_sink import (  # noqa: F401
 from .map_ops import remove_map  # noqa: F401
 from .multiplex import detect_halve_index, detect_halve_index_impl  # noqa: F401
 from .subsets import (  # noqa: F401
-    expand_memlet_expression,
-    offset_memlets,
-    repl_subset,
-    repl_subset_to_use_laneid_offset,
-    repl_subset_to_use_with_int_offset,
-    replace_all_access_subsets,
-    replace_memlet_expression,
-    squeeze_memlets_of_packed_arrays,
-    try_clean_other_subset_going_out_from_map_entry,
-    use_previous_subsets,
+    expand_memlet_expression, offset_memlets, repl_subset, repl_subset_to_use_laneid_offset,
+    repl_subset_to_use_with_int_offset, replace_all_access_subsets, replace_memlet_expression,
+    squeeze_memlets_of_packed_arrays, try_clean_other_subset_going_out_from_map_entry, use_previous_subsets,
 )
 from .lane_expansion import (  # noqa: F401
     _all_atoms, assert_symbols_in_parent_map_symbols, expand_interstate_assignments_to_lanes, find_symbol_assignment,

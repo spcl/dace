@@ -31,7 +31,6 @@ import pytest
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
-
 N = dace.symbol("N")
 
 
@@ -111,7 +110,8 @@ def _run(prog, Nv: int, remainder_strategy: str):
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_v"
 
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  insert_copies=False,
                  remainder_strategy=remainder_strategy,
                  **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
@@ -188,7 +188,8 @@ def _run3(prog, Nv: int, remainder_strategy: str, in_arrays: list, out_arrays: l
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"{prog.name}_{Nv}_{remainder_strategy}_v"
 
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  insert_copies=False,
                  remainder_strategy=remainder_strategy,
                  **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
@@ -273,7 +274,8 @@ def test_constant_range_div_16(remainder_strategy):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"constant_range_div_16_{remainder_strategy}_v"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  insert_copies=False,
                  remainder_strategy=remainder_strategy,
                  **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
@@ -297,7 +299,8 @@ def test_constant_range_div_24(remainder_strategy):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"constant_range_div_24_{remainder_strategy}_v"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  insert_copies=False,
                  remainder_strategy=remainder_strategy,
                  **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
@@ -313,7 +316,6 @@ def test_constant_range_div_24(remainder_strategy):
 # the split — the resulting SDFG carries NO remainder map.  This is the
 # replacement for the old explicit ``divides_evenly`` mode: divisibility
 # is detected, not declared by the caller.
-
 
 _SYMBOLIC_DIV_M = dace.symbol("M")
 
@@ -381,14 +383,14 @@ def test_symbolic_8m_no_remainder_end_to_end(remainder_strategy):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"symbolic_8m_e2e_{remainder_strategy}_v"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
                  insert_copies=False,
                  remainder_strategy=remainder_strategy,
                  **_branch_kwargs(remainder_strategy)).apply_pass(vsdfg, {})
 
-    assert _count_remainder_maps(vsdfg) == 0, (
-        f"VectorizeCPU emitted a remainder map for a provably-divisible "
-        f"8*M trip (strategy={remainder_strategy})")
+    assert _count_remainder_maps(vsdfg) == 0, (f"VectorizeCPU emitted a remainder map for a provably-divisible "
+                                               f"8*M trip (strategy={remainder_strategy})")
 
     for Mv in (1, 2, 5):
         Nv = 8 * Mv

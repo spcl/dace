@@ -64,8 +64,7 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
     from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
     for state in sdfg.all_states():
-        has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_")
-                            for name in state.sdfg.arrays)
+        has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_") for name in state.sdfg.arrays)
         if not has_iter_mask:
             continue
         for e in state.edges():
@@ -73,21 +72,19 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
                 continue
             subset_str = str(e.data.subset)
             if LaneIdScheme.SUFFIX in subset_str:
-                raise RuntimeError(
-                    f"assert_no_lane_memlet_reads: map with _iter_mask in scope "
-                    f"({state.label}) still has a per-lane memlet on '{e.data.data}' "
-                    f"with subset {subset_str}. Lane fanout failed to collapse to "
-                    f"an intrinsic — would fault on inactive lanes. Set "
-                    f"`lower_to_intrinsics=True` on VectorizeCPU, or use "
-                    f"`remainder_strategy='scalar'` for this kernel.")
+                raise RuntimeError(f"assert_no_lane_memlet_reads: map with _iter_mask in scope "
+                                   f"({state.label}) still has a per-lane memlet on '{e.data.data}' "
+                                   f"with subset {subset_str}. Lane fanout failed to collapse to "
+                                   f"an intrinsic — would fault on inactive lanes. Set "
+                                   f"`lower_to_intrinsics=True` on VectorizeCPU, or use "
+                                   f"`remainder_strategy='scalar'` for this kernel.")
 
     for s in sdfg.all_sdfgs_recursive():
         if s is sdfg:
             continue
         # Re-walk children: each NSDFG may have its own _iter_mask scope.
         for state in s.states():
-            has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_")
-                                for name in state.sdfg.arrays)
+            has_iter_mask = any(name == "_iter_mask" or name.startswith("_iter_mask_") for name in state.sdfg.arrays)
             if not has_iter_mask:
                 continue
             for e in state.edges():
@@ -95,8 +92,7 @@ def assert_no_lane_memlet_reads(sdfg: dace.SDFG, vector_width: int) -> None:
                     continue
                 subset_str = str(e.data.subset)
                 if LaneIdScheme.SUFFIX in subset_str:
-                    raise RuntimeError(
-                        f"assert_no_lane_memlet_reads: nested SDFG '{s.name}' with "
-                        f"_iter_mask in scope still has a per-lane memlet on "
-                        f"'{e.data.data}' in state '{state.label}' with subset "
-                        f"{subset_str}.")
+                    raise RuntimeError(f"assert_no_lane_memlet_reads: nested SDFG '{s.name}' with "
+                                       f"_iter_mask in scope still has a per-lane memlet on "
+                                       f"'{e.data.data}' in state '{state.label}' with subset "
+                                       f"{subset_str}.")

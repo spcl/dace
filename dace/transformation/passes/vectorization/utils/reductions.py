@@ -33,10 +33,8 @@ to use these helpers behind a knob.
 """
 from typing import List
 
-
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
-
 
 # Identity element for each supported reduction op. Used to initialise the
 # per-lane vector accumulator without depending on a literal-zero-init

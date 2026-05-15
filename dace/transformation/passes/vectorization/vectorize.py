@@ -17,7 +17,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.utils import *
 from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
-    _setup_strided_inside_nsdfg, _setup_multi_element_strided_inside_nsdfg,
+    _setup_strided_inside_nsdfg,
+    _setup_multi_element_strided_inside_nsdfg,
 )
 import dace.sdfg.tasklet_utils as tutil
 
@@ -264,8 +265,7 @@ class Vectorize(ppl.Pass):
         import sympy as _sp
         inner_sdfg = nsdfg_node.sdfg
         for direction in ("in", "out"):
-            edges = (list(state.in_edges(nsdfg_node)) if direction == "in"
-                     else list(state.out_edges(nsdfg_node)))
+            edges = (list(state.in_edges(nsdfg_node)) if direction == "in" else list(state.out_edges(nsdfg_node)))
             for e in edges:
                 if e.data.data is None or e.data.subset is None:
                     continue
@@ -321,15 +321,12 @@ class Vectorize(ppl.Pass):
                     wb = e.data.subset[param_dims_wide[0][0]][0]
                     try:
                         wb_sym = _sp.sympify(wb)
-                        inter_lane_stride = int(
-                            _sp.simplify(wb_sym.subs(map_sym, map_sym + 1) - wb_sym))
+                        inter_lane_stride = int(_sp.simplify(wb_sym.subs(map_sym, map_sym + 1) - wb_sym))
                     except Exception:
                         inter_lane_stride = None
-                is_single_dim_strided = (len(param_dims_wide) == 1
-                                         and len(stride_one_dims) == 1
+                is_single_dim_strided = (len(param_dims_wide) == 1 and len(stride_one_dims) == 1
                                          and param_dims_wide[0][0] == stride_one_dims[0]
-                                         and param_dims_wide[0][1] > self.vector_width
-                                         and inter_lane_stride is not None
+                                         and param_dims_wide[0][1] > self.vector_width and inter_lane_stride is not None
                                          and inter_lane_stride > 1)
 
                 if is_single_dim_strided and self.vector_width > 1:
@@ -361,27 +358,49 @@ class Vectorize(ppl.Pass):
                     K_candidate = inner_dim0 if (inner_dim0 is not None and inner_dim0 >= 1) else 1
                     handled = False
                     if (bbox_vol - K_candidate) % (W - 1) == 0:
-                        S_value = int(dace.symbolic.int_floor(bbox_vol - K_candidate, W - 1))  # concrete pass-time int (never C++ '/')
+                        S_value = int(dace.symbolic.int_floor(bbox_vol - K_candidate,
+                                                              W - 1))  # concrete pass-time int (never C++ '/')
                         if S_value >= K_candidate:
                             if K_candidate == 1:
-                                _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                                            e.data.data, arr, W, S_value,
+                                _setup_strided_inside_nsdfg(state,
+                                                            nsdfg_node,
+                                                            inner_sdfg,
+                                                            e,
+                                                            inner_conn,
+                                                            e.data.data,
+                                                            arr,
+                                                            W,
+                                                            S_value,
                                                             direction=direction)
                             else:
-                                _setup_multi_element_strided_inside_nsdfg(
-                                    state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                    e.data.data, arr, W,
-                                    elements_per_iter=K_candidate,
-                                    stride=S_value, direction=direction)
+                                _setup_multi_element_strided_inside_nsdfg(state,
+                                                                          nsdfg_node,
+                                                                          inner_sdfg,
+                                                                          e,
+                                                                          inner_conn,
+                                                                          e.data.data,
+                                                                          arr,
+                                                                          W,
+                                                                          elements_per_iter=K_candidate,
+                                                                          stride=S_value,
+                                                                          direction=direction)
                             handled = True
                     if not handled:
                         # Fall back to the older K=1 single-element check
                         # (some pre-Slice-1 callers don't populate
                         # ``inner_arr`` with the K value).
                         if (bbox_vol - 1) % (W - 1) == 0:
-                            stride_value = int(dace.symbolic.int_floor(bbox_vol - 1, W - 1))  # concrete pass-time int (never C++ '/')
-                            _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                                        e.data.data, arr, W, stride_value,
+                            stride_value = int(dace.symbolic.int_floor(bbox_vol - 1,
+                                                                       W - 1))  # concrete pass-time int (never C++ '/')
+                            _setup_strided_inside_nsdfg(state,
+                                                        nsdfg_node,
+                                                        inner_sdfg,
+                                                        e,
+                                                        inner_conn,
+                                                        e.data.data,
+                                                        arr,
+                                                        W,
+                                                        stride_value,
                                                         direction=direction)
                             handled = True
                     if not handled:
@@ -400,10 +419,9 @@ class Vectorize(ppl.Pass):
                 if len(param_dims_wide) >= 2 and self.vector_width > 1:
                     # Every wide param-dim's bbox must equal W (sanity).
                     if not all(bw == self.vector_width for _, bw in param_dims_wide):
-                        raise NotImplementedError(
-                            f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} has "
-                            f"non-W bbox per param-dim: {param_dims_wide}; only W per dim is "
-                            f"supported today.")
+                        raise NotImplementedError(f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} has "
+                                                  f"non-W bbox per param-dim: {param_dims_wide}; only W per dim is "
+                                                  f"supported today.")
                     linear_stride = 0
                     for d, _bw in param_dims_wide:
                         b, _ee, _s = e.data.subset[d]
@@ -414,15 +432,22 @@ class Vectorize(ppl.Pass):
                         except Exception:
                             coeff = None
                         if coeff is None:
-                            raise NotImplementedError(
-                                f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} dim "
-                                f"{d} has non-linear param dependence ({b}); only linear "
-                                f"begins supported.")
+                            raise NotImplementedError(f"Vectorize: multi-dim strided NSDFG edge on {e.data.data} dim "
+                                                      f"{d} has non-linear param dependence ({b}); only linear "
+                                                      f"begins supported.")
                         linear_stride = linear_stride + coeff * arr.strides[d]
                     inner_conn = e.dst_conn if direction == "in" else e.src_conn
-                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
-                                                e.data.data, arr, self.vector_width, linear_stride,
-                                                direction=direction, multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
+                    _setup_strided_inside_nsdfg(state,
+                                                nsdfg_node,
+                                                inner_sdfg,
+                                                e,
+                                                inner_conn,
+                                                e.data.data,
+                                                arr,
+                                                self.vector_width,
+                                                linear_stride,
+                                                direction=direction,
+                                                multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
@@ -782,22 +807,19 @@ class Vectorize(ppl.Pass):
                             e2 = state.add_edge(at, "_out", src_node, None, dace.memlet.Memlet(f"{src_node.data}[{i}]"))
                             modified_nodes.add(at)
                             if isinstance(e1, dace.nodes.Node):
-                                raise RuntimeError(
-                                    "state.add_edge returned a Node, not an Edge "
-                                    f"(_in edge for {old_data_name}); SDFG API contract broken")
+                                raise RuntimeError("state.add_edge returned a Node, not an Edge "
+                                                   f"(_in edge for {old_data_name}); SDFG API contract broken")
                             if isinstance(e2, dace.nodes.Node):
-                                raise RuntimeError(
-                                    "state.add_edge returned a Node, not an Edge "
-                                    f"(_out edge for {src_node.data}); SDFG API contract broken")
+                                raise RuntimeError("state.add_edge returned a Node, not an Edge "
+                                                   f"(_out edge for {src_node.data}); SDFG API contract broken")
                             modified_edges.add(e1)
                             modified_edges.add(e2)
 
                         # Now update the subset
                         edge.data = dace.memlet.Memlet(expr=f"{src_node.data}[0:{self.vector_width}]")
                         if isinstance(edge, dace.nodes.Node):
-                            raise RuntimeError(
-                                f"edge for {src_node.data} is a Node, not an Edge; "
-                                "SDFG API contract broken")
+                            raise RuntimeError(f"edge for {src_node.data} is a Node, not an Edge; "
+                                               "SDFG API contract broken")
                         modified_edges.add(edge)
         return modified_nodes, modified_edges, modified_data
 
@@ -1192,15 +1214,13 @@ class Vectorize(ppl.Pass):
                             lb, le, ls = new_range_list_expanded[d]
                             if isinstance(le, int):
                                 le = dace.symbolic.SymExpr(str(le))
-                            new_le = le.subs(
-                                param_sym,
-                                dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
+                            new_le = le.subs(param_sym,
+                                             dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
                             new_range_list_expanded[d] = (lb, new_le, ls)
                         new_memlet = dace.memlet.Memlet(data=memlet.data,
                                                         subset=dace.subsets.Range(new_range_list_expanded))
                     else:
-                        new_memlet = dace.memlet.Memlet(data=memlet.data,
-                                                        subset=dace.subsets.Range(new_range_list))
+                        new_memlet = dace.memlet.Memlet(data=memlet.data, subset=dace.subsets.Range(new_range_list))
                     self._assert_no_other_subset(memlet, edge, state)
                     state.remove_edge(edge)
                     state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
@@ -1305,8 +1325,13 @@ class Vectorize(ppl.Pass):
                 elif iter_mask_name is not None:
                     mask_connector_arg = "_mask"
 
-                instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
-                                              vector_map_param, self.vector_op_numeric_type,
+                instantiate_tasklet_from_info(state,
+                                              node,
+                                              tasklet_info,
+                                              self.vector_width,
+                                              self.templates,
+                                              vector_map_param,
+                                              self.vector_op_numeric_type,
                                               mask_connector=mask_connector_arg)
 
     def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
@@ -1351,8 +1376,7 @@ class Vectorize(ppl.Pass):
             self._assert_no_other_subset(memlet, edge, state)
 
             state.remove_edge(edge)
-            edge = state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
-                                  self._vector_memlet(new_dataname))
+            edge = state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, self._vector_memlet(new_dataname))
 
             if isinstance(edge.dst, dace.nodes.MapEntry):
                 new_edges = {
@@ -1469,8 +1493,7 @@ class Vectorize(ppl.Pass):
         single-source builder used by every memlet-rewrite helper here."""
         return dace.memlet.Memlet(
             data=new_dataname,
-            subset=dace.subsets.Range([(dace.symbolic.SymExpr(0),
-                                        dace.symbolic.SymExpr(self.vector_width) - 1,
+            subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
                                         dace.symbolic.SymExpr(1))]),
         )
 

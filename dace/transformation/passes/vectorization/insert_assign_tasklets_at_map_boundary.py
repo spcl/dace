@@ -150,8 +150,8 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
 
             outer_memlet: Memlet = edge.data
             if direction == 'in':
-                scope_node = edge.src                       # innermost MapEntry
-                local_an = edge.dst                         # AccessNode inside the scope
+                scope_node = edge.src  # innermost MapEntry
+                local_an = edge.dst  # AccessNode inside the scope
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
                 outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
@@ -164,8 +164,8 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 state.add_edge(tasklet, "_out", local_an, None, local_memlet)
                 count += 1
             else:
-                local_an = edge.src                         # AccessNode inside the scope
-                scope_node = edge.dst                       # innermost MapExit
+                local_an = edge.src  # AccessNode inside the scope
+                scope_node = edge.dst  # innermost MapExit
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
                 outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))

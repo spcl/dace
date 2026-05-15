@@ -314,7 +314,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                             rhs_expr = ie_assigns[sym_name]
                             try:
                                 rhs_sym = dace.symbolic.SymExpr(rhs_expr)
-                                rhs_arr_atoms = {str(f.func) for f in rhs_sym.atoms(Function)} & set(state.sdfg.arrays.keys())
+                                rhs_arr_atoms = {str(f.func)
+                                                 for f in rhs_sym.atoms(Function)} & set(state.sdfg.arrays.keys())
                             except Exception:
                                 rhs_arr_atoms = set()
                             if len(rhs_arr_atoms) == 1:

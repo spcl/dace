@@ -6,7 +6,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 from dace.transformation.passes.vectorization.utils.lane_fanout import detect_multi_dim_strided_apply
 
-
 _MULTI_DIM_STRIDED_STORE_TEMPLATE = """
 {{
 strided_store<{dtype}>(_in, _out, {vector_length}, {stride});
@@ -42,7 +41,8 @@ class DetectMultiDimStridedStore(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        detect_multi_dim_strided_apply(sdfg, direction="store",
+        detect_multi_dim_strided_apply(sdfg,
+                                       direction="store",
                                        intrinsic_template=_MULTI_DIM_STRIDED_STORE_TEMPLATE,
                                        intrinsic_template_masked=_MULTI_DIM_STRIDED_STORE_TEMPLATE_MASKED,
                                        intrinsic_tasklet_name="multi_dim_strided_store")

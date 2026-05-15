@@ -50,10 +50,10 @@ from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol("N")
 
-
 # --------------------------------------------------------------------------
 # Simple elemental kernel used across the knob matrix.
 # --------------------------------------------------------------------------
+
 
 @dace.program
 def _add_scaled(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
@@ -95,6 +95,7 @@ def _run_and_compare(name: str, **vec_kwargs) -> None:
 # vector_width
 # --------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("width", [4, 8, 16])
 def test_knob_vector_width(width):
     """Numerical equivalence at W ∈ {4, 8, 16}. Catches a regression
@@ -105,6 +106,7 @@ def test_knob_vector_width(width):
 # --------------------------------------------------------------------------
 # only_apply_vectorization_pass
 # --------------------------------------------------------------------------
+
 
 def test_knob_only_apply_vectorization_pass_bypass():
     """``only_apply_vectorization_pass=True`` skips the preamble pipeline
@@ -118,6 +120,7 @@ def test_knob_only_apply_vectorization_pass_bypass():
 # no_inline
 # --------------------------------------------------------------------------
 
+
 def test_knob_no_inline():
     """``no_inline=True`` removes ``InlineSDFGs`` from the pipeline.
     Output stays numerically equivalent for the simple elemental kernel
@@ -128,6 +131,7 @@ def test_knob_no_inline():
 # --------------------------------------------------------------------------
 # eliminate_trivial_vector_map
 # --------------------------------------------------------------------------
+
 
 def test_knob_eliminate_trivial_vector_map_false_keeps_outer_map():
     """``eliminate_trivial_vector_map=False`` drops ``RemoveVectorMaps``
@@ -159,6 +163,7 @@ def test_knob_eliminate_trivial_vector_map_false_keeps_outer_map():
 # user_skip_nsdfg_arrays
 # --------------------------------------------------------------------------
 
+
 def test_knob_user_skip_nsdfg_arrays_accepted():
     """``user_skip_nsdfg_arrays`` is forwarded to ``add_copies_before_and_after_nsdfg``
     as the per-call skip list. For the simple elemental kernel without
@@ -170,6 +175,7 @@ def test_knob_user_skip_nsdfg_arrays_accepted():
 # --------------------------------------------------------------------------
 # force_autovec_ops / force_pscalar_ops
 # --------------------------------------------------------------------------
+
 
 def test_knob_force_autovec_rewrites_template():
     """``force_autovec_ops={"+"}`` rewrites the ``vector_add`` template
@@ -204,6 +210,7 @@ def test_knob_force_pscalar_rewrites_template():
 # --------------------------------------------------------------------------
 # Constructor rejections (mutex + value-domain checks)
 # --------------------------------------------------------------------------
+
 
 def test_constructor_rejects_use_fp_factor_and_branch_normalization():
     """``use_fp_factor`` and ``branch_normalization`` are mutually

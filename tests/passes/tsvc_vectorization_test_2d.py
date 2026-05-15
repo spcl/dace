@@ -26,6 +26,7 @@ from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 LEN_2D = dace.symbol("LEN_2D")
 
+
 @dace.program
 def s1115_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -94,17 +95,13 @@ def s126_d_single(
 
 
 @dace.program
-def s132_d_single(
-    aa: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D], c: dace.float64[LEN_2D]
-):
+def s132_d_single(aa: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D], c: dace.float64[LEN_2D]):
     for i in range(1, LEN_2D):
         aa[0, i] = aa[1, i - 1] + b[i] * c[1]
 
 
 @dace.program
-def s141_d_single(
-    bb: dace.float64[LEN_2D, LEN_2D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]
-):
+def s141_d_single(bb: dace.float64[LEN_2D, LEN_2D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     for i in range(LEN_2D):
         k = (i + 1) * i // 2 + i
         for j in range(i, LEN_2D):
@@ -274,29 +271,13 @@ def vbor_d_single(
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (
-            a1 * b1 * c1
-            + a1 * b1 * d1
-            + a1 * b1 * e1
-            + a1 * b1 * f1
-            + a1 * c1 * d1
-            + a1 * c1 * e1
-            + a1 * c1 * f1
-            + a1 * d1 * e1
-            + a1 * d1 * f1
-            + a1 * e1 * f1
-        )
-        b1 = (
-            b1 * c1 * d1
-            + b1 * c1 * e1
-            + b1 * c1 * f1
-            + b1 * d1 * e1
-            + b1 * d1 * f1
-            + b1 * e1 * f1
-        )
+        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
+              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
+
 
 # (kernel, [(argname, shape_class), ...]) entries.
 _KERNELS = [
@@ -334,8 +315,6 @@ def _allocate(shape_class: str, n: int) -> np.ndarray:
     if shape_class == "1d":
         return np.random.rand(n).astype(np.float64)
     raise ValueError(f"unknown shape_class: {shape_class}")
-
-
 
 
 _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (16, 17))

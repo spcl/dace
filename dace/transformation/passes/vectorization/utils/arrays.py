@@ -79,12 +79,8 @@ def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new
     # accesses into already-W-wide connectors like ``__tmp_70_18_r``).
     import copy as _copy
 
-    full_subset = dace.subsets.Range([
-        (dace.symbolic.SymExpr(0),
-         dace.symbolic.SymExpr(d) - dace.symbolic.SymExpr(1),
-         dace.symbolic.SymExpr(1))
-        for d in new_shape
-    ])
+    full_subset = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(d) - dace.symbolic.SymExpr(1),
+                                       dace.symbolic.SymExpr(1)) for d in new_shape])
     for s in sdfg.all_states():
         for e in s.edges():
             if e.data is None or e.data.data is None:
@@ -93,10 +89,7 @@ def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new
                 continue
             # Only rewrite memlets touching a Tasklet, where the connector
             # typing depends on the subset shape.
-            is_tasklet_edge = (
-                isinstance(e.src, dace.nodes.Tasklet)
-                or isinstance(e.dst, dace.nodes.Tasklet)
-            )
+            is_tasklet_edge = (isinstance(e.src, dace.nodes.Tasklet) or isinstance(e.dst, dace.nodes.Tasklet))
             if not is_tasklet_edge:
                 continue
             e.data.subset = _copy.deepcopy(full_subset)

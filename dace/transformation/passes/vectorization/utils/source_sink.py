@@ -67,29 +67,25 @@ def get_scalar_source_nodes(
     sdfg: dace.SDFG, non_transient_only: bool,
     skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """Returns source nodes (in-degree 0) for scalars or shape-(1,) arrays."""
-    return _get_boundary_nodes(sdfg, side="source", kind="scalar",
-                               non_transient_only=non_transient_only, skip=skip)
+    return _get_boundary_nodes(sdfg, side="source", kind="scalar", non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_source_nodes(sdfg: dace.SDFG,
                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """Returns source nodes for arrays with shape != (1,)."""
-    return _get_boundary_nodes(sdfg, side="source", kind="array",
-                               non_transient_only=non_transient_only, skip=set())
+    return _get_boundary_nodes(sdfg, side="source", kind="array", non_transient_only=non_transient_only, skip=set())
 
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG, non_transient_only: bool,
                           skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """Returns sink nodes (out-degree 0) for scalars or shape-(1,) arrays."""
-    return _get_boundary_nodes(sdfg, side="sink", kind="scalar",
-                               non_transient_only=non_transient_only, skip=skip)
+    return _get_boundary_nodes(sdfg, side="sink", kind="scalar", non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_sink_nodes(sdfg: dace.SDFG,
                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """Returns sink nodes for arrays with shape != (1,)."""
-    return _get_boundary_nodes(sdfg, side="sink", kind="array",
-                               non_transient_only=non_transient_only, skip=set())
+    return _get_boundary_nodes(sdfg, side="sink", kind="array", non_transient_only=non_transient_only, skip=set())
 
 
 def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
@@ -157,8 +153,7 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
 
 
 def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
-                                            source_node: dace.nodes.AccessNode,
-                                            sink_node: dace.nodes.AccessNode):
+                                            source_node: dace.nodes.AccessNode, sink_node: dace.nodes.AccessNode):
     """
     Checks if a transient accumulator is initialized to zero and used in an in-place reduction pattern.
     ``nsdfg`` is the parent NSDFG node and ``state`` is where the NSDFG resides in.

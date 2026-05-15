@@ -32,7 +32,6 @@ from dace.sdfg import nodes
 
 from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme
 
-
 _ASSIGN_LABEL_RE = re.compile(r"^(?:assign|a)_(\d+)$")
 
 _ITER_MASK_PREFIX = "_iter_mask"
@@ -99,9 +98,9 @@ def detect_fixed_increment(expr_strings):
     return deltas[0], exprs[min_idx]
 
 
-def _match_assign_fan(state: dace.SDFGState, packed_node: dace.nodes.AccessNode,
-                      direction: str) -> Optional[Tuple[List[dace.nodes.Tasklet], List[Tuple[str, dace.subsets.Range]],
-                                                        int]]:
+def _match_assign_fan(
+        state: dace.SDFGState, packed_node: dace.nodes.AccessNode,
+        direction: str) -> Optional[Tuple[List[dace.nodes.Tasklet], List[Tuple[str, dace.subsets.Range]], int]]:
     """
     If ``packed_node`` has a fan of ``assign_<i>`` tasklets on ``direction``
     ("gather"/"load" = in-side, "scatter"/"store" = out-side), return
@@ -186,7 +185,10 @@ def _bounding_box_per_dim(subsets):
     return box
 
 
-def detect_multi_dim_strided_apply(sdfg: SDFG, *, direction: str, intrinsic_template: str,
+def detect_multi_dim_strided_apply(sdfg: SDFG,
+                                   *,
+                                   direction: str,
+                                   intrinsic_template: str,
                                    intrinsic_tasklet_name: str,
                                    intrinsic_template_masked: Optional[str] = None) -> int:
     """
@@ -301,22 +303,26 @@ def detect_multi_dim_strided_apply(sdfg: SDFG, *, direction: str, intrinsic_temp
 
             if iter_mask_name is not None:
                 mask_an = state.add_access(iter_mask_name)
-                state.add_edge(mask_an, None, t1, "_mask",
-                               dace.memlet.Memlet(f"{iter_mask_name}[0:{vector_length}]"))
+                state.add_edge(mask_an, None, t1, "_mask", dace.memlet.Memlet(f"{iter_mask_name}[0:{vector_length}]"))
 
             found += 1
 
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                found += detect_multi_dim_strided_apply(node.sdfg, direction=direction,
+                found += detect_multi_dim_strided_apply(node.sdfg,
+                                                        direction=direction,
                                                         intrinsic_template=intrinsic_template,
                                                         intrinsic_tasklet_name=intrinsic_tasklet_name,
                                                         intrinsic_template_masked=intrinsic_template_masked)
     return found
 
 
-def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrinsic_template: str,
+def detect_lane_fanout_apply(sdfg: SDFG,
+                             *,
+                             direction: str,
+                             pattern: str,
+                             intrinsic_template: str,
                              intrinsic_tasklet_name: str,
                              intrinsic_template_masked: Optional[str] = None) -> int:
     """
@@ -363,14 +369,14 @@ def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrin
             if pattern == "contiguous":
                 initializer_values = ", ".join(str(s) for _, s in idx_data_and_subset)
                 intrinsic_code = template.format(initializer_values=initializer_values,
-                                                 vector_length=vector_length, dtype=dtype_cpp)
+                                                 vector_length=vector_length,
+                                                 dtype=dtype_cpp)
             else:  # strided
                 initializers = [str(s) for _, s in idx_data_and_subset]
                 fixed_increment, base_expr = detect_fixed_increment(initializers)
                 if fixed_increment is None:
                     continue
-                intrinsic_code = template.format(vector_length=vector_length, stride=fixed_increment,
-                                                 dtype=dtype_cpp)
+                intrinsic_code = template.format(vector_length=vector_length, stride=fixed_increment, dtype=dtype_cpp)
 
             indirect = _single_indirect_neighbour(state, sorted_tasklets, is_pack_in_side)
             if not isinstance(indirect, dace.nodes.AccessNode):
@@ -430,15 +436,16 @@ def detect_lane_fanout_apply(sdfg: SDFG, *, direction: str, pattern: str, intrin
 
             if iter_mask_name is not None:
                 mask_an = state.add_access(iter_mask_name)
-                state.add_edge(mask_an, None, t1, "_mask",
-                               dace.memlet.Memlet(f"{iter_mask_name}[0:{vector_length}]"))
+                state.add_edge(mask_an, None, t1, "_mask", dace.memlet.Memlet(f"{iter_mask_name}[0:{vector_length}]"))
 
             found += 1
 
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                found += detect_lane_fanout_apply(node.sdfg, direction=direction, pattern=pattern,
+                found += detect_lane_fanout_apply(node.sdfg,
+                                                  direction=direction,
+                                                  pattern=pattern,
                                                   intrinsic_template=intrinsic_template,
                                                   intrinsic_tasklet_name=intrinsic_tasklet_name,
                                                   intrinsic_template_masked=intrinsic_template_masked)

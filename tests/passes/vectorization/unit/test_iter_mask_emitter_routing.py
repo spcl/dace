@@ -13,14 +13,12 @@ is a follow-up slice; these tests construct ``EmitCtx`` directly so the
 consumer logic can be validated in isolation.
 """
 import dace
-import pytest
 
 from dace.transformation.passes.vectorization.utils.tasklets import (
     EmitCtx,
     _generate_code,
     _template_key,
 )
-
 
 N = dace.symbol("N")
 

@@ -470,7 +470,6 @@ class BranchNormalizationPipeline(ppl.Pass):
 
         remaining = _count_conditional_blocks(sdfg)
         if remaining:
-            raise NotImplementedError(
-                f"BranchNormalizationPipeline: {remaining} ConditionalBlock(s) remain after "
-                f"{self.MAX_ITERS} fixed-point iterations; unsupported branch shape")
+            raise NotImplementedError(f"BranchNormalizationPipeline: {remaining} ConditionalBlock(s) remain after "
+                                      f"{self.MAX_ITERS} fixed-point iterations; unsupported branch shape")
         return rewritten or None

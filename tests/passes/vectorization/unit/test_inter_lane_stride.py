@@ -73,9 +73,12 @@ def _run(prog, arrays, params):
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"{prog.name}_ils_v"
-    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True,
-                 use_fp_factor=True, branch_normalization=False,
-                 insert_copies=False, remainder_strategy="scalar").apply_pass(vsdfg, {})
+    VectorizeCPU(vector_width=8,
+                 fail_on_unvectorizable=True,
+                 use_fp_factor=True,
+                 branch_normalization=False,
+                 insert_copies=False,
+                 remainder_strategy="scalar").apply_pass(vsdfg, {})
 
     sdfg(**ref, **params)
     vsdfg(**vec, **params)

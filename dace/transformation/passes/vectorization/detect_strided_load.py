@@ -6,7 +6,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 from dace.transformation.passes.vectorization.utils.lane_fanout import detect_lane_fanout_apply
 
-
 _STRIDED_LOAD_TEMPLATE = """
 {{
 strided_load<{dtype}>(_in, _out, {vector_length}, {stride});
@@ -36,7 +35,9 @@ class DetectStridedLoad(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        detect_lane_fanout_apply(sdfg, direction="load", pattern="strided",
+        detect_lane_fanout_apply(sdfg,
+                                 direction="load",
+                                 pattern="strided",
                                  intrinsic_template=_STRIDED_LOAD_TEMPLATE,
                                  intrinsic_template_masked=_STRIDED_LOAD_TEMPLATE_MASKED,
                                  intrinsic_tasklet_name="gather_load")

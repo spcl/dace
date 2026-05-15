@@ -194,3 +194,4 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+latex-tools/

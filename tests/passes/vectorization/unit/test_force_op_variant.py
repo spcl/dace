@@ -24,7 +24,6 @@ import pytest
 
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
-
 N = dace.symbol("N")
 
 
@@ -36,9 +35,7 @@ def add_div_program(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], 
 
 def _templates_after_override(force_autovec=None, force_pscalar=None) -> dict:
     """Build a VectorizeCPU and pull the rewritten templates dict out."""
-    v = VectorizeCPU(vector_width=8,
-                     force_autovec_ops=force_autovec,
-                     force_pscalar_ops=force_pscalar)
+    v = VectorizeCPU(vector_width=8, force_autovec_ops=force_autovec, force_pscalar_ops=force_pscalar)
     for p in v._passes:
         if hasattr(p, "templates") and isinstance(p.templates, dict):
             return p.templates
@@ -91,9 +88,7 @@ def test_end_to_end_pscalar_div():
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = "force_pscalar_div_v"
 
-    VectorizeCPU(vector_width=8,
-                 fail_on_unvectorizable=True,
-                 force_pscalar_ops={"/"}).apply_pass(vsdfg, {})
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, force_pscalar_ops={"/"}).apply_pass(vsdfg, {})
 
     sdfg(a=a, b=b, c=c, out=out_ref, N=Nv)
     vsdfg(a=a, b=b, c=c, out=out_vec, N=Nv)
@@ -114,9 +109,7 @@ def test_end_to_end_av_div():
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = "force_av_div_v"
 
-    VectorizeCPU(vector_width=8,
-                 fail_on_unvectorizable=True,
-                 force_autovec_ops={"/"}).apply_pass(vsdfg, {})
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True, force_autovec_ops={"/"}).apply_pass(vsdfg, {})
 
     sdfg(a=a, b=b, c=c, out=out_ref, N=Nv)
     vsdfg(a=a, b=b, c=c, out=out_vec, N=Nv)

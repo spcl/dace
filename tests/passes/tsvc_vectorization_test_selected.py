@@ -334,7 +334,9 @@ def test_s441(remainder_strategy):
     # not compatible with fp_factor (locked plan decision), so pin to
     # branch_mode='fp_factor' and skip the masked variant.
     if remainder_strategy == "masked":
-        pytest.skip("s441 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization (locked plan rule)")
+        pytest.skip(
+            "s441 uses EliminateBranches → fp_factor; masked-remainder requires branch_normalization (locked plan rule)"
+        )
     run_vectorization_test(
         dace_func=dace_s441,
         arrays={

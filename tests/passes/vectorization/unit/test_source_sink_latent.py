@@ -21,7 +21,6 @@ from dace.transformation.passes.vectorization.utils.source_sink import (
     move_out_reduction,
 )
 
-
 # --------------------------------------------------------------------------
 # Bug 1: ``check_writes_to_scalar_sinks_happen_through_assign_tasklets``
 #

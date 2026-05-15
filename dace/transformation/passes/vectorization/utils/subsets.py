@@ -52,10 +52,9 @@ def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: Set, free_
     newly_free = sdfg.free_symbols - prev_sdfg_free_syms
     for free_sym in free_syms:
         if str(free_sym) in newly_free:
-            raise Exception(
-                f"`{helper_name}` has introduced new free symbols (this will cause problems as the new "
-                f"symbols should not be free). This will result an invalid SDFG, either call with "
-                f"`add_missing_symbols=True` or fix this issue")
+            raise Exception(f"`{helper_name}` has introduced new free symbols (this will cause problems as the new "
+                            f"symbols should not be free). This will result an invalid SDFG, either call with "
+                            f"`add_missing_symbols=True` or fix this issue")
 
 
 def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,

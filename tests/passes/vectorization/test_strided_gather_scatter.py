@@ -552,9 +552,7 @@ def test_halve_index_gather():
             "src": src,
             "dst": dst
         },
-        params={
-            "N": N_val
-        },
+        params={"N": N_val},
         vector_width=8,
         sdfg_name="halve_index_gather",
     )
@@ -574,9 +572,7 @@ def test_halve_index_s4117():
             "c": c,
             "d": d
         },
-        params={
-            "N": N_val
-        },
+        params={"N": N_val},
         vector_width=8,
         sdfg_name="halve_index_s4117",
     )
@@ -661,6 +657,7 @@ def test_strided_load_stride_2_fp32():
 #   enforces this contract post-collapse.
 #
 # N=17, W=8 ⇒ main covers 16, remainder covers 1.
+
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_gather_load_nondiv(remainder_strategy):
@@ -767,6 +764,7 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
 # ``strided_store<T>`` paths work for non-double T under both divisible
 # and non-divisible N, and under scalar/masked remainder strategies.
 
+
 @dace.program
 def strided_load_stride_2_fp32_nondiv(src: dace.float32[2 * N], dst: dace.float32[N], scale: dace.float32):
     for i, in dace.map[0:N:1]:
@@ -780,8 +778,14 @@ def test_strided_load_fp32_stride_2_nondiv(remainder_strategy):
     dst = numpy.zeros(N_val, dtype=numpy.float32)
     run_vectorization_test(
         dace_func=strided_load_stride_2_fp32_nondiv,
-        arrays={"src": src, "dst": dst},
-        params={"N": N_val, "scale": numpy.float32(1.5)},
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N_val,
+            "scale": numpy.float32(1.5)
+        },
         vector_width=8,
         sdfg_name=f"sl_fp32_s2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -809,8 +813,14 @@ def test_diagonal_gather_load_masked(remainder_strategy):
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=diagonal_gather_load,
-        arrays={"A": A, "dst": dst},
-        params={"N": N_val, "scale": 1.5},
+        arrays={
+            "A": A,
+            "dst": dst
+        },
+        params={
+            "N": N_val,
+            "scale": 1.5
+        },
         vector_width=8,
         sdfg_name=f"diag_gather_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -825,8 +835,14 @@ def test_diagonal_scatter_store_masked(remainder_strategy):
     A = numpy.zeros((N_val, N_val))
     run_vectorization_test(
         dace_func=diagonal_scatter_store,
-        arrays={"src": src, "A": A},
-        params={"N": N_val, "scale": 1.5},
+        arrays={
+            "src": src,
+            "A": A
+        },
+        params={
+            "N": N_val,
+            "scale": 1.5
+        },
         vector_width=8,
         sdfg_name=f"diag_scatter_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,

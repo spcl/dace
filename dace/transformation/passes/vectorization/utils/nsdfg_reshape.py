@@ -148,7 +148,8 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([(((end + 1 - begin) // step)).simplify() for begin, end, step in subset
+        expected_shape_collapsed_strided = tuple([(((end + 1 - begin) // step)).simplify()
+                                                  for begin, end, step in subset
                                                   if (((end + 1 - begin) // step)).simplify() != 1])
 
         # Validate: array shape must match one of the expected shapes
@@ -198,9 +199,14 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
                                f"    Collapsed strided: {expected_shape_collapsed_strided}")
 
 
-def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tuple, new_shape: tuple,
-                                         expected_full: tuple, expected_strided: tuple,
-                                         expected_collapsed_strided: tuple, *, direction: str,
+def _raise_on_expansion_rebuild_mismatch(connector_name: str,
+                                         original_shape: tuple,
+                                         new_shape: tuple,
+                                         expected_full: tuple,
+                                         expected_strided: tuple,
+                                         expected_collapsed_strided: tuple,
+                                         *,
+                                         direction: str,
                                          vector_width: Optional[int] = None) -> None:
     """Guard for ``fix_nsdfg_connector_array_shapes_mismatch``.
 
@@ -270,8 +276,7 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
         # address the wider range — allow it.
         if (expands_real_dim and vector_width is not None
                 and all(d == 0 or d == vector_width - 1 for d in per_dim_growth if d is not None)
-                and all(d is not None for d in per_dim_growth)
-                and any(d == vector_width - 1 for d in per_dim_growth)):
+                and all(d is not None for d in per_dim_growth) and any(d == vector_width - 1 for d in per_dim_growth)):
             expands_real_dim = False
 
         # Strided-bbox exception: a 1-D ``(K,)`` connector (K elements
@@ -283,8 +288,7 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
         # stride-4 gather ``(2,) -> (30,)`` at W=8 (7*4 + 2). The inner
         # body still accesses it K-wise; only the boundary copy spans
         # the bbox.
-        if (expands_real_dim and vector_width is not None
-                and len(original_shape) == 1 and len(new_shape) == 1):
+        if (expands_real_dim and vector_width is not None and len(original_shape) == 1 and len(new_shape) == 1):
             K = _int_or_none(original_shape[0])
             bbox = _int_or_none(new_shape[0])
             if K is not None and bbox is not None and K >= 1 and bbox > K:
@@ -297,18 +301,16 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
                     expands_real_dim = False
 
     if expands_real_dim:
-        raise ValueError(
-            f"fix_nsdfg_connector_array_shapes_mismatch ({direction}): connector "
-            f"{connector_name!r} has original shape {original_shape}; none of the four "
-            f"expected interpretations match and the candidate rebuild "
-            f"({new_shape}) would EXPAND a non-placeholder dim. Inner SDFG accesses "
-            f"can't legitimately address the larger range. Expected shapes considered:\n"
-            f"    Full:              {expected_full}\n"
-            f"    Strided:           {expected_strided}\n"
-            f"    Collapsed full:    {new_shape}\n"
-            f"    Collapsed strided: {expected_collapsed_strided}\n"
-            f"Fix the caller's connector shape or memlet subset to be consistent."
-        )
+        raise ValueError(f"fix_nsdfg_connector_array_shapes_mismatch ({direction}): connector "
+                         f"{connector_name!r} has original shape {original_shape}; none of the four "
+                         f"expected interpretations match and the candidate rebuild "
+                         f"({new_shape}) would EXPAND a non-placeholder dim. Inner SDFG accesses "
+                         f"can't legitimately address the larger range. Expected shapes considered:\n"
+                         f"    Full:              {expected_full}\n"
+                         f"    Strided:           {expected_strided}\n"
+                         f"    Collapsed full:    {new_shape}\n"
+                         f"    Collapsed strided: {expected_collapsed_strided}\n"
+                         f"Fix the caller's connector shape or memlet subset to be consistent.")
 
 
 def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
@@ -352,12 +354,14 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
         # Calculate all possible expected shapes
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset])
+        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify()
+                                        for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset
+        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify()
+                                                  for begin, end, step in subset
                                                   if (dace.symbolic.int_floor(end + 1 - begin, step)).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
@@ -387,7 +391,8 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
         # legitimately address the larger range — raise loudly so the
         # caller fixes its inputs, rather than silently corrupting
         # downstream codegen.
-        _raise_on_expansion_rebuild_mismatch(connector_name, original_shape,
+        _raise_on_expansion_rebuild_mismatch(connector_name,
+                                             original_shape,
                                              expected_shape_collapsed_full,
                                              expected_shape_full,
                                              expected_shape_strided,
@@ -441,12 +446,14 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
         # Calculate all possible expected shapes
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset])
+        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify()
+                                        for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset
+        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify()
+                                                  for begin, end, step in subset
                                                   if (dace.symbolic.int_floor(end + 1 - begin, step)).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
@@ -463,7 +470,8 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
 
         # ===== Mismatch detected - decide rebuild vs raise =====
         # See input-edge branch above for the rationale.
-        _raise_on_expansion_rebuild_mismatch(connector_name, original_shape,
+        _raise_on_expansion_rebuild_mismatch(connector_name,
+                                             original_shape,
                                              expected_shape_collapsed_full,
                                              expected_shape_full,
                                              expected_shape_strided,
@@ -654,9 +662,17 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
         return copy.deepcopy(edge_subset)
 
 
-def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
-                                inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str,
-                                orig_arr, vector_width: int, stride: int, *, direction: str,
+def _setup_strided_inside_nsdfg(state: dace.SDFGState,
+                                nsdfg_node: dace.nodes.NestedSDFG,
+                                inner_sdfg: dace.SDFG,
+                                edge,
+                                inner_conn: str,
+                                orig_data: str,
+                                orig_arr,
+                                vector_width: int,
+                                stride: int,
+                                *,
+                                direction: str,
                                 multi_dim_param_dims: tuple = ()) -> None:
     """Wire a strided boundary edge into the NSDFG so the strided load /
     store happens INSIDE the NSDFG body.
@@ -687,8 +703,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
     else:
         # Single-stride-1-dim path (1D strided / s127 / s1111 shape).
         stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
-        assert len(stride_one_indices) == 1, (
-            f"Strided-inside requires a single stride-1 dim; got {orig_arr.strides}")
+        assert len(stride_one_indices) == 1, (f"Strided-inside requires a single stride-1 dim; got {orig_arr.strides}")
         stride_one_idx = stride_one_indices[0]
         edge_b, edge_e, _ = edge.data.subset[stride_one_idx]
         bbox_size = edge_e - edge_b + 1
@@ -735,8 +750,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
         # the subset to 1-D ``[0 : W-1]`` — the downstream vector tasklet
         # consumes the full W-wide buffer.
         _flatten_subset = bool(multi_dim_param_dims)
-        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
-                                              dace.symbolic.SymExpr(vector_width - 1),
+        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(vector_width - 1),
                                               dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
             for inner_edge in inner_state.edges():
@@ -762,8 +776,8 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
         )
         prep.add_edge(bbox_an, None, tasklet, "_in",
                       dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
-        prep.add_edge(tasklet, "_out", vec_an, None,
-                      dace.memlet.Memlet.from_array(vec_name, inner_sdfg.arrays[vec_name]))
+        prep.add_edge(tasklet, "_out", vec_an, None, dace.memlet.Memlet.from_array(vec_name,
+                                                                                   inner_sdfg.arrays[vec_name]))
         if old_start is not None and old_start is not prep:
             inner_sdfg.add_edge(prep, old_start, dace.InterstateEdge())
 
@@ -778,8 +792,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
         # (same reason as the "in" direction above — the W-wide
         # transient gets a vector-store from the body).
         _flatten_subset = bool(multi_dim_param_dims)
-        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
-                                              dace.symbolic.SymExpr(vector_width - 1),
+        _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(vector_width - 1),
                                               dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
             for inner_edge in inner_state.edges():
@@ -819,9 +832,9 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.Ne
 
 
 def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
-                                               inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str,
-                                               orig_arr, vector_width: int, *, elements_per_iter: int,
-                                               stride: int, direction: str) -> None:
+                                              inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str, orig_arr,
+                                              vector_width: int, *, elements_per_iter: int, stride: int,
+                                              direction: str) -> None:
     """Multi-element-per-iteration strided / contiguous bbox case.
 
     Generalised K-elements-per-iter pattern: each iteration accesses
@@ -878,7 +891,7 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         if name in inner_sdfg.arrays:
             inner_sdfg.remove_data(name, validate=False)
         inner_sdfg.add_array(name=name,
-                             shape=(W,),
+                             shape=(W, ),
                              dtype=orig_arr.dtype,
                              storage=dace.dtypes.StorageType.Register,
                              transient=True,
@@ -887,8 +900,7 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         phase_names.append(name)
 
     dtype_ctype = orig_arr.dtype.ctype
-    full_buf_range = dace.subsets.Range([(dace.symbolic.SymExpr(0),
-                                          dace.symbolic.SymExpr(W - 1),
+    full_buf_range = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(W - 1),
                                           dace.symbolic.SymExpr(1))])
 
     # Rewrite body memlets: each ``<conn>[p]`` reference (single-point
@@ -1017,7 +1029,6 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
             #   linearised stride is computed from the array's per-dim
             #   strides. Catches ``A[i, i]``, ``A[2*i, i]``, ``A[i, 2*i]``
             #   patterns under the NSDFG-wrapped (P1+P2) path.
-            import sympy as _sp
             stride_one_indices = [i for i, s in enumerate(orig_arr.strides) if s == 1]
             is_strided = False
             stride_value = 1
@@ -1127,15 +1138,28 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                 # rename (``movable_data`` → ``VecNameScheme.make(movable_data)``)
                 # skips them — the connector keeps the original name.
                 if multi_elem_per_iter > 0:
-                    _setup_multi_element_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e,
-                                                              inner_conn, orig_data, orig_arr,
+                    _setup_multi_element_strided_inside_nsdfg(state,
+                                                              nsdfg_node,
+                                                              inner_sdfg,
+                                                              e,
+                                                              inner_conn,
+                                                              orig_data,
+                                                              orig_arr,
                                                               vector_width,
                                                               elements_per_iter=multi_elem_per_iter,
                                                               stride=stride_value,
                                                               direction=direction)
                 else:
-                    _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn, orig_data,
-                                                orig_arr, vector_width, stride_value, direction=direction,
+                    _setup_strided_inside_nsdfg(state,
+                                                nsdfg_node,
+                                                inner_sdfg,
+                                                e,
+                                                inner_conn,
+                                                orig_data,
+                                                orig_arr,
+                                                vector_width,
+                                                stride_value,
+                                                direction=direction,
                                                 multi_dim_param_dims=multi_dim_dims)
                 continue
 
@@ -1519,16 +1543,16 @@ def add_copies_before_and_after_nsdfg(
         for ie in state.in_edges(nsdfg_node):
             if ie.dst_conn is not None and ie.dst_conn == movable_data and vec_data in nsdfg_node.in_connectors:
                 assert vec_data in nsdfg_node.in_connectors, f"{vec_data} not in {nsdfg_node.in_connectors}"
-                assert len(set(state.in_edges_by_connector(nsdfg_node, vec_data))) == 0, (
-                    f"There are edges connected to {vec_data}: "
-                    f"{set(state.in_edges_by_connector(nsdfg_node, vec_data))}")
+                assert len(set(state.in_edges_by_connector(
+                    nsdfg_node, vec_data))) == 0, (f"There are edges connected to {vec_data}: "
+                                                   f"{set(state.in_edges_by_connector(nsdfg_node, vec_data))}")
                 ie.dst_conn = vec_data
         for oe in state.out_edges(nsdfg_node):
             if oe.src_conn is not None and oe.src_conn == movable_data and vec_data in nsdfg_node.out_connectors:
                 assert vec_data in nsdfg_node.out_connectors, f"{vec_data} not in {nsdfg_node.out_connectors}"
-                assert len(set(state.out_edges_by_connector(nsdfg_node, vec_data))) == 0, (
-                    f"There are edges connected to {vec_data}: "
-                    f"{set(state.out_edges_by_connector(nsdfg_node, vec_data))}")
+                assert len(set(state.out_edges_by_connector(
+                    nsdfg_node, vec_data))) == 0, (f"There are edges connected to {vec_data}: "
+                                                   f"{set(state.out_edges_by_connector(nsdfg_node, vec_data))}")
                 oe.src_conn = vec_data
 
     # Move vector data above the vector map, it makes merging overlapping accesses easier.

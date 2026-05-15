@@ -202,20 +202,19 @@ class VectorizeCPU(ppl.Pipeline):
             templates[op] = _vec_name_pat.sub(r"vector_\1_pscalar<", templates[op], count=1)
         for op in force_autovec_ops:
             templates[op] = _vec_name_pat.sub(r"vector_\1_av<", templates[op], count=1)
-        vectorizer = Vectorize(
-            templates=templates,
-            vector_width=vector_width,
-            vector_input_storage=dace.dtypes.StorageType.Register,
-            vector_output_storage=dace.dtypes.StorageType.Register,
-            global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
-            global_code_location="frame",
-            vector_op_numeric_type=dace.float64,
-            try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
-            apply_on_maps=apply_on_maps,
-            insert_copies=insert_copies,
-            fail_on_unvectorizable=fail_on_unvectorizable,
-            eliminate_trivial_vector_map=eliminate_trivial_vector_map,
-            user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
+        vectorizer = Vectorize(templates=templates,
+                               vector_width=vector_width,
+                               vector_input_storage=dace.dtypes.StorageType.Register,
+                               vector_output_storage=dace.dtypes.StorageType.Register,
+                               global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
+                               global_code_location="frame",
+                               vector_op_numeric_type=dace.float64,
+                               try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+                               apply_on_maps=apply_on_maps,
+                               insert_copies=insert_copies,
+                               fail_on_unvectorizable=fail_on_unvectorizable,
+                               eliminate_trivial_vector_map=eliminate_trivial_vector_map,
+                               user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
         if not only_apply_vectorization_pass:
             # Pick the branch-lowering front of the pipeline. ``use_fp_factor``
             # keeps today's behaviour, ``EliminateBranches`` collapses if/else
