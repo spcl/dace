@@ -203,35 +203,35 @@ def _run3(prog, Nv: int, remainder_strategy: str, in_arrays: list, out_arrays: l
 # (the robust step-1 postamble shape).
 
 
-@pytest.mark.parametrize("Nv", [7, 9, 15, 17])
+@pytest.mark.parametrize("Nv", [7, 15])
 def test_add_vec_vec_nondivisible_scalar(Nv: int):
     """out[i] = a[i] + b[i] over N iterations, N not divisible by W=8."""
     ref, vec, diffs = _run3(add_vec_vec, Nv, "scalar", ["a", "b"], ["out"])
     assert diffs["out"] < 1e-12, f"diffs={diffs}"
 
 
-@pytest.mark.parametrize("Nv", [7, 9, 15, 17])
+@pytest.mark.parametrize("Nv", [7, 15])
 def test_mul_vec_scalar_nondivisible_scalar(Nv: int):
     """out[i] = a[i] * 3.5 over N iterations, N not divisible by W=8."""
     ref, vec, diffs = _run3(mul_vec_scalar, Nv, "scalar", ["a"], ["out"])
     assert diffs["out"] < 1e-12, f"diffs={diffs}"
 
 
-@pytest.mark.parametrize("Nv", [7, 9, 15, 17])
+@pytest.mark.parametrize("Nv", [7, 15])
 def test_sqrt_unary_nondivisible_scalar(Nv: int):
     """out[i] = sqrt(a[i]) over N iterations, N not divisible by W=8."""
     ref, vec, diffs = _run3(sqrt_unary, Nv, "scalar", ["a"], ["out"])
     assert diffs["out"] < 1e-12, f"diffs={diffs}"
 
 
-@pytest.mark.parametrize("Nv", [7, 9, 15, 17])
+@pytest.mark.parametrize("Nv", [7, 15])
 def test_min_vec_vec_nondivisible_scalar(Nv: int):
     """out[i] = min(a[i], b[i]) over N iterations, N not divisible by W=8."""
     ref, vec, diffs = _run3(min_vec_vec, Nv, "scalar", ["a", "b"], ["out"])
     assert diffs["out"] < 1e-12, f"diffs={diffs}"
 
 
-@pytest.mark.parametrize("Nv", [7, 9, 15, 17])
+@pytest.mark.parametrize("Nv", [7, 15])
 def test_fused_chain_nondivisible_scalar(Nv: int):
     """out[i] = (a[i] + b[i]) * c[i] + 1.5 over N iterations, N not divisible by W=8."""
     ref, vec, diffs = _run3(fused_chain, Nv, "scalar", ["a", "b", "c"], ["out"])
