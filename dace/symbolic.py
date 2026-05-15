@@ -1822,10 +1822,12 @@ def deserialize_symbolic(expr) -> SymbolicType:
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
+    # Do not cache SymPy objects: SymPy equality/hash ignores DaCe symbol dtype metadata.
     if isinstance(expr, SymExpr):
         return expr
     if isinstance(expr, sympy.Basic):
         return sympy.simplify(expr) if simplify is True else expr
+    # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
         return _pystr_to_symbolic_cached(expr, simplify)
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
