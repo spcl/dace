@@ -372,14 +372,7 @@ def _big_nested_map_for_for_map(A: dace.float64[_BIG_N, _BIG_N], B: dace.float64
 
 
 def test_large_nested_map_for_for_map_program():
-    """>=20 maps with heavily aliased iterators across deep nests.
-
-    The frontend program has 22 maps and 22 ``range`` loops whose iterator
-    names collapse to only two distinct symbols.  The pass must give every
-    loop a unique name, keep all maps intact, and remain semantics-
-    preserving -- verified against the un-transformed SDFG (the non-
-    transformed reference), not a hand-written numpy loop.
-    """
+    """>=20 maps with heavily aliased iterators across deep nests."""
 
     def n_maps(g):
         return sum(1 for n, _ in g.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
