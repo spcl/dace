@@ -44,10 +44,8 @@ def _get_sdfg(
     non_zero: bool,
     subset_in_first_dim: bool,
 ) -> dace.SDFG:
-    """
-    Construct an SDFG that performs a configurable number of memcpy and memset
-    operations, possibly with extra computation or non-zero memsets.
-    """
+    """Build an SDFG with a configurable number of memcpy/memset map paths,
+    optionally adding extra computation, non-zero fills, or a first-dim subset."""
 
     sdfg = dace.SDFG("main")
     state = sdfg.add_state("memset_memcpy_maps")
@@ -727,13 +725,8 @@ def test_nested_memcpy_with_dimension_change_and_strides(expansion_type, xp, ful
 
 
 def test_transpose_map_is_not_lifted_to_memcpy():
-    """Pin: a map whose tasklet body is ``_out = _in`` but whose in/out
-    memlet subsets permute the map indices is a *transpose*, not a
-    pure copy. The pass must leave it alone -- lifting it to a
-    ``CopyLibraryNode`` (which lowers to ``cudaMemcpyAsync``) would
-    silently turn a transpose into a flat memcpy and produce wrong
-    output. Regressed in ``test_persistent_gpu_transpose_regression``.
-    """
+    """A ``_out = _in`` map whose in/out subsets permute the map indices is a
+    transpose, not a copy, so it is left unlifted (no ``CopyLibraryNode``)."""
     sdfg = dace.SDFG("transpose_pin")
     sdfg.add_array("A", [5, 3], dace.float64)
     sdfg.add_array("AT", [3, 5], dace.float64)
@@ -752,14 +745,8 @@ def test_transpose_map_is_not_lifted_to_memcpy():
 
 
 def test_inkernel_memset_is_not_lifted():
-    """Pin: a memset (``scratch[j] = 0``) inside a GPU_Device map must NOT
-    be lifted to a ``MemsetLibraryNode`` -- it expands to host-only
-    ``cudaMemsetAsync`` (illegal from device code) and a ``GPU_Device``
-    mapped tasklet that breaks ``AddThreadBlockMap`` when nested in another
-    GPU map. Uses ``simplify=True`` so the inner ``MapEntry -> Tasklet ->
-    MapExit -> AccessNode`` shape exists at top level (``simplify=False``
-    wraps each map body in a NestedSDFG and the pattern never matches).
-    """
+    """A memset map nested inside a ``GPU_Device`` map is left unlifted (no
+    ``MemsetLibraryNode``) because ``cudaMemsetAsync`` cannot run from device code."""
 
     @dace.program
     def kernel_with_inner_memset(A: dace.float64[128, 64] @ dace.StorageType.GPU_Global):
@@ -778,14 +765,8 @@ def test_inkernel_memset_is_not_lifted():
 
 
 def test_single_element_memset_is_not_lifted():
-    """Pin: a memset over a single-element array must NOT be lifted.
-
-    The pure expansion of ``MemsetLibraryNode`` collapses every singleton
-    dim (``_make_memset_skeleton``'s ``keep`` filter); a 1-element memset
-    therefore lifts to a mapped tasklet with an empty map, which downstream
-    ``propagate_memlet`` rejects with ``TypeError: object of type 'NoneType'
-    has no len()``. Skip the lift entirely.
-    """
+    """A memset over a single-element array is left unlifted (no
+    ``MemsetLibraryNode``) because its pure expansion collapses to an empty map."""
 
     @dace.program
     def single_element_zero(A: dace.float64[1]):
@@ -800,10 +781,8 @@ def test_single_element_memset_is_not_lifted():
 
 
 def test_single_element_memcpy_is_not_lifted():
-    """Pin: a memcpy over a single element must NOT be lifted (same family
-    as ``test_single_element_memset_is_not_lifted`` -- singleton-collapse in
-    ``CopyLibraryNode``'s pure expansion produces a degenerate map).
-    """
+    """A memcpy over a single element is left unlifted (no ``CopyLibraryNode``)
+    because its pure expansion collapses to a degenerate map."""
 
     @dace.program
     def single_element_copy(A: dace.float64[1], B: dace.float64[1]):
@@ -818,16 +797,8 @@ def test_single_element_memcpy_is_not_lifted():
 
 
 def test_shared_passthrough_connector_blocks_lift():
-    """Pin: when a map_exit's IN_X passthrough is fed by *both* a memset
-    tasklet and a compute tasklet (e.g. a boundary write and a per-thread
-    compute write to the same array), the pass must NOT lift the memset.
-    Lifting would sever the shared ``MapExit OUT_X -> AccessNode`` edge
-    that aggregates both writes; the compute tasklet's data path would be
-    destroyed and downstream MapTiling would observe an OUT_X with no
-    IN_X (and vice-versa). Surfaced by deriche; the validator rejects the
-    post-tile state with ``No match for output connector OUT_y2`` or its
-    counterpart.
-    """
+    """A memset whose ``MapExit`` passthrough connector is shared with a compute
+    tasklet is left unlifted (no ``MemsetLibraryNode``) and the SDFG stays valid."""
     sdfg = dace.SDFG("shared_passthrough_pin")
     sdfg.add_array("A", [10], dace.float64, dace.StorageType.GPU_Global)
     state = sdfg.add_state("main")

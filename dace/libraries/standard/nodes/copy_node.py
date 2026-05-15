@@ -65,12 +65,17 @@ def _coarse_pick_for_storage_pair(src_storage, dst_storage):
 
 
 def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
-    """Single source of truth for resolving ``CopyLibraryNode.implementation``
-    when set to ``'Auto'`` (the default). Picks a concrete implementation
-    from endpoint storages, subset shapes, and the surrounding scope.
+    """Resolve ``CopyLibraryNode.implementation`` when set to ``'Auto'`` (the default).
 
-    Returns one of the concrete implementation names registered in
-    ``CopyLibraryNode.implementations`` -- never ``'Auto'`` itself."""
+    Picks a concrete implementation from endpoint storages, subset shapes,
+    and the surrounding scope.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :returns: a concrete implementation name from
+              ``CopyLibraryNode.implementations`` -- never ``'Auto'`` itself.
+    """
     from dace.sdfg.scope import is_devicelevel_gpu
 
     inp_name, inp, in_subset, out_name, out, out_subset, _dyn, _stream = node.validate(parent_sdfg,
@@ -154,11 +159,20 @@ def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
 
 
 def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
-    """Upgrade ``MemcpyCUDA1D`` to a more specific impl when the subsets
-    aren't simple contiguous: ``MemcpyCUDA2D`` (1-or-2D strided patterns),
-    ``MappedTasklet`` (same-side GPU strided -- runs inside a kernel),
-    ``CopyNDTemplate`` (same-side CPU C-packed), or
-    ``MemcpyCUDANDStrided`` (cross-boundary >=3D)."""
+    """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
+
+    Picks ``MemcpyCUDA2D`` (1-or-2D strided patterns), ``MappedTasklet``
+    (same-side GPU strided -- runs inside a kernel), ``CopyNDTemplate``
+    (same-side CPU C-packed), or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :returns: the refined implementation name, or ``None`` when the subsets
+              are simple contiguous (keep ``MemcpyCUDA1D``).
+    :raises ValueError: a strided cross-CPU/GPU pattern with no common
+        stride-1 axis that no single memcpy can lower.
+    """
     inp_name, inp, in_subset, out_name, out, out_subset, _dyn, _stream = node.validate(parent_sdfg,
                                                                                        parent_state,
                                                                                        allow_cross_storage=True)
@@ -219,8 +233,9 @@ def _require_contiguous_subset(name: str, subset, desc, side: str):
 
 @dataclass
 class CopyExpansion:
-    """Inputs + collapsed-shape state shared across CopyLibraryNode expansions
-    that build a wrapper SDFG. Returned by :func:`_make_expansion_sdfg`."""
+    """Inputs + collapsed-shape state shared across :class:`CopyLibraryNode`
+    expansions that build a wrapper SDFG. Returned by
+    :func:`_make_expansion_sdfg`."""
     sdfg: dace.SDFG
     state: dace.SDFGState
     inp_name: str
@@ -238,8 +253,17 @@ class CopyExpansion:
 
 
 def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
-    """Shared validation + SDFG skeleton. ``require_contiguous=True`` enforces
-    contiguous subsets on both sides (needed by flat-memcpy expansions)."""
+    """Shared validation + wrapper-SDFG skeleton for expansions.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :param allow_cross_storage: permit differing src/dst storages.
+    :param require_contiguous: enforce contiguous subsets on both sides
+        (needed by flat-memcpy expansions).
+    :returns: a :class:`CopyExpansion` with the skeleton SDFG and collapsed
+              shape/stride state.
+    """
     inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(
         parent_sdfg, parent_state, allow_cross_storage=allow_cross_storage)
 
@@ -275,13 +299,22 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
 
 
 def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=False):
-    """Element-wise mapped tasklet expansion. Schedule comes from the
-    storages: ``Sequential`` for Register/Register or Register<->GPU_Shared
-    (thread-level) and for any in-kernel copy (a new ``GPU_Device`` map
-    inside an existing kernel would create an invalid kernel-in-kernel
-    nesting), ``GPU_Device`` if any side is GPU storage and we're at host
-    level, else ``Default`` (CPU<->CPU -- inferred post-expansion). Raises
-    across the CPU/GPU boundary."""
+    """Element-wise mapped tasklet expansion.
+
+    Schedule comes from the storages: ``Sequential`` for Register/Register
+    or Register<->GPU_Shared (thread-level) and for any in-kernel copy (a
+    new ``GPU_Device`` map inside an existing kernel would create an invalid
+    kernel-in-kernel nesting), ``GPU_Device`` if any side is GPU storage and
+    we're at host level, else ``Default`` (CPU<->CPU -- inferred
+    post-expansion).
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :param allow_cross_storage: permit differing src/dst storages.
+    :returns: the wrapper SDFG holding the mapped tasklet.
+    :raises ValueError: the copy crosses the CPU/GPU boundary.
+    """
     from dace.sdfg.scope import is_devicelevel_gpu
     ctx = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
@@ -337,20 +370,34 @@ def _memcpy_kind(inp, out) -> str:
 
 
 def _stream_expr(stream_input, conn_name: str = _STREAM_CONN) -> Tuple[bool, str]:
-    """Return ``(has_stream, expr)``: connector name when a stream is wired,
-    ``__dace_current_stream`` (the legacy ambient placeholder the codegen
-    binds) otherwise."""
+    """Resolve the GPU stream expression for a memcpy tasklet.
+
+    :param stream_input: stream descriptor, or ``None`` for the ambient stream.
+    :param conn_name: connector name to use when a stream is wired.
+    :returns: ``(has_stream, expr)`` -- the connector name when a stream is
+              wired, ``__dace_current_stream`` (the ambient placeholder the
+              codegen binds) otherwise.
+    """
     if stream_input is None:
         return False, "__dace_current_stream"
     return True, conn_name
 
 
 def _memcpy_connector_typing(inp, out, one_elem: bool, in_is_cpu: bool, out_is_cpu: bool, in_conn: str, out_conn: str):
-    """Single-elem CPU side stays value-typed and is addressed via ``&``;
-    every other side is pointer-typed and passed by name. Used by the
-    cudaMemcpy and CPU memcpy expansions for connector + tasklet-arg shape.
+    """Pick connector types and tasklet-arg forms for a memcpy expansion.
 
-    Returns ``(in_conn_type, out_conn_type, in_arg, out_arg)``."""
+    A single-element CPU side stays value-typed and is addressed via ``&``;
+    every other side is pointer-typed and passed by name.
+
+    :param inp: source descriptor.
+    :param out: destination descriptor.
+    :param one_elem: whether the copy is a single element.
+    :param in_is_cpu: whether the source is host-accessible.
+    :param out_is_cpu: whether the destination is host-accessible.
+    :param in_conn: source connector name.
+    :param out_conn: destination connector name.
+    :returns: ``(in_conn_type, out_conn_type, in_arg, out_arg)``.
+    """
     in_value_typed = one_elem and in_is_cpu
     out_value_typed = one_elem and out_is_cpu
     in_conn_type = inp.dtype if in_value_typed else dace.dtypes.pointer(inp.dtype)
@@ -361,9 +408,16 @@ def _memcpy_connector_typing(inp, out, one_elem: bool, in_is_cpu: bool, out_is_c
 
 
 def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
-    """Return a Tasklet emitting one ``cudaMemcpyAsync``. The transfer
-    direction (HostToDevice / DeviceToHost / DeviceToDevice / HostToHost) is
-    inferred from endpoint storages; cross-CPU/GPU is allowed."""
+    """Build a Tasklet emitting one ``cudaMemcpyAsync``.
+
+    The transfer direction (HostToDevice / DeviceToHost / DeviceToDevice /
+    HostToHost) is inferred from endpoint storages; cross-CPU/GPU is allowed.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the memcpy.
+    """
     inp_name, inp, in_subset, out_name, out, out_subset, _dyn, stream_input = node.validate(parent_sdfg,
                                                                                             parent_state,
                                                                                             allow_cross_storage=True)
@@ -402,12 +456,22 @@ def _build_copynd_call(ctype,
                        dst_strides,
                        in_arg=_INPUT_CONNECTOR_NAME,
                        out_arg=_OUTPUT_CONNECTOR_NAME):
-    """Build a ``dace::CopyND`` / ``dace::CopyNDDynamic`` call string,
-    picking the most-specific static template form: ``CopyND<T, 1, false,
-    dims...>`` for static shapes (else ``CopyNDDynamic<T, 1, false, ndims>``),
-    refined by ``ConstDst`` / ``ConstSrc`` / ``Dynamic`` based on which
-    stride set is constexpr. Runtime args are whatever's not in the
-    template. ``in_arg``/``out_arg`` override the pointer-variable names."""
+    """Build a ``dace::CopyND`` / ``dace::CopyNDDynamic`` call string.
+
+    Picks the most-specific static template form: ``CopyND<T, 1, false,
+    dims...>`` for static shapes (else ``CopyNDDynamic<T, 1, false,
+    ndims>``), refined by ``ConstDst`` / ``ConstSrc`` / ``Dynamic`` based on
+    which stride set is constexpr; runtime args are whatever's not in the
+    template.
+
+    :param ctype: C++ element type.
+    :param copy_shape: collapsed copy extents per dimension.
+    :param src_strides: collapsed source strides.
+    :param dst_strides: collapsed destination strides.
+    :param in_arg: source pointer-variable name.
+    :param out_arg: destination pointer-variable name.
+    :returns: the ``...::Copy(...)`` call string.
+    """
     from dace import symbolic
 
     ndims = len(copy_shape)
@@ -549,8 +613,7 @@ class ExpandCopyNDTemplate(ExpandTransformation):
 @library.expansion
 class ExpandMemcpyCUDA1D(ExpandTransformation):
     """One ``cudaMemcpyAsync`` for a contiguous copy. Direction (H2D / D2H /
-    D2D / H2H) is inferred from endpoint storages -- covers what the legacy
-    ``CUDA``, ``CUDAHostToDevice``, and ``CUDADeviceToHost`` impls did separately."""
+    D2D / H2H) is inferred from endpoint storages."""
     environments = [environments.CUDA]
 
     @staticmethod
@@ -931,9 +994,17 @@ class CopyLibraryNode(nodes.LibraryNode):
 
     def validate(self, sdfg, state, allow_cross_storage=True):
         """Resolve in/out edges, names, subsets, dynamic inputs, and an
-        optional stream descriptor. Raises if the libnode is not wired
-        with exactly one input and one output data edge, dtypes mismatch,
-        or (when ``allow_cross_storage`` is False) the two storages differ."""
+        optional stream descriptor.
+
+        :param sdfg: SDFG containing ``state``.
+        :param state: state containing this libnode.
+        :param allow_cross_storage: when False, require matching src/dst storages.
+        :returns: ``(inp_name, inp, in_subset, out_name, out, out_subset,
+                  dynamic_inputs, stream_input)``.
+        :raises ValueError: the libnode is not wired with exactly one input
+            and one output data edge, dtypes mismatch, or (when
+            ``allow_cross_storage`` is False) the two storages differ.
+        """
         out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(out_edges) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
