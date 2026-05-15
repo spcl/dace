@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""TensorDot library node and its pure / TTGT / cuTENSOR expansions."""
 import collections
 import dace
 
-from dace.libraries.standard import environments as standard_environments
+from dace.libraries.standard import environments
 from dace import library, nodes, properties
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
@@ -265,7 +266,7 @@ class ExpandCuTensor(ExpandTransformation):
     (i.e. D = alpha * A * B with beta = 0).
     """
 
-    environments = [standard_environments.cuTensor]
+    environments = [environments.cuTensor]
 
     # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, scalar type for alpha/beta).
     # The scalar type follows the compute descriptor: real for real-valued
@@ -373,25 +374,17 @@ class ExpandCuTensor(ExpandTransformation):
             if (worksize > 0) cudaMalloc(&work, worksize);
         """
 
-        # The host codegen only declares __dace_current_stream when the tasklet
-        # is directly adjacent to GPU access nodes; library nodes inside a
-        # `@dace.program(device=GPU)` program don't always trigger that. Fetch
-        # the stream explicitly from the codegen-managed gpu_context instead,
-        # in a private scope so it does not clash with an outer declaration.
         execute = """
             cutensorPlan_t plan;
             dace::linalg::CheckCuTensorError(cutensorCreatePlan(
                 __dace_cutensor_handle, &plan, opDesc, planPref, worksize));
-            {
-                cudaStream_t __dace_cutensor_stream = __state->gpu_context->streams[0];
-                cutensorStatus_t err = cutensorContract(
-                    __dace_cutensor_handle, plan,
-                    (const void*)&alpha, _left_tensor, _right_tensor,
-                    (const void*)&beta,  _out_tensor,  _out_tensor,
-                    work, worksize, __dace_cutensor_stream);
-                if (err != CUTENSOR_STATUS_SUCCESS) {
-                    printf("ERROR: %s\\n", cutensorGetErrorString(err));
-                }
+            cutensorStatus_t err = cutensorContract(
+                __dace_cutensor_handle, plan,
+                (const void*)&alpha, _left_tensor, _right_tensor,
+                (const void*)&beta,  _out_tensor,  _out_tensor,
+                work, worksize, __dace_current_stream);
+            if (err != CUTENSOR_STATUS_SUCCESS) {
+                printf("ERROR: %s\\n", cutensorGetErrorString(err));
             }
             cutensorDestroyPlan(plan);
             cutensorDestroyPlanPreference(planPref);
@@ -402,7 +395,7 @@ class ExpandCuTensor(ExpandTransformation):
             if (work) cudaFree(work);
         """
 
-        code = f"{standard_environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

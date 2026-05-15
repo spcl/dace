@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Unit tests for the TensorTranspose library node with the cuTENSOR v2 expansion.
 Tests float64 and int32 tensors using parametrization.

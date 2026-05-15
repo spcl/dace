@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 import dace
 import multiprocessing
 from dace import library, nodes, properties
@@ -126,6 +127,11 @@ class ExpandCuTensor(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        """Expand ``node`` into a cuTENSOR ``cutensorPermute`` tasklet.
+
+        :returns: A tasklet implementing the transpose, or the pure expansion for integer dtypes.
+        :raises NotImplementedError: If ``node.beta`` is non-zero (unsupported by ``cutensorPermute``).
+        """
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
@@ -160,7 +166,7 @@ class ExpandCuTensor(ExpandTransformation):
         code = f"""\
 {environments.cuTensor.handle_setup_code(node)}
 {{
-    // ---- cuTENSOR v2 permutation ----------------------------------------
+    // cuTENSOR v2 permutation
     const uint32_t kNdim = {ndim};
 
     int32_t  modesA[{ndim}]   = {{{modes_a_str}}};
@@ -172,7 +178,7 @@ class ExpandCuTensor(ExpandTransformation):
 
     {alpha_type} alpha = {alpha_val};
 
-    // --- tensor descriptors (v2: alignment hint in bytes, 256 is safe) ---
+    // tensor descriptors (v2: alignment hint in bytes, 256 is safe)
     cutensorTensorDescriptor_t descA, descC;
     dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
         __dace_cutensor_handle, &descA, kNdim,
@@ -181,7 +187,7 @@ class ExpandCuTensor(ExpandTransformation):
         __dace_cutensor_handle, &descC, kNdim,
         extentC, stridesC, {cutensor_dtype}, 256));
 
-    // --- operation descriptor (permutation) ------------------------------
+    // operation descriptor (permutation)
     cutensorOperationDescriptor_t opDesc;
     dace::linalg::CheckCuTensorError(cutensorCreatePermutation(
         __dace_cutensor_handle, &opDesc,
@@ -189,7 +195,7 @@ class ExpandCuTensor(ExpandTransformation):
         descC, modesC,
         {compute_desc}));
 
-    // --- plan preference & plan ------------------------------------------
+    // plan preference & plan
     cutensorPlanPreference_t planPref;
     dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
         __dace_cutensor_handle, &planPref,
@@ -199,13 +205,13 @@ class ExpandCuTensor(ExpandTransformation):
     dace::linalg::CheckCuTensorError(cutensorCreatePlan(
         __dace_cutensor_handle, &plan, opDesc, planPref, 0));
 
-    // --- execute ---------------------------------------------------------
+    // execute
     dace::linalg::CheckCuTensorError(cutensorPermute(
         __dace_cutensor_handle, plan,
         (const void*)&alpha, _inp_tensor, _out_tensor,
         __dace_current_stream));
 
-    // --- cleanup ---------------------------------------------------------
+    // cleanup
     cutensorDestroyPlan(plan);
     cutensorDestroyPlanPreference(planPref);
     cutensorDestroyOperationDescriptor(opDesc);

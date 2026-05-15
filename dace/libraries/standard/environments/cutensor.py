@@ -1,9 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""DaCe library environment for the NVIDIA cuTENSOR backend."""
 import dace.library
 
 
 @dace.library.environment
 class cuTensor:
+    """Build/link configuration and per-node setup code for cuTENSOR-backed library nodes."""
 
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
@@ -22,6 +24,12 @@ class cuTensor:
 
     @staticmethod
     def handle_setup_code(node):
+        """Emit the C++ that fetches a per-device cuTENSOR handle for ``node``.
+
+        :param node: Library node being expanded; its ``location["gpu"]`` (if set) selects the device.
+        :returns: C++ snippet declaring ``__dace_cutensor_handle``.
+        :raises ValueError: If ``location["gpu"]`` is set but not an integer.
+        """
         location = node.location
         if not location or "gpu" not in node.location:
             location = -1  # -1 means current device
