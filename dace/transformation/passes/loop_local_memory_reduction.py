@@ -396,9 +396,11 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if any(i is None for il in read_indices + all_write_indices for i in il):
             return
 
-        if any(
-                b.has(sp.Mod) and any(s.name in changing_syms for s in b.free_symbols)
-                for il in read_indices + all_write_indices for _, b in il):
+        def _is_dynamic_modulo_offset(offset):
+            return offset.has(sp.Mod) and any(s.name in changing_syms for s in offset.free_symbols)
+
+        offsets = [b for il in read_indices + all_write_indices for _, b in il]
+        if any(_is_dynamic_modulo_offset(offset) for offset in offsets):
             return
 
         # Combine the read and write indices into a 1D array access for easier analysis
