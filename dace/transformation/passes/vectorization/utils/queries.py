@@ -247,6 +247,37 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             continue
         if arr_name.startswith("__strided_buf_") or arr_name in strided_buf_aliases:
             del all_accesses_to_arrays[arr_name]
+            continue
+        # ``_cond_*`` bool transients are emitted by BranchNormalization /
+        # SameWriteSetIfElseToMergeCFG to carry per-lane condition results.
+        # After ``replace_arrays_with_new_shape`` reshapes them to ``(W,)``
+        # and their memlets are rewritten to ``[0:W-1]``, the point-access
+        # ``b == e`` assert below would trip — exclude them, same as the
+        # ``_iter_mask`` and ``__strided_buf_`` cases above.
+        if arr_name.startswith("_cond_"):
+            del all_accesses_to_arrays[arr_name]
+            continue
+        # Any already-W-wide 1D array (transient OR non-transient
+        # connector — non-transient covers e.g. NSDFG-boundary
+        # accumulator descriptors like ``__tmp_70_18_r`` from
+        # the SpMV reduction pattern) is past the "should this be
+        # vectorized?" decision.  Its memlets carry the full W-wide
+        # range subset after ``replace_arrays_with_new_shape``, which
+        # would trip the point-access ``b == e`` assert below.  Skip
+        # everything whose array descriptor is already ``(vector_width,)``.
+        try:
+            arr_obj = sdfg.arrays.get(arr_name)
+        except Exception:
+            arr_obj = None
+        if arr_obj is not None:
+            shape = tuple(arr_obj.shape)
+            if len(shape) == 1:
+                try:
+                    if int(shape[0]) > 1:
+                        del all_accesses_to_arrays[arr_name]
+                        continue
+                except (TypeError, ValueError):
+                    pass
 
     array_is_vectorizable = {k: True for k in all_accesses_to_arrays}
 
