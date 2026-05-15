@@ -268,6 +268,28 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
                 and any(d == vector_width - 1 for d in per_dim_growth)):
             expands_real_dim = False
 
+        # Strided-bbox exception: a 1-D ``(K,)`` connector (K elements
+        # per iter) widened to the strided bounding box ``(W-1)*S + K``
+        # for some inter-lane stride ``S >= 1`` — the legitimate reshape
+        # the strided / multi-element-strided handlers
+        # (``_setup_strided_inside_nsdfg`` /
+        # ``_setup_multi_element_strided_inside_nsdfg``) need, e.g. a K=2
+        # stride-4 gather ``(2,) -> (30,)`` at W=8 (7*4 + 2). The inner
+        # body still accesses it K-wise; only the boundary copy spans
+        # the bbox.
+        if (expands_real_dim and vector_width is not None
+                and len(original_shape) == 1 and len(new_shape) == 1):
+            K = _int_or_none(original_shape[0])
+            bbox = _int_or_none(new_shape[0])
+            if K is not None and bbox is not None and K >= 1 and bbox > K:
+                num = bbox - K
+                den = vector_width - 1
+                # bbox == (W-1)*S + K  ⇔  (bbox-K) divisible by (W-1),
+                # quotient S >= 1 (S >= K is the gather/scatter-with-gaps
+                # case; S < K never happens for a real strided bbox).
+                if den > 0 and num % den == 0 and (num // den) >= 1:
+                    expands_real_dim = False
+
     if expands_real_dim:
         raise ValueError(
             f"fix_nsdfg_connector_array_shapes_mismatch ({direction}): connector "
