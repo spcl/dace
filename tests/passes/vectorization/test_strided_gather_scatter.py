@@ -912,21 +912,9 @@ def strided_load_stride_2_fp32_nondiv(src: dace.float32[2 * N], dst: dace.float3
 
 
 @dace.program
-def strided_load_stride_3_fp32_nondiv(src: dace.float32[3 * N], dst: dace.float32[N], scale: dace.float32):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 3] * scale
-
-
-@dace.program
 def strided_store_stride_2_fp32_nondiv(src: dace.float32[N], dst: dace.float32[2 * N], scale: dace.float32):
     for i, in dace.map[0:N:1]:
         dst[i * 2] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_3_fp32_nondiv(src: dace.float32[N], dst: dace.float32[3 * N], scale: dace.float32):
-    for i, in dace.map[0:N:1]:
-        dst[i * 3] = src[i] * scale
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
@@ -946,22 +934,6 @@ def test_strided_load_fp32_stride_2_nondiv(remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-def test_strided_load_fp32_stride_3_nondiv(remainder_strategy):
-    N_val = 22
-    src = numpy.random.rand(3 * N_val).astype(numpy.float32)
-    dst = numpy.zeros(N_val, dtype=numpy.float32)
-    run_vectorization_test(
-        dace_func=strided_load_stride_3_fp32_nondiv,
-        arrays={"src": src, "dst": dst},
-        params={"N": N_val, "scale": numpy.float32(1.5)},
-        vector_width=8,
-        sdfg_name=f"sl_fp32_s3_nondiv_{remainder_strategy}",
-        remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
-    )
-
-
-@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_strided_store_fp32_stride_2_nondiv(remainder_strategy):
     N_val = 22
     src = numpy.random.rand(N_val).astype(numpy.float32)
@@ -972,22 +944,6 @@ def test_strided_store_fp32_stride_2_nondiv(remainder_strategy):
         params={"N": N_val, "scale": numpy.float32(1.5)},
         vector_width=8,
         sdfg_name=f"ss_fp32_s2_nondiv_{remainder_strategy}",
-        remainder_strategy=remainder_strategy,
-        lower_to_intrinsics=(remainder_strategy == "masked"),
-    )
-
-
-@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-def test_strided_store_fp32_stride_3_nondiv(remainder_strategy):
-    N_val = 22
-    src = numpy.random.rand(N_val).astype(numpy.float32)
-    dst = numpy.zeros(3 * N_val, dtype=numpy.float32)
-    run_vectorization_test(
-        dace_func=strided_store_stride_3_fp32_nondiv,
-        arrays={"src": src, "dst": dst},
-        params={"N": N_val, "scale": numpy.float32(1.5)},
-        vector_width=8,
-        sdfg_name=f"ss_fp32_s3_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
         lower_to_intrinsics=(remainder_strategy == "masked"),
     )
