@@ -18,15 +18,15 @@ def foo(A: dace.float64[10, 10], idx: dace.int32[10, 10], B: dace.float64[5, 10]
 def test_nested_sdfg_symbol_mapping():
     """
     The map inside the loop body with nested SDFG.
-    The loop variable `i` must appear in the nested SDFG's symbol_mapping.
+    The loop variable ``i`` must appear in the nested SDFG's symbol_mapping.
     After UniqueLoopIterators, the symbol_mapping should reference the new
-    ``_loop_it_<N>`` name, not the original `i`.
+    ``_loop_it_<N>`` name, not the original ``i``.
     """
     UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = foo.to_sdfg(simplify=False)
 
-    # Before: confirm `i` is the loop variable and appears in a nested SDFG mapping
+    # Before: confirm ``i`` is the loop variable and appears in a nested SDFG mapping
     loops_before = [cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
     assert len(loops_before) == 1
     assert loops_before[0].loop_variable == 'i'
