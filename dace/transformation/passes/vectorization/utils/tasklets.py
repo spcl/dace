@@ -247,10 +247,17 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                                              dtype=dtype_,
                                              mask=mask_arg)
 
-    # Fallback: unsupported operator
+    # Fallback: unsupported operator (or op with no ``_masked`` template).
+    # When ``ctx.mask_connector`` is set the per-lane write MUST be gated
+    # by the iter-mask: the masked remainder runs this body once over
+    # the trailing R<W elements and the inactive lanes must NOT write
+    # back (an unconditional store clobbers live array data — e.g. the
+    # pre-loop ``a[LEN_1D-1]`` scalar write in TSVC s2244).
     comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
     code_lines = [f"_dace_vectorize({ctx.vector_width})"]
     code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
+    if ctx.mask_connector:
+        code_lines.append(f"if ({ctx.mask_connector}[_vi]) {{")
 
     # Determine operand order
     lhs_expr = lhs_ + "[_vi]"
@@ -297,6 +304,8 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
             else:
                 code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right}[_vi])){comparison_suffix};")
 
+    if ctx.mask_connector:
+        code_lines.append("}")  # close ``if (mask[_vi]) {``
     code_lines.append("}")
     return "\n".join(code_lines)
 
@@ -353,6 +362,16 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     out_dtypes = {state.sdfg.arrays[oe.data.data].dtype for oe in oes if oe.data.data is not None}
     all_dtypes = in_dtypes.union(out_dtypes)
 
+    # NOTE: the C.2-b ``_iter_mask`` (``bool[W]``) connector makes
+    # ``all_dtypes`` non-homogeneous so masked tasklets take the
+    # fallback lane-loop below rather than the ``vector_*_av_masked``
+    # templates. That fallback is now mask-gated (see ``_generate_code``
+    # fallback: ``if (mask[_vi]) ...``), which is the correct behaviour;
+    # we deliberately do NOT exclude the mask from this check, because
+    # the ``vector_*_av_masked`` scalar-variant templates have an
+    # inconsistent arg order vs their runtime macros (separate bug),
+    # so routing masked-scalar ops through the template path
+    # mis-compiles. The gated fallback is correct for all ops.
     fallbackcode_due_to_types = len(all_dtypes) != 1
 
     ctx = EmitCtx(state=state,
