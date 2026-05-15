@@ -61,7 +61,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dst = node_path[i + 1]
             oes = {oe for oe in state.out_edges(src) if oe.dst == dst}
             if len(oes) != 1:
-                # Fail
+                # Ambiguous or missing edge between consecutive path nodes.
                 return []
             oe = oes.pop()
             edges.append(oe)
@@ -69,10 +69,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     @staticmethod
     def _subset_param_order(subset, map_params: List[str]) -> List[str]:
-        """Per-dimension list of which map parameter (if any) the subset uses
-        in that dimension. Dimensions that don't reference any map param drop
-        out. Used to compare in vs. out access orderings -- see
-        ``_in_out_subsets_are_pure_copy``.
+        """Per-dimension list of which map parameter the subset uses.
+
+        Dimensions that don't reference any map param drop out. Used to compare
+        in- vs. out-subset access orderings, see :meth:`_in_out_subsets_are_pure_copy`.
+
+        :param subset: Memlet subset to inspect.
+        :param map_params: Names of the enclosing map's parameters.
+        :returns: One map-parameter name per dimension that references exactly one.
         """
         param_set = set(map_params)
         order = []
@@ -89,12 +93,17 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return order
 
     def _in_out_subsets_are_pure_copy(self, in_subset, out_subset, map_params: List[str]) -> bool:
-        """Reject permutations (e.g. transpose) but accept broadcasts.
+        """Reject permutations (e.g. transpose) but accept copies and broadcasts.
 
         ``_out = _in`` is identical for a copy, a broadcast and a transpose;
         only the first two lower safely to ``cudaMemcpyAsync``. A map
         parameter appearing in both in- and out-subsets must keep the same
         relative order -- transpose swaps it, copy/broadcast preserve it.
+
+        :param in_subset: Subset of the tasklet's input memlet.
+        :param out_subset: Subset of the tasklet's output memlet.
+        :param map_params: Names of the enclosing map's parameters.
+        :returns: True iff the in/out ordering is a copy or broadcast, not a permutation.
         """
         in_order = self._subset_param_order(in_subset, map_params)
         out_order = self._subset_param_order(out_subset, map_params)
@@ -105,9 +114,15 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry,
                                  is_memset: bool) -> List[List[MultiConnectorEdge]]:
-        """
-        Find ``MapEntry -> tasklet -> MapExit`` paths whose tasklet is a pure copy
-        (``is_memset=False``) or constant-zero write (``is_memset=True``).
+        """Find ``MapEntry -> tasklet -> MapExit`` data-movement paths under a map.
+
+        Matches a tasklet that is a pure element-wise copy (``is_memset=False``)
+        or a constant-zero write (``is_memset=True``).
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :param is_memset: Match constant-zero writes when True, copies when False.
+        :returns: One edge list per matched path; empty if none match.
         """
         if any(s != 1 for (_, _, s) in node.map.range):
             return []
@@ -538,6 +553,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         Single-element transfers must not be lifted: the libnode pure expansion
         collapses every singleton dim, yielding an empty map shape that breaks
         memlet propagation. There is also no perf gain over the original tasklet.
+
+        :param copy_length: Collapsed transfer length expression.
+        :returns: True iff the length simplifies to the integer 1.
         """
         try:
             return int(dace.symbolic.simplify(copy_length)) == 1
@@ -550,6 +568,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         An in-kernel lift would expand to ``cudaMemcpyAsync`` / ``cudaMemsetAsync``,
         which are host-only and cannot run from device code.
+
+        :param state: State containing the map.
+        :param node: Map entry whose ancestor chain is checked.
+        :returns: True iff any ancestor map has a GPU schedule.
         """
         parent_tuple = helpers.get_parent_map(state, node)
         while parent_tuple is not None:
