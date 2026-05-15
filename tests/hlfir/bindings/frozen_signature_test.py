@@ -2,7 +2,6 @@
 detection.  These don't need the full HLFIR pipeline or flang-new on
 PATH; they exercise the binding-side plumbing in isolation.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

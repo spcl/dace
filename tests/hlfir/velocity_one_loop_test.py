@@ -15,7 +15,6 @@ Reference: pure-numpy reimplementation of the same loop nest
 entirely; the full-velocity numerical case will be handled
 separately when the bigger plumbing pattern is settled.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

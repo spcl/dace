@@ -3,7 +3,6 @@
 Tracks the "current" SDFG state, pending scalar assignments that need
 flushing as tasklets, and the active DO-loop iterator renames.
 """
-from __future__ import annotations
 
 from dace import InterstateEdge, SDFG
 

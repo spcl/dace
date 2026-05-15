@@ -14,7 +14,6 @@ Pinned coverage:
   * Both reads and writes through the pointer (``tmp = 13``,
     ``r = func(tmp)``).
 """
-from __future__ import annotations
 
 from pathlib import Path
 

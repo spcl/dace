@@ -22,7 +22,6 @@ Test sizes / data shape (per user spec):
     * indirection arrays carry values in ``[1, 31]`` so every
       ``w(idx_arr(...), jk, jb)`` access is in-bounds.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

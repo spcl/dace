@@ -14,7 +14,6 @@ symbol or an inlined constant.  These tests pin that contract:
   procedure can be inlined or left as a fir.call (the inline-all pass
   collapses both into a single function-scope HLFIR for the bridge).
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

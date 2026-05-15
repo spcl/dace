@@ -13,7 +13,6 @@ Pipelines:
     (lift-cf-to-scf refuses to walk past fir.select_case).  Everything
     else gets the default pipeline.
 """
-from __future__ import annotations
 
 import re
 import shutil

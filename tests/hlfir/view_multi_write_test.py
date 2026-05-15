@@ -5,7 +5,6 @@ dummies each get a write in the same inlined-callee block.
 
 E2e against an f2py-compiled reference of the same Fortran source.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

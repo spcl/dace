@@ -15,7 +15,6 @@ Both place the ``SELECT CASE`` inside a module-contained subroutine
 called from ``main`` so the inliner has to actually clone the lowered
 CFG into the caller (which is the original segfault path).
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -1,5 +1,4 @@
 """Ported from f2dace/dev:tests/fortran/fortran_loops_test.py."""
-from __future__ import annotations
 
 import numpy as np
 import pytest

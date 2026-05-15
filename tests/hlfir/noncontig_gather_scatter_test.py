@@ -18,7 +18,6 @@ The corresponding ``ported/noncontig_pardecls_test.py`` cases cover
 the cross-subroutine call shape that exercises the same path through
 ``hlfir-inline-all`` first.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -5,7 +5,6 @@ and interstate-edge state-change assignments for symbol writes.  The
 actual per-element compute lives in ``emit_tasklet``; this module only
 stitches states and regions together.
 """
-from __future__ import annotations
 
 import re
 

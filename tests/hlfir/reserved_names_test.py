@@ -9,7 +9,6 @@ sympy with ``SympifyError: cannot sympify object of type LazyFunction``.
 These tests exercise the rename pass directly so a regression on the
 collision set surfaces here, not via the wider integration tests.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

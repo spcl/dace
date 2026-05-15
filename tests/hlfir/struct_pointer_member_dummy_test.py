@@ -14,7 +14,6 @@ to find the inner ``SequenceType`` and classified ``h_data`` as a
 Scalar of dtype ``!fir.box<!fir.ptr<...>>`` -- arglist later raised
 ``KeyError: 'h_data_d0'`` looking up the deferred-shape extent symbol.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

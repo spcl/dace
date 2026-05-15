@@ -25,7 +25,6 @@ Usage:
     python tests/run_relevant_tests.py --workers 1           # serial
     python tests/run_relevant_tests.py -- -k merge           # forward args to pytest
 """
-from __future__ import annotations
 
 import argparse
 import re

@@ -27,7 +27,6 @@ and crashes lookup -- and the same struct-typed kernel dummy would
 crash the reference build too.  Skipping f2py for both paths keeps
 the test surface uniform and dodges that parser limitation entirely.
 """
-from __future__ import annotations
 
 import ctypes
 import shutil

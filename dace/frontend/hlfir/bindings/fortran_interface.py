@@ -17,7 +17,6 @@ module and pulls out:
 No fparser dependency  --  HLFIR's types carry all of this; mangled
 names like ``_QM<mod>T<tname>`` let us recover module origins.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple

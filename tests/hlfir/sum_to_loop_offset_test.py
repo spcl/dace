@@ -5,7 +5,6 @@ reductions over array slices.  Under the HLFIR bridge, the same
 expressions are lowered as SUM intrinsic calls with the access
 chain's offsets handled by the standard memlet machinery.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

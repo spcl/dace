@@ -15,7 +15,6 @@ index math needed.
 ``assign_reads_array`` is the predicate used by ``emit_assign`` to
 decide which path an incoming assign should take.
 """
-from __future__ import annotations
 
 import re
 

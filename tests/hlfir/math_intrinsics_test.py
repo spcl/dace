@@ -17,7 +17,6 @@ Coverage:
   Python ``%`` operator and the C++ codegen picks the right semantics
   for the operand type.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -2,7 +2,6 @@
 raise on unresolved calls.  Tests use pre-compiled HLFIR files written
 to tmp_path so the flang toolchain is exercised exactly once per test.
 """
-from __future__ import annotations
 
 import subprocess
 import sys

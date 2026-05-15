@@ -13,7 +13,6 @@ What's not covered (orthogonal to allocatable plumbing):
   * Multiple ``ALLOCATE`` calls on the same variable (reallocation).
   * Allocatable arrays in ``COMMON`` / module globals.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

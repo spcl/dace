@@ -9,7 +9,6 @@ Exercises every case-label shape the bridge recognises:
     case (:hi)        -> x <= hi
     case default      -> else branch at the innermost nesting
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

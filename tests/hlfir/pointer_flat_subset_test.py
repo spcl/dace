@@ -22,7 +22,6 @@ that f2py's harness doesn't accept here), so the tests apply ``target``
 to the variable as a whole  --  Fortran promotes the attribute to every
 component automatically.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

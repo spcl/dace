@@ -13,7 +13,6 @@ The complementary case  --  an allocatable that IS queried via
 ``ALLOCATED``  --  must keep its tracker; ``intrinsic_allocated_test.py``
 pins that behaviour and stays green after this change.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

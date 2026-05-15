@@ -21,7 +21,6 @@ tolerance, the bug is in the source/sink accumulation cross-talk.
 If it doesn't, the divergence comes from the bottom half (lines
 2620..3700) or the assembly/solver/clip combination only.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -15,7 +15,6 @@ If this PASSES, the cloudsc bug is in the bottom-lower (solvers +
 flux + tendency, lines 3356-3710).  If it FAILS with the same
 26/548 PCOVPTOT mismatch, the bug is in the bottom-upper physics.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -12,7 +12,6 @@ When Flang lowers ``sin(a)`` on an array, the result is an
 it bare by consulting ``is_elementwise`` so the name isn't rewritten to
 an ``_in_sin`` tasklet connector.
 """
-from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import ElementwiseIntrinsic
 

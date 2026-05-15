@@ -20,7 +20,6 @@ For each pattern: build the SDFG via the HLFIR bridge AND an f2py
 reference from the same Fortran source on identical seeded inputs,
 then assert numerical equivalence at strict ulp-level tolerance.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

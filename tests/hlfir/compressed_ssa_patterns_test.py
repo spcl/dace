@@ -11,7 +11,6 @@ to an interstate edge.
 Both the SDFG and the reference are compiled from the SAME Fortran
 source  --  f2py-built reference per ``feedback_e2e_numerical``.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

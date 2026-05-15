@@ -8,7 +8,6 @@ offset normalisation uniformly through the
 The two paths from the old test (with vs without normalisation)
 collapse to one path here.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

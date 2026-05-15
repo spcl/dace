@@ -4,7 +4,6 @@ These are the only pieces of binding-code-generation logic, so we
 test each shape in isolation: single recipe in, list of Fortran
 lines out.
 """
-from __future__ import annotations
 
 import pytest
 

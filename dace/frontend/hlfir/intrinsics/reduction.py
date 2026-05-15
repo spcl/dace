@@ -11,7 +11,6 @@ The bridge's extract_ast spots one of these ops as the source of an
 parameters below; hlfir_to_sdfg then calls
 ``state.add_reduce(wcr, axes, identity)``.
 """
-from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import ReductionIntrinsic
 

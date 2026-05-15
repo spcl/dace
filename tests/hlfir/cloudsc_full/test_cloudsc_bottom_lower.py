@@ -18,7 +18,6 @@ Expectation: this PASSES at rtol=atol=1e-12.  The bisection chain says:
 So this loopnest's role is to confirm the negative: the solvers + flux +
 tendency portion of cloudsc lowers bit-correctly under the bridge.
 """
-from __future__ import annotations
 from pathlib import Path
 import numpy as np
 import pytest

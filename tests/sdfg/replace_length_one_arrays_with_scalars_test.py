@@ -17,7 +17,6 @@ Tests cover:
       their TRANSIENT length-1 arrays only,
     * ``transient_only=True`` skips signature length-1 arrays.
 """
-from __future__ import annotations
 
 import ctypes
 

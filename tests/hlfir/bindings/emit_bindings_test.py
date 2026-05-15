@@ -9,7 +9,6 @@ the zero-copy guarantees).  No numerical compile-and-run here  --
 those live in a separate integration test once the bridge side is
 wired.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

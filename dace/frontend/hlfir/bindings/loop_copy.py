@@ -15,7 +15,6 @@ All three return ``List[str]``  --  individual source lines already
 indented to wrapper-body level (four spaces).  Callers concatenate
 and hand to ``assemble_module``.
 """
-from __future__ import annotations
 
 from typing import List, Tuple
 

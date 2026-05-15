@@ -1,6 +1,5 @@
 """``FlattenPlan`` data model  --  JSON round-trip, index substitution,
 strip helpers, recipe equality."""
-from __future__ import annotations
 
 from pathlib import Path
 

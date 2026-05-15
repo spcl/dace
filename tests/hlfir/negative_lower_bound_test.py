@@ -20,7 +20,6 @@ Two distinct paths:
    lower to ``arr[-4]`` -- invalid pointer.  Currently a real gap;
    marked xfail here.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

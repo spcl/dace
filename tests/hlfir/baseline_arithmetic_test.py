@@ -5,7 +5,6 @@ each feature lives in a focused file.  Every test here builds the SDFG
 through the HLFIR frontend AND a gfortran-via-f2py reference from the
 same source, then asserts numerical agreement on random inputs.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

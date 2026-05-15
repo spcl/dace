@@ -15,7 +15,6 @@ through the same path; once those are implemented the corresponding
 xfails in [noncontig_pardecls_test.py](ported/noncontig_pardecls_test.py)
 will move here as positive tests instead.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

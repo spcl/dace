@@ -1,5 +1,4 @@
 """Verbatim port of f2dace/dev:tests/fortran/future/fortran_class_test.py."""
-from __future__ import annotations
 
 import numpy as np
 import pytest

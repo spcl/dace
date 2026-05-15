@@ -11,7 +11,6 @@ intrinsics through the HLFIR frontend.
   extents (clamped to ``>= 0``).  Lowered as per-element scalar
   assigns; existing assign machinery handles it.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

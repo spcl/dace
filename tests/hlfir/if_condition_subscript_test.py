@@ -20,7 +20,6 @@ neighbouring array reads inside an ``IF`` guarding a per-iteration
 write.  The xfail captures the bridge gap so the next person to touch
 ``extract_ast`` notices when it falls out.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

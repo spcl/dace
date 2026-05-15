@@ -17,7 +17,6 @@ the assign; the bridge peels that convert at the assign-dispatch site
 so the libcall path still fires.  The convert-peeling is exercised by
 ``test_count_into_logical_destination`` below.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

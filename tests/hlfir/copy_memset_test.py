@@ -4,7 +4,6 @@ Exercises the two ``hlfir.assign`` shapes that skip the tasklet/loop path
 and go straight to library nodes on FaCe.  Compared numerically against
 the gfortran/f2py-compiled reference on seeded random input.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

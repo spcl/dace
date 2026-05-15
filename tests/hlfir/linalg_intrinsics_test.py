@@ -10,7 +10,6 @@ path and go straight to dedicated library nodes:
 Each result is compared numerically against the gfortran/f2py-compiled
 Fortran reference on seeded random input.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

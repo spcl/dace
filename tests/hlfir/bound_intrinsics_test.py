@@ -14,7 +14,6 @@ The bridge handles all three through the generic ``arith.select`` ternary
 fallback in ``buildExpr``  --  no dedicated intrinsic op exists in the
 HLFIR dialect for them.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

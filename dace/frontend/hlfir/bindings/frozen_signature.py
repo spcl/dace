@@ -12,7 +12,6 @@ header is emitted, we call ``fs.verify_against(sdfg)``.  Any drift
 from the snapshot raises ``SignatureDriftError``  --  the contract is
 compile-time, not SDFG-time.
 """
-from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field

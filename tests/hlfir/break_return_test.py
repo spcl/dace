@@ -20,7 +20,6 @@ Fortran source by ``do_loop_exit_test.py`` (where Flang's lift-cf-to-scf
 turns the EXIT into an ``scf.while`` keep-going condition); these tests
 are the focused unit-test for the emit handlers themselves.
 """
-from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field

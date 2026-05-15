@@ -17,7 +17,6 @@ MKL / OpenBLAS / cuBLAS backends internally.
 
 ``Dot`` produces a scalar result from two rank-1 inputs.
 """
-from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.base import LibNodeIntrinsic
 

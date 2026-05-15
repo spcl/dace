@@ -10,7 +10,6 @@ The check below confirms by inspecting the tasklet directly: count
 of input connectors == count of DISTINCT (array, index) reads in
 the RHS, not the total occurrence count.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

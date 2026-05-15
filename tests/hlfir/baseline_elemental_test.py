@@ -8,7 +8,6 @@ Fortran parser), so the reference uses an explicit per-element DO loop
 that implements the same scalar body.  A numpy-only check would work
 too, but going through gfortran gives us a real Fortran reference.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

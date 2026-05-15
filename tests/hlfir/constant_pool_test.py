@@ -15,7 +15,6 @@ on a ``fir.global`` op.  The bridge needs to:
 Without that the kernel's reads silently return zero  --  the transient
 is registered but its content is uninitialised.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -9,7 +9,6 @@ We port the tests one at a time  --  this file picks up the very short
 ones; more intricate cases (``allocate``-based entry points, PROGRAM
 wrappers, etc.) wait until the matching HLFIR lowerings land.
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path

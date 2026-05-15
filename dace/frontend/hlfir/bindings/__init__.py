@@ -24,7 +24,6 @@ Public surface:
     emit_bindings(frozen, iface, plan, out_path)
          --  the top-level emitter
 """
-from __future__ import annotations
 
 from dace.frontend.hlfir.bindings.emit_bindings import emit_bindings
 from dace.frontend.hlfir.bindings.flatten_plan import (

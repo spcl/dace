@@ -6,7 +6,6 @@ without any section slicing.  Reductions over dynamic sections
 (``ANY(mask(lo:hi, jk))``) hit a separate gap in ``emit_reduce``
 and stay xfailed via ``test_loopnest_6_sdfg_matches_f2py``.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -4,7 +4,6 @@ Each registry file (``elementwise.py``, ``reductions/...``, ``linalg/...``,
 ``direct/...``) just populates a dict whose values are one of these
 dataclasses, so the public helpers in ``__init__.py`` can be family-agnostic.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass
 

@@ -24,7 +24,6 @@ lowering itself.  If they agree, the cloudsc_full bug only manifests
 when source/sink and sedimentation/LU/flux are stitched together --
 i.e. it's a cross-talk-only bug.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -28,7 +28,6 @@ in branch conditions; only integer scalars (loop counters, do-while
 guards, array indices) need the symbol promotion that lets DaCe
 evaluate them on interstate edges.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

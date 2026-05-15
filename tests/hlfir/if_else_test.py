@@ -5,7 +5,6 @@ a THEN-only IF (writing ``c``), both guarded on an element-wise numeric
 condition.  The SDFG result must match the gfortran-compiled reference
 on seeded random input.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

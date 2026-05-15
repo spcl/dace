@@ -22,7 +22,6 @@ These tests are deliberately the smallest possible programs that
 exercise that path so a regression here points at the bridge logic
 rather than at any other surrounding feature.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -25,7 +25,6 @@ the bridge and ``f2py`` can consume directly without preprocessing.
 
 Skips cleanly when the artifacts directory is missing.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

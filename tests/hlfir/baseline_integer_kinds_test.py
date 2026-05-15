@@ -16,7 +16,6 @@ Distinguishes ``INTEGER(1)`` (signed 8-bit ``int8_t``) from MLIR's
 LOGICAL->bool migration lands; today as ``uint8``).  The two are
 unrelated despite both involving "1".
 """
-from __future__ import annotations
 
 from pathlib import Path
 

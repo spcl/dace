@@ -7,7 +7,6 @@ binding honest: mutating the SDFG after ``build()`` can still be
 useful for other purposes, but you can't SHIP a compiled library
 whose signature disagrees with the wrapper that calls it.
 """
-from __future__ import annotations
 
 import dace
 import pytest

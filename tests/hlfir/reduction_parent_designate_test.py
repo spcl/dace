@@ -16,7 +16,6 @@ These tests pin the regression: a future divergence between the
 elementals.inc and control_flow.inc walkers would re-introduce the
 rank mismatch.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

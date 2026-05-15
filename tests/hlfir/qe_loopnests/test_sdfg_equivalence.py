@@ -18,7 +18,6 @@ Source experiments (without the NUMA / multi-allocator harness):
 Each test compares SDFG output against gfortran/f2py reference
 bit-exact (``rtol=1e-12`` real(8); ``rtol=1e-12`` complex(8) too).
 """
-from __future__ import annotations
 
 from pathlib import Path
 

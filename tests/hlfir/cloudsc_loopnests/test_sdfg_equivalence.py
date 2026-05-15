@@ -11,7 +11,6 @@ flat versions for cross-checking at the gfortran level), the cloudsc
 loopnests are bare flat subroutines  --  the SDFG-vs-f2py comparison is
 the only meaningful correctness check.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

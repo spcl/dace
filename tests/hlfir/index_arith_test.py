@@ -10,7 +10,6 @@ argslist resolver).
 These tests are intentionally minimal  --  one pattern per test  --  so a
 regression immediately points at the arith op that broke.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

@@ -4,7 +4,6 @@ Exercises Fortran array-slice arguments to subroutines  --  the
 caller passes ``aa(:, :, k)`` (a 2-D view into a 3-D parent), the
 callee operates on it as if it were a contiguous 2-D array.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

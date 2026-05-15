@@ -6,7 +6,6 @@ pass folds the exit edge into an ``scf.while`` whose ``scf.condition``
 encodes the combined keep-going predicate.  This test pins that shape
 end-to-end against the gfortran reference.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

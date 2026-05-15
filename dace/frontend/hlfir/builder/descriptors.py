@@ -6,7 +6,6 @@ runs on-demand from the emit path when the bridge introduces synthetic
 scalars (``__sc_N`` / ``__al_N``) that weren't in the original variable
 classification.
 """
-from __future__ import annotations
 
 from types import SimpleNamespace
 

@@ -8,7 +8,6 @@ Unrecognised keyword arguments are silently accepted for interface
 compatibility; only the subset of features the HLFIR frontend currently
 lowers will actually produce correct SDFGs.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

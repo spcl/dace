@@ -19,7 +19,6 @@ are reused everywhere that emits a subset string:
   * ``_format_offset_subset(arr, parts)``  --  wrap a per-dim list in the
     uniform ``arr[(p0) - offset_arr_d0, ...]`` form.
 """
-from __future__ import annotations
 
 import re
 

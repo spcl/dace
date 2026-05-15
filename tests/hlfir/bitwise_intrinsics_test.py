@@ -19,7 +19,6 @@ The bridge's ``buildExpr`` recognises the underlying ``arith.shli`` /
 ``arith.shrsi`` / ``arith.andi`` / ``arith.ori`` / ``arith.xori`` ops on
 non-i1 operands; the test below verifies the full chain end-to-end.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

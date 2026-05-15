@@ -18,7 +18,6 @@ Index convention inside recipe expressions:
     ``substitute_indices`` replaces them with concrete names at
     template time.
 """
-from __future__ import annotations
 
 import json
 import re

@@ -9,7 +9,6 @@ body is ``_out_b = sin(_in_a_0) + (2.0 * _in_a_1)``.
 The reference is compiled with gfortran through ``numpy.f2py``; both run
 on seeded random input and outputs must match to ``1e-12``.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

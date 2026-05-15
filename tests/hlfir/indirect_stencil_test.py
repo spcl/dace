@@ -15,7 +15,6 @@ for an indirect access:
     (``edge_idx_at0 = edge_idx[...]``), which forces a new state before
     the compute tasklet.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

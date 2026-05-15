@@ -7,7 +7,6 @@ Exercises the Phase-1 section-assignment path in the HLFIR bridge:
 emitters are involved  --  everything reuses the existing ``emit_loop`` /
 ``emit_tasklet`` dispatch.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

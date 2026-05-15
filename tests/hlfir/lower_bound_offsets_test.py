@@ -13,7 +13,6 @@ Tests pin three Fortran shapes the design unblocks:
   * Whole-array section assignment with a non-1 lb on both sides  --
     section-parent + array offset interact through the symbol layer.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

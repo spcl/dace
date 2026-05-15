@@ -16,7 +16,6 @@ Flang-emitted shapes are exercised.  References are NumPy  --  f2py's
 module-contained-elemental parsing is shaky, so we check against a
 hand-rolled per-element implementation instead.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

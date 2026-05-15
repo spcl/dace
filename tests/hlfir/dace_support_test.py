@@ -1,5 +1,4 @@
 """Ported from f2dace/dev:tests/fortran/dace_support_test.py."""
-from __future__ import annotations
 
 import numpy as np
 import pytest

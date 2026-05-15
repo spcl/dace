@@ -9,7 +9,6 @@ original Fortran ``LOGICAL(KIND=N)`` image (e.g. 4-byte ``int32``
 with ``-1``/``0`` encoding) and the SDFG's bool layout at the
 Fortran boundary.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

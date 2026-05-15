@@ -16,7 +16,6 @@ silent wrong values) when ``hlfir-flatten-structs`` could not lower
 the struct  --  the loud-failure pattern from the previous round of
 correctness work.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

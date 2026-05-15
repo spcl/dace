@@ -15,7 +15,6 @@ Three lowering modes:
 Each test compares against a numpy reference; numerical correctness is
 the bar.  The library node's own pure expansion is covered separately
 in ``count_library_node_test.py``."""
-from __future__ import annotations
 
 from pathlib import Path
 

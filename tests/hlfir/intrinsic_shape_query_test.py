@@ -11,7 +11,6 @@
 Each test compares an SDFG run against an f2py / gfortran reference so
 the lowering matches Fortran semantics bit-for-bit.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

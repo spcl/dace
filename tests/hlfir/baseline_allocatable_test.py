@@ -16,7 +16,6 @@ What this file does NOT yet exercise (deferred):
 The baseline assumes the program correctly tracks allocation state  --
 no runtime ``ALLOCATED`` checks are inserted by the bridge.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -16,7 +16,6 @@ bundle (struct + flat + gfortran driver) stays the single source of
 truth; the Python test just slices out the flat subroutine for f2py
 and HLFIR.
 """
-from __future__ import annotations
 
 import re
 import shutil

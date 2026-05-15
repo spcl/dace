@@ -9,7 +9,6 @@ All share the same shape: flush pending scalars, ensure a state, add the
 node, attach edges.  Kept together because they're structurally cousins
 and none is big enough to earn its own file.
 """
-from __future__ import annotations
 
 import importlib
 import math

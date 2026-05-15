@@ -8,7 +8,6 @@ Reduce that wrote through the whole destination  --  last one won.
 Each test wires ``res(i) = REDUCE(...)`` for two distinct ``i`` values
 and checks both elements end up correctly populated.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -27,7 +27,6 @@ expression sees a clean scalar load.
 Each test below pairs an SDFG run against an f2py / numpy reference
 on identical random inputs.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

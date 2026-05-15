@@ -18,7 +18,6 @@ supply.  Parameter-attributed globals and initialised module data
 (``fir.global`` with a dense init) stay transient and get baked
 into the constant pool.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

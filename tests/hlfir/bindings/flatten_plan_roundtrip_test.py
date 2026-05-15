@@ -3,7 +3,6 @@
 ``hlfir.flatten_plan`` attribute that the bridge decodes back into a
 usable ``FlattenPlan`` dataclass.
 """
-from __future__ import annotations
 
 import subprocess
 import sys

@@ -13,7 +13,6 @@ the structural ``**``-in-tasklet check guards the lowering shape;
 the numerical check guards that ``**`` evaluates to the right value
 at run time.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

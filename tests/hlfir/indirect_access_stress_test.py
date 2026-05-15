@@ -26,7 +26,6 @@ Patterns covered (gather + scatter):
 A pure ``builds_and_runs`` test runs first per pattern -- if the
 SDFG can't even be compiled, the deeper numeric assertion is moot.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

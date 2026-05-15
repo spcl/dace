@@ -9,7 +9,6 @@ We don't model pointer aliasing, so this only covers straight-line
 ``deallocate(x); allocate(x(...))`` re-allocation; branched ALLOCATE
 sites (one ``allocate`` per arm of an ``if``) are out of scope.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

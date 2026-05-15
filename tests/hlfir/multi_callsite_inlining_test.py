@@ -12,7 +12,6 @@ for the SDFG  --  e2e per ``feedback_e2e_numerical``.
    the section_alias path (Pass 0b multi-callsite rename) so each
    call site gets its own VarInfo.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

@@ -7,7 +7,6 @@ by-value (would silently drop the imaginary part).  Length-1 arrays
 match the existing scalar-output convention and keep the test surface
 ABI-clean.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

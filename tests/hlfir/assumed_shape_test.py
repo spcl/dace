@@ -26,7 +26,6 @@ These tests guard that behaviour end to end:
 - ``test_sdfg_matches_gfortran_reference``  --  same source compiled with
   ``gfortran`` via ``f2py``; two outputs must match bit-exactly.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

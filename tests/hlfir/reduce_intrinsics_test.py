@@ -4,7 +4,6 @@ Checks that ``sum``, ``product``, ``minval``, ``maxval`` each lower
 through Flang's dedicated HLFIR op into an SDFG Reduce node, and that
 the numerical result matches the gfortran/f2py-compiled reference.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

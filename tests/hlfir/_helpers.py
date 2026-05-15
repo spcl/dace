@@ -9,7 +9,6 @@ implementation is reused across every ported file:
   length-1-Array based on what ``sdfg.arglist()`` classifies them as.
 - ``_xfail(reason, *, strict=True)``   --  uniform strict-xfail marker.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

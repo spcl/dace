@@ -6,7 +6,6 @@ This is a stricter classification than the current bridge uses  --  shape
 and loop-bound scalars already land as symbols, but an "index-only
 scalar" like ``ix`` in a ``b(i) = a(ix); ix = ix + 1`` pattern does not.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess

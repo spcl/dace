@@ -8,6 +8,5 @@ legacy frontend.  Today this file only carries an empty
 ``DIRECT_INTRINSICS`` set so callers can query against it without
 special-casing the "not yet implemented" state.
 """
-from __future__ import annotations
 
 DIRECT_INTRINSICS: set[str] = set()

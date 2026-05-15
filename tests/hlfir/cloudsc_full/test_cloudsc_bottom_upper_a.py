@@ -8,7 +8,6 @@ Autoconversion (4.3a/b) + Melting (4.4a) + Freezing (4.4b/c) sections.
 If this passes, the bug is in 4.5 EVAPORATION.
 If it fails, the bug is in 4.2-4.4 (Sedimentation/Autoconv/Melt/Freeze).
 """
-from __future__ import annotations
 from pathlib import Path
 import numpy as np
 import pytest

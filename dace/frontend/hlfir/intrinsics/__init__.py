@@ -18,7 +18,6 @@ this package and nothing else.  The families live in flat siblings:
     linalg.py          --  matmul, transpose, dot_product
     direct.py          --  SIZE / LBOUND / UBOUND / ... (Phase 4 stub)
 """
-from __future__ import annotations
 
 from dace.frontend.hlfir.intrinsics.elementwise import ELEMENTWISE_INTRINSICS
 from dace.frontend.hlfir.intrinsics.reduction import REDUCTIONS

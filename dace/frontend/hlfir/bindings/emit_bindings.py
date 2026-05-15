@@ -11,7 +11,6 @@ The real work is in sibling modules:
 construction logic lives here; it all routes through the named
 builders so each concern is test-isolated.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

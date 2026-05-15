@@ -17,7 +17,6 @@ This test fixes the pattern at minimal scale (no MAXVAL, no struct,
 no inlined callee) so a regression here surfaces independently of
 Phases F / A / B / G work.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

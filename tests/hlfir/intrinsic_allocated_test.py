@@ -13,7 +13,6 @@ allocatable's heap descriptor).  The bridge:
 Each test compares against an f2py / gfortran reference so the
 state-tracking matches Fortran semantics exactly.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

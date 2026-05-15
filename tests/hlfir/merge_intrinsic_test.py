@@ -7,7 +7,6 @@ bridge's generic ``arith.select`` ternary fallback in ``buildExpr``
 emits a Python ``(t if cond else f)`` form that the C++ codegen lowers
 to a conditional expression.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

@@ -5,7 +5,6 @@ swapped from f2dace's ``SourceCodeBuilder().check_with_gfortran() +
 create_singular_sdfg_from_string`` to FaCe's ``build_sdfg`` + an f2py
 reference where applicable.
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest

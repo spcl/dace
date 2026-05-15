@@ -15,7 +15,6 @@ Fortran source's subroutine name ``CLOUDSCOUTER`` (entry =
 ``program_inputs`` / ``program_parameters`` keyed off
 ``'cloudscexp2_full_20230324'``; both consolidate to one key.
 """
-from __future__ import annotations
 
 from numbers import Integral, Number
 from typing import Dict, Union

@@ -4,7 +4,6 @@ Note: f2dace's while_test wraps the test in a PROGRAM + CALL idiom; the
 HLFIR frontend runs on the subroutine directly (cross-subroutine PROGRAM
 lowering is not yet implemented), so the verbatim port targets the
 ``while_test_function`` subroutine."""
-from __future__ import annotations
 
 import numpy as np
 import pytest

@@ -12,7 +12,6 @@ Gather and scatter exercise loop-variable indirection through a single
 loops whose bounds are themselves array-element loads  --  the harder
 case the bridge does not yet lower (currently xfailed).
 """
-from __future__ import annotations
 
 from pathlib import Path
 

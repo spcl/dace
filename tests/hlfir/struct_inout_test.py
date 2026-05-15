@@ -15,7 +15,6 @@ value.  This file pins that behaviour with a paired test against the
 ``intent(in)`` companion in ``ported/struct_test.py`` (where the
 descriptor is a true ``Scalar`` and the bare name is correct).
 """
-from __future__ import annotations
 
 import numpy as np
 import pytest
