@@ -22,7 +22,7 @@ import pytest
 
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.passes._tsvc_harness_helper import kernel_has_branch
+from tests.passes._tsvc_harness_helper import build_tsvc_matrix
 
 LEN_2D = dace.symbol("LEN_2D")
 
@@ -336,33 +336,13 @@ def _allocate(shape_class: str, n: int) -> np.ndarray:
     raise ValueError(f"unknown shape_class: {shape_class}")
 
 
-@pytest.fixture(params=["scalar", "masked"])
-def remainder_strategy(request) -> str:
-    return request.param
 
 
-@pytest.fixture(params=["merge", "fp_factor"])
-def branch_mode(request) -> str:
-    return request.param
+_MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (16, 17))
 
 
-@pytest.fixture(params=[16, 17])
-def len_2d_val(request) -> int:
-    return request.param
-
-
-@pytest.mark.parametrize("kernel,params_spec", _KERNELS, ids=[k.name for k, _ in _KERNELS])
+@pytest.mark.parametrize("kernel,params_spec,remainder_strategy,branch_mode,len_2d_val", _MATRIX, ids=_IDS)
 def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_val):
-    if branch_mode == "fp_factor" and remainder_strategy == "masked":
-        pytest.skip("fp_factor + masked rejected by VectorizeCPU (locked plan rule)")
-    # Lever 1: fp_factor == merge for a branchless kernel (no ``if`` to
-    # lower) — skip the duplicate fp_factor run.
-    if branch_mode == "fp_factor" and not kernel_has_branch(kernel):
-        pytest.skip("branchless kernel: fp_factor SDFG == merge SDFG")
-    # Lever 2: LEN divisible by W ⇒ P2 emits no remainder ⇒ masked SDFG
-    # == scalar SDFG. Skip the duplicate masked run.
-    if remainder_strategy == "masked" and (len_2d_val % 8 == 0):
-        pytest.skip("LEN %% W == 0: no remainder, masked == scalar")
 
     arrays_ref = {name: _allocate(shape_class, len_2d_val) for name, shape_class in params_spec}
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}

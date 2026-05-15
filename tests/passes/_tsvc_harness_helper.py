@@ -35,3 +35,39 @@ def kernel_has_branch(prog) -> bool:
         has = True
     _BRANCH_CACHE[key] = has
     return has
+
+
+def build_tsvc_matrix(kernels, lens):
+    """Pre-filtered (kernel, ..., remainder, branch, LEN) parametrize list.
+
+    Generates only the *meaningful* combos so redundant ones are never
+    collected (instead of being collected then ``pytest.skip``-ped):
+
+    - locked rule: ``fp_factor`` + ``masked`` is rejected by VectorizeCPU.
+    - Lever 1: a branchless kernel's ``fp_factor`` SDFG == its ``merge``
+      SDFG (no ``if`` to lower) — emit ``merge`` only.
+    - Lever 2: ``LEN %% W == 0`` ⇒ P2 emits no remainder ⇒ ``masked``
+      SDFG == ``scalar`` SDFG — emit ``scalar`` only.
+
+    :param kernels: list of tuples whose ``[0]`` is the ``@dace.program``
+        (remaining elements, e.g. argnames/argspec/params, are passed
+        through unchanged).
+    :param lens: iterable of LEN values (e.g. ``(64, 65)``).
+    :return: ``(params, ids)`` for a single ``@pytest.mark.parametrize``.
+    """
+    params, ids = [], []
+    for kt in kernels:
+        prog = kt[0]
+        has_branch = kernel_has_branch(prog)
+        for L in lens:
+            for rem in ("scalar", "masked"):
+                for br in ("merge", "fp_factor"):
+                    if br == "fp_factor" and rem == "masked":
+                        continue
+                    if br == "fp_factor" and not has_branch:
+                        continue
+                    if rem == "masked" and L % 8 == 0:
+                        continue
+                    params.append((*kt, rem, br, L))
+                    ids.append(f"{prog.name}-{rem}-{br}-{L}")
+    return params, ids
