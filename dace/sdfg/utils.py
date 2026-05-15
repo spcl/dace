@@ -1764,8 +1764,12 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     """
     if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
+        # ``get_view_edge`` returns ``None`` for an orphaned view (no
+        # incoming/outgoing edge that points at the viewed access node) --
+        # treat such a view as having no edge-side dependencies and fall
+        # through to the viewed-node check below.
         e = get_view_edge(state, node)
-        if e.data:
+        if e is not None and e.data:
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
             free_symbols = set()
@@ -2539,6 +2543,10 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
             return offset_symbols | used_symbols
     elif isinstance(scope, nd.MapEntry):
         used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
+        if not include_symbols_for_offset_calculations:
+            # The map's own range free symbols are iteration/offset-calculation
+            # symbols; surface them only when offset symbols were requested.
+            used_symbols = used_symbols - scope.free_symbols
         return offset_symbols | used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))

@@ -59,12 +59,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
-                if arg_type.storage is dtypes.StorageType.GPU_Global:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-                    continue
-
+                # ``PromoteGPUScalarsToArrays`` runs before codegen and
+                # rewrites every GPU-storage Scalar into a length-1 Array,
+                # so by the time we get here a Scalar is necessarily a
+                # value-typed CPU-side scalar -- register it as such.
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
@@ -195,6 +193,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
+
+        if edge is None:
+            return
 
         # We need to know if this is a read or a write variation
         is_write = edge.src is node
@@ -502,6 +503,19 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
+            # The assignment necessary to unify the explicit streams and streams declared through
+            # the state of the SDFG.
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                ctype = dtypes.gpuStream_t.ctype
+                allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
+                # Local is ``gpuStream_t* {name}`` -- register the matching
+                # pointer ctype so consumers (``emit_memlet_reference``) emit
+                # ``gpuStream_t* gpu_streams`` in nested-SDFG signatures
+                # instead of ``gpuStream_t gpu_streams`` (1 vs. 2 pointer
+                # levels).
+                define_var(name, DefinedType.Pointer, dtypes.pointer(dtypes.gpuStream_t).ctype)
+                return
+
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -576,6 +590,9 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+            return
+        elif nodedesc.dtype == dtypes.gpuStream_t:
+            callsite_stream.write(f"{alloc_name} = nullptr;")
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
@@ -994,6 +1011,11 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst
 
+            if isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state).dtype == dtypes.gpuStream_t:
+                # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+                # Thus, nothing needs to be written and out memlets of this kind should be ignored.
+                continue
+
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
                                                        and not isinstance(dst_node, nodes.CodeNode)):
@@ -1035,8 +1057,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
-                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
-                        str(edge.src), str(edge.dst)))
+                    return
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -1254,7 +1275,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
-
             else:
                 if not memlet.dynamic:
                     if is_scalar:
@@ -1289,8 +1309,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
-        else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+
+        # Set Defined Type for GPU Stream connectors
+        # Shadowing for stream variable needs to be allowed
+        if memlet_type == 'gpuStream_t':
+            var_type = DefinedType.GPUStream
+            defined = DefinedType.GPUStream
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -1465,8 +1489,19 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit post-memlet tasklet preamble code
         callsite_stream.write(after_memlets_stream.getvalue())
 
-        # Instrumentation: Pre-tasklet
-        instr = self._dispatcher.instrumentation[node.instrument]
+        # Instrumentation: Pre-tasklet. Fall back to the enclosing state's
+        # ``instrument`` flag if the node itself wasn't tagged -- this makes
+        # state-level annotations (e.g. ``GPU_TX_MARKERS`` on a copyin
+        # state) surface for tasklets generated by library-node expansions
+        # (CopyLibraryNode -> cudaMemcpyAsync) which don't carry their own
+        # instrument attribute. The provider's hook can still filter by
+        # node identity / label.
+        instr_type = node.instrument
+        if (instr_type == dtypes.InstrumentationType.No_Instrumentation
+                and getattr(state_dfg, 'instrument', dtypes.InstrumentationType.No_Instrumentation)
+                != dtypes.InstrumentationType.No_Instrumentation):
+            instr_type = state_dfg.instrument
+        instr = self._dispatcher.instrumentation.get(instr_type)
         if instr is not None:
             instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
@@ -1520,6 +1555,10 @@ class CPUCodeGen(TargetCodeGenerator):
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+            pass
+        elif isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state_dfg).dtype == dtypes.gpuStream_t:
+            # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+            # Thus, nothing needs to be written.
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]

@@ -1,18 +1,19 @@
-name: Pauli GPU Tests
+name: Pauli GPU Legacy
 
 on:
-  workflow_dispatch
-  #push:
-  #  branches: [ main, ci-fix ]
-  #pull_request:
-  #  branches: [ main, ci-fix ]
-  #merge_group:
-  #  branches: [ main, ci-fix ]
+  workflow_dispatch:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  DACE_compiler_cuda_implementation: legacy
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}

@@ -723,6 +723,34 @@ class ExpandTransformation(PatternTransformation):
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
+
+            # Carry over any in/out connectors from the original library node
+            # that the expansion didn't already declare (e.g. dynamic-range
+            # passthrough connectors injected by upstream passes). Without this
+            # the redirected edges point at nonexistent connectors after
+            # ``change_edge_*`` swaps the endpoint, and validation rejects
+            # them. We preserve the expansion's own connector types, so any
+            # name collision keeps the expansion's typing.
+            #
+            # Only carry over connectors that are still actively used: an
+            # expansion may rename incoming/outgoing edges in-place (e.g.
+            # ``SpecializeMatMul`` rewrites the ``_a``/``_b`` MatMul connectors
+            # to ``_x``/``_y`` on the matching Dot edges). The original
+            # connector names then have no edges referencing them and must
+            # not be re-added to the expansion node -- doing so would leave
+            # them dangling and trip ``InvalidSDFGNodeError``.
+            in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
+            out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
+            for conn_name, conn_type in node.in_connectors.items():
+                if conn_name not in in_conns_with_edges:
+                    continue
+                if conn_name not in expansion.in_connectors and conn_name not in expansion.out_connectors:
+                    expansion.add_in_connector(conn_name, dtype=conn_type)
+            for conn_name, conn_type in node.out_connectors.items():
+                if conn_name not in out_conns_with_edges:
+                    continue
+                if conn_name not in expansion.out_connectors and conn_name not in expansion.in_connectors:
+                    expansion.add_out_connector(conn_name, dtype=conn_type)
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 

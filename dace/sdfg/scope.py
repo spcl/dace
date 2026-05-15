@@ -263,7 +263,11 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', nod
     )
 
 
-def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
+def is_devicelevel_gpu_kernel(
+    sdfg: 'dace.sdfg.SDFG',
+    state: 'dace.sdfg.SDFGState',
+    node: nd.Node,
+) -> bool:
     """ Tests whether a node in an SDFG is contained within an actual GPU kernel.
         The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
         device-level schedule, but are not within an actual GPU kernel.
