@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Give every ``LoopRegion``'s loop variable a globally-unique name.
+"""Give every ``LoopRegion`` loop variable a globally-unique name.
 
 Independent source loops can share an iterator name (``for i`` in
 both); once their regions merge into one SDFG the shared name aliases
