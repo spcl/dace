@@ -1,32 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``InsertAssignTaskletsAtMapBoundary``: a vectorization-focused special case of
-``InsertExplicitCopies`` (from ``new-gpu-codegen-dev``). Detects the two
-map-boundary staging patterns and inserts a plain ``_out = _in`` tasklet
-instead of a ``CopyLibraryNode``.
+"""Insert plain assignment tasklets at map-boundary staging edges.
 
-Patterns handled (same detection as ``InsertExplicitCopies._replace_map_staging_copies``):
-  * Stage-in:  ``AccessNode -> MapEntry (-> MapEntry)* -> AccessNode``
-  * Stage-out: ``AccessNode -> (MapExit ->)* MapExit -> AccessNode``
-
-For each match, the inner ``MapEntry -> AccessNode`` (or ``AccessNode -> MapExit``)
-edge is replaced with a 3-node chain whose middle is a plain assignment
-tasklet. The outer-side memlet keeps its data + subset; the inner-side
-memlet becomes a single-element write/read on the local AccessNode.
-
-Why a vectorization-specific variant:
-- The python frontend's parser emits ``MapEntry -> AccessNode`` edges with
-  ``other_subset`` set (for shifted reads like ``b[i+1]``). The vectorize
-  pass raises on ``other_subset != None``. The assignment tasklet
-  inserted by this pass splits the memlet into two simple subsets, so
-  downstream emitters see uniform shapes.
-- Unlike the lib-node version, this emits a Python tasklet that the
-  vectorizer's existing tasklet classifier / emitter recognises and
-  lowers to ``vector_copy(...)`` per the unified pipeline.
-
-GPU storage filters and device-scope handling from ``InsertExplicitCopies``
-are intentionally omitted; this pass runs unconditionally as a vectorization
-precursor.
+A vectorization-focused variant of ``InsertExplicitCopies``: it detects
+the stage-in (``AccessNode -> MapEntry* -> AccessNode``) and stage-out
+(``AccessNode -> MapExit* -> AccessNode``) staging patterns and replaces
+the boundary edge with a 3-node chain whose middle is an ``_out = _in``
+tasklet. This splits memlets carrying ``other_subset`` into two simple
+subsets so downstream vectorization emitters see uniform shapes. GPU
+storage/device-scope handling is intentionally omitted.
 """
 import copy as _copy
 from typing import Any, Dict, Optional
@@ -45,15 +26,24 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
+        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Return whether the pass should run again after modifications."""
         return False
 
     def depends_on(self):
+        """Return the set of passes this pass depends on."""
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Insert assignment tasklets at every matching staging edge.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results from previously run passes (unused).
+        :returns: Number of tasklets inserted, or ``None`` if none.
+        """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -63,17 +53,14 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
 
     @staticmethod
     def _replace_other_subset_an_edges(sdfg: SDFG, state: SDFGState) -> int:
-        """Replace ``AccessNode -[other_subset]→ AccessNode`` edges with an
-        intermediate assign tasklet so downstream passes never see
-        ``other_subset`` set.
+        """Split ``AccessNode -[other_subset]-> AccessNode`` edges via an intermediate assign tasklet.
 
-        The frontend lowers a scalar slice like ``a0 = a[0]`` into
-        ``a -[data=a, subset=0, other_subset=0]→ a0`` (a single edge that
-        carries both ends' subsets). The vectorize pipeline's
-        ``no_other_subset`` invariant rejects this shape. Inserting a plain
-        ``_out = _in`` tasklet between the two AccessNodes splits the
-        memlet into two clean halves (``a -[subset=0]→ tasklet`` +
-        ``tasklet -[a0, subset=0]→ a0``).
+        The inserted ``_out = _in`` tasklet splits the memlet into two
+        clean halves so downstream passes never see ``other_subset`` set.
+
+        :param sdfg: The SDFG owning the array descriptors.
+        :param state: The state whose edges are scanned and rewritten.
+        :returns: Number of edges replaced.
         """
         edges_to_process = []
         for e in state.edges():
@@ -116,13 +103,14 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
 
     @staticmethod
     def _replace_map_staging(sdfg: SDFG, state: SDFGState) -> int:
-        """Replace ``AccessNode -> MapEntry -> AccessNode`` (stage-in) and
-        ``AccessNode -> MapExit -> AccessNode`` (stage-out) paths with an
-        intermediate assignment tasklet.
+        """Replace map-boundary stage-in/stage-out paths with an intermediate assign tasklet.
 
-        Detection mirrors ``InsertExplicitCopies._replace_map_staging_copies``:
-        the innermost edge of the memlet_path identifies the staging boundary;
-        the outer AccessNode is the path's source (stage-in) or sink (stage-out).
+        The innermost memlet-path edge identifies the staging boundary; the
+        outer AccessNode is the path's source (stage-in) or sink (stage-out).
+
+        :param sdfg: The SDFG owning the array descriptors.
+        :param state: The state whose staging edges are rewritten.
+        :returns: Number of staging edges replaced.
         """
         edges_to_process = []
 

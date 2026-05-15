@@ -1,13 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Layout / stride helpers for the vectorization pipeline.
-
-Today this module exposes a single legacy helper,
-``assert_strides_are_packed_C_or_packed_Fortran``. A follow-up slice
-introduces ``contiguous_dim_of`` (per-array contig dim lookup) and
-deprecates the global C/F classification — the per-array path is more
-robust under mixed layouts and is what the audit fixes already use.
-"""
+"""Layout / stride helpers for the vectorization pipeline."""
 from typing import Union
 
 import dace
@@ -17,19 +9,15 @@ def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str,
     """
     Verify that all arrays in an SDFG are packed in consistent C or Fortran order.
 
-    Each array must have a unit stride in either the first or last dimension for auto-vectorization.
-    The function determines whether the layout is consistently Fortran (F) or
-    C-style (C). One-dimensional arrays are allowed in both and default to 'F'.
+    Each array must have a unit stride in its first or last dimension.
+    One-dimensional arrays are allowed in both and default to ``"F"``.
 
-    Args:
-        sdfg (dace.SDFG): The SDFG whose arrays are checked.
-
-    Returns:
-        str | None: "C" or "F" indicating the stride ordering, or None if no arrays are found.
-
-    Raises:
-        AssertionError: If an array lacks a unit stride in both first and last dimension.
-        ValueError: If arrays have mixed C and Fortran stride ordering.
+    :param sdfg: The SDFG whose arrays are checked.
+    :returns: ``"C"`` or ``"F"`` indicating the stride ordering, or
+        ``None`` if no arrays are found.
+    :raises AssertionError: If an array lacks a unit stride in both first
+        and last dimension.
+    :raises ValueError: If arrays have mixed C and Fortran stride ordering.
     """
     stride_type = None
     has_one_d_arrays = False

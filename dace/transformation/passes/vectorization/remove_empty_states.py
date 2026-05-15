@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Remove empty states, splicing their interstate edges and assignments together."""
 import copy
 from typing import Any, Dict
 from dace import SDFG, InterstateEdge, properties
@@ -9,19 +10,30 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveEmptyStates(ppl.Pass):
-    # This pass is testes as part of the vectorization pipeline
+    """Remove empty states and splice their incident interstate edges.
+
+    Tested as part of the vectorization pipeline.
+    """
+
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
+        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Return whether the pass should run again after modifications."""
         return False
 
     def depends_on(self):
+        """Return the set of passes this pass depends on."""
         return {}
 
     def _apply(self, sdfg: SDFG):
+        """Remove empty states recursively, merging assignments across the spliced edge.
+
+        :param sdfg: The SDFG to transform in place.
+        """
         for state in sdfg.all_states():
             # If empty state
             if len(state.nodes()) != 0:
@@ -66,5 +78,10 @@ class RemoveEmptyStates(ppl.Pass):
                     self._apply(node.sdfg)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+        """Remove all empty states from the SDFG and validate the result.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results from previously run passes (unused).
+        """
         self._apply(sdfg)
         sdfg.validate()

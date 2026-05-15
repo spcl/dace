@@ -1,15 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Array-descriptor mutation helpers.
-
-The three helpers in this module add or rebuild ``dace.data.Array``
-descriptors on an SDFG. They are kept as separate functions
-(rather than merged into one) deliberately:
-``replace_arrays_with_new_shape`` is destructive (remove-then-readd),
-``copy_arrays_with_a_new_shape`` is additive (new name, original kept),
-``add_transient_arrays_from_list`` is bulk-add for arbitrary specs.
-Callers rely on the distinct semantics.
-"""
+"""Array-descriptor mutation helpers (add or rebuild ``dace.data.Array`` descriptors on an SDFG)."""
 from typing import Any, Iterable, Set, Tuple
 
 import dace

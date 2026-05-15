@@ -1,26 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Subset and memlet rewriting helpers.
+"""Subset and memlet rewriting helpers for the vectorization pipeline.
 
-This module groups the helpers that mutate ``dace.subsets.Range``
-expressions and the memlets that carry them. Three rough sub-families:
+Three rough sub-families:
 
-- **Pattern replace** (``repl_subset``, ``repl_subset_to_use_*_offset``)
-  — symbolic substitution on a single subset.
-- **Memlet rewrite** (``replace_memlet_expression``,
+- Pattern replace (``repl_subset``, ``repl_subset_to_use_*_offset``):
+  symbolic substitution on a single subset.
+- Memlet rewrite (``replace_memlet_expression``,
   ``expand_memlet_expression``, ``offset_memlets``,
-  ``replace_all_access_subsets``) — walk a set of edges and replace the
-  memlet payload in-place.
-- **Post-collapse** (``squeeze_memlets_of_packed_arrays``,
-  ``use_previous_subsets``, ``try_clean_other_subset_going_out_from_map_entry``)
-  — fix up memlets after upstream passes have already changed the
-  data-descriptor shape or the surrounding map.
-
-Per the locked policy (mechanical-only relocation + defensive checks
-stay), every helper is moved verbatim. Tier-1 / Tier-2 audit fixes that
-target this family (``replace_memlet_expression`` matching by edge
-identity, ``expand_memlet_expression`` raise-instead-of-assert, etc.)
-are tracked separately and not applied during this move.
+  ``replace_all_access_subsets``): walk edges and replace the payload
+  in-place.
+- Post-collapse (``squeeze_memlets_of_packed_arrays``,
+  ``use_previous_subsets``, ``try_clean_other_subset_going_out_from_map_entry``):
+  fix up memlets after upstream passes changed the descriptor shape or
+  surrounding map.
 """
 import copy
 from typing import Dict, Iterable, List, Set, Union
@@ -32,7 +24,12 @@ from dace.sdfg.graph import Edge
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
-    """ Convenience wrapper to make the .replace not in-place """
+    """Apply ``repl_dict`` to a copy of ``subset`` (non-in-place ``.replace``).
+
+    :param subset: Subset to copy and rewrite.
+    :param repl_dict: Symbol-name to replacement-expression mapping.
+    :returns: A new subset with the replacements applied.
+    """
     new_subset = copy.deepcopy(subset)
     new_subset.replace(repl_dict)
     return new_subset
@@ -41,13 +38,11 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
 def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: Set, free_syms: Set, helper_name: str) -> None:
     """Raise if a subset rewrite introduced new free symbols into the SDFG.
 
-    Both ``repl_subset_to_use_laneid_offset`` and
-    ``repl_subset_to_use_with_int_offset`` check that the rewrite has
-    not produced free symbols that did not exist in the SDFG before; an
-    invalid SDFG with un-bound symbols is the silent-corruption failure
-    mode this guard catches. The two callers pass their own
-    ``helper_name`` for the error message so the trace points at the
-    real callsite.
+    :param sdfg: The SDFG being rewritten.
+    :param prev_sdfg_free_syms: SDFG free symbols before the rewrite.
+    :param free_syms: Free symbols of the rewritten subset.
+    :param helper_name: Caller name, used in the error message.
+    :raises Exception: if the rewrite produced a free symbol absent before.
     """
     newly_free = sdfg.free_symbols - prev_sdfg_free_syms
     for free_sym in free_syms:
@@ -59,29 +54,17 @@ def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: Set, free_
 
 def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,
                                      vector_map_param: str) -> dace.subsets.Range:
-    """
-    Apply a symbolic offset to all free symbols in a subset.
+    """Rewrite a subset's free symbols to their per-lane variants.
 
-    This function replaces each free symbol in the subset with a new symbol
-    that has the offset appended to its name (e.g., 'i' becomes 'i_{offset}' where offset is an integer).
-    New symbols are automatically added to the SDFG if they don't exist.
+    Each free symbol ``s`` becomes ``s_laneid_<symbol_offset>`` (added to the
+    SDFG if absent), except the vector map param, which becomes
+    ``(s + symbol_offset)``.
 
-    If symbol is vector map param always add + 1 instead of laneid
-
-    Args:
-        sdfg: The SDFG containing the subset
-        subset: The subset whose symbols should be offset
-        symbol_offset: String to append to each symbol name (should be an integer)
-        add_missing_symbols: If True, adds symbol mappings and assignments for
-                           free symbols in the parent SDFG
-
-    Returns:
-        A new subset with offset symbols applied
-
-    Example:
-        If subset contains symbol 'i' and symbol_offset is '_v':
-        - 'i' becomes 'i_v'
-        - Symbol 'i_v' is added to SDFG if not present
+    :param sdfg: The SDFG containing the subset.
+    :param subset: The subset whose symbols should be offset.
+    :param symbol_offset: Integer-valued string suffix / offset.
+    :param vector_map_param: The vector map parameter name.
+    :returns: A new subset with the offset symbols applied.
     """
     # Offset needs to be positive integer
     assert symbol_offset.isdigit()
@@ -113,11 +96,16 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
 
 def repl_subset_to_use_with_int_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbols_to_offset: Set[str],
                                        int_offset: int) -> dace.subsets.Range:
-    """
-    Apply a int offset to all free symbols appearing on `symbols_to_offset` in a subset.
+    """Add an integer offset to selected free symbols in a subset.
 
-    that has the offset appended to its name (e.g., 'i' becomes 'i + {int_offset}' where offset is an integer).
-    No new symbol is added
+    Each symbol in ``symbols_to_offset`` becomes ``(s + int_offset)``. No new
+    symbol is added.
+
+    :param sdfg: The SDFG containing the subset.
+    :param subset: The subset to rewrite.
+    :param symbols_to_offset: Names of the symbols to offset.
+    :param int_offset: Integer offset to add.
+    :returns: A new subset with the offset applied.
     """
     prev_sdfg_free_syms = sdfg.free_symbols
 
@@ -149,30 +137,22 @@ def replace_memlet_expression(state: SDFGState,
                               edges_to_skip: Set[Edge[Memlet]],
                               vector_numeric_type: typeclass,
                               dataname: Union[str, None] = None) -> Set[str]:
-    """
-    Replace memlet subsets matching a pattern with a new subset expression.
+    """Replace memlet subsets matching ``old_subset_expr`` with a new subset.
 
-    Optionally converts scalar/size-1 arrays to arrays that match the new_subset_expr's sizes
-    using the `vector_numeric_type` as dtype to accommodate the new subset dimensions.
+    Optionally converts Scalar / size-1 Array nodes on matching edges to
+    arrays shaped to ``new_subset_expr`` using ``vector_numeric_type``.
 
-    Args:
-        state: The SDFG state containing the edges
-        edges: Edges whose memlets should be checked and potentially replaced
-        old_subset: The subset pattern to match
-        new_subset: The replacement subset
-        convert_scalars_to_arrays: If True, converts Scalar/size-1 Array nodes
-                                  to proper Arrays with shape matching new_subset
-        edges_to_skip: Set of edges that should not be modified (validation)
-        vector_dtype: Data type to use when converting scalars to arrays
-        dataname: if not None checks for memlet data too
-
-    Raises:
-        Exception: If an edge marked to skip is encountered during replacement
-        because it indicates a bug in the auto-vectorization logic
-
-    Side Effects:
-        - Modifies memlet subsets on matching edges
-        - May remove and re-add array data descriptors with new shapes
+    :param state: The SDFG state containing the edges.
+    :param edges: Edges whose memlets are checked and potentially replaced.
+    :param old_subset_expr: The subset pattern to match.
+    :param new_subset_expr: The replacement subset.
+    :param repl_scalars_with_arrays: If True, convert Scalar / size-1 Array
+        nodes on matching edges to arrays shaped to ``new_subset_expr``.
+    :param edges_to_skip: Edges that must not be modified (a match here is a
+        bug).
+    :param vector_numeric_type: Dtype used when converting scalars to arrays.
+    :param dataname: If not None, also require the memlet data to match.
+    :raises Exception: if an edge in ``edges_to_skip`` matches the pattern.
     """
     arr_dim = [((e + 1 - b) // s) for (b, e, s) in new_subset_expr]
 
@@ -205,23 +185,18 @@ def replace_memlet_expression(state: SDFGState,
 
 def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], edges_to_skip: Set[Edge[Memlet]],
                              vector_width: int) -> Set[Edge[Memlet]]:
-    """
-    Expand single-element memlet subsets along stride-1 dimensions to a given vector length.
-    Pre-condition: all subset dimensions need to be 1
+    """Expand single-element memlet subsets along stride-1 dims to ``vector_width``.
 
-    For each memlet edge, this function modifies subsets that represent a single element
-    and extend them to cover `vector_width` elements when the corresponding array stride is 1.
-    Trying to modify an edge listed in `edges_to_skip` raises an error as it indicates a
-    bug in the auto-vectorization logic.
+    For each edge, a single-element subset on the array's stride-1 dimension
+    is widened to ``vector_width`` elements.
 
-    Args:
-        state (SDFGState): The SDFG state containing the edges.
-        edges (Iterable[Edge[Memlet]]): The memlet edges to inspect and possibly modify.
-        edges_to_skip (Set[Edge[Memlet]]): Edges that should not be expanded.
-        vector_width (int): The number of elements to expand contiguous subsets to.
-
-    Returns:
-        Set[Edge[Memlet]]: The set of edges whose memlets were modified.
+    :param state: The SDFG state containing the edges.
+    :param edges: The memlet edges to inspect and possibly modify.
+    :param edges_to_skip: Edges that must not be expanded.
+    :param vector_width: Number of elements to expand contiguous subsets to.
+    :returns: The set of edges whose memlets were modified.
+    :raises Exception: if a subset is neither all length-1 nor has exactly
+        one ``vector_width``-length dim.
     """
     modified_edges = set()
     for edge in edges:
@@ -259,6 +234,14 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
 
 
 def offset_memlets(sdfg: dace.SDFG, dataname: str, offsets: List[dace.symbolic.SymExpr]):
+    """Subtract ``offsets`` from every memlet subset of ``dataname``.
+
+    Length-1 dimensions are collapsed out of the resulting subset.
+
+    :param sdfg: The SDFG to walk.
+    :param dataname: Data name whose memlets are offset.
+    :param offsets: Per-dimension offsets to subtract.
+    """
     from dace.transformation.passes.vectorization.utils.iteration import walk_memlets_of
     for _state, edge in walk_memlets_of(sdfg, dataname):
         subset = edge.data.subset.offset_new(dace.subsets.Range(offsets), negative=True)
@@ -268,13 +251,11 @@ def offset_memlets(sdfg: dace.SDFG, dataname: str, offsets: List[dace.symbolic.S
 
 
 def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str):
-    """
-    Replaces all memlet subsets for a given array in a state with a new subset expression.
+    """Replace every memlet subset for ``name`` in ``state`` with a new subset.
 
-    Args:
-        state: The SDFG state to modify.
-        name: Array name whose accesses are replaced.
-        new_subset_expr: The new subset expression (e.g., "0:4").
+    :param state: The SDFG state to modify.
+    :param name: Array name whose accesses are replaced.
+    :param new_subset_expr: The new subset expression (e.g. ``"0:4"``).
     """
     for edge in state.edges():
         if edge.data is not None and edge.data.data == name:
@@ -284,6 +265,12 @@ def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr
 
 def squeeze_memlets_of_packed_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
                                      array_accesses_to_be_packed: Set[str]):
+    """Collapse memlet subsets of packed arrays to single-element accesses.
+
+    :param state: The SDFG state to modify.
+    :param map_entry: Map whose body edges are inspected.
+    :param array_accesses_to_be_packed: Data names to squeeze.
+    """
     all_nodes = state.all_nodes_between(map_entry, state.exit_node(map_entry))
     all_edges = state.all_edges(*all_nodes)
     for edge in all_edges:
@@ -294,37 +281,16 @@ def squeeze_memlets_of_packed_arrays(state: dace.SDFGState, map_entry: dace.node
 
 def use_previous_subsets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, vector_width: int,
                          vectorizable_arrays: Set[str]):
-    """
-    Rewrite memlet subsets on edges leaving a single-parameter inner map so that
-    structured vector accesses correctly refer to the surrounding parent map.
+    """Rewrite out-edge memlet subsets of a single-param inner map to refer to the parent map.
 
-    The function performs:
-        1. Extract the inner map parameter (e.g., `i`).
-        2. Extract the parent's map lower bound symbol (e.g., `tile_i`).
-        3. For each outgoing memlet:
-             - Identify its corresponding incoming memlet (IN_x -> OUT_x).
-             - Clone its subset.
-             - Substitute outer -> inner symbols for begin/end expressions.
-             - Adjust end bound when the subset length matches `vector_width` (=structured access).
-             - Compute the memlet volume.
-             - Assign a new Memlet with the updated subset and volume.
+    For each outgoing memlet, the matching incoming memlet's subset is cloned,
+    the outer map symbol is substituted by the inner param, and an exact
+    ``vector_width``-length dim has its end bound shrunk by ``vector_width - 1``.
 
-    Parameters
-    ----------
-    state : dace.SDFGState
-        The current SDFG state containing the map entry.
-    map_entry : dace.nodes.MapEntry
-        The map entry whose outgoing memlet subsets will be rewritten.
-        Must have exactly one map parameter.
-    vector_width : int
-        Width of the structured vector access. If a subset dimension has length
-        equal to `vector_width`, we shrink its end bound by `vector_width - 1`.
-        As in this case we have an exact subset, otherwise we pass a complete dimension or something in that fay that we cant change.
-
-    Notes
-    -----
-    We cast symbolic expressions to string and re-sympify them to force SymPy
-    to reattach the same symbol objects used by DaCe.
+    :param state: The SDFG state containing the map entry.
+    :param map_entry: The map entry to rewrite; must have exactly one param.
+    :param vector_width: Width of the structured vector access.
+    :param vectorizable_arrays: Data names eligible for the rewrite.
     """
 
     # Inner map has exactly one parameter, e.g., `i`.
@@ -386,6 +352,14 @@ def use_previous_subsets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, 
 
 
 def try_clean_other_subset_going_out_from_map_entry(state: SDFGState, map_entry: dace.nodes.MapEntry):
+    """Replace map-entry out-edges carrying an ``other_subset`` with assign tasklets.
+
+    Each such edge to an AccessNode is split into an in-memlet and an
+    out-memlet via an inserted ``_out = _in`` tasklet.
+
+    :param state: The SDFG state to modify.
+    :param map_entry: Map entry whose out-edges are inspected.
+    """
     id = 0
     for oe in state.out_edges(map_entry):
         if oe.data.other_subset is not None and isinstance(oe.dst, dace.nodes.AccessNode):

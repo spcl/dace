@@ -3,34 +3,9 @@
 Symbol lane fan-out helpers for the vectorization pipeline.
 
 When a scalar symbol is computed by an interstate edge in an inner SDFG
-that sits below a vectorized map, every lane needs its own copy of the
-symbol (one per lane = ``vector_width`` copies). The helpers here build
-those per-lane variants and stitch them back into the SDFG:
-
-- ``expand_interstate_assignments_to_lanes``: the core fan-out. Rewrites
-  every interstate-edge assignment ``sym = expr`` into a family
-  ``sym_laneid_<i> = expr-with-vector-iter-shifted``, keyed via
-  ``LaneIdScheme``. Already-lane-encoded LHS keys are carried through
-  unchanged (idempotency).
-- ``try_demoting_vectorizable_symbols``: demotes interstate-edge
-  symbols whose value depends only on parent-scope state into scalar
-  data nodes. This frees them from the lane-fan-out path entirely.
-- ``resolve_missing_laneid_symbols``: bandage pass for any free
-  ``sym_laneid_<i>`` symbol that survived the fan-out without a
-  defining edge — synthesises the assignment from the parent-map state.
-- ``assert_symbols_in_parent_map_symbols``: defensive validator that
-  every ``*_laneid_*`` symbol in a missing-symbols set corresponds to a
-  parent-map / parent-loop iterator. Loud failure preferred.
-- ``find_symbol_assignment``: backwards traversal that returns the
-  first interstate-edge assignment expression for a symbol.
-- ``_all_atoms``: SymPy helper that collects every Symbol / Indexed /
-  Function atom in an expression, used by both ``collect_vectorizable_arrays``
-  (still in the legacy module pending S6d) and the fan-out itself.
-
-This is the most fragile module in the vectorization pipeline; touch
-with care. Latent issues (non-idempotency footguns, hand-rolled
-name-parsing in ``resolve_missing_laneid_symbols``, etc.) are recorded
-in the master plan rather than fixed during the mechanical S6c move.
+below a vectorized map, every lane needs its own copy of the symbol.
+These helpers build the per-lane variants and stitch them back into the
+SDFG.
 """
 import re
 from typing import Set
@@ -49,18 +24,13 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
                                          nsdfg: dace.nodes.NestedSDFG):
     """
-    Validates that given symbols correspond to loop variables in parent map scopes of a NestedSDFG.
+    Validate that symbols correspond to loop variables in parent map scopes of a NestedSDFG.
 
-    Args:
-        missing_symbols: Symbols to validate (e.g., {"i_laneid_0", "j_laneid_1"}).
-        state: The SDFG state.
-        nsdfg: NestedSDFG node.
-
-    Returns:
-        Set of loop variable names found in the parent scopes.
-
-    Raises:
-        AssertionError if a symbol is not found in the loop scopes.
+    :param missing_symbols: Symbols to validate (e.g. ``{"i_laneid_0", "j_laneid_1"}``).
+    :param state: The SDFG state.
+    :param nsdfg: The NestedSDFG node.
+    :returns: Set of loop variable names found in the parent scopes.
+    :raises AssertionError: If a symbol is not found in the loop scopes.
     """
 
     def validate_and_strip(strings):
@@ -101,14 +71,11 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
 
 def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
     """
-    Finds the assignment expression of a given symbol by traversing the SDFG backwards.
+    Find a symbol's assignment expression by traversing the SDFG backwards.
 
-    Args:
-        sdfg: The SDFG to search.
-        sym_name: Symbol to find.
-
-    Returns:
-        Assignment expression as a string, or None if not found.
+    :param sdfg: The SDFG to search.
+    :param sym_name: Symbol to find.
+    :returns: Assignment expression as a string, or ``None`` if not found.
     """
 
     # Pre-condition for vectorization
@@ -129,13 +96,11 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
 
 def _all_atoms(expr, ignored=()):
     """
-    Return a set of all atomic elements in a SymPy expression, including:
-    - Symbols
-    - Indexed symbols / arrays
-    - Function calls
-    - Numbers (optional)
+    Return all atomic elements (Symbols, Indexed, Function calls) of a SymPy expression.
 
-    ignored: tuple of types to ignore, e.g., (sympy.Number,)
+    :param expr: The SymPy expression to inspect.
+    :param ignored: Function classes to skip (e.g. ``(sympy.Number,)``).
+    :returns: Set of atoms found in the expression.
     """
     # Use expr.atoms to get all different types of atoms
     atoms = set()
@@ -160,6 +125,21 @@ def _all_atoms(expr, ignored=()):
 def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
                                            state: dace.SDFGState, vector_width: int, invariant_data: Set[str],
                                            vector_map_param: str):
+    """
+    Fan out every interstate-edge assignment into one variant per lane.
+
+    ``sym = expr`` becomes a family ``sym_laneid_<i> = expr`` with the
+    vector iterator shifted by the lane index. Fully invariant
+    expressions keep only the original symbol; already-lane-encoded LHS
+    keys are carried through unchanged (idempotency).
+
+    :param inner_sdfg: The nested SDFG whose interstate edges to expand.
+    :param nsdfg_node: The NestedSDFG node containing ``inner_sdfg``.
+    :param state: The state holding ``nsdfg_node``.
+    :param vector_width: Number of lanes (variants emitted per assignment).
+    :param invariant_data: Names whose values are constant across lanes.
+    :param vector_map_param: The vectorized map parameter name.
+    """
     # `sym = 0`
     # Would become
     # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
@@ -265,6 +245,15 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
 
 
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
+    """
+    Demote interstate-edge symbols that do not depend on array data into scalar data nodes.
+
+    Symbols used on memlet subsets are never demoted. Demoting frees a
+    symbol from the lane-fan-out path.
+
+    :param inner_sdfg: The nested SDFG whose symbols to consider.
+    :returns: Set of symbol names that were demoted.
+    """
     assigned_symbols = dict()
     for edge in inner_sdfg.all_interstate_edges():
         for k, v in edge.data.assignments.items():
@@ -319,44 +308,20 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
 
 def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
     """
-    Resolve missing expanded loop symbols of the form ``loop_var_laneid_ID`` inside
-    an SDFG nested in a vectorized map.
+    Reconstruct missing ``loop_var_laneid_<id>`` symbols in a vectorized-map nested SDFG.
 
-    During vectorized code generation, additional symbol variants such as
-    ``i_laneid_0``, ``i_laneid_1`` may appear, but these are often not present in
-    ``nsdfg.symbol_mapping``. This function reconstructs such missing symbols and
-    inserts appropriate symbol assignments before the start block of the inner SDFG.
+    Lane-suffixed symbol variants may appear without being present in
+    ``nsdfg.symbol_mapping``. Parent-map symbols are left untouched;
+    others are aliased (or offset, for the vector parameter) via an
+    assignment state inserted before the start block.
 
-    Parameters
-    ----------
-    inner_sdfg : dace.SDFG
-        The inner SDFG in which missing free symbols appear.
-
-    nsdfg : dace.nodes.NestedSDFG
-        The nested SDFG node that contains the symbol mapping to the outer SDFG.
-
-    state : dace.SDFGState
-        The state containing the NestedSDFG node. Used to look up parent map symbols.
-
-    vector_map_param : str
-        The name of the map iterator corresponding to the vector lane dimension.
-        Symbols derived from this parameter will be rewritten as `vector_map_param + laneid`.
-
-    Notes
-    -----
-    - Missing symbols must contain ``"_laneid_"``. Symbols not matching this pattern
-      trigger an assertion.
-    - Symbols belonging to the parent map (returned by
-      ``assert_symbols_in_parent_map_symbols``) are *not* rewritten.
-    - All rewritten symbols are assigned immediately before the start block of
-      ``inner_sdfg`` via ``add_state_before``.
-
-    Raises
-    ------
-    AssertionError
-        If unexpected missing symbols remain after processing, or if symbols do not
-        conform to the expected ``*_laneid_*`` pattern.
-
+    :param inner_sdfg: The inner SDFG in which missing free symbols appear.
+    :param nsdfg: The NestedSDFG node holding the symbol mapping.
+    :param state: The state containing ``nsdfg``; used to look up parent map symbols.
+    :param vector_map_param: The vector-lane map iterator name; symbols
+        derived from it are rewritten as ``vector_map_param + laneid``.
+    :raises AssertionError: If unexpected missing symbols remain after processing.
+    :raises NotImplementedError: If a missing symbol lacks a ``_laneid_<i>`` suffix.
     """
     # Find missing symbols
     missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))

@@ -17,13 +17,10 @@ from dace.sdfg.state import BreakBlock, ConditionalBlock
 
 def has_maps(sdfg: dace.SDFG) -> bool:
     """
-    Check if the given SDFG or any nested SDFG contains a MapEntry node.
+    Check if the SDFG or any nested SDFG contains a MapEntry node.
 
-    Args:
-        sdfg (dace.SDFG): The SDFG to inspect.
-
-    Returns:
-        bool: True if any MapEntry exists in the SDFG hierarchy, False otherwise.
+    :param sdfg: The SDFG to inspect.
+    :returns: ``True`` if any MapEntry exists in the hierarchy.
     """
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
@@ -33,14 +30,11 @@ def has_maps(sdfg: dace.SDFG) -> bool:
 
 def is_innermost_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """
-    Check if a map is innermost (contains no nested maps or maps inside nested SDFGs).
+    Check if a map is innermost (no nested maps, including inside nested SDFGs).
 
-    Args:
-        map_entry (dace.nodes.MapEntry): The map entry node to test.
-        state (SDFGState): The state containing the map entry.
-
-    Returns:
-        bool: True if the map has no inner maps or maps in nested SDFGs, False otherwise.
+    :param state: The state containing the map entry.
+    :param map_entry: The map entry node to test.
+    :returns: ``True`` if the map has no inner maps.
     """
     nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
     if any(isinstance(node, dace.nodes.MapEntry) for node in nodes_between):
@@ -52,12 +46,9 @@ def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: d
     """
     Check if a map contains either a single NestedSDFG or none at all.
 
-    Args:
-        map_entry (dace.nodes.MapEntry): The map entry to check.
-        graph: The graph containing the map.
-
-    Returns:
-        bool: True if the map contains a single NestedSDFG or no NestedSDFG, False otherwise.
+    :param graph: The state containing the map.
+    :param map_entry: The map entry to check.
+    :returns: ``True`` if the map contains a single NestedSDFG or no NestedSDFG.
     """
     all_nodes = {
         k
@@ -69,6 +60,13 @@ def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: d
 
 
 def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dace.nodes.NestedSDFG:
+    """
+    Return the sole NestedSDFG inside a map, or ``None`` if not exactly one.
+
+    :param graph: The state containing the map.
+    :param map_entry: The map entry to inspect.
+    :returns: The single NestedSDFG node, or ``None``.
+    """
     all_nodes = {
         k
         for k in graph.all_nodes_between(map_entry, graph.exit_node(map_entry))
@@ -80,10 +78,22 @@ def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.Map
 
 
 def has_only_states(sdfg: dace.SDFG) -> bool:
+    """
+    Check whether every top-level node of an SDFG is a plain SDFGState.
+
+    :param sdfg: The SDFG to inspect.
+    :returns: ``True`` if no control-flow regions are present.
+    """
     return all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()})
 
 
 def has_only_states_or_single_block_with_break_only(sdfg: dace.SDFG) -> bool:
+    """
+    Check that an SDFG has only states, or only conditional blocks whose sole branch is a break.
+
+    :param sdfg: The SDFG to inspect.
+    :returns: ``True`` if the SDFG matches either shape.
+    """
     ifs = {n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)}
     all_ifs_are_only_break = all({
         len(ifb.branches) == 1 and len(ifb.branches[0][1].nodes()) == 1
@@ -102,11 +112,9 @@ def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
     """
     Assert that each map contains either a single NestedSDFG or none at all.
 
-    Args:
-        sdfg (dace.SDFG): The SDFG to validate.
-
-    Raises:
-        AssertionError: If a map body contains more than one node or a mix of NestedSDFG and other nodes.
+    :param sdfg: The SDFG to validate.
+    :raises AssertionError: If a map body contains more than one node or a
+        mix of NestedSDFG and other nodes.
     """
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
@@ -186,12 +194,9 @@ def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dac
     """
     Check if the last dimension of a map performs contiguous accesses.
 
-    Args:
-        map_entry (dace.nodes.MapEntry): The map entry to check.
-        state: The state containing the map.
-
-    Returns:
-        bool: True if all memlets contain the last map parameter, False otherwise.
+    :param state: The state containing the map.
+    :param map_entry: The map entry to check.
+    :returns: ``True`` if every memlet's unit-stride dim involves the last map parameter.
     """
     nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
     edges = state.all_edges(*nodes)
@@ -217,14 +222,14 @@ def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dac
 
 def count_param_in_expr(expr, param_str: str):
     """
-    Count occurrences of a parameter inside a SymPy expression, including
-    inside function-call arguments.
+    Count occurrences of a parameter in a SymPy expression, including function-call args.
 
-    Compares by symbol *name*, not by SymPy ``==``, because DaCe's
-    ``dace.symbolic.symbol`` is a SymPy ``Symbol`` subclass whose equality
-    semantics carry extra attributes — two symbols with the same name but
-    different DaCe metadata can compare unequal under ``==`` while being the
-    same identifier from the pass's perspective.
+    Matches by symbol name (not SymPy ``==``), since DaCe symbols with the
+    same name but different metadata can compare unequal.
+
+    :param expr: The SymPy expression to scan.
+    :param param_str: The parameter name to count.
+    :returns: Number of occurrences.
     """
     if not isinstance(expr, sympy.Basic):
         return 0
@@ -249,15 +254,11 @@ def count_param_in_expr(expr, param_str: str):
 
 def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """
-    Check if the last map parameter appears across multiple dimensions or
-    function-call argument usages in the state.
+    Check if the last map parameter appears across multiple subset dimensions.
 
-    Args:
-        map_entry (dace.nodes.MapEntry): The map entry node.
-        state (dace.SDFGState): The containing state.
-
-    Returns:
-        bool: True if the map parameter appears in >1 dimension or in function args.
+    :param state: The containing state.
+    :param map_entry: The map entry node.
+    :returns: ``True`` if the last parameter appears in more than one dimension.
     """
 
     last_param = str(map_entry.map.params[-1])
@@ -284,16 +285,13 @@ def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: d
 
 def is_linear_in_param(expr, param_str: str) -> bool:
     """
-    Return True iff ``expr`` is a sympy expression of the form ``c*p + d``
-    where ``p`` is the symbol named ``param_str``, ``c`` is a constant
-    (does not contain ``p``), and ``d`` is constant in ``p`` too.
-
-    Used by :func:`map_param_dim_usage_is_linear_combo` to classify
-    diagonal / linear-combination access patterns (``A[i, i]``,
-    ``A[2*i, i]``, ``A[i, 2*i]``) that the vectorizer can lower as
-    strided loads/stores once the per-dim coefficients are constant.
+    Return whether ``expr`` is linear in ``param_str`` (form ``c*p + d``, ``c``/``d`` constant in ``p``).
 
     A bare integer / float literal counts as linear (coefficient 0).
+
+    :param expr: The expression to classify.
+    :param param_str: The parameter symbol name.
+    :returns: ``True`` if ``expr`` is linear in the parameter.
     """
     if not isinstance(expr, sympy.Basic):
         return True  # plain int/float literal
@@ -315,14 +313,16 @@ def is_linear_in_param(expr, param_str: str) -> bool:
 
 def map_param_dim_usage_is_linear_combo(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """
-    For every memlet inside the map whose last-param appears in more than
-    one dimension, verify each dim's begin expression is linear in the
-    last-param (form ``c*p + d`` with ``c`` constant in ``p``).
+    Check that multi-dimension uses of the last map parameter are all linear in it.
 
-    Returns ``True`` when the usage is purely linear-combo (vectorizable as
-    a strided load/store), ``False`` otherwise. Memlets where the param
-    does not appear at all, or appears in only one dim, do not block the
-    classification — they are unaffected by linear-combo lowering.
+    For every memlet whose last parameter appears in more than one
+    dimension, each such dimension must be a point access whose begin
+    expression is linear in the parameter. Memlets where the parameter is
+    absent or used in only one dimension do not block the classification.
+
+    :param state: The containing state.
+    :param map_entry: The map entry to inspect.
+    :returns: ``True`` if all multi-dim uses are linear (strided-lowerable).
     """
     last_param = str(map_entry.map.params[-1])
     nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
@@ -348,21 +348,17 @@ def map_param_dim_usage_is_linear_combo(state: dace.SDFGState, map_entry: dace.n
 
 def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
     """
-    Assert that the last dimension of all maps in an SDFG performs contiguous accesses.
+    Assert that the last dimension of every map in an SDFG performs contiguous accesses.
 
-    For each innermost map, this function checks that the last map parameter
-    appears in every memlet within the map body, ensuring the last dimension
-    corresponds to contiguous memory accesses. It also validates that all tasklets
-    are properly enclosed in map scopes or nested SDFGs.
+    Also validates that every tasklet is enclosed in a map scope or a
+    nested SDFG.
 
-    Args:
-        sdfg (dace.SDFG): The SDFG to check.
-
-    Raises:
-        Exception: If a tasklet is not enclosed in any map or valid nested SDFG scope.
-        ValueError: If a node's parent scope is not a map, or the last map parameter
-            does not appear in a memlet subset expression.
-        AssertionError: If internal consistency assumptions about map nesting fail.
+    :param sdfg: The SDFG to check.
+    :raises Exception: If a tasklet is not enclosed in any map or valid
+        nested-SDFG scope.
+    :raises ValueError: If a node's parent scope is not a map, or the last
+        map parameter does not appear in a memlet subset.
+    :raises AssertionError: If internal map-nesting assumptions fail.
     """
     # Imported lazily to avoid the import cycle:
     # ``utils/__init__.py`` imports ``map_predicates`` AND ``nsdfg_reshape``,
@@ -408,6 +404,13 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
 
 
 def map_has_branching_memlets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    """
+    Check whether any map-entry out-connector feeds more than one edge.
+
+    :param state: The state containing the map.
+    :param map_entry: The map entry to inspect.
+    :returns: ``True`` if a single out-connector branches to multiple edges.
+    """
     for out_conn in map_entry.out_connectors:
         out_egdges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
         if len(out_egdges_of_out_conn) > 1:
@@ -416,6 +419,12 @@ def map_has_branching_memlets(state: dace.SDFGState, map_entry: dace.nodes.MapEn
 
 
 def sdfg_has_nested_sdfgs(sdfg: dace.SDFG):
+    """
+    Check whether an SDFG contains any NestedSDFG node.
+
+    :param sdfg: The SDFG to inspect.
+    :returns: ``True`` if a NestedSDFG node is present.
+    """
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
@@ -424,6 +433,13 @@ def sdfg_has_nested_sdfgs(sdfg: dace.SDFG):
 
 
 def map_has_nested_sdfgs(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    """
+    Check whether a map body contains a NestedSDFG node.
+
+    :param state: The state containing the map.
+    :param map_entry: The map entry to inspect.
+    :returns: ``True`` if the map body has a NestedSDFG.
+    """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
         if isinstance(node, dace.nodes.NestedSDFG):
             return True
@@ -431,6 +447,13 @@ def map_has_nested_sdfgs(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
 
 
 def has_nsdfg_depth_more_than_one(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    """
+    Check whether a map body contains a NestedSDFG that itself contains a NestedSDFG.
+
+    :param state: The state containing the map.
+    :param map_entry: The map entry to inspect.
+    :returns: ``True`` if nested-SDFG depth exceeds one.
+    """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
         if isinstance(node, dace.nodes.NestedSDFG):
             if sdfg_has_nested_sdfgs(node.sdfg):

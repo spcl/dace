@@ -2,22 +2,10 @@
 """
 AST-based code-rewrite helpers used by the vectorization pipeline.
 
-The helpers in this module manipulate Python expression / statement
-strings (CodeBlock bodies, interstate-edge assignment RHSs, loop and
-conditional-block conditions). They are deliberately kept separate
-from the sympy-based rewriters in ``dace.symbolic`` because:
-- Inputs here include non-sympifiable Python (loop predicates with
-  ``and``/``or``, branch conditions with ``not``, etc.).
-- Outputs must round-trip cleanly through ``ast.unparse`` so DaCe's
-  codegen reads the same Python it would have generated otherwise.
-
-No overlap with ``dace.sdfg.construction_utils`` or ``dace.symbolic``
-exists today — the closest neighbours are ``construction_utils._tokens``
-(token-set extraction, not AST rewrite) and
-``symbolic.replace_array_accesses_with_connectors`` (sympy-printer
-``arr[...]`` → connector rewrite, different input contract). Per the
-locked scope decision the helpers stay AST-based and are not folded
-into the sympy round-trip.
+These helpers manipulate Python expression / statement strings
+(CodeBlock bodies, interstate-edge assignment RHSs, loop and
+conditional-block conditions) and round-trip them through
+``ast.unparse``.
 """
 import ast
 import re
@@ -31,22 +19,15 @@ from dace.symbolic import DaceSympyPrinter
 
 def extract_bracket_contents(expr: str, name: str):
     """
-    Extracts the contents inside the brackets following a given variable name in an expression.
+    Extract the contents inside the brackets following a given name in an expression.
 
-    This function searches for a pattern of the form `<name>[...]` within a given string and
-    extracts the full matched substring and the individual elements inside the brackets. It
-    correctly handles nested brackets and quoted strings, ensuring that commas within nested
-    structures or strings are not treated as separators.
+    Handles nested brackets and quoted strings so commas inside them are not split on.
 
-    Args:
-        expr (str): The input expression to search within.
-        name (str): The name of the variable or function to match before the brackets.
-
-    Returns:
-        tuple[str, list[str]]:
-            A tuple containing:
-              - The full matched string (e.g., `"A[1, (2, 3), 'x']"`), or an empty string if no match is found.
-              - A list of strings representing the top-level comma-separated elements inside the brackets.
+    :param expr: The input expression to search within.
+    :param name: The variable / function name to match before the brackets.
+    :returns: ``(full_match, parts)`` where ``full_match`` is the matched
+        ``<name>[...]`` substring (empty if no match) and ``parts`` is the
+        list of top-level comma-separated elements inside the brackets.
     """
     # Find <name>[...]
     pattern = rf'\b{name}\s*\[(.*)\]'
@@ -95,9 +76,8 @@ def extract_bracket_contents(expr: str, name: str):
 class _DropDimsTransformer(ast.NodeTransformer):
     """AST transformer that drops dimensions from every Subscript access of a named array.
 
-    Walks the tree and rewrites `Name(dataname)[indices]` so that any index whose position
-    has `dim_mask[i] == 0` is removed. Indices kept according to `dim_mask[i] == 1`.
-    Raises ValueError if any access has a dimension count different from len(dim_mask).
+    Rewrites ``Name(dataname)[indices]`` keeping only indices where
+    ``dim_mask[i] == 1``.
     """
 
     def __init__(self, dataname: str, dim_mask: Tuple[int, ...]):
@@ -140,28 +120,18 @@ class _DropDimsTransformer(ast.NodeTransformer):
 
 def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str:
     """
-    Remove dimensions from every array access of `dataname` in a Python expression string.
+    Remove dimensions from every array access of ``dataname`` in a Python expression string.
 
-    Dimensions where `dim_mask` is 0 are removed; dimensions where it is 1 are kept.
-    Rewrites are AST-based, so multiple occurrences within the same string are all updated
-    (and string-literal subscripts like ``"A[i]"`` inside another expression are not).
+    Dimensions where ``dim_mask`` is 0 are dropped; 1 are kept. Rewrites
+    are AST-based, so all occurrences are updated. Returns the input
+    unchanged if no matching access is found or the input does not parse
+    as Python.
 
-    Args:
-        src_str: Source expression / statement(s).
-        dim_mask: Tuple of 0/1 indicating which dimensions to keep.
-        dataname: Name of the array whose accesses should be rewritten.
-
-    Returns:
-        Modified string with dimensions dropped from each occurrence.
-
-    Raises:
-        ValueError: If any access has a dimension count different from `len(dim_mask)`.
-
-    Notes:
-        - Returns the original string unchanged if no matching access is found.
-        - Falls back to returning the original string when the input does not parse as
-          Python (e.g. raw C++ code blocks); callers that pass non-Python should be fixed
-          to use a language-aware rewriter rather than this helper.
+    :param src_str: Source expression / statement(s).
+    :param dim_mask: Tuple of 0/1 indicating which dimensions to keep.
+    :param dataname: Name of the array whose accesses to rewrite.
+    :returns: Modified string with dimensions dropped from each occurrence.
+    :raises ValueError: If any access has a dimension count different from ``len(dim_mask)``.
     """
     try:
         tree = ast.parse(src_str)
@@ -175,22 +145,16 @@ def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str
 
 def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
     """
-    Remove dimensions from all accesses to a specific array throughout an SDFG.
+    Remove dimensions from all accesses to an array throughout an SDFG.
 
-    This function traverses an entire SDFG and updates all references to a
-    specific array, removing dimensions according to the provided mask. It
-    updates:
-    1. Memlet subsets on edges
-    2. Loop conditions, init statements, and update statements
-    3. Conditional branch conditions
-    4. Interstate edge assignments
+    Updates memlet subsets on edges, loop conditions / init / update
+    statements, conditional branch conditions, and interstate-edge
+    assignments.
 
-    Args:
-        sdfg: The SDFG to modify
-        dim_mask: Tuple of 0s and 1s indicating which dimensions to keep
-                 (1 = keep, 0 = drop). Length must match array dimensionality.
-        dataname: Name of the array whose accesses to update
-
+    :param sdfg: The SDFG to modify.
+    :param dim_mask: Tuple of 0/1 indicating which dimensions to keep
+        (1 = keep, 0 = drop); length must match array dimensionality.
+    :param dataname: Name of the array whose accesses to update.
     """
 
     for cfg_region in sdfg.all_control_flow_regions():
@@ -260,18 +224,18 @@ def offset_symbol_in_expression(expr_str: str,
                                 offset: int,
                                 arrays: Optional[Set[str]] = None) -> str:
     """
-    Returns a new expression string where a specified symbol is incremented by a given offset.
+    Return a new expression string with a symbol incremented by an offset.
 
-    Args:
-        expr_str (str): The original expression as a string.
-        symbol_to_offset (str): The symbol within the expression to offset.
-        offset (int): The integer value to add to the symbol.
-        arrays: Names of arrays in scope; passed to ``DaceSympyPrinter`` so
-            that any array read inside ``expr_str`` round-trips as
-            ``arr[idx]`` instead of ``arr(idx)``. Callers that have an
-            SDFG in scope should pass ``set(sdfg.arrays.keys())``.
-            Defaults to the empty set — same output as ``sympy.pycode``
-            for scalar-only inputs.
+    :param expr_str: The original expression as a string.
+    :param symbol_to_offset: The symbol within the expression to offset.
+    :param offset: The integer value to add to the symbol.
+    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so
+        array reads round-trip as ``arr[idx]`` instead of ``arr(idx)``.
+        Callers with an SDFG in scope should pass ``set(sdfg.arrays.keys())``.
+        Defaults to the empty set.
+    :returns: The offset expression string, or the original unchanged if
+        the symbol is not present.
+    :raises Exception: If ``expr_str`` contains an ``Eq(`` equality term.
     """
     if "Eq(" in expr_str:
         raise Exception(expr_str)
@@ -294,17 +258,21 @@ def use_laneid_symbol_in_expression(expr_str: str,
                                     vector_map_param: str = None,
                                     arrays: Optional[Set[str]] = None) -> str:
     """
-    Returns a new expression string where a specified symbol is replaced with laneid-ed version
-    `sym1` -> `sym1_laneid_{offset}`
+    Return a new expression string with a symbol replaced by its lane-id variant.
 
-    Args:
-        expr_str (str): The original expression as a string.
-        symbol_to_offset (str): The symbol within the expression to offset.
-        offset (int): The integer value to add to the symbol.
+    ``sym1`` becomes ``sym1_laneid_<offset>``, except when the symbol is
+    ``vector_map_param``, which becomes ``(sym + offset)``.
 
-    Returns:
-        str: A new expression string with the symbol offset.
-             If the symbol is not found in the expression, returns the original expression string unchanged.
+    :param expr_str: The original expression as a string.
+    :param symbol_to_offset: The symbol within the expression to offset.
+    :param offset: The lane index / integer offset to apply.
+    :param vector_map_param: The vector map parameter name; matching
+        symbols are offset rather than lane-suffixed.
+    :param arrays: Array names in scope, passed to ``DaceSympyPrinter`` so
+        array reads print as ``arr[idx]``.
+    :returns: The rewritten expression string, or the original unchanged
+        if the symbol is not present.
+    :raises Exception: If ``expr_str`` contains an ``Eq(`` equality term.
     """
     if "Eq(" in expr_str:
         raise Exception(expr_str)

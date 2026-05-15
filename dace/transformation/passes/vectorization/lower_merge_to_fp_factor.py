@@ -1,25 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``LowerMergeToFpFactor`` — rewrites every ``merge(c, t, e)`` call inside a
-``Tasklet`` body as the floating-point factor form ``c * t + (1 - c) * e``.
-
-This is the downstream rewriter for the ``K1 = fp_factor`` pipeline branch.
-The canonical merge IR emitted by ``SameWriteSetIfElseToMergeCFG`` (M3.1b)
-and ``BranchNormalization`` (M3.2) is what every prep pass produces; this
-pass turns those merge calls into FP-factor arithmetic so that downstream
-emission falls back on the existing ``vector_mul`` / ``vector_add``
-templates instead of the ``vector_select`` / mask-blend path used by the
-``K1 = merge`` branch.
-
-Tasklet connectors and edges are unchanged: only the ``code`` string is
-rewritten. ``c`` may be either an in-connector (the typical M3.1b/M3.2
-shape, e.g. ``_c``) or a free symbol that the merge tasklet carried in
-its body (the cond-as-symbol shape M3.1b/M3.2 emit when the cond is not
-resolvable to an array). Both cases collapse to the same FP-factor body.
-
-After this pass runs, no ``Tasklet`` body in the SDFG contains a
-``merge(...)`` call.
-"""
+"""Rewrites every ``merge(c, t, e)`` call in a tasklet body to the
+floating-point factor form ``c * t + (1 - c) * e``; only the code string
+changes (connectors and edges are untouched)."""
 import ast
 import copy
 from typing import Optional
@@ -31,16 +13,18 @@ from dace.transformation import pass_pipeline as ppl
 
 
 class _MergeToFpFactor(ast.NodeTransformer):
-    """Replaces every ``merge(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``.
-
-    Tracks whether any rewrite happened so the caller can skip writing the
-    code back when nothing changed.
-    """
+    """Replaces every ``merge(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``."""
 
     def __init__(self):
+        """Initialize with no rewrite recorded yet."""
         self.changed = False
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
+        """Lower a ``merge(c, t, e)`` call to FP-factor arithmetic, recursing first.
+
+        :param node: the call node being visited.
+        :returns: the rewritten node, or the original if it is not a 3-arg merge.
+        """
         # Recurse first so nested ``merge(merge(...), ...)`` lowers inside-out.
         self.generic_visit(node)
         if not (isinstance(node.func, ast.Name) and node.func.id == "merge" and len(node.args) == 3):
@@ -57,20 +41,25 @@ class _MergeToFpFactor(ast.NodeTransformer):
 
 @properties.make_properties
 class LowerMergeToFpFactor(ppl.Pass):
-    """Lower every ``merge(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``.
-
-    See module docstring for the contract.
-    """
+    """Lower every ``merge(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``."""
 
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
+        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """This pass never needs reapplication."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        """Rewrite all merge calls in Python tasklet bodies of ``sdfg``.
+
+        :param sdfg: the SDFG whose tasklets are rewritten in place.
+        :param _: unused pipeline results.
+        :returns: number of tasklets rewritten, or None if none changed.
+        """
         rewritten = 0
         for state in sdfg.all_states():
             for node in state.nodes():

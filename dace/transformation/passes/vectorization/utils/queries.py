@@ -15,14 +15,10 @@ import dace
 
 
 def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:
-    """
-    Try to convert a symbolic expression to an integer.
+    """Try to convert a symbolic expression to an integer.
 
-    Args:
-        sym_epxr (dace.symbolic.SymExpr): The symbolic expression to convert.
-
-    Returns:
-        int | None: The integer value if conversion succeeds, otherwise None.
+    :param sym_epxr: The symbolic expression to convert.
+    :returns: The integer value if conversion succeeds, otherwise ``None``.
     """
     try:
         return int(sym_epxr)
@@ -32,25 +28,18 @@ def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:
 
 def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGState,
                                             map_entry: dace.nodes.MapEntry) -> Set[str]:
-    """
-    Determines which arrays can be vectorized based on their access patterns and symbol usage.
-    The symbols used for accessing should not have any indirectness, meaning that they should
-    not be accessing other Arrays on interstate assignemnts, this is expressed as a free function
-    in sympy.
+    """Find non-unit-stride array accesses inside a map.
 
-    The map parameter involve in vectorization should not appear in a multiplicaiton expression.
-    E.g. loop (int i = 0; i < N; i ++) and access A[i] is ok but, A[i*2] means it is strided and it
-    needs to be packed
+    An access is non-unit-stride when the map parameter appears multiplied
+    in the stride-1-dim begin expression (e.g. ``A[i*2]``), or when the
+    parameter spans more than one dimension (diagonal / linear-combo).
 
-    Args:
-        sdfg: The SDFG to analyze.
-        parent_nsdfg_node: NestedSDFG node.
-        parent_state: State containing the NestedSDFG.
-        invariant_scalars: Set of scalar names that are invariant across lanes (means these
-            scalars to do not prevent vectorization)
-
-    Returns:
-        Dictionary mapping array names to a boolean indicating vectorizability.
+    :param sdfg: The SDFG to analyze.
+    :param state: State containing the map.
+    :param map_entry: The map whose body accesses are inspected.
+    :returns: Dictionary mapping array names to a boolean indicating
+        vectorizability.
+    :raises NotImplementedError: if a memlet carries an ``other_subset``.
     """
     # Pre condition first parent maps is over the contiguous dimension and right most param if multi-dimensional
     parent_map = map_entry
@@ -109,14 +98,11 @@ def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGSta
 
 
 def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subsets.Range], str]:
-    """
-    Collects all access subsets for each array in the SDFG.
+    """Collect all access subsets for each array in the SDFG.
 
-    Args:
-        sdfg: The SDFG to analyze.
-
-    Returns:
-        Dictionary mapping array names to a set of accessed subsets.
+    :param sdfg: The SDFG to analyze.
+    :returns: Dictionary mapping array names to a set of accessed subsets.
+    :raises NotImplementedError: if a memlet carries an ``other_subset``.
     """
     d = dict()
     for state in sdfg.all_states():
@@ -131,17 +117,13 @@ def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subs
 
 
 def collect_all_memlets_to_dataname(sdfg: dace.SDFG) -> Dict[str, Set[dace.subsets.Range]]:
-    """
-    Collect all unique memlet subsets for each data array in the SDFG.
+    """Collect all unique memlet subsets for each data array in the SDFG.
 
-    This function traverses all states and edges in the SDFG and groups memlet subsets
-    by the data array they access. Does not check interstate edges or conditionals.
+    Groups memlet subsets by the data array they access. Does not check
+    interstate edges or conditionals.
 
-    Args:
-        sdfg: The SDFG to analyze
-
-    Returns:
-        A dictionary mapping data array names to sets of their accessed subsets
+    :param sdfg: The SDFG to analyze.
+    :returns: Dictionary mapping data array names to sets of accessed subsets.
     """
     dataname_to_memlets = dict()
     for state in sdfg.all_states():
@@ -155,6 +137,12 @@ def collect_all_memlets_to_dataname(sdfg: dace.SDFG) -> Dict[str, Set[dace.subse
 
 
 def parse_int_or_default(value, default=8):
+    """Parse ``value`` as an int, returning ``default`` on failure.
+
+    :param value: Value to convert.
+    :param default: Fallback when conversion fails.
+    :returns: The parsed int, or ``default``.
+    """
     try:
         return int(value)
     except (ValueError, TypeError):
@@ -163,29 +151,22 @@ def parse_int_or_default(value, default=8):
 
 def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: dace.SDFGState,
                                 invariant_scalars: Set[str]) -> Dict[str, bool]:
-    """
-    Determines which arrays can be vectorized based on their access patterns and symbol usage.
-    The symbols used for accessing should not have any indirectness, meaning that they should
-    not be accessing other Arrays on interstate assignemnts, this is expressed as a free function
-    in sympy.
+    """Determine which arrays can be vectorized through a NestedSDFG.
 
-    The map parameter involve in vectorization should not appear in a multiplicaiton expression.
-    E.g. loop (int i = 0; i < N; i ++) and access A[i] is ok but, A[i*2] means it is strided and it
-    needs to be packed
+    An array is not vectorizable if its access is strided in the map
+    parameter (``A[i*2]``) or if a non-map free symbol is defined by an
+    indirect (array-indexed) interstate assignment.
 
-    Consider the case A[for_it_88, 0, jo] and interstate assignment has jo = B[for_it_88, 0]
-    And the loop is over 0->for_it_88, this not vectorizable, so if any dimension involved uses the loop map
-    param return false
-
-    Args:
-        sdfg: The SDFG to analyze.
-        parent_nsdfg_node: NestedSDFG node.
-        parent_state: State containing the NestedSDFG.
-        invariant_scalars: Set of scalar names that are invariant across lanes (means these
-            scalars to do not prevent vectorization)
-
-    Returns:
-        Dictionary mapping array names to a boolean indicating vectorizability.
+    :param sdfg: The SDFG to analyze.
+    :param parent_nsdfg_node: NestedSDFG node.
+    :param parent_state: State containing the NestedSDFG.
+    :param invariant_scalars: Scalar names invariant across lanes (these do
+        not prevent vectorization).
+    :returns: Dictionary mapping array names to a boolean indicating
+        vectorizability.
+    :raises NotImplementedError: if a memlet carries an ``other_subset``.
+    :raises Exception: if a strided multiplicative access is encountered
+        (case not yet analyzed).
     """
     # Lazy import to avoid an obvious cycle: ``utils.lane_expansion``
     # itself imports from ``utils.name_schemes`` but not from this
@@ -399,13 +380,12 @@ def collect_element_write_subsets(state: dace.SDFGState) -> Optional[Dict[str, d
     """Return ``{arr_name: subset}`` for every element-wise write in ``state``.
 
     A write is element-wise iff its memlet subset has
-    ``num_elements_exact() == 1``. Returns ``None`` if any in-edge to an
-    AccessNode in ``state`` violates that — both M3.1
-    (``SameWriteSetIfElseToMergeCFG``) and M3.2 (``BranchNormalization``)
-    skip the rewrite when this happens.
+    ``num_elements_exact() == 1``. Multiple writes to the same array keep
+    only the last subset seen.
 
-    Multiple writes to the same array within ``state`` keep only the
-    last subset seen (matches the existing behaviour of both callers).
+    :param state: State to inspect.
+    :returns: Mapping of array name to its element-wise write subset, or
+        ``None`` if any in-edge to an AccessNode is not element-wise.
     """
     out: Dict[str, dace.subsets.Range] = {}
     for n in state.nodes():

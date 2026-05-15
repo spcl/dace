@@ -25,32 +25,19 @@ from dace.transformation.passes.vectorization.utils.name_schemes import PackedNa
 
 
 def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
-    """
-    For each vector-map parameter, return the END bound of the outer
-    data-parallel map that supplies its BEGIN expression.
+    """Map each vector-map param to the end bound of the outer data-parallel map.
 
-    Walks the two-level scope hierarchy ``nsdfg -> vector_map -> data_map``,
-    matches each vector-map ``begin`` expression to a data-map parameter
-    (so that ``vector_map`` was constructed as ``i_v = i : i + W : W`` over
-    the data-map's ``i``), and returns the data-map's end bound.
+    Walks ``nsdfg -> vector_map -> data_map`` and matches each vector-map
+    ``begin`` (canonicalised via ``dace.symbolic.simplify``) to a data-map
+    ``begin``, returning that data-map's end bound. For
+    ``map i=0:N -> map i_v=i:i+4:4 -> NestedSDFG`` the result is
+    ``{'i_v': 'N - 1'}``.
 
-    Args:
-        state: The SDFG state containing the nested SDFG node.
-        node: The nested SDFG node whose vector access ranges to determine.
-
-    Returns:
-        Dictionary mapping vector-map parameter names (e.g. ``'i_v'``) to
-        the outer data-map's end bound (e.g. the string repr of ``'N - 1'``
-        if the data map iterates ``0:N``). The semantic name "max access
-        range" is loose — this is the upper iteration bound, not the
+    :param state: The SDFG state containing the nested SDFG node.
+    :param node: The nested SDFG node whose vector access ranges to determine.
+    :returns: Dictionary mapping vector-map param names to the outer data-map's
+        end bound (string repr). This is the upper iteration bound, not the
         per-memlet access range.
-
-    Example:
-        For ``map i=0:N -> map i_v=i:i+4:4 -> NestedSDFG``, returns ``{'i_v': 'N - 1'}``.
-
-    Note:
-        Lookup uses ``dace.symbolic.simplify(begin)`` for canonical
-        equality so structurally-equal exprs (``i + 0`` vs ``i``) match.
     """
     scope_dict = state.scope_dict()
     vector_map = scope_dict[node]
@@ -72,17 +59,13 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
 def find_state_containing_node(root_sdfg: dace.SDFG, node: dace.nodes.Node) -> dace.SDFGState:
     """Return the ``SDFGState`` that contains ``node``.
 
-    Works for any node type — Tasklet, NestedSDFG, AccessNode, MapEntry,
-    etc. The only caller today (``map_predicates``) passes a Tasklet, so
-    the function is intentionally typed as general ``dace.nodes.Node``.
+    Works for any node type (Tasklet, NestedSDFG, AccessNode, MapEntry, ...).
 
-    Callers that need the containing ``SDFG`` should read it off the
-    returned state via ``state.sdfg``.
-
-    History: previously named ``find_state_of_nsdfg_node`` with a
-    return-type annotation of ``SDFGState`` but a body that returned
-    the root SDFG, then later fixed to return the state. Renamed now
-    so the name + param type reflect the actual contract.
+    :param root_sdfg: SDFG to search recursively.
+    :param node: Node to locate.
+    :returns: The state containing ``node``.
+    :raises Exception: if the node is found in a non-state container, or if
+        it is not found at all.
     """
     for n, g in root_sdfg.all_nodes_recursive():
         if n == node:
@@ -93,34 +76,16 @@ def find_state_containing_node(root_sdfg: dace.SDFG, node: dace.nodes.Node) -> d
 
 
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
-    """
-    Validate that nested SDFG connector arrays match their memlet subset shapes.
-    This is to avoid memlet-squeezing issues going to the nested SDFGs
+    """Validate that NSDFG connector arrays match their memlet subset shapes.
 
-    This function checks both input and output edges of a nested SDFG to ensure
-    that the array shapes inside the nested SDFG match the shapes implied by
-    the memlet subsets on the edges connecting to the parent SDFG.
+    Checks input and output edges against four expected shape interpretations
+    (full / strided / collapsed-full / collapsed-strided). Validation-only;
+    use ``fix_nsdfg_connector_array_shapes_mismatch`` to correct mismatches.
 
-    The validation considers multiple shape interpretations:
-    1. Full shape with unit stride: (end + 1 - begin)
-    2. Shape accounting for stride: ``int_floor(end + 1 - begin, stride)``
-       (NOT sympy ``//`` — that canonicalises to ``floor(x - 1/k)``
-       which the C++ printer emits as broken integer ``/``)
-    3. Collapsed shapes (excluding size-1 dimensions)
-
-    Args:
-        parent_state: The state in the parent SDFG containing the nested SDFG node
-        nsdfg_node: The nested SDFG node whose connector shapes to validate
-
-    Raises:
-        AssertionError: If any connector array shape doesn't match any of the
-                       expected shape interpretations, with detailed error message
-
-
-    Note:
-        This is a validation-only function - it does not modify the SDFG.
-        Use fix_nsdfg_connector_array_shapes_mismatch() to automatically
-        correct detected mismatches.
+    :param parent_state: State in the parent SDFG containing the NSDFG node.
+    :param nsdfg_node: The NSDFG node whose connector shapes to validate.
+    :raises AssertionError: if a connector array shape matches none of the
+        expected interpretations.
     """
     # ===== Validate Input Edges =====
     for in_edge in parent_state.in_edges(nsdfg_node):
@@ -208,33 +173,25 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str,
                                          *,
                                          direction: str,
                                          vector_width: Optional[int] = None) -> None:
-    """Guard for ``fix_nsdfg_connector_array_shapes_mismatch``.
+    """Guard ``fix_nsdfg_connector_array_shapes_mismatch`` against corrupting rebuilds.
 
-    Four rebuild patterns are legitimate and must be allowed:
-    - **Narrowing**: rank-equal with every new dim ≤ original (cloudsc
-      case: ``(klon, klev) → (5, 9)`` slice).
-    - **Drop dims**: new rank < original (collapsed-full).
-    - **Vector-widening**: rank-equal, every expanding dim grows by
-      exactly ``vector_width - 1`` while the rest are unchanged.  This
-      is a stencil halo being widened for a W-wide vector body — e.g. a
-      5-point jacobi stencil window ``(3, 3) → (3, 10)`` for ``W=8``
-      (column halo ``3`` → ``3 + (W-1) = 10``).  The inner SDFG's
-      vectorized accesses *do* legitimately address the wider range, so
-      this is NOT corrupting.
-    - **Placeholder expansion**: original has every dim == 1 — the
-      connector was the post-P1 / post-prepare_vectorized_array
-      single-element placeholder being expanded to the actual bbox
-      (strided 1D / multi-dim diagonal paths rely on this).
+    Four rebuilds are legitimate: narrowing (every new dim <= original),
+    drop-dims (lower rank), vector-widening (a halo dim grown by exactly
+    ``vector_width - 1``), and placeholder expansion (original all-1s, or a
+    1-D ``(K,)`` widened to a strided bounding box). A rank-equal rebuild that
+    strictly enlarges a non-1 original dim is corrupting and rejected.
 
-    Reject only the genuinely-corrupting shape: rank-equal with at
-    least one new dim STRICTLY larger than a non-1 original dim. That
-    is the test-fixture case ``(3, 4) → (5, 9)`` where the inner SDFG
-    was sized for an actual range that the rebuild can't legitimately
-    grow past.
-
-    Raises:
-        ValueError: if the proposed rebuild expands a non-1 original
-            dim past its size, or grows the rank.
+    :param connector_name: Connector being rebuilt (for the error message).
+    :param original_shape: Connector array shape before the rebuild.
+    :param new_shape: Proposed (collapsed-full) shape.
+    :param expected_full: Full expected shape (for the error message).
+    :param expected_strided: Strided expected shape (for the error message).
+    :param expected_collapsed_strided: Collapsed-strided expected shape.
+    :param direction: ``"in"`` or ``"out"`` (for the error message).
+    :param vector_width: When set, enables the vector-widening / strided-bbox
+        exceptions.
+    :raises ValueError: if the rebuild expands a non-placeholder dim or grows
+        the rank.
     """
     # Drop-dims case (new has fewer dims than original) — always
     # allowed; the helper computes ``dims_to_keep`` separately.
@@ -316,29 +273,20 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str,
 def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
                                               nsdfg_node: dace.nodes.NestedSDFG,
                                               vector_width: Optional[int] = None) -> None:
-    """
-    Automatically fix shape mismatches in nested SDFG connector arrays.
+    """Detect and fix shape mismatches in nested SDFG connector arrays.
 
-    This function detects and corrects shape mismatches between connector arrays
-    inside a nested SDFG and their corresponding memlet subsets in the parent SDFG.
-    (see also `check_nsdfg_connector_array_shapes_match`)
-
-    Fix strategy:
-    1. Calculate expected shape from memlet subset (collapsed, removing size-1 dims)
-    2. If shape mismatch detected, recreate array with correct shape and strides
-    3. Update all accesses inside the nested SDFG using drop_dims() transformation
-
-    This is particularly useful after transformations that:
-    - Modify memlet subsets (e.g., vectorization, tiling)
-    - Collapse dimensions (e.g., constant folding, loop unrolling)
-    - Change access patterns (e.g., stride modifications)
+    For each connector whose array shape matches none of the expected
+    interpretations, the array is recreated at the collapsed-full shape (after
+    the expansion guard accepts the rebuild) and inner accesses are updated via
+    ``drop_dims``. See also ``check_nsdfg_connector_array_shapes_match``.
 
     :param parent_state: State in the parent SDFG containing the NSDFG node.
     :param nsdfg_node: NSDFG node whose connector shapes to fix.
     :param vector_width: When set, lets the expansion guard recognise a
         legitimate vector-widening rebuild (a halo dim grown by exactly
-        ``vector_width - 1``) instead of raising — needed for stencil
-        bodies (jacobi) on the remainder path.
+        ``vector_width - 1``) instead of raising.
+    :raises ValueError: if a rebuild would corrupt the connector shape
+        (via the expansion guard).
     """
 
     # ===== Fix Input Edge Connector Arrays =====
@@ -522,27 +470,27 @@ def prepare_vectorized_array(state: dace.SDFGState,
                              vector_storage: dace.dtypes.StorageType,
                              reuse_name_if_existing: bool = False,
                              use_name: str = None):
-    """
-    Prepares a vectorized array by creating the vector array in outer SDFG
-    and replacing the inner array with vectorized version.
+    """Allocate the outer vector array and reshape the inner array to it.
 
-    Args:
-        state: The SDFG state
-        inner_sdfg: The inner SDFG containing the array
-        inner_arr_name: Name of the array to vectorize
-        orig_dataname: Original data array name
-        orig_arr: Original outer array descriptor
-        memlet: Memlet for determining offsets
-        vector_width: Width of the vector
-        vector_storage: Storage type for the vector
-        reuse_name_if_existing: Does not find a new name
+    For multi-dimensional arrays the NSDFG length-1 dims are collapsed and the
+    surviving dim is offset to the outer subset's start.
 
-    Returns:
-        tuple: (vector_dataname, inner_offset). ``inner_offset`` is currently
-        always ``0`` because the multi-dim path rewrites inner memlets directly
-        via ``walk_memlets_of`` instead of returning an offset for the caller
-        to apply. It is kept in the return tuple for backwards-compatibility
-        with ``compute_edge_subset``, which still accepts an offset arg.
+    :param state: The SDFG state.
+    :param inner_sdfg: The inner SDFG containing the array.
+    :param inner_arr_name: Name of the array to vectorize.
+    :param orig_dataname: Original data array name.
+    :param orig_arr: Original outer array descriptor.
+    :param subset: Outer memlet subset, used to drive the dim collapse.
+    :param vector_width: Width of the vector.
+    :param vector_storage: Storage type for the vector.
+    :param reuse_name_if_existing: Reuse ``use_name`` instead of finding a new
+        name (requires ``use_name``).
+    :param use_name: Explicit vector array name to use.
+    :returns: ``(vector_dataname, inner_offset)``. ``inner_offset`` is always
+        ``0`` (the multi-dim path rewrites memlets in place); it is kept for
+        backwards-compatibility with ``compute_edge_subset``.
+    :raises NotImplementedError: if the multi-dim subset does not have exactly
+        one non-length-1 dimension.
     """
     vector_dataname_candidate = VecNameScheme.make_k(orig_dataname) if use_name is None else use_name
     if reuse_name_if_existing:
@@ -625,18 +573,14 @@ def prepare_vectorized_array(state: dace.SDFGState,
 
 
 def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_width):
-    """
-    Computes the copy subset based on stride and offset.
+    """Compute the boundary copy subset based on stride and offset.
 
-    Args:
-        edge_subset: Subset from the edge
-        subset: Subset from the memlet
-        orig_arr: Original array descriptor
-        inner_offset: Offset value
-        vector_width: Width of the vector
-
-    Returns:
-        dace.subsets.Range: The copy subset
+    :param edge_subset: Subset from the edge.
+    :param subset: Subset from the memlet.
+    :param orig_arr: Original array descriptor.
+    :param inner_offset: Offset value.
+    :param vector_width: Width of the vector.
+    :returns: The copy subset.
     """
     # Get stride-1 begin value
     if len(subset) == len(orig_arr.strides):
@@ -674,26 +618,26 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
                                 *,
                                 direction: str,
                                 multi_dim_param_dims: tuple = ()) -> None:
-    """Wire a strided boundary edge into the NSDFG so the strided load /
-    store happens INSIDE the NSDFG body.
+    """Wire a strided boundary edge so the strided load / store runs inside the NSDFG.
 
-    Direction "in": outer edge passes the full bbox to the NSDFG connector
-    (reshaped to (bbox_size,)). Inside the NSDFG, a new prep state runs
-    ``strided_load<T>`` from the connector array into a fresh W-wide
-    transient ``<inner_conn>_vec``. Body memlets that referenced the
-    connector are rewritten to reference ``<inner_conn>_vec``.
+    Direction ``"in"``: the outer edge passes the full bounding box to the
+    connector; a prep state runs ``strided_load<T>`` into a W-wide transient
+    and body memlets are rewritten to it. Direction ``"out"`` is symmetric
+    with a ``strided_store<T>`` finish state.
 
-    Direction "out": symmetric — the body writes to ``<inner_conn>_vec``;
-    a finish state runs ``strided_store<T>`` from the transient into the
-    bbox-shaped connector; the outer edge carries the bbox subset.
-
-    ``multi_dim_param_dims`` (multi-dim diagonal / linear-combo case):
-    when non-empty, the bbox is expanded across ALL listed dims (each
-    set to ``vector_width``) instead of only the single stride-1 dim.
-    The ``stride`` argument is interpreted as a LINEARISED inter-lane
-    stride (e.g. ``N + 1`` for ``A[i, i]``) and the same
-    ``strided_load`` / ``strided_store`` intrinsic walks the W elements
-    through linear memory.
+    :param state: Parent SDFG state.
+    :param nsdfg_node: The NSDFG node.
+    :param inner_sdfg: Inner SDFG of the NSDFG.
+    :param edge: The boundary edge to rewire.
+    :param inner_conn: Connector name inside the NSDFG.
+    :param orig_data: Outer data name.
+    :param orig_arr: Outer array descriptor.
+    :param vector_width: Lane count.
+    :param stride: Inter-lane stride (linearised when ``multi_dim_param_dims``).
+    :param direction: ``"in"`` or ``"out"``.
+    :param multi_dim_param_dims: When non-empty (diagonal / linear-combo
+        case), the bbox is expanded across all listed dims instead of only
+        the stride-1 dim.
     """
     assert direction in ("in", "out")
     bbox_shape = list(orig_arr.shape)
@@ -835,23 +779,24 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
                                               inner_sdfg: dace.SDFG, edge, inner_conn: str, orig_data: str, orig_arr,
                                               vector_width: int, *, elements_per_iter: int, stride: int,
                                               direction: str) -> None:
-    """Multi-element-per-iteration strided / contiguous bbox case.
+    """Wire a K-elements-per-iteration strided boundary into the NSDFG.
 
-    Generalised K-elements-per-iter pattern: each iteration accesses
-    ``K`` consecutive elements per lane; consecutive lanes are
-    ``stride`` apart. Total bbox spans ``(W-1)*stride + K`` indices.
+    Each iteration accesses ``K`` consecutive elements per lane; consecutive
+    lanes are ``stride`` apart, so the bbox spans ``(W-1)*stride + K``. The
+    pattern is split into K independent stride-``stride`` loads / stores into
+    K W-wide phase transients.
 
-    - ``stride == K``: contiguous bbox (TSVC s127 — ``a[2*i], a[2*i+1]``).
-    - ``stride > K``: multi-elem scatter/gather with gaps
-      (e.g. ``a[4*i], a[4*i+1]`` writes 2 contiguous elements every 4).
-
-    The body's inner connector is shape ``(K, ...)`` with K separate
-    tasklet writes / reads (one per intra-iter position). Vectorize
-    as K independent stride-``stride`` loads / stores into K W-wide
-    transients, one per phase ``p in [0, K)``:
-
-    - Direction "in":   ``strided_load<T>(_in + p, _out, W, stride)``
-    - Direction "out":  ``strided_store<T>(_in, _out + p, W, stride)``
+    :param state: Parent SDFG state.
+    :param nsdfg_node: The NSDFG node.
+    :param inner_sdfg: Inner SDFG of the NSDFG.
+    :param edge: The boundary edge to rewire.
+    :param inner_conn: Connector name inside the NSDFG.
+    :param orig_data: Outer data name.
+    :param orig_arr: Outer array descriptor.
+    :param vector_width: Lane count.
+    :param elements_per_iter: K, elements accessed per iteration (>= 2).
+    :param stride: Inter-lane stride (>= K).
+    :param direction: ``"in"`` or ``"out"``.
     """
     assert direction in ("in", "out")
     assert elements_per_iter >= 2, f"multi-element handler requires K >= 2, got {elements_per_iter}"
@@ -989,18 +934,21 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
 
 def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
                    vector_width: int, vector_storage: dace.dtypes.StorageType, *, direction: str) -> Set[str]:
-    """
-    Rewire one direction of NSDFG-boundary edges to flow through a freshly
-    allocated vector access node. Single implementation for both
-    ``process_in_edges`` and ``process_out_edges``.
+    """Rewire one direction of NSDFG-boundary edges through a fresh vector access node.
 
-    direction="in": for each movable arr, rewire ``src --[orig]--> nsdfg`` into
-        ``src --[orig, copy_subset]--> vec_an --[vec_from_array]--> nsdfg``.
-    direction="out": for each movable arr, rewire ``nsdfg --[orig]--> dst`` into
-        ``nsdfg --[vec_from_array]--> vec_an --[orig, copy_subset]--> dst``,
-        and also detect inout connectors (already created on the in-side by
-        a prior call with ``direction="in"``) so the existing vector name
-        is reused instead of clashing.
+    Backs ``process_in_edges`` / ``process_out_edges``. Strided edges are
+    instead routed inside the NSDFG via the strided handlers; ``"out"`` reuses
+    an inout connector's vector name minted by a prior ``"in"`` call.
+
+    :param state: Parent SDFG state.
+    :param nsdfg_node: The NSDFG node.
+    :param movable_arrays: Set of ``(data_name, subset)`` pairs to rewire.
+    :param vector_width: Lane count.
+    :param vector_storage: Storage type for the vector arrays.
+    :param direction: ``"in"`` or ``"out"``.
+    :returns: The set of vector data names allocated.
+    :raises NotImplementedError: if a strided outer subset's bbox volume does
+        not match ``(W-1)*S + K`` for any valid K.
     """
     assert direction in ("in", "out"), direction
     assert isinstance(nsdfg_node, dace.nodes.NestedSDFG)
@@ -1214,13 +1162,29 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
 
 def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
                      vector_width: int, vector_storage: dace.dtypes.StorageType) -> Set[str]:
-    """Rewire ``src -> nsdfg`` boundary edges through a freshly allocated vector access."""
+    """Rewire ``src -> nsdfg`` boundary edges through a fresh vector access.
+
+    :param state: Parent SDFG state.
+    :param nsdfg_node: The NSDFG node.
+    :param movable_arrays: Set of ``(data_name, subset)`` pairs to rewire.
+    :param vector_width: Lane count.
+    :param vector_storage: Storage type for the vector arrays.
+    :returns: The set of vector data names allocated.
+    """
     return _process_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage, direction="in")
 
 
 def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
                       vector_width: int, vector_storage: dace.dtypes.StorageType) -> Set[str]:
-    """Rewire ``nsdfg -> dst`` boundary edges through a freshly allocated vector access."""
+    """Rewire ``nsdfg -> dst`` boundary edges through a fresh vector access.
+
+    :param state: Parent SDFG state.
+    :param nsdfg_node: The NSDFG node.
+    :param movable_arrays: Set of ``(data_name, subset)`` pairs to rewire.
+    :param vector_width: Lane count.
+    :param vector_storage: Storage type for the vector arrays.
+    :returns: The set of vector data names allocated.
+    """
     return _process_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage, direction="out")
 
 
@@ -1231,48 +1195,18 @@ def add_copies_before_and_after_nsdfg(
     vector_storage: dace.dtypes.StorageType,
     skip: Set[str],
 ) -> Set[str]:
-    """
-    Add vector copy operations before and after a nested SDFG node.
-    If the copy can't be inserted before, then it is done inside as a fallback,
+    """Add vector copy operations before and after a nested SDFG node.
 
-    This function analyzes data access patterns in a nested SDFG and determines which
-    arrays can have their copies moved outside the nested SDFG for optimization. It
-    handles two types of arrays:
+    Movable arrays (single uniform, vectorizable access pattern) get a vector
+    copy at the NSDFG boundary; unmovable arrays (multiple subsets or unbound
+    symbols) get copy-in / copy-out tasklets inside the NSDFG instead.
 
-    Skip set will result in the dataname to be not copied no matter what, it should be
-    used for unstructured loads.
-
-    1. Movable arrays: Arrays with uniform access patterns (structured and vectorizable)
-       can be copied before/after the nested SDFG execution.
-
-    2. Unmovable arrays: Arrays with unstructured access patterns or symbol dependencies
-       that require copies to remain inside the nested SDFG.
-
-    ----------------
-    For movable arrays:
-        MapEntry -(Array[0:N])-> NSDFG
-        becomes:
-        MapEntry -(Array[0:N])-> VecArray -(VecArray[0:vector_width])-> NSDFG
-
-        or:
-
-        MapEntry -(Array[i:i+vector_width])-> NSDFG
-        becomes:
-        MapEntry -(Array[i:i+vector_width])-> VecArray -(VecArray[0:vector_width])-> NSDFG
-
-    For unmovable arrays:
-        Assignment tasklets are inserted at each read/write point inside the nested SDFG.
-
-    Args:
-        state: The SDFG state containing the nested SDFG node
-        nsdfg_node: The nested SDFG node to process
-        vector_width: The width of vector operations
-        vector_storage: Storage type for vector arrays (e.g., Register, FPGA_Local)
-
-    Side effects:
-        - Modifies the nested SDFG by adding assignment tasklets for unmovable arrays
-        - Saves intermediate SDFG to "b.sdfg" for debugging
-        - Calls process_in_edges and process_out_edges (which must be defined elsewhere)
+    :param state: The SDFG state containing the nested SDFG node.
+    :param nsdfg_node: The nested SDFG node to process.
+    :param vector_width: The width of vector operations.
+    :param vector_storage: Storage type for vector arrays.
+    :param skip: Data names never copied (used for unstructured loads).
+    :returns: The set of vector data names inserted at the boundary.
     """
     # ``collect_all_memlets_to_dataname`` lives in ``utils.queries`` (S1b);
     # imported lazily to keep this module's top-level import surface narrow.
@@ -1444,8 +1378,12 @@ def add_copies_before_and_after_nsdfg(
     def _emit_unmovable_copy(target_state, unmovable_name, vec_name, subset, direction):
         """Splice a ``vector_copy`` tasklet inside ``target_state``.
 
-        direction="in":  orig_access --[orig, subset]--> tasklet --[vec_from_array]--> vec_access
-        direction="out": vec_access --[vec_from_array]--> tasklet --[orig, subset]--> orig_access
+        :param target_state: State to splice into.
+        :param unmovable_name: Original (unmovable) data name.
+        :param vec_name: Vector buffer name.
+        :param subset: Subset of the original access.
+        :param direction: ``"in"`` (orig -> tasklet -> vec) or ``"out"``
+            (vec -> tasklet -> orig).
         """
         assert direction in ("in", "out"), direction
         orig_access = target_state.add_access(unmovable_name)
@@ -1574,6 +1512,20 @@ def add_copies_before_and_after_nsdfg(
 
 def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG, free_syms: Set[str],
                        name: str) -> dace.SDFGState:
+    """Find / create the first NSDFG state where every symbol in ``free_syms`` is in scope.
+
+    Walks the (single-successor) NSDFG forward from the start block,
+    accumulating interstate-edge assignments, and inserts a new copy-in
+    state before the first state that defines all required symbols. A state
+    created by a prior call is reused.
+
+    :param inner_sdfg: The inner SDFG to walk.
+    :param nsdfg_node: The NSDFG node (source of the initial symbol mapping).
+    :param free_syms: Symbol names that must be in scope.
+    :param name: Array name being copied (used in the state label).
+    :returns: The copy-in state.
+    :raises RuntimeError: if no state defines every required symbol.
+    """
     assert all({isinstance(n, dace.SDFGState) for n in inner_sdfg.nodes()})
 
     syms_available = set(nsdfg_node.symbol_mapping.keys())
@@ -1606,6 +1558,11 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
 
 
 def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
+    """Clear connector and tasklet dtypes on the NSDFG and recurse into nested ones.
+
+    :param inner_sdfg: Inner SDFG whose tasklet / nested connectors are reset.
+    :param nsdfg: NSDFG node whose in / out connectors are reset.
+    """
     # TODO(upstream-correctness): this helper erases all connector dtypes
     # because earlier passes in the vectorization pipeline leave wrong
     # types behind. The proper fix is to make those upstream passes set
@@ -1630,6 +1587,16 @@ def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
 
 
 def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_entry: dace.nodes.MapEntry):
+    """Move an access node from below a one-param vector map to above it.
+
+    Rewrites ``MapEntry -> AccessNode -> dst`` into
+    ``AccessNode -> MapEntry -> dst`` so overlapping accesses merge more
+    easily.
+
+    :param state: The SDFG state to modify.
+    :param node: The access node to lift.
+    :param map_entry: The single-parameter vector map (length 1) it sits under.
+    """
     # We have MapEntry -> AccessNode -> DstNode
     # We move it up to be: AccessNode -> MapEntry -> DstNode
     # If access node's size is multiplied with the loop's dimensions

@@ -1,28 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``GenerateIterationMask``, P3 vectorization-prep. Attaches a per-iteration
-boolean lane mask ``_iter_mask`` to the body of every innermost map flagged
-for masking. The mask reads ``mask[l] = (iter_var + l <= ub)`` so the
-vectorizer (Phase C.2) can use it as the base predicate for every emitted
-op and combine it with any ``cond_mask`` the branch-normalization passes
-produced.
+"""Attach a per-iteration boolean lane mask to innermost map bodies.
 
-The semantic name ``_iter_mask`` is load-bearing, the downstream emitter
-recognises it and switches to the masked intrinsic variants. ``dace.data.add_mask``
-(M1) builds the transient; the actual mask-fill is a small CPP tasklet
-in a fresh start state prepended to the body NSDFG.
+A transient ``_iter_mask`` with ``mask[l] = (lb + l <= ub)`` is added to
+the body NestedSDFG of every targeted innermost map; the downstream
+emitter recognises the name and switches to masked intrinsic variants.
+The mask is filled by a CPP tasklet in a prepended start state.
 
-Two modes:
-
-- ``"step_w_only"`` (default), only maps with ``step == vector_width``
-  get the mask. Pairs with P2's masked-remainder shape.
-- ``"all_innermost"``, every innermost map gets the mask. Used by the
-  ALWAYS_ITER_MASK regime where the whole loop is treated as the
-  remainder.
-
-Precondition: P1 has been run so every innermost map's body is a single
-NestedSDFG. The mask is added to that nested SDFG; bare-tasklet bodies
-are skipped with a clear NotImplementedError.
+Precondition: every innermost map body is already a single NestedSDFG
+(produced by ``NestInnermostMapBodyIntoNSDFG``); bare-tasklet bodies are
+rejected.
 """
 from typing import Optional
 
@@ -53,17 +39,34 @@ class GenerateIterationMask(ppl.Pass):
                                "mode names match the ``VectorizeCPU.remainder_strategy`` knob.")
 
     def __init__(self, vector_width: int = 8, mode: str = "step_w_only"):
+        """Initialize the pass.
+
+        :param vector_width: Number of lanes in the mask.
+        :param mode: ``step_w_only`` masks maps with step==``vector_width``;
+            ``all_innermost`` masks every innermost map; ``masked`` masks
+            maps tagged ``__masked_rem``.
+        """
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
 
     def modifies(self) -> ppl.Modifies:
+        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.Descriptors | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Return whether the pass should run again after modifications."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        """Attach the iteration mask to every targeted innermost map body.
+
+        :param sdfg: The SDFG to transform in place.
+        :param _: Unused pipeline results.
+        :returns: Number of masks attached, or ``None`` if none.
+        :raises ValueError: If ``mode`` is not a recognised mode.
+        :raises NotImplementedError: If a targeted map body is not a single NestedSDFG.
+        """
         if self.mode not in ("step_w_only", "all_innermost", "masked"):
             raise ValueError(f"GenerateIterationMask.mode must be 'step_w_only', 'all_innermost', or "
                              f"'masked', got {self.mode!r}")
@@ -90,6 +93,15 @@ class GenerateIterationMask(ppl.Pass):
         return applied or None
 
     def _attach_mask(self, nsdfg_node: dace.nodes.NestedSDFG, iter_var: str, lb, ub, W: int) -> bool:
+        """Add and fill the ``_iter_mask`` transient inside one body NestedSDFG.
+
+        :param nsdfg_node: The NestedSDFG node whose inner SDFG receives the mask.
+        :param iter_var: The map's innermost loop parameter name.
+        :param lb: Symbolic lower bound of the innermost range.
+        :param ub: Symbolic upper bound of the innermost range.
+        :param W: Number of lanes in the mask.
+        :returns: ``True`` if a mask was added, ``False`` if one already existed.
+        """
         inner: dace.SDFG = nsdfg_node.sdfg
         # Idempotency, skip if a mask is already attached.
         if any(name.startswith("_iter_mask") for name in inner.arrays):

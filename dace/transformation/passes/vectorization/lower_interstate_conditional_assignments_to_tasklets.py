@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Demote free symbols used in conditional-assignment tasklets to scalars."""
 from typing import Any, Dict
 import sympy
 import dace
@@ -11,19 +12,15 @@ from dace.transformation.interstate.state_fusion_with_happens_before import Stat
 from dace.transformation.passes import FuseStates
 from dace import dtypes
 
-# ------------------------------------------------------------
-# CONFIGURATION
-# ------------------------------------------------------------
-
-# ------------------------------------------------------------
-# HELPER FUNCTIONS
-# ------------------------------------------------------------
-
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
-    # This pass is testes as part of the vectorization pipeline
+    """Demote free symbols of conditional-assignment tasklets to fp64 scalars.
+
+    Tested as part of the vectorization pipeline.
+    """
+
     CATEGORY: str = 'Vectorization'
 
     conditional_assignment_tasklet_prefix = properties.Property(dtype=str,
@@ -33,15 +30,24 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     apply_once = properties.Property(dtype=bool, default=False)
 
     def modifies(self) -> ppl.Modifies:
+        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Return whether the pass should run again after modifications."""
         return False
 
     def depends_on(self):
+        """Return the set of passes this pass depends on."""
         return {}
 
-    def _apply(self, cfg: ControlFlowRegion):
+    def _apply(self, cfg: ControlFlowRegion) -> bool:
+        """Recursively demote conditional-assignment free symbols within a control-flow region.
+
+        :param cfg: The control-flow region (or SDFG) to process.
+        :returns: ``True`` if a demotion was applied and ``apply_once`` requests early exit.
+        :raises Exception: If an unsupported control-flow node type is encountered.
+        """
         if self._applied > 0 and self.apply_once:
             return False
 
@@ -131,6 +137,10 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return False
 
     def _apply_extended_state_fusion(self, sdfg: SDFG):
+        """Fuse consecutive states recursively, including nested SDFGs.
+
+        :param sdfg: The SDFG whose states are fused in place.
+        """
         FuseStates().apply_pass(sdfg, {})
         applied = True
         while applied:
@@ -158,6 +168,10 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     self._apply_extended_state_fusion(node.sdfg)
 
     def _setzero_true_for_all_transient_scalars(self, sdfg: SDFG):
+        """Mark every scope-lifetime transient scalar as zero-initialized.
+
+        :param sdfg: The SDFG whose transient scalars are updated in place.
+        """
         for state in sdfg.all_states():
             for node in state.data_nodes():
                 if (isinstance(state.sdfg.arrays[node.data], data.Scalar)
@@ -169,6 +183,12 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     self._setzero_true_for_all_transient_scalars(node.sdfg)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> bool:
+        """Demote conditional-assignment free symbols to scalars across the SDFG.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results from previously run passes (unused).
+        :returns: ``True`` if any symbol was demoted.
+        """
         self._applied = 0
         #self._setzero_true_for_all_transient_scalars(sdfg)
         has_applied = self._apply(sdfg)

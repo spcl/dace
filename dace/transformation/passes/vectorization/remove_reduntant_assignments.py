@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Pass that removes redundant copy-assignment tasklets between access nodes."""
 import copy
 import dace
 from typing import Any, Dict, Set, Optional, Tuple
@@ -10,21 +11,33 @@ from dace.transformation.passes.eliminate_branches import EliminateBranches
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveRedundantAssignments(ppl.Pass):
-    # This pass is testes as part of the vectorization pipeline
+    """Remove pass-through copy-assignment tasklets between scalar access nodes."""
+
+    # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
+        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Report whether this pass should run again after other passes."""
         return False
 
     def depends_on(self):
+        """Report the passes this pass depends on."""
         return {EliminateBranches}
 
     def _detect_access_node_tasklet_access_node(
         self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet
     ) -> Optional[Tuple[dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.AccessNode]]:
+        """Match an access-node -> tasklet -> access-node chain.
+
+        :param state: State containing ``tasklet``.
+        :param tasklet: Candidate assignment tasklet.
+        :returns: The ``(in_access, tasklet, out_access)`` triple, or ``None``
+            if the pattern does not match.
+        """
         in_edges = state.in_edges(tasklet)
         out_edges = state.out_edges(tasklet)
 
@@ -44,6 +57,13 @@ class RemoveRedundantAssignments(ppl.Pass):
     def _detect_access_node_tasklet_map_exit(
             self, state: dace.SDFGState, tasklet: dace.nodes.Tasklet
     ) -> Optional[Tuple[dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.MapExit]]:
+        """Match a scalar access-node -> tasklet -> map-exit chain.
+
+        :param state: State containing ``tasklet``.
+        :param tasklet: Candidate assignment tasklet.
+        :returns: The ``(in_access, tasklet, map_exit)`` triple, or ``None`` if
+            the pattern does not match or the input is not a scalar.
+        """
         in_edges = state.in_edges(tasklet)
         out_edges = state.out_edges(tasklet)
 
@@ -64,6 +84,11 @@ class RemoveRedundantAssignments(ppl.Pass):
         return in_edge.src, tasklet, out_edge.dst
 
     def _is_assignment(self, tasklet: dace.nodes.Tasklet):
+        """Report whether ``tasklet`` is a single-input, single-output copy.
+
+        :param tasklet: Tasklet to inspect.
+        :returns: ``True`` if the tasklet body is ``out = in``.
+        """
         inc = tasklet.in_connectors
         outc = tasklet.out_connectors
         if len(inc) != 1 or len(outc) != 1:
@@ -76,6 +101,11 @@ class RemoveRedundantAssignments(ppl.Pass):
         return False
 
     def _apply(self, sdfg: SDFG, potential_scalars: Set[str]) -> None:
+        """Remove redundant assignments in ``sdfg`` and recurse into nested SDFGs.
+
+        :param sdfg: SDFG to transform in place.
+        :param potential_scalars: Array names eligible for removal.
+        """
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
@@ -106,6 +136,12 @@ class RemoveRedundantAssignments(ppl.Pass):
                     self._apply(node.sdfg, potential_scalars)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Run the pass over ``sdfg``.
+
+        :param sdfg: SDFG to transform in place.
+        :param pipeline_results: Results of previously run pipeline passes;
+            supplies the eligible scalar set when ``EliminateBranches`` ran.
+        """
         # ``EliminateBranches`` populates ``potential_scalars`` (the symbols it
         # collapsed into FP factors). When the pipeline runs the M3 branch
         # normalization path instead, that pass is absent and the input is

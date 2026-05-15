@@ -1,25 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``SameWriteSetIfElseToMergeCFG`` — rewrites a same-write-set ``if/else`` into
-three sequential CFGs (``compute_then``, ``compute_else``, ``apply_merge``),
-where ``apply_merge`` emits one ``merge(cond, _then_<arr>, _else_<arr>)``
-tasklet per shared write target.
+"""Rewrite a same-write-set ``if/else`` into compute-then/compute-else/merge CFGs.
 
-After this pass runs, the original ``ConditionalBlock`` is gone for any pair
-of arms that write to *identical* element subsets; the two arms become
-sequentially-executed CFGs that produce temporaries, and a third state folds
-those temporaries via the symbolic ``merge`` (see
-:mod:`dace.runtime.include.dace.merge`) which the vectorizer later lowers
-to a SIMD blend.
-
-Restrictions in this slice (raise :class:`NotImplementedError` otherwise):
-- the ``ConditionalBlock`` has exactly two branches, the first with a
-  condition and the second with ``None`` (the ``else``);
-- each branch is a :class:`ControlFlowRegion` containing exactly one state;
-- writes are element subsets (``num_elements_exact() == 1``) with the
-  *same* subset in both arms for every shared write target;
-- arm bodies contain only ``Tasklet`` and ``AccessNode`` nodes (no
-  nested SDFGs, no maps inside the arm; tile-level prep happens elsewhere).
+The two arms become sequential states producing ``_then_<arr>`` /
+``_else_<arr>`` temporaries; a final state folds them with the symbolic
+``merge`` (see :mod:`dace.runtime.include.dace.merge`) which the
+vectorizer lowers to a SIMD blend. Only handles a two-branch
+``if/else`` with single-state arms whose shared writes are matching
+element subsets and whose bodies are tasklets/access nodes; anything
+else raises :class:`NotImplementedError`.
 """
 import re
 from typing import Optional, Tuple
@@ -36,18 +24,21 @@ from dace.transformation import pass_pipeline as ppl
 
 
 def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge, skip_cb=None) -> bool:
-    """True iff ``sym_name`` is referenced anywhere in ``sdfg`` other than
-    as the lhs of its own assignment on ``defining_edge``. Used to decide
-    whether the lift can safely delete the assignment + remove the symbol.
+    """Whether ``sym_name`` is consumed outside its own defining edge.
 
-    ``skip_cb`` is the ``ConditionalBlock`` currently being rewritten, its
-    branch conditions are the consumer we are already rewiring away, so
-    they do not count as external.
+    Decides if the lift can delete the assignment and drop the symbol.
+    Walks interstate assignment RHSs/conditions, ConditionalBlock branch
+    conditions, LoopRegion init/cond/update, Tasklet code, and parent
+    NestedSDFG ``symbol_mapping``.
 
-    Walks five places that can reference a symbol by name: interstate-edge
-    assignment RHSs and conditions, ConditionalBlock branch conditions,
-    LoopRegion init/condition/update expressions, Tasklet code bodies, and
-    parent NestedSDFG symbol_mapping values.
+    :param sdfg: SDFG to scan.
+    :param sym_name: symbol being lifted.
+    :param defining_edge: the interstate edge that assigns ``sym_name``
+        (its own lhs use does not count).
+    :param skip_cb: the ``ConditionalBlock`` being rewritten; its branch
+        conditions are the consumer being rewired away, so they do not
+        count as external.
+    :returns: ``True`` if an external consumer remains.
     """
     from dace.sdfg.state import LoopRegion as _LoopRegion
     from dace.sdfg.state import ConditionalBlock as _ConditionalBlock
@@ -114,12 +105,19 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
+        """CFG, states and access nodes."""
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Never (single fixed-point sweep over all blocks)."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        """Rewrite every matching same-write-set block.
+
+        :param sdfg: SDFG to transform in place.
+        :returns: number of blocks rewritten, or ``None`` if none.
+        """
         rewritten = 0
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
@@ -132,6 +130,12 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return rewritten or None
 
     def _matches(self, cb: ConditionalBlock) -> bool:
+        """Whether ``cb`` is a rewritable two-arm same-write-set block.
+
+        :param cb: candidate conditional block.
+        :returns: ``True`` if it has an ``if``+``else`` with single-state
+            tasklet/access-node arms sharing at least one element write.
+        """
         if len(cb.branches) != 2:
             return False
         (cond0, body0), (cond1, body1) = cb.branches
@@ -159,12 +163,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return bool(shared)
 
     def _collect_write_subsets(self, state: dace.SDFGState):
-        """Return ``{arr_name: subset}`` for every element-wise write.
+        """Element-wise writes of a state.
 
-        Raises ``NotImplementedError`` if any write is not element-wise —
-        the merge-CFG rewrite cannot soundly produce per-element merge
-        tasklets in that case. ``_shared_writes`` swallows this raise
-        and returns ``{}``.
+        :param state: arm state to inspect.
+        :returns: ``{arr_name: subset}`` for every element-wise write.
+        :raises NotImplementedError: if any write is not element-wise
+            (the merge rewrite cannot produce per-element tasklets then;
+            ``_shared_writes`` swallows this and returns ``{}``).
         """
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         out = collect_element_write_subsets(state)
@@ -174,9 +179,14 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return out
 
     def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict:
-        """Return ``{arr_name: subset}`` for arrays written in both arms with
-        identical subsets. Returns an empty dict if either arm has any
-        non-element-wise write (caller treats that as a non-match)."""
+        """Shared element writes of both arms.
+
+        :param s0: the ``if`` arm state.
+        :param s1: the ``else`` arm state.
+        :returns: ``{arr_name: subset}`` for arrays written in both arms
+            with identical subsets; empty if either arm has a
+            non-element-wise write (treated by the caller as a non-match).
+        """
         try:
             w0 = self._collect_write_subsets(s0)
             w1 = self._collect_write_subsets(s1)
@@ -189,6 +199,15 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         return shared
 
     def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock):
+        """Replace ``cb`` with compute-then / compute-else / apply-merge states.
+
+        Clones each arm (redirecting escaping writes to ``_then_<arr>`` /
+        ``_else_<arr>`` transients) and emits one ``merge`` tasklet per
+        escaping target; arm-local writes stay inline.
+
+        :param sdfg: SDFG used for name resolution.
+        :param cb: the conditional block to rewrite (removed in place).
+        """
         parent = cb.parent_graph
         (cond_block, then_body), (_, else_body) = cb.branches
         then_state: dace.SDFGState = then_body.nodes()[0]
@@ -213,6 +232,13 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         else_writes = self._collect_write_subsets(else_state)
 
         def _alloc(prefix: str, arr_name: str) -> str:
+            """Add a register transient ``<prefix>_<arr_name>`` mirroring
+            ``arr_name``'s shape/dtype.
+
+            :param prefix: ``"_then"`` or ``"_else"``.
+            :param arr_name: array whose shape/dtype to mirror.
+            :returns: the new (possibly renamed) transient's name.
+            """
             base = local_sdfg.arrays[arr_name]
             name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
                                            shape=base.shape,

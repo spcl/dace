@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Explicit SIMD vectorization pass: tiles innermost maps to the vector width,
+rewrites tasklets/memlets to vector form, and vectorizes nested SDFG bodies."""
 import dace
 import copy
 import warnings
@@ -26,6 +28,8 @@ import dace.sdfg.tasklet_utils as tutil
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class Vectorize(ppl.Pass):
+    """Vectorizes innermost maps to a fixed vector width, including nested SDFG bodies."""
+
     templates = properties.DictProperty(
         key_type=str,
         value_type=str,
@@ -57,6 +61,22 @@ class Vectorize(ppl.Pass):
                  fail_on_unvectorizable: bool,
                  eliminate_trivial_vector_map: bool,
                  user_skip_nsdfg_arrays: Optional[Set[str]] = None):
+        """Configure the vectorizer.
+
+        :param templates: op-name to C++ vector-template string mapping.
+        :param vector_width: number of lanes per vector.
+        :param vector_input_storage: storage type for vector inputs.
+        :param vector_output_storage: storage type for vector outputs.
+        :param vector_op_numeric_type: numeric type used for vector ops.
+        :param global_code: C++ global code to append to the SDFG.
+        :param global_code_location: location key for the global code.
+        :param try_to_demote_symbols_in_nsdfgs: attempt to demote NSDFG symbols.
+        :param apply_on_maps: optional whitelist of map entries to vectorize.
+        :param insert_copies: insert copy-in/copy-out around vectorized maps.
+        :param fail_on_unvectorizable: raise instead of skipping unvectorizable maps.
+        :param eliminate_trivial_vector_map: remove trivial single-lane vector maps.
+        :param user_skip_nsdfg_arrays: array names to skip during NSDFG copying.
+        """
         super().__init__()
 
         self.templates = templates
@@ -75,18 +95,27 @@ class Vectorize(ppl.Pass):
         self.user_skip_nsdfg_arrays = set(user_skip_nsdfg_arrays) if user_skip_nsdfg_arrays else set()
 
     def modifies(self) -> ppl.Modifies:
+        """This pass may modify everything."""
         return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies):
+        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
+        """Preprocessing passes that must run before vectorization."""
         return {
             PowerOperatorExpansion, SplitTasklets, RemoveFPTypeCasts, RemoveIntTypeCasts,
             CleanDataToScalarSliceToTaskletPattern
         }
 
     def _vectorize_map(self, state: SDFGState, inner_map_entry: dace.nodes.MapEntry, vectorization_number: int):
+        """Tile, rewrite, and vectorize a single innermost map (and its NSDFG body if any).
+
+        :param state: the state containing the map.
+        :param inner_map_entry: the innermost map entry to vectorize.
+        :param vectorization_number: unique index used to name per-map vector arrays.
+        """
         # Get the innermost maps
         assert isinstance(inner_map_entry, dace.nodes.MapEntry)
         assert inner_map_entry in state.nodes()
@@ -224,6 +253,14 @@ class Vectorize(ppl.Pass):
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
+        """Return whether an NSDFG connector is backed by a Scalar in the parent.
+
+        :param state: the state containing the nested SDFG.
+        :param nsdfg: the nested SDFG node.
+        :param scalar_name: the connector name to inspect.
+        :returns: True if the parent-side data is a Scalar.
+        :raises Exception: if the connector is not found on the NSDFG.
+        """
         for ie in state.in_edges(nsdfg):
             if ie.dst_conn == scalar_name:
                 dataname = ie.data.data
@@ -239,29 +276,20 @@ class Vectorize(ppl.Pass):
 
     def _setup_strided_nsdfg_edges_inline(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG,
                                           map_param: str):
-        """For each NSDFG boundary edge whose lane-fanout produces a
-        non-contiguous access pattern, call ``_setup_strided_inside_nsdfg``
-        so the strided load/store happens inside the NSDFG body.
+        """Emit a strided load/store inside the NSDFG body for non-contiguous boundary edges.
 
-        Two patterns trigger the rewrite:
+        Handles both single-dim strided accesses (one stride-1 dim with a
+        wider-than-W bounding box and the map param in its begin) and
+        multi-dim strided accesses (e.g. a diagonal ``A[i, i]``), linearising
+        the inter-lane stride through array strides. Contiguous full-slice
+        edges are left for the standard reshape path.
 
-        - **1D strided**: a single stride-1 dim with bbox volume > W and
-          ``map_param`` in the begin. Stride is ``(bbox - 1) / (W - 1)``.
-          Catches TSVC s127 / s1111-shape outer-scatter patterns.
-
-        - **Multi-dim strided** (e.g. diagonal ``A[i, i]``): two or more
-          dims of the outer subset have ``map_param`` in their begin and
-          a W-wide bbox (set by ``_extend_memlets``' multi-dim branch).
-          The linearised stride is the sum of ``arr.strides[d] *
-          coeff_of_map_param_in_dim_d`` across the param-dims.  Catches
-          ``A[i, i]``, ``A[2*i, i]``, ``A[i, 2*i]`` under masked /
-          scalar remainder + ``lower_to_intrinsics=True``.
-
-        Runs independently of ``insert_copies`` — the strided body
-        rewrite is required for correctness when an outer scatter /
-        gather pattern is wrapped in an NSDFG. Contiguous full-slice
-        edges (begin without the map param) pass through to the
-        standard reshape path."""
+        :param state: the state containing the nested SDFG.
+        :param nsdfg_node: the nested SDFG node.
+        :param map_param: the vectorized map parameter name.
+        :raises NotImplementedError: if a strided edge does not match a
+            supported stride/element pattern.
+        """
         import sympy as _sp
         inner_sdfg = nsdfg_node.sdfg
         for direction in ("in", "out"):
@@ -450,6 +478,18 @@ class Vectorize(ppl.Pass):
                                                 multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
+        """Vectorize the body of a nested SDFG sitting inside a vectorized map.
+
+        Reconciles connector shapes, reshapes transients to the vector width,
+        packs indirect accesses, duplicates interstate symbols per lane, and
+        rewrites memlets and tasklets to vector form.
+
+        :param state: the state containing the nested SDFG.
+        :param nsdfg: the nested SDFG node.
+        :param vector_map_param: the vectorized map parameter name.
+        :returns: the set of array names handled as unstructured (already packed).
+        :raises Exception: if a scalar source and sink both remain after reduction lift.
+        """
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         # Imagine the case where
         # On vectorization of interstate edges (Step 3):
@@ -711,6 +751,14 @@ class Vectorize(ppl.Pass):
 
     def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG, non_vectorizable_arrays: Set[str],
                                        vector_map_param: str):
+        """Fan out writes to non-vectorizable array sinks into one access per lane.
+
+        :param inner_sdfg: the nested SDFG being vectorized.
+        :param non_vectorizable_arrays: array names that must be packed/duplicated.
+        :param vector_map_param: the vectorized map parameter name.
+        :returns: the modified nodes and modified edges as a pair of sets.
+        :raises Exception: if a write to a non-transient scalar sink remains.
+        """
         modified_edges = set()
         modified_nodes = set()
         for state in inner_sdfg.all_states():
@@ -737,6 +785,14 @@ class Vectorize(ppl.Pass):
     def _generate_loads_to_packed_storage(
             self, sdfg: dace.SDFG, array_accessed_to_be_packed: Set[str], candidate_arrays: Set[str],
             vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]], Set[str]]:
+        """Build per-lane gather loads into packed transient storage for indirect arrays.
+
+        :param sdfg: the nested SDFG being vectorized.
+        :param array_accessed_to_be_packed: array names needing packed storage.
+        :param candidate_arrays: arrays that may be promoted to vector width.
+        :param vector_map_param: the vectorized map parameter name.
+        :returns: modified nodes, modified edges, and the packed data names.
+        """
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
         expanded_symbols = set()
@@ -826,6 +882,15 @@ class Vectorize(ppl.Pass):
     def _generate_strided_loads_to_packed_storage(
             self, sdfg: dace.SDFG, state: dace.SDFGState, symbols_to_offset: Set[str], map_entry: dace.nodes.MapEntry,
             array_accessed_to_be_packed: Set[str]) -> Tuple[set[dace.nodes.Node], Set[Edge[Memlet]]]:
+        """Replace strided array loads inside a map with per-lane gathers into packed storage.
+
+        :param sdfg: the SDFG containing the map.
+        :param state: the state containing the map.
+        :param symbols_to_offset: symbols to offset per lane (the map params).
+        :param map_entry: the vectorized map entry.
+        :param array_accessed_to_be_packed: array names needing packed storage.
+        :returns: the modified nodes and modified edges as a pair of sets.
+        """
 
         all_nodes = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
@@ -919,6 +984,15 @@ class Vectorize(ppl.Pass):
     def _generate_strided_stores_from_packed_storage(
             self, sdfg: dace.SDFG, state: dace.SDFGState, symbols_to_offset: Set[str], map_entry: dace.nodes.MapEntry,
             array_accessed_to_be_packed: Set[str]) -> Tuple[set[dace.nodes.Node], Set[Edge[Memlet]]]:
+        """Replace strided array stores inside a map with per-lane scatters from packed storage.
+
+        :param sdfg: the SDFG containing the map.
+        :param state: the state containing the map.
+        :param symbols_to_offset: symbols to offset per lane (the map params).
+        :param map_entry: the vectorized map entry.
+        :param array_accessed_to_be_packed: array names needing packed storage.
+        :returns: the modified nodes and modified edges as a pair of sets.
+        """
 
         all_nodes = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
@@ -1012,6 +1086,14 @@ class Vectorize(ppl.Pass):
 
     def _expand_interstate_assignment(self, sdfg: dace.SDFG, edge: Edge[InterstateEdge], syms: Set[str],
                                       candidate_arrays: Set[str]):
+        """Fan out interstate symbol assignments on one edge into one per lane.
+
+        :param sdfg: the SDFG being vectorized.
+        :param edge: the interstate edge whose assignments are expanded.
+        :param syms: the symbol names to fan out.
+        :param candidate_arrays: arrays referenced in assignments to index per lane.
+        :returns: the set of duplicated symbol names.
+        """
         duplicated_symbols = set()
         syms_to_rm = set()
         new_assignments = dict()
@@ -1064,6 +1146,13 @@ class Vectorize(ppl.Pass):
         return duplicated_symbols
 
     def _expand_interstate_assignments(self, sdfg: dace.SDFG, syms: Set[str], candidate_arrays: Set[str]):
+        """Fan out interstate symbol assignments per lane across all interstate edges.
+
+        :param sdfg: the SDFG being vectorized.
+        :param syms: the symbol names to fan out.
+        :param candidate_arrays: arrays referenced in assignments to index per lane.
+        :returns: the set of duplicated symbol names.
+        """
         duplicated_symbols = set()
         for edge in sdfg.all_interstate_edges():
             duplicated_symbols = duplicated_symbols.union(
@@ -1075,6 +1164,13 @@ class Vectorize(ppl.Pass):
                                   map_entry: dace.nodes.MapEntry,
                                   modified_nodes: Set[dace.nodes.Node] = set(),
                                   modified_edges: Set[Edge[Memlet]] = set()):
+        """Promote scalar/length-1 transients inside a vectorized map to vector-width arrays.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param modified_nodes: nodes already handled, skipped here.
+        :param modified_edges: edges already handled, skipped here.
+        """
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         edges_to_rm = set()
         edges_to_add = set()
@@ -1136,6 +1232,12 @@ class Vectorize(ppl.Pass):
                         state: SDFGState,
                         map_entry: dace.nodes.MapEntry,
                         modified_edges: Set[Edge[Memlet]] = set()):
+        """Extend memlets inside a vectorized map to vector-width slices.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param modified_edges: edges already handled, skipped here.
+        """
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
@@ -1145,6 +1247,13 @@ class Vectorize(ppl.Pass):
         self._extend_memlets_from_node_and_edge_list(state, edges)
 
     def _extend_memlets_from_node_and_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]]):
+        """Extend each edge's param-bearing stride-1 dim to a vector-width slice.
+
+        :param state: the state containing the edges.
+        :param edges: the edges whose memlets are rewritten.
+        :raises NotImplementedError: if the map param spans multiple dims
+            non-pointwise or the param-bearing stride-1 dim has a non-1 step.
+        """
         # For each memlet, find the dimension whose range expression contains the inner map param
         # and (if it is stride-1 in the array) extend it to a vector-width slice.
         #
@@ -1260,6 +1369,13 @@ class Vectorize(ppl.Pass):
 
     def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vector_map_param: str,
                           modified_nodes: Set[dace.nodes.AccessNode]):
+        """Replace scalar tasklets inside a vectorized map with vector-template tasklets.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param vector_map_param: the vectorized map parameter name.
+        :param modified_nodes: nodes already handled, skipped here.
+        """
         nodes = set(state.all_nodes_between(map_entry, state.exit_node(map_entry))) - modified_nodes
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
@@ -1269,6 +1385,16 @@ class Vectorize(ppl.Pass):
 
     def _replace_tasklets_from_node_list(self, state: SDFGState, nodes: Iterable[dace.nodes.Node],
                                          vector_map_param: str):
+        """Rewrite each Python tasklet in the list to its vector-template form.
+
+        Invariant scalar-only tasklets are left as-is; when an iteration-mask
+        transient is in scope, a ``_mask`` connector is wired so masked
+        template variants can be selected.
+
+        :param state: the state containing the tasklets.
+        :param nodes: the candidate nodes to rewrite.
+        :param vector_map_param: the vectorized map parameter name.
+        """
         # C.2-b: when the inner SDFG has a P3-generated ``_iter_mask: bool[W]``
         # transient in scope, every vectorized tasklet that writes to an array
         # picks up a ``_mask`` input connector wired from that array. The
@@ -1335,6 +1461,13 @@ class Vectorize(ppl.Pass):
                                               mask_connector=mask_connector_arg)
 
     def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
+        """Rewrite all memlets on ``dataname`` inside the map to the vector copy.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param dataname: the original array name.
+        :param new_dataname: the vector-copy array name.
+        """
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
@@ -1345,6 +1478,13 @@ class Vectorize(ppl.Pass):
 
     def _offset_memlets_from_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]], dataname: str,
                                        new_dataname: str):
+        """Rewrite matching memlets in the edge list to the vector copy.
+
+        :param state: the state containing the edges.
+        :param edges: the edges to inspect.
+        :param dataname: the original array name to match.
+        :param new_dataname: the vector-copy array name.
+        """
         for edge in edges:
             if edge.data.data is None or edge.data.data != dataname:
                 continue
@@ -1357,6 +1497,14 @@ class Vectorize(ppl.Pass):
 
     def _iterate_on_path_from_map_entry_to_exit(self, state: SDFGState, map_exit: dace.nodes.MapExit,
                                                 data_in_edge: Edge[Memlet], dataname: str, new_dataname: str):
+        """Forward-rewrite memlets from a map-entry in-edge toward the map exit.
+
+        :param state: the state containing the dataflow.
+        :param map_exit: the map exit that bounds the traversal.
+        :param data_in_edge: the starting in-edge into the map.
+        :param dataname: the original array name to match.
+        :param new_dataname: the vector-copy array name.
+        """
         # BFS along the dataflow rewriting matching memlets to the new (vector) data name.
         # The traversal pops one edge at a time, replaces its memlet, then enqueues the out-edges
         # of the new edge's dst — so the next iteration sees the up-to-date graph. Mutation and
@@ -1402,6 +1550,14 @@ class Vectorize(ppl.Pass):
 
     def _iterate_on_path_from_map_exit_to_entry(self, state: SDFGState, map_entry: dace.nodes.MapEntry,
                                                 data_out_edge: Edge[Memlet], dataname: str, new_dataname: str):
+        """Backward-rewrite memlets from a map-exit out-edge toward the map entry.
+
+        :param state: the state containing the dataflow.
+        :param map_entry: the map entry that bounds the traversal.
+        :param data_out_edge: the starting out-edge from the map exit.
+        :param dataname: the original array name to match.
+        :param new_dataname: the vector-copy array name.
+        """
         # Walk backward from a map_exit out-edge through the producing dataflow, rewriting matching
         # memlets to the new (vector) data name. The traversal stops as soon as the producing
         # path forks (multiple in-edges into a node) — this is intentional: the rewrite then leaves
@@ -1445,6 +1601,13 @@ class Vectorize(ppl.Pass):
 
     def _offset_memlets_on_path(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str,
                                 new_dataname: str):
+        """Rewrite the in- and out-paths of a vectorized map to the vector copy.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param dataname: the original array name.
+        :param new_dataname: the vector-copy array name.
+        """
         # Get memlet paths
         # And while memlet we have not encountered the map exit continue
         # if we find data name then we will replace
@@ -1480,6 +1643,11 @@ class Vectorize(ppl.Pass):
         ) == 1, f"{dataname} -> {new_dataname} no data in our out edges found | {in_edges}, {out_edges}"
 
     def _find_new_name(self, candidate: str):
+        """Return a unique array name derived from ``candidate``.
+
+        :param candidate: the desired base name.
+        :returns: ``candidate`` or a suffixed variant not yet used.
+        """
         candidate2 = candidate
         i = 0
         while candidate2 in self._used_names:
@@ -1489,8 +1657,11 @@ class Vectorize(ppl.Pass):
         return candidate2
 
     def _vector_memlet(self, new_dataname: str) -> dace.memlet.Memlet:
-        """Build a ``new_dataname[0:vector_width]`` (step 1) memlet — the
-        single-source builder used by every memlet-rewrite helper here."""
+        """Build a ``new_dataname[0:vector_width]`` step-1 memlet.
+
+        :param new_dataname: the vector-copy array name.
+        :returns: a full-width step-1 memlet over that array.
+        """
         return dace.memlet.Memlet(
             data=new_dataname,
             subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
@@ -1499,12 +1670,12 @@ class Vectorize(ppl.Pass):
 
     @staticmethod
     def _assert_no_other_subset(memlet: dace.memlet.Memlet, edge: Edge[Memlet], state: SDFGState) -> None:
-        """Raise ``NotImplementedError`` if ``memlet.other_subset`` is set.
+        """Raise if ``memlet.other_subset`` is set, which vectorization does not support.
 
-        Vectorization does not support ``other_subset`` on memlets; fail
-        loudly rather than silently producing wrong code. The single
-        message format keeps the three callsites that previously inlined
-        this check in sync.
+        :param memlet: the memlet to check.
+        :param edge: the edge carrying the memlet (for the error message).
+        :param state: the state containing the edge (for the error message).
+        :raises NotImplementedError: if ``other_subset`` is not None.
         """
         if memlet.other_subset is not None:
             raise NotImplementedError(
@@ -1513,6 +1684,14 @@ class Vectorize(ppl.Pass):
 
     def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int,
                               vectorizable_arrays: Dict[str, bool]):
+        """Insert vector-staging copies before and after a vectorized map.
+
+        :param state: the state containing the map.
+        :param map_entry: the vectorized map entry.
+        :param vectorization_number: unique index used to name staging arrays.
+        :param vectorizable_arrays: per-array vectorizability flags.
+        :raises RuntimeError: if a map-exit out-edge has no data.
+        """
         map_exit = state.exit_node(map_entry)
         data_and_offsets = list()
         in_datas = set()
@@ -1627,6 +1806,14 @@ class Vectorize(ppl.Pass):
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        """Vectorize every eligible innermost map in ``sdfg``.
+
+        :param sdfg: the SDFG vectorized in place.
+        :param pipeline_results: unused pipeline results.
+        :returns: the set of map entries that were vectorized.
+        :raises NotImplementedError: if input/output storage differ or an
+            NSDFG without a parent map scope is found.
+        """
         # Sanity check: every array must have a consistent unit-stride dim; raises on mixed layouts.
         # The result is no longer cached because callers now resolve the contiguous dim per-array
         # (via desc.strides.index(1)) rather than from a global F/C classification.

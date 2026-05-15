@@ -1,31 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Vectorization helper utilities.
-
-This package replaced the legacy single-file
-``vectorization_utils.py`` junk-drawer module (split across S1..S6d
-and deleted in S7). Modules are organised by concern:
-
-- ``layout`` — packed-stride helpers (C vs Fortran).
-- ``queries`` — read-only inspectors (subset collection,
-  vectorizable-array analysis, int parsers).
-- ``code_rewrite`` — AST-based code/expression rewriters.
-- ``iteration`` — graph-traversal helpers (e.g. ``walk_memlets_of``).
-- ``nsdfg_reshape`` — connector / shape reconciliation across
-  NestedSDFG boundaries, ``add_copies_before_and_after_nsdfg``,
-  ``sift_access_node_up``.
-- ``tasklets`` — tasklet creation / classification / replication.
-- ``arrays`` — array-descriptor mutators (rebuild, copy, bulk-add).
-- ``source_sink`` — boundary-node classification and reduction lift.
-- ``map_predicates`` — boolean queries on maps / SDFGs and their
-  defensive ``assert_X`` siblings.
-- ``lane_expansion`` — symbol fan-out across lanes.
-- ``subsets`` — subset/repl/memlet-rewrite family.
-- ``name_schemes`` — ``LaneIdScheme`` and future ``VecNameScheme`` /
-  ``PackedNameScheme``.
-- ``map_ops`` — ``remove_map``.
-- ``multiplex`` — ``int_floor`` halve-index pattern detection.
-"""
+"""Vectorization helper utilities: layout/query inspectors, AST and memlet
+rewriters, NSDFG reshaping, tasklet and array mutators, and naming schemes."""
 from .name_schemes import LaneIdScheme, PackedNameScheme, VecNameScheme  # noqa: F401
 from .layout import assert_strides_are_packed_C_or_packed_Fortran  # noqa: F401
 from .queries import (  # noqa: F401

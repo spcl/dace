@@ -1,17 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Boundary-node classification and reduction-lift helpers.
+"""Boundary-node classification and reduction-lift helpers.
 
-The four ``get_{scalar,array}_{source,sink}_nodes`` functions classify
-SDFGState access nodes by transientness and shape. ``move_out_reduction``
-and its pattern-detection helpers (``input_is_zero_and_transient_accumulator``,
-``only_one_flop_after_source``) lift simple ``acc = 0; for: acc += x; use(acc)``
-patterns out of a NestedSDFG so the accumulator can be vectorized.
-
-Per the locked policy (mechanical-only + defensive checks stay), every
-helper is moved verbatim. The post-S7 reductions redesign (R-1..R-5)
-will replace these with a single ``recognize_reduction()`` + delete the
-quad of source/sink classifiers entirely.
+The ``get_{scalar,array}_{source,sink}_nodes`` functions classify access
+nodes by transientness and shape. ``move_out_reduction`` and its detection
+helpers lift a simple ``acc = 0; for: acc += x; use(acc)`` pattern out of
+a NestedSDFG so the accumulator can be vectorized.
 """
 import copy
 from typing import List, Set, Tuple
@@ -21,22 +14,25 @@ import dace.sdfg.tasklet_utils as tutil
 
 
 def _is_scalar_or_shape_one(arr: dace.data.Data) -> bool:
-    """Scalar nodes for our purposes: Scalar descriptors or Array of shape (1,)."""
+    """Check whether ``arr`` is scalar-like.
+
+    :param arr: Data descriptor to test.
+    :returns: True for a Scalar descriptor or an Array of shape ``(1,)``.
+    """
     return isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, ))
 
 
 def _get_boundary_nodes(sdfg: dace.SDFG, *, side: str, kind: str, non_transient_only: bool,
                         skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """
-    Single classifier for the four ``get_{scalar,array}_{source,sink}_nodes`` helpers.
+    """Single classifier backing the four ``get_*_{source,sink}_nodes`` helpers.
 
-    Args:
-        sdfg: SDFG to inspect.
-        side: ``"source"`` (in_degree == 0) or ``"sink"`` (out_degree == 0).
-        kind: ``"scalar"`` (Scalar or shape-(1,) Array) or ``"array"`` (Array with
-            shape != (1,)).
-        non_transient_only: If True, drop transient access nodes.
-        skip: data names to exclude.
+    :param sdfg: SDFG to inspect.
+    :param side: ``"source"`` (in_degree == 0) or ``"sink"`` (out_degree == 0).
+    :param kind: ``"scalar"`` (Scalar or shape-(1,) Array) or ``"array"``
+        (Array with shape != (1,)).
+    :param non_transient_only: If True, drop transient access nodes.
+    :param skip: Data names to exclude.
+    :returns: List of ``(state, access_node)`` pairs matching the criteria.
     """
     assert side in ("source", "sink"), side
     assert kind in ("scalar", "array"), kind
@@ -66,42 +62,62 @@ def _get_boundary_nodes(sdfg: dace.SDFG, *, side: str, kind: str, non_transient_
 def get_scalar_source_nodes(
     sdfg: dace.SDFG, non_transient_only: bool,
     skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """Returns source nodes (in-degree 0) for scalars or shape-(1,) arrays."""
+    """Return source nodes (in-degree 0) for scalars or shape-(1,) arrays.
+
+    :param sdfg: SDFG to inspect.
+    :param non_transient_only: If True, drop transient access nodes.
+    :param skip: Data names to exclude.
+    :returns: List of ``(state, access_node)`` pairs.
+    """
     return _get_boundary_nodes(sdfg, side="source", kind="scalar", non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_source_nodes(sdfg: dace.SDFG,
                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """Returns source nodes for arrays with shape != (1,)."""
+    """Return source nodes (in-degree 0) for arrays with shape != (1,).
+
+    :param sdfg: SDFG to inspect.
+    :param non_transient_only: If True, drop transient access nodes.
+    :returns: List of ``(state, access_node)`` pairs.
+    """
     return _get_boundary_nodes(sdfg, side="source", kind="array", non_transient_only=non_transient_only, skip=set())
 
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG, non_transient_only: bool,
                           skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """Returns sink nodes (out-degree 0) for scalars or shape-(1,) arrays."""
+    """Return sink nodes (out-degree 0) for scalars or shape-(1,) arrays.
+
+    :param sdfg: SDFG to inspect.
+    :param non_transient_only: If True, drop transient access nodes.
+    :param skip: Data names to exclude.
+    :returns: List of ``(state, access_node)`` pairs.
+    """
     return _get_boundary_nodes(sdfg, side="sink", kind="scalar", non_transient_only=non_transient_only, skip=skip)
 
 
 def get_array_sink_nodes(sdfg: dace.SDFG,
                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
-    """Returns sink nodes for arrays with shape != (1,)."""
+    """Return sink nodes (out-degree 0) for arrays with shape != (1,).
+
+    :param sdfg: SDFG to inspect.
+    :param non_transient_only: If True, drop transient access nodes.
+    :returns: List of ``(state, access_node)`` pairs.
+    """
     return _get_boundary_nodes(sdfg, side="sink", kind="array", non_transient_only=non_transient_only, skip=set())
 
 
 def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
                                                                 scalar_sink_nodes: List[Tuple[dace.SDFGState,
                                                                                               dace.nodes.AccessNode]]):
-    """
-    Ensures all writes to scalar sink nodes occur through simple assignment tasklets.
-    Assignments can also occur through AccessNode -Edge-> AccessNode where `other_subset` is not none.
-    Auto-vectorization does not support that.
+    """Ensure all writes to scalar sink nodes go through assignment tasklets.
 
-    Args:
-        sdfg: The SDFG to check.
-        scalar_sink_nodes: List of scalar sink nodes to validate.
+    Auto-vectorization does not support a write via an AccessNode-to-AccessNode
+    edge with a non-None ``other_subset``.
 
-    Raises:
-        Exception if a scalar sink write is not via an assignment tasklet.
+    :param sdfg: The SDFG to check.
+    :param scalar_sink_nodes: List of ``(state, sink_node)`` pairs to validate.
+    :raises Exception: if a scalar sink does not have exactly one in-edge, or
+        if its write is not via an assignment tasklet.
     """
     # ``is_assignment_tasklet`` lives in ``utils.tasklets`` (S6b);
     # imported lazily here to avoid a circular import at module load
@@ -119,16 +135,14 @@ def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
 
 
 def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNode):
-    """
-    Checks whether only one computational tasklet (non-assignment) occurs after a given source node.
-    Does BFS starting from the access node.
+    """Check whether at most one computational (non-assignment) tasklet follows a source.
 
-    Args:
-        state: The SDFG state containing the node.
-        node: The source AccessNode.
+    BFS forward from ``node``.
 
-    Returns:
-        Tuple (bool, List of nodes) indicating if the condition holds and the nodes checked.
+    :param state: The SDFG state containing the node.
+    :param node: The source AccessNode.
+    :returns: ``(holds, checked_nodes)`` — whether the condition holds and the
+        nodes visited (empty list when more than one flop is found).
     """
     from dace.transformation.passes.vectorization.utils.tasklets import is_assignment_tasklet
 
@@ -154,22 +168,18 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
 
 def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                             source_node: dace.nodes.AccessNode, sink_node: dace.nodes.AccessNode):
-    """
-    Checks if a transient accumulator is initialized to zero and used in an in-place reduction pattern.
-    ``nsdfg`` is the parent NSDFG node and ``state`` is where the NSDFG resides in.
+    """Check for a transient accumulator zero-initialised before an in-place reduction.
 
-    It traverses backwards from the source access node in the parent state to find a
-    zero-assignment to the accumulator. The accumulator is ``source_node.data``. For it
-    to be an accumulator the source and sink data must be the same.
+    Traverses backward from the source access node in the parent state to find
+    a zero-assignment to the accumulator. The source and sink data must be the
+    same name for it to be an accumulator.
 
-    Args:
-        state: The parent SDFG state.
-        nsdfg: The NestedSDFG node.
-        source_node: Source access node feeding the accumulator.
-        sink_node: Sink access node consuming the accumulator.
-
-    Returns:
-        Tuple (bool, accumulator_name) indicating if the pattern is valid and the accumulator's name.
+    :param state: The parent SDFG state.
+    :param nsdfg: The NestedSDFG node.
+    :param source_node: Source access node feeding the accumulator.
+    :param sink_node: Sink access node consuming the accumulator.
+    :returns: ``(is_valid, accumulator_name)``; ``accumulator_name`` is ``""``
+        when the pattern does not match.
     """
 
     # Make sure the data of in and out edges refer to the same name
@@ -227,15 +237,15 @@ def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.n
 
 
 def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: int):
-    """
-    Expands assignment tasklets writing to an array at a to be over the vector length
-    over the unit stride dimension a[0] = ..., a[1] = ..., ...
-    For assignment tasklets the dataname given as name.
+    """Expand literal-init assignment tasklets writing ``name`` to all vector lanes.
 
-    Args:
-        state: The SDFG state to modify.
-        name: The array being written.
-        vector_width: Length of the vector to expand to.
+    Rewrites ``a = v`` into ``a[0] = v; ...; a[W-1] = v``.
+
+    :param state: The SDFG state to modify.
+    :param name: The array being written.
+    :param vector_width: Length of the vector to expand to.
+    :raises NotImplementedError: if a non-assignment tasklet (with input
+        connectors) feeds the accumulator.
     """
     for e in state.edges():
         if (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == name and isinstance(e.src, dace.nodes.Tasklet)):
@@ -257,20 +267,15 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: i
 
 
 def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str, tree: bool = False):
-    """
-    Adds a reduction tasklet to reduce a vectorized array into a scalar before its use.
+    """Insert a reduction tasklet that scalarizes a vectorized array before its use.
 
-    Args:
-        state: The SDFG state.
-        name: Array to reduce.
-        vector_width: Number of vector elements.
-        op: Reduction operation (e.g., "+", "*", "max", "min").
-        tree: When True, emit the log-depth tree form
-            (``((a + b) + (c + d)) + ...``) instead of the linear chain.
-            Default ``False`` matches the historical chain shape. The
-            chain and tree forms are not bit-exact for non-associative
-            ops (FP ``+``/``*``); pick ``tree=True`` only when the
-            caller is OK with reassociation.
+    :param state: The SDFG state.
+    :param name: Array to reduce.
+    :param vector_width: Number of vector elements.
+    :param op: Reduction operation (e.g. ``"+"``, ``"*"``, ``"max"``, ``"min"``).
+    :param tree: When True emit the log-depth tree form instead of the linear
+        chain. The forms are not bit-exact for non-associative ops, so pass
+        ``True`` only when reassociation is acceptable.
     """
     # Any time a tasklet reads name[0:vector_width] then we need to reduce it before
     # In a reduction tasklet
@@ -304,36 +309,22 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
 
 def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, inner_sdfg: dace.SDFG,
                        vector_width) -> Tuple[bool, str, str]:
-    """
-    Moves a reduction out of a NestedSDFG, vectorizing transient accumulators and adjusting tasklets.
+    """Lift a simple zero-init reduction out of a NestedSDFG and vectorize it.
 
-    This function is typically used when a computation pattern consists of:
-      1. A scalar source feeding a NestedSDFG,
-      2. A transient accumulator initialized to zero (outside nested SDFG)
-      3. A single computational tasklet updating the accumulator (e.g. acc = acc + some_var)
-      4. A scalar sink at the end of the nsdfg for the accumulator.
+    Handles the pattern: a scalar source feeds the NSDFG, a transient
+    accumulator is zero-initialised outside it, a single computational
+    tasklet updates the accumulator, and a scalar sink consumes it. The
+    accumulator is widened to ``vector_width``, its memlets and assignment
+    tasklets are expanded, and a reduction tasklet scalarizes it before use.
 
-    The transformation performs the following steps:
-        1. Checks that there is at most one floating-point operation after the source. (For condition 3)
-        2. Validates that the accumulator is a transient scalar initialized to zero. (For condition 1 and 2)
-        3. Extracts the operation performed on the accumulator (e.g., addition, multiplication).
-        4. Reshapes the source, sink, and accumulator arrays to a vectorized form of size `vector_width`.
-        5. Updates all memlets accessing the accumulator to cover the full vector range.
-        6. Expands assignment tasklets to operate on all vector elements.
-        7. Inserts a reduction tasklet that combines the vector elements back to a scalar before use.
-
-    Args:
-        scalar_source_nodes: List of tuples `(state, node)` representing source scalar nodes feeding the NestedSDFG.
-        state: Parent SDFGState containing the NestedSDFG node.
-        nsdfg: NestedSDFG node where the reduction occurs.
-        inner_sdfg: Inner SDFG of the NestedSDFG.
-        vector_width: The width of vectorization for the accumulator.
-
-    Notes:
-        - Only supports simple reduction patterns with one operation and transient accumulators.
-        - The function assumes that the scalar source and sink nodes are properly connected through the NestedSDFG.
-        - The reduction operation is extracted automatically from the first tasklet after the source.
-
+    :param scalar_source_nodes: List of ``(state, node)`` source scalar nodes
+        feeding the NestedSDFG.
+    :param state: Parent SDFGState containing the NestedSDFG node.
+    :param nsdfg: NestedSDFG node where the reduction occurs.
+    :param inner_sdfg: Inner SDFG of the NestedSDFG.
+    :param vector_width: Vectorization width for the accumulator.
+    :returns: ``(lifted, source_data, sink_data)`` — whether the reduction
+        was lifted, and the source / sink data names.
     """
     # ``replace_arrays_with_new_shape`` lives in ``utils.arrays`` (S6a)
     # and ``replace_all_access_subsets`` in ``utils.subsets`` (S6d-b);

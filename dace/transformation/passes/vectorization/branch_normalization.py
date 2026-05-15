@@ -1,27 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``BranchNormalization`` flattens every remaining ``ConditionalBlock`` in
-the SDFG into a linear sequence of plain tasklets, so the vectorizer can
-treat them as masked or unconditional SIMD ops.
+"""Flatten residual ``ConditionalBlock`` s into ``merge``-tasklet form.
 
-It runs after ``SameWriteSetIfElseToMergeCFG`` (M3.1b), which has already
-handled the case where both arms of an ``if/else`` write to identical
-locations. What remains here:
-
-- **Single-arm conditional** (``if cond: body``, no else): the body is
-  lifted into a sibling state and every write ``arr[subset] = expr`` is
-  rewritten as ``arr[subset] = merge(cond_mask, expr, arr[subset])``.
-- **Two-arm with disjoint write sets**: split into two sequential
-  single-arm conditionals via ``BranchElimination._split_branches``,
-  then normalize each.
-- **Two-arm with overlapping (but not identical) write sets**: raise
-  ``NotImplementedError``. M3.1b is supposed to catch identical-write
-  sets, so anything reaching this case is genuinely unsupported by the
-  current normalization model.
-
-After the pass, no ``ConditionalBlock`` remains in any region that was
-processed, and ``assert_connector_role_matches_edges`` passes on every
-emitted state.
+Runs after ``SameWriteSetIfElseToMergeCFG`` (which handles identical-write
+arms). Single-arm ``if`` becomes ``arr = merge(cond, expr, arr)``;
+disjoint two-arm ``if/else`` is split into two sequential single-arm
+conditionals and re-normalized; overlapping-but-not-identical write sets
+are unsupported (``NotImplementedError``). No ``ConditionalBlock`` remains
+afterwards.
 """
 import copy
 from typing import Dict, Optional, Set
@@ -38,28 +23,18 @@ from dace.transformation import pass_pipeline as ppl
 
 
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
-    """Returns the per-arm set of array names whose write must be rerouted
-    to a private arm-local transient before the arm bodies can run
-    unconditionally.
+    """Per-arm array writes that must be rerouted to a private transient.
 
-    A write to ``arr`` inside arm ``i`` escapes (so it needs rerouting)
-    iff any of:
+    A write of ``arr`` in arm ``i`` escapes iff ``arr`` is non-transient,
+    or read outside ``cb`` (sibling states plus interstate condition /
+    assignment text), or read by another arm (all arms run unconditionally
+    after the rewrite).
 
-    1. ``arr`` is non-transient (visible to callers of the SDFG that owns
-       ``cb``).
-    2. ``arr`` is read somewhere outside the subtree rooted at ``cb``,
-       computed by skipping every state inside ``cb`` while walking
-       ``state.read_and_write_sets()`` over the rest of the SDFG, plus
-       tokenizing interstate-edge conditions and assignment RHSs whose
-       endpoints lie outside ``cb``.
-    3. ``arr`` is read by *another* arm of ``cb``, since every arm runs
-       unconditionally post-rewrite and one arm's read would otherwise
-       see another arm's just-written value.
-
-    Returns ``{arm_index: {arr_name, ...}}``. Arms with no escaping
-    writes get an empty set entry. The redirect plan that drives the
-    actual rewrite is one private transient per ``(arm_index, arr)``
-    pair.
+    :param sdfg: SDFG used for name resolution; the owning SDFG of ``cb``
+        is used internally as ``cb`` may be nested.
+    :param cb: the conditional block being normalized.
+    :returns: ``{arm_index: {escaping_arr_name, ...}}`` (empty set per arm
+        with no escaping writes).
     """
     # Resolve to the SDFG that physically owns ``cb`` (it may be inside a
     # NestedSDFG). Arrays referenced from cb's arms live in this SDFG.
@@ -168,12 +143,19 @@ class BranchNormalization(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
+        """CFG, states and access nodes."""
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Never (internal fixed-point loop)."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        """Flatten every ``ConditionalBlock`` to fixed point.
+
+        :param sdfg: SDFG to transform in place.
+        :returns: number of rewrites, or ``None`` if none.
+        """
         rewritten = 0
         # Repeat-until-fixed-point. Each pass may split disjoint two-arm
         # conditionals into pairs that need another rewrite cycle.
@@ -195,6 +177,12 @@ class BranchNormalization(ppl.Pass):
         return rewritten or None
 
     def _try_rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock) -> bool:
+        """Dispatch ``cb`` to the single-arm or disjoint two-arm rewrite.
+
+        :param sdfg: SDFG used for name resolution.
+        :param cb: the conditional block to attempt.
+        :returns: ``True`` if a rewrite was applied.
+        """
         branches = cb.branches
         if len(branches) == 1:
             cond, body = branches[0]
@@ -214,6 +202,14 @@ class BranchNormalization(ppl.Pass):
 
     def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,
                               body: ControlFlowRegion) -> bool:
+        """Lower ``if cond: body`` to ``arr = merge(cond, expr, arr)`` writes.
+
+        :param sdfg: SDFG used for name resolution.
+        :param cb: the single-arm conditional block (removed in place).
+        :param cond: the arm condition.
+        :param body: the arm body (one tasklet/access-node state).
+        :returns: ``True`` if normalized, ``False`` if the shape is unsupported.
+        """
         if len(body.nodes()) != 1 or not isinstance(body.nodes()[0], dace.SDFGState):
             return False
         body_state: dace.SDFGState = body.nodes()[0]
@@ -239,6 +235,18 @@ class BranchNormalization(ppl.Pass):
 
     def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
                                 body1: ControlFlowRegion) -> bool:
+        """Split a disjoint-write ``if/else`` into two sequential single-arm ``if`` s.
+
+        :param sdfg: SDFG used for name resolution.
+        :param cb: the two-arm conditional block.
+        :param cond0: the ``if`` condition.
+        :param body0: the ``if`` arm body.
+        :param body1: the ``else`` arm body.
+        :returns: ``True`` if split (next sweep normalizes each half),
+            ``False`` if the shape is unsupported.
+        :raises NotImplementedError: if the arms have overlapping but
+            non-identical write subsets.
+        """
         if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
             return False
         s0, s1 = body0.nodes()[0], body1.nodes()[0]
@@ -304,9 +312,15 @@ class BranchNormalization(ppl.Pass):
                                  cond_text: str,
                                  *,
                                  skip_cb=None):
-        """For each access-node write in ``state``, redirect through a merge
-        tasklet so the post-condition write becomes
-        ``arr = merge(cond, expr, arr)``."""
+        """Redirect each write in ``state`` through ``arr = merge(cond, expr, arr)``.
+
+        :param sdfg: SDFG used for name resolution.
+        :param state: the lifted arm-body state.
+        :param write_subsets: ``{arr_name: subset}`` of escaping writes to gate.
+        :param cond_text: the arm condition expression.
+        :param skip_cb: conditional block whose conditions to exclude when
+            resolving the cond symbol (forwarded to the cond resolver).
+        """
         # Resolve cond once. The symbol-lifting side effect (deleting the
         # upstream assignment for the cond symbol) must fire at most once
         # across all writes that share the same cond; resolving inside the

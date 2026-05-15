@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""CPU vectorization pipeline: branch lowering, map preparation, then ``Vectorize``."""
 import dace
 from typing import Iterator, List, Optional, Set
 from dace.transformation import Pass, pass_pipeline as ppl
@@ -48,7 +49,9 @@ class _AssertNoLaneMemletReadsPass(ppl.Pass):
 
 
 class VectorizeCPU(ppl.Pipeline):
-    _cpu_global_code = """
+    """Ordered pipeline lowering innermost maps to CPU SIMD; see :meth:`__init__` for knobs."""
+
+    _CPU_GLOBAL_CODE = """
 #include "dace/cpu_vectorizable_math.h"
 """
 
@@ -69,6 +72,28 @@ class VectorizeCPU(ppl.Pipeline):
                  force_autovec_ops: Optional[Set[str]] = None,
                  force_pscalar_ops: Optional[Set[str]] = None,
                  remainder_strategy: str = "scalar"):
+        """Build the pipeline.
+
+        :param vector_width: SIMD lane count.
+        :param try_to_demote_symbols_in_nsdfgs: demote NSDFG symbols to scalars when safe.
+        :param fuse_overlapping_loads: append ``FuseOverlappingLoads``.
+        :param apply_on_maps: restrict vectorization to these map entries.
+        :param insert_copies: insert copy-in/out around NSDFG boundaries.
+        :param only_apply_vectorization_pass: run only ``Vectorize`` (skip prep/cleanup).
+        :param no_inline: skip ``InlineSDFGs``.
+        :param fail_on_unvectorizable: raise instead of skipping a map that cannot be vectorized.
+        :param eliminate_trivial_vector_map: append ``RemoveVectorMaps``.
+        :param user_skip_nsdfg_arrays: NSDFG array names to exclude from copy-in/out.
+        :param use_fp_factor: branch lowering via ``c*x + (1-c)*y`` (mutually exclusive with ``branch_normalization``).
+        :param branch_normalization: branch lowering via the M3 ``merge`` normalization.
+        :param lower_to_intrinsics: append the gather/scatter/strided detect passes.
+        :param force_autovec_ops: ops to emit as ``vector_<op>_av`` (autovec hint).
+        :param force_pscalar_ops: ops to emit as ``vector_<op>_pscalar`` (no autovec hint).
+        :param remainder_strategy: ``"scalar"`` (scalar postamble), ``"masked"`` (iter-mask
+            remainder) or ``"full_loop_mask"`` (R3, not yet wired).
+        :raises ValueError: on a rejected knob combination (see body).
+        :raises NotImplementedError: for ``remainder_strategy="full_loop_mask"``.
+        """
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
@@ -206,7 +231,7 @@ class VectorizeCPU(ppl.Pipeline):
                                vector_width=vector_width,
                                vector_input_storage=dace.dtypes.StorageType.Register,
                                vector_output_storage=dace.dtypes.StorageType.Register,
-                               global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
+                               global_code=VectorizeCPU._CPU_GLOBAL_CODE.format(vector_width=vector_width),
                                global_code_location="frame",
                                vector_op_numeric_type=dace.float64,
                                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,

@@ -1,17 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tasklet helpers used by the vectorization pipeline.
+"""Tasklet creation / classification / vectorized-code-emission helpers.
 
-This module hosts the tasklet-creation / replication / classification
-utilities, including the 327-LoC ``instantiate_tasklet_from_info``
-emission core that picks per-template C++ code based on the
-``TaskletType`` classification from ``dace.sdfg.tasklet_utils``.
-
-Per the locked policy (defensive checks stay, mechanical-only), every
-helper is moved verbatim. The planned redesign of the emission core
-(tile lib nodes, separate per-ISA expansions) is deferred to a
-post-S7 slice; for now the helpers retain the existing template-based
-emission.
+The emission core ``instantiate_tasklet_from_info`` picks per-template C++
+code from the ``TaskletType`` classification in ``dace.sdfg.tasklet_utils``,
+falling back to a scalar lane loop when no template applies.
 """
 import copy
 import re
@@ -33,16 +25,11 @@ from dace.transformation.passes.vectorization.utils.name_schemes import PackedNa
 
 
 def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict:
-    """
-    Map tasklet input connectors to their corresponding array descriptors.
+    """Map a tasklet's input connectors to their array descriptors.
 
-    Args:
-        state (dace.SDFGState): The state containing the tasklet.
-        tasklet (dace.nodes.Tasklet): The tasklet whose connectors are inspected.
-
-    Returns:
-        dict[str, dace.data.Data]: A mapping from tasklet input connector names
-        to the corresponding array descriptors in the SDFG.
+    :param state: The state containing the tasklet.
+    :param tasklet: The tasklet whose connectors are inspected.
+    :returns: Mapping from input connector name to the array descriptor.
     """
     tdict = dict()
     for ie in state.in_edges(tasklet):
@@ -52,14 +39,12 @@ def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) 
 
 
 def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
-    """
-    Checks if a tasklet is a simple assignment (one input to one output).
-    Checks `a = b` or `a = b;`
-    Args:
-        node: The Tasklet to check.
+    """Check whether a tasklet is a simple one-in one-out assignment.
 
-    Returns:
-        True if it is a single assignment tasklet, False otherwise.
+    Matches ``a = b`` or ``a = b;``.
+
+    :param node: The Tasklet to check.
+    :returns: True iff it is a single assignment tasklet.
     """
     if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
         in_conn = next(iter(node.in_connectors.keys()))
@@ -73,18 +58,13 @@ _VECTOR_COPY_CALL_RE = re.compile(r"\bvector_copy\s*\(")
 
 
 def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
-    """
-    Check if a tasklet performs a vector copy operation.
+    """Check whether a tasklet performs a ``vector_copy`` call.
 
-    Args:
-        t: The tasklet to check
+    The match is word-boundary anchored so ``my_vector_copy(`` does not
+    falsely match; comments / string literals are not stripped.
 
-    Returns:
-        True if the tasklet's code contains a ``vector_copy(`` call,
-        False otherwise. The match is word-boundary anchored so that
-        identifiers like ``my_vector_copy(`` do not falsely match. CPP
-        comments / string literals are not stripped — accepting that
-        residual false-positive risk in exchange for a one-line check.
+    :param t: The tasklet to check.
+    :returns: True iff the tasklet's code contains a ``vector_copy(`` call.
     """
     return _VECTOR_COPY_CALL_RE.search(t.code.as_string) is not None
 
@@ -101,13 +81,12 @@ UNARY_OPERATORS = {"!", "-"}
 
 
 def _str_to_float_or_str(s: Union[int, float, str, None]):
-    """Convert ``s`` to ``float`` iff ``float(s)`` parses, else return ``s`` unchanged.
+    """Convert ``s`` to ``float`` iff it parses, else return it unchanged.
 
-    ``None`` passes through. Used to fold C-numeric-literal strings
-    (``"0.99"``, ``"1e5"``, ``"-3"``) into ``float`` for template
-    substitution. Symbol names and SDFG data names fail the parse and
-    stay as strings. Note: ``"inf"`` / ``"nan"`` parse as floats —
-    callers that don't want IEEE specials must filter beforehand.
+    ``None`` passes through. ``"inf"`` / ``"nan"`` parse as floats.
+
+    :param s: Value to fold.
+    :returns: ``float(s)`` if parseable, else ``s`` unchanged.
     """
     if s is None:
         return s
@@ -118,7 +97,11 @@ def _str_to_float_or_str(s: Union[int, float, str, None]):
 
 
 def _is_number(s: str) -> bool:
-    """True iff ``float(s)`` parses. ``None`` returns ``False``."""
+    """Check whether ``s`` is a numeric literal.
+
+    :param s: String to test.
+    :returns: True iff ``float(s)`` parses; ``None`` returns ``False``.
+    """
     return s is not None and _str_to_float_or_str(s) != s
 
 
@@ -126,16 +109,10 @@ def _is_number(s: str) -> bool:
 class EmitCtx:
     """Per-tasklet emission state shared by every per-``TaskletType`` emitter.
 
-    Bundles the variables that ``_generate_code`` and the per-type emitters
-    used to read from the enclosing closure of ``instantiate_tasklet_from_info``.
-    Explicit container, no inheritance — just a flat dataclass so the helpers
-    move to module level without losing access to anything they need.
-
-    ``mask_connector`` (C.2b): the name of an ``_iter_mask`` input connector
-    on the tasklet, set when the upstream pipeline wired a P3-generated
-    ``_iter_mask: bool[W]`` array to this tasklet. When set, the emitter
-    looks up ``templates[op + "_masked"]`` and formats with ``mask=<name>``;
-    when ``None`` (the default), the emitter uses the unsuffixed template.
+    Bundles the values that ``_generate_code`` and the per-type emitters need.
+    ``mask_connector`` is the name of an ``_iter_mask: bool[W]`` input
+    connector; when set the emitter routes to the ``op + "_masked"`` template
+    and passes ``mask=<name>``, otherwise it uses the unsuffixed template.
     """
     state: dace.SDFGState
     node: dace.nodes.Tasklet
@@ -149,13 +126,12 @@ class EmitCtx:
 
 
 def _template_key(ctx: EmitCtx, base_op: str) -> str:
-    """Return the templates-dict key for ``base_op`` adjusted for ``mask_connector``.
+    """Return the templates-dict key for ``base_op``, adjusted for masking.
 
-    When ``ctx.mask_connector`` is set AND the masked variant exists in the
-    templates dict, returns ``base_op + "_masked"``. Otherwise returns
-    ``base_op`` unchanged. Callers route to the masked variant by passing
-    ``mask=ctx.mask_connector`` into the .format() call; the unsuffixed
-    template silently ignores the extra kwarg.
+    :param ctx: Emission context.
+    :param base_op: Unmasked operator key.
+    :returns: ``base_op + "_masked"`` if a mask connector is set and that key
+        exists, else ``base_op`` unchanged.
     """
     if ctx.mask_connector is not None:
         masked = base_op + "_masked"
@@ -165,18 +141,22 @@ def _template_key(ctx: EmitCtx, base_op: str) -> str:
 
 
 def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> str:
-    """
-    Generate the C++ vectorized code string using templates or fallbacks.
+    """Generate the vectorized C++ code string for one tasklet.
 
-    Handles:
-    - Array-array, array-scalar, scalar-array
-    - Commutative and non-commutative ops
-    - Single constant + array/scalar (or array/scalar + constant)
-    - Fallback loops if operator not supported (hope compiler will do it)
+    Uses the matching template (array-array, array-scalar, constant variants,
+    commutative / non-commutative) or a scalar lane-loop fallback. When
+    ``ctx.mask_connector`` is set, masked template variants are used and the
+    fallback loop is iter-mask-gated.
 
-    When ``ctx.mask_connector`` is set the emitter routes to ``op_ + "_masked"``
-    template entries (if present) and passes ``mask=ctx.mask_connector`` to
-    .format(), producing calls like ``vector_<op>_av_masked(out, a, b, mask)``.
+    :param ctx: Emission context.
+    :param rhs1_: First array operand, or ``None``.
+    :param rhs2_: Second array operand, or ``None``.
+    :param const1_: First constant operand, or ``None``.
+    :param const2_: Second constant operand, or ``None``.
+    :param lhs_: Output connector name.
+    :param op_: Operator string.
+    :returns: The generated C++ code string.
+    :raises Exception: on an invalid operand configuration for the fallback.
     """
 
     # Get out edge and its dtype
@@ -312,7 +292,13 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
 def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> None:
     """Set ``ctx.node.code`` from the template-or-fallback dispatcher.
 
-    The dropped ``ttype`` parameter was unused; callers no longer pass it.
+    :param ctx: Emission context.
+    :param rhs1_: First array operand, or ``None``.
+    :param rhs2_: Second array operand, or ``None``.
+    :param const1_: First constant operand, or ``None``.
+    :param const2_: Second constant operand, or ``None``.
+    :param lhs_: Output connector name.
+    :param op_: Operator string.
     """
     ctx.node.code = dace.properties.CodeBlock(
         code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
@@ -563,17 +549,16 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
 
 def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_width: int,
                      vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
-    """
-    Duplicates an access node into a packed vector of a given width, updating all relevant tasklets and memlets.
-    It writes to a packed storage by using the duplicated symbols.
+    """Duplicate an access node into a packed vector buffer of width ``vector_width``.
 
-    Args:
-        state: The SDFG state containing the node.
-        node: The AccessNode to duplicate.
-        vector_width: Number of elements to pack.
+    Writes to packed storage using per-lane (laneid-offset) symbols and
+    updates the feeding tasklet / memlets accordingly.
 
-    Returns:
-        A tuple of sets: touched nodes and touched edges created during duplication.
+    :param state: The SDFG state containing the node.
+    :param node: The AccessNode to duplicate.
+    :param vector_width: Number of elements to pack.
+    :param vector_map_param: Map param used for per-lane symbol offsetting.
+    :returns: ``(touched_nodes, touched_edges)`` created during duplication.
     """
     # ``repl_subset_to_use_laneid_offset`` lives in ``utils.subsets`` (S6d-b).
     # Imported lazily to keep this module's top-level import surface narrow.
@@ -658,21 +643,17 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
 def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
                                     vector_storage_type: dace.dtypes.StorageType, vector_width: int, *,
                                     direction: str) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """
-    Splice a ``vector_copy`` tasklet + transient vector access node onto ``edge``.
+    """Splice a ``vector_copy`` tasklet + transient vector access node onto ``edge``.
 
-    direction="from_src" (after the source):
-        src --[edge]--> dst
-        becomes
-        src --[edge]--> tasklet --> vec_access --> dst
+    ``"from_src"``: ``src -> tasklet -> vec -> dst``.
+    ``"to_dst"``: ``src -> vec -> tasklet -> dst``.
 
-    direction="to_dst" (before the destination):
-        src --[edge]--> dst
-        becomes
-        src --> vec_access --> tasklet --[edge]--> dst
-
-    Returns the three new edges in source-to-destination order so callers see
-    the same shape regardless of direction.
+    :param state: The SDFG state containing the edge.
+    :param edge: The edge to splice around.
+    :param vector_storage_type: Storage type for the vector transient.
+    :param vector_width: Lane count.
+    :param direction: ``"from_src"`` or ``"to_dst"``.
+    :returns: The three new edges in source-to-destination order.
     """
     assert direction in ("from_src", "to_dst"), direction
     src, src_conn = edge.src, edge.src_conn
@@ -720,12 +701,26 @@ def _insert_vector_copy_around_edge(state: dace.SDFGState, edge: Edge[Memlet],
 def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet],
                                        vector_storage_type: dace.dtypes.StorageType,
                                        vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """Splice ``vector_copy`` after the source: src --> tasklet --> vec --> dst."""
+    """Splice ``vector_copy`` after the source: ``src -> tasklet -> vec -> dst``.
+
+    :param state: The SDFG state containing the edge.
+    :param edge: The edge to splice around.
+    :param vector_storage_type: Storage type for the vector transient.
+    :param vector_width: Lane count.
+    :returns: The three new edges in source-to-destination order.
+    """
     return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="from_src")
 
 
 def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
                                      vector_storage_type: dace.dtypes.StorageType,
                                      vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
-    """Splice ``vector_copy`` before the destination: src --> vec --> tasklet --> dst."""
+    """Splice ``vector_copy`` before the destination: ``src -> vec -> tasklet -> dst``.
+
+    :param state: The SDFG state containing the edge.
+    :param edge: The edge to splice around.
+    :param vector_storage_type: Storage type for the vector transient.
+    :param vector_width: Lane count.
+    :returns: The three new edges in source-to-destination order.
+    """
     return _insert_vector_copy_around_edge(state, edge, vector_storage_type, vector_width, direction="to_dst")

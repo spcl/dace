@@ -1,25 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Shared lane-fanout detection used by the four ``Detect*`` passes
-(``DetectGather`` / ``DetectScatter`` for the contiguous pattern and
-``DetectStridedLoad`` / ``DetectStridedStore`` for the strided pattern).
+Shared lane-fanout detection used by the gather / scatter / strided-load / strided-store passes.
 
-All four passes look for an access node tagged ``_packed`` whose
-neighbours (in-side for load/gather, out-side for store/scatter) are a
-contiguous fan of ``assign_<i>`` tasklets reading or writing the same
-indirect array at different subset indices.
-
-- ``pattern="contiguous"`` (gather/scatter) collapses the fan into a
-  single ``gather_double`` / ``scatter_double`` intrinsic call that
-  takes the index array as a literal ``int64_t[]``.
-- ``pattern="strided"`` (strided_load / strided_store) recognises that
-  the per-lane subsets form a fixed-increment progression and collapses
-  the fan into a single ``strided_{load,store}_double`` intrinsic call
-  with a ``stride`` parameter.
-
-The four passes used to be textual duplicates of one another modulo
-direction and pattern. ``detect_lane_fanout_apply`` is the one source
-of truth they all delegate to.
+All passes look for an access node tagged ``_packed`` whose neighbours
+are a contiguous fan of ``assign_<i>`` tasklets reading or writing the
+same indirect array, and collapse that fan into a single intrinsic call
+(``gather`` / ``scatter`` for arbitrary indices, ``strided_*`` for a
+fixed-increment progression).
 """
 import re
 from typing import List, Optional, Set, Tuple
@@ -38,13 +25,15 @@ _ITER_MASK_PREFIX = "_iter_mask"
 
 
 def _find_iter_mask(sdfg: dace.SDFG) -> Optional[str]:
-    """Return the name of an ``_iter_mask`` array in ``sdfg.arrays`` or ``None``.
+    """
+    Return the name of an ``_iter_mask`` array in ``sdfg.arrays``, or ``None``.
 
-    ``GenerateIterationMask`` (P3) allocates ``_iter_mask`` (or
-    ``_iter_mask_<n>`` on collisions) as a per-NSDFG transient bool[W].
-    When the lane-fanout collapse runs inside that NSDFG, the mask is in
-    scope and the collapsed tasklet must consume it via a ``_mask``
-    connector + the ``_masked`` template variant.
+    When the iteration mask is in scope, the collapsed tasklet must
+    consume it via a ``_mask`` connector and the ``_masked`` template
+    variant.
+
+    :param sdfg: The SDFG whose arrays to inspect.
+    :returns: The mask array name, or ``None`` if absent.
     """
     for name in sdfg.arrays:
         if name == _ITER_MASK_PREFIX or name.startswith(_ITER_MASK_PREFIX + "_"):
@@ -53,7 +42,13 @@ def _find_iter_mask(sdfg: dace.SDFG) -> Optional[str]:
 
 
 def sort_tasklets_by_number(tasklets):
-    """Sort tasklets with labels of the form ``assign_<number>`` by the numeric part."""
+    """
+    Sort tasklets with labels of the form ``assign_<number>`` by the numeric part.
+
+    :param tasklets: Tasklets to sort.
+    :returns: The tasklets ordered by their numeric label suffix.
+    :raises ValueError: If a tasklet label does not match ``assign_<number>``.
+    """
 
     def get_number(tasklet):
         m = _ASSIGN_LABEL_RE.match(tasklet.label)
@@ -66,10 +61,11 @@ def sort_tasklets_by_number(tasklets):
 
 def detect_fixed_increment(expr_strings):
     """
-    Detect whether a list of expressions has a fixed increment.
+    Detect whether a list of expressions forms a fixed-increment progression.
 
-    Returns ``(increment, smallest_expr)``; ``(None, None)`` if no
-    fixed-stride pattern matches.
+    :param expr_strings: Expression strings to test.
+    :returns: ``(increment, smallest_expr)``, or ``(None, None)`` if no
+        fixed-stride pattern matches.
     """
     if len(expr_strings) < 2:
         return None, None
@@ -102,10 +98,14 @@ def _match_assign_fan(
         state: dace.SDFGState, packed_node: dace.nodes.AccessNode,
         direction: str) -> Optional[Tuple[List[dace.nodes.Tasklet], List[Tuple[str, dace.subsets.Range]], int]]:
     """
-    If ``packed_node`` has a fan of ``assign_<i>`` tasklets on ``direction``
-    ("gather"/"load" = in-side, "scatter"/"store" = out-side), return
-    ``(sorted_tasklets, per_tasklet_far_data_and_subset, vector_length)``.
-    Returns ``None`` if no match.
+    Match a fan of ``assign_<i>`` tasklets around a ``_packed`` access node.
+
+    :param state: The state containing ``packed_node``.
+    :param packed_node: The ``_packed`` access node to inspect.
+    :param direction: ``"gather"``/``"load"`` for the in-side fan,
+        ``"scatter"``/``"store"`` for the out-side fan.
+    :returns: ``(sorted_tasklets, far_data_and_subset, vector_length)``,
+        or ``None`` if no match.
     """
     is_pack_in_side = direction in ("gather", "load")
 
@@ -142,7 +142,14 @@ def _match_assign_fan(
 
 
 def _single_indirect_neighbour(state: dace.SDFGState, sorted_tasklets, is_pack_in_side: bool):
-    """Return the single non-packed AccessNode every fan tasklet's far edge connects to."""
+    """
+    Return the single non-packed node every fan tasklet's far edge connects to.
+
+    :param state: The state containing the tasklets.
+    :param sorted_tasklets: The fan tasklets, in order.
+    :param is_pack_in_side: ``True`` if the packed node is on the in-side.
+    :returns: The shared neighbour node.
+    """
     indirect_neighbours = set()
     for t in sorted_tasklets:
         far_edges = state.in_edges(t) if is_pack_in_side else state.out_edges(t)
@@ -153,11 +160,12 @@ def _single_indirect_neighbour(state: dace.SDFGState, sorted_tasklets, is_pack_i
 
 def _linearise_subset_through_strides(subset: dace.subsets.Range, strides) -> Optional[dace.symbolic.SymExpr]:
     """
-    Linearise a multi-dim point subset ``[(b0, b0, 1), (b1, b1, 1), ...]``
-    through the array's strides into a single scalar offset
-    ``sum_d (b_d * strides[d])``.
+    Linearise a multi-dim point subset through the array strides into a scalar offset.
 
-    Returns ``None`` if any dim is not a point access (``begin != end``).
+    :param subset: A point subset (each dim must have ``begin == end``).
+    :param strides: The array's per-dimension strides.
+    :returns: ``sum_d (b_d * strides[d])``, or ``None`` if any dim is not
+        a point access.
     """
     if len(subset) != len(strides):
         return None
@@ -171,9 +179,10 @@ def _linearise_subset_through_strides(subset: dace.subsets.Range, strides) -> Op
 
 def _bounding_box_per_dim(subsets):
     """
-    Per-dim bounding box ``(min(begin), max(begin))`` across a list of point
-    subsets. Returns a list of ``(lo, hi, 1)`` tuples suitable for building a
-    ``dace.subsets.Range``.
+    Compute the per-dimension bounding box across a list of point subsets.
+
+    :param subsets: List of point subsets of equal dimensionality.
+    :returns: List of ``(lo, hi, 1)`` tuples suitable for a ``dace.subsets.Range``.
     """
     num_dims = len(subsets[0])
     box = []
@@ -192,22 +201,22 @@ def detect_multi_dim_strided_apply(sdfg: SDFG,
                                    intrinsic_tasklet_name: str,
                                    intrinsic_template_masked: Optional[str] = None) -> int:
     """
-    Recognise the multi-dim linear-combo fan around a ``_packed`` access node
-    (e.g. ``A[i,i]``, ``A[2*i,i]``, ``A[i,2*i]``) and collapse it into a single
-    ``strided_load_double`` / ``strided_store_double`` intrinsic call.
+    Collapse a multi-dim linear-combination fan around a ``_packed`` node into one intrinsic.
 
-    The per-lane subsets are linearised through the array's strides; if the
-    resulting scalar offsets form a fixed-increment sequence, the W assign
-    tasklets are replaced by one CPP intrinsic tasklet whose memlet is the
-    bounding box of the touched elements. ``_in`` (load) or ``_out`` (store)
-    in the emitted body is a flat ``double*`` pointing at the lane-0 element.
+    Recognises patterns such as ``A[i,i]``, ``A[2*i,i]``, ``A[i,2*i]``.
+    Per-lane subsets are linearised through the array strides; if the
+    offsets form a fixed-increment sequence, the assign tasklets are
+    replaced by one CPP strided-load/store intrinsic tasklet whose memlet
+    is the bounding box of the touched elements. Only fully matched fans
+    are collapsed.
 
-    Per the per-lane-multi-dim-tasklets-must-be-Python rule, this pass only
-    fires for fully matched fans — the collapsed tasklet operates on the
-    linearised stride and emits CPP, while any unmatched fan remains as the
-    original Python per-lane assigns.
-
-    Returns the number of fans collapsed (recurses into nested SDFGs).
+    :param sdfg: The SDFG to transform (recursively, including nested SDFGs).
+    :param direction: ``"load"`` or ``"store"``.
+    :param intrinsic_template: CPP body template for the collapsed tasklet.
+    :param intrinsic_tasklet_name: Label for the collapsed tasklet.
+    :param intrinsic_template_masked: Optional masked-variant template,
+        used when an iteration mask is in scope.
+    :returns: The number of fans collapsed.
     """
     assert direction in ("load", "store"), direction
     is_pack_in_side = direction == "load"
@@ -326,20 +335,21 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                              intrinsic_tasklet_name: str,
                              intrinsic_template_masked: Optional[str] = None) -> int:
     """
-    Recognise an ``assign_<i>`` fan around a ``_packed`` access node and
-    collapse it into a single intrinsic call. Returns the count of fans
-    collapsed (including any inside nested SDFGs).
+    Collapse a 1-D ``assign_<i>`` fan around a ``_packed`` node into one intrinsic call.
 
-    direction: "gather"/"load" = fan is on the in-side of the packed
-        node; "scatter"/"store" = fan is on the out-side.
-    pattern: "contiguous" = the per-lane indices are arbitrary (the
-        intrinsic takes an index array); "strided" = the per-lane
-        indices form a fixed-increment progression (the intrinsic takes
-        a stride parameter).
-
-    ``intrinsic_template`` is the CPP body string. For ``contiguous`` it
-    uses ``{initializer_values}`` and ``{vector_length}`` placeholders;
-    for ``strided`` it uses ``{vector_length}`` and ``{stride}``.
+    :param sdfg: The SDFG to transform (recursively, including nested SDFGs).
+    :param direction: ``"gather"``/``"load"`` (fan on the in-side) or
+        ``"scatter"``/``"store"`` (fan on the out-side).
+    :param pattern: ``"contiguous"`` (arbitrary per-lane indices; the
+        intrinsic takes an index array) or ``"strided"`` (fixed-increment
+        indices; the intrinsic takes a stride).
+    :param intrinsic_template: CPP body template. ``contiguous`` uses
+        ``{initializer_values}``/``{vector_length}``; ``strided`` uses
+        ``{vector_length}``/``{stride}``.
+    :param intrinsic_tasklet_name: Label for the collapsed tasklet.
+    :param intrinsic_template_masked: Optional masked-variant template,
+        used when an iteration mask is in scope.
+    :returns: The number of fans collapsed.
     """
     assert direction in ("gather", "scatter", "load", "store"), direction
     assert pattern in ("contiguous", "strided"), pattern

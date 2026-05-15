@@ -1,35 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Reduction emission helpers for the vectorization pipeline.
+"""Reduction-expression emission helpers for the vectorization pipeline.
 
-This module is the staged home for the reductions redesign (R-1 .. R-5
-in the plan). Today it contains only the read-only building blocks
-R-1 introduces; the actual integration into ``move_out_reduction`` /
-``reduce_before_use`` is a separate R-2 slice.
-
-What lives here:
-
-- ``IDENTITY`` — table mapping reduction-op string to the identity
-  element used to initialise the vector accumulator. The current
-  reduction-lift path only recognises literal-zero accumulator init
-  (``acc = 0``) which restricts it to additive reductions; the
-  identity table is the data half of the fix.
-- ``emit_chain_reduction`` — the existing linear-chain emitter,
-  factored out so callers can switch between chain and tree forms
-  without copying code. Behaviour-equivalent to the inline emitter
-  ``reduce_before_use`` currently uses.
-- ``emit_tree_reduction`` — log-depth tree fallback. For an associative
-  op the chain ``a + b + c + d + e + f + g + h`` (critical path 7)
-  becomes ``((a + b) + (c + d)) + ((e + f) + (g + h))`` (critical
-  path 3). For non-infix ops (``max``/``min``) the equivalent shape
-  is ``max(max(max(a, b), max(c, d)), max(max(e, f), max(g, h)))``.
+- ``IDENTITY`` maps a reduction-op string to its accumulator identity
+  element.
+- ``emit_chain_reduction`` emits a linear left-associated reduction
+  (critical path ``O(W)``).
+- ``emit_tree_reduction`` emits a balanced-tree reduction
+  (critical path ``O(log W)``); not bit-exact with the chain form for
+  non-associative ops.
 
 Both emitters return a single C++/Python expression string that the
-caller wraps with ``_out = ...`` and feeds to ``add_tasklet``.
-
-Per the locked policy, this slice is mechanical and purely additive —
-no callers switch over yet. R-2 will migrate ``reduce_before_use``
-to use these helpers behind a knob.
+caller wraps with ``_out = ...``.
 """
 from typing import List
 
@@ -52,6 +33,13 @@ IDENTITY = {
 
 
 def _validate(op: str, vector_width: int) -> None:
+    """Validate a reduction op and lane count.
+
+    :param op: Reduction operator string.
+    :param vector_width: Lane count.
+    :raises NotImplementedError: if ``op`` is not a supported reduction op.
+    :raises ValueError: if ``vector_width`` is less than 1.
+    """
     if op not in _INFIX_OPS and op not in _FUNCALL_OPS:
         raise NotImplementedError(f"emit_*_reduction: unsupported op {op!r}")
     if vector_width < 1:
@@ -61,8 +49,11 @@ def _validate(op: str, vector_width: int) -> None:
 def _wrap_pair(op: str, left: str, right: str) -> str:
     """Combine two operands using ``op``.
 
-    Infix ops produce ``(left op right)``; the ``max``/``min`` function-call
-    ops produce ``op(left, right)``.
+    :param op: Reduction operator string.
+    :param left: Left operand expression.
+    :param right: Right operand expression.
+    :returns: ``(left op right)`` for infix ops, ``op(left, right)`` for
+        the ``max``/``min`` function-call ops.
     """
     if op in _INFIX_OPS:
         return f"({left} {op} {right})"
@@ -70,11 +61,13 @@ def _wrap_pair(op: str, left: str, right: str) -> str:
 
 
 def emit_chain_reduction(input_var: str, vector_width: int, op: str) -> str:
-    """Linear left-associated chain — critical path ``O(W)``.
+    """Emit a linear left-associated reduction — critical path ``O(W)``.
 
-    Matches the form used by ``reduce_before_use`` today:
-    ``a op b op c op d`` for infix ops; ``op(op(op(a, b), c), d)`` for
-    function-call ops.
+    :param input_var: Name of the W-wide input buffer.
+    :param vector_width: Lane count.
+    :param op: Reduction operator string.
+    :returns: ``a op b op c op d`` for infix ops; ``op(op(op(a, b), c), d)``
+        for function-call ops.
     """
     _validate(op, vector_width)
     lanes = [f"{input_var}[{i}]" for i in range(vector_width)]
@@ -89,11 +82,15 @@ def emit_chain_reduction(input_var: str, vector_width: int, op: str) -> str:
 
 
 def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
-    """Balanced-tree reduction — critical path ``O(log W)``.
+    """Emit a balanced-tree reduction — critical path ``O(log W)``.
 
     Pairs lanes ``(0,1)``, ``(2,3)``, ... at each level, halving until one
-    operand remains. Odd lane counts trail the lone lane forward unchanged
-    until the next level pairs it up.
+    operand remains. An odd lane trails forward unchanged to the next level.
+
+    :param input_var: Name of the W-wide input buffer.
+    :param vector_width: Lane count.
+    :param op: Reduction operator string.
+    :returns: The balanced-tree reduction expression.
     """
     _validate(op, vector_width)
     operands: List[str] = [f"{input_var}[{i}]" for i in range(vector_width)]

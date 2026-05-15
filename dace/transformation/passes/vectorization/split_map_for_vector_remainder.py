@@ -1,27 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-``SplitMapForVectorRemainder``, P2 vectorization-prep. For every
-innermost step-1 map whose range is not provably divisible by
-``vector_width``, split the map into:
+"""Split innermost maps into a vectorisable main map plus a trailing remainder.
 
-- a **main map** that strides by ``vector_width`` and is the vectorisation
-  target,
-- a **remainder map** scheduled sequentially after the main map covering
-  the leftover trailing iterations.
-
-Two modes for the remainder:
-
-- ``"scalar"`` (default), step 1, marked ``ScheduleType.Sequential`` so
-  the vectorizer skips it. Today's standard postamble shape.
-- ``"masked"``, step ``vector_width``, the remainder body keeps the same
-  vector body and relies on P3 to wire an ``_iter_mask`` connector that
-  zeroes out the out-of-range lanes. Until P3 lands the mask is missing,
-  so masked mode is a stub that allocates the right map ranges but does
-  not attach the mask yet, downstream emission must error if it sees a
-  step-``W`` remainder without the connector.
-
-Reuses ``dace.transformation.helpers.replicate_scope`` (proven on the
-legacy ``dataflow/vectorization.py`` postamble path).
+For every innermost step-1 map whose range is not provably divisible by
+``vector_width``, the map is split into a main map (the vectorisation
+target) and a remainder map covering the leftover trailing iterations.
+The remainder is either a sequential scalar tail (``scalar`` mode) or a
+masked step-``vector_width`` body that relies on a later pass to attach
+the iteration-mask connector (``masked`` mode).
 """
 from typing import Optional
 
@@ -47,17 +32,32 @@ class SplitMapForVectorRemainder(ppl.Pass):
                                "remainder that P3 will attach the iter-mask connector to")
 
     def __init__(self, vector_width: int = 8, mode: str = "scalar"):
+        """Initialize the pass.
+
+        :param vector_width: SIMD lane count; the main map's vector width.
+        :param mode: ``scalar`` for a sequential step-1 remainder, ``masked``
+            for a step-``vector_width`` remainder masked by a later pass.
+        """
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
 
     def modifies(self) -> ppl.Modifies:
+        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.Nodes | ppl.Modifies.States
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Return whether the pass should run again after modifications."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        """Split every eligible innermost map into a main map plus a remainder.
+
+        :param sdfg: The SDFG to transform in place.
+        :param _: Unused pipeline results.
+        :returns: Number of maps split, or ``None`` if none.
+        :raises ValueError: If ``mode`` is not ``scalar`` or ``masked``.
+        """
         if self.mode not in ("scalar", "masked"):
             raise ValueError(f"SplitMapForVectorRemainder.mode must be 'scalar' or 'masked', got {self.mode!r}")
 
@@ -75,6 +75,13 @@ class SplitMapForVectorRemainder(ppl.Pass):
         return applied or None
 
     def _split(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, W: int) -> bool:
+        """Split one innermost map into a main map and a remainder map.
+
+        :param state: The state containing the map.
+        :param map_entry: The innermost map entry to split.
+        :param W: Vector width used for the main map and divisibility check.
+        :returns: ``True`` if the map was split, ``False`` if skipped.
+        """
         # Only handle a step-1 innermost range. Multi-dim maps split on the
         # innermost dim, but skip if that dim does not have step 1.
         if not map_entry.map.range.ranges:

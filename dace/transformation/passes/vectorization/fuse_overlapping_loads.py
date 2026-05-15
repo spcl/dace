@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Pass that fuses overlapping per-lane loads into one shared union access."""
 import copy
 import dace
 from typing import Dict, List, Optional, Tuple
@@ -11,18 +12,29 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class FuseOverlappingLoads(ppl.Pass):
-    # This pass is testes as part of the vectorization pipeline
+    """Fuse overlapping per-lane loads of the same array into one shared union access."""
+
+    # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
+        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Report whether this pass should run again after other passes."""
         return False
 
     def _collect_loads(
             self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry
     ) -> Dict[str, List[Tuple[Edge[Memlet], dace.nodes.AccessNode, Edge[Memlet]]]]:
+        """Group the incoming access nodes of ``map_entry`` by their source array.
+
+        :param state: State containing ``map_entry``.
+        :param map_entry: Inner map entry whose load fan-out is inspected.
+        :returns: Map from source array name to ``(src_in_edge, access_node,
+            map_in_edge)`` tuples.
+        """
         # The supported pattern is:
         # Map Entry -> [AccessNodes...] -> MapEntry
         # Where we have:
@@ -72,6 +84,11 @@ class FuseOverlappingLoads(ppl.Pass):
     def compute_union_and_offsets(
         self, in_data_and_srcs: Dict[str, List[Tuple[Edge[Memlet], dace.nodes.AccessNode, Edge[Memlet]]]]
     ) -> Dict[str, dace.subsets.Range]:
+        """Compute the union subset and shape for each grouped source array.
+
+        :param in_data_and_srcs: Output of :meth:`_collect_loads`.
+        :returns: Map from array name to ``(union_subset, union_shape)``.
+        """
         union_subsets = dict()
         for k, v in in_data_and_srcs.items():
             union_subset: dace.subsets.Range = v[0][0].data.subset
@@ -84,6 +101,10 @@ class FuseOverlappingLoads(ppl.Pass):
         return union_subsets
 
     def _apply(self, sdfg: dace.SDFG):
+        """Fuse overlapping loads in ``sdfg`` and recurse into nested SDFGs.
+
+        :param sdfg: SDFG to transform in place.
+        """
         for state in sdfg.all_states():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -181,4 +202,8 @@ class FuseOverlappingLoads(ppl.Pass):
                     self._apply(node.sdfg)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        """Run the pass over ``sdfg``.
+
+        :param sdfg: SDFG to transform in place.
+        """
         self._apply(sdfg)

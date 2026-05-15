@@ -1,15 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Map mutation helpers used by the vectorization pipeline.
-
-``remove_map`` is the only entry here today. The plan originally
-suggested promoting it to ``dace.sdfg.utils`` because the body has no
-vectorization-specific logic, but the actual call set is narrow (only
-``RemoveVectorMaps`` invokes it) and keeping it inside the
-vectorization package matches the reuse-threshold directive
-("don't shuffle copies across directories without a measured win").
-If a third party later wants it, the move out is one line.
-"""
+"""Map mutation helpers used by the vectorization pipeline."""
 import copy
 
 import dace
@@ -19,6 +9,16 @@ from dace.symbolic import DaceSympyPrinter
 
 
 def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
+    """
+    Remove a map scope, redirecting its edges and substituting params with range starts.
+
+    Tasklet code and nested-SDFG symbol mappings / edge subsets inside
+    the former scope are rewritten so each map parameter is replaced by
+    its range begin.
+
+    :param map_entry: The map entry node to remove.
+    :param state: The state containing ``map_entry``.
+    """
     assert map_entry in state.nodes()
     map_exit = state.exit_node(map_entry)
 

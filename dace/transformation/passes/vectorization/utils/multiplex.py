@@ -1,19 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Halve-index multiplex pattern detection.
+"""Halve-index multiplex pattern detection for the vectorization pipeline.
 
-When a memlet begin expression is ``int_floor(i, k)`` (or the
-deprecated alias ``floor_int(i, k)``), it indicates an access pattern
-where ``vector_length / k`` distinct lanes share each load. The
-vectorizer rewrites such accesses by allocating a packed transient
-sized ``vector_length`` and emitting a ``multiplex_elements`` tasklet
-that fans the loaded values out to the right lanes.
-
-The two helpers here live in their own module because the surrounding
-plumbing (``multiplex_elements`` C++ runtime in
-``dace/runtime/include/dace/vector_intrinsics/multiplex.h`` +
-``multiplexed_<array>`` transient naming) is its own concern,
-independent of subset rewriting or NSDFG shape reconciliation.
+A memlet begin expression of ``int_floor(i, k)`` (or alias ``floor_int(i, k)``)
+means ``vector_length / k`` lanes share each load; such accesses are rewritten
+through a packed transient and a ``multiplex_elements`` tasklet.
 """
 import sympy
 
@@ -22,6 +12,17 @@ from dace import SDFGState
 
 
 def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vector_length):
+    """Rewrite halve-indexed accesses on a map's out-edges into a multiplex tasklet.
+
+    :param state: State containing the inner vector map.
+    :param new_inner_map: Inner MapEntry whose out-edges are scanned.
+    :param vector_length: Number of vector lanes.
+    :returns: ``(modified_nodes, modified_edges)`` — the nodes and edges added
+        or removed during the rewrite.
+    :raises NotImplementedError: if a memlet has more than one halve-indexed
+        dimension, if ``vector_length`` is not divisible by the detected
+        divisor, or if a begin expression is not symbolic.
+    """
     all_nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
     map_param = new_inner_map.map.params[-1]
     all_edges = state.out_edges(new_inner_map)
@@ -83,12 +84,11 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
 
 
 def detect_halve_index_impl(expr):
-    """
-    Detect patterns like int_floor(i, k) or floor_int(i, k)
-    where k is ANY positive integer.
+    """Detect an ``int_floor(i, k)`` / ``floor_int(i, k)`` pattern.
 
-    Returns:
-        (symbol, divisor) or (None, None)
+    :param expr: Symbolic begin expression to inspect.
+    :returns: ``(symbol, divisor)`` if ``expr`` is a halve-index over a
+        positive-integer divisor ``k``, else ``(None, None)``.
     """
     # Only custom functions
     if isinstance(expr, sympy.Function) and expr.func.__name__ in ("int_floor", "floor_int"):

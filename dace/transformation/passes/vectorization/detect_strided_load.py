@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Pass that collapses a strided per-lane fan-out into a strided-load intrinsic."""
 from typing import Any, Dict
 
 from dace import SDFG, properties
@@ -22,19 +23,29 @@ strided_load_masked<{dtype}>(_in, _out, {vector_length}, {stride}, _mask);
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DetectStridedLoad(ppl.Pass):
+    """Replace a strided per-lane load fan-out with a single strided-load intrinsic."""
+
     # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
+        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        """Report whether this pass should run again after other passes."""
         return False
 
     def depends_on(self):
+        """Report the passes this pass depends on."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+        """Detect and rewrite strided load fan-outs in ``sdfg``.
+
+        :param sdfg: SDFG to transform in place.
+        :param pipeline_results: Results of previously run pipeline passes.
+        """
         detect_lane_fanout_apply(sdfg,
                                  direction="load",
                                  pattern="strided",
