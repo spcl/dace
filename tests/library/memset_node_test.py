@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
+"""Tests for :class:`MemsetLibraryNode` and its pure / CPU / CUDA expansions."""
 import dace
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
@@ -163,8 +163,7 @@ def test_memset_cuda_gpu_multi_dim():
 
 @pytest.mark.gpu
 def test_memset_cuda_cpu():
-    # Test CUDA implementation on CPU arrays
-    # should fail at validation or compilation
+    # The CUDA expansion targeting a CPU array must be rejected.
     sdfg = _get_sdfg("CUDA", gpu=False)
     sdfg.name += "_cuda_cpu"
     sdfg.validate()

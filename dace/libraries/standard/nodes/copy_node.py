@@ -28,10 +28,6 @@ from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 _INPUT_CONNECTOR_NAME = "_cpy_in"
 _OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
-# Must differ from STREAM_CONN: the expansion adds a nested-SDFG array of
-# that name, and DaCe rejects tasklet connectors colliding with array names.
-_STREAM_TASKLET_CONN = "_stream_in"
-
 # A mapped tasklet cannot read CPU and write GPU (or vice versa) in one
 # scope. ``Register`` adopts the side of its enclosing scope and is handled
 # explicitly by the predicates below — never a member of either set.
@@ -333,14 +329,6 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     return ctx.sdfg
 
 
-def _stream_expr_for_tasklet(tasklet_inputs: set, stream_input) -> str:
-    """Add the tasklet stream connector if needed, and return the stream-arg expression."""
-    if stream_input is None:
-        return "__dace_current_stream"
-    tasklet_inputs.add(_STREAM_TASKLET_CONN)
-    return _STREAM_TASKLET_CONN
-
-
 def _memcpy_kind(inp, out) -> str:
     """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
@@ -470,40 +458,6 @@ def _build_copynd_call(ctype,
 
     all_args = [in_arg, out_arg] + stride_args
     return f"{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});"
-
-
-def _build_copynd_tasklet_in_state(sdfg,
-                                   state,
-                                   inp_name,
-                                   inp,
-                                   in_shape_collapsed,
-                                   in_strides_collapsed,
-                                   out_name,
-                                   out,
-                                   out_shape_collapsed,
-                                   out_strides_collapsed,
-                                   *,
-                                   name: str,
-                                   code_suffix: str = ""):
-    """Wire a ``dace::CopyND`` tasklet (``_cpy_in`` → ``_cpy_out``) into
-    ``state`` over the collapsed shapes. ``code_suffix`` lets shared-memory
-    callers append e.g. ``\\n__syncthreads();``."""
-    code = _build_copynd_call(inp.dtype.ctype, in_shape_collapsed, in_strides_collapsed,
-                              out_strides_collapsed) + code_suffix
-    in_access = state.add_access(inp_name)
-    out_access = state.add_access(out_name)
-    tasklet = state.add_tasklet(name=name,
-                                inputs={_INPUT_CONNECTOR_NAME},
-                                outputs={_OUTPUT_CONNECTOR_NAME},
-                                code=code,
-                                language=dace.Language.CPP)
-    state.add_edge(
-        in_access, None, tasklet, _INPUT_CONNECTOR_NAME,
-        dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in in_shape_collapsed])))
-    state.add_edge(
-        tasklet, _OUTPUT_CONNECTOR_NAME, out_access, None,
-        dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
-    return tasklet
 
 
 @library.expansion
