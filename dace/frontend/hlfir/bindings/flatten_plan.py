@@ -204,7 +204,7 @@ class FlattenPlan:
         a nested dict of the same shape."""
         return cls(entries=tuple(FlattenEntry.from_dict(e) for e in d.get('entries', [])))
 
-    def to_json(self, path: str) -> None:
+    def to_json(self, path: str):
         with open(path, 'w') as fh:
             json.dump(self.to_dict(), fh, indent=2)
 

@@ -382,7 +382,7 @@ class SDFGBuilder:
         sdfg.validate()
         return sdfg
 
-    def _register_constants(self, sdfg: SDFG) -> None:
+    def _register_constants(self, sdfg: SDFG):
         """Attach Flang's constant-pool data to the SDFG.
 
         Every ``VarInfo`` with non-empty ``const_data`` represents a
@@ -427,7 +427,7 @@ class SDFGBuilder:
                 arr = arr.reshape(shape, order='C')
             sdfg.add_constant(v.fortran_name, arr, desc)
 
-    def _run_post_gen_passes(self, sdfg: SDFG) -> None:
+    def _run_post_gen_passes(self, sdfg: SDFG):
         """Run the post-generation cleanup passes that take a freshly-
         emitted bridge SDFG to its canonical shape.  See Stage 4b in
         ``dace/frontend/hlfir/README.md`` for the pipeline.
@@ -507,7 +507,7 @@ class SDFGBuilder:
                     if isinstance(desc, (Scalar, Array)) and desc.transient:
                         node.setzero = True
 
-    def _attach_frozen_signature(self, sdfg: SDFG) -> None:
+    def _attach_frozen_signature(self, sdfg: SDFG):
         """Snapshot ``sdfg.arglist()`` + free symbols into a
         ``FrozenSignature`` and pin it on the SDFG.
 

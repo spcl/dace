@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Give every ``LoopRegion``'s loop variable a globally-unique name.
 
-Two ``LoopRegion``s synthesised from independent source-level loops can
+Two ``LoopRegion`` s synthesised from independent source-level loops can
 share the same Python-level iterator name (``for i in ...`` in both).
 Once they merge into a single SDFG -- e.g. through inlining -- the
 shared name turns into an alias and downstream passes (symbol
@@ -98,7 +98,7 @@ class UniqueLoopIterators(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str) -> None:
+    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str):
         """Rename ``old_name`` to ``new_name`` inside ``cfg``.  The
         ControlFlowRegion's own ``replace_dict`` already cascades the
         rename through every state, interstate edge, memlet, tasklet,
@@ -156,7 +156,7 @@ class UniqueLoopIterators(ppl.Pass):
         # Stride unknown -- fall back to last-attained value.
         return loop_end
 
-    def _apply_recursive(self, sdfg: dace.SDFG) -> None:
+    def _apply_recursive(self, sdfg: dace.SDFG):
         # Names DaCe knows are arrays -- ``symstr`` uses this set to
         # render array subscripts as ``arr[idx]`` (Python syntax for
         # interstate-edge assignments) rather than ``arr(idx)`` (sympy

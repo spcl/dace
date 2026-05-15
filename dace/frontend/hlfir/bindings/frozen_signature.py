@@ -88,7 +88,7 @@ class FrozenSignature:
 
     # ----- I/O ---------------------------------------------------------
 
-    def to_json(self, path: str) -> None:
+    def to_json(self, path: str):
         with open(path, 'w') as fh:
             json.dump(
                 {
@@ -115,7 +115,7 @@ class FrozenSignature:
 
     # ----- Drift check -------------------------------------------------
 
-    def verify_against(self, sdfg) -> None:
+    def verify_against(self, sdfg):
         """Compare the live ``sdfg.arglist()`` + free-symbol set against
         this snapshot.  Raise ``SignatureDriftError`` on any divergence.
 

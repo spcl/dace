@@ -10,7 +10,7 @@ Usage standalone:
     python build_bridge.py --clean       # wipe build dir and rebuild
 
 The build directory lives at <this_file's_dir>/build.  The compiled .so is
-symlinked next to this file so that `import hlfir_bridge` works without
+symlinked next to this file so that ``import hlfir_bridge`` works without
 PYTHONPATH manipulation.
 """
 
