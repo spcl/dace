@@ -1,8 +1,8 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import dace
-import dace.libraries.environments as environments
 
+from dace.libraries.standard import environments as standard_environments
 from dace import library, nodes, properties
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
@@ -265,7 +265,7 @@ class ExpandCuTensor(ExpandTransformation):
     (i.e. D = alpha * A * B with beta = 0).
     """
 
-    environments = [environments.cuTensor]
+    environments = [standard_environments.cuTensor]
 
     # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, scalar type for alpha/beta).
     # The scalar type follows the compute descriptor: real for real-valued
@@ -402,7 +402,7 @@ class ExpandCuTensor(ExpandTransformation):
             if (work) cudaFree(work);
         """
 
-        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+        code = f"{standard_environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

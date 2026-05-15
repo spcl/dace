@@ -6,7 +6,6 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
 from .. import environments
-from dace.libraries.environments.cutensor import cuTensor
 import warnings
 
 
@@ -103,7 +102,7 @@ class ExpandCuTensor(ExpandTransformation):
     cutensorElementwiseBinary.
     """
 
-    environments = [cuTensor]
+    environments = [environments.cuTensor]
 
     # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, alpha C type)
     #
@@ -159,7 +158,7 @@ class ExpandCuTensor(ExpandTransformation):
         stride_c_str = ', '.join(symstr(s) for s in out_tensor.strides)
 
         code = f"""\
-{cuTensor.handle_setup_code(node)}
+{environments.cuTensor.handle_setup_code(node)}
 {{
     // ---- cuTENSOR v2 permutation ----------------------------------------
     const uint32_t kNdim = {ndim};
