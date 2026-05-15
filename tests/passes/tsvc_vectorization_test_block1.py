@@ -30,6 +30,35 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 LEN_1D = dace.symbol("LEN_1D")
 
 
+
+import ast as _ast
+import inspect as _inspect
+
+_BRANCH_CACHE = {}
+
+
+def _kernel_has_branch(prog) -> bool:
+    """``True`` iff the kernel body contains an ``if`` (so ``merge`` vs
+    ``fp_factor`` branch-lowering actually differ). Branchless kernels
+    produce an identical SDFG under both modes, so the ``fp_factor``
+    parametrization is pure duplication for them."""
+    key = getattr(prog, "name", id(prog))
+    if key in _BRANCH_CACHE:
+        return _BRANCH_CACHE[key]
+    try:
+        src = _inspect.getsource(prog.f)
+        tree = _ast.parse(_textwrap_dedent(src))
+        has = any(isinstance(n, _ast.If) for n in _ast.walk(tree))
+    except Exception:
+        has = True  # be conservative: if we cannot tell, keep both modes
+    _BRANCH_CACHE[key] = has
+    return has
+
+
+def _textwrap_dedent(s: str) -> str:
+    import textwrap
+    return textwrap.dedent(s)
+
 @dace.program
 def s116_d_single(a: dace.float64[LEN_1D]):
     for i in range(0, LEN_1D - 4, 4):
@@ -393,6 +422,14 @@ def test_tsvc_block1(kernel, argnames, remainder_strategy, branch_mode, len_1d_v
     # Locked-plan-rule skip: fp_factor cannot combine with masked iter_mask.
     if branch_mode == "fp_factor" and remainder_strategy == "masked":
         pytest.skip("fp_factor + masked rejected by VectorizeCPU (locked plan rule)")
+    # Lever 1: fp_factor == merge for a branchless kernel (no ``if`` to
+    # lower) — skip the duplicate fp_factor run.
+    if branch_mode == "fp_factor" and not _kernel_has_branch(kernel):
+        pytest.skip("branchless kernel: fp_factor SDFG == merge SDFG")
+    # Lever 2: LEN divisible by W ⇒ P2 emits no remainder ⇒ masked SDFG
+    # == scalar SDFG. Skip the duplicate masked run.
+    if remainder_strategy == "masked" and (len_1d_val % 8 == 0):
+        pytest.skip("LEN %% W == 0: no remainder, masked == scalar")
 
     arrays_ref = {name: _allocate(name, len_1d_val) for name in argnames}
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}
