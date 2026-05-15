@@ -5,7 +5,6 @@ import ctypes
 
 import dace
 import numpy as np
-import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
