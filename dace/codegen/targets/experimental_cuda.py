@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
@@ -624,7 +625,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             result += f' + gridDim.x * gridDim.y * blockIdx.z'
         return result
 
-    #######################################################################
     # Array Declaration, Allocation and Deallocation
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,

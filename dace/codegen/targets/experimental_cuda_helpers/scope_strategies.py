@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Scope-emission strategies (RAII bracket managers) for the experimental CUDA codegen."""
 from abc import ABC, abstractmethod
 
 from dace import dtypes, subsets, symbolic
@@ -13,9 +14,7 @@ from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, Kern
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
 from dace.transformation.dataflow.add_threadblock_map import product
 
-#----------------------------------------------------------------------------------
 # GPU Scope Generation Strategies
-#----------------------------------------------------------------------------------
 
 
 def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
@@ -191,8 +190,6 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
 
                 # Optimize conditions if they are always true
-                #############################################
-
                 condition = ''
 
                 # Block range start
@@ -252,7 +249,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
             num_warps = product(warp_dim_bounds)
 
-            # The C type used to define the (flat) threadId and warpId variables
+            # The C type that defines the (flat) threadId and warpId variables
             ids_ctype = kernel_spec.gpu_index_ctype
 
             # ----------------- Guard checks -----------------------
@@ -386,9 +383,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                 raise ValueError(f"Warp ID value {min_element} must be non-negative.")
 
 
-#----------------------------------------------------------------------------------
-# Scope Manager, handling brackets and allocation/deallocation of arrays in Scopes
-#----------------------------------------------------------------------------------
+# Scope Manager: handles brackets and allocation/deallocation of arrays in scopes
 
 
 class ScopeManager:

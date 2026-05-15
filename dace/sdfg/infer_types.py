@@ -257,15 +257,6 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         if isinstance(desc, data.Scalar):
             continue  # Skip scalars
 
-        # The GPU stream handle array is plumbing, not data: it carries a
-        # scheduler-assigned stream slot into stream-using nodes and must
-        # not be interpreted as imposing a schedule constraint.  (Today it
-        # uses Register storage, which is already excluded by the map
-        # lookup below; this explicit guard keeps the invariant even if
-        # the stream array's storage changes in the future.)
-        if desc.dtype == dtypes.gpuStream_t:
-            continue
-
         storage = desc.storage
         if storage not in dtypes.STORAGEDEFAULT_SCHEDULE:
             continue

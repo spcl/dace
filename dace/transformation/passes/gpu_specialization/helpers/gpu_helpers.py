@@ -100,12 +100,6 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
     return False
 
 
-def get_gpu_stream_connector_name() -> str:
-    """Deprecated. Use :data:`STREAM_CONNECTOR` directly. Returned name is
-    the single canonical connector name (no per-id suffix anymore)."""
-    return STREAM_CONNECTOR
-
-
 # Storages that mark a copy/memset library node as "GPU-relevant" — i.e.
 # its expansion wires the ``stream`` connector to a cudaMemcpy /
 # cudaMemset runtime call. Hoisted to module scope because

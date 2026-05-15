@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
 from typing import Dict, FrozenSet, Set, Tuple, List
 import copy
 import functools
@@ -45,23 +46,16 @@ def _tile_extent(max_elem, min_elem):
 @make_properties
 @transformation.explicit_cf_compatible
 class MoveArrayOutOfKernel(Pass):
-    """
-    This pass supports a legacy use case in the 'ExperimentalCUDACodeGen' backend: the use of
-    transient arrays with dtypes.StorageType.GPU_Global inside GPU_Device scheduled maps (kernels).
-    Previously, the old 'CUDACodeGen' moved such arrays outside the kernel during codegen, which caused:
+    """Lift transient ``GPU_Global`` arrays out of ``GPU_Device`` maps (kernels).
 
-    1. Mismatches between the SDFG and the generated code,
-    2. Complex, misplaced logic in codegen,
-    3. Incorrect semantics — a single shared array was reused instead of per-iteration replication,
-       leading to race conditions.
+    Such arrays are replicated per map iteration into disjoint outer arrays,
+    making the transformation explicit at the SDFG level (no codegen-time
+    rewrite, no naming collisions) and giving correct per-iteration semantics
+    instead of a single shared array (which races).
 
-    This pass fixes these issues by explicitly lifting such arrays out of GPU_Device maps
-    and creating disjoint arrays per map iteration. Unlike the legacy approach, the transformation
-    is now visible and consistent at the SDFG level, avoiding naming collisions and improving clarity.
-
-    NOTE: There is no true "local device (GPU_Device) memory" on GPUs, but DaCe supports this
-    pattern for legacy reasons. This pass exists purely for backward compatibility, and its use
-    is strongly discouraged.
+    NOTE: GPUs have no true per-thread ``GPU_Device`` memory; DaCe only
+    supports this pattern for backward compatibility and its use is
+    strongly discouraged.
     """
 
     def __init__(self):
@@ -183,22 +177,14 @@ class MoveArrayOutOfKernel(Pass):
                               Memlet.from_array(array_name, array_desc))
 
     def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str):
-        """
-        Moves a transient GPU_Global array out of a GPU_Device map (kernel) in the nested case.
+        """Move a transient GPU_Global array out of a kernel when its accesses span nested SDFGs.
 
-        This function handles the more complex scenario where access nodes to the array may be
-        defined inside nested SDFGs within the kernel's parent SDFG. It moves the array out of
-        all nested maps and SDFGs, updating shapes and memlets accordingly, and resolves naming
-        conflicts that arise from multiple descriptors with the same name in different scopes
-        (by renaming).
+        Handles the case where access nodes live inside SDFGs nested under the
+        kernel's parent: reshapes/rewrites memlets, renames on descriptor-name
+        conflicts, and lifts the array through every intermediate nested SDFG.
 
-        The method also ensures that the array is correctly lifted through all nested SDFGs
-        between its original definition and the kernel map, updating symbols and connectors
-        along the way.
-
-        Args:
-            kernel_entry: The MapEntry node representing the GPU kernel.
-            array_name: Name of the transient array to move.
+        :param kernel_entry: MapEntry of the GPU kernel.
+        :param array_name: Transient array to move.
         """
         # Collect all information about every distinct data descriptor with the same name "array_name"
         array_descriptor_usage = self.collect_array_descriptor_usage(kernel_entry, array_name)
@@ -262,19 +248,12 @@ class MoveArrayOutOfKernel(Pass):
 
     def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry, sdfg_hierarchy: List[SDFG],
                                         old_subset: List):
-        """
-        Lifts a transient array through nested SDFGs.
+        """Lift a transient array out through each nested SDFG up to the kernel boundary.
 
-        For each SDFG in the hierarchy (from inner to outer), this deepcopies the array descriptor
-        and adds edges from the NestedSDFG node through any enclosing maps to a new access node.
-        This is done until the kernel is exited.
-        Memlets are updated using `old_subset` and enclosing map parameters.
-
-        Args:
-            array_name: Name of the array to lift.
-            kernel_entry: Innermost GPU kernel MapEntry.
-            sdfg_hierarchy: Ordered list of nested SDFGs (inner to outer).
-            old_subset: Inner array subset used for memlet construction.
+        :param array_name: Array to lift.
+        :param kernel_entry: Innermost GPU kernel MapEntry.
+        :param sdfg_hierarchy: Nested SDFGs ordered inner→outer.
+        :param old_subset: Inner array subset used to build the lifted memlets.
         """
         # Move array out ouf the kernel map entry through nested SDFGs
         outer_sdfg = sdfg_hierarchy.pop(0)
@@ -520,7 +499,8 @@ class MoveArrayOutOfKernel(Pass):
             min_elements = map_range.min_element()
             range_size = [_tile_extent(mx, mn) for mx, mn in zip(max_elements, min_elements)]
 
-            #TODO: check this / clean (maybe support packed C and packed Fortran layouts separately for code readability future)
+            # Strides assume a packed C layout; packed-Fortran support would
+            # need a separate stride order here.
             old_total_size = array_desc.total_size
             accumulator = old_total_size
             new_strides.insert(0, old_total_size)
@@ -612,27 +592,16 @@ class MoveArrayOutOfKernel(Pass):
     def collect_array_descriptor_usage(
             self, map_entry: nodes.MapEntry,
             array_name: str) -> Set[Tuple[dt.Array, SDFG, FrozenSet[SDFG], FrozenSet[nodes.AccessNode]]]:
-        """
-        Tracks usage of a transient array across nested SDFGs within the scope of a map.
+        """Track usage of a transient array across nested SDFGs within a map scope.
 
-        For each array it collects:
-        - the outermost SDFG where it is defined or passed through,
-        - all SDFGs in which it is accessed or passed via connectors,
-        - all AccessNodes referencing it in those SDFGs.
+        "Same array" means same name connected via memlets — several
+        ``dt.Array`` descriptor objects may exist across SDFGs for one
+        logical array.
 
-        Note: By "same array" we mean arrays with the same name and connected via memlets;
-        multiple descriptor objects (dt.Array) may exist across SDFGs for the same logical array.
-
-        Args:
-            map_entry: The MapEntry node whose scope is used for analysis.
-            array_name: The name of the array to analyze.
-
-        Returns:
-            A set of tuples, each containing:
-                - one of potentially many dt.Array descriptors,
-                - the outermost defining or using SDFG,
-                - a frozenset of all involved SDFGs,
-                - a frozenset of all AccessNodes using this array.
+        :param map_entry: MapEntry whose scope is analyzed.
+        :param array_name: Array to track.
+        :returns: Set of ``(descriptor, outermost SDFG, all involved SDFGs,
+            all referencing AccessNodes)`` tuples.
         """
         access_nodes_info: List[Tuple[nodes.AccessNode, SDFGState,
                                       SDFG]] = self.get_access_nodes_within_map(map_entry, array_name)

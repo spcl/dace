@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tracks GPU stream slots and maps stream-using nodes to their assigned ``gpuStream_t``."""
 from typing import Dict
 from dace import SDFG, nodes
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name

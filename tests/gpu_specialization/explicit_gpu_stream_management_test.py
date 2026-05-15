@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for explicit GPU stream assignment and sync-tasklet insertion."""
 import pytest
 
 import dace
@@ -11,15 +12,14 @@ from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline i
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
-                                                                               get_gpu_stream_array_name,
-                                                                               get_gpu_stream_connector_name)
+                                                                               get_gpu_stream_array_name)
 
 gpu_stream_pipeline = GPUStreamPipeline()
 
 backend = common.get_gpu_backend()
 
 _STREAM_ARRAY = get_gpu_stream_array_name()
-_STREAM_VAR_PREFIX = get_gpu_stream_connector_name()
+_STREAM_VAR_PREFIX = STREAM_CONNECTOR
 
 
 def _sync_tasklets(state):

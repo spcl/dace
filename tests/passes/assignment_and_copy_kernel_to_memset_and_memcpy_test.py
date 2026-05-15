@@ -1,5 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for :class:`AssignmentAndCopyKernelToMemsetAndMemcpy`.
 
+Verifies the lifting of in-map memset / element-wise-copy patterns to ``MemsetLibraryNode``
+and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
+"""
 import functools
 import dace
 import numpy
@@ -193,9 +197,8 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
-# MemsetLibraryNode kept the legacy ``pure`` / ``CPU`` / ``CUDA`` impl names;
-# CopyLibraryNode renamed to ``MappedTasklet`` / ``MemcpyCPU`` / ``MemcpyCUDA1D``.
-# Tests still parametrize on the legacy label and translate per type here.
+# MemsetLibraryNode and CopyLibraryNode use different impl-name vocabularies.
+# Tests parametrize on the Memset names; map them to the Copy names here.
 _COPY_IMPL_FROM_EXPANSION_TYPE = {
     "pure": "MappedTasklet",
     "CPU": "MemcpyCPU",
@@ -440,7 +443,7 @@ def test_double_memcpy_with_dynamic_connectors(expansion_type, xp):
     p.apply_pass(sdfg, {})
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.NestedSDFG):
-            p.apply_pass(n.sdfg)
+            p.apply_pass(n.sdfg, {})
     sdfg.validate()
     assert _get_num_memcpy_library_nodes(sdfg) == 2
     assert _get_num_memset_library_nodes(sdfg) == 0
@@ -859,6 +862,36 @@ def test_shared_passthrough_connector_blocks_lift():
         "MemsetLibraryNode; this severs the compute tasklet's data path.")
     # SDFG should still be valid (no orphan connectors / edges left behind).
     sdfg.validate()
+
+
+def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
+    # The map_entry receives a dynamic-range scalar on a CUSTOM-named connector
+    # (not the auto-generated `__map_*` prefix). The libnode doesn't iterate
+    # so the dynamic input must not be propagated; otherwise the libnode ends
+    # up with a dangling connector that codegen later trips on.
+    Ub = dace.symbol('Ub')
+    sdfg = dace.SDFG('arbitrary_dyn_conn')
+    sdfg.add_array('src', [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_array('dst', [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_scalar('upper_bound', dace.int32)
+    state = sdfg.add_state('s')
+    src = state.add_access('src')
+    dst = state.add_access('dst')
+    ub = state.add_access('upper_bound')
+
+    me, mx = state.add_map('cpy_map', {'i': '0:Ub', 'j': '0:Ub'})
+    me.add_in_connector('Ub_in')
+    state.add_edge(ub, None, me, 'Ub_in', dace.Memlet('upper_bound[0]'))
+
+    t = state.add_tasklet('copy_t', {'_in'}, {'_out'}, '_out = _in')
+    state.add_memlet_path(src, me, t, dst_conn='_in', memlet=dace.Memlet('src[i, j]'))
+    state.add_memlet_path(t, mx, dst, src_conn='_out', memlet=dace.Memlet('dst[i, j]'))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, CopyLibraryNode):
+            assert 'Ub_in' not in n.in_connectors
 
 
 if __name__ == "__main__":

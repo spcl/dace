@@ -29,8 +29,8 @@ from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
-    get_gpu_stream_connector_name, has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node,
-    is_gpu_stream_consumer, is_inside_gpu_device_kernel)
+    has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node, is_gpu_stream_consumer,
+    is_inside_gpu_device_kernel)
 
 # ---------------------------------------------------------------------------
 # Stream-array allocation + propagation
@@ -121,17 +121,15 @@ def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]):
     instead of crossing scope boundaries.
     """
     stream_array_name = get_gpu_stream_array_name()
-    stream_var_prefix = get_gpu_stream_connector_name()
 
     for sub_sdfg in sdfg.all_sdfgs_recursive():
         if is_inside_gpu_device_kernel(sub_sdfg):
             continue
         for state in sub_sdfg.states():
-            _connect_streams_in_state(state, assignments, stream_array_name, stream_var_prefix)
+            _connect_streams_in_state(state, assignments, stream_array_name)
 
 
-def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], stream_array_name: str,
-                              stream_var_prefix: str):
+def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], stream_array_name: str):
     topo_index: Dict[Node, int] = {
         n: i
         for i, n in enumerate(dfs_topological_sort(state, sources=state.source_nodes()))
@@ -155,17 +153,16 @@ def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], st
 
     for stream_id, stream_users in per_stream.items():
         stream_users.sort(key=lambda n: topo_index[n])
-        _build_chain(state, stream_id, stream_users, stream_array_name, stream_var_prefix)
+        _build_chain(state, stream_id, stream_users, stream_array_name)
 
 
-def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], stream_array_name: str,
-                 stream_var_prefix: str):
+def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], stream_array_name: str):
     accessed_slot = f"{stream_array_name}[{stream_id}]"
     prev_access: Optional[nodes.AccessNode] = None
 
     for node in stream_users:
         entry, exit_ = _entry_exit(state, node)
-        in_conn = _stream_in_connector_name(node, stream_id, stream_var_prefix)
+        in_conn = _stream_in_connector_name(node)
 
         if has_stream_connector(entry):
             continue
@@ -244,12 +241,11 @@ def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
     return node, node
 
 
-def _stream_in_connector_name(node: Node, stream_id: int, stream_var_prefix: str) -> str:
+def _stream_in_connector_name(node: Node) -> str:
     """Single canonical connector name across every consumer class —
     kernel ``MapEntry``, libnode, runtime tasklet, sync tasklet. The
     stream id rides on the wired ``gpu_streams[<i>]`` memlet, not the
-    connector name. ``stream_var_prefix`` / ``stream_id`` are accepted
-    for back-compat but ignored."""
+    connector name."""
     return STREAM_CONNECTOR
 
 

@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 import warnings
 from typing import Dict, Set, Tuple
 
@@ -135,7 +136,6 @@ class DefaultSharedMemorySync(ppl.Pass):
             Subset of `tb_map_exits` where any AccessNode between the entry and exit
             uses GPU shared memory, indicating a synchronization barrier is needed.
         """
-        #------------------------- helper function -------------------------
         sync_requiring_exits: Dict[MapExit, SDFGState] = {}
 
         for map_exit, state in tb_map_exits.items():

@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for GPU stream scheduling (stream count, per-state sync-tasklet fusion)."""
 import pytest
 
 import dace

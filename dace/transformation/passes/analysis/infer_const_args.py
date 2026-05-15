@@ -1,3 +1,5 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Analysis pass that infers which SDFG arguments are compile-time constant."""
 import dace
 from dace.transformation import pass_pipeline as ppl, transformation
 from typing import Dict, Set, Tuple

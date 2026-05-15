@@ -1,12 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Wrapper :class:`Pass` classes that turn previously-imperative steps in
-``experimental_cuda.preprocess`` into composable Pipeline members.
+"""Wrapper :class:`Pass` classes exposing the ``experimental_cuda.preprocess``
+steps as composable Pipeline members.
 
-Each pass corresponds to one of the manual operations the codegen target
-used to call directly (``sdfg.expand_library_nodes``,
-``apply_transformations_once_everywhere(AddThreadBlockMap)``, etc.) and
-exposes the same behaviour through the Pipeline framework so the order
-becomes declarative and testable.
+Each pass wraps one codegen-preprocess operation
+(``sdfg.expand_library_nodes``, ``apply_transformations_once_everywhere(AddThreadBlockMap)``,
+etc.) so the ordering is declarative and testable.
 """
 from typing import Any, Dict, Optional
 

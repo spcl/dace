@@ -28,10 +28,6 @@ from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 _INPUT_CONNECTOR_NAME = "_cpy_in"
 _OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
-# Must differ from STREAM_CONN: the expansion adds a nested-SDFG array of
-# that name, and DaCe rejects tasklet connectors colliding with array names.
-_STREAM_TASKLET_CONN = "_stream_in"
-
 # A mapped tasklet cannot read CPU and write GPU (or vice versa) in one
 # scope. ``Register`` adopts the side of its enclosing scope and is handled
 # explicitly by the predicates below — never a member of either set.
@@ -125,6 +121,20 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
         refined = _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg)
         if refined is not None:
             impl = refined
+
+    # 6. Rank-mismatched volume-equal copies (e.g. reshape between arrays of
+    # different rank). MappedTasklet emits a single access expression for both
+    # endpoints and would write a rank-N memlet against a rank-M descriptor;
+    # route to CopyNDTemplate which flattens to a 1D pointer walk when both
+    # sides are C-packed contiguous.
+    if impl is None or impl == 'MappedTasklet':
+        in_shape_c, _ = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_c, _ = collapse_shape_and_strides(out_subset, out.strides)
+        if len(in_shape_c) != len(out_shape_c):
+            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and inp.is_packed_c_strides()
+                    and out.is_packed_c_strides() and in_subset.is_contiguous_subset(inp)
+                    and out_subset.is_contiguous_subset(out)):
+                return 'CopyNDTemplate'
 
     return impl or 'MappedTasklet'
 
@@ -319,14 +329,6 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     return ctx.sdfg
 
 
-def _stream_expr_for_tasklet(tasklet_inputs: set, stream_input) -> str:
-    """Add the tasklet stream connector if needed, and return the stream-arg expression."""
-    if stream_input is None:
-        return "__dace_current_stream"
-    tasklet_inputs.add(_STREAM_TASKLET_CONN)
-    return _STREAM_TASKLET_CONN
-
-
 def _memcpy_kind(inp, out) -> str:
     """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
@@ -458,40 +460,6 @@ def _build_copynd_call(ctype,
     return f"{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});"
 
 
-def _build_copynd_tasklet_in_state(sdfg,
-                                   state,
-                                   inp_name,
-                                   inp,
-                                   in_shape_collapsed,
-                                   in_strides_collapsed,
-                                   out_name,
-                                   out,
-                                   out_shape_collapsed,
-                                   out_strides_collapsed,
-                                   *,
-                                   name: str,
-                                   code_suffix: str = ""):
-    """Wire a ``dace::CopyND`` tasklet (``_cpy_in`` → ``_cpy_out``) into
-    ``state`` over the collapsed shapes. ``code_suffix`` lets shared-memory
-    callers append e.g. ``\\n__syncthreads();``."""
-    code = _build_copynd_call(inp.dtype.ctype, in_shape_collapsed, in_strides_collapsed,
-                              out_strides_collapsed) + code_suffix
-    in_access = state.add_access(inp_name)
-    out_access = state.add_access(out_name)
-    tasklet = state.add_tasklet(name=name,
-                                inputs={_INPUT_CONNECTOR_NAME},
-                                outputs={_OUTPUT_CONNECTOR_NAME},
-                                code=code,
-                                language=dace.Language.CPP)
-    state.add_edge(
-        in_access, None, tasklet, _INPUT_CONNECTOR_NAME,
-        dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in in_shape_collapsed])))
-    state.add_edge(
-        tasklet, _OUTPUT_CONNECTOR_NAME, out_access, None,
-        dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
-    return tasklet
-
-
 @library.expansion
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
@@ -550,9 +518,22 @@ class ExpandCopyNDTemplate(ExpandTransformation):
                                       "use MappedTasklet if dynamic copy sizes are needed.")
 
         in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-        _, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
+        if len(in_shape_collapsed) != len(out_shape_collapsed):
+            # Rank-mismatched but volume-equal (e.g. reshape between
+            # (2,3,4) and (8,3)). Both sides are C-packed contiguous by the
+            # picker's preconditions, so a 1D pointer walk over the total
+            # element count copies them correctly.
+            total = reduce(operator.mul, in_shape_collapsed, 1)
+            copy_shape = [total]
+            in_strides_collapsed = [1]
+            out_strides_collapsed = [1]
+        else:
+            copy_shape = in_shape_collapsed
+
         code = _build_copynd_call(inp.dtype.ctype,
-                                  in_shape_collapsed,
+                                  copy_shape,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
                                   in_arg=_INPUT_CONNECTOR_NAME,
