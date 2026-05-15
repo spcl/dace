@@ -317,27 +317,23 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                                   templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass,
                                   mask_connector: Optional[str] = None) -> None:
     """
-    Instantiates a tasklet's code block in vectorized form based on classification info.
+    Rewrite ``node.code`` into vectorized C++ from ``classify_tasklet`` info.
 
-    This function takes a tasklet and its classification `info` (from `classify_tasklet`) and
-    updates `node.code` to a vectorized CodeBlock using the provided templates. Handles
-    different tasklet types (array-array, array-scalar, scalar-symbol, etc.) and supports
-    vectorization over the specified width.
+    Dispatches on the classified ``TaskletType`` (array-array, array-scalar,
+    scalar-symbol, ...) and substitutes the matching ``templates`` entry, or
+    falls back to a scalar lane loop when no template applies.
 
-    Args:
-        state: The SDFGState containing the tasklet.
-        node: The tasklet node to instantiate.
-        info: Classification dictionary containing:
-            - "type": TaskletType enum describing operand types.
-            - "lhs": Left-hand side variable.
-            - "rhs1": First right-hand side variable.
-            - "rhs2": Second right-hand side variable (optional).
-            - "constant1": First constant operand (optional).
-            - "constant2": Second constant operand (optional).
-            - "op": Operation string (e.g., "+", "*", "=").
-        vector_width: Number of lanes for vectorization.
-        templates: Mapping from operation strings to template strings for code generation.
-        vector_map_param: Name of the map parameter used for lane indexing in vectorization.
+    :param state: State containing the tasklet.
+    :param node: Tasklet to rewrite.
+    :param info: ``classify_tasklet`` dict — ``type`` (``TaskletType``),
+        ``lhs``, ``rhs1``/``rhs2`` (optional), ``constant1``/``constant2``
+        (optional), ``op``.
+    :param vector_width: Lane count.
+    :param templates: Op-string to C++ template-string mapping.
+    :param vector_map_param: Map param used for lane indexing.
+    :param vector_dtype: Fallback dtype when an edge carries no data.
+    :param mask_connector: ``_iter_mask`` connector name, or ``None`` for the
+        unmasked path.
     """
     # Extract classification info
     ttype: tutil.TaskletType = info.get("type")
@@ -381,7 +377,28 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        _set_template(ctx, rhs1, rhs2, c1, c2, lhs, "=")
+        # Loop-invariant scalar read into a W-wide vector buffer
+        # (s176-style ``c[j]`` where ``j`` is the outer-loop param):
+        # the RHS edge's subset is a single element, so the codegen
+        # types the ``_in`` connector as ``T``, not ``T*``.  Route to
+        # the broadcast template ``=c`` (``vector_copy_w_scalar``) by
+        # placing the scalar input name in the constant slot — the
+        # dispatcher then picks ``op_ + "c"`` (``"=c"``).  Without this
+        # the ``=`` template emits ``vector_copy<T,W>(_out, _in)`` and
+        # the compile fails with ``cannot convert 'double' to 'const
+        # double*'`` for ``_in``.
+        in_scalar_rhs = None
+        for ie in ies:
+            try:
+                if int(ie.data.subset.num_elements()) == 1:
+                    in_scalar_rhs = ie.dst_conn
+                    break
+            except Exception:
+                pass
+        if in_scalar_rhs is not None:
+            _set_template(ctx, None, None, in_scalar_rhs, None, lhs, "=")
+        else:
+            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, "=")
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
         val = None
         if c1 is not None:
