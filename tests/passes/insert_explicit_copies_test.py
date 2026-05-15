@@ -738,7 +738,7 @@ def test_iec_reinterpret_does_not_lift_view():
 # the reference.
 
 _ = None  # needed for dace.map range syntax
-datatype = dace.float64
+_DATATYPE = dace.float64
 
 
 def _run_and_compare(program, init_fn, check_arrays, sizes, name):
@@ -771,7 +771,7 @@ NY = dace.symbol('NY')
 TMAX = dace.symbol('TMAX')
 
 
-@dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY], datatype[TMAX])
+@dace.program(_DATATYPE[NX, NY], _DATATYPE[NX, NY], _DATATYPE[NX, NY], _DATATYPE[TMAX])
 def fdtd2d_v(ex, ey, hz, _fict_):
     for t in range(TMAX):
 
@@ -787,7 +787,7 @@ def fdtd2d_v(ex, ey, hz, _fict_):
             hz1 << hz[i, j]
             hz2 << hz[i - 1, j]
             eyout >> ey[i, j]
-            eyout = eyin - datatype(0.5) * (hz1 - hz2)
+            eyout = eyin - _DATATYPE(0.5) * (hz1 - hz2)
 
         @dace.map
         def update_ex(i: _[0:NX], j: _[1:NY]):
@@ -795,7 +795,7 @@ def fdtd2d_v(ex, ey, hz, _fict_):
             hz1 << hz[i, j]
             hz2 << hz[i, j - 1]
             exout >> ex[i, j]
-            exout = exin - datatype(0.5) * (hz1 - hz2)
+            exout = exin - _DATATYPE(0.5) * (hz1 - hz2)
 
         @dace.map
         def update_hz(i: _[0:NX - 1], j: _[0:NY - 1]):
@@ -805,7 +805,7 @@ def fdtd2d_v(ex, ey, hz, _fict_):
             ey1 << ey[i + 1, j]
             ey2 << ey[i, j]
             hzout >> hz[i, j]
-            hzout = hzin - datatype(0.7) * (ex1 - ex2 + ey1 - ey2)
+            hzout = hzin - _DATATYPE(0.7) * (ex1 - ex2 + ey1 - ey2)
 
 
 def _init_fdtd2d(NX, NY, TMAX):
@@ -830,7 +830,7 @@ M_corr = dace.symbol('M_corr')
 N_corr = dace.symbol('N_corr')
 
 
-@dace.program(datatype[N_corr, M_corr], datatype[M_corr, M_corr], datatype[M_corr], datatype[M_corr])
+@dace.program(_DATATYPE[N_corr, M_corr], _DATATYPE[M_corr, M_corr], _DATATYPE[M_corr], _DATATYPE[M_corr])
 def correlation_v(data, corr, mean, stddev):
 
     @dace.map
@@ -866,7 +866,7 @@ def correlation_v(data, corr, mean, stddev):
         m << mean[j]
         sd << stddev[j]
         oud >> data[i, j]
-        oud = (ind - m) / (math.sqrt(datatype(N_corr)) * sd)
+        oud = (ind - m) / (math.sqrt(_DATATYPE(N_corr)) * sd)
 
     @dace.map
     def comp_corr_diag(i: _[0:M_corr]):
@@ -916,7 +916,7 @@ M_cov = dace.symbol('M_cov')
 N_cov = dace.symbol('N_cov')
 
 
-@dace.program(datatype[N_cov, M_cov], datatype[M_cov, M_cov], datatype[M_cov])
+@dace.program(_DATATYPE[N_cov, M_cov], _DATATYPE[M_cov, M_cov], _DATATYPE[M_cov])
 def covariance_v(data, cov, mean):
     mean[:] = 0.0
 

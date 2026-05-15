@@ -1,5 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for :class:`AssignmentAndCopyKernelToMemsetAndMemcpy`.
 
+Verifies the lifting of in-map memset / element-wise-copy patterns to ``MemsetLibraryNode``
+and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
+"""
 import functools
 import dace
 import numpy
@@ -193,9 +197,8 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
-# MemsetLibraryNode kept the legacy ``pure`` / ``CPU`` / ``CUDA`` impl names;
-# CopyLibraryNode renamed to ``MappedTasklet`` / ``MemcpyCPU`` / ``MemcpyCUDA1D``.
-# Tests still parametrize on the legacy label and translate per type here.
+# MemsetLibraryNode and CopyLibraryNode use different impl-name vocabularies.
+# Tests parametrize on the Memset names; map them to the Copy names here.
 _COPY_IMPL_FROM_EXPANSION_TYPE = {
     "pure": "MappedTasklet",
     "CPU": "MemcpyCPU",
@@ -440,7 +443,7 @@ def test_double_memcpy_with_dynamic_connectors(expansion_type, xp):
     p.apply_pass(sdfg, {})
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.NestedSDFG):
-            p.apply_pass(n.sdfg)
+            p.apply_pass(n.sdfg, {})
     sdfg.validate()
     assert _get_num_memcpy_library_nodes(sdfg) == 2
     assert _get_num_memset_library_nodes(sdfg) == 0

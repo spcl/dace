@@ -2,14 +2,13 @@
 """Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 import warnings
 import dace
-import copy
 from dace import properties
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 
 @properties.make_properties
@@ -303,6 +302,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return new_in_data_range, new_out_data_range, out_length_collapsed
 
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
+        """Lift every pure element-wise-copy path under map ``node`` to a ``CopyLibraryNode``.
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :param verbose: Emit warnings for skipped lift opportunities.
+        :returns: Number of paths lifted.
+        """
         memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
         rmed_count = 0
 
@@ -410,6 +416,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return rmed_count
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
+        """Lift every constant-zero-write path under map ``node`` to a ``MemsetLibraryNode``.
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :param verbose: Emit warnings for skipped lift opportunities.
+        :returns: Number of paths lifted.
+        """
         memset_paths = self._detect_contiguous_memset_paths(state, node)
 
         joined_edges = set()
@@ -525,14 +538,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def _is_single_element_copy(copy_length) -> bool:
         """True iff the lift would write a single element.
 
-        A one-element memset / memcpy can't be lifted: the pure expansion
-        of ``MemsetLibraryNode`` / ``CopyLibraryNode`` collapses every
-        singleton dim (``_make_memset_skeleton``'s ``keep`` filter at
-        ``memset_node.py:33``), which leaves the resulting mapped
-        tasklet with an empty map shape. Downstream ``propagate_memlet``
-        then hits a ``None`` subset and raises ``TypeError: object of
-        type 'NoneType' has no len()``. There's no perf reason to lift
-        a one-element transfer either — the original tasklet is fine.
+        Single-element transfers must not be lifted: the libnode pure expansion
+        collapses every singleton dim, yielding an empty map shape that breaks
+        memlet propagation. There is also no perf gain over the original tasklet.
         """
         try:
             return int(dace.symbolic.simplify(copy_length)) == 1
@@ -543,13 +551,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def _is_nested_in_gpu_scope(state: dace.SDFGState, node: dace.nodes.MapEntry) -> bool:
         """True iff ``node`` sits inside any ancestor map with a GPU schedule.
 
-        Lifting an in-kernel map to a ``CopyLibraryNode`` / ``MemsetLibraryNode``
-        ends up calling ``cudaMemcpyAsync`` / ``cudaMemsetAsync`` once expanded,
-        which are host-only runtime entry points and cannot be issued from
-        device code. Additionally the expansion produces a ``GPU_Device``-
-        scheduled mapped tasklet that, when nested inside another GPU map,
-        fails ``AddThreadBlockMap.can_be_applied`` (nested-GPU rule) and then
-        breaks ``InferGPUGridAndBlockSize``.
+        An in-kernel lift would expand to ``cudaMemcpyAsync`` / ``cudaMemsetAsync``,
+        which are host-only and cannot run from device code.
         """
         parent_tuple = helpers.get_parent_map(state, node)
         while parent_tuple is not None:
@@ -559,7 +562,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             parent_tuple = helpers.get_parent_map(parent_state, parent_map)
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[int, Dict[dace.SDFGState, Set[dace.SDFGState]]]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> int:
+        """Walk every map in ``sdfg`` and lift its element-wise-copy / constant-zero paths.
+
+        :param sdfg: SDFG to mutate in place.
+        :param pipeline_res: Unused; provided by the pass-pipeline contract.
+        :returns: Total number of memcpy + memset paths lifted across the SDFG.
+        """
         map_entries = set()
 
         for n, g in sdfg.all_nodes_recursive():

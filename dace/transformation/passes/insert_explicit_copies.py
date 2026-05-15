@@ -293,9 +293,7 @@ class InsertExplicitCopies(ppl.Pass):
             # would (a) emit a memcpy between two pointers into the same buffer
             # and (b) break `sdutil.get_view_edge`, which requires the View's
             # neighbor on at least one side to be an AccessNode — it walks the
-            # adjacent edge to the underlying buffer. Same convention the
-            # legacy CUDA codegen already follows in `_compute_cudastreams`
-            # ("Skip views").
+            # adjacent edge to the underlying buffer.
             if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
                 continue
 
