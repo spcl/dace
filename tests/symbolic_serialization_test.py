@@ -146,6 +146,14 @@ def test_pystr_to_symbolic_does_not_cache_basic_by_symbol_equality():
     assert symbolic.serialize_symbolic(restored) == '-1 + symbol($N, dtype=dace.int64)'
 
 
+def test_pystr_to_symbolic_simplifies_basic_when_requested():
+    expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)
+
+    restored = symbolic.pystr_to_symbolic(expr, simplify=True)
+
+    assert restored == symbolic.symbol('N') + 2
+
+
 def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     json_range = {
         'type': 'Range',

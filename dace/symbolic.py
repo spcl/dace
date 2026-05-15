@@ -1822,8 +1822,10 @@ def deserialize_symbolic(expr) -> SymbolicType:
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
-    if isinstance(expr, (SymExpr, sympy.Basic)):
+    if isinstance(expr, SymExpr):
         return expr
+    if isinstance(expr, sympy.Basic):
+        return sympy.simplify(expr) if simplify is True else expr
     if symbol_map is None:
         return _pystr_to_symbolic_cached(expr, simplify)
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
