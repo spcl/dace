@@ -361,7 +361,7 @@ class Vectorize(ppl.Pass):
                     K_candidate = inner_dim0 if (inner_dim0 is not None and inner_dim0 >= 1) else 1
                     handled = False
                     if (bbox_vol - K_candidate) % (W - 1) == 0:
-                        S_value = (bbox_vol - K_candidate) // (W - 1)
+                        S_value = int(dace.symbolic.int_floor(bbox_vol - K_candidate, W - 1))  # concrete pass-time int (never C++ '/')
                         if S_value >= K_candidate:
                             if K_candidate == 1:
                                 _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
@@ -379,7 +379,7 @@ class Vectorize(ppl.Pass):
                         # (some pre-Slice-1 callers don't populate
                         # ``inner_arr`` with the K value).
                         if (bbox_vol - 1) % (W - 1) == 0:
-                            stride_value = (bbox_vol - 1) // (W - 1)
+                            stride_value = int(dace.symbolic.int_floor(bbox_vol - 1, W - 1))  # concrete pass-time int (never C++ '/')
                             _setup_strided_inside_nsdfg(state, nsdfg_node, inner_sdfg, e, inner_conn,
                                                         e.data.data, arr, W, stride_value,
                                                         direction=direction)

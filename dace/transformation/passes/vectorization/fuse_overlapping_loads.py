@@ -77,7 +77,9 @@ class FuseOverlappingLoads(ppl.Pass):
             union_subset: dace.subsets.Range = v[0][0].data.subset
             for in_edge, an, out_edge in v[1:]:
                 union_subset = union_subset.union(in_edge.data.subset)
-            union_shape = [((e + 1) - b) // s for (b, e, s) in union_subset]
+            # int_floor (NOT sympy //) so a strided shape (s>1) emits a
+            # correct C++ integer extent, not the broken floor(x-1/s).
+            union_shape = [dace.symbolic.int_floor((e + 1) - b, s) for (b, e, s) in union_subset]
             union_subsets[k] = (union_subset, union_shape)
         return union_subsets
 

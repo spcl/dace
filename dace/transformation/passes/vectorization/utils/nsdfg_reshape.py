@@ -103,7 +103,9 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
 
     The validation considers multiple shape interpretations:
     1. Full shape with unit stride: (end + 1 - begin)
-    2. Shape accounting for stride: (end + 1 - begin) // stride
+    2. Shape accounting for stride: ``int_floor(end + 1 - begin, stride)``
+       (NOT sympy ``//`` — that canonicalises to ``floor(x - 1/k)``
+       which the C++ printer emits as broken integer ``/``)
     3. Collapsed shapes (excluding size-1 dimensions)
 
     Args:
@@ -135,15 +137,19 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
         # the check used raw ``(end + 1 - begin)`` and the fix used
         # ``.simplify()``, so the same input could be flagged as a mismatch
         # by ``check_*`` but accepted by ``fix_*``.
+        # Analysis-only extent check (this shape is ONLY compared against
+        # connector_array.shape, never emitted) — sympy ``//`` is the
+        # blessed exception here; the codegen-reaching rebuild in
+        # fix_nsdfg_connector_array_shapes_mismatch uses int_floor.
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
+        expected_shape_strided = tuple([(((end + 1 - begin) // step)).simplify() for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
-                                                  if ((end + 1 - begin) // step).simplify() != 1])
+        expected_shape_collapsed_strided = tuple([(((end + 1 - begin) // step)).simplify() for begin, end, step in subset
+                                                  if (((end + 1 - begin) // step)).simplify() != 1])
 
         # Validate: array shape must match one of the expected shapes
         shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
@@ -170,13 +176,13 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
         # Calculate expected shapes (same logic as input edges)
         expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
 
-        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+        expected_shape_strided = tuple([((end + 1 - begin) // step) for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
                                                if (end + 1 - begin) != 1])
 
-        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
-                                                  if (end + 1 - begin) // step != 1])
+        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step) for begin, end, step in subset
+                                                  if ((end + 1 - begin) // step) != 1])
 
         # Validate: array shape must match one of the expected shapes
         shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
@@ -346,13 +352,13 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
         # Calculate all possible expected shapes
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
+        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
-                                                  if ((end + 1 - begin) // step).simplify() != 1])
+        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset
+                                                  if (dace.symbolic.int_floor(end + 1 - begin, step)).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
         strides_collapsed = tuple([
@@ -435,13 +441,13 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
         # Calculate all possible expected shapes
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
+        expected_shape_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset])
 
         expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
                                                if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
-                                                  if ((end + 1 - begin) // step).simplify() != 1])
+        expected_shape_collapsed_strided = tuple([(dace.symbolic.int_floor(end + 1 - begin, step)).simplify() for begin, end, step in subset
+                                                  if (dace.symbolic.int_floor(end + 1 - begin, step)).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
         strides_collapsed = tuple(
@@ -1613,7 +1619,7 @@ def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_
 
     desc = state.sdfg.arrays[node.data]
     assert len(desc.shape) == len(map_entry.map.params)
-    map_lengths = tuple([(e + 1 - b) // s for (b, e, s) in map_entry.map.range])
+    map_lengths = tuple([dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in map_entry.map.range])
     # Vector map is one dimensional and has length 1 due to step size
     assert len(map_entry.map.params) == 1
     assert map_lengths[0] == 1
