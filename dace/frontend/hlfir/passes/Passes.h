@@ -10,8 +10,9 @@
 
 #pragma once
 
-#include "mlir/Pass/Pass.h"
 #include <memory>
+
+#include "mlir/Pass/Pass.h"
 
 namespace hlfir_bridge {
 

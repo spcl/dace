@@ -25,15 +25,13 @@
 #include <utility>
 #include <vector>
 
-#include "llvm/ADT/DenseMap.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
-
-#include "flang/Optimizer/HLFIR/HLFIROps.h"
-
 #include "bridge/extract_ast.h"
 #include "bridge/extract_vars.h"
 #include "bridge/trace_utils.h"
+#include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "llvm/ADT/DenseMap.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/Value.h"
 
 namespace hlfir_bridge {
 
@@ -59,7 +57,8 @@ inline thread_local llvm::DenseMap<mlir::Operation *, std::string> kAllocaMap;
 /// ``hlfir.elemental`` body to the synthetic transient name that
 /// ``buildElementalAssign`` materialises ahead of the elemental loop.
 /// ``buildExpr`` consults this map when handling ``hlfir.apply``.
-inline thread_local std::map<mlir::Operation *, std::string> kHlfirExprToTransient;
+inline thread_local std::map<mlir::Operation *, std::string>
+    kHlfirExprToTransient;
 
 /// Position-array registry: ``__sym_<arr>_<one_based_idx>`` symbol minted by
 /// ``buildIndexExpr`` for each ``arr(constant)`` it sees used as an
@@ -94,9 +93,11 @@ inline thread_local bool kBoolExprNoSubscripts = false;
 /// ``arith.select`` ternary, ``buildExpr``'s i1 ``andi`` / ``ori``
 /// chain handler).
 struct NoSubscriptGuard {
-    bool prev;
-    NoSubscriptGuard() : prev(kBoolExprNoSubscripts) { kBoolExprNoSubscripts = true; }
-    ~NoSubscriptGuard() { kBoolExprNoSubscripts = prev; }
+  bool prev;
+  NoSubscriptGuard() : prev(kBoolExprNoSubscripts) {
+    kBoolExprNoSubscripts = true;
+  }
+  ~NoSubscriptGuard() { kBoolExprNoSubscripts = prev; }
 };
 
 /// When true, suppress the ``dace.float32(...)`` wrap around f32
@@ -114,9 +115,11 @@ inline thread_local bool kSuppressFloatCast = false;
 
 /// RAII guard scoping ``kSuppressFloatCast = true``.
 struct SuppressFloatCastGuard {
-    bool prev;
-    SuppressFloatCastGuard() : prev(kSuppressFloatCast) { kSuppressFloatCast = true; }
-    ~SuppressFloatCastGuard() { kSuppressFloatCast = prev; }
+  bool prev;
+  SuppressFloatCastGuard() : prev(kSuppressFloatCast) {
+    kSuppressFloatCast = true;
+  }
+  ~SuppressFloatCastGuard() { kSuppressFloatCast = prev; }
 };
 
 // ============================================================================
@@ -156,15 +159,13 @@ std::string buildBoolExpr(mlir::Value val, int d);
 /// Render the ``dim``-th index expression of an ``hlfir.designate``,
 /// applying section / assumed-shape lower-bound rebases.  See
 /// ``expressions.cpp``.
-std::string buildDesignateIndexExpr(hlfir::DesignateOp dg,
-                                    unsigned dim,
-                                    mlir::Value idx,
-                                    int depth);
+std::string buildDesignateIndexExpr(hlfir::DesignateOp dg, unsigned dim,
+                                    mlir::Value idx, int depth);
 
 /// Per-dim AccessInfo entry produced by ``expandDesignateChain``.
 struct DimEntry {
-    std::string var;   // identifier for AccessInfo::index_vars
-    std::string expr;  // 1-based expression for AccessInfo::index_exprs
+  std::string var;   // identifier for AccessInfo::index_vars
+  std::string expr;  // 1-based expression for AccessInfo::index_exprs
 };
 
 /// Walk an innermost ``hlfir.designate``'s parent chain (through
@@ -175,8 +176,8 @@ struct DimEntry {
 /// ``buildElementalCountLibcall`` / ``buildElementalAnyAllReduce``
 /// so the access list always matches the underlying array even when
 /// the inner designate is a rank-reduced view.  See ``elementals.cpp``.
-std::pair<std::string, std::vector<DimEntry>>
-expandDesignateChain(hlfir::DesignateOp innermost);
+std::pair<std::string, std::vector<DimEntry>> expandDesignateChain(
+    hlfir::DesignateOp innermost);
 
 /// Resolve an SSA index to its source name when we're inside an
 /// elemental body (the elemental's block argument is a tracked synth
@@ -224,8 +225,7 @@ std::string resolveExtent(mlir::Value shape, unsigned d);
 /// read it touches to ``accesses``.  Used by ``buildLibCallNode`` so
 /// the libcall's tasklet picks up every input array.  See
 /// ``elementals.cpp``.
-void collectReadAccesses(mlir::Value v,
-                         std::vector<AccessInfo> &accesses,
+void collectReadAccesses(mlir::Value v, std::vector<AccessInfo> &accesses,
                          int depth);
 
 /// Map an ``hlfir.matmul`` / ``hlfir.transpose`` / ``hlfir.dot_product``

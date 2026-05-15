@@ -10,12 +10,14 @@
 
 #pragma once
 
-#include "mlir/IR/Value.h"
-#include "flang/Optimizer/HLFIR/HLFIROps.h"
 #include <llvm/ADT/SmallVector.h>
+
 #include <optional>
 #include <set>
 #include <string>
+
+#include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "mlir/IR/Value.h"
 
 namespace hlfir_bridge {
 
@@ -91,7 +93,8 @@ std::string extractName(const std::string &mangled);
 /// short-name collisions between a caller declare and an inlined-
 /// callee dummy declare that aliases the caller's storage.  Per
 /// thread.
-void setManglingOverride(const std::string &mangled, const std::string &shortName);
+void setManglingOverride(const std::string &mangled,
+                         const std::string &shortName);
 
 /// Drop every mangling-override binding.  Called at the start of each
 /// ``extractVariables`` / ``extractAST`` invocation so a previous

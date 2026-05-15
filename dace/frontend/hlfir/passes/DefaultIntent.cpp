@@ -1,5 +1,6 @@
 // ============================================================================
-// DefaultIntent.cpp  --  Fill in ``intent_inout`` for dummies that lack an intent.
+// DefaultIntent.cpp  --  Fill in ``intent_inout`` for dummies that lack an
+// intent.
 // ============================================================================
 // Problem:
 //     Fortran lets a subroutine declare a dummy argument without any INTENT
@@ -24,14 +25,12 @@
 //     code trivially correct.
 // ============================================================================
 
-#include "passes/Passes.h"
-
 #include "flang/Optimizer/Dialect/FIRAttr.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
-
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "passes/Passes.h"
 
 namespace hlfir_bridge {
 
@@ -40,54 +39,51 @@ namespace {
 struct DefaultIntentPass
     : public mlir::PassWrapper<DefaultIntentPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DefaultIntentPass)
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DefaultIntentPass)
 
-    llvm::StringRef getArgument() const final {
-        return "hlfir-default-intent";
-    }
-    llvm::StringRef getDescription() const final {
-        return "Stamp intent_inout onto dummy-argument hlfir.declare ops "
-               "that lack an explicit intent, mirroring Fortran's default.";
-    }
+  llvm::StringRef getArgument() const final { return "hlfir-default-intent"; }
+  llvm::StringRef getDescription() const final {
+    return "Stamp intent_inout onto dummy-argument hlfir.declare ops "
+           "that lack an explicit intent, mirroring Fortran's default.";
+  }
 
-    void runOnOperation() override {
-        auto *ctx = &getContext();
-        using Flags = fir::FortranVariableFlagsEnum;
-        auto hasIntent = [](Flags f) {
-            return bitEnumContainsAny(f, Flags::intent_in)
-                || bitEnumContainsAny(f, Flags::intent_out)
-                || bitEnumContainsAny(f, Flags::intent_inout);
-        };
+  void runOnOperation() override {
+    auto *ctx = &getContext();
+    using Flags = fir::FortranVariableFlagsEnum;
+    auto hasIntent = [](Flags f) {
+      return bitEnumContainsAny(f, Flags::intent_in) ||
+             bitEnumContainsAny(f, Flags::intent_out) ||
+             bitEnumContainsAny(f, Flags::intent_inout);
+    };
 
-        getOperation().walk([&](mlir::func::FuncOp func) {
-            if (func.isExternal()) return;
-            auto &block = func.front();
-            for (auto arg : block.getArguments()) {
-                hlfir::DeclareOp decl;
-                for (auto *u : arg.getUsers())
-                    if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
-                        decl = d;
-                        break;
-                    }
-                if (!decl) continue;
+    getOperation().walk([&](mlir::func::FuncOp func) {
+      if (func.isExternal()) return;
+      auto &block = func.front();
+      for (auto arg : block.getArguments()) {
+        hlfir::DeclareOp decl;
+        for (auto *u : arg.getUsers())
+          if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
+            decl = d;
+            break;
+          }
+        if (!decl) continue;
 
-                auto current = decl.getFortranAttrs();
-                Flags flags = current ? *current : Flags::None;
-                if (hasIntent(flags)) continue;
+        auto current = decl.getFortranAttrs();
+        Flags flags = current ? *current : Flags::None;
+        if (hasIntent(flags)) continue;
 
-                flags = flags | Flags::intent_inout;
-                decl->setAttr(
-                    "fortran_attrs",
-                    fir::FortranVariableFlagsAttr::get(ctx, flags));
-            }
-        });
-    }
+        flags = flags | Flags::intent_inout;
+        decl->setAttr("fortran_attrs",
+                      fir::FortranVariableFlagsAttr::get(ctx, flags));
+      }
+    });
+  }
 };
 
 }  // anonymous namespace
 
 std::unique_ptr<mlir::Pass> createDefaultIntentPass() {
-    return std::make_unique<DefaultIntentPass>();
+  return std::make_unique<DefaultIntentPass>();
 }
 
 }  // namespace hlfir_bridge

@@ -10,8 +10,9 @@
 // IR shape:
 //
 //   %elt   = hlfir.designate %parent (%idx)            : !fir.ref<T>
-//   %arr   = fir.convert     %elt                      : !fir.ref<T> -> !fir.ref<!fir.array<?xT>>
-//   %decl  = hlfir.declare   %arr (%shape) {...}       : (!fir.ref<!fir.array<?xT>>, !fir.shape<1>) -> ...
+//   %arr   = fir.convert     %elt                      : !fir.ref<T> ->
+//   !fir.ref<!fir.array<?xT>> %decl  = hlfir.declare   %arr (%shape) {...} :
+//   (!fir.ref<!fir.array<?xT>>, !fir.shape<1>) -> ...
 //   ... uses of %decl#0 / #1 ...
 //
 // The ``fir.convert`` from a rank-0 ref to a rank-1 ref is the
@@ -32,7 +33,8 @@
 //
 //   %lo    = arith.constant <idx>                           : index
 //   %hi    = arith.addi    %lo, <N - 1>                     : index
-//   %sec   = hlfir.designate %parent (lo:hi:1) shape ...    : !fir.box<!fir.array<NxT>>
+//   %sec   = hlfir.designate %parent (lo:hi:1) shape ...    :
+//   !fir.box<!fir.array<NxT>>
 //
 // Every use of ``%decl#0`` / ``%decl#1`` is rewritten to the section's
 // result.  The bridge's existing per-element designate / box-aware
@@ -149,10 +151,12 @@
 // ----------
 // * HLFIR design overview, ``hlfir.designate`` / ``hlfir.associate``
 //   semantics  --  https://flang.llvm.org/docs/HighLevelFIR.html
-// * Current HLFIR spec (main)  --  https://github.com/llvm/llvm-project/blob/main/flang/docs/HighLevelFIR.md
+// * Current HLFIR spec (main)  --
+// https://github.com/llvm/llvm-project/blob/main/flang/docs/HighLevelFIR.md
 // * Variable / Expression value concepts (LLVM 18.1.0)  --
 //   https://releases.llvm.org/18.1.0/tools/flang/docs/HighLevelFIR.html
-// * Fortran Discourse: explicit-shape and assumed-size arrays + sequence association  --
+// * Fortran Discourse: explicit-shape and assumed-size arrays + sequence
+// association  --
 //   https://fortran-lang.discourse.group/t/explicit-shape-and-assumed-size-arrays-and-sequence-association/2783
 // * FIR Language Reference (``fir.convert`` operand-shape rules)  --
 //   https://flang.llvm.org/docs/FIRLangRef.html
@@ -160,22 +164,21 @@
 //   https://releases.llvm.org/13.0.0/tools/flang/docs/Calls.html
 // ============================================================================
 
-#include "passes/Passes.h"
-
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
-
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/SmallVector.h"
+#include "passes/Passes.h"
 
 namespace hlfir_bridge {
 
 namespace {
 
-// Forward decl: mutual recursion between traceConstIndex and traceStoredConstant.
+// Forward decl: mutual recursion between traceConstIndex and
+// traceStoredConstant.
 static std::optional<int64_t> traceConstIndex(mlir::Value v);
 
 /// Recover a constant value stored into an alloca.  Used to fold
@@ -187,45 +190,45 @@ static std::optional<int64_t> traceConstIndex(mlir::Value v);
 /// if the alloca has multiple stores (genuinely runtime-varying
 /// value) or the stored value isn't itself a foldable constant.
 static std::optional<int64_t> traceStoredConstant(mlir::Value memref) {
-    // Walk through hlfir.declare wrappers down to the underlying alloca.
-    mlir::Value root = memref;
-    for (int i = 0; i < 8; ++i) {
-        auto *d = root.getDefiningOp();
-        if (!d) return std::nullopt;
-        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
-            root = decl.getMemref();
-            continue;
-        }
-        if (mlir::isa<fir::AllocaOp>(d) || mlir::isa<fir::AllocMemOp>(d)) break;
-        return std::nullopt;
+  // Walk through hlfir.declare wrappers down to the underlying alloca.
+  mlir::Value root = memref;
+  for (int i = 0; i < 8; ++i) {
+    auto *d = root.getDefiningOp();
+    if (!d) return std::nullopt;
+    if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+      root = decl.getMemref();
+      continue;
     }
-    // Collect all alias views (the alloca itself plus any hlfir.declare
-    // re-declares of it) and look for a single fir.store among their users.
-    llvm::SmallVector<mlir::Value, 4> aliases{root};
-    for (auto *u : root.getUsers()) {
-        if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
-            aliases.push_back(d.getResult(0));
-            aliases.push_back(d.getResult(1));
-            for (auto *u2 : d.getResult(0).getUsers()) {
-                if (auto d2 = mlir::dyn_cast<hlfir::DeclareOp>(u2)) {
-                    aliases.push_back(d2.getResult(0));
-                    aliases.push_back(d2.getResult(1));
-                }
-            }
+    if (mlir::isa<fir::AllocaOp>(d) || mlir::isa<fir::AllocMemOp>(d)) break;
+    return std::nullopt;
+  }
+  // Collect all alias views (the alloca itself plus any hlfir.declare
+  // re-declares of it) and look for a single fir.store among their users.
+  llvm::SmallVector<mlir::Value, 4> aliases{root};
+  for (auto *u : root.getUsers()) {
+    if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
+      aliases.push_back(d.getResult(0));
+      aliases.push_back(d.getResult(1));
+      for (auto *u2 : d.getResult(0).getUsers()) {
+        if (auto d2 = mlir::dyn_cast<hlfir::DeclareOp>(u2)) {
+          aliases.push_back(d2.getResult(0));
+          aliases.push_back(d2.getResult(1));
         }
+      }
     }
-    fir::StoreOp uniqueStore;
-    int storeCount = 0;
-    for (auto a : aliases) {
-        for (auto *u : a.getUsers()) {
-            if (auto s = mlir::dyn_cast<fir::StoreOp>(u)) {
-                ++storeCount;
-                uniqueStore = s;
-            }
-        }
+  }
+  fir::StoreOp uniqueStore;
+  int storeCount = 0;
+  for (auto a : aliases) {
+    for (auto *u : a.getUsers()) {
+      if (auto s = mlir::dyn_cast<fir::StoreOp>(u)) {
+        ++storeCount;
+        uniqueStore = s;
+      }
     }
-    if (storeCount != 1 || !uniqueStore) return std::nullopt;
-    return traceConstIndex(uniqueStore.getValue());
+  }
+  if (storeCount != 1 || !uniqueStore) return std::nullopt;
+  return traceConstIndex(uniqueStore.getValue());
 }
 
 /// Walk a ``fir.global`` to its initialiser constant.  Used to fold
@@ -235,17 +238,17 @@ static std::optional<int64_t> traceStoredConstant(mlir::Value memref) {
 /// op carries the initial value.
 static std::optional<int64_t> traceGlobalInitialiser(mlir::SymbolRefAttr name,
                                                      mlir::Operation *anchor) {
-    auto module = anchor->getParentOfType<mlir::ModuleOp>();
-    if (!module) return std::nullopt;
-    auto sym = module.lookupSymbol(name.getLeafReference());
-    auto global = mlir::dyn_cast_or_null<fir::GlobalOp>(sym);
-    if (!global) return std::nullopt;
-    if (global.getRegion().empty()) return std::nullopt;
-    for (auto &op : global.getRegion().front()) {
-        if (auto hv = mlir::dyn_cast<fir::HasValueOp>(op))
-            return traceConstIndex(hv.getResval());
-    }
-    return std::nullopt;
+  auto module = anchor->getParentOfType<mlir::ModuleOp>();
+  if (!module) return std::nullopt;
+  auto sym = module.lookupSymbol(name.getLeafReference());
+  auto global = mlir::dyn_cast_or_null<fir::GlobalOp>(sym);
+  if (!global) return std::nullopt;
+  if (global.getRegion().empty()) return std::nullopt;
+  for (auto &op : global.getRegion().front()) {
+    if (auto hv = mlir::dyn_cast<fir::HasValueOp>(op))
+      return traceConstIndex(hv.getResval());
+  }
+  return std::nullopt;
 }
 
 /// Trace an MLIR Value back to a constant ``index`` value if possible.
@@ -271,89 +274,108 @@ static std::optional<int64_t> traceGlobalInitialiser(mlir::SymbolRefAttr name,
 /// genuinely runtime-varying).  The caller falls back to the symbolic
 /// rewrite in that case.
 static std::optional<int64_t> traceConstIndex(mlir::Value v) {
-    for (int i = 0; i < 32 && v; ++i) {
-        auto *def = v.getDefiningOp();
-        if (!def) return std::nullopt;
-        if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
-            if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
-                return ia.getInt();
+  for (int i = 0; i < 32 && v; ++i) {
+    auto *def = v.getDefiningOp();
+    if (!def) return std::nullopt;
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
+      if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(c.getValue()))
+        return ia.getInt();
+      return std::nullopt;
+    }
+    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) {
+      v = cv.getValue();
+      continue;
+    }
+    if (auto add = mlir::dyn_cast<mlir::arith::AddIOp>(def)) {
+      auto a = traceConstIndex(add.getLhs());
+      auto b2 = traceConstIndex(add.getRhs());
+      if (a && b2) return *a + *b2;
+      return std::nullopt;
+    }
+    if (auto sub = mlir::dyn_cast<mlir::arith::SubIOp>(def)) {
+      auto a = traceConstIndex(sub.getLhs());
+      auto b2 = traceConstIndex(sub.getRhs());
+      if (a && b2) return *a - *b2;
+      return std::nullopt;
+    }
+    if (auto mul = mlir::dyn_cast<mlir::arith::MulIOp>(def)) {
+      auto a = traceConstIndex(mul.getLhs());
+      auto b2 = traceConstIndex(mul.getRhs());
+      if (a && b2) return *a * *b2;
+      return std::nullopt;
+    }
+    if (auto div = mlir::dyn_cast<mlir::arith::DivSIOp>(def)) {
+      auto a = traceConstIndex(div.getLhs());
+      auto b2 = traceConstIndex(div.getRhs());
+      if (a && b2 && *b2 != 0) return *a / *b2;
+      return std::nullopt;
+    }
+    if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
+      // Both branches agree -> done.
+      auto t = traceConstIndex(sel.getTrueValue());
+      auto f = traceConstIndex(sel.getFalseValue());
+      if (t && f && *t == *f) return *t;
+      // Otherwise resolve via the condition: ``select sgt(x,0), x, 0``
+      // (flang's nonneg-extent clamp) folds when x is a known constant.
+      if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpIOp>(
+              sel.getCondition().getDefiningOp())) {
+        auto lhs = traceConstIndex(cmp.getLhs());
+        auto rhs = traceConstIndex(cmp.getRhs());
+        if (!lhs || !rhs) return std::nullopt;
+        using P = mlir::arith::CmpIPredicate;
+        bool taken = false;
+        switch (cmp.getPredicate()) {
+          case P::eq:
+            taken = (*lhs == *rhs);
+            break;
+          case P::ne:
+            taken = (*lhs != *rhs);
+            break;
+          case P::slt:
+            taken = (*lhs < *rhs);
+            break;
+          case P::sle:
+            taken = (*lhs <= *rhs);
+            break;
+          case P::sgt:
+            taken = (*lhs > *rhs);
+            break;
+          case P::sge:
+            taken = (*lhs >= *rhs);
+            break;
+          default:
             return std::nullopt;
         }
-        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def)) {
-            v = cv.getValue();
-            continue;
+        return taken ? t : f;
+      }
+      return std::nullopt;
+    }
+    if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
+      // Try the ``__assoc_scalar`` (alloca + single store) path first.
+      if (auto fromStore = traceStoredConstant(ld.getMemref()))
+        return fromStore;
+      // Fall through to the address_of @global path.
+      mlir::Value mem = ld.getMemref();
+      for (int j = 0; j < 8 && mem; ++j) {
+        auto *d = mem.getDefiningOp();
+        if (!d) return std::nullopt;
+        if (auto ao = mlir::dyn_cast<fir::AddrOfOp>(d))
+          return traceGlobalInitialiser(ao.getSymbol(), def);
+        if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
+          mem = cv.getValue();
+          continue;
         }
-        if (auto add = mlir::dyn_cast<mlir::arith::AddIOp>(def)) {
-            auto a = traceConstIndex(add.getLhs());
-            auto b2 = traceConstIndex(add.getRhs());
-            if (a && b2) return *a + *b2;
-            return std::nullopt;
-        }
-        if (auto sub = mlir::dyn_cast<mlir::arith::SubIOp>(def)) {
-            auto a = traceConstIndex(sub.getLhs());
-            auto b2 = traceConstIndex(sub.getRhs());
-            if (a && b2) return *a - *b2;
-            return std::nullopt;
-        }
-        if (auto mul = mlir::dyn_cast<mlir::arith::MulIOp>(def)) {
-            auto a = traceConstIndex(mul.getLhs());
-            auto b2 = traceConstIndex(mul.getRhs());
-            if (a && b2) return *a * *b2;
-            return std::nullopt;
-        }
-        if (auto div = mlir::dyn_cast<mlir::arith::DivSIOp>(def)) {
-            auto a = traceConstIndex(div.getLhs());
-            auto b2 = traceConstIndex(div.getRhs());
-            if (a && b2 && *b2 != 0) return *a / *b2;
-            return std::nullopt;
-        }
-        if (auto sel = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
-            // Both branches agree -> done.
-            auto t = traceConstIndex(sel.getTrueValue());
-            auto f = traceConstIndex(sel.getFalseValue());
-            if (t && f && *t == *f) return *t;
-            // Otherwise resolve via the condition: ``select sgt(x,0), x, 0``
-            // (flang's nonneg-extent clamp) folds when x is a known constant.
-            if (auto cmp = mlir::dyn_cast_or_null<mlir::arith::CmpIOp>(
-                    sel.getCondition().getDefiningOp())) {
-                auto lhs = traceConstIndex(cmp.getLhs());
-                auto rhs = traceConstIndex(cmp.getRhs());
-                if (!lhs || !rhs) return std::nullopt;
-                using P = mlir::arith::CmpIPredicate;
-                bool taken = false;
-                switch (cmp.getPredicate()) {
-                    case P::eq:  taken = (*lhs == *rhs); break;
-                    case P::ne:  taken = (*lhs != *rhs); break;
-                    case P::slt: taken = (*lhs <  *rhs); break;
-                    case P::sle: taken = (*lhs <= *rhs); break;
-                    case P::sgt: taken = (*lhs >  *rhs); break;
-                    case P::sge: taken = (*lhs >= *rhs); break;
-                    default: return std::nullopt;
-                }
-                return taken ? t : f;
-            }
-            return std::nullopt;
-        }
-        if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
-            // Try the ``__assoc_scalar`` (alloca + single store) path first.
-            if (auto fromStore = traceStoredConstant(ld.getMemref()))
-                return fromStore;
-            // Fall through to the address_of @global path.
-            mlir::Value mem = ld.getMemref();
-            for (int j = 0; j < 8 && mem; ++j) {
-                auto *d = mem.getDefiningOp();
-                if (!d) return std::nullopt;
-                if (auto ao = mlir::dyn_cast<fir::AddrOfOp>(d))
-                    return traceGlobalInitialiser(ao.getSymbol(), def);
-                if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) { mem = cv.getValue(); continue; }
-                if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(d)) { mem = decl.getMemref(); continue; }
-                return std::nullopt;
-            }
-            return std::nullopt;
+        if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+          mem = decl.getMemref();
+          continue;
         }
         return std::nullopt;
+      }
+      return std::nullopt;
     }
     return std::nullopt;
+  }
+  return std::nullopt;
 }
 
 /// Recognise a SeqAssociation adapter: ``fir.convert`` from
@@ -361,197 +383,201 @@ static std::optional<int64_t> traceConstIndex(mlir::Value v) {
 /// where the source is an element-form ``hlfir.designate``.  Returns
 /// the source designate on match, null otherwise.
 static hlfir::DesignateOp matchSeqAdapter(fir::ConvertOp conv) {
-    auto srcTy = conv.getValue().getType();
-    auto dstTy = conv.getResult().getType();
-    auto srcRef = mlir::dyn_cast<fir::ReferenceType>(srcTy);
-    auto dstRef = mlir::dyn_cast<fir::ReferenceType>(dstTy);
-    if (!srcRef || !dstRef) return {};
-    auto srcEle = srcRef.getEleTy();
-    auto dstEle = dstRef.getEleTy();
-    auto dstSeq = mlir::dyn_cast<fir::SequenceType>(dstEle);
-    if (!dstSeq) return {};
-    if (mlir::isa<fir::SequenceType>(srcEle)) return {};
-    if (srcEle != dstSeq.getEleTy()) return {};
-    auto dg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
-        conv.getValue().getDefiningOp());
-    if (!dg) return {};
-    // Must be element form (any-triplet -> already a section, skip).
-    for (bool b : dg.getIsTriplet()) if (b) return {};
-    if (dg.getIndices().empty()) return {};
-    return dg;
+  auto srcTy = conv.getValue().getType();
+  auto dstTy = conv.getResult().getType();
+  auto srcRef = mlir::dyn_cast<fir::ReferenceType>(srcTy);
+  auto dstRef = mlir::dyn_cast<fir::ReferenceType>(dstTy);
+  if (!srcRef || !dstRef) return {};
+  auto srcEle = srcRef.getEleTy();
+  auto dstEle = dstRef.getEleTy();
+  auto dstSeq = mlir::dyn_cast<fir::SequenceType>(dstEle);
+  if (!dstSeq) return {};
+  if (mlir::isa<fir::SequenceType>(srcEle)) return {};
+  if (srcEle != dstSeq.getEleTy()) return {};
+  auto dg = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
+      conv.getValue().getDefiningOp());
+  if (!dg) return {};
+  // Must be element form (any-triplet -> already a section, skip).
+  for (bool b : dg.getIsTriplet())
+    if (b) return {};
+  if (dg.getIndices().empty()) return {};
+  return dg;
 }
 
 struct RewriteSequenceAssociationPass
     : public mlir::PassWrapper<RewriteSequenceAssociationPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RewriteSequenceAssociationPass)
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RewriteSequenceAssociationPass)
 
-    llvm::StringRef getArgument() const final {
-        return "hlfir-rewrite-sequence-association";
+  llvm::StringRef getArgument() const final {
+    return "hlfir-rewrite-sequence-association";
+  }
+  llvm::StringRef getDescription() const final {
+    return "Replace Fortran sequence-association adapters "
+           "(scalar element passed to array dummy) with an "
+           "explicit section designate of the parent array.";
+  }
+
+  void runOnOperation() override {
+    llvm::SmallVector<fir::ConvertOp, 8> targets;
+    getOperation().walk([&](fir::ConvertOp c) {
+      if (matchSeqAdapter(c)) targets.push_back(c);
+    });
+    for (auto c : targets) rewrite(c);
+  }
+
+ private:
+  void rewrite(fir::ConvertOp conv) {
+    auto eltDg = matchSeqAdapter(conv);
+    if (!eltDg) return;
+
+    // Step 1: find the hlfir.declare that consumes the convert.
+    // There should be exactly one (the formal's declare).
+    hlfir::DeclareOp formalDecl;
+    for (auto *u : conv.getResult().getUsers()) {
+      if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
+        formalDecl = d;
+        break;
+      }
     }
-    llvm::StringRef getDescription() const final {
-        return "Replace Fortran sequence-association adapters "
-               "(scalar element passed to array dummy) with an "
-               "explicit section designate of the parent array.";
+    if (!formalDecl) return;
+
+    // Step 2: pull the formal's declared length from the declare's
+    // shape.  Folds to a compile-time constant when possible (the
+    // common case  --  literal extent, ``parameter`` constant,
+    // constant arithmetic); otherwise we fall back to the runtime
+    // extent value and emit a ``box<array<?xT>>`` section.
+    auto shapeVal = formalDecl.getShape();
+    if (!shapeVal) return;
+    auto shapeOp =
+        mlir::dyn_cast_or_null<fir::ShapeOp>(shapeVal.getDefiningOp());
+    if (!shapeOp || shapeOp.getExtents().size() != 1) return;
+    mlir::Value extentVal = shapeOp.getExtents()[0];
+    auto Nopt = traceConstIndex(extentVal);
+    if (Nopt && *Nopt <= 0) return;
+
+    // Step 3: pull the element start index from the source
+    // designate.  ``hlfir.designate`` for an element form has one
+    // scalar operand per parent dimension.  For a rank-K parent
+    // (the QE / BLAS pattern: ``f(d(1, j), ldd)`` with ``d``
+    // rank-2) we place the triplet on the FIRST dimension and
+    // pass the remaining indices through unchanged  --  Fortran's
+    // column-major contiguity makes that the dimension the formal
+    // strides over.
+    if (eltDg.getIndices().empty()) return;
+    if (!eltDg.getIsTriplet().empty())
+      for (bool t : eltDg.getIsTriplet())
+        if (t) return;
+    mlir::Value lo = eltDg.getIndices()[0];
+
+    // Step 4: build the section designate over the parent array.
+    // Insert AFTER the formal declare  --  for the runtime-symbolic
+    // path the extent Value is only defined inside the inlined
+    // callee scope (typically as ``arith.select sgt(load(dz), 0),
+    // load(dz), 0``) which dominates the declare but not the
+    // ``fir.convert`` call site.  Inserting after the declare keeps
+    // both paths legal under SSA dominance.
+    mlir::OpBuilder b(formalDecl->getNextNode());
+    auto loc = conv.getLoc();
+    auto idxTy = b.getIndexType();
+
+    auto toIndex = [&](mlir::Value v) {
+      if (v.getType() == idxTy) return v;
+      return b.create<fir::ConvertOp>(loc, idxTy, v).getResult();
+    };
+    mlir::Value loIdx = toIndex(lo);
+    auto c1 = b.create<mlir::arith::ConstantOp>(loc, idxTy, b.getIndexAttr(1));
+
+    // Decide constant-N vs runtime-N variant.  The runtime variant
+    // emits a ``box<array<?xT>>`` and computes ``hi`` from the
+    // original extent value at runtime.
+    mlir::Value hi;
+    mlir::Value sectionShape;
+    fir::SequenceType sectionSeqTy;
+    auto convDstSeq = mlir::cast<fir::SequenceType>(
+        mlir::cast<fir::ReferenceType>(conv.getResult().getType()).getEleTy());
+    auto eleTy = convDstSeq.getEleTy();
+    if (Nopt) {
+      int64_t N = *Nopt;
+      auto cN =
+          b.create<mlir::arith::ConstantOp>(loc, idxTy, b.getIndexAttr(N));
+      auto cNm1 =
+          b.create<mlir::arith::ConstantOp>(loc, idxTy, b.getIndexAttr(N - 1));
+      hi = b.create<mlir::arith::AddIOp>(loc, loIdx, cNm1).getResult();
+      sectionShape =
+          b.create<fir::ShapeOp>(loc, mlir::ValueRange{cN.getResult()})
+              .getResult();
+      sectionSeqTy = fir::SequenceType::get({N}, eleTy);
+    } else {
+      // Runtime-extent path.  ``hi = lo + extent - 1`` with the
+      // extent value carried straight from the formal declare.
+      mlir::Value extentIdx = toIndex(extentVal);
+      auto extentMinus1 =
+          b.create<mlir::arith::SubIOp>(loc, extentIdx, c1.getResult())
+              .getResult();
+      hi = b.create<mlir::arith::AddIOp>(loc, loIdx, extentMinus1).getResult();
+      sectionShape =
+          b.create<fir::ShapeOp>(loc, mlir::ValueRange{extentIdx}).getResult();
+      sectionSeqTy = fir::SequenceType::get(
+          {fir::SequenceType::getUnknownExtent()}, eleTy);
     }
+    auto boxTy = fir::BoxType::get(sectionSeqTy);
 
-    void runOnOperation() override {
-        llvm::SmallVector<fir::ConvertOp, 8> targets;
-        getOperation().walk([&](fir::ConvertOp c) {
-            if (matchSeqAdapter(c)) targets.push_back(c);
-        });
-        for (auto c : targets) rewrite(c);
+    // Pass-through scalar indices for parent dims 2..K.  Empty for
+    // rank-1 parents (the textbook sequence-association case);
+    // populated for the QE pattern's rank-2+ parent.
+    auto parent = eltDg.getMemref();
+    llvm::SmallVector<mlir::Value, 6> tripletOps{loIdx, hi, c1.getResult()};
+    llvm::SmallVector<bool, 6> isTriplet{true};
+    for (size_t i = 1; i < eltDg.getIndices().size(); ++i) {
+      tripletOps.push_back(toIndex(eltDg.getIndices()[i]));
+      isTriplet.push_back(false);
     }
+    auto sectionDg = b.create<hlfir::DesignateOp>(
+        loc,
+        /*resultType0=*/boxTy,
+        /*memref=*/parent,
+        /*component=*/mlir::StringAttr{},
+        /*component_shape=*/mlir::Value{},
+        /*indices=*/mlir::ValueRange{tripletOps},
+        /*is_triplet=*/b.getDenseBoolArrayAttr(isTriplet),
+        /*substring=*/mlir::ValueRange{},
+        /*complex_part=*/mlir::BoolAttr{},
+        /*shape=*/sectionShape,
+        /*typeparams=*/mlir::ValueRange{},
+        /*fortran_attrs=*/fir::FortranVariableFlagsAttr{});
 
-   private:
-    void rewrite(fir::ConvertOp conv) {
-        auto eltDg = matchSeqAdapter(conv);
-        if (!eltDg) return;
+    // Step 5: redirect uses of the formal declare's results to the
+    // new section view.  The declare emits two results (box view
+    // + raw ref); both should resolve to the section.  When the
+    // result types differ, insert a fir.convert.
+    mlir::Value sectionResult = sectionDg.getResult();
+    auto rewireResult = [&](mlir::Value r) {
+      if (r.use_empty()) return;
+      mlir::Value replacement = sectionResult;
+      if (r.getType() != sectionResult.getType()) {
+        // Builder ``b`` already sits after the formal declare,
+        // so its insertion point is right after the section.
+        replacement = b.create<fir::ConvertOp>(loc, r.getType(), sectionResult)
+                          .getResult();
+      }
+      r.replaceAllUsesWith(replacement);
+    };
+    rewireResult(formalDecl.getResult(0));
+    rewireResult(formalDecl.getResult(1));
 
-        // Step 1: find the hlfir.declare that consumes the convert.
-        // There should be exactly one (the formal's declare).
-        hlfir::DeclareOp formalDecl;
-        for (auto *u : conv.getResult().getUsers()) {
-            if (auto d = mlir::dyn_cast<hlfir::DeclareOp>(u)) {
-                formalDecl = d;
-                break;
-            }
-        }
-        if (!formalDecl) return;
-
-        // Step 2: pull the formal's declared length from the declare's
-        // shape.  Folds to a compile-time constant when possible (the
-        // common case  --  literal extent, ``parameter`` constant,
-        // constant arithmetic); otherwise we fall back to the runtime
-        // extent value and emit a ``box<array<?xT>>`` section.
-        auto shapeVal = formalDecl.getShape();
-        if (!shapeVal) return;
-        auto shapeOp = mlir::dyn_cast_or_null<fir::ShapeOp>(shapeVal.getDefiningOp());
-        if (!shapeOp || shapeOp.getExtents().size() != 1) return;
-        mlir::Value extentVal = shapeOp.getExtents()[0];
-        auto Nopt = traceConstIndex(extentVal);
-        if (Nopt && *Nopt <= 0) return;
-
-        // Step 3: pull the element start index from the source
-        // designate.  ``hlfir.designate`` for an element form has one
-        // scalar operand per parent dimension.  For a rank-K parent
-        // (the QE / BLAS pattern: ``f(d(1, j), ldd)`` with ``d``
-        // rank-2) we place the triplet on the FIRST dimension and
-        // pass the remaining indices through unchanged  --  Fortran's
-        // column-major contiguity makes that the dimension the formal
-        // strides over.
-        if (eltDg.getIndices().empty()) return;
-        if (!eltDg.getIsTriplet().empty())
-            for (bool t : eltDg.getIsTriplet()) if (t) return;
-        mlir::Value lo = eltDg.getIndices()[0];
-
-        // Step 4: build the section designate over the parent array.
-        // Insert AFTER the formal declare  --  for the runtime-symbolic
-        // path the extent Value is only defined inside the inlined
-        // callee scope (typically as ``arith.select sgt(load(dz), 0),
-        // load(dz), 0``) which dominates the declare but not the
-        // ``fir.convert`` call site.  Inserting after the declare keeps
-        // both paths legal under SSA dominance.
-        mlir::OpBuilder b(formalDecl->getNextNode());
-        auto loc = conv.getLoc();
-        auto idxTy = b.getIndexType();
-
-        auto toIndex = [&](mlir::Value v) {
-            if (v.getType() == idxTy) return v;
-            return b.create<fir::ConvertOp>(loc, idxTy, v).getResult();
-        };
-        mlir::Value loIdx = toIndex(lo);
-        auto c1 = b.create<mlir::arith::ConstantOp>(
-            loc, idxTy, b.getIndexAttr(1));
-
-        // Decide constant-N vs runtime-N variant.  The runtime variant
-        // emits a ``box<array<?xT>>`` and computes ``hi`` from the
-        // original extent value at runtime.
-        mlir::Value hi;
-        mlir::Value sectionShape;
-        fir::SequenceType sectionSeqTy;
-        auto convDstSeq = mlir::cast<fir::SequenceType>(
-            mlir::cast<fir::ReferenceType>(conv.getResult().getType()).getEleTy());
-        auto eleTy = convDstSeq.getEleTy();
-        if (Nopt) {
-            int64_t N = *Nopt;
-            auto cN = b.create<mlir::arith::ConstantOp>(
-                loc, idxTy, b.getIndexAttr(N));
-            auto cNm1 = b.create<mlir::arith::ConstantOp>(
-                loc, idxTy, b.getIndexAttr(N - 1));
-            hi = b.create<mlir::arith::AddIOp>(loc, loIdx, cNm1).getResult();
-            sectionShape = b.create<fir::ShapeOp>(
-                loc, mlir::ValueRange{cN.getResult()}).getResult();
-            sectionSeqTy = fir::SequenceType::get({N}, eleTy);
-        } else {
-            // Runtime-extent path.  ``hi = lo + extent - 1`` with the
-            // extent value carried straight from the formal declare.
-            mlir::Value extentIdx = toIndex(extentVal);
-            auto extentMinus1 = b.create<mlir::arith::SubIOp>(
-                loc, extentIdx, c1.getResult()).getResult();
-            hi = b.create<mlir::arith::AddIOp>(loc, loIdx, extentMinus1).getResult();
-            sectionShape = b.create<fir::ShapeOp>(
-                loc, mlir::ValueRange{extentIdx}).getResult();
-            sectionSeqTy = fir::SequenceType::get(
-                {fir::SequenceType::getUnknownExtent()}, eleTy);
-        }
-        auto boxTy = fir::BoxType::get(sectionSeqTy);
-
-        // Pass-through scalar indices for parent dims 2..K.  Empty for
-        // rank-1 parents (the textbook sequence-association case);
-        // populated for the QE pattern's rank-2+ parent.
-        auto parent = eltDg.getMemref();
-        llvm::SmallVector<mlir::Value, 6> tripletOps{loIdx, hi, c1.getResult()};
-        llvm::SmallVector<bool, 6> isTriplet{true};
-        for (size_t i = 1; i < eltDg.getIndices().size(); ++i) {
-            tripletOps.push_back(toIndex(eltDg.getIndices()[i]));
-            isTriplet.push_back(false);
-        }
-        auto sectionDg = b.create<hlfir::DesignateOp>(
-            loc,
-            /*resultType0=*/boxTy,
-            /*memref=*/parent,
-            /*component=*/mlir::StringAttr{},
-            /*component_shape=*/mlir::Value{},
-            /*indices=*/mlir::ValueRange{tripletOps},
-            /*is_triplet=*/b.getDenseBoolArrayAttr(isTriplet),
-            /*substring=*/mlir::ValueRange{},
-            /*complex_part=*/mlir::BoolAttr{},
-            /*shape=*/sectionShape,
-            /*typeparams=*/mlir::ValueRange{},
-            /*fortran_attrs=*/fir::FortranVariableFlagsAttr{});
-
-        // Step 5: redirect uses of the formal declare's results to the
-        // new section view.  The declare emits two results (box view
-        // + raw ref); both should resolve to the section.  When the
-        // result types differ, insert a fir.convert.
-        mlir::Value sectionResult = sectionDg.getResult();
-        auto rewireResult = [&](mlir::Value r) {
-            if (r.use_empty()) return;
-            mlir::Value replacement = sectionResult;
-            if (r.getType() != sectionResult.getType()) {
-                // Builder ``b`` already sits after the formal declare,
-                // so its insertion point is right after the section.
-                replacement = b.create<fir::ConvertOp>(
-                    loc, r.getType(), sectionResult).getResult();
-            }
-            r.replaceAllUsesWith(replacement);
-        };
-        rewireResult(formalDecl.getResult(0));
-        rewireResult(formalDecl.getResult(1));
-
-        // Erase the declare, the convert, and the element designate
-        // (if no other users remain).
-        formalDecl.erase();
-        conv.erase();
-        if (eltDg.getResult().use_empty()) eltDg.erase();
-    }
+    // Erase the declare, the convert, and the element designate
+    // (if no other users remain).
+    formalDecl.erase();
+    conv.erase();
+    if (eltDg.getResult().use_empty()) eltDg.erase();
+  }
 };
 
 }  // namespace
 
 std::unique_ptr<mlir::Pass> createRewriteSequenceAssociationPass() {
-    return std::make_unique<RewriteSequenceAssociationPass>();
+  return std::make_unique<RewriteSequenceAssociationPass>();
 }
 
 }  // namespace hlfir_bridge

@@ -4,10 +4,11 @@
 
 #pragma once
 
-#include "mlir/IR/BuiltinOps.h"
 #include <cstdint>
 #include <string>
 #include <vector>
+
+#include "mlir/IR/BuiltinOps.h"
 
 namespace hlfir_bridge {
 
@@ -24,11 +25,11 @@ namespace hlfir_bridge {
 /// (Fortran 1-based, square-bracket notation) so the SDFG generator can
 /// detect indirection by looking for ``[`` in the expression.
 struct AccessInfo {
-    std::string array_name;
-    std::vector<std::string> index_vars;
-    std::vector<std::string> index_exprs;
-    bool is_read = false;
-    bool is_write = false;
+  std::string array_name;
+  std::vector<std::string> index_vars;
+  std::vector<std::string> index_exprs;
+  bool is_read = false;
+  bool is_write = false;
 };
 
 /// Recursive AST node.  `kind` discriminates which fields are populated:
@@ -68,47 +69,47 @@ struct AccessInfo {
 ///                   No payload  --  hlfir_to_sdfg emits a ``ReturnBlock``
 ///                   at SDFG top level.
 struct ASTNode {
-    std::string kind;
+  std::string kind;
 
-    // loop
-    std::string loop_iter, loop_bound;
-    // Lower bound  --  int form covers the common ``DO i = 1, n`` case from
-    // fir.do_loop where Flang resolves the lower to a constant.  For
-    // symbolic lowers (e.g. ``res(a:b) = ...`` from array-section
-    // assign) set ``loop_lower_expr`` to a Fortran expression string;
-    // the emitter prefers the string whenever it is non-empty.
-    int64_t loop_lower = -1;
-    std::string loop_lower_expr;
-    // Step (Fortran ``DO i = a, b, c``'s ``c``).  Default 1; -1 for
-    // reverse-direction ``DO i = N, 1, -1`` (LU back-substitution
-    // pattern).  Other steps are not yet supported.
-    int64_t loop_step = 1;
+  // loop
+  std::string loop_iter, loop_bound;
+  // Lower bound  --  int form covers the common ``DO i = 1, n`` case from
+  // fir.do_loop where Flang resolves the lower to a constant.  For
+  // symbolic lowers (e.g. ``res(a:b) = ...`` from array-section
+  // assign) set ``loop_lower_expr`` to a Fortran expression string;
+  // the emitter prefers the string whenever it is non-empty.
+  int64_t loop_lower = -1;
+  std::string loop_lower_expr;
+  // Step (Fortran ``DO i = a, b, c``'s ``c``).  Default 1; -1 for
+  // reverse-direction ``DO i = N, 1, -1`` (LU back-substitution
+  // pattern).  Other steps are not yet supported.
+  int64_t loop_step = 1;
 
-    // assign
-    std::string target, expr;
-    bool target_is_array = false;
-    std::vector<AccessInfo> accesses;
+  // assign
+  std::string target, expr;
+  bool target_is_array = false;
+  std::vector<AccessInfo> accesses;
 
-    // conditional / while
-    std::string condition;
+  // conditional / while
+  std::string condition;
 
-    // call
-    std::string callee;
-    std::vector<std::string> call_args;
-    // Per-call-arg slice subset, parallel to ``call_args``.  Empty entry =
-    // whole array; non-empty entry = a Fortran 1-based slice expression
-    // like ``"1:3"`` so emit_libcall can build a sliced memlet
-    // (``dot_product(arg1(1:3), arg2(1:3))`` etc.).
-    std::vector<std::string> call_arg_subsets;
+  // call
+  std::string callee;
+  std::vector<std::string> call_args;
+  // Per-call-arg slice subset, parallel to ``call_args``.  Empty entry =
+  // whole array; non-empty entry = a Fortran 1-based slice expression
+  // like ``"1:3"`` so emit_libcall can build a sliced memlet
+  // (``dot_product(arg1(1:3), arg2(1:3))`` etc.).
+  std::vector<std::string> call_arg_subsets;
 
-    // reduce
-    std::string reduce_src;       // input array name
-    std::string reduce_wcr;       // lambda string, e.g. "lambda a, b: a + b"
-    std::string reduce_identity;  // initial-accumulator string, e.g. "0"
-    std::vector<int64_t> reduce_axes;  // empty = reduce all dimensions
+  // reduce
+  std::string reduce_src;            // input array name
+  std::string reduce_wcr;            // lambda string, e.g. "lambda a, b: a + b"
+  std::string reduce_identity;       // initial-accumulator string, e.g. "0"
+  std::vector<int64_t> reduce_axes;  // empty = reduce all dimensions
 
-    // recursive
-    std::vector<ASTNode> children, else_children;
+  // recursive
+  std::vector<ASTNode> children, else_children;
 };
 
 /// Build the AST for the first func.func found in the module.

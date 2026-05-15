@@ -59,17 +59,14 @@
 //       same path covers the lifted top-level case here.
 // ============================================================================
 
-#include "passes/Passes.h"
-
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
-
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/Pass/Pass.h"
-
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
+#include "passes/Passes.h"
 
 namespace hlfir_bridge {
 
@@ -80,141 +77,136 @@ namespace {
 /// the dispatcher routes it through ``CountLibraryNode`` which handles
 /// inline use via the libcall emit path.
 static bool isReductionOp(mlir::Operation *op) {
-    if (!op) return false;
-    return mlir::isa<hlfir::SumOp, hlfir::ProductOp, hlfir::MinvalOp,
-                     hlfir::MaxvalOp, hlfir::AnyOp, hlfir::AllOp>(op);
+  if (!op) return false;
+  return mlir::isa<hlfir::SumOp, hlfir::ProductOp, hlfir::MinvalOp,
+                   hlfir::MaxvalOp, hlfir::AnyOp, hlfir::AllOp>(op);
 }
 
 /// Find every reduction op transitively used by ``rootOp`` (the RHS of an
 /// assign)  --  except the rootOp itself.  Returns them in
 /// reverse-postorder so callers process inner reductions before outer.
 static void collectNestedReductions(
-        mlir::Operation *rootOp,
-        llvm::SmallVectorImpl<mlir::Operation *> &out) {
-    if (!rootOp) return;
-    llvm::SmallVector<mlir::Operation *, 8> stack;
-    llvm::SmallPtrSet<mlir::Operation *, 16> seen;
-    for (auto v : rootOp->getOperands())
-        if (auto *def = v.getDefiningOp())
-            if (seen.insert(def).second)
-                stack.push_back(def);
-    while (!stack.empty()) {
-        auto *op = stack.pop_back_val();
-        if (isReductionOp(op)) out.push_back(op);
-        for (auto v : op->getOperands())
-            if (auto *def = v.getDefiningOp())
-                if (seen.insert(def).second)
-                    stack.push_back(def);
-    }
+    mlir::Operation *rootOp, llvm::SmallVectorImpl<mlir::Operation *> &out) {
+  if (!rootOp) return;
+  llvm::SmallVector<mlir::Operation *, 8> stack;
+  llvm::SmallPtrSet<mlir::Operation *, 16> seen;
+  for (auto v : rootOp->getOperands())
+    if (auto *def = v.getDefiningOp())
+      if (seen.insert(def).second) stack.push_back(def);
+  while (!stack.empty()) {
+    auto *op = stack.pop_back_val();
+    if (isReductionOp(op)) out.push_back(op);
+    for (auto v : op->getOperands())
+      if (auto *def = v.getDefiningOp())
+        if (seen.insert(def).second) stack.push_back(def);
+  }
 }
 
 struct LiftReductionOperandsPass
     : public mlir::PassWrapper<LiftReductionOperandsPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LiftReductionOperandsPass)
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LiftReductionOperandsPass)
 
-    llvm::StringRef getArgument() const final {
-        return "hlfir-lift-reduction-operands";
-    }
-    llvm::StringRef getDescription() const final {
-        return "Lift array-reducing intrinsics that appear as inline "
-               "expression operands into a preceding scalar-temp assign, "
-               "so the AST extractor sees only top-level reductions and "
-               "scalar loads in the consuming expression.";
-    }
+  llvm::StringRef getArgument() const final {
+    return "hlfir-lift-reduction-operands";
+  }
+  llvm::StringRef getDescription() const final {
+    return "Lift array-reducing intrinsics that appear as inline "
+           "expression operands into a preceding scalar-temp assign, "
+           "so the AST extractor sees only top-level reductions and "
+           "scalar loads in the consuming expression.";
+  }
 
-    void runOnOperation() override {
-        // Counter for unique temp names per function.
-        llvm::DenseMap<mlir::func::FuncOp, unsigned> liftCounter;
+  void runOnOperation() override {
+    // Counter for unique temp names per function.
+    llvm::DenseMap<mlir::func::FuncOp, unsigned> liftCounter;
 
-        // Two-pass: collect first, mutate after  --  modifying the IR
-        // mid-walk would invalidate iterators.
-        struct Job {
-            hlfir::AssignOp consumer;
-            mlir::Operation *redOp;
-        };
-        llvm::SmallVector<Job, 16> jobs;
+    // Two-pass: collect first, mutate after  --  modifying the IR
+    // mid-walk would invalidate iterators.
+    struct Job {
+      hlfir::AssignOp consumer;
+      mlir::Operation *redOp;
+    };
+    llvm::SmallVector<Job, 16> jobs;
 
-        getOperation().walk([&](hlfir::AssignOp assign) {
-            auto rhs = assign.getRhs();
-            auto *rhsOp = rhs.getDefiningOp();
-            if (!rhsOp) return;
-            // If the RHS itself is a reduction, the dispatcher already
-            // handles it  --  leave alone.  Only lift NESTED reductions.
-            llvm::SmallVector<mlir::Operation *, 4> nested;
-            collectNestedReductions(rhsOp, nested);
-            for (auto *r : nested) jobs.push_back({assign, r});
-        });
+    getOperation().walk([&](hlfir::AssignOp assign) {
+      auto rhs = assign.getRhs();
+      auto *rhsOp = rhs.getDefiningOp();
+      if (!rhsOp) return;
+      // If the RHS itself is a reduction, the dispatcher already
+      // handles it  --  leave alone.  Only lift NESTED reductions.
+      llvm::SmallVector<mlir::Operation *, 4> nested;
+      collectNestedReductions(rhsOp, nested);
+      for (auto *r : nested) jobs.push_back({assign, r});
+    });
 
-        for (auto &job : jobs) lift(job.consumer, job.redOp, liftCounter);
-    }
+    for (auto &job : jobs) lift(job.consumer, job.redOp, liftCounter);
+  }
 
-    /// Materialise a scalar local for the reduction op's result, emit
-    /// ``hlfir.assign <red> to <local>`` before the consuming assign,
-    /// and rewrite the consuming RHS to read from the local.
-    void lift(hlfir::AssignOp consumer, mlir::Operation *redOp,
-              llvm::DenseMap<mlir::func::FuncOp, unsigned> &liftCounter) {
-        auto func = consumer->getParentOfType<mlir::func::FuncOp>();
-        if (!func) return;
-        if (redOp->getNumResults() != 1) return;
-        auto resTy = redOp->getResult(0).getType();
-        // Reduction result types are always scalar (i32, f64, logical, ...).
-        // Defensive: bail on unexpected shapes.
-        if (mlir::isa<fir::SequenceType>(resTy)) return;
+  /// Materialise a scalar local for the reduction op's result, emit
+  /// ``hlfir.assign <red> to <local>`` before the consuming assign,
+  /// and rewrite the consuming RHS to read from the local.
+  void lift(hlfir::AssignOp consumer, mlir::Operation *redOp,
+            llvm::DenseMap<mlir::func::FuncOp, unsigned> &liftCounter) {
+    auto func = consumer->getParentOfType<mlir::func::FuncOp>();
+    if (!func) return;
+    if (redOp->getNumResults() != 1) return;
+    auto resTy = redOp->getResult(0).getType();
+    // Reduction result types are always scalar (i32, f64, logical, ...).
+    // Defensive: bail on unexpected shapes.
+    if (mlir::isa<fir::SequenceType>(resTy)) return;
 
-        unsigned gid = liftCounter[func]++;
-        auto loc = redOp->getLoc();
-        auto *ctx = func.getContext();
+    unsigned gid = liftCounter[func]++;
+    auto loc = redOp->getLoc();
+    auto *ctx = func.getContext();
 
-        // Create the temp local at the function entry block  --  putting
-        // it inline at the consuming assign's location works too, but
-        // hoisting to entry keeps the pattern uniform with how flang
-        // emits other Fortran-source ``REAL :: tmp`` locals.
-        mlir::OpBuilder b(&func.front(), func.front().begin());
-        auto allocaTy = fir::ReferenceType::get(resTy);
-        auto alloca = b.create<fir::AllocaOp>(loc, resTy);
-        std::string uniqName = "_QQred_lift_" + std::to_string(gid);
-        mlir::NamedAttrList attrs;
-        attrs.append("uniq_name", mlir::StringAttr::get(ctx, uniqName));
-        // operandSegmentSizes for hlfir.declare: memref + (no shape) +
-        // (no typeparams) + (no dummy_scope).
-        attrs.append("operandSegmentSizes",
-                     b.getDenseI32ArrayAttr({1, 0, 0, 0}));
-        auto decl = b.create<hlfir::DeclareOp>(
-            loc, mlir::TypeRange{allocaTy, allocaTy},
-            mlir::ValueRange{alloca.getResult()}, attrs);
+    // Create the temp local at the function entry block  --  putting
+    // it inline at the consuming assign's location works too, but
+    // hoisting to entry keeps the pattern uniform with how flang
+    // emits other Fortran-source ``REAL :: tmp`` locals.
+    mlir::OpBuilder b(&func.front(), func.front().begin());
+    auto allocaTy = fir::ReferenceType::get(resTy);
+    auto alloca = b.create<fir::AllocaOp>(loc, resTy);
+    std::string uniqName = "_QQred_lift_" + std::to_string(gid);
+    mlir::NamedAttrList attrs;
+    attrs.append("uniq_name", mlir::StringAttr::get(ctx, uniqName));
+    // operandSegmentSizes for hlfir.declare: memref + (no shape) +
+    // (no typeparams) + (no dummy_scope).
+    attrs.append("operandSegmentSizes", b.getDenseI32ArrayAttr({1, 0, 0, 0}));
+    auto decl =
+        b.create<hlfir::DeclareOp>(loc, mlir::TypeRange{allocaTy, allocaTy},
+                                   mlir::ValueRange{alloca.getResult()}, attrs);
 
-        // Emit the lifted assign and load IMMEDIATELY AFTER the
-        // reduction op  --  placing them at the consumer's location would
-        // put the load AFTER existing uses of the reduction (e.g.
-        // ``arith.cmpf %scalar, %maxval`` followed by
-        // ``arith.select`` followed by the assign), and rewriting those
-        // earlier uses to reference the load would violate dominance.
-        // After-the-reduction placement keeps the load before every
-        // existing use; the reduction op itself stays at its original
-        // position and the new ``hlfir.assign`` plus ``fir.load`` form
-        // a tight pair right behind it.  The dispatcher then sees the
-        // lifted assign as a top-level ``temp = REDUCTION(...)`` and
-        // routes through the existing reduce-emit machinery; consuming
-        // sites read the scalar load uniformly.
-        b.setInsertionPointAfter(redOp);
-        auto liftedAssign = b.create<hlfir::AssignOp>(
-            loc, redOp->getResult(0), decl.getResult(0));
-        auto load = b.create<fir::LoadOp>(loc, decl.getResult(0));
+    // Emit the lifted assign and load IMMEDIATELY AFTER the
+    // reduction op  --  placing them at the consumer's location would
+    // put the load AFTER existing uses of the reduction (e.g.
+    // ``arith.cmpf %scalar, %maxval`` followed by
+    // ``arith.select`` followed by the assign), and rewriting those
+    // earlier uses to reference the load would violate dominance.
+    // After-the-reduction placement keeps the load before every
+    // existing use; the reduction op itself stays at its original
+    // position and the new ``hlfir.assign`` plus ``fir.load`` form
+    // a tight pair right behind it.  The dispatcher then sees the
+    // lifted assign as a top-level ``temp = REDUCTION(...)`` and
+    // routes through the existing reduce-emit machinery; consuming
+    // sites read the scalar load uniformly.
+    b.setInsertionPointAfter(redOp);
+    auto liftedAssign =
+        b.create<hlfir::AssignOp>(loc, redOp->getResult(0), decl.getResult(0));
+    auto load = b.create<fir::LoadOp>(loc, decl.getResult(0));
 
-        // Replace every existing use of ``redOp`` with the load,
-        // EXCEPT the just-emitted ``hlfir.assign`` (which intentionally
-        // takes the reduction's original result as its source).
-        llvm::SmallPtrSet<mlir::Operation *, 4> exceptions{liftedAssign};
-        redOp->getResult(0).replaceAllUsesExcept(load.getResult(),
-                                                 exceptions);
-    }
+    // Replace every existing use of ``redOp`` with the load,
+    // EXCEPT the just-emitted ``hlfir.assign`` (which intentionally
+    // takes the reduction's original result as its source).
+    llvm::SmallPtrSet<mlir::Operation *, 4> exceptions{liftedAssign};
+    redOp->getResult(0).replaceAllUsesExcept(load.getResult(), exceptions);
+  }
 };
 
 }  // namespace
 
 std::unique_ptr<mlir::Pass> createLiftReductionOperandsPass() {
-    return std::make_unique<LiftReductionOperandsPass>();
+  return std::make_unique<LiftReductionOperandsPass>();
 }
 
 }  // namespace hlfir_bridge

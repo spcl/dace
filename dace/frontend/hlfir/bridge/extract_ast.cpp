@@ -7,21 +7,21 @@
 // that pull the dialect headers in once for the whole bundle.
 
 #include "bridge/extract_ast.h"
+
+#include <functional>
+#include <iomanip>
+#include <map>
+#include <set>
+#include <sstream>
+
 #include "bridge/extract_vars.h"
 #include "bridge/trace_utils.h"
-
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/HLFIR/HLFIROps.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include <functional>
-#include <map>
-#include <set>
-#include <iomanip>
-#include <sstream>
 
 // The AST extraction is split across five sibling translation units
 // (``ast/expressions.cpp``, ``ast/assigns.cpp``, ``ast/elementals.cpp``,
@@ -30,6 +30,4 @@
 // they all read from.
 #include "bridge/ast/ast_helpers.h"
 
-namespace hlfir_bridge {
-
-}  // namespace hlfir_bridge
+namespace hlfir_bridge {}  // namespace hlfir_bridge
