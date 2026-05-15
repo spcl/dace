@@ -138,11 +138,12 @@ def test_rational_addition_roundtrip_preserves_serialization():
 
 def test_pystr_to_symbolic_preserves_typed_symbols():
     # Prime the parser cache with an equal untyped SymPy expression.
-    symbolic.pystr_to_symbolic(symbolic.deserialize_symbolic('-1 + $N'))
+    _untyped = symbolic.pystr_to_symbolic(symbolic.deserialize_symbolic('-1 + $N'))
     typed = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
 
     restored = symbolic.pystr_to_symbolic(typed)
 
+    assert symbolic.serialize_symbolic(_untyped) == '-1 + $N'
     assert restored is typed
     assert symbolic.serialize_symbolic(restored) == '-1 + symbol($N, dtype=dace.int64)'
 
@@ -154,6 +155,7 @@ def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default(simplify):
     restored = symbolic.pystr_to_symbolic(expr, simplify=simplify)
 
     assert restored is expr
+    assert len(restored.args) == 3
 
 
 def test_pystr_to_symbolic_simplifies_basic_when_requested():
@@ -162,6 +164,7 @@ def test_pystr_to_symbolic_simplifies_basic_when_requested():
     restored = symbolic.pystr_to_symbolic(expr, simplify=True)
 
     assert restored == symbolic.symbol('N') + 2
+    assert len(restored.args) == 2
 
 
 def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
