@@ -407,7 +407,12 @@ def test_tsvc_block2(kernel, argnames, remainder_strategy, branch_mode, len_1d_v
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}
 
     sdfg_name = f"{kernel.name}_b2_{branch_mode}_{remainder_strategy}_{len_1d_val}"
-    sdfg = kernel.to_sdfg(simplify=False)
+    # Isolate each parametrized variant from the @dace.program SDFG
+    # cache: to_sdfg() can return a shared cached SDFG that a prior
+    # variant already mutated in place (simplify/LoopToMap), so deep-
+    # copy before any mutation. Variant tag is the name suffix.
+    import copy as _copy
+    sdfg = _copy.deepcopy(kernel.to_sdfg(simplify=False))
     sdfg.name = sdfg_name + "_ref"
     sdfg.simplify(validate=True, validate_all=True)
     sdfg.apply_transformations_repeated(LoopToMap())
