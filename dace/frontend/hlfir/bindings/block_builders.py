@@ -182,7 +182,10 @@ def build_wrapper_head(frozen: FrozenSignature, iface: OriginalInterface, plan: 
     for entry in plan.entries:
         r = entry.recipe
         ftype = _fortran_type(r.scratch_dtype)
-        shape_dims = "(" + ", ".join(":" for _ in range(r.rank)) + ")"
+        # Rank-0 (a scalar struct member, e.g. ``s%scal``) takes no
+        # array spec  --  ``real :: x()`` is invalid Fortran; it must
+        # be declared as a plain scalar ``pointer``.
+        shape_dims = ("(" + ", ".join(":" for _ in range(r.rank)) + ")") if r.rank > 0 else ""
         if r.aliasable:
             for flat in r.flat_names:
                 flat_ptr_lines.append(f"    {ftype}, pointer :: {flat}{shape_dims}")

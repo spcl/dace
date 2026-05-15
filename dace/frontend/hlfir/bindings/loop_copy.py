@@ -75,7 +75,13 @@ def render_alias_calls(recipe: FlattenRecipe) -> List[str]:
     out: List[str] = []
     for flat, read_expr in zip(recipe.flat_names, recipe.read_exprs):
         base = strip_index_args(read_expr)
-        out.append(f"    call c_f_pointer(c_loc({base}), {flat}, [{shape_list}])")
+        # A scalar struct member (rank 0, no shape exprs) aliases as a
+        # scalar pointer  --  ``c_f_pointer`` must NOT get a shape
+        # argument (``[]`` is an invalid empty array constructor).
+        if recipe.rank == 0 or not recipe.shape_exprs:
+            out.append(f"    call c_f_pointer(c_loc({base}), {flat})")
+        else:
+            out.append(f"    call c_f_pointer(c_loc({base}), {flat}, [{shape_list}])")
     return out
 
 
