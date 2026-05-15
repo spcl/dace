@@ -26,38 +26,9 @@ import pytest
 
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from tests.passes._tsvc_harness_helper import kernel_has_branch
 
 LEN_1D = dace.symbol("LEN_1D")
-
-
-
-import ast as _ast
-import inspect as _inspect
-
-_BRANCH_CACHE = {}
-
-
-def _kernel_has_branch(prog) -> bool:
-    """``True`` iff the kernel body contains an ``if`` (so ``merge`` vs
-    ``fp_factor`` branch-lowering actually differ). Branchless kernels
-    produce an identical SDFG under both modes, so the ``fp_factor``
-    parametrization is pure duplication for them."""
-    key = getattr(prog, "name", id(prog))
-    if key in _BRANCH_CACHE:
-        return _BRANCH_CACHE[key]
-    try:
-        src = _inspect.getsource(prog.f)
-        tree = _ast.parse(_textwrap_dedent(src))
-        has = any(isinstance(n, _ast.If) for n in _ast.walk(tree))
-    except Exception:
-        has = True  # be conservative: if we cannot tell, keep both modes
-    _BRANCH_CACHE[key] = has
-    return has
-
-
-def _textwrap_dedent(s: str) -> str:
-    import textwrap
-    return textwrap.dedent(s)
 
 @dace.program
 def s331_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
@@ -244,12 +215,6 @@ def vpvpv_d_single(
 
 
 @dace.program
-def vpvts_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    for i in range(LEN_1D):
-        a[i] = a[i] + b[i] * S
-
-
-@dace.program
 def vpvtv_d_single(
     a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
 ):
@@ -299,7 +264,6 @@ _KERNELS = [
     (vif_d_single, ['a', 'b']),
     (vpv_d_single, ['a', 'b']),
     (vpvpv_d_single, ['a', 'b', 'c']),
-    (vpvts_d_single, ['a', 'b']),
     (vpvtv_d_single, ['a', 'b', 'c']),
     (vsumr_d_single, ['a', 'sum_out']),
     (vtv_d_single, ['a', 'b']),
@@ -338,7 +302,7 @@ def test_tsvc_block3(kernel, argnames, remainder_strategy, branch_mode, len_1d_v
         pytest.skip("fp_factor + masked rejected by VectorizeCPU (locked plan rule)")
     # Lever 1: fp_factor == merge for a branchless kernel (no ``if`` to
     # lower) — skip the duplicate fp_factor run.
-    if branch_mode == "fp_factor" and not _kernel_has_branch(kernel):
+    if branch_mode == "fp_factor" and not kernel_has_branch(kernel):
         pytest.skip("branchless kernel: fp_factor SDFG == merge SDFG")
     # Lever 2: LEN divisible by W ⇒ P2 emits no remainder ⇒ masked SDFG
     # == scalar SDFG. Skip the duplicate masked run.

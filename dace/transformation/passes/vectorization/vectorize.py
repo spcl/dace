@@ -782,16 +782,22 @@ class Vectorize(ppl.Pass):
                             e2 = state.add_edge(at, "_out", src_node, None, dace.memlet.Memlet(f"{src_node.data}[{i}]"))
                             modified_nodes.add(at)
                             if isinstance(e1, dace.nodes.Node):
-                                assert False
+                                raise RuntimeError(
+                                    "state.add_edge returned a Node, not an Edge "
+                                    f"(_in edge for {old_data_name}); SDFG API contract broken")
                             if isinstance(e2, dace.nodes.Node):
-                                assert False
+                                raise RuntimeError(
+                                    "state.add_edge returned a Node, not an Edge "
+                                    f"(_out edge for {src_node.data}); SDFG API contract broken")
                             modified_edges.add(e1)
                             modified_edges.add(e2)
 
                         # Now update the subset
                         edge.data = dace.memlet.Memlet(expr=f"{src_node.data}[0:{self.vector_width}]")
                         if isinstance(edge, dace.nodes.Node):
-                            assert False
+                            raise RuntimeError(
+                                f"edge for {src_node.data} is a Node, not an Edge; "
+                                "SDFG API contract broken")
                         modified_edges.add(edge)
         return modified_nodes, modified_edges, modified_data
 
