@@ -40,9 +40,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     rmid = 0
 
-    def __init__(self, overapproximate_first_dimensions: bool = False, node_label_whitelist: List[str] = list()):
+    def __init__(self,
+                 overapproximate_first_dimensions: bool = False,
+                 node_label_whitelist: Optional[List[str]] = None):
         self.overapproximate_first_dimension = overapproximate_first_dimensions
-        self.node_label_whitelist = node_label_whitelist
+        self.node_label_whitelist = node_label_whitelist if node_label_whitelist is not None else []
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
