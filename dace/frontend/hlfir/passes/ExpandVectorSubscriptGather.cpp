@@ -263,7 +263,7 @@ struct ExpandVectorSubscriptGatherPass
                 auto y = mlir::dyn_cast<hlfir::YieldElementOp>(op);
                 if (!y) continue;
                 auto v = y.getElementValue();
-                for (int i = 0; i < 8 && v; ++i) {
+                for (int i = 0; i < 128 && v; ++i) {
                     auto *d = v.getDefiningOp();
                     if (!d) break;
                     if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))   { v = cv.getValue(); continue; }

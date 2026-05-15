@@ -6,7 +6,6 @@ this helper run ``flang-new-21 -fc1 -emit-hlfir`` behind the scenes.  If
 no flang binary is found the helpers report it; the calling test module
 should skip collection accordingly.
 """
-from __future__ import annotations
 
 import os
 import re
@@ -112,20 +111,34 @@ def f2py_compile(
 def compile_to_hlfir(source: str, out_dir: Path, name: str = "src", *, preprocess: bool = False) -> Path:
     """Write `source` as <out_dir>/<name>.f90, compile it to HLFIR, return the path.
 
-    When ``preprocess`` is true, run the optional Fortran source
-    rewriter (``dace.frontend.hlfir.preprocess.preprocess_fortran``)
-    before flang sees the source -- needed for legacy code that uses
-    INTEGER flags as IF conditions (``IF (laericeauto)``), which
-    flang-new-21 rejects.  Off by default so we don't paper over real
-    issues in clean source; opt in per call site.
+    ``rewrite_integer_powers`` runs unconditionally on every input:
+    expanding integer-valued REAL powers (``x**2.0``) to explicit
+    multiplies is algebraically exact and makes the bridge and the
+    gfortran reference emit byte-identical arithmetic.  Literal
+    double-precision promotion is deliberately NOT applied here -- it
+    is baked directly into the kernel source files, not run as a
+    build-time pass.
+
+    When ``preprocess`` is true, also run the optional ``IF (intvar)``
+    rewriter (``preprocess_fortran``) before flang sees the source --
+    needed for legacy code that uses INTEGER flags as IF conditions
+    (``IF (laericeauto)``), which flang-new-21 rejects.  Off by
+    default so we don't paper over real issues in clean source; opt
+    in per call site.
+
+    :param source: inline Fortran source text.
+    :param out_dir: scratch directory for the ``.f90`` / ``.hlfir`` pair.
+    :param name: base filename for that pair.
+    :param preprocess: also run the opt-in ``IF (intvar)`` rewrite.
+    :returns: path to the emitted ``.hlfir`` file.
     """
     assert _FLANG is not None, "flang-new-21 not available"
     src = out_dir / f"{name}.f90"
+    from dace.frontend.hlfir.preprocess import (preprocess_fortran, rewrite_integer_powers)
+    source = rewrite_integer_powers(source)
     if preprocess:
-        from dace.frontend.hlfir.preprocess import preprocess_fortran
-        src.write_text(preprocess_fortran(source))
-    else:
-        src.write_text(source)
+        source = preprocess_fortran(source)
+    src.write_text(source)
     hlfir = out_dir / f"{name}.hlfir"
     subprocess.check_call([_FLANG, "-fc1", "-emit-hlfir", str(src), "-o", str(hlfir)])
     return hlfir

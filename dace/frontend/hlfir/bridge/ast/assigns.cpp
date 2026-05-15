@@ -257,6 +257,18 @@ namespace hlfir_bridge {
             break;
         }
         auto arrName = traceToDecl(arrayVal);
+        // ``fir.box_dims`` reads the box (#1) result of an
+        // ``hlfir.declare``; ``traceToDecl`` keys on the addr result
+        // and comes back empty for an assumed-shape / boxed dummy
+        // (``a(10:)`` -> ``fir.shift`` + box).  Recover the name from
+        // the declare's mangled uniq_name so the lower bound resolves
+        // to ``offset_<arr>_d<dim>`` instead of leaking ``?`` into the
+        // do-loop upper-bound expression (E10).
+        if (arrName.empty()) {
+            if (auto *adef = arrayVal.getDefiningOp())
+                if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(adef))
+                    arrName = extractName(decl.getUniqName().str());
+        }
         if (dimC && !arrName.empty()) {
             // Suppress when an allocmem in the module carries this
             // declare's expected name  --  that path keeps the legacy
@@ -361,6 +373,30 @@ namespace hlfir_bridge {
                          + buildIndexExpr(sel.getTrueValue(),  d + 1) + ", "
                          + buildIndexExpr(sel.getFalseValue(), d + 1) + ")";
                 }
+            }
+            // LBOUND/UBOUND empty-array clamp: flang lowers
+            // ``LBOUND(a,d)`` (and the lb term of ``UBOUND``) on a
+            // boxed assumed-shape array as
+            //   %c = arith.cmpi eq, <box_extent>, 0
+            //   %r = arith.select %c, 1, <declared_lb>
+            // (Fortran: LBOUND of a zero-size array is 1).  For a loop
+            // bound / index the meaningful case is the non-empty array
+            // -> the declared bound (the false branch); a zero-size
+            // array makes the loop empty anyway so the value is
+            // irrelevant.  Resolve to the real bound instead of
+            // leaking the ``?`` sentinel into the expression (E10).
+            if ((pred == P::eq || pred == P::ne)) {
+                auto isConst = [](mlir::Value x, int64_t want) {
+                    auto c = traceConstInt(x);
+                    return c && *c == want;
+                };
+                bool condIsZeroExtent =
+                    isConst(cmp.getRhs(), 0) || isConst(cmp.getLhs(), 0);
+                mlir::Value t = sel.getTrueValue(), f = sel.getFalseValue();
+                if (condIsZeroExtent && pred == P::eq && isConst(t, 1))
+                    return buildIndexExpr(f, d + 1);   // non-empty: real bound
+                if (condIsZeroExtent && pred == P::ne && isConst(f, 1))
+                    return buildIndexExpr(t, d + 1);
             }
         }
     }

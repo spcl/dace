@@ -1,9 +1,13 @@
-"""Coverage for the optional Fortran source pre-processor (rewrites
-``IF (intvar)`` to ``IF (intvar /= 0)`` for INTEGER scalars).
+"""Coverage for the Fortran source pre-processor: the ``IF (intvar)``
+rewrite, the ``x**2`` / ``x**3`` -> explicit-multiply expansion, and the
+single/default REAL literal -> double-precision promotion.
 """
-from __future__ import annotations
 
-from dace.frontend.hlfir.preprocess import preprocess_fortran
+from dace.frontend.hlfir.preprocess import (
+    preprocess_fortran,
+    promote_real_literals_to_double,
+    rewrite_integer_powers,
+)
 
 
 def test_rewrites_bare_integer_if():
@@ -99,3 +103,82 @@ SUBROUTINE plain(x)
 END SUBROUTINE
 """
     assert preprocess_fortran(src) == src
+
+
+# --------------------------------------------------------------------------
+# rewrite_integer_powers -- only integer-valued REAL exponents become
+# repeated multiplies; bare integers / fractional powers are untouched.
+# --------------------------------------------------------------------------
+
+
+def test_pow_real_two_and_three():
+    # Minimal change: one outer pair only -- the base is a primary so
+    # each factor needs no wrapping of its own.
+    assert rewrite_integer_powers("y = x**2.0") == "y = (x*x)"
+    assert rewrite_integer_powers("y = x**3.0_JPRB") == "y = (x*x*x)"
+
+
+def test_pow_base_parenthesised_for_precedence():
+    # Already-parenthesised base keeps its own parens; the single outer
+    # pair preserves precedence (2.0*(t*t), a/(b*b), -(x*x)).
+    assert rewrite_integer_powers("z = (a-b)**2.0") == "z = ((a-b)*(a-b))"
+    assert rewrite_integer_powers("f = 2.0*t**2.0 + a/b**2.0") == "f = 2.0*(t*t) + a/(b*b)"
+    assert rewrite_integer_powers("g = -x**2.0") == "g = -(x*x)"
+
+
+def test_pow_call_and_array_bases_left_untouched():
+    # Duplicating a function/array reference would call twice -- unsafe
+    # for impure functions and shared inlined accumulators.  Such
+    # powers are left for flang's own lowering.
+    assert rewrite_integer_powers("h = arr(i,j)**2.0D0") == "h = arr(i,j)**2.0D0"
+    assert rewrite_integer_powers("k = s%m(2)%v**3.0") == "k = s%m(2)%v**3.0"
+    assert rewrite_integer_powers("q = custom_sum(d)**2.0") == "q = custom_sum(d)**2.0"
+    # A pure designator chain (no call/subscript) is still safe.
+    assert rewrite_integer_powers("w = a%b%c**2.0") == "w = (a%b%c*a%b%c)"
+
+
+def test_pow_leaves_bare_integer_and_fractional_alone():
+    # Bare integer exponent: flang lowers x**2 correctly itself.
+    assert rewrite_integer_powers("c = z**2") == "c = z**2"
+    # Genuine fractional powers must stay as pow().
+    assert rewrite_integer_powers("d = r**0.5_JPRB") == "d = r**0.5_JPRB"
+    assert rewrite_integer_powers("e = w**2.5") == "e = w**2.5"
+    assert rewrite_integer_powers("p = rho**0.78") == "p = rho**0.78"
+
+
+def test_pow_comment_untouched_and_idempotent():
+    assert rewrite_integer_powers("z = a**2.0  ! b**2.0 keep") == "z = (a*a)  ! b**2.0 keep"
+    once = rewrite_integer_powers("v = (p-q)**2.0 + zt**3.0_JPRB")
+    assert rewrite_integer_powers(once) == once
+
+
+# --------------------------------------------------------------------------
+# promote_real_literals_to_double -- single/default REAL literals become
+# explicit double; already-double and integers are left as-is.
+# --------------------------------------------------------------------------
+
+
+def test_double_bare_and_single_kind():
+    assert promote_real_literals_to_double("x = 2.0") == "x = 2.0D0"
+    assert promote_real_literals_to_double("y = 4.2_JPRM + 1.0_4") == "y = 4.2D0 + 1.0D0"
+    assert promote_real_literals_to_double("b = 1.0e-3 + .5 + 1.") == "b = 1.0D-3 + .5D0 + 1.D0"
+
+
+def test_double_leaves_already_double_and_integers():
+    # _JPRB / _8 / D-exponent are already double.
+    assert promote_real_literals_to_double("z = 0.85E5_JPRB + 1.5D0 + 1.0_8") == "z = 0.85E5_JPRB + 1.5D0 + 1.0_8"
+    # Integers and kind selectors must not be touched.
+    assert promote_real_literals_to_double("n = 137 + i*2") == "n = 137 + i*2"
+    assert promote_real_literals_to_double("REAL(KIND=8) :: q") == "REAL(KIND=8) :: q"
+    assert promote_real_literals_to_double("k = SELECTED_REAL_KIND(13,300)") == "k = SELECTED_REAL_KIND(13,300)"
+
+
+def test_double_skips_identifiers_strings_comments():
+    assert promote_real_literals_to_double("r = R2ES + X1 + a2b") == "r = R2ES + X1 + a2b"
+    assert promote_real_literals_to_double("msg = 'keep 2.0 here'  ! 3.0 too") == "msg = 'keep 2.0 here'  ! 3.0 too"
+    assert promote_real_literals_to_double("u = 6.0 ! 7.0 stays") == "u = 6.0D0 ! 7.0 stays"
+
+
+def test_double_idempotent():
+    once = promote_real_literals_to_double("v = 2.0 + 0.85E5 + 1.0_JPRM")
+    assert promote_real_literals_to_double(once) == once

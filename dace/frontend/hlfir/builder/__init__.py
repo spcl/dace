@@ -35,7 +35,6 @@ NOTE on nanobind bindings:
     var.shape_symbols, assign.accesses) returns a FRESH Python list copy.
     Hot paths cache such attributes into locals.
 """
-from __future__ import annotations
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -481,25 +480,31 @@ class SDFGBuilder:
         # ``descriptors.py`` and don't need this pass.
         replace_length_one_arrays_with_scalars(sdfg, recursive=True, transient_only=True)
 
-        # Zero-initialise every transient Scalar in the SDFG (and every
-        # nested SDFG).  Fortran semantics: a local REAL/INTEGER scalar
-        # is undefined until written -- but for code paths that read it
-        # under data-dependent IF branches without a guaranteed prior
-        # write, gfortran and the bridge see DIFFERENT garbage values
-        # (depending on stack layout, register allocation, prior
-        # function calls), which causes divergent IF outcomes and
-        # cascading numerical drift downstream.  Forcing zero-init on
-        # every transient Scalar pins the bit pattern across both
-        # paths and eliminates this class of divergence.
+        # Zero-initialise every transient Scalar AND transient Array in
+        # the SDFG (and every nested SDFG).  Fortran semantics: a local
+        # REAL/INTEGER scalar or array is undefined until written -- but
+        # for code paths that read it under data-dependent IF branches
+        # without a guaranteed prior write (common after a kernel is
+        # carved down -- the producer of a still-read local lives in a
+        # deleted section), gfortran and the bridge see DIFFERENT
+        # garbage: the gfortran reference is built with
+        # ``-finit-local-zero`` (locals, scalar and array, start at 0),
+        # while the bridge's transients are ``new``-allocated and hold
+        # heap garbage (~1e228), causing divergent IF outcomes and
+        # cascading drift.  Forcing zero-init on every transient pins
+        # the bit pattern across both paths -- matching
+        # ``-finit-local-zero`` -- and eliminates this class of
+        # divergence.  ``setzero`` only adds an initialiser, so a
+        # transient that *is* written-before-read is unaffected.
         import dace
-        from dace.data import Scalar
+        from dace.data import Array, Scalar
         for nsdfg in [sdfg] + [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]:
             for state in nsdfg.all_states():
                 for node in state.nodes():
                     if not isinstance(node, dace.nodes.AccessNode):
                         continue
                     desc = nsdfg.arrays.get(node.data)
-                    if isinstance(desc, Scalar) and desc.transient:
+                    if isinstance(desc, (Scalar, Array)) and desc.transient:
                         node.setzero = True
 
     def _attach_frozen_signature(self, sdfg: SDFG) -> None:

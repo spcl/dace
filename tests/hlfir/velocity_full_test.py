@@ -22,7 +22,6 @@ Test flow: build SDFG, compile reference .so, allocate flat buffers,
 ``init_inputs_random_c`` once, snapshot for SDFG, ``run_velocity_flat_c``
 on the reference copy, run SDFG on the snapshot, compare outputs.
 """
-from __future__ import annotations
 
 import ctypes
 import shutil
@@ -242,7 +241,6 @@ _OUTPUT_NAMES = (
 )
 
 
-@pytest.mark.xfail(strict=False, reason="full velocity_tendencies e2e -- iterating on remaining bridge gaps")
 def test_velocity_full_numerical(tmp_path: Path):
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)
@@ -372,15 +370,19 @@ def test_velocity_full_numerical(tmp_path: Path):
         nproma=scalar_or_arr('nproma', nproma, np.int32),
     )
     # Deferred-shape pointer/allocatable companions need ``<arr>_d<i>``
-    # extent bound symbols for every dim that the bridge couldn't resolve
-    # symbolically.  Use the arglist to know which ones to provide.
+    # extent bound symbols + ``offset_<arr>_d<i>`` lower-bound symbols
+    # for every dim that the bridge couldn't resolve symbolically.
+    # All arrays here are 1-based (no negative bounds), so offset = 1.
     for nm, arr in list(sdfg_kw.items()):
         if not hasattr(arr, 'shape'):
             continue
         for d in range(len(arr.shape)):
-            sym = f'{nm}_d{d}'
-            if sym in arglist:
-                sdfg_kw.setdefault(sym, np.int64(arr.shape[d]))
+            extent_sym = f'{nm}_d{d}'
+            offset_sym = f'offset_{nm}_d{d}'
+            if extent_sym in arglist:
+                sdfg_kw.setdefault(extent_sym, np.int64(arr.shape[d]))
+            if offset_sym in arglist:
+                sdfg_kw.setdefault(offset_sym, np.int64(1))
     # bridge stores LOGICAL arrays as bool8; ctypes/owner_mask is int8 ->
     # convert to a writable bool view so DaCe's wrapper accepts it.
     sdfg_kw['p_patch_cells_decomp_info_owner_mask'] = \

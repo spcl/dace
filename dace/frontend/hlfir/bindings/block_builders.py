@@ -9,10 +9,10 @@ and return the rendered text.  All Fortran-construction logic that
 depends on the flattening plan lives in ``loop_copy.py`` and is
 called from ``build_wrapper_body`` / ``build_wrapper_tail``.
 """
-from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
 from dace.frontend.hlfir.bindings.flatten_plan import (
     FlattenPlan, )
@@ -526,11 +526,58 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
     return decl_lines, copy_in_lines, copy_out_lines, name_override
 
 
+_OFFSET_SYM_RE = re.compile(r"^offset_(.+)_d(\d+)$")
+_EXTENT_SYM_RE = re.compile(r"^(.+)_d(\d+)$")
+
+
+def _sym_from_intrinsic(sym: str, frozen: FrozenSignature) -> Optional[Tuple[str, str, int]]:
+    """Map a free SDFG symbol to the Fortran intrinsic that populates
+    it from the caller's actual storage.
+
+    ``offset_<arr>_d<i>``  -> ``("lbound", <fortran-expr>, i+1)``
+    ``<arr>_d<i>`` (extent) -> ``("size",   <fortran-expr>, i+1)``
+
+    ``<arr>`` is matched to a ``FrozenArg`` by ``sdfg_name``; the
+    Fortran expression is the original dummy (or, for a flattened
+    struct member, the ``st%u`` outer expression) so ``lbound`` /
+    ``size`` query the array the caller actually passed.
+
+    :param sym: a free symbol name.
+    :param frozen: the frozen signature (arg metadata).
+    :returns: ``(intrinsic, fortran_expr, dim)`` or ``None`` when the
+        symbol isn't an offset/extent of a known array arg.
+    """
+    by_sdfg = {a.sdfg_name: a for a in frozen.args}
+
+    def _expr(arr: str) -> Optional[str]:
+        a = by_sdfg.get(arr)
+        if a is None or a.kind != "array":
+            return None
+        return a.from_struct_member or a.fortran_name
+
+    m = _OFFSET_SYM_RE.match(sym)
+    if m:
+        e = _expr(m.group(1))
+        return ("lbound", e, int(m.group(2)) + 1) if e else None
+    m = _EXTENT_SYM_RE.match(sym)
+    if m:
+        e = _expr(m.group(1))
+        return ("size", e, int(m.group(2)) + 1) if e else None
+    return None
+
+
 def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dummy_set: set) -> List[str]:
-    """Emit ``sym = int(size(<outer>, dim=d), c_int)`` for every
-    free symbol that isn't already an outer dummy.  Walks the plan
-    to find the first recipe whose ``shape_exprs`` mention the
-    symbol; falls back to a TODO comment if none does.
+    """Emit one assignment per free SDFG symbol from the caller's
+    actual Fortran storage.
+
+    A free symbol is either an array's per-dim lower bound
+    (``offset_<arr>_d<i>`` -> ``lbound``) or extent
+    (``<arr>_d<i>`` -> ``size``).  The struct-flatten plan supplies a
+    precise ``size(st%a, dim=d)`` expression where it has one;
+    otherwise we fall back to ``lbound``/``size`` on the arg's own
+    Fortran expression (covers plain assumed-shape and non-default
+    lower-bound dummies, which have no flatten entry).  Symbols that
+    are themselves outer dummies are left for the caller to pass.
     """
     # Cap symbols of aos_alloc recipes are populated by the pack-in
     # code (``render_aos_alloc_pack_in`` writes ``cap_<m> = max_i(...)``)
@@ -562,6 +609,16 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
                     break
             if found:
                 break
-        if not found:
+        if found:
+            continue
+        # No flatten-plan size expr: derive the value directly from the
+        # caller's array via lbound/size (closes the gap for plain
+        # assumed-shape / non-default-lower-bound dummies, and is the
+        # ONLY path that ever populates an ``offset_<arr>_d<i>``).
+        intr = _sym_from_intrinsic(sym, frozen)
+        if intr is not None:
+            fn, expr, dim = intr
+            out.append(f"    {sym} = int({fn}({expr}, dim={dim}), c_int)")
+        else:
             out.append(f"    ! TODO: no plan entry gives size for free symbol {sym!r}")
     return out

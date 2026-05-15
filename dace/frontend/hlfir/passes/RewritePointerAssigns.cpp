@@ -292,7 +292,7 @@ struct RebindChain {
 /// op shape).
 static RebindChain traceRebindChain(mlir::Value v) {
     RebindChain out;
-    for (int i = 0; i < 16 && v; ++i) {
+    for (int i = 0; i < 128 && v; ++i) {
         auto *def = v.getDefiningOp();
         if (!def) return out;
         if (auto rb = mlir::dyn_cast<fir::ReboxOp>(def))   { v = rb.getBox(); continue; }
@@ -630,7 +630,7 @@ struct RewritePointerAssignsPass
                 // fir.convert chain and check if it reaches ptrDecl's
                 // results.
                 mlir::Value mr = other.getMemref();
-                for (int i = 0; i < 8 && mr; ++i) {
+                for (int i = 0; i < 128 && mr; ++i) {
                     if (mr == ptrDecl.getResult(0) || mr == ptrDecl.getResult(1)) {
                         aliasDecls.push_back(other);
                         return;

@@ -35,7 +35,7 @@ inline constexpr int kBuildExprDepth = 128;
 /// Maximum recursion depth for ``buildIndexExpr``.  Index expressions
 /// stay shallower than general expressions (one index operand per
 /// designate dim, narrower op set), but inherit the same budget.
-inline constexpr int kBuildIndexExprDepth = 64;
+inline constexpr int kBuildIndexExprDepth = 128;
 
 /// Maximum ``fir.convert`` chain length while walking a single SSA
 /// value inside ``resolveIndex``.  Flang occasionally stacks several
@@ -51,7 +51,7 @@ inline constexpr int kTypeWrapperPeelDepth = 32;
 /// are long-running walks through fir.convert / fir.load / designate
 /// chains back to the originating declare or constant.
 inline constexpr int kTraceToDeclMax = 1024;
-inline constexpr int kTraceConstIntMax = 64;
+inline constexpr int kTraceConstIntMax = 128;
 
 /// Maximum memref-walk depth inside ``asAssumedShapeAlias`` (peels
 /// fir.convert ops between the alias declare and the outer declare).
@@ -63,6 +63,16 @@ inline constexpr int kAliasMemrefWalkDepth = 32;
 /// assumed-shape dummy declares.  Value is an ArrayAttr of StringAttrs,
 /// one per dimension (empty string if that dim disagreed across callers).
 inline constexpr const char *kShapeHintAttr = "hlfir_bridge.shape_hint";
+
+/// Per-dim lower-bound hint stamped by ``hlfir-flatten-structs`` on a
+/// synthesised flat-companion declare.  A nested array member's
+/// non-default lower bound (``inner%v(0:3)``) lives only on the
+/// per-access ``hlfir.designate``'s ``fir.shape_shift`` and is lost
+/// when that designate is rewritten away; the flatten pass records it
+/// here so ``resolveLowerBounds`` recovers it instead of defaulting
+/// the companion's dims to 1.  ArrayAttr of StringAttrs, one per
+/// flattened dim (decimal lb, or "1" for the default).
+inline constexpr const char *kLbHintAttr = "hlfir_bridge.lb_hint";
 
 /// Extract the short Fortran name from Flang's mangled unique name.
 ///   "_QFcompute_z_v_grad_wEnproma" -> "nproma"

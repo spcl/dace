@@ -28,6 +28,48 @@ namespace hlfir_bridge {
 ///   1. hlfir_bridge.shape_hint attribute (populated by PropagateShapes)
 ///   2. fir.shape / fir.shape_shift operand (traced via SSA)
 ///   3. empty  --  caller fills with synthetics
+/// Single decoder for the one ``AnyShapeOrShiftType`` shape operand of
+/// ``hlfir.declare`` / ``fir.declare``.  Per the FIR/HLFIR op defs it
+/// is exactly one of three forms (and lbs are carried *only* here --
+/// HLFIR omits them iff every lb is the default 1):
+///   * ``fir.shape<N>``        -- extents only; lbs all implicit 1
+///   * ``fir.shape_shift<N>``  -- interleaved ``(lb,ext)`` pairs
+///   * ``fir.shift<N>``        -- lbs only; extents live on the box
+/// Centralising this kills the three duplicated ShapeOp/ShapeShiftOp
+/// inspections and adds the previously-unhandled ``fir.shift`` (an
+/// assumed-shape / pointer dummy with explicit local lower bounds,
+/// e.g. ``a(10:,20:)`` -> ``fir.shift %c10,%c20``).
+struct ShapeOperandInfo {
+    enum Kind { None, Shape, ShapeShift, Shift } kind = None;
+    std::vector<mlir::Value> lbs;      // empty for Shape (implicit 1)
+    std::vector<mlir::Value> extents;  // empty for Shift (box-carried)
+    unsigned rank = 0;
+};
+
+static ShapeOperandInfo classifyShapeOperand(mlir::Value shape) {
+    ShapeOperandInfo si;
+    if (!shape) return si;
+    auto *def = shape.getDefiningOp();
+    if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(def)) {
+        si.kind = ShapeOperandInfo::Shape;
+        for (auto e : sh.getExtents()) si.extents.push_back(e);
+        si.rank = si.extents.size();
+    } else if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(def)) {
+        si.kind = ShapeOperandInfo::ShapeShift;
+        auto ops = ss->getOperands();
+        for (unsigned i = 0; i + 1 < ops.size(); i += 2) {
+            si.lbs.push_back(ops[i]);
+            si.extents.push_back(ops[i + 1]);
+        }
+        si.rank = si.lbs.size();
+    } else if (auto sf = mlir::dyn_cast_or_null<fir::ShiftOp>(def)) {
+        si.kind = ShapeOperandInfo::Shift;
+        for (auto lb : sf->getOperands()) si.lbs.push_back(lb);
+        si.rank = si.lbs.size();
+    }
+    return si;
+}
+
 static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
     std::vector<std::string> syms;
 
@@ -87,15 +129,11 @@ static std::vector<std::string> resolveShapeSyms(hlfir::DeclareOp decl) {
         if (!expr.empty()) { syms.push_back(expr); return; }
         syms.push_back("?");
     };
-    if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
-        for (auto ext : sh.getExtents())
-            pushExtent(ext);
-
-    if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
-        auto ops = ss->getOperands();
-        for (unsigned i = 1; i < ops.size(); i += 2)
-            pushExtent(ops[i]);
-    }
+    // ``fir.shift`` carries no extents (they live on the box); leaving
+    // ``syms`` empty lets the caller's SequenceType / synthetic-name
+    // fallback supply them, which is correct for assumed-shape.
+    for (auto ext : classifyShapeOperand(shape).extents)
+        pushExtent(ext);
 
     return syms;
 }
@@ -157,7 +195,7 @@ static std::vector<std::string> lowerBoundsFromAllocSite(fir::AllocMemOp alloc) 
     // allocmem result and the embox memref operand; peel it via a
     // tight worklist (depth bounded).
     auto peelToEmbox = [](mlir::Value v) -> fir::EmboxOp {
-        for (int i = 0; i < 4 && v; ++i) {
+        for (int i = 0; i < 128 && v; ++i) {
             for (auto *u : v.getUsers()) {
                 if (auto eb = mlir::dyn_cast<fir::EmboxOp>(u)) return eb;
             }
@@ -244,25 +282,41 @@ std::string allocAliasName(const std::string &fortran, unsigned site) {
 
 static std::vector<std::string> resolveLowerBounds(hlfir::DeclareOp decl) {
     std::vector<std::string> lbs;
-    auto shape = decl.getShape();
-    if (!shape) return lbs;
 
-    if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
-        for (unsigned i = 0; i < sh.getExtents().size(); ++i)
-            lbs.push_back("1");
-
-    if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
-        auto ops = ss->getOperands();
-        for (unsigned i = 0; i < ops.size(); i += 2) {
-            if (auto c = traceConstInt(ops[i]))
-                lbs.push_back(std::to_string(*c));
-            else {
-                auto n = traceToDecl(ops[i]);
-                lbs.push_back(n.empty() ? "?" : n);
-            }
-        }
+    // ``hlfir-flatten-structs`` lb_hint: authoritative per-dim lower
+    // bounds for a synthesised flat companion whose declare carries
+    // only a plain ``fir.shape`` (the nested member's real lb lived on
+    // the rewritten-away designate's ``fir.shape_shift``).  Consulted
+    // before the shape operand so the SequenceType fallback can't
+    // default the dims to 1 (E8).
+    if (auto hint = decl->getAttrOfType<mlir::ArrayAttr>(kLbHintAttr)) {
+        for (auto a : hint)
+            lbs.push_back(mlir::cast<mlir::StringAttr>(a).str());
+        return lbs;
     }
 
+    auto si = classifyShapeOperand(decl.getShape());
+    if (si.kind == ShapeOperandInfo::None) return lbs;
+
+    // ``fir.shape``: HLFIR guarantees lbs are omitted iff every dim is
+    // the Fortran default 1 -- authoritative, no tracing needed.
+    if (si.kind == ShapeOperandInfo::Shape) {
+        lbs.assign(si.rank, "1");
+        return lbs;
+    }
+
+    // ``fir.shape_shift`` (lb,ext pairs) and ``fir.shift`` (lbs only)
+    // both carry the authoritative explicit per-dim lower bounds for
+    // an assumed-shape / pointer dummy declared with explicit local
+    // bounds (``a(10:,20:)``) -- ``si.lbs`` holds them for both forms.
+    for (auto lb : si.lbs) {
+        if (auto c = traceConstInt(lb))
+            lbs.push_back(std::to_string(*c));
+        else {
+            auto n = traceToDecl(lb);
+            lbs.push_back(n.empty() ? "?" : n);
+        }
+    }
     return lbs;
 }
 
@@ -272,20 +326,23 @@ static std::vector<std::string> resolveLowerBounds(hlfir::DeclareOp decl) {
 /// chain link).  Bounded depth to keep the walk cheap.
 static bool designateRootedAt(hlfir::DesignateOp dg, hlfir::DeclareOp decl) {
     mlir::Value v = dg.getMemref();
-    for (int i = 0; i < 8 && v; ++i) {
+    for (int i = 0; i < 128 && v; ++i) {
         auto *d = v.getDefiningOp();
         if (!d) return false;
-        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d))
-            return dc == decl;
+        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(d)) {
+            if (dc == decl) return true;
+            // Inlined-callee aliasing declare: its memref derives from
+            // ``decl#0`` (or a peelable chain over it).  Trace through
+            // to keep matching designates that live inside inlined
+            // subroutines on the same root storage.
+            v = dc.getMemref();
+            continue;
+        }
         if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))    { v = cv.getValue(); continue; }
         if (auto ld = mlir::dyn_cast<fir::LoadOp>(d))       { v = ld.getMemref(); continue; }
         if (auto rb = mlir::dyn_cast<fir::ReboxOp>(d))      { v = rb.getBox(); continue; }
         if (auto ba = mlir::dyn_cast<fir::BoxAddrOp>(d))    { v = ba.getVal(); continue; }
         if (auto co = mlir::dyn_cast<fir::CoordinateOp>(d)) { v = co.getRef(); continue; }
-        // Don't peel inner DesignateOps -- a chain ``dg2 = designate dg1(i)``
-        // means dg2 is rooted at the SAME source as dg1, not at dg1 itself;
-        // we want to credit the literal indices of every link in the chain
-        // to the SAME underlying declare.  Walk through:
         if (auto inner = mlir::dyn_cast<hlfir::DesignateOp>(d)) { v = inner.getMemref(); continue; }
         break;
     }
@@ -324,6 +381,91 @@ static bool designateRootedAt(hlfir::DesignateOp dg, hlfir::DeclareOp decl) {
 /// index was observed.  Used by the dummy-arg-allocatable free-offset
 /// fallback to distinguish "purely symbolic access (need caller-bound
 /// offset)" from "literal-positive access (1-based default is fine)".
+/// Try to recover a constant integer that ``v`` evaluates to,
+/// peeling one or more ``fir.load %decl`` indirections by scanning
+/// the function for ``fir.store <const>, %decl`` writes.
+///
+/// Used by ``inferLowerBoundsFromLiteralAccesses`` to handle the
+/// inlined-callee pattern ICON's ``get_indices_c`` uses:
+///
+///     irl_end = opt_rl_end             ! ``fir.store -5, %irl_end_decl``
+///     i_endidx_in = arr(irl_end)       ! designate index = ``fir.load %irl_end_decl``
+///
+/// Plain ``traceConstInt`` returns nullopt for the loaded value;
+/// this helper recursively peels the inlined-callee chain:
+///   * ``hlfir.associate %c-5``        (callee arg materialised by value)
+///   * ``hlfir.declare`` aliases       (inlined dummy re-declares)
+///   * ``fir.convert``                 (i32 -> i64 index coercions)
+///   * ``fir.load %X`` -> ``fir.store <v>, %X``  (local stash)
+/// recursing on the stored value at each store.  Returns the
+/// most-negative literal that reaches the index (matching the
+/// per-dim ``min`` semantics in the caller).  Bounded recursion.
+///
+/// :param v: SSA value used as a designate index.
+/// :param func: enclosing function (scopes the store walk).
+/// :param depth: recursion guard.
+/// :returns: const value if a literal reaches the index, else nullopt.
+static std::optional<int64_t>
+traceConstIntThroughLoad(mlir::Value v, mlir::func::FuncOp func,
+                         int depth = 0) {
+    if (depth > 64 || !v) return std::nullopt;
+    if (auto c = traceConstInt(v)) return c;
+    auto *def = v.getDefiningOp();
+    if (!def) return std::nullopt;
+
+    // hlfir.associate %c {adapt.valuebyref} -- the callee received
+    // the literal by value; its source is the constant.
+    if (auto as = mlir::dyn_cast<hlfir::AssociateOp>(def))
+        return traceConstIntThroughLoad(as.getSource(), func, depth + 1);
+    // fir.convert (kind coercion).
+    if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))
+        return traceConstIntThroughLoad(cv.getValue(), func, depth + 1);
+    // hlfir.declare alias -- trace its backing memref.
+    if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(def))
+        return traceConstIntThroughLoad(dc.getMemref(), func, depth + 1);
+
+    auto ld = mlir::dyn_cast<fir::LoadOp>(def);
+    if (!ld) return std::nullopt;
+    auto target = ld.getMemref();
+
+    // Match writes whose target is the same SSA value OR resolves to
+    // the same backing declare (the write may use decl#0 while the
+    // load uses decl#1, or one side goes through an extra alias
+    // declare).  Two write op shapes: ``fir.store <v>, %tgt`` and
+    // ``hlfir.assign <v> to %tgt`` (the form Flang emits for a plain
+    // scalar ``local = irl_end`` after inlining).
+    auto targetName = traceToDecl(target);
+    auto sameTarget = [&](mlir::Value writeTgt) {
+        if (writeTgt == target) return true;
+        if (!targetName.empty())
+            return traceToDecl(writeTgt) == targetName;
+        return false;
+    };
+    std::optional<int64_t> result;
+    func.walk([&](fir::StoreOp st) {
+        if (!sameTarget(st.getMemref())) return;
+        if (auto c = traceConstIntThroughLoad(st.getValue(), func, depth + 1)) {
+            if (!result || *c < *result) result = c;
+        }
+    });
+    func.walk([&](hlfir::AssignOp as) {
+        if (!sameTarget(as.getLhs())) return;
+        if (auto c = traceConstIntThroughLoad(as.getRhs(), func, depth + 1)) {
+            if (!result || *c < *result) result = c;
+        }
+    });
+    if (result) return result;
+
+    // No store reached -- the load may read a declare that aliases an
+    // ``hlfir.associate`` (inlined by-value dummy with no explicit
+    // store).  Peel the load target through the declare chain.
+    if (auto *tdef = target.getDefiningOp()) {
+        if (auto dc = mlir::dyn_cast<hlfir::DeclareOp>(tdef))
+            return traceConstIntThroughLoad(dc.getMemref(), func, depth + 1);
+    }
+    return std::nullopt;
+}
+
 static void inferLowerBoundsFromLiteralAccesses(
     hlfir::DeclareOp decl, std::vector<std::string> &lbs, int rank,
     std::vector<bool> *seenLitOut = nullptr) {
@@ -339,7 +481,10 @@ static void inferLowerBoundsFromLiteralAccesses(
         auto indices = dg.getIndices();
         unsigned nIdx = std::min<unsigned>(indices.size(), (unsigned)rank);
         for (unsigned d = 0; d < nIdx; ++d) {
-            if (auto c = traceConstInt(indices[d])) {
+            // Peel a single ``fir.load %decl`` indirection if needed
+            // (inlined-callee pattern: caller passes -5, callee stores
+            // it to a local, then loads it for the designate index).
+            if (auto c = traceConstIntThroughLoad(indices[d], func)) {
                 if (*c < minLit[d]) minLit[d] = *c;
                 seenLit[d] = true;
             }
@@ -514,7 +659,7 @@ static std::vector<double> extractGlobalInitData(fir::GlobalOp gop) {
 // Walks through ``fir.convert`` shims that flang occasionally
 // inserts between the address_of and the declare's memref.
 static std::string traceToGlobalSymbol(mlir::Value memref) {
-    for (int i = 0; i < 8 && memref; ++i) {
+    for (int i = 0; i < 128 && memref; ++i) {
         auto *d = memref.getDefiningOp();
         if (!d) return {};
         if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) {
@@ -643,7 +788,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
     // information from collapsing.
     {
         auto leadsToDesignate = [](mlir::Value v) -> bool {
-            for (int i = 0; i < 8 && v; ++i) {
+            for (int i = 0; i < 128 && v; ++i) {
                 auto *d = v.getDefiningOp();
                 if (!d) return false;
                 if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
@@ -796,16 +941,8 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // leaf referenced in a closed-form extent expression
         // (``traceExtentExpr`` resolves these for the descriptor; the
         // leaves must be SDFG symbols for the expression to compile).
-        if (auto shape = op.getShape()) {
-            if (auto sh = mlir::dyn_cast_or_null<fir::ShapeOp>(shape.getDefiningOp()))
-                for (auto ext : sh.getExtents())
-                    collectExtentExprScalars(ext, symbolNames);
-            if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(shape.getDefiningOp())) {
-                auto ops = ss->getOperands();
-                for (unsigned i = 1; i < ops.size(); i += 2)
-                    collectExtentExprScalars(ops[i], symbolNames);
-            }
-        }
+        for (auto ext : classifyShapeOperand(op.getShape()).extents)
+            collectExtentExprScalars(ext, symbolNames);
     }
     module.walk([&](fir::DoLoopOp lp) {
         auto ub = traceToDecl(lp.getUpperBound());
@@ -1136,8 +1273,32 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
         // the per-dim min of literal-integer indices.  No-op when
         // every observed literal index is >= 1.  See the inference
         // function's docstring for the full rationale.
+        // The literal-access heuristic only recovers EXPLICIT negative
+        // lower bounds on deferred-shape ALLOCATABLE/POINTER arrays
+        // (ICON's ``end_block(min_rl:)`` pattern, where
+        // ``resolveLowerBounds`` saw no shape op).  A plain
+        // ``fir.ShapeOp`` declare -- an automatic / explicit-shape
+        // local like ``ZQX(KLON,KLEV,NCLV)`` -- has Fortran-default
+        // lower bound 1 in every dim, which ``resolveLowerBounds``
+        // already returned authoritatively.  Running the heuristic
+        // there lets a mis-traced non-literal subscript (a loop
+        // induction var or a folded PARAMETER pulled through
+        // ``traceConstIntThroughLoad``) poison a known-good bound --
+        // observed as ``offset_zqx_d2 = -999`` from the mixed
+        // ``ZQX(JL,JK,NCLDQV)`` / ``ZQX(JL,JK,JM)`` subscripts, which
+        // turned the write subset into a wild out-of-bounds store.
+        // Skip it for plain-ShapeOp declares; ShapeShiftOp (explicit
+        // bounds) stays authoritative via the ``lbs[d] != "1"`` guard
+        // inside the heuristic.
         std::vector<bool> seenLit;
-        inferLowerBoundsFromLiteralAccesses(op, v.lower_bounds, v.rank, &seenLit);
+        bool plainShapeOp =
+            op.getShape() &&
+            mlir::isa_and_nonnull<fir::ShapeOp>(op.getShape().getDefiningOp());
+        if (plainShapeOp)
+            seenLit.assign(v.rank, false);
+        else
+            inferLowerBoundsFromLiteralAccesses(op, v.lower_bounds, v.rank,
+                                                &seenLit);
 
         // Dummy-arg deferred-shape ALLOCATABLE/POINTER fallback: the
         // declare is a function block-arg, its declared type has no
@@ -1209,7 +1370,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             //     underlying section skips the copy and reverses
             //     ``hlfir.copy_out`` automatically (writes propagate
             //     through the view).
-            for (int i = 0; i < 8 && m; ++i) {
+            for (int i = 0; i < 128 && m; ++i) {
                 auto *def = m.getDefiningOp();
                 if (!def) break;
                 if (auto cv = mlir::dyn_cast<fir::ConvertOp>(def))
@@ -1237,7 +1398,7 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                         // fall back to a small symbol renderer so the
                         // subset stays expressible.
                         auto renderSym = [](mlir::Value v) -> std::string {
-                            for (int i = 0; i < 16 && v; ++i) {
+                            for (int i = 0; i < 128 && v; ++i) {
                                 auto *d = v.getDefiningOp();
                                 if (!d) return "";
                                 if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))
@@ -1469,6 +1630,18 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
                 if (av.shape_symbols.size() < (size_t)av.rank)
                     av.shape_symbols.assign(av.rank, "?");
                 av.lower_bounds.assign(av.shape_symbols.size(), "1");
+                // Per-alias lower-bound recovery from the same embox
+                // shape_shift the primary VarInfo uses.  Without this,
+                // every re-ALLOCATE alias defaults to ``offset = 1``
+                // regardless of the actual bound (real bug: writes
+                // via ``arr(0) = …`` after ``ALLOCATE(arr(0:10))``
+                // land at the wrong buffer position).
+                auto lb_from_alloc = lowerBoundsFromAllocSite(allocSites[site]);
+                for (size_t d = 0; d < lb_from_alloc.size()
+                                      && d < av.lower_bounds.size(); ++d) {
+                    if (lb_from_alloc[d] != "?")
+                        av.lower_bounds[d] = lb_from_alloc[d];
+                }
                 av.role          = "array";
                 vars.push_back(std::move(av));
             }

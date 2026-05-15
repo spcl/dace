@@ -890,6 +890,85 @@ static std::string designateChainPath(hlfir::DesignateOp leaf,
     return joined;
 }
 
+/// Walk the same ``hlfir.designate`` chain ``walkDesignateChain``
+/// recognises (leaf -> root) and collect the per-dim lower bounds the
+/// chain's indexed designates carry on their shape operands, returned
+/// outer-first to match the flat companion's concatenated dim order
+/// (outer array dims, then nested member dims).
+///
+/// A nested array member's non-default lower bound (``inner%v(0:3)``)
+/// lives ONLY on the per-access designate's ``fir.shape_shift``; the
+/// synthesised flat companion declare gets a plain ``fir.shape``
+/// (extents only).  ``resolveLowerBounds`` would then default every
+/// flattened dim to 1.  ``replaceStructArgNested`` calls this before
+/// the chains are rewritten away and stamps the result as
+/// ``kLbHintAttr`` so the resolver recovers the real bound (E8).
+///
+/// Each ``hlfir.designate`` with a component selector AND indices
+/// contributes ``getIndices().size()`` dims; its shape operand gives
+/// those dims' lbs (``fir.shape`` -> all 1, ``fir.shape_shift`` ->
+/// lb,ext pairs, ``fir.shift`` -> lbs).  A non-constant lb comes back
+/// as ``"?"``.  Returns the flat outer-first lb-string vector, or an
+/// empty vector if the chain has no component step.
+static llvm::SmallVector<std::string, 4> collectChainLowerBounds(
+    hlfir::DesignateOp leaf) {
+    // Per-designate lb groups, leaf-first (reversed at the end).
+    llvm::SmallVector<llvm::SmallVector<std::string, 4>, 4> groupsRev;
+    bool sawComponent = false;
+    hlfir::DesignateOp cur = leaf;
+    for (int i = 0; i < kFlattenMaxDepth && cur; ++i) {
+        bool hasComponent = false;
+        for (auto nm : {"component_name", "component"})
+            if (cur->getAttrOfType<mlir::StringAttr>(nm)) {
+                hasComponent = true;
+                break;
+            }
+        if (hasComponent) sawComponent = true;
+
+        unsigned nIdx = cur.getIndices().size();
+        if (nIdx) {
+            llvm::SmallVector<std::string, 4> lbs;
+            // HLFIR puts the lb-bearing shape op in ``component_shape``
+            // when the designate selects an array component (the
+            // ``o%arr(i)`` / ``inner%v(j)`` case); ``getShape()``
+            // (operand 4) is only the designate result's own section
+            // shape and is null for scalar-element access.
+            mlir::Value shp = hasComponent ? cur.getComponentShape()
+                                           : cur.getShape();
+            auto *sd = shp ? shp.getDefiningOp() : nullptr;
+            if (auto ss = mlir::dyn_cast_or_null<fir::ShapeShiftOp>(sd)) {
+                auto ops = ss->getOperands();
+                for (unsigned k = 0; k + 1 < ops.size(); k += 2) {
+                    auto c = traceConstInt(ops[k]);
+                    lbs.push_back(c ? std::to_string(*c) : "?");
+                }
+            } else if (auto sf = mlir::dyn_cast_or_null<fir::ShiftOp>(sd)) {
+                for (auto lb : sf->getOperands()) {
+                    auto c = traceConstInt(lb);
+                    lbs.push_back(c ? std::to_string(*c) : "?");
+                }
+            } else {
+                // fir.shape (extents only) or no shape operand:
+                // Fortran-default lb 1 for every index this step
+                // contributes.
+                lbs.assign(nIdx, "1");
+            }
+            // Defensive: keep the group width == #indices so the
+            // outer-first flatten stays dim-aligned even if a shape
+            // op's rank disagrees (malformed / sliced IR).
+            if (lbs.size() != nIdx) lbs.assign(nIdx, "1");
+            groupsRev.push_back(std::move(lbs));
+        }
+        cur = mlir::dyn_cast_or_null<hlfir::DesignateOp>(
+            cur.getMemref().getDefiningOp());
+    }
+    llvm::SmallVector<std::string, 4> flat;
+    if (!sawComponent) return flat;
+    for (auto it = groupsRev.rbegin(); it != groupsRev.rend(); ++it)
+        flat.append(it->begin(), it->end());
+    return flat;
+}
+
 /// Path-prefix accumulated while tracing an alias declare back to its
 /// underlying decl: outermost component first.  Surfaces when an
 /// inlined-callee dummy aliases ``decl`` through
@@ -958,6 +1037,11 @@ static bool rewriteDesignateChain(
     auto it = leafBase.find(path);
     if (it == leafBase.end()) return false;
     auto newBase = it->second;
+    // E8: the nested member's non-default lower bound is recovered
+    // and stamped as ``kLbHintAttr`` on the flat companion by
+    // ``rewriteChainsRootedAt`` (just before it calls this), since
+    // that's where the un-rewritten chain leaves are still visible
+    // with their ``fir.shape_shift`` operands intact.
 
     // Leaf-only path (no intermediate indices).  Preserves the
     // leaf's full shape  --  including triplet sections, shape
@@ -1203,6 +1287,34 @@ static void rewriteChainsRootedAt(hlfir::DeclareOp decl,
             break;
         }
     });
+    // E8: before the chains are rewritten away, recover each nested
+    // array member's real per-dim lower bound from its designate's
+    // ``fir.shape_shift`` and stamp it on the flat companion declare.
+    // The synthesised companion carries only a plain ``fir.shape``
+    // (extents), so ``resolveLowerBounds`` would otherwise default
+    // every flattened dim to 1 -- losing ``inner%v(0:3)``'s lb 0.
+    for (auto dg : chainLeaves) {
+        llvm::SmallVector<mlir::Value, 4> ignored;
+        std::string key = walkDesignateChain(dg, ignored);
+        if (key.empty()) continue;
+        auto it = leafBase.find(key);
+        if (it == leafBase.end()) continue;
+        auto lbs = collectChainLowerBounds(dg);
+        if (lbs.empty()) continue;
+        bool anyNonDefault = false;
+        for (auto &s : lbs)
+            if (s != "1") { anyNonDefault = true; break; }
+        if (!anyNonDefault) continue;
+        auto *declOp = it->second.getDefiningOp();
+        auto decl = mlir::dyn_cast_or_null<hlfir::DeclareOp>(declOp);
+        if (!decl) continue;
+        llvm::SmallVector<mlir::Attribute, 4> attrs;
+        for (auto &s : lbs)
+            attrs.push_back(mlir::StringAttr::get(decl.getContext(), s));
+        decl->setAttr(hlfir_bridge::kLbHintAttr,
+                      mlir::ArrayAttr::get(decl.getContext(), attrs));
+    }
+
     for (auto dg : chainLeaves)
         rewriteDesignateChain(dg, leafBase, &aliasPrefixes);
 }

@@ -223,7 +223,7 @@ struct ExpandVectorSubscriptScatterPass
         // extent.  Walk both region bodies to find the root declare
         // each side references.
         auto traceRoot = [](mlir::Value v) -> hlfir::DeclareOp {
-            for (int i = 0; i < 16 && v; ++i) {
+            for (int i = 0; i < 128 && v; ++i) {
                 auto *d = v.getDefiningOp();
                 if (!d) return {};
                 if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d))     { v = cv.getValue(); continue; }
@@ -290,7 +290,7 @@ struct ExpandVectorSubscriptScatterPass
                     auto y = mlir::dyn_cast<hlfir::YieldOp>(inner);
                     if (!y) continue;
                     mlir::Value v = y.getEntity();
-                    for (int i = 0; i < 8 && v; ++i) {
+                    for (int i = 0; i < 128 && v; ++i) {
                         auto *d = v.getDefiningOp();
                         if (!d) break;
                         if (auto cv = mlir::dyn_cast<fir::ConvertOp>(d)) { v = cv.getValue(); continue; }

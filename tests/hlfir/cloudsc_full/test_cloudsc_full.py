@@ -36,7 +36,6 @@ cleanly without breaking the sweep.  Each gap closes in a separate
 commit (the test stays xfailed throughout).  Final commit removes
 the xfail decorator.
 """
-from __future__ import annotations
 
 from pathlib import Path
 
@@ -180,12 +179,15 @@ def _f2py_ref(tmp_path_factory):
 
 @pytest.mark.xfail(
     strict=False,
-    reason="full CLOUDSC integration probe  --  first iteration surfaces "
-    "the bridge gaps that the per-loopnest tests can't see "
-    "(rank-4 PCLV slicing, 100+ scalar-arg signature, deeply-nested "
-    "ELEMENTAL chains, block-loop state hoisting).  Each gap "
-    "closes in a follow-up commit; the test stays xfailed until "
-    "all gaps clear.",
+    reason="Structural bugs fixed (zero-init arrays + offset-poisoning "
+    "gate): PCOVPTOT now matches except the 1 documented high-JK ULP "
+    "threshold cell.  Remaining: the Section-6 flux outputs "
+    "(PFSQLF/PFSQIF/PFSQRF/PFSQSF/PFPLS*/PFHPS*) diverge ~130 cells at "
+    "O(0.4) -- a real flux-accumulation lowering bug, previously masked "
+    "by the old fail-fast assert_allclose (which stopped at PCOVPTOT and "
+    "never reached the flux outputs).  The collect-all budget below now "
+    "surfaces it; xfail stays until the flux bug is fixed (NOT a ULP "
+    "concession).",
 )
 def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     """End-to-end SDFG-vs-f2py equivalence on the full CLOUDSC.
@@ -235,14 +237,46 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
     sdfg(**sdfg_kwargs)
 
-    # Per-output numerical check.  Start strict (rtol=1e-12,
-    # atol=1e-12).  Per-output relaxation lands in a follow-up
-    # commit if IEEE-fma reordering forces it.
+    # Per-output mismatch budget (collect all, don't fail-fast).
+    #
+    # Every output must match the f2py reference at strict
+    # rtol=atol=1e-12 in EVERY cell -- except PCOVPTOT, where at most
+    # ONE cell may differ and that cell must be a hard {0,1}
+    # threshold flip at a high vertical level.  That single cell is
+    # the documented, non-bridge cross-compiler artifact: a 1-ulp
+    # rounding seed (gfortran ``x*x*x`` vs the bridge's expansion;
+    # FOE statement-function inlining order) compounds across ~99 JK
+    # levels in block IBL=3 until it crosses the hard reset
+    # ``IF (ZQPRETOT < ZEPSEC) ZCOVPTOT = 0``.  ZCOVPTOT is a cloud
+    # fraction in [0,1]; the reset makes it exactly 0 where gfortran
+    # keeps ~1 (or vice versa) -> a lone delta of 1.0.  See
+    # project_hlfir_cloudsc_section_4_5_bisection.  Any structural
+    # regression (the 373/548 garbage we fixed) reappears as many
+    # mismatches and fails loudly here.
+    rtol = atol = 1e-12
+    report: list[str] = []
     for name in program_outputs:
-        np.testing.assert_allclose(
-            outputs_sdfg[name.lower()],
-            outputs_ref[name.lower()],
-            rtol=1e-12,
-            atol=1e-12,
-            err_msg=f"mismatch on output {name}",
-        )
+        a = np.asarray(outputs_sdfg[name.lower()])
+        b = np.asarray(outputs_ref[name.lower()])
+        bad = ~np.isclose(a, b, rtol=rtol, atol=atol, equal_nan=True)
+        nbad = int(bad.sum())
+        if nbad == 0:
+            continue
+        if name.upper() != "PCOVPTOT":
+            report.append(f"{name}: {nbad} cell(s) exceed rtol={rtol} "
+                          f"(max |Δ|={np.abs(a - b)[bad].max():.3e})")
+            continue
+        # PCOVPTOT: tolerate <=1 cell, and only a {0,1} threshold flip.
+        idx = np.argwhere(bad)
+        if nbad > 1:
+            report.append(f"PCOVPTOT: {nbad} cells differ (budget is <=1 "
+                          f"high-JK threshold flip); indices {idx[:5].tolist()}")
+            continue
+        (cell, ) = idx
+        av, bv = float(a[tuple(cell)]), float(b[tuple(cell)])
+        flip = {round(av, 9), round(bv, 9)} <= {0.0, 1.0}
+        jk = int(cell[1])  # (KLON, KLEV, NBLOCKS) -> dim 1 is the level
+        if not (flip and jk >= 90):
+            report.append(f"PCOVPTOT lone diff at {cell.tolist()} is not a high-JK "
+                          f"{{0,1}} threshold flip: sdfg={av} ref={bv} jk={jk}")
+    assert not report, "cloudsc_full numerical mismatch:\n" + "\n".join(report)

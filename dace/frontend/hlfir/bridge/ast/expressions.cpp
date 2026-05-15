@@ -7,6 +7,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <set>
@@ -455,6 +456,18 @@ std::string lowerIsPresent(mlir::Value operand) {
             break;
         }
         std::string arrName = traceToDecl(arrayVal);
+        // ``fir.box_dims`` reads the *box* result (#1) of an
+        // ``hlfir.declare``; ``traceToDecl`` keys on the addr result
+        // and can come back empty for an assumed-shape / boxed dummy.
+        // Recover the name from the declare's mangled uniq_name so the
+        // bound resolves to its ``offset_<arr>_d<dim>`` /
+        // ``<arr>_d<dim>`` symbol instead of leaking ``?`` into the
+        // loop-bound expression (E10).
+        if (arrName.empty()) {
+            if (auto *adef = arrayVal.getDefiningOp())
+                if (auto decl = mlir::dyn_cast<hlfir::DeclareOp>(adef))
+                    arrName = extractName(decl.getUniqName().str());
+        }
         if (!dimC || arrName.empty()) return "?";
         unsigned dim = static_cast<unsigned>(*dimC);
 
@@ -532,6 +545,20 @@ std::string lowerIsPresent(mlir::Value operand) {
                     unsigned lbIdx = 2 * dim;
                     if (lbIdx < ops.size()) {
                         auto s = buildIndexExpr(ops[lbIdx], d + 1);
+                        if (!s.empty() && s != "?") return s;
+                    }
+                }
+                // ``fir.shift`` (assumed-shape / pointer dummy declared
+                // with explicit local lower bounds, e.g. ``a(10:)`` ->
+                // ``fir.shift %c10``).  Operands are lbs only -- the
+                // K-th operand is dim K's lower bound.  Without this
+                // ``LBOUND``/``UBOUND`` on such a dummy fell through to
+                // the wrong default and leaked the ``?`` sentinel into
+                // the loop-bound expression (E10).
+                if (auto sf = mlir::dyn_cast<fir::ShiftOp>(
+                        shapeVal.getDefiningOp())) {
+                    if (dim < sf->getNumOperands()) {
+                        auto s = buildIndexExpr(sf->getOperand(dim), d + 1);
                         if (!s.empty() && s != "?") return s;
                     }
                 }
@@ -1242,13 +1269,40 @@ std::string lowerIsPresent(mlir::Value operand) {
 
     if (auto cst = mlir::dyn_cast<mlir::arith::ConstantOp>(def)) {
         if (auto f = mlir::dyn_cast<mlir::FloatAttr>(cst.getValue())) {
-            // 17 digits round-trips IEEE-754 binary64 exactly  --  anything
-            // less truncates the mantissa and Flang-folded constants
-            // (module ``parameter`` literals etc.) come out at f32
-            // precision in tasklet code.
-            std::ostringstream o;
-            o << std::setprecision(17) << f.getValueAsDouble();
-            std::string lit = o.str();
+            bool isF32 = false;
+            if (auto ft = mlir::dyn_cast<mlir::FloatType>(cst.getType()))
+                isF32 = ft.getWidth() == 32;
+            std::string lit;
+            if (isF32) {
+                // The constant is genuinely f32.  Print the SHORTEST
+                // decimal that round-trips to that f32 value (binary32
+                // needs at most 9 significant digits) instead of the
+                // f64-widened ``0.10000000149011612``.  Wrapped in
+                // ``dace.float32(...)`` the two are bit-identical, but
+                // the short form stays close to the Fortran source.
+                float fv = static_cast<float>(f.getValueAsDouble());
+                for (int prec = 1; prec <= 9; ++prec) {
+                    std::ostringstream o;
+                    o << std::setprecision(prec) << fv;
+                    if (std::strtof(o.str().c_str(), nullptr) == fv) {
+                        lit = o.str();
+                        break;
+                    }
+                }
+                if (lit.empty()) {  // non-finite or unexpected
+                    std::ostringstream o;
+                    o << std::setprecision(9) << fv;
+                    lit = o.str();
+                }
+            } else {
+                // 17 digits round-trips IEEE-754 binary64 exactly  --
+                // anything less truncates the mantissa and Flang-folded
+                // constants (module ``parameter`` literals etc.) come
+                // out at f32 precision in tasklet code.
+                std::ostringstream o;
+                o << std::setprecision(17) << f.getValueAsDouble();
+                lit = o.str();
+            }
             // ``ostringstream`` drops the decimal point for integer-valued
             // doubles (e.g. ``0.0`` -> ``"0"``).  That makes the C++ code
             // emit a plain ``int`` literal in a float context, so
@@ -1271,10 +1325,8 @@ std::string lowerIsPresent(mlir::Value operand) {
             // ``5.5``.  Pairs with the ``fir.convert f32->f64`` wrap so
             // both the literal and the widening cast preserve the
             // intended precision.
-            if (auto ft = mlir::dyn_cast<mlir::FloatType>(cst.getType())) {
-                if (ft.getWidth() == 32 && !kSuppressFloatCast)
-                    return "dace.float32(" + lit + ")";
-            }
+            if (isF32 && !kSuppressFloatCast)
+                return "dace.float32(" + lit + ")";
             return lit;
         }
         if (auto i = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))

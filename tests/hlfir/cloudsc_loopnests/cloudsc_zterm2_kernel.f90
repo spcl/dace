@@ -18,8 +18,8 @@ SUBROUTINE zterm2_kernel(n, zpr02, zcorrfac, zrho, zcorrfac2, &
   REAL(KIND = 8), INTENT(OUT) :: zterm2(n)
   INTEGER(KIND = 4) :: i
   DO i = 1, n
-    zterm2(i) = 0.65*rcl_const6s*zpr02(i)**rcl_const4s + rcl_const3s*zcorrfac(i)**0.5 &
-              & *zrho(i)**0.5*zpr02(i)**rcl_const5s/zcorrfac2(i)**0.5
+    zterm2(i) = 0.65D0*rcl_const6s*zpr02(i)**rcl_const4s + rcl_const3s*zcorrfac(i)**0.5D0 &
+              & *zrho(i)**0.5D0*zpr02(i)**rcl_const5s/zcorrfac2(i)**0.5D0
   END DO
 END SUBROUTINE zterm2_kernel
 

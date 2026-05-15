@@ -31,17 +31,33 @@ shape because the earlier stages normalised away the irregularities.
 
 ## Stages
 
-**(0, optional) Pre-process source.** `dace.frontend.hlfir.preprocess.preprocess_fortran`
-rewrites `IF (intvar)` to `IF (intvar /= 0)` for any INTEGER scalar
-declared in the source. Off by default  --  flang-new-21 rejects bare
-INTEGER as an IF condition (only LOGICAL is legal), and the rewrite
-must happen at the source layer because the parser fails before HLFIR
-is even produced. Real codebases that need it: ECRAD radiation kernels,
-parts of CloudSC microphysics (`IF (laericeauto)`), ICON tendency
-scaffolding. We dislike adding it  --  it's a SED-style regex, not a
-Fortran parser, so it's brittle by construction. Opt in per call site
-(`compile_to_hlfir(..., preprocess=True)`); leave off when feeding
-clean source so we don't paper over real issues.
+**(0) Pre-process source.** `dace.frontend.hlfir.preprocess` holds
+three text rewrites that must run before flang (they change what
+flang accepts, or what arithmetic each backend is free to pick).
+They are SED-style regex transforms, not a Fortran parser, so each
+is deliberately narrow; comment- and string-awareness is shared via
+`_scan_line` so a `!` or `**` inside a character literal is never
+touched.
+
+- `rewrite_integer_powers` -- expands an integer-valued REAL-literal
+  power (`x**2.0` -> `(x*x)`, `(p-q)**3.0` -> `((p-q)*(p-q)*(p-q))`).
+  Runs **unconditionally** in `compile_to_hlfir`: algebraically exact
+  and removes a backend-dependent `pow(x, 2.0)` vs `x*x` rounding
+  difference against the gfortran reference. A bare-integer exponent
+  (`x**2`) is left for flang's own (bit-identical) integer-power
+  lowering; genuine fractional powers (`**0.5`) stay as `pow()`; a
+  base containing a call/array reference is left alone (duplicating it
+  would invoke it twice).
+- `promote_real_literals_to_double` -- single/default REAL literals to
+  an explicit double form (`2.0` -> `2.0D0`). A standalone utility
+  applied directly to kernel source on disk when a codebase must be
+  globally double; **not** wired into the build path.
+- `preprocess_fortran` -- `IF (intvar)` -> `IF (intvar /= 0)` for
+  INTEGER scalars. flang-new-21 rejects bare INTEGER as an IF
+  condition (only LOGICAL is legal); ECRAD / CloudSC (`IF
+  (laericeauto)`) / ICON scaffolding ship this. **Opt-in** per call
+  site (`compile_to_hlfir(..., preprocess=True)`); off by default so
+  we don't paper over real issues in clean source.
 
 **(1) Parse.** One or more `.hlfir` files are loaded into a shared
 `MLIRContext` and merged into a single `ModuleOp` via

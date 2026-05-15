@@ -455,7 +455,7 @@ buildElementalAssign(hlfir::AssignOp assign, hlfir::ElementalOp elem) {
     // emits for the per-element load.
     if (auto ld = mlir::dyn_cast<fir::LoadOp>(def)) {
         mlir::Value mem = ld.getMemref();
-        for (int i = 0; i < 8 && mem; ++i) {
+        for (int i = 0; i < 128 && mem; ++i) {
             auto *md = mem.getDefiningOp();
             if (!md) break;
             if (auto cv = mlir::dyn_cast<fir::ConvertOp>(md)) {
