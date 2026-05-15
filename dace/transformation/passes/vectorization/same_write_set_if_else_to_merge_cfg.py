@@ -22,7 +22,7 @@ Restrictions in this slice (raise :class:`NotImplementedError` otherwise):
   nested SDFGs, no maps inside the arm; tile-level prep happens elsewhere).
 """
 import re
-from typing import Optional
+from typing import Optional, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -252,7 +252,11 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         # writes share the same cond.
         cond_text = cond_block.as_string if isinstance(cond_block, CodeBlock) else str(cond_block)
         any_subset_str = str(next(iter(write_subsets.values())))
-        cond_array_name = self._resolve_cond_to_array(local_sdfg, am_state, cond_text, any_subset_str, skip_cb=cb)
+        resolved = self._resolve_cond_to_array(local_sdfg, am_state, cond_text, any_subset_str, skip_cb=cb)
+        if resolved is None:
+            cond_array_name, cond_producer = None, None
+        else:
+            cond_array_name, cond_producer = resolved
         for arr, subset in write_subsets.items():
             then_op = temp_then.get(arr, arr)
             else_op = temp_else.get(arr, arr)
@@ -263,7 +267,8 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                                      then_op,
                                      else_op,
                                      cond_text,
-                                     cond_array_name=cond_array_name)
+                                     cond_array_name=cond_array_name,
+                                     cond_producer=cond_producer)
 
         # Stitch in/out edges of the ConditionalBlock onto ct_state -> ce_state
         # -> am_state, then drop the original block.
@@ -311,18 +316,24 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                             else_name: str,
                             cond_text: str,
                             *,
-                            cond_array_name: Optional[str] = None):
+                            cond_array_name: Optional[str] = None,
+                            cond_producer: Optional[dace.nodes.AccessNode] = None):
         """Emit ``arr[subset] = merge(_c, _t, _e)`` where ``_c``, ``_t``,
         ``_e`` are wired as 3 in-connectors. ``cond_array_name`` is the
         bool transient already lifted for this cond; when ``None``, the
-        cond stays as free-symbol text inside the merge tasklet body."""
+        cond stays as free-symbol text inside the merge tasklet body.
+        ``cond_producer`` is the access node the lift/combine tasklet wrote
+        the transient through; reusing it keeps the merge on the same
+        connected dataflow path as the producer (else codegen may emit the
+        merge before the cond is computed). ``None`` falls back to a fresh
+        read node (recipe-1 array, produced elsewhere)."""
         access_then = state.add_access(then_name)
         access_else = state.add_access(else_name)
         access_out = state.add_access(arr_name)
         subset_str = str(subset)
 
         if cond_array_name is not None:
-            cond_access = state.add_access(cond_array_name)
+            cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
             t = state.add_tasklet(
                 name=f"merge_{arr_name}",
                 inputs={"_c", "_t", "_e"},
@@ -348,15 +359,21 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                                cond_text: str,
                                subset_str: str,
                                *,
-                               skip_cb=None) -> Optional[str]:
-        """Resolve ``cond_text`` to the name of a per-lane bool transient
-        usable as the ``_c`` source of the merge tasklet. Returns ``None``
-        when no transient can be produced (the caller then keeps the cond
-        as free-symbol text in the merge body).
+                               skip_cb=None) -> Optional[Tuple[str, Optional[dace.nodes.AccessNode]]]:
+        """Resolve ``cond_text`` to a per-lane bool transient usable as the
+        ``_c`` source of the merge tasklet.
 
-        The function only manages bookkeeping for the WRITE side of any
-        emitted lift / combine tasklet: each caller adds its own READ
-        access node into the returned array. Recipes tried in order:
+        :returns: ``None`` when no transient can be produced (the caller
+            then keeps the cond as free-symbol text in the merge body), or
+            ``(array_name, producer_access)`` where ``producer_access`` is
+            the access node the emitted lift/combine tasklet writes the
+            transient through in *this* state — consumers must connect their
+            read edge from that exact node so the dataflow stays a single
+            connected path. ``producer_access`` is ``None`` only for recipe
+            1 (the name already designates an array produced elsewhere with
+            its own edges); the caller then adds its own read node.
+
+        Recipes tried in order:
 
         1. ``cond_text`` already names an SDFG array — return the name.
         2. ``cond_text`` is a single symbol that an interstate edge sets;
@@ -367,7 +384,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         """
         cond_text = cond_text.strip()
         if cond_text in sdfg.arrays:
-            return cond_text
+            return cond_text, None
         direct = self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if direct is not None:
             return direct
@@ -408,6 +425,10 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             return None
 
         # Recurse, every name must resolve to an array (no partial lifts).
+        # ``_resolve_cond_to_array`` returns ``(array_name, producer_access)``
+        # where ``producer_access`` is the access node a lift/combine tasklet
+        # in *this* state writes the transient through (``None`` when the
+        # name was already a pre-existing array produced elsewhere).
         lifted = {}
         for name in names:
             resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str, skip_cb=skip_cb)
@@ -417,7 +438,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
 
         # Pick the shape from any lifted transient; they all describe the
         # same per-lane bool result.
-        any_arr = next(iter(lifted.values()))
+        any_arr = next(iter(lifted.values()))[0]
         shape = sdfg.arrays[any_arr].shape
 
         cond_name, _ = sdfg.add_array(name="_cond_compound",
@@ -443,8 +464,16 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
                               outputs={out_conn},
                               code=f"{out_conn} = ({cleaned})")
         for name, conn in in_conn_names.items():
-            lifted_name = lifted[name]
-            lifted_access = state.add_access(lifted_name)
+            lifted_name, lifted_producer = lifted[name]
+            # Reuse the producing access node so ``lift_cond -> transient ->
+            # combine_cond`` is a single connected dataflow path. A fresh
+            # ``state.add_access`` would leave the producer in a disconnected
+            # component, so codegen is free to emit the combine before the
+            # lift (TSVC s271: ``_cond_compound = _cond_b_index>0`` was
+            # emitted ahead of ``_cond_b_index = b``). Only the
+            # already-an-array case (producer ``None``, written elsewhere
+            # with its own edges) needs a fresh read node here.
+            lifted_access = lifted_producer if lifted_producer is not None else state.add_access(lifted_name)
             lifted_total = sdfg.arrays[lifted_name].total_size
             lifted_subset = "0" if lifted_total == 1 else subset_str
             state.add_edge(lifted_access, None, t, conn, dace.Memlet(expr=f"{lifted_name}[{lifted_subset}]"))
@@ -452,7 +481,7 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
-        return cond_name
+        return cond_name, cond_access
 
     def _lift_interstate_cond_to_tasklet(self,
                                          sdfg: dace.SDFG,
@@ -496,17 +525,27 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
 
-        # Build the new bool transient sized to the cond range. Use the
-        # first array read's shape as a template, the bool array tracks
-        # the per-lane comparison result.
+        # Build the lifted transient sized to the cond range. The RHS of
+        # ``cond_sym``'s assignment is NOT necessarily a boolean
+        # comparison — it is frequently a *value* operand that a
+        # downstream comparison consumes (e.g. ``cond_sym = b[i]`` feeding
+        # ``b[i] > 0.0``). Typing this array ``bool`` truncates that
+        # float operand to ``b != 0`` and the comparison becomes wrong
+        # (TSVC s271 ``if b[i] > 0.0`` -> all negative-b lanes wrongly
+        # taken). Carry the RHS's actual dtype (the first array read's);
+        # a genuine bool-valued RHS stored as ``0.0``/``1.0`` is still
+        # correct for the downstream comparison/merge. ``_cond_compound``
+        # (the final boolean) stays ``bool`` separately.
         if arr_reads:
             template = sdfg.arrays[arr_reads[0]]
             shape = template.shape
+            cond_dtype = template.dtype
         else:
             shape = (1, )
+            cond_dtype = dace.bool_
         cond_name, _ = sdfg.add_array(name=f"_cond_{cond_sym}",
                                       shape=shape,
-                                      dtype=dace.bool_,
+                                      dtype=cond_dtype,
                                       storage=dace.dtypes.StorageType.Register,
                                       transient=True,
                                       find_new_name=True)
@@ -542,4 +581,4 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
-        return cond_name
+        return cond_name, cond_access

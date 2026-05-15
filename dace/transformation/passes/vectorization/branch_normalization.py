@@ -317,7 +317,11 @@ class BranchNormalization(ppl.Pass):
             SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
         resolver = SameWriteSetIfElseToMergeCFG()
         any_subset_str = str(next(iter(write_subsets.values())))
-        cond_array_name = resolver._resolve_cond_to_array(sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+        resolved = resolver._resolve_cond_to_array(sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+        if resolved is None:
+            cond_array_name, cond_producer = None, None
+        else:
+            cond_array_name, cond_producer = resolved
 
         for arr_name in list(write_subsets.keys()):
             # Find every write access node for this array in this state.
@@ -372,7 +376,11 @@ class BranchNormalization(ppl.Pass):
                 state.remove_edge(in_edge)
                 state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
                 if cond_array_name is not None:
-                    cond_access = state.add_access(cond_array_name)
+                    # Reuse the producing access node (see
+                    # ``_resolve_cond_to_array``): a fresh read node would
+                    # disconnect the lift from this merge and let codegen
+                    # emit the merge before the cond is computed.
+                    cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
                     merge_t = state.add_tasklet(
                         name=f"bn_merge_{arr_name}",
                         inputs={"_c", "_new", "_old"},
