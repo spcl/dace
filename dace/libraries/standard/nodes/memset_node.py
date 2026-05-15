@@ -114,7 +114,7 @@ def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
 @library.expansion
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
-    :func:``select_memset_implementation`` based on the destination storage,
+    :func:`select_memset_implementation` based on the destination storage,
     dynamic inputs, and the surrounding scope."""
     environments = []
 
