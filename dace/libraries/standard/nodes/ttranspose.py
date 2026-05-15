@@ -128,9 +128,9 @@ class ExpandCuTensor(ExpandTransformation):
         cutensor_dtype, compute_desc, alpha_type = environments.cuTensor.TYPE_MAP[dtype]
         alpha_val = f"({alpha_type}){node.alpha}"
 
-        # Input modes: identity mapping  [0, 1, …, n-1]
+        # Input modes: identity mapping  [0, 1, ..., n-1]
         modes_a = list(range(ndim))
-        # Output modes: the permutation   [axes[0], axes[1], …]
+        # Output modes: the permutation   [axes[0], axes[1], ...]
         modes_c = list(node.axes)
 
         modes_a_str = ', '.join(str(m) for m in modes_a)
