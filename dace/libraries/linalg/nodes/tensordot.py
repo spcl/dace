@@ -270,6 +270,14 @@ class ExpandCuTensor(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        """Expand ``node`` into a cuTENSOR ``cutensorContract`` tasklet.
+
+        :param node: The ``TensorDot`` library node being expanded.
+        :param parent_state: SDFG state containing ``node``.
+        :param parent_sdfg: SDFG containing ``parent_state``.
+        :returns: A ``nodes.Tasklet`` calling ``cutensorContract``.
+        :raises NotImplementedError: If the output ``dtype`` is not in ``cuTensor.TYPE_MAP``.
+        """
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type

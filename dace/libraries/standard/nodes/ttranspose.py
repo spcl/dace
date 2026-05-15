@@ -111,7 +111,12 @@ class ExpandCuTensor(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         """Expand ``node`` into a cuTENSOR ``cutensorPermute`` tasklet.
 
-        :returns: A tasklet implementing the transpose, or the pure expansion for integer dtypes.
+        :param node: The ``TensorTranspose`` library node being expanded.
+        :param parent_state: SDFG state containing ``node``.
+        :param parent_sdfg: SDFG containing ``parent_state``.
+        :returns: A ``nodes.Tasklet`` calling ``cutensorPermute``, or the
+            ``SDFG`` from ``ExpandPure.expansion`` when ``dtype`` is unsupported
+            (e.g. integer types).
         :raises NotImplementedError: If ``node.beta`` is non-zero (unsupported by ``cutensorPermute``).
         """
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
