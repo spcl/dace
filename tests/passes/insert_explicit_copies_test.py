@@ -241,19 +241,19 @@ def test_insert_nested_sdfg():
 
 
 def _count_nested_sdfgs(sdfg):
-    """Count NestedSDFGs in ``sdfg`` (top level only — not recursive into them)."""
+    """Count NestedSDFGs in ``sdfg`` (top level only -- not recursive into them)."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
 
 
 def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
     """Single-element same-side copies must expand to direct
-    ``_out = _in`` Tasklets — never wrapped in a NestedSDFG.
+    ``_out = _in`` Tasklets -- never wrapped in a NestedSDFG.
 
     The MappedTasklet path would build a 0-D map for these (every dim
     collapses), which crashes propagation; the routing in
     ``select_copy_implementation`` short-circuits to the ``Tasklet`` impl
-    instead. This test pins that behavior on a mix of CPU↔CPU and
-    Register↔GPU_Global single-element copies — the canonical "scalar
+    instead. This test pins that behavior on a mix of CPU<->CPU and
+    Register<->GPU_Global single-element copies -- the canonical "scalar
     transfer" cases produced by ``auto_optimize`` for stencil kernels.
     """
     cpu = dace.StorageType.CPU_Heap
@@ -282,7 +282,7 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
 
     sdfg.expand_library_nodes()
 
-    # No NestedSDFGs should remain — every single-element copy must have
+    # No NestedSDFGs should remain -- every single-element copy must have
     # expanded directly to a Tasklet via the ``Tasklet`` impl.
     assert _count_nested_sdfgs(sdfg) == 0, (
         "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
@@ -400,8 +400,8 @@ def test_insert_self_copy_subset_is_dst_side():
     in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
     out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
 
-    # The destination side (column 4) must be on the `_out` edge; the source
-    # side (column 3) on the `_in` edge.
+    # The destination side (column 4) must be on the ``_out`` edge; the source
+    # side (column 3) on the ``_in`` edge.
     assert str(in_e.data.subset) == "0:4, 3", (f"src side should read column 3 (other_subset); got {in_e.data.subset}")
     assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
 
@@ -434,7 +434,7 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
     """When the destination array's shape is reachable from the source's by
     collapsing contiguous runs of dimensions (e.g. einsum cuBLAS reshapes
     ``[8, 12, 5, 3] -> [96, 5, 3]``), the pass must derive a destination
-    subset that spans the full destination — falling back to ``src_subset``
+    subset that spans the full destination -- falling back to ``src_subset``
     leaves a rank-mismatched memlet that fails validation."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG(f"reshape_collapse_{len(src_shape)}_to_{len(dst_shape)}")
@@ -443,7 +443,7 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
     st = sdfg.add_state("s")
     a = st.add_access("A")
     b = st.add_access("B")
-    # Memlet on the source side (no other_subset) — forces the pass through
+    # Memlet on the source side (no other_subset) -- forces the pass through
     # ``_derive_matching_dst_subset`` to pick a destination range.
     st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
 
@@ -551,8 +551,8 @@ def test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_nam
 
 _N = dace.symbol('_N')
 
-
 # AccessNode<->View edges must remain direct after IEC.
+
 
 def test_iec_skips_array_to_view_edge():
     sdfg = dace.SDFG('skip_array_to_view')

@@ -25,8 +25,8 @@ def wire_stream_to(sdfg: dace.SDFG, state: dace.SDFGState, target: nodes.Node, t
                    stream_input: Optional[dace.data.Data]):
     """Connect the SDFG-level ``stream`` access node to ``target`` on
     ``target_conn``. No-op when no stream is wired. For map entries the
-    connector is added on the target typed as ``gpuStream_t`` — type-based
-    detection in :func:`has_stream_connector` relies on this so the
+    connector is added on the target typed as ``gpuStream_t`` -- type-based
+    detection in :func:``has_stream_connector`` relies on this so the
     post-expansion reconnect pass treats the libnode-wired consumer as
     already-wired and doesn't re-thread a duplicate edge."""
     if stream_input is None:
@@ -43,7 +43,7 @@ def wire_stream_through_map(sdfg: dace.SDFG, state: dace.SDFGState, map_entry: n
     """Wire the SDFG-level ``stream`` access node *through* ``map_entry``
     into ``target.target_conn``: adds ``IN_stream`` / ``OUT_stream``
     pass-through connectors on the map and the two memlet edges
-    ``stream → MapEntry.IN_stream`` and ``MapEntry.OUT_stream → target``.
+    ``stream -> MapEntry.IN_stream`` and ``MapEntry.OUT_stream -> target``.
 
     Used when a Sequential map encloses a stream-using consumer and the
     DaCe convention requires the connector to thread through the scope.
@@ -81,7 +81,7 @@ def extract_stream_and_dynamic_inputs(
             continue
         datadesc = sdfg.arrays[ie.data.data]
         if not isinstance(datadesc, dace.data.Scalar):
-            raise ValueError("Dynamic inputs (not connected to `_in`) must be scalars.")
+            raise ValueError("Dynamic inputs (not connected to ``_in``) must be scalars.")
         dynamic_inputs[ie.dst_conn] = datadesc
 
     return stream_input, dynamic_inputs
