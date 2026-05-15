@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`AssignmentAndCopyKernelToMemsetAndMemcpy`.
+"""Tests for :class:``AssignmentAndCopyKernelToMemsetAndMemcpy``.
 
 Verifies the lifting of in-map memset / element-wise-copy patterns to ``MemsetLibraryNode``
 and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
@@ -64,7 +64,7 @@ def _get_sdfg(
         },
     )
 
-    # Select memset value: 0.0 or 1.0 depending on `non_zero`
+    # Select memset value: 0.0 or 1.0 depending on ``non_zero``
     assign_value = "0" if not non_zero else "1"
 
     # Create each memcpy or memset node
@@ -97,7 +97,7 @@ def _get_sdfg(
 
         # Handle input connection for memcpy
         if is_memcpy:
-            # Connect array → map → tasklet
+            # Connect array -> map -> tasklet
             state.add_edge(
                 state.add_access(in_name),
                 None,
@@ -164,7 +164,7 @@ def _get_sdfg(
                 dace.memlet.Memlet(f"{out_name}[i, j]"),
             )
         else:
-            # Normal write path: tasklet → map_exit
+            # Normal write path: tasklet -> map_exit
             state.add_edge(
                 tasklet,
                 "_out",
@@ -173,7 +173,7 @@ def _get_sdfg(
                 dace.memlet.Memlet(f"{out_name}[i, j]"),
             )
 
-        # Final output: map_exit → output array
+        # Final output: map_exit -> output array
         state.add_edge(
             map_exit,
             f"OUT_{out_name}",
@@ -696,7 +696,7 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
     return sdfg
 
 
-# expected_memcpy is 1 only with fortran_strides=True — C-strides can't be
+# expected_memcpy is 1 only with fortran_strides=True -- C-strides can't be
 # collapsed into a single memcpy because of the dimension change.
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 @pytest.mark.parametrize(
@@ -727,9 +727,9 @@ def test_nested_memcpy_with_dimension_change_and_strides(expansion_type, xp, ful
 
 
 def test_transpose_map_is_not_lifted_to_memcpy():
-    """Pin: a map whose tasklet body is `_out = _in` but whose in/out
+    """Pin: a map whose tasklet body is ``_out = _in`` but whose in/out
     memlet subsets permute the map indices is a *transpose*, not a
-    pure copy. The pass must leave it alone — lifting it to a
+    pure copy. The pass must leave it alone -- lifting it to a
     ``CopyLibraryNode`` (which lowers to ``cudaMemcpyAsync``) would
     silently turn a transpose into a flat memcpy and produce wrong
     output. Regressed in ``test_persistent_gpu_transpose_regression``.
@@ -748,24 +748,17 @@ def test_transpose_map_is_not_lifted_to_memcpy():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0, (
         "Transpose pattern (in subset [i, j], out subset [j, i]) was incorrectly "
-        "lifted to a CopyLibraryNode — the pass treats permutation as pure copy.")
+        "lifted to a CopyLibraryNode -- the pass treats permutation as pure copy.")
 
 
 def test_inkernel_memset_is_not_lifted():
-    """Pin: a memset (``scratch[j] = 0``) that sits *inside* a GPU_Device
-    map must NOT be lifted to a ``MemsetLibraryNode``. The libnode expands
-    to ``cudaMemsetAsync``, which is a host-only runtime entry point and
-    cannot be issued from device code. Also, the expansion produces a
-    ``GPU_Device``-scheduled mapped tasklet that, when nested inside
-    another GPU map, fails ``AddThreadBlockMap.can_be_applied`` and
-    breaks ``InferGPUGridAndBlockSize`` downstream. Regressed in the
-    four ``nested_kernel_transient_test`` variants.
-
-    Uses ``simplify=True`` so the inner Sequential map's ``MapEntry ->
-    Tasklet -> MapExit -> AccessNode`` shape is actually present at the
-    top level — with ``simplify=False`` the frontend wraps each map body
-    in a NestedSDFG and the lift pattern never matches even when the
-    precondition is off.
+    """Pin: a memset (``scratch[j] = 0``) inside a GPU_Device map must NOT
+    be lifted to a ``MemsetLibraryNode`` -- it expands to host-only
+    ``cudaMemsetAsync`` (illegal from device code) and a ``GPU_Device``
+    mapped tasklet that breaks ``AddThreadBlockMap`` when nested in another
+    GPU map. Uses ``simplify=True`` so the inner ``MapEntry -> Tasklet ->
+    MapExit -> AccessNode`` shape exists at top level (``simplify=False``
+    wraps each map body in a NestedSDFG and the pattern never matches).
     """
 
     @dace.program
@@ -780,7 +773,7 @@ def test_inkernel_memset_is_not_lifted():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "An in-kernel memset (Sequential map inside GPU_Device) was lifted to a "
-        "MemsetLibraryNode — but cudaMemsetAsync is host-only and cannot run from "
+        "MemsetLibraryNode -- but cudaMemsetAsync is host-only and cannot run from "
         "device code. The pass should skip maps nested in any GPU scope.")
 
 
@@ -808,7 +801,7 @@ def test_single_element_memset_is_not_lifted():
 
 def test_single_element_memcpy_is_not_lifted():
     """Pin: a memcpy over a single element must NOT be lifted (same family
-    as ``test_single_element_memset_is_not_lifted`` — singleton-collapse in
+    as ``test_single_element_memset_is_not_lifted`` -- singleton-collapse in
     ``CopyLibraryNode``'s pure expansion produces a degenerate map).
     """
 
@@ -840,7 +833,7 @@ def test_shared_passthrough_connector_blocks_lift():
     state = sdfg.add_state("main")
     a = state.add_access("A")
     me, mx = state.add_map("kernel", {"i": "0:10"}, schedule=dace.ScheduleType.GPU_Device)
-    # Two tasklets sharing the SAME ``MapExit.IN_A`` passthrough — like
+    # Two tasklets sharing the SAME ``MapExit.IN_A`` passthrough -- like
     # the deriche pattern where a boundary memset and a per-thread
     # compute both write to a single aggregate ``MapExit OUT_A -> A``
     # edge. ``add_memlet_path`` auto-renames conflicting connectors, so
@@ -866,7 +859,7 @@ def test_shared_passthrough_connector_blocks_lift():
 
 def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
     # The map_entry receives a dynamic-range scalar on a CUSTOM-named connector
-    # (not the auto-generated `__map_*` prefix). The libnode doesn't iterate
+    # (not the auto-generated ``__map_*`` prefix). The libnode doesn't iterate
     # so the dynamic input must not be propagated; otherwise the libnode ends
     # up with a dangling connector that codegen later trips on.
     Ub = dace.symbol('Ub')
