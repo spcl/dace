@@ -37,7 +37,7 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     matches the source subset's volume shape (either directly, or after
     squeezing singleton dimensions), the implicit destination range is the
     full destination (offset 0 on every dimension). Otherwise we fall back
-    to ``src_subset`` for backward compatibility — that path is only
+    to ``src_subset`` for backward compatibility -- that path is only
     correct when the two arrays share the same shape.
     """
     from dace import subsets as _subsets
@@ -45,8 +45,8 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
     src_size = list(src_subset.size())
     dst_shape = list(dst_desc.shape)
 
-    # DaCe symbols are interned by name but `sympy.simplify` can leave
-    # `N - N` un-simplified when the two `N` instances belong to different
+    # DaCe symbols are interned by name but ``sympy.simplify`` can leave
+    # ``N - N`` un-simplified when the two ``N`` instances belong to different
     # symbol objects. Compare via string repr, which yields a canonical form
     # for symbols sharing a name.
     def _eq(a, b):
@@ -132,7 +132,7 @@ def _is_consecutive_reshape(src_size, dst_shape):
 def _expr_lt(a, b):
     """``a < b`` for sympy/numeric mixes, falling back to ``False`` on
     indeterminate symbolic comparisons (which sends both pointers forward
-    in lockstep — safe under the equal-product guard)."""
+    in lockstep -- safe under the equal-product guard)."""
     try:
         return bool((a - b) < 0)
     except Exception:
@@ -278,7 +278,7 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.is_empty():
                 continue
 
-            # WCR edges aren't copies — they're reductions. Lifting them
+            # WCR edges aren't copies -- they're reductions. Lifting them
             # into a ``CopyLibraryNode`` would lose the conflict-resolution
             # semantics (write-without-merge). They're left in place so a
             # later pass can lower them to a proper reduction node.
@@ -291,8 +291,8 @@ class InsertExplicitCopies(ppl.Pass):
             # Views alias their underlying array; an Array<->View edge is an
             # aliasing reference, not a copy. Lifting it into a CopyLibraryNode
             # would (a) emit a memcpy between two pointers into the same buffer
-            # and (b) break `sdutil.get_view_edge`, which requires the View's
-            # neighbor on at least one side to be an AccessNode — it walks the
+            # and (b) break ``sdutil.get_view_edge``, which requires the View's
+            # neighbor on at least one side to be an AccessNode -- it walks the
             # adjacent edge to the underlying buffer.
             if isinstance(src_desc, dace.data.View) or isinstance(dst_desc, dace.data.View):
                 continue
@@ -301,7 +301,7 @@ class InsertExplicitCopies(ppl.Pass):
             # ``is_packed_fortran_strides`` on both endpoints. ``Array`` and
             # ``Scalar`` both satisfy that contract (Scalar reports ``shape
             # = (1,)``, ``strides = [1]``). ``Stream`` (queue) and other
-            # non-shape data classes do not — leave the natural memlet for
+            # non-shape data classes do not -- leave the natural memlet for
             # the codegen's stream / custom paths.
             if not isinstance(src_desc, (dace.data.Array, dace.data.Scalar)) \
                     or not isinstance(dst_desc, (dace.data.Array, dace.data.Scalar)):
@@ -325,10 +325,10 @@ class InsertExplicitCopies(ppl.Pass):
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # `Memlet` carries `data` (which array `subset` refers to) plus an
-            # optional `other_subset`. For self-copies (src_name == dst_name)
-            # `memlet.data` matches both endpoints; the DaCe convention there
-            # is that `subset` is the destination range, so check dst first.
+            # ``Memlet`` carries ``data`` (which array ``subset`` refers to) plus an
+            # optional ``other_subset``. For self-copies (src_name == dst_name)
+            # ``memlet.data`` matches both endpoints; the DaCe convention there
+            # is that ``subset`` is the destination range, so check dst first.
             if memlet.data == dst_name:
                 dst_subset = memlet.subset
                 src_subset = memlet.other_subset

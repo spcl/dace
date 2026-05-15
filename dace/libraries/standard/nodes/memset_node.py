@@ -91,18 +91,14 @@ def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGS
 
 
 def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
-    """Single source of truth for resolving ``MemsetLibraryNode.implementation``
-    when set to ``'Auto'``. Returns one of ``'pure'`` / ``'CUDA'`` / ``'CPU'``.
+    """Resolve a ``'Auto'`` ``MemsetLibraryNode.implementation`` to
+    ``'pure'`` / ``'CUDA'`` / ``'CPU'``.
 
-    - In-device scope: ``'pure'`` (a Sequential map of element-zero, the only
-      thing safe inside device code — ``cudaMemsetAsync`` cannot be issued
-      from a kernel).
-    - GPU storage on the destination, host-issued: ``'CUDA'``
-      (``cudaMemsetAsync``).
-    - Else: ``'CPU'`` (``std::memset``).
-
-    Falls back to ``'pure'`` whenever dynamic scalar inputs are present —
-    only the mapped expansion supports those."""
+    ``'pure'`` (Sequential element-zero map) in device scope or when dynamic
+    scalar inputs are present (``cudaMemsetAsync`` cannot be issued from a
+    kernel and only the mapped expansion supports dynamic inputs); ``'CUDA'``
+    (``cudaMemsetAsync``) for host-issued GPU-destination memsets; else
+    ``'CPU'`` (``std::memset``)."""
     from dace.sdfg.scope import is_devicelevel_gpu
 
     out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
@@ -195,7 +191,7 @@ class MemsetLibraryNode(nodes.LibraryNode):
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
-                             f"`{_OUTPUT_CONNECTOR_NAME}` output edge.")
+                             f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
 
         oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]
