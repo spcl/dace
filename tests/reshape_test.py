@@ -3,9 +3,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import propagation as prop
-from dace import nodes
 import dace.library
-from dace.transformation import transformation as xf
 
 
 def test_unsqueeze():

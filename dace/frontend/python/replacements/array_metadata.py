@@ -2,6 +2,7 @@
 """
 Contains replacements for array metadata (shape, strides, etc.).
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, Size
 from dace import data, SDFG, SDFGState

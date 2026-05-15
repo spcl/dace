@@ -8,7 +8,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_unroll import LoopUnroll
-import numpy as np
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 

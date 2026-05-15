@@ -5,7 +5,7 @@ import dace
 import math
 import numpy as np
 import pytest
-from dace.transformation.dataflow import MapFusionVertical, Vectorization
+from dace.transformation.dataflow import Vectorization
 from dace.transformation.optimizer import Optimizer
 
 N = dace.symbol('N')

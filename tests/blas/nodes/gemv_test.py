@@ -5,7 +5,6 @@ import dace
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
-from dace.transformation.interstate import InlineSDFG
 
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):

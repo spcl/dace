@@ -379,10 +379,10 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other is not None and self.ctype == other.ctype
+        return other is not None and self.ctype == getattr(other, 'ctype', False)
 
     def __ne__(self, other):
-        return other is not None and self.ctype != other.ctype
+        return other is not None and self.ctype != getattr(other, 'ctype', False)
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
@@ -720,8 +720,6 @@ class struct(typeclass):
     def from_json(json_obj, context=None):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
-
-        import dace.serialize  # Avoid import loop
 
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
