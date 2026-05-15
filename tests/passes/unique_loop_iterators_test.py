@@ -304,6 +304,114 @@ def test_while_loop_no_induction_var():
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 
+_BIG_N = 4
+
+
+@dace.program
+def _big_nested_map_for_for_map(A: dace.float64[_BIG_N, _BIG_N], B: dace.float64[_BIG_N, _BIG_N]):
+    """11 inline ``map -> for -> for -> map`` nests (22 maps, 22 loops).
+
+    Iterator names ``i``/``j``/``k``/``l`` are reused in every nest on
+    purpose, so the pass must independently rename ~44 loop variables.
+    """
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] * (k + 1)
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] - k
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[l, j] * 2 + k
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, k] + j
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[j, k] * 3
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] * A[k, l]
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[l, i] += A[i, j] + k * 2
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] / (k + 1)
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[l, k] - j
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] * k + l
+    for i in dace.map[0:_BIG_N]:
+        for j in range(_BIG_N):
+            for k in range(_BIG_N):
+                for l in dace.map[0:_BIG_N]:
+                    B[i, l] += A[i, j] + A[i, k]
+
+
+def test_large_nested_map_for_for_map_program():
+    """≥20 maps with heavily aliased iterators across deep nests.
+
+    The frontend program has 22 maps and 22 ``range`` loops whose iterator
+    names collapse to only two distinct symbols.  The pass must give every
+    loop a unique name, keep all maps intact, and remain semantics-
+    preserving -- verified against the un-transformed SDFG (the non-
+    transformed reference), not a hand-written numpy loop.
+    """
+
+    def n_maps(g):
+        return sum(1 for n, _ in g.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+
+    def loopvars(g):
+        return [n.loop_variable for n, _ in g.all_nodes_recursive() if isinstance(n, LoopRegion)]
+
+    base = _big_nested_map_for_for_map.to_sdfg(simplify=False)
+    lv_before = loopvars(base)
+    assert n_maps(base) >= 20
+    assert len(lv_before) >= 20
+    assert len(set(lv_before)) < len(lv_before), "expected aliased iterator names before the pass"
+
+    rng = np.random.default_rng(0)
+    A = rng.random((_BIG_N, _BIG_N))
+    out_ref = np.zeros((_BIG_N, _BIG_N), np.float64)
+    base(A=A, B=out_ref)
+
+    sdfg = _big_nested_map_for_for_map.to_sdfg(simplify=False)
+    UniqueLoopIterators._loop_var_counter = 0
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    lv_after = loopvars(sdfg)
+    assert n_maps(sdfg) >= 20
+    assert len(lv_after) == len(set(lv_after)), "loop iterators must be unique after the pass"
+
+    out_pass = np.zeros((_BIG_N, _BIG_N), np.float64)
+    sdfg(A=A, B=out_pass)
+    assert np.allclose(out_ref, out_pass), "UniqueLoopIterators changed program semantics"
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -312,3 +420,4 @@ if __name__ == '__main__':
     test_loop_var_on_interstate_edge()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
+    test_large_nested_map_for_for_map_program()
