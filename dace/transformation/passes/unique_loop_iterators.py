@@ -30,30 +30,6 @@ _LOOP_ITER_NAME_PREFIX = "_loop_it"
 _POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 
 
-def _rename_symbol_by_name(expr: Union[sp.Basic, str], old_name: str, new_name: str) -> sp.Basic:
-    """Rename a symbol in ``expr`` by name, ignoring sympy assumptions.
-
-    ``subs``/``replace`` match full symbol identity (name + assumptions),
-    so they miss same-named symbols carrying different assumption flags.
-    Matching ``free_symbols`` by name and ``xreplace``-ing them avoids
-    that.
-
-    :param expr: Expression (or string) to rewrite.
-    :param old_name: Symbol name to replace.
-    :param new_name: Replacement symbol name.
-    :returns: ``expr`` with the rename applied.
-    """
-    if isinstance(expr, str):
-        expr = dace.symbolic.pystr_to_symbolic(expr)
-    if not isinstance(expr, sp.Basic):
-        return expr
-    new_sym = sp.Symbol(new_name)
-    matches = {s: new_sym for s in expr.free_symbols if getattr(s, 'name', None) == old_name}
-    if not matches:
-        return expr
-    return expr.xreplace(matches)
-
-
 @dace.properties.make_properties
 @explicit_cf_compatible
 class UniqueLoopIterators(ppl.Pass):
@@ -79,8 +55,9 @@ class UniqueLoopIterators(ppl.Pass):
         """Rename ``old_name`` to ``new_name`` inside ``cfg``.
 
         ``replace_dict`` cascades the rename through the region's
-        states, edges, memlets, tasklets, and nested regions.  It does
-        not touch nested-SDFG ``symbol_mapping`` keys (owned by the
+        states, edges, memlets, tasklets, and nested-SDFG
+        ``symbol_mapping`` *values*.  It does not rename
+        ``symbol_mapping`` *keys* (the inner symbol names, owned by the
         inner SDFG), so those are re-keyed here and the inner SDFG is
         recursed into when its symbol table declares the name.
 
@@ -97,8 +74,9 @@ class UniqueLoopIterators(ppl.Pass):
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
                 if old_name in node.symbol_mapping:
-                    rhs = node.symbol_mapping.pop(old_name)
-                    node.symbol_mapping[new_name] = _rename_symbol_by_name(rhs, old_name, new_name)
+                    # ``replace_dict`` already rewrote the mapped value;
+                    # only the key (inner symbol name) needs re-keying.
+                    node.symbol_mapping[new_name] = node.symbol_mapping.pop(old_name)
                 if old_name in node.sdfg.symbols:
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
