@@ -5,15 +5,11 @@ Tests float64 and int32 tensors using parametrization.
 """
 import numpy as np
 import pytest
-
 import dace
 from dace import dtypes
 from dace.libraries.standard import TensorTranspose
 
 
-# ---------------------------------------------------------------------------
-#  Helper: build an SDFG  host -> GPU -> TensorTranspose -> GPU -> host
-# ---------------------------------------------------------------------------
 def _build_transpose_sdfg(
     name: str,
     inp_shape: tuple,
@@ -177,7 +173,6 @@ def test_transpose_pure_3d_jik(dtype_np, dtype_dace, type_name):
     np.testing.assert_allclose(B, expected, rtol=rtol, atol=atol, err_msg=f"Pure transpose failed for {dtype_np}")
 
 
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     for (nptype, dacetype, strtype) in dtype_params:
         test_transpose_pure_3d_jik(nptype, dacetype, strtype)
