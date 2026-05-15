@@ -15,7 +15,7 @@ are intentional — loud failures are preferred over silent shape
 corruption at the NSDFG boundary.
 """
 import copy
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 import dace
 from dace import SDFGState
@@ -194,13 +194,21 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
 
 def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tuple, new_shape: tuple,
                                          expected_full: tuple, expected_strided: tuple,
-                                         expected_collapsed_strided: tuple, *, direction: str) -> None:
+                                         expected_collapsed_strided: tuple, *, direction: str,
+                                         vector_width: Optional[int] = None) -> None:
     """Guard for ``fix_nsdfg_connector_array_shapes_mismatch``.
 
-    Three rebuild patterns are legitimate and must be allowed:
+    Four rebuild patterns are legitimate and must be allowed:
     - **Narrowing**: rank-equal with every new dim ≤ original (cloudsc
       case: ``(klon, klev) → (5, 9)`` slice).
     - **Drop dims**: new rank < original (collapsed-full).
+    - **Vector-widening**: rank-equal, every expanding dim grows by
+      exactly ``vector_width - 1`` while the rest are unchanged.  This
+      is a stencil halo being widened for a W-wide vector body — e.g. a
+      5-point jacobi stencil window ``(3, 3) → (3, 10)`` for ``W=8``
+      (column halo ``3`` → ``3 + (W-1) = 10``).  The inner SDFG's
+      vectorized accesses *do* legitimately address the wider range, so
+      this is NOT corrupting.
     - **Placeholder expansion**: original has every dim == 1 — the
       connector was the post-P1 / post-prepare_vectorized_array
       single-element placeholder being expanded to the actual bbox
@@ -241,12 +249,24 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
         expands_real_dim = True
     else:
         # Rank-equal: flag if any non-1 original dim gets STRICTLY larger.
+        per_dim_growth = []
         for orig_d, new_d in zip(original_shape, new_shape):
             orig_int = _int_or_none(orig_d)
             diff = _int_or_none(new_d - orig_d) if hasattr(new_d, "__sub__") else None
+            per_dim_growth.append(diff)
             if diff is not None and diff > 0 and (orig_int is None or orig_int > 1):
                 expands_real_dim = True
-                break
+
+        # Vector-widening exception: every dim either unchanged (diff 0)
+        # or grown by exactly ``vector_width - 1`` (a stencil halo being
+        # widened for the W-wide vector body, e.g. jacobi ``(3,3)`` →
+        # ``(3,10)`` at W=8).  The inner vectorized accesses legitimately
+        # address the wider range — allow it.
+        if (expands_real_dim and vector_width is not None
+                and all(d == 0 or d == vector_width - 1 for d in per_dim_growth if d is not None)
+                and all(d is not None for d in per_dim_growth)
+                and any(d == vector_width - 1 for d in per_dim_growth)):
+            expands_real_dim = False
 
     if expands_real_dim:
         raise ValueError(
@@ -263,7 +283,9 @@ def _raise_on_expansion_rebuild_mismatch(connector_name: str, original_shape: tu
         )
 
 
-def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
+def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState,
+                                              nsdfg_node: dace.nodes.NestedSDFG,
+                                              vector_width: Optional[int] = None) -> None:
     """
     Automatically fix shape mismatches in nested SDFG connector arrays.
 
@@ -281,10 +303,12 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
     - Collapse dimensions (e.g., constant folding, loop unrolling)
     - Change access patterns (e.g., stride modifications)
 
-    Args:
-        parent_state: The state in the parent SDFG containing the nested SDFG node
-        nsdfg_node: The nested SDFG node whose connector shapes to fix
-
+    :param parent_state: State in the parent SDFG containing the NSDFG node.
+    :param nsdfg_node: NSDFG node whose connector shapes to fix.
+    :param vector_width: When set, lets the expansion guard recognise a
+        legitimate vector-widening rebuild (a halo dim grown by exactly
+        ``vector_width - 1``) instead of raising — needed for stencil
+        bodies (jacobi) on the remainder path.
     """
 
     # ===== Fix Input Edge Connector Arrays =====
@@ -340,7 +364,8 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
                                              expected_shape_full,
                                              expected_shape_strided,
                                              expected_shape_collapsed_strided,
-                                             direction="in")
+                                             direction="in",
+                                             vector_width=vector_width)
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
@@ -415,7 +440,8 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
                                              expected_shape_full,
                                              expected_shape_strided,
                                              expected_shape_collapsed_strided,
-                                             direction="out")
+                                             direction="out",
+                                             vector_width=vector_width)
 
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)

@@ -209,7 +209,7 @@ class Vectorize(ppl.Pass):
             # and is left for the standard reshape path to handle.
             if not self.insert_copies:
                 self._setup_strided_nsdfg_edges_inline(state, nsdfg_node, vector_map_param)
-            fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
+            fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node, vector_width=int(self.vector_width))
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
 
@@ -296,11 +296,41 @@ class Vectorize(ppl.Pass):
                 # 1D strided path (existing): exactly one stride-1 dim is
                 # the param-bearing wide dim, bbox > W. Stride is
                 # ``(bbox - 1) / (W - 1)``.
+                #
+                # Strided vs contiguous is decided by the *inter-lane
+                # stride* — the memory displacement between what lane
+                # ``l`` and lane ``l+1`` access on the wide dim, i.e.
+                # ``begin(map_param + 1) - begin(map_param)``.  This is
+                # robust to stencil halo width and arbitrary affine
+                # offsets:
+                #
+                # - ``A[2*i]``           → 2*(j+1) - 2*j           = 2  (strided)
+                # - ``A[i+1, j+1]``      → (j+1+1) - (j+1)         = 1  (contiguous,
+                #   5-point jacobi: bbox = W + 2 > W but lanes are 1 apart)
+                # - 9-box / wide stencil → still 1  (bbox = W + 2*halo,
+                #   inter-lane stride unchanged — correctly contiguous)
+                # - ``A[i + LEN//2]``    → 1  (contiguous, offset only)
+                #
+                # Only an inter-lane stride > 1 is a genuine strided
+                # access for the ``(W-1)*S+K`` handler; stride == 1
+                # (any halo width) must fall through to the normal
+                # contiguous reshape path.
                 stride_one_dims = [d for d, st in enumerate(arr.strides) if st == 1]
+                inter_lane_stride = None
+                if len(param_dims_wide) == 1:
+                    wb = e.data.subset[param_dims_wide[0][0]][0]
+                    try:
+                        wb_sym = _sp.sympify(wb)
+                        inter_lane_stride = int(
+                            _sp.simplify(wb_sym.subs(map_sym, map_sym + 1) - wb_sym))
+                    except Exception:
+                        inter_lane_stride = None
                 is_single_dim_strided = (len(param_dims_wide) == 1
                                          and len(stride_one_dims) == 1
                                          and param_dims_wide[0][0] == stride_one_dims[0]
-                                         and param_dims_wide[0][1] > self.vector_width)
+                                         and param_dims_wide[0][1] > self.vector_width
+                                         and inter_lane_stride is not None
+                                         and inter_lane_stride > 1)
 
                 if is_single_dim_strided and self.vector_width > 1:
                     bbox_vol = param_dims_wide[0][1]
@@ -441,7 +471,7 @@ class Vectorize(ppl.Pass):
             demoted_scalars = try_demoting_vectorizable_symbols(inner_sdfg)
 
         # 1.1.1
-        fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
+        fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg, vector_width=int(self.vector_width))
         cutil.replace_length_one_arrays_with_scalars(inner_sdfg, True, True)
 
         # 1.1.2
