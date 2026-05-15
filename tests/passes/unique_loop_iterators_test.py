@@ -226,7 +226,7 @@ def test_loop_var_on_interstate_edge():
 
 
 def test_loop_bound_with_indirect_array():
-    """Loop bound is ``row_ptr(i+1) - 1`` — sympy's default ``str``
+    """Loop bound is ``row_ptr(i+1) - 1`` -- sympy's default ``str``
     would render the array access as a function call.  The pass must use
     ``arrayexprs=`` so the reconstruction assignment carries the
     Python subscript form."""
@@ -372,7 +372,7 @@ def _big_nested_map_for_for_map(A: dace.float64[_BIG_N, _BIG_N], B: dace.float64
 
 
 def test_large_nested_map_for_for_map_program():
-    """≥20 maps with heavily aliased iterators across deep nests.
+    """>=20 maps with heavily aliased iterators across deep nests.
 
     The frontend program has 22 maps and 22 ``range`` loops whose iterator
     names collapse to only two distinct symbols.  The pass must give every
