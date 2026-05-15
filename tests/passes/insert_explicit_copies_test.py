@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for ``InsertExplicitCopies`` pass (Layer 2).
-
-Part 1: Artificial SDFG-builder-API tests with direct AccessNode->AccessNode
-         edges and map boundary staging patterns.
-Part 2: Polybench-derived functional tests that verify the pass preserves
-         numerical correctness on real programs.
-"""
+"""Tests for the ``InsertExplicitCopies`` pass: builder-API structural cases plus Polybench numerical checks."""
 import copy as _copy
 import math
 
@@ -37,8 +30,7 @@ def _count_direct_copy_edges(sdfg):
 
 
 def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
-    """Postcondition: after copy-node insertion, no memlet in any state/nsdfg
-    should still carry an ``other_subset`` copies are represented by ``CopyLibraryNode``."""
+    """Assert no memlet in any state or nested SDFG still carries an ``other_subset`` after copy-node insertion."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for edge in state.edges():
@@ -123,8 +115,8 @@ def test_insert_cpu_to_cpu_2d_slice():
 ],
                          ids=["data_is_dst", "data_is_src"])
 def test_insert_other_subset_data_convention(sdfg_name, memlet):
-    """Both memlet conventions (data=src or data=dst) must produce the same
-    copy: _in=A[2:10], _out=B[0:8], no other_subset."""
+    """Either memlet convention (``data=src`` or ``data=dst``) yields the same copy ``_in=A[2:10]``,
+    ``_out=B[0:8]`` with no ``other_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, st, _, _ = _build_copy_sdfg(sdfg_name, [("A", [20], cpu), ("B", [20], cpu)], memlet)
 
@@ -246,15 +238,10 @@ def _count_nested_sdfgs(sdfg):
 
 
 def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
-    """Single-element same-side copies must expand to direct
-    ``_out = _in`` Tasklets -- never wrapped in a NestedSDFG.
+    """Single-element copies expand to direct ``_cpy_out = _cpy_in`` Tasklets, never a NestedSDFG.
 
-    The MappedTasklet path would build a 0-D map for these (every dim
-    collapses), which crashes propagation; the routing in
-    ``select_copy_implementation`` short-circuits to the ``Tasklet`` impl
-    instead. This test pins that behavior on a mix of CPU<->CPU and
-    Register<->GPU_Global single-element copies -- the canonical "scalar
-    transfer" cases produced by ``auto_optimize`` for stencil kernels.
+    The ``MappedTasklet`` path would build a 0-D map for these and crash
+    propagation, so routing must short-circuit to the ``Tasklet`` impl.
     """
     cpu = dace.StorageType.CPU_Heap
     pinned = dace.StorageType.CPU_Pinned
@@ -282,8 +269,6 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
 
     sdfg.expand_library_nodes()
 
-    # No NestedSDFGs should remain -- every single-element copy must have
-    # expanded directly to a Tasklet via the ``Tasklet`` impl.
     assert _count_nested_sdfgs(sdfg) == 0, (
         "Single-element copies should expand to a direct Tasklet, not a NestedSDFG. "
         f"Found {_count_nested_sdfgs(sdfg)} NestedSDFG(s) after expansion.")
@@ -307,8 +292,8 @@ def test_insert_validates_after_pass():
 
 
 def test_insert_view_dst_round_trip_lifts_source_edge():
-    # AN_src -> View -> AN_dst round-trip collapses to a single AN_src -> Copy -> AN_dst.
-    # Asserts the src side: A has its out-edge going to the CopyLibraryNode (not to the View).
+    """An AN -> View -> AN round-trip collapses so the source array's single out-edge targets the
+    ``CopyLibraryNode`` and the View is removed."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_dst_intermediate")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -331,8 +316,8 @@ def test_insert_view_dst_round_trip_lifts_source_edge():
 
 
 def test_insert_view_src_round_trip_lifts_destination_edge():
-    # Symmetric: asserts the dst side after the round-trip collapse.
-    # sink has its in-edge coming from the CopyLibraryNode (not from the View).
+    """An AN -> View -> AN round-trip collapses so the sink's single in-edge comes from the
+    ``CopyLibraryNode`` and the View is removed."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_src_intermediate")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -355,8 +340,7 @@ def test_insert_view_src_round_trip_lifts_destination_edge():
 
 
 def test_insert_view_round_trip_collapses_to_single_copy():
-    # AN_src -> View -> AN_dst yields exactly one CopyLibraryNode (not two);
-    # the View is removed once it has no remaining consumers.
+    """An AN -> View -> AN round-trip yields exactly one ``CopyLibraryNode`` and the now-unused View is removed."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_round_trip")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -378,11 +362,8 @@ def test_insert_view_round_trip_collapses_to_single_copy():
 
 
 def test_insert_self_copy_subset_is_dst_side():
-    """Self-copy edge ``A -> A`` (e.g. ``p[:, -1] = p[:, -2]``): memlet.data
-    matches both endpoints, so the side picked for ``subset`` vs
-    ``other_subset`` must come from the DaCe convention (subset = dst).
-    Reversing them silently produces a backwards copy that runs without
-    error."""
+    """On a self-copy ``p -> p`` the ``subset`` side maps to the ``_out`` (dst) edge and ``other_subset`` to
+    ``_in`` (src); reversing them would silently produce a backwards copy."""
     sdfg = dace.SDFG("self_copy_subset_dst")
     sdfg.add_array("p", [4, 5], dace.float64)
 
@@ -400,16 +381,13 @@ def test_insert_self_copy_subset_is_dst_side():
     in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
     out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
 
-    # The destination side (column 4) must be on the ``_out`` edge; the source
-    # side (column 3) on the ``_in`` edge.
     assert str(in_e.data.subset) == "0:4, 3", (f"src side should read column 3 (other_subset); got {in_e.data.subset}")
     assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
 
 
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
-    """Shared assertions for the consecutive-reshape derivation tests:
-    after the pass runs the SDFG validates and the lifted CopyLibraryNode's
-    output edge carries a memlet whose subset spans the full ``dst_shape``."""
+    """Assert the SDFG validates and the single lifted ``CopyLibraryNode``'s output memlet spans the full
+    ``dst_shape``."""
     sdfg.validate()
     copies = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
     assert len(copies) == 1, f"expected exactly one CopyLibraryNode, got {len(copies)}"
@@ -431,11 +409,8 @@ def _check_reshape_copy(sdfg, dst_name, dst_shape):
         ([8, 12, 5, 3], [1440]),  # full flatten
     ])
 def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
-    """When the destination array's shape is reachable from the source's by
-    collapsing contiguous runs of dimensions (e.g. einsum cuBLAS reshapes
-    ``[8, 12, 5, 3] -> [96, 5, 3]``), the pass must derive a destination
-    subset that spans the full destination -- falling back to ``src_subset``
-    leaves a rank-mismatched memlet that fails validation."""
+    """When the destination shape collapses contiguous source dims, the pass derives a full-destination subset
+    rather than reusing the rank-mismatched ``src_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG(f"reshape_collapse_{len(src_shape)}_to_{len(dst_shape)}")
     sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
@@ -443,8 +418,7 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
     st = sdfg.add_state("s")
     a = st.add_access("A")
     b = st.add_access("B")
-    # Memlet on the source side (no other_subset) -- forces the pass through
-    # ``_derive_matching_dst_subset`` to pick a destination range.
+    # No other_subset, so the pass must derive the destination range itself.
     st.add_edge(a, None, b, None, Memlet(data="A", subset=', '.join(f"0:{s}" for s in src_shape)))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
@@ -460,10 +434,8 @@ def test_insert_consecutive_collapse_reshape(src_shape, dst_shape):
         ([6, 20], [2, 3, 4, 5]),  # double split
     ])
 def test_insert_consecutive_split_reshape(src_shape, dst_shape):
-    """The inverse of the collapse case: destination has a higher rank
-    reached by splitting source dims into contiguous runs.
-    ``_is_consecutive_reshape`` is symmetric, so the same code path serves
-    both directions."""
+    """The inverse split case: a higher-rank destination reached by splitting source dims is handled by the same
+    symmetric code path."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG(f"reshape_split_{len(src_shape)}_to_{len(dst_shape)}")
     sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
@@ -485,9 +457,7 @@ def test_insert_consecutive_split_reshape(src_shape, dst_shape):
         ([1, 96, 5, 3], [8, 12, 5, 3]),  # leading 1 + split
     ])
 def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
-    """Unit-length dimensions on either side must be ignored when checking
-    for a consecutive-collapse / split match. Both sides squeeze to 1s
-    before the two-pointer walk."""
+    """Unit-length dimensions on either side are ignored when matching a consecutive collapse or split."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG(f"reshape_squeeze_{len(src_shape)}_to_{len(dst_shape)}")
     sdfg.add_array("A", src_shape, dace.float64, storage=cpu)
@@ -502,9 +472,8 @@ def test_insert_reshape_with_squeezed_ones(src_shape, dst_shape):
 
 
 def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
-    # Repeated apply_pass invocations must not accumulate extra CopyLibraryNodes.
-    # First call collapses the round-trip; subsequent calls have no AN -> View -> AN
-    # pattern left to act on, so they are no-ops.
+    """Repeated ``apply_pass`` calls do not accumulate extra ``CopyLibraryNode``s; runs after the first are
+    no-ops since the round-trip pattern is gone."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("view_rewrite_idempotent")
     sdfg.add_array("A", [4, 5, 6], dace.float64, storage=cpu)
@@ -551,10 +520,9 @@ def test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_nam
 
 _N = dace.symbol('_N')
 
-# AccessNode<->View edges must remain direct after IEC.
-
 
 def test_iec_skips_array_to_view_edge():
+    """An AccessNode -> View edge is left direct (no ``CopyLibraryNode`` inserted)."""
     sdfg = dace.SDFG('skip_array_to_view')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
@@ -569,6 +537,8 @@ def test_iec_skips_array_to_view_edge():
 
 
 def test_iec_collapses_round_trip_view():
+    """An A -> View -> sink round-trip collapses to one ``CopyLibraryNode``, removes the View, and stays
+    numerically correct."""
     sdfg = dace.SDFG('collapse_round_trip_view')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
@@ -580,8 +550,6 @@ def test_iec_collapses_round_trip_view():
     state.add_edge(a, None, v, None, Memlet('A[1, 0:5, 0:6]'))
     state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
     InsertExplicitCopies().apply_pass(sdfg, {})
-    # Round-trip collapsed: one CopyLibraryNode from A to sink, View removed
-    # (would be isolated; no other consumer kept it alive).
     assert _count_copy_nodes(sdfg) == 1
     assert v not in state.nodes()
     sdfg.validate()
@@ -592,6 +560,7 @@ def test_iec_collapses_round_trip_view():
 
 
 def test_iec_collapse_keeps_view_with_other_consumers():
+    """A round-trip collapse keeps the View when it still has another consumer edge."""
     sdfg = dace.SDFG('collapse_keeps_view_with_other_consumers')
     sdfg.add_array('A', [4, 5, 6], dace.float64)
     sdfg.add_view('Av', [5, 6], dace.float64)
@@ -606,13 +575,13 @@ def test_iec_collapse_keeps_view_with_other_consumers():
     state.add_edge(v, None, out, None, Memlet('Av[0:5, 0:6]'))
     state.add_edge(v, None, other, None, Memlet('Av[0:5, 0:6]'))
     InsertExplicitCopies().apply_pass(sdfg, {})
-    # Round-trip is collapsed for v->sink, but v still has v->also_reads, so it
-    # stays in the SDFG (and its incoming view-aliasing edge is preserved).
+    # v survives because v->also_reads still consumes it after the collapse.
     assert v in state.nodes()
     sdfg.validate()
 
 
 def test_iec_skips_reshape_view_edge():
+    """A reshape (rank-changing) AccessNode -> View edge is left direct with no ``CopyLibraryNode``."""
     sdfg = dace.SDFG('skip_reshape_view')
     sdfg.add_array('A', [2, 3, 4], dace.float64)
     sdfg.add_view('Av', [8, 3], dace.float64)
@@ -624,13 +593,9 @@ def test_iec_skips_reshape_view_edge():
     assert _count_copy_nodes(sdfg) == 0
 
 
-# Array<->Array copies with rank-mismatched subsets where the extra rank is a constant index.
-# After ``collapse_shape_and_strides`` the singleton dims drop out and both sides have
-# matching rank; the lifted CopyLibraryNode expansion must produce per-side access
-# expressions of the right rank.
-
-
 def test_iec_array_to_array_constant_first_dim():
+    """A rank-mismatched copy whose extra leading dim is a constant index collapses to matching rank and copies
+    correctly."""
     sdfg = dace.SDFG('const_first_dim_copy')
     sdfg.add_array('src', [5, 4, 3], dace.float64)
     sdfg.add_array('dst', [4, 3], dace.float64)
@@ -647,6 +612,8 @@ def test_iec_array_to_array_constant_first_dim():
 
 
 def test_iec_array_to_array_constant_middle_dim():
+    """A rank-mismatched copy whose extra middle dim is a constant index collapses to matching rank and copies
+    correctly."""
     sdfg = dace.SDFG('const_middle_dim_copy')
     sdfg.add_array('src', [4, 5, 3], dace.float64)
     sdfg.add_array('dst', [4, 3], dace.float64)
@@ -662,11 +629,9 @@ def test_iec_array_to_array_constant_middle_dim():
     assert np.array_equal(dst, src[:, 2, :])
 
 
-# Rank-changing volume-equal copies (no constant dim) take the CopyNDTemplate
-# fallback: both sides flatten to a 1D pointer walk when C-packed contiguous.
-
-
 def test_iec_array_to_array_rank_change_uses_copynd():
+    """A volume-equal rank-changing copy with no constant dim takes the ``CopyNDTemplate`` flatten path and
+    copies correctly."""
     sdfg = dace.SDFG('rank_change_copynd')
     sdfg.add_array('src', [2, 3, 4], dace.float64)
     sdfg.add_array('dst', [8, 3], dace.float64)
@@ -683,6 +648,7 @@ def test_iec_array_to_array_rank_change_uses_copynd():
 
 
 def test_iec_array_to_array_flatten_uses_copynd():
+    """A 2D -> 1D flatten copy takes the ``CopyNDTemplate`` path and copies correctly."""
     sdfg = dace.SDFG('flatten_copynd')
     sdfg.add_array('src', [4, 3], dace.float64)
     sdfg.add_array('dst', [12], dace.float64)
@@ -705,6 +671,7 @@ def _iec_pin_reshape_rank_change(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]
 
 
 def test_iec_reshape_does_not_lift_view():
+    """The pass does not lift a reshape view in a real program; output stays numerically correct."""
     sdfg = _iec_pin_reshape_rank_change.to_sdfg(simplify=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
@@ -722,6 +689,7 @@ def _iec_pin_reinterpret_dtype(A: dace.int32[_N]):
 
 
 def test_iec_reinterpret_does_not_lift_view():
+    """The pass does not lift a dtype-reinterpret view; output stays numerically correct."""
     sdfg = _iec_pin_reinterpret_dtype.to_sdfg(simplify=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
@@ -732,10 +700,7 @@ def test_iec_reinterpret_does_not_lift_view():
     assert np.array_equal(A, expected)
 
 
-# Part 2: Polybench-derived numerical correctness tests. Pattern 1 (direct
-# AccessNode->AccessNode edges) is not present in polybench; Pattern 2
-# (map-boundary staging) may or may not fire. Either way, output must match
-# the reference.
+# Polybench-derived tests: the pass must preserve numerical output on real programs.
 
 _ = None  # needed for dace.map range syntax
 _DATATYPE = dace.float64
@@ -823,6 +788,7 @@ def _init_fdtd2d(NX, NY, TMAX):
 
 
 def test_polybench_fdtd2d():
+    """``InsertExplicitCopies`` preserves fdtd2d output versus the untransformed reference."""
     _run_and_compare(fdtd2d_v, _init_fdtd2d, ["ex", "ey", "hz"], {"NX": 20, "NY": 30, "TMAX": 10}, "fdtd2d")
 
 
@@ -909,6 +875,7 @@ def _init_correlation(N_corr, M_corr):
 
 
 def test_polybench_correlation():
+    """``InsertExplicitCopies`` preserves correlation output versus the untransformed reference."""
     _run_and_compare(correlation_v, _init_correlation, ["corr"], {"N_corr": 32, "M_corr": 28}, "correlation")
 
 
@@ -975,6 +942,7 @@ def _init_covariance(N_cov, M_cov):
 
 
 def test_polybench_covariance():
+    """``InsertExplicitCopies`` preserves covariance output versus the untransformed reference."""
     _run_and_compare(covariance_v, _init_covariance, ["cov"], {"N_cov": 32, "M_cov": 28}, "covariance")
 
 

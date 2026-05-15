@@ -10,7 +10,12 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 
 
 def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.sdfg.nodes.NestedSDFG) -> Union[dace.SDFGState, None]:
-    """Find the state that contains a given NestedSDFG node."""
+    """Find the state that contains a given NestedSDFG node.
+
+    :param sdfg: The SDFG to search recursively.
+    :param nsdfg_node: The nested SDFG node to locate.
+    :returns: The containing state, or ``None`` if not found.
+    """
     if nsdfg_node is None:
         return None
     for n, g in sdfg.all_nodes_recursive():
@@ -33,7 +38,7 @@ def get_parent_map_and_loop_scopes(
         ControlFlowRegion / ConditionalBlock.
     :param parent_state: The SDFGState containing *node*, or ``None`` if
         *node* is a ControlFlowRegion.
-    :return: A list of parent scopes (MapEntry or LoopRegion), ordered
+    :returns: A list of parent scopes (MapEntry or LoopRegion), ordered
         from innermost to outermost.
     """
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
