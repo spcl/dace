@@ -291,7 +291,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         # to be "definitely True"
         if all((s < tile_size) == True for s in mapentry.map.range.size()):
             # If smaller than tile size, don't transform and instead
-            # make map sequential — but only when the data the map
+            # make map sequential -- but only when the data the map
             # touches is host-accessible. A Sequential schedule emits a
             # host loop; if any neighbouring AccessNode is GPU_Global
             # the loop would read/write device memory, which the

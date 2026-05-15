@@ -1,14 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Lift transient GPU_Global arrays out of kernel scopes (legacy back-compat
-fix for SDFGs that allocate GPU_Global inside ``GPU_Device`` maps), then
-lift every implicit copy edge to a ``CopyLibraryNode`` with the ``Auto``
-implementation; ``select_copy_implementation`` picks the concrete
-expansion at expand-time from endpoint storages and surrounding scope.
+"""Lift transient ``GPU_Global`` arrays out of kernel scopes (legacy
+back-compat for SDFGs allocating ``GPU_Global`` inside ``GPU_Device`` maps),
+then lift every implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
 
-Bails out if any ``GPU_Global -> GPU_Global`` transient copy still
-survives inside a kernel after the hoist — those are the offenders that
-need manual restructuring.
+Raises if any transient ``GPU_Global -> GPU_Global`` copy still survives
+inside a kernel after the hoist -- those need manual restructuring.
 """
 import warnings
 from typing import Any, Dict, List
@@ -22,18 +18,12 @@ from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKe
 
 
 def _is_register_demotable(desc, max_elements: int) -> bool:
-    """Return True if ``desc`` is safe AND worth demoting to per-thread
-    ``Register`` storage:
+    """True if ``desc`` is safe and worth demoting to per-thread ``Register``.
 
-    * Every shape dim is a concrete positive integer (no symbols). A
-      symbol would leak into host-side ``cudaMalloc`` size expressions
-      if the transient were lifted instead — that's the failure mode
-      this gate avoids — and the GPU has no way to size a per-thread
-      array on the device.
-    * The product of shape dims is ``<= max_elements``. Larger arrays
-      fall through to ``MoveArrayOutOfKernel`` (one shared global
-      allocation indexed by the kernel iteration) rather than burning
-      a per-thread register-or-local-memory slab.
+    Requires every shape dim to be a concrete positive integer (a symbol
+    would leak into host-side ``cudaMalloc`` and cannot size a per-thread
+    array) and ``prod(shape) <= max_elements`` (larger arrays go through
+    ``MoveArrayOutOfKernel`` instead of a per-thread slab).
     """
     total = 1
     try:
@@ -50,10 +40,9 @@ def _is_register_demotable(desc, max_elements: int) -> bool:
 
 
 def _has_wcr_incoming(sdfg, data_name: str) -> bool:
-    """Return True if any memlet in the SDFG writes to ``data_name`` with
-    a WCR (write-conflict-resolution = atomic accumulator). Such arrays
-    must stay shared across threads — demoting them to Register would
-    silently break the accumulation."""
+    """True if any memlet writes ``data_name`` with a WCR (atomic
+    accumulator). Such arrays must stay shared -- demoting to Register
+    would silently break the accumulation."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for e in state.edges():
@@ -67,15 +56,14 @@ def _has_wcr_incoming(sdfg, data_name: str) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
-    """Hoist transient GPU_Global arrays out of kernel scopes, then lift
-    every implicit copy edge to a ``CopyLibraryNode`` (``Auto`` impl).
+    """Hoist transient ``GPU_Global`` arrays out of kernel scopes, then lift
+    every implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
 
-    The hoist runs ``MoveArrayOutOfKernel`` for each transient GPU_Global
-    array found inside a ``GPU_Device`` map. After the hoist the array
-    lives in the SDFG that owns the kernel as a non-transient connector
-    parameter; the kernel body just passes data through. If any
-    transient GPU_Global copy still survives inside the kernel after the
-    hoist, the post-hoist guard raises with the offender list."""
+    The hoist runs ``MoveArrayOutOfKernel`` per transient ``GPU_Global``
+    array inside a ``GPU_Device`` map; afterwards the array is a
+    non-transient connector parameter on the kernel-owning SDFG. A
+    post-hoist guard raises with the offender list if any in-kernel
+    transient ``GPU_Global`` copy survives."""
 
     register_demotion_max_elements = properties.Property(
         dtype=int,
@@ -98,7 +86,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict:
         self._hoist_transient_gpu_global_out_of_kernels(sdfg)
         self._fail_on_in_kernel_global_global(sdfg)
-        # Lift every implicit copy edge — including in-kernel ones. The
+        # Lift every implicit copy edge -- including in-kernel ones. The
         # ``MappedTasklet`` expansion forces ``Sequential`` schedule when
         # already inside a kernel, so we don't get a forbidden GPU_Device-in-
         # GPU_Device nesting.
@@ -106,14 +94,12 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         return {}
 
     def _hoist_transient_gpu_global_out_of_kernels(self, sdfg: SDFG):
-        """Run ``MoveArrayOutOfKernel`` for every transient GPU_Global array
-        defined inside a ``GPU_Device`` map.
+        """Run ``MoveArrayOutOfKernel`` for every transient ``GPU_Global``
+        array defined inside a ``GPU_Device`` map.
 
-        Mirrors the existing call site in ``GPUTransformSDFG`` (which only
-        runs when a user explicitly applies GPU transformations); placing
-        it inside the gpu_specialization pipeline ensures the hoist always
-        happens before copies are lifted, regardless of how the caller
-        produced the SDFG."""
+        Mirrors the ``GPUTransformSDFG`` call site but runs inside the
+        gpu_specialization pipeline so the hoist always precedes copy
+        lifting regardless of how the SDFG was produced."""
         transients_in_kernels = set()
         transients_outside = set()
 
@@ -140,7 +126,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             else:
                 transients_outside.add((node.data, desc))
 
-        # Only hoist transients that are *only* defined inside the kernel —
+        # Only hoist transients that are *only* defined inside the kernel --
         # if the same (name, desc) pair appears outside, leave the inner
         # one alone (``MoveArrayOutOfKernel`` handles naming for us when it
         # runs).
@@ -159,7 +145,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             #     the lift path, which is the failure mode this gate
             #     avoids);
             #   * no incoming WCR memlet (a cross-thread atomic
-            #     accumulator must stay shared — per-thread registers
+            #     accumulator must stay shared -- per-thread registers
             #     would silently drop the accumulation).
             # Anything else falls through to ``MoveArrayOutOfKernel``.
             if (_is_register_demotable(desc, self.register_demotion_max_elements)
@@ -174,7 +160,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
     def _fail_on_in_kernel_global_global(self, sdfg: SDFG):
         # A transient GPU_Global array inside a kernel scope cannot be
         # allocated by the codegen (no host-side allocator on that path).
-        # Non-transient GPU_Global through-flows are fine — they're
+        # Non-transient GPU_Global through-flows are fine -- they're
         # connector-bound and the kernel just passes data through them.
         offenders: List[str] = []
         for nsdfg in sdfg.all_sdfgs_recursive():

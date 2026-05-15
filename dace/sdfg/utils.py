@@ -1765,7 +1765,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
         # ``get_view_edge`` returns ``None`` for an orphaned view (no
-        # incoming/outgoing edge that points at the viewed access node) —
+        # incoming/outgoing edge that points at the viewed access node) --
         # treat such a view as having no edge-side dependencies and fall
         # through to the viewed-node check below.
         e = get_view_edge(state, node)

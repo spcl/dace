@@ -1,19 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Numerical-validation matrix for NPBench kernels through the new GPU pipeline.
-
-For each kernel:
-  1. Build a CPU SDFG and run it (reference).
-  2. Build a fresh SDFG, apply ``apply_gpu_transformations()``, then run the
-     explicit GPU stream-management pipeline (``InsertExplicitGPUGlobalMemoryCopies``
-     -> stream scheduling/insertion/connection -> sync tasklets), and compile
-     with the new GPU codegen.
-  3. Run the GPU SDFG on independent copies of the inputs and compare to the
-     CPU result element-wise.
-
-Failure modes are surfaced as test failures with the kernel name, plus the
-type of failure (compile vs numerical) so the report is easy to read.
-"""
+"""Numerical-validation matrix for NPBench kernels through the new GPU pipeline: CPU SDFG vs
+GPU-transformed SDFG element-wise, with compile/numerical failures tagged in the report."""
 import os
 import sys
 from typing import Callable, Dict
@@ -104,9 +91,7 @@ def _run_through_new_gpu_pipeline(kernel,
                                   *,
                                   rtol: float = 1e-10,
                                   atol: float = 1e-12) -> None:
-    """Build CPU and new-pipeline GPU SDFGs, run both, compare. Compilation
-    failures and numerical mismatches surface as ``pytest.fail`` with a tag
-    so the matrix output classifies them at a glance."""
+    """Build CPU and GPU SDFGs, run both, compare; failures surface as tagged ``pytest.fail``."""
     cpu_sdfg = kernel.to_sdfg(simplify=True)
     cpu_args = build_args()
     cpu_ret = cpu_sdfg(**cpu_args, **symbols)
@@ -114,12 +99,8 @@ def _run_through_new_gpu_pipeline(kernel,
     gpu_sdfg = kernel.to_sdfg(simplify=True)
     gpu_sdfg.apply_gpu_transformations()
 
-    # ``ExperimentalCUDACodeGen.preprocess`` runs the explicit-stream-management
-    # pipeline (``InsertExplicitGPUGlobalMemoryCopies`` -> stream scheduling /
-    # insertion / connection -> sync tasklets) itself. Pre-applying it here
-    # double-applies stream wiring, which corrupts the per-stream chains and
-    # produces runtime memory faults. Hand the SDFG to ``compile()`` raw and
-    # let preprocess do the lowering once.
+    # ``ExperimentalCUDACodeGen.preprocess`` runs the stream pipeline itself; pre-applying it here
+    # double-wires the per-stream chains and faults at runtime. Hand the SDFG to ``compile()`` raw.
 
     try:
         compiled = gpu_sdfg.compile()

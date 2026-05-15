@@ -1,12 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Reservation enforcement for framework-owned descriptor names.
-
-The gpu_specialization pipeline takes ownership of ``gpu_streams`` and
-uses its presence as the canonical "lowering applied" signal.
-``SDFG.add_datadesc`` rejects user-driven additions of names in
-``SDFG.RESERVED_NAMES``; the pipeline itself bypasses the guard via
-``add_datadesc(..., _internal_use=True)``.
-"""
+"""``SDFG.add_datadesc`` rejects user additions of ``SDFG.RESERVED_NAMES`` (e.g. ``gpu_streams``),
+while ``_internal_use=True`` bypasses the guard for the pipeline itself."""
 import pytest
 
 import dace

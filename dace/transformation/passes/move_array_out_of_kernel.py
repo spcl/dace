@@ -20,20 +20,12 @@ from dace.symbolic import symbol
 
 
 def _tile_extent(max_elem, min_elem):
-    """Per-iteration extent of an inner-map range, falling back to the
-    static tile width for outer-symbol-dependent ranges.
+    """Per-iteration extent of an inner-map range.
 
-    For a tile pattern ``i = start : Min(X, start+Y) + 1`` (the shape
-    DaCe's ``MapTiling`` produces for a kernel block stride of ``Y+1``),
-    the upper-bound number of iterations is ``Y + 1`` — independent of
-    ``start``. Recognise the ``Min`` argument that simplifies to a
-    non-negative integer offset from ``min_elem`` and return ``offset+1``.
-
-    For everything else (plain bounded maps, sequential inner maps, etc.)
-    fall back to the symbolic ``max_elem + 1 - min_elem`` form, which
-    is correct as long as no outer-loop symbols appear in the bounds —
-    the caller is responsible for shape symbols being host-visible at
-    the lift destination.
+    For a tile pattern ``i = start : Min(X, start+Y) + 1`` the extent is the
+    static tile width ``Y + 1`` (independent of the outer symbol ``start``).
+    Otherwise fall back to the symbolic ``max_elem + 1 - min_elem``; the caller
+    must ensure any shape symbols are host-visible at the lift destination.
     """
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
@@ -48,37 +40,24 @@ def _tile_extent(max_elem, min_elem):
 class MoveArrayOutOfKernel(Pass):
     """Lift transient ``GPU_Global`` arrays out of ``GPU_Device`` maps (kernels).
 
-    Such arrays are replicated per map iteration into disjoint outer arrays,
-    making the transformation explicit at the SDFG level (no codegen-time
-    rewrite, no naming collisions) and giving correct per-iteration semantics
-    instead of a single shared array (which races).
-
-    NOTE: GPUs have no true per-thread ``GPU_Device`` memory; DaCe only
-    supports this pattern for backward compatibility and its use is
-    strongly discouraged.
+    Each array is replicated per map iteration into a disjoint outer array
+    (correct per-iteration semantics instead of a single racing array). GPUs
+    have no per-thread ``GPU_Device`` memory, so this is backward-compat only
+    and discouraged.
     """
 
     def __init__(self):
-        """
-        Initializes caches for mapping nodes to their states and SDFGs.
-
-        This avoids repeatedly traversing the SDFG structure during the pass.
-        The caches are populated in `apply_pass` for convenience.
-        """
+        """Initialize node-to-state and node-to-SDFG caches (populated in :meth:`apply_pass`)."""
         self._node_to_state_cache: Dict[nodes.Node, SDFGState] = dict()
         self._node_to_sdfg_cache: Dict[nodes.Node, SDFG] = dict()
 
     # Entry point
     def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
-        """
-        Applies the pass to move a transient GPU_Global array out of a GPU_Device map.
+        """Move a transient ``GPU_Global`` array out of a ``GPU_Device`` map.
 
-        Args:
-            root_sdfg: The top-level SDFG to operate on.
-            kernel_entry: The MapEntry node representing the GPU_Device scheduled map (i.e., the kernel)
-                        that contains the transient array.
-            array_name: The name of the transient array to move. Note that multiple arrays with the
-                        same name may exist within the kernel. All will be lifted.
+        :param root_sdfg: Top-level SDFG to operate on.
+        :param kernel_entry: ``GPU_Device`` kernel MapEntry containing the array.
+        :param array_name: Transient array to move; all same-named arrays are lifted.
         """
         # Cache every nodes parent state and parent sdfg
         for node, parent in root_sdfg.all_nodes_recursive():
@@ -100,57 +79,42 @@ class MoveArrayOutOfKernel(Pass):
             access_nodes = [an for an, _, _ in self.get_access_nodes_within_map(kernel_entry, array_name)]
             self.move_array_out_of_kernel_flat(kernel_entry, array_name, access_nodes)
         else:
-            # Access nodes span nested maps or SDFGs —  more involved (more checks, naming conflicts, several seperate
+            # Access nodes span nested maps or SDFGs --  more involved (more checks, naming conflicts, several seperate
             # array descriptors with the same array_name)
             self.move_array_out_of_kernel_nested(kernel_entry, array_name)
 
     # Main transformation algorithms and helpers
     def move_array_out_of_kernel_flat(self, kernel_entry: nodes.MapEntry, array_name: str,
                                       access_nodes: List[nodes.AccessNode]):
+        """Move a transient ``GPU_Global`` array out of a kernel (flat case).
+
+        Flat = all access nodes share the kernel map's SDFG/state, so no
+        nested SDFGs or naming conflicts. The array is reshaped to a disjoint
+        slice per map iteration (e.g. ``[64]`` under a ``[0:128, 0:32]`` kernel
+        becomes ``[128, 32, 64]``).
+
+        :param kernel_entry: GPU kernel MapEntry.
+        :param array_name: Transient array to move.
+        :param access_nodes: Access nodes referring to the array inside the map.
         """
-        Moves a transient GPU_Global array out of a GPU_Device map (kernel) in the flat case.
-
-        This function handles the simpler case where all access nodes to the array are in the same
-        SDFG and state as the kernel map. Therefore, there are no nested SDFGs or naming conflicts
-        (since an SDFG cannot define multiple descriptors with the same name).
-
-        The array is reshaped to allocate a disjoint slice per map iteration. For example, given:
-
-            for x, y in dace.map[0:128, 0:32] @ GPU_Device:
-                gpu_A = dace.define_local([64], dtype, storage=GPU_Global)
-
-        the array shape will be updated to [128, 32, 64], and memlets will ensure each thread
-        accesses [x, y, 0:64].
-
-        Additionally, this method inserts the necessary access nodes and edges to correctly move
-        the array out of the map scope and maintain correctness.
-
-        Args:
-            kernel_entry: The MapEntry node representing the GPU kernel.
-            array_name: Name of the transient array to move.
-            access_nodes: List of access nodes referring to the array inside the map.
-        """
-        # A closest AccessNode of kernel exit is used
+        # Use the AccessNode closest to the kernel exit
         parent_state = self._node_to_state_cache[kernel_entry]
         kernel_exit: nodes.MapExit = parent_state.exit_node(kernel_entry)
         closest_an = self.get_nearest_access_node(access_nodes, kernel_exit)
         array_desc = closest_an.desc(parent_state)
 
-        # Get the chain of MapEntries from the AccessNode up to and including the kernel map entry
+        # MapEntry chain from the AccessNode up to and including the kernel map entry
         map_entry_chain, _ = self.get_maps_between(kernel_entry, closest_an)
 
-        # Store the original full-range subset of the array.
-        # Needed to define correct memlets when moving the array out of the kernel.
+        # Original full-range subset, needed to build the lifted memlets
         old_subset = [(0, dim - 1, 1) for dim in array_desc.shape]
 
-        # Update the array
         new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
         array_desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
 
-        # Update all memlets
         self.update_memlets(kernel_entry, array_name, closest_an, access_nodes)
 
-        # add new edges to move access Node out of map
+        # Add edges to move the AccessNode out of the map
         in_connector: str = 'IN_' + array_name
         out_connector: str = 'OUT_' + array_name
         previous_node = closest_an
@@ -171,22 +135,22 @@ class MoveArrayOutOfKernel(Pass):
             previous_node = next_map_exit
             previous_out_connector = out_connector
 
-        # New Access Node outside of the target map, connected to the exit
+        # New AccessNode outside the target map, connected to its exit
         access_node_outside = parent_state.add_access(array_name)
         parent_state.add_edge(kernel_exit, out_connector, access_node_outside, None,
                               Memlet.from_array(array_name, array_desc))
 
     def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str):
-        """Move a transient GPU_Global array out of a kernel when its accesses span nested SDFGs.
+        """Move a transient ``GPU_Global`` array out of a kernel when its
+        accesses span nested SDFGs.
 
-        Handles the case where access nodes live inside SDFGs nested under the
-        kernel's parent: reshapes/rewrites memlets, renames on descriptor-name
-        conflicts, and lifts the array through every intermediate nested SDFG.
+        Reshapes/rewrites memlets, renames on descriptor-name conflicts, and
+        lifts the array through every intermediate nested SDFG.
 
         :param kernel_entry: MapEntry of the GPU kernel.
         :param array_name: Transient array to move.
         """
-        # Collect all information about every distinct data descriptor with the same name "array_name"
+        # Info on every distinct descriptor sharing the name ``array_name``
         array_descriptor_usage = self.collect_array_descriptor_usage(kernel_entry, array_name)
         original_array_name = array_name
         kernel_parent_sdfg = self._node_to_sdfg_cache[kernel_entry]
@@ -194,20 +158,17 @@ class MoveArrayOutOfKernel(Pass):
         for array_desc, outermost_sdfg, sdfg_defined, access_nodes in array_descriptor_usage:
 
             if outermost_sdfg == kernel_parent_sdfg:
-                # Special case: There are nested accesss nodes, but their descriptor is defined at
-                # the same sdfg as the kernel. Thus, we can use the simpler algorithm.
+                # Nested access nodes, but the descriptor is defined in the kernel's
+                # SDFG -- the flat algorithm suffices.
                 self.move_array_out_of_kernel_flat(kernel_entry, original_array_name, list(access_nodes))
                 continue
 
-            # The outermost node
             nsdfg_node = outermost_sdfg.parent_nsdfg_node
             map_entry_chain, _ = self.get_maps_between(kernel_entry, nsdfg_node)
 
-            # Store the original full-range subset of the array.
-            # Needed to define correct memlets when moving the array out of the kernel.
+            # Original full-range subset, needed to build the lifted memlets
             old_subset = [(0, dim - 1, 1) for dim in array_desc.shape]
 
-            # Update array_descriptor
             new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
             array_desc.set_shape(new_shape=new_shape,
                                  strides=new_strides,
@@ -215,15 +176,13 @@ class MoveArrayOutOfKernel(Pass):
                                  offset=new_offsets)
             array_desc.transient = False
 
-            # Update memlets data movement
             self.update_memlets(kernel_entry, original_array_name, nsdfg_node, access_nodes)
 
-            # Update name if names conflict
+            # Rename on descriptor-name conflict
             required, array_name = self.new_name_required(kernel_entry, original_array_name, sdfg_defined)
             if required:
                 self.replace_array_name(sdfg_defined, original_array_name, array_name, array_desc)
 
-            # Ensure required symbols are defined
             self.update_symbols(map_entry_chain, kernel_parent_sdfg)
 
             # Collect all SDFGs from the outermost definition to the target map's parent (inclusive)
@@ -241,7 +200,7 @@ class MoveArrayOutOfKernel(Pass):
             if len(sdfg_hierarchy) < 2:
                 raise ValueError(f"Invalid SDFG hierarchy: only one SDFG found. "
                                  f"Expected at least two levels, since {outermost_sdfg} is not equal to "
-                                 "the kernel map's SDFG and is contained within it — the last entry should "
+                                 "the kernel map's SDFG and is contained within it -- the last entry should "
                                  "be the kernel's parent SDFG.")
 
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy, old_subset)
@@ -252,10 +211,10 @@ class MoveArrayOutOfKernel(Pass):
 
         :param array_name: Array to lift.
         :param kernel_entry: Innermost GPU kernel MapEntry.
-        :param sdfg_hierarchy: Nested SDFGs ordered inner→outer.
+        :param sdfg_hierarchy: Nested SDFGs ordered inner->outer.
         :param old_subset: Inner array subset used to build the lifted memlets.
         """
-        # Move array out ouf the kernel map entry through nested SDFGs
+        # Lift the array through each nested SDFG up to the kernel boundary
         outer_sdfg = sdfg_hierarchy.pop(0)
         while sdfg_hierarchy:
             inner_sdfg = outer_sdfg
@@ -263,13 +222,12 @@ class MoveArrayOutOfKernel(Pass):
             nsdfg_node = inner_sdfg.parent_nsdfg_node
             nsdfg_parent_state = self._node_to_state_cache[nsdfg_node]
 
-            # copy and add the descriptor to the outer sdfg
+            # Copy the descriptor into the outer SDFG
             old_desc = inner_sdfg.arrays[array_name]
             new_desc = copy.deepcopy(old_desc)
             outer_sdfg.add_datadesc(array_name, new_desc)
 
-            # Get all parent scopes to detect how the data needs to flow.
-            # E.g. nsdfg_node -> MapExit  needs to be nsdfg_node -> MapExit -> AccessNode (new)
+            # Enclosing map scopes the data must flow back out through
             parent_scopes: List[nodes.MapEntry] = []
             current_parent_scope = nsdfg_node
             scope_dict = nsdfg_parent_state.scope_dict()
@@ -277,25 +235,20 @@ class MoveArrayOutOfKernel(Pass):
                 parent_scopes.append(scope_dict[current_parent_scope])
                 current_parent_scope = scope_dict[current_parent_scope]
 
-            # Get a new AccessNode where the nsdfg node's parent state is.
-            # Note: This is in the OUTER sdfg, so this is the first accessNode accessing
-            # the current array descriptor
+            # New AccessNode in the OUTER SDFG -- the first node accessing this descriptor
             exit_access_node = nsdfg_parent_state.add_access(array_name)
 
-            # Cache its location
             self._node_to_state_cache[exit_access_node] = nsdfg_parent_state
             self._node_to_sdfg_cache[exit_access_node] = outer_sdfg
 
-            # Create a dataflow path from the NestedSDFG node to the new exit access node,
-            # passing through any enclosing map scopes (if the NestedSDFG is nested within maps).
+            # Dataflow path from the NestedSDFG node to the new exit access node,
+            # through any enclosing map scopes
             src = nsdfg_node
             for scope_entry in parent_scopes:
-                # next destination is the scope exit
                 scope_exit = nsdfg_parent_state.exit_node(scope_entry)
                 dst = scope_exit
 
-                # Next, add edge between src and dst in 2 steps:
-                # 1.1 Determine source connector name and register it based on src type
+                # Source connector, by src node type
                 if isinstance(src, nodes.NestedSDFG):
                     src_conn = array_name
                     src.add_out_connector(src_conn)
@@ -304,7 +257,7 @@ class MoveArrayOutOfKernel(Pass):
                     src.add_out_connector(src_conn)
                 else:
                     raise NotImplementedError(
-                        f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected."
+                        f"Unsupported source node type '{type(src).__name__}' -- only NestedSDFG or MapExit are expected."
                     )
 
                 # 1.2 Determine destination connector name and register it based on dst type
@@ -315,7 +268,7 @@ class MoveArrayOutOfKernel(Pass):
                     dst.add_in_connector(dst_conn)
                 else:
                     raise NotImplementedError(
-                        f"Unsupported destination node type '{type(dst).__name__}' — expected AccessNode or MapEntry.")
+                        f"Unsupported destination node type '{type(dst).__name__}' -- expected AccessNode or MapEntry.")
 
                 # 2. Add the edge using the connector names determined in Step 1.
                 next_entries, _ = self.get_maps_between(kernel_entry, src)
@@ -337,7 +290,7 @@ class MoveArrayOutOfKernel(Pass):
                 src.add_out_connector(src_conn)
             else:
                 raise NotImplementedError(
-                    f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected.")
+                    f"Unsupported source node type '{type(src).__name__}' -- only NestedSDFG or MapExit are expected.")
 
             next_entries, _ = self.get_maps_between(kernel_entry, src)
             memlet_subset = Range(self.get_memlet_subset(next_entries, src) + old_subset)
@@ -350,23 +303,17 @@ class MoveArrayOutOfKernel(Pass):
 
     # Memlet related helper functions
     def get_memlet_subset(self, map_chain: List[nodes.MapEntry], node: nodes.Node):
-        """
-        Compute the memlet subset to access an array based on the position of a node within nested GPU maps.
+        """Memlet subset for accessing an array given a node's position in
+        nested GPU maps.
 
-        For each GPU_Device or GPU_ThreadBlock map in the chain:
-        - If the node lies inside the map (but is not the map entry or exit itself),
-          the subset is the single index corresponding to the map parameter (symbolic).
-        - Otherwise, the full range of the map dimension is used.
+        Per ``GPU_Device``/``GPU_ThreadBlock`` map in the chain: a node
+        strictly inside the map yields the single symbolic map-param index;
+        otherwise the full map-dimension range. This makes memlets represent
+        per-thread/per-block slices when lifting arrays out of kernels.
 
-        This ensures that memlets correctly represent per-thread or per-block slices
-        when moving arrays out of kernel scopes.
-
-        Args:
-            map_chain: List of MapEntry nodes representing nested maps from outermost to innermost.
-            node: The node for which to determine the subset (could be an access node or map entry/exit).
-
-        Returns:
-            A list of subsets (start, end, stride) tuples for each map dimension.
+        :param map_chain: Nested MapEntry nodes, outermost to innermost.
+        :param node: Node whose subset is computed (AccessNode or map entry/exit).
+        :returns: List of ``(start, end, stride)`` tuples per map dimension.
         """
         subset = []
         for next_map in map_chain:
@@ -389,20 +336,17 @@ class MoveArrayOutOfKernel(Pass):
 
     def update_memlets(self, kernel_entry: nodes.MapEntry, array_name: str, outermost_node: nodes.Node,
                        access_nodes: Set[nodes.AccessNode]):
-        """
-        Updates all memlets related to a given transient array to reflect correct data
-        movement when moving array out of the kernel entry.
+        """Rewrite every memlet of a transient array for correct data movement
+        after lifting it out of the kernel.
 
-        Any map enclosing the `outermost_node` also encloses all access nodes and is
-        used to determine which maps are strictly above the access nodes. Based on this,
-        we compute the correct memlet subset that includes the additional dimensions
-        from the GPU map hierarchy.
+        Maps enclosing ``outermost_node`` also enclose all access nodes; they
+        determine which maps sit strictly above and thus the extra GPU-hierarchy
+        dimensions to prepend to each subset.
 
-        Args:
-            kernel_entry: The MapEntry node representing the GPU kernel scope.
-            array_name: Name of the transient array being moved out.
-            outermost_node: The outermost node.
-            access_nodes: Set of AccessNodes inside the kernel that reference the same array.
+        :param kernel_entry: MapEntry of the GPU kernel scope.
+        :param array_name: Transient array being moved out.
+        :param outermost_node: The outermost node.
+        :param access_nodes: AccessNodes inside the kernel referencing the array.
         """
         map_entry_chain, _ = self.get_maps_between(kernel_entry, outermost_node)
         params_as_ranges = self.get_memlet_subset(map_entry_chain, outermost_node)
@@ -457,35 +401,21 @@ class MoveArrayOutOfKernel(Pass):
 
     # Array, symbol and renaming related helper functions
     def get_new_shape_info(self, array_desc: dt.Array, map_exit_chain: List[nodes.MapEntry]):
-        """
-        Calculate the new shape, strides, total size, and offsets for a transient array
-        when moving it out of a GPU_Device kernel.
+        """New shape, strides, total size and offsets for a transient array
+        lifted out of a ``GPU_Device`` kernel.
 
-        Each GPU_Device map adds dimensions to allocate disjoint slices per thread.
+        Each GPU map prepends dimensions for per-thread disjoint slices, e.g.
+        ``gpu_A`` of shape ``[64]`` under ``map[0:128, 0:32]`` becomes
+        ``[128, 32, 64]`` (indexed ``gpu_A[x, y, :]``).
 
-        For example:
+        For a tiled ``GPU_ThreadBlock`` map ``i = start : Min(X, start+Y) + 1``
+        the per-iteration extent references ``start``, an outer-loop symbol
+        invisible at host scope. :func:`_tile_extent` substitutes the tight
+        static upper bound ``Y + 1``; non-tiled maps keep ``max - min + 1``.
 
-            for x, y in dace.map[0:128, 0:32] @ GPU_Device:
-                gpu_A = dace.define_local([64], dtype, storage=GPU_Global)
-
-        gpu_A's shape changes from [64] to [128, 32, 64] to give each thread its own slice
-        (i.e. gpu_A[x, y, 64]).
-
-        For a tiled inner ``GPU_ThreadBlock`` map of the form
-        ``i = start : Min(X, start+Y) + 1``, the per-iteration extent is
-        ``-start + Min(X, start+Y) + 1``, which references ``start`` — an
-        outer-loop symbol that is not visible at host scope. The static
-        upper bound on the tile width is ``Y + 1`` (the partial last block
-        is smaller; ``Y + 1`` is tight). :func:`_tile_extent` recognises
-        this pattern and substitutes the constant; the fallback path
-        keeps the original ``max - min + 1`` form for non-tiled maps.
-
-        Args:
-            array_desc: Original array descriptor.
-            map_exit_chain: List of MapEntry nodes between array and kernel exit.
-
-        Returns:
-            Tuple (new_shape, new_strides, new_total_size, new_offsets) for the updated array.
+        :param array_desc: Original array descriptor.
+        :param map_exit_chain: MapEntry nodes between array and kernel exit.
+        :returns: ``(new_shape, new_strides, new_total_size, new_offsets)``.
         """
         extended_size = []
         new_strides = list(array_desc.strides)
@@ -517,15 +447,13 @@ class MoveArrayOutOfKernel(Pass):
         return new_shape, new_strides, new_total_size, new_offsets
 
     def replace_array_name(self, sdfgs: FrozenSet[SDFG], old_name: str, new_name: str, array_desc: dt.Array):
-        """
-        Replaces all occurrences of an array name in the given SDFGs, including its data descriptor,
-        memlets, connectors and access nodes with a new name.
+        """Rename an array across ``sdfgs`` -- descriptor, memlets, connectors
+        and access nodes.
 
-        Args:
-            sdfgs (Set[SDFG]): The SDFGs in which to perform the renaming.
-            old_name (str): The original array name to be replaced.
-            new_name (str): The new array name.
-            new_descriptor (dt.Array): The data descriptor associated with the old and new name.
+        :param sdfgs: SDFGs in which to rename.
+        :param old_name: Original array name.
+        :param new_name: New array name.
+        :param array_desc: Descriptor to re-register under ``new_name``.
         """
         for sdfg in sdfgs:
 
@@ -557,17 +485,11 @@ class MoveArrayOutOfKernel(Pass):
                         dst.add_in_connector(new_in_conn)
 
     def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG):
-        """
-        Ensures symbols from GPU maps are defined in all nested SDFGs.
+        """Propagate GPU-map symbols (e.g. map indices) into every nested SDFG
+        under ``top_sdfg`` so lifted memlets referencing them stay valid.
 
-        When lifting arrays out of GPU maps, any used symbols (e.g., map indices)
-        must be available in nested SDFGs for correct memlet updates.
-        This function collects such symbols from the map scopes and adds them to
-        the symbol tables and mappings of all nested SDFGs under `top_sdfg`.
-
-        Args:
-            map_entry_chain: List of GPU MapEntry nodes whose symbols are relevant.
-            top_sdfg: The top-level SDFG under which symbols will be propagated.
+        :param map_entry_chain: GPU MapEntry nodes whose symbols are relevant.
+        :param top_sdfg: Top-level SDFG to propagate symbols under.
         """
         all_symbols = set()
         for next_map in map_entry_chain:
@@ -594,7 +516,7 @@ class MoveArrayOutOfKernel(Pass):
             array_name: str) -> Set[Tuple[dt.Array, SDFG, FrozenSet[SDFG], FrozenSet[nodes.AccessNode]]]:
         """Track usage of a transient array across nested SDFGs within a map scope.
 
-        "Same array" means same name connected via memlets — several
+        "Same array" means same name connected via memlets -- several
         ``dt.Array`` descriptor objects may exist across SDFGs for one
         logical array.
 
@@ -677,19 +599,14 @@ class MoveArrayOutOfKernel(Pass):
 
     def new_name_required(self, map_entry: nodes.MapEntry, array_name: str,
                           sdfg_defined: FrozenSet[SDFG]) -> Tuple[bool, str]:
-        """
-        Returns whether the array_name is also used at an SDFG which is not in the sdfg_defined set.
-        This means that the array_name at that SDFG refers to another data descriptor.
-        Another new name is suggested if this case occurs.
+        """Detect whether ``array_name`` collides with a different descriptor
+        in an SDFG outside ``sdfg_defined``, and suggest a free name if so.
 
-        Args:
-            map_entry: The MapEntry node whose scope is used to determine name usage.
-            array_name: The name of the data descriptor of interest
-            sdfg_defined: where the data descriptor is defined
-
-        Returns:
-            A Tuple where first element is indicatin whether a new name is required, and
-            the other is either the same name if no new name is required or otherwise a new name suggestion.
+        :param map_entry: MapEntry whose scope bounds the name-usage check.
+        :param array_name: Data descriptor name of interest.
+        :param sdfg_defined: SDFGs where the descriptor is defined.
+        :returns: ``(rename_required, name)`` -- ``name`` is the original when
+            no rename is needed, else a fresh suggestion.
         """
         map_parent_sdfg = self._node_to_sdfg_cache[map_entry]
         taken_names = set()
@@ -725,15 +642,9 @@ class MoveArrayOutOfKernel(Pass):
     # Utility functions - basic building blocks
     def get_access_nodes_within_map(self, map_entry: nodes.MapEntry,
                                     data_name: str) -> List[Tuple[nodes.AccessNode, SDFGState, SDFG]]:
-        """
-        Finds all AccessNodes that refer to the given `data_name` and are located inside
-        the scope of the specified MapEntry.
+        """All AccessNodes for ``data_name`` inside ``map_entry``'s scope.
 
-        Returns:
-            A list of tuples, each consisting of:
-                - the matching AccessNode,
-                - the SDFGState in which it resides,
-                - and the parent SDFG containing the node.
+        :returns: ``(AccessNode, SDFGState, parent SDFG)`` tuples.
         """
         starting_sdfg = self._node_to_sdfg_cache[map_entry]
         matching_access_nodes = []
@@ -750,21 +661,15 @@ class MoveArrayOutOfKernel(Pass):
 
     def get_maps_between(self, stop_map_entry: nodes.MapEntry,
                          node: nodes.Node) -> Tuple[List[nodes.MapEntry], List[nodes.MapExit]]:
-        """
-        Returns all MapEntry/MapExit pairs between `node` and `stop_map_entry`, inclusive.
+        """All MapEntry/MapExit pairs between ``node`` and ``stop_map_entry``,
+        inclusive, innermost to outermost.
 
-        Maps are returned from innermost to outermost, starting at the scope of `node` and
-        ending at `stop_map_entry`. Assumes that `node` is (directly or indirectly via a
-        nestedSDFG) contained within the `stop_map_entry`'s scope.
+        Assumes ``node`` is contained (directly or via a nested SDFG) within
+        ``stop_map_entry``'s scope.
 
-        Args:
-            stop_map_entry: The outermost MapEntry to stop at (inclusive).
-            node: The node from which to begin scope traversal.
-
-        Returns:
-            A tuple of two lists:
-                - List of MapEntry nodes (from inner to outer scope),
-                - List of corresponding MapExit nodes.
+        :param stop_map_entry: Outermost MapEntry to stop at (inclusive).
+        :param node: Node to begin scope traversal from.
+        :returns: ``(MapEntry list, MapExit list)``, inner to outer.
         """
         stop_state = self._node_to_state_cache[stop_map_entry]
         stop_exit = stop_state.exit_node(stop_map_entry)
@@ -793,19 +698,13 @@ class MoveArrayOutOfKernel(Pass):
         return entries, exits
 
     def get_nearest_access_node(self, access_nodes: List[nodes.AccessNode], node: nodes.Node) -> nodes.AccessNode:
-        """
-        Finds the closest access node (by graph distance) to the given node
-        within the same state. Direction is ignored.
+        """Closest AccessNode to ``node`` by graph distance within the same
+        state (direction-agnostic BFS).
 
-        Args:
-            access_nodes: List of candidate AccessNodes to search from.
-            node: The node from which to start the search.
-
-        Returns:
-            The closest AccessNode (by number of edges traversed).
-
-        Raises:
-            RuntimeError: If no access node is conected in the node's state to the node.
+        :param access_nodes: Candidate AccessNodes.
+        :param node: Node to start the search from.
+        :returns: The closest AccessNode by edges traversed.
+        :raises RuntimeError: No candidate is connected to ``node`` in its state.
         """
         state = self._node_to_state_cache[node]
 
@@ -824,12 +723,9 @@ class MoveArrayOutOfKernel(Pass):
         raise RuntimeError(f"No access node found connected to the given node {node}. ")
 
     def in_paths(self, access_node: nodes.AccessNode) -> List[List[MultiConnectorEdge[Memlet]]]:
-        """
-        Traces all incoming dataflow paths to the given AccessNode.
-        Only searches in the same state where the AccessNode is.
+        """All incoming dataflow paths to ``access_node`` within its state.
 
-        Returns:
-            A list of edge paths (each a list of edges).
+        :returns: List of edge paths (each a list of edges).
         """
         state = self._node_to_state_cache[access_node]
 
@@ -862,12 +758,9 @@ class MoveArrayOutOfKernel(Pass):
         return complete_paths
 
     def out_paths(self, access_node: nodes.AccessNode) -> List[List[MultiConnectorEdge[Memlet]]]:
-        """
-        Traces all outgoing dataflow paths to the given AccessNode.
-        Only searches in the same state where the AccessNode is.
+        """All outgoing dataflow paths from ``access_node`` within its state.
 
-        Returns:
-            A list of edge paths (each a list of edges).
+        :returns: List of edge paths (each a list of edges).
         """
         state: SDFGState = self._node_to_state_cache[access_node]
 

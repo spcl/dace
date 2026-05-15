@@ -262,9 +262,9 @@ def test_pseudo_1d_copy_test(c_order: bool):
 
 @pytest.mark.gpu
 def test_gpu_shared_to_global_1D():
-    """Shared → Global copy inside a GPU kernel. Currently emits a
+    """Shared -> Global copy inside a GPU kernel. Currently emits a
     generic per-thread ``dace::CopyND<...>::Copy`` template (each thread
-    redundantly writes the same destination — correct, slower than the old
+    redundantly writes the same destination -- correct, slower than the old
     ``SharedToGlobal1D`` block-cooperative template). Lifting Shared
     copies to ``SharedMemoryCollective`` is gated on a codegen-scope fix."""
     M = 32

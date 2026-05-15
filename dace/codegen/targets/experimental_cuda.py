@@ -450,11 +450,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     edge: Tuple[nodes.Node, str, nodes.Node, str,
                                 Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        # All CPU↔GPU and GPU↔GPU AccessNode→AccessNode edges (host-issued
+        # All CPU<->GPU and GPU<->GPU AccessNode->AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
         # ``InsertExplicitGPUGlobalMemoryCopies`` during ``preprocess()`` and
         # lowered through their expansions. Anything reaching this dispatch
-        # is a register / scope-local CPU copy — delegate to CPU codegen.
+        # is a register / scope-local CPU copy -- delegate to CPU codegen.
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def state_dispatch_predicate(self, sdfg, state):
@@ -636,8 +636,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # ----------------- Guard checks --------------------
 
-        # NOTE: `dfg` is None iff `nodedesc` is non-free symbol dependent (see DaCeCodeGenerator.determine_allocation_lifetime).
-        # We avoid `is_nonfree_sym_dependent` when dfg is None and `nodedesc` is a View.
+        # NOTE: ``dfg`` is None iff ``nodedesc`` is non-free symbol dependent (see DaCeCodeGenerator.determine_allocation_lifetime).
+        # We avoid ``is_nonfree_sym_dependent`` when dfg is None and ``nodedesc`` is a View.
         if dfg and not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "declare_array is only for variables that require separate declaration and allocation.")
@@ -995,19 +995,8 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
 
 class KernelSpec:
-    """Kernel metadata (name, grid/block dims, arguments) used by ``ExperimentalCUDACodeGen``.
-
-    Public attributes:
-      - ``kernel_map_entry``: the ``GPU_Device`` MapEntry that is the kernel's root scope.
-      - ``kernel_map``: shorthand for ``kernel_map_entry.map``.
-      - ``kernel_name``: function name of the generated ``__global__``.
-      - ``kernel_constants``: data + symbols that take a ``const`` qualifier in the kernel signature.
-      - ``arglist``: ``{name: descriptor}`` for every kernel argument.
-      - ``args_as_input`` / ``args_typed``: kernel-side argument forms (call site / declaration).
-      - ``kernel_wrapper_args_as_input`` / ``kernel_wrapper_args_typed``: host-wrapper forms.
-      - ``grid_dims`` / ``block_dims``: launch geometry.
-      - ``warpSize``: backend warp size from config.
-      - ``gpu_index_ctype``: C type for thread/block/warp indices (``compiler.cuda.gpu_index_type``).
+    """Kernel metadata (name, grid/block dims, argument forms, warp size) used by
+    ``ExperimentalCUDACodeGen`` to emit the ``__global__`` and its host launch wrapper.
     """
 
     def __init__(self, cudaCodeGen: ExperimentalCUDACodeGen, sdfg: SDFG, cfg: ControlFlowRegion,

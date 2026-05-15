@@ -1,37 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU specialization pipelines.
 
-The codegen target invokes :class:`GPUCodegenPreprocessPipeline` once
-during ``preprocess``. That pipeline composes every transformation
-needed to bring an SDFG to a state the experimental CUDA codegen can
-emit code for; the order is declarative and post-expansion-first (no
-two-phase wiring around ``expand_library_nodes`` any more).
-
-Two lower-level entry points remain for callers that want to invoke
-just the stream pass:
-
-* :class:`GPUStreamPipeline` — wraps one
-  :class:`GPUStreamSchedulingStrategy` (default
-  :class:`NaiveGPUStreamScheduler`; pass ``scheduling_strategy=…`` to
-  opt into another, e.g. :class:`MonolithicSingleStreamGPUScheduler`).
-
-  The strategy owns end-to-end stream lowering: assigns streams,
-  allocates ``gpu_streams`` (with propagation to nested SDFGs that need
-  it), wires every consumer's stream connector, and emits sync tasklets
-  per its own placement policy. Operates on a *post-expansion* SDFG —
-  callers must run ``sdfg.expand_library_nodes(recursive=True)`` first
-  if their input still contains library nodes.
-
-  Stream scheduling is single-shot. Re-application is rejected with a
-  warning — the WCC partition is graph-shape-dependent and re-running
-  on an already-wired SDFG would corrupt the wiring. Nested SDFGs share
-  the root's decisions; calling the pipeline on a non-root SDFG raises.
-
-* :class:`GPUCodegenPreprocessPipeline` — the codegen-target end-to-end
-  pipeline. Composes scheduling/storage inference, scalar promotion,
-  implicit-copy lifting, library expansion, stream scheduling,
-  Shared-transient lifting, threadblock tiling, and connector-type
-  re-inference in one declarative sequence.
+:class:`GPUCodegenPreprocessPipeline` is the codegen target's one-shot
+codegen-preparation pipeline. :class:`GPUStreamPipeline` is a lower-level
+entry point that runs just the stream-scheduling strategy on a
+post-expansion SDFG. Both are single-shot and act on the root SDFG only.
 """
 import warnings
 from typing import Any, Dict, Optional
@@ -49,15 +22,9 @@ class GPUStreamPipeline(Pipeline):
     """Post-expansion GPU stream lowering, parametrised by scheduling strategy.
 
     Pass ``scheduling_strategy=<instance>`` to swap in a different
-    strategy (e.g. :class:`MonolithicSingleStreamGPUScheduler`).
-
-    Expects a *post-expansion* SDFG: every kernel ``MapEntry`` and
-    runtime call Tasklet (e.g. ``cudaMemcpyAsync``) is visible at its
-    final position. The strategy walks them directly, so libnodes must
-    have been flattened upstream (call
-    ``sdfg.expand_library_nodes(recursive=True)`` if your input still
-    contains them; :class:`GPUCodegenPreprocessPipeline` does this for
-    you).
+    strategy (default :class:`NaiveGPUStreamScheduler`). Expects a
+    post-expansion SDFG -- libnodes must be flattened upstream via
+    ``sdfg.expand_library_nodes(recursive=True)``.
     """
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
@@ -72,7 +39,7 @@ class GPUStreamPipeline(Pipeline):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         if is_gpu_lowering_applied(sdfg):
             warnings.warn(
-                "GPUStreamPipeline: skipping re-application — the SDFG already has the "
+                "GPUStreamPipeline: skipping re-application -- the SDFG already has the "
                 "``gpu_streams`` array, indicating the pipeline has run. Stream "
                 "assignment is single-shot and re-running it would corrupt the wiring.",
                 UserWarning,
@@ -92,57 +59,8 @@ GPUSpecializationPipeline = GPUStreamPipeline
 class GPUCodegenPreprocessPipeline(Pipeline):
     """One-shot GPU-codegen preparation.
 
-    Composes every transformation that brings an SDFG to a state the
-    experimental CUDA codegen can emit code for. Order is declarative;
-    each step depends on the previous one's invariants but is otherwise
-    independent. Replaces the previous hand-stitched sequence in
-    ``ExperimentalCUDACodeGen.preprocess``.
-
-    Steps (in order):
-
-    1. :class:`InferDefaultSchedulesAndStorages` — fill in ``Default``
-       schedules / storages everywhere.
-    2. :class:`PromoteGPUScalarsToArrays` — promote scalars the kernel
-       writes into length-1 Arrays (rule 1) and any other Scalar that
-       cannot live on the GPU as a Scalar (rule 2).
-    3. :class:`AssignmentAndCopyKernelToMemsetAndMemcpy` — recognise
-       in-kernel pure copies / zero-fills and lift them to
-       ``CopyLibraryNode`` / ``MemsetLibraryNode`` so they lower to
-       ``cudaMemcpyAsync`` / ``cudaMemsetAsync`` instead of a no-op
-       kernel launch.
-    4. :class:`InsertExplicitGPUGlobalMemoryCopies` — hoist transient
-       ``GPU_Global`` arrays out of kernel scopes; demote small literal-
-       shape kernel-internal transients to ``Register`` storage when
-       safe; then lift implicit ``AccessNode → AccessNode`` and
-       map-staging edges into explicit ``CopyLibraryNode`` instances.
-    5. :class:`ExpandLibraryNodes` — wraps
-       ``sdfg.expand_library_nodes(recursive=True)`` as a Pass; re-runs
-       ``set_default_schedule_and_storage_types`` on the post-expansion
-       SDFG so freshly-spawned NSDFGs don't ship with
-       ``ScheduleType.Default`` Maps.
-    6. :class:`NaiveGPUStreamScheduler` — schedule streams, allocate
-       ``gpu_streams`` on the top SDFG, wire ``__stream`` connectors on
-       every GPU consumer (kernels, libnodes, runtime tasklets), and
-       emit ``cudaStreamSynchronize`` tasklets at cross-stream and host
-       boundaries. Runs on the *post-expansion* SDFG so it sees real
-       kernels + runtime tasklets, not opaque libnodes.
-    7. :class:`LiftSharedOutOfNestedSDFG` — promote every transient
-       ``GPU_Shared`` array inside a NestedSDFG up to the SDFG that
-       owns the enclosing ``GPU_Device`` map, so the framecode walker
-       emits ``__shared__ T name[N]`` into the kernel function body.
-    8. :class:`AddThreadBlockMaps` — tile every ``GPU_Device`` map with
-       an inner ``GPU_ThreadBlock``; computes the
-       ``(grid, block)`` dimensions for codegen. Returns
-       ``{'kernel_dimensions_map': …, 'tb_inserted_kernels': …}`` — the
-       codegen target reads it from ``pipeline_results``. Runs late so
-       the kernel-internal transient hoist (step 4) sees user-authored
-       kernel shapes rather than post-tile shapes.
-    9. :class:`ReinferConnectorTypes` — re-derive NestedSDFG connector
-       types from their (now-mutated) inner descriptors. Earlier passes
-       (especially step 2's Scalar → length-1 Array widening) leave
-       connector type annotations referring to the pre-mutation
-       descriptors; without this fixup the codegen emits the wrong
-       pointer-vs-value signatures.
+    Declarative ordering of every transformation that brings an SDFG to a state the experimental
+    CUDA codegen can emit. See the constructor for the non-obvious sequencing constraints.
     """
 
     def __init__(self):
@@ -157,26 +75,16 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
         # Order constraints:
-        #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` runs before
-        #     the stream scheduler. It carries the original map's
-        #     dynamic-input edges onto the new libnode; if a
-        #     ``__stream`` connector has already been wired, the lift
-        #     would clash with it.
-        #   * ``NaiveGPUStreamScheduler`` runs *after*
-        #     ``ExpandLibraryNodes``. The scheduler walks real kernel
-        #     ``MapEntry`` / runtime-call ``Tasklet`` nodes; libnodes
-        #     are opaque to it and would be missed.
-        #   * ``AddThreadBlockMaps`` runs after the kernel-internal
-        #     transient hoist (inside
-        #     ``InsertExplicitGPUGlobalMemoryCopies``). Tiling first
-        #     introduces an inner-map range like ``Min(N-1, b_i+31) -
-        #     b_i + 1`` whose ``b_i`` outer-loop symbol then leaks into
-        #     host-side ``cudaMalloc`` size expressions for any
-        #     transient lifted out of the kernel.
-        #   * ``ReinferConnectorTypes`` runs last. Earlier passes
-        #     mutate descriptors out from under NestedSDFG connectors;
-        #     re-deriving connector types makes the codegen emit the
-        #     right pointer-vs-value signatures.
+        #   * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` before the stream scheduler: it moves
+        #     the map's dynamic-input edges onto the new libnode and a pre-wired ``__stream``
+        #     connector would clash.
+        #   * ``NaiveGPUStreamScheduler`` after ``ExpandLibraryNodes``: the scheduler walks real
+        #     kernel/runtime-call nodes and would miss opaque libnodes.
+        #   * ``AddThreadBlockMaps`` after the kernel-internal transient hoist (in
+        #     ``InsertExplicitGPUGlobalMemoryCopies``): tiling first leaks the inner-map outer-loop
+        #     symbol into host-side ``cudaMalloc`` size expressions for hoisted transients.
+        #   * ``ReinferConnectorTypes`` last: earlier passes mutate descriptors under NestedSDFG
+        #     connectors, so connector types must be re-derived for correct codegen signatures.
         super().__init__([
             InferDefaultSchedulesAndStorages(),
             PromoteGPUScalarsToArrays(),

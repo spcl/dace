@@ -1,11 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Minimal CPU -> GPU -> CPU scalar round-trip.
-
-``CPU scalar -> GPU scalar transient -> CPU array`` (3 nodes, 2 edges, one
-state, no tasklet, no NSDFG, no Map). Pins the I1 regression: the experimental
-codegen previously segfaulted because ``_replace_direct_copies`` skipped the
-``Scalar -> Array`` edge, leaving the host-side ``dace::CopyND`` template to
-write a host pointer into device memory.
+"""Pins the I1 regression: a CPU scalar -> GPU scalar transient -> CPU array
+round-trip must not segfault (``_replace_direct_copies`` previously skipped
+the ``Scalar -> Array`` edge, writing a host pointer into device memory).
 """
 import numpy as np
 import pytest

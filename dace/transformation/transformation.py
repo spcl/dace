@@ -737,7 +737,7 @@ class ExpandTransformation(PatternTransformation):
             # ``SpecializeMatMul`` rewrites the ``_a``/``_b`` MatMul connectors
             # to ``_x``/``_y`` on the matching Dot edges). The original
             # connector names then have no edges referencing them and must
-            # not be re-added to the expansion node — doing so would leave
+            # not be re-added to the expansion node -- doing so would leave
             # them dangling and trip ``InvalidSDFGNodeError``.
             in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
             out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}

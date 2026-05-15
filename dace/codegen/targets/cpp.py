@@ -267,7 +267,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
           and framecode.where_allocated[(sdfg, name)] is not sdfg
           and desc.storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)):
         # Array allocated for another SDFG, use unambiguous name. Skipped for
-        # GPU_Shared (kernel-scoped) and Register (thread-scoped) — those can't
+        # GPU_Shared (kernel-scoped) and Register (thread-scoped) -- those can't
         # collide across NSDFG boundaries because their scope is the kernel /
         # thread, not the translation unit.
         return f'__{sdfg.cfg_id}_{name}'
@@ -888,13 +888,13 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 )
         elif host_node_on_gpu_memory and cuda_impl == 'legacy':
             # Legacy with max_concurrent_streams<0 short-circuits
-            # _compute_cudastreams (cuda.py:819-821) so no `_cuda_stream`
+            # _compute_cudastreams (cuda.py:819-821) so no ``_cuda_stream``
             # is set, yet library code (e.g. the cuBLAS env's
-            # `cublasSetStream(_, __dace_current_stream)`) still references
+            # ``cublasSetStream(_, __dace_current_stream)``) still references
             # the variable. Emit a nullptr fallback so that compiles.
             # Experimental codegen never reaches this branch: it explicitly
-            # sets `_cuda_stream` on every tasklet that references
-            # `__dace_current_stream` via `_annotate_legacy_cuda_stream`.
+            # sets ``_cuda_stream`` on every tasklet that references
+            # ``__dace_current_stream`` via ``_annotate_legacy_cuda_stream``.
             callsite_stream.write(
                 '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
                 cfg,

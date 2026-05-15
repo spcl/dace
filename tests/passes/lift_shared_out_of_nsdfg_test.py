@@ -1,16 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Direct unit tests for ``LiftSharedOutOfNestedSDFG``.
-
-The pass promotes ``GPU_Shared`` transients out of NestedSDFGs that sit
-inside a ``GPU_Device`` map and wires them through the NSDFG via
-connectors + dependency edges to the kernel ``MapEntry`` / ``MapExit``,
-so the framecode allocator pins their ``__shared__`` declaration to the
-kernel scope.
-
-These tests build minimal SDFGs (no codegen invocation) and assert the
-resulting topology directly, locking the contract independently of the
-broader pipeline.
-"""
+"""Unit tests for ``LiftSharedOutOfNestedSDFG``, which promotes ``GPU_Shared`` transients out of
+NSDFGs inside a ``GPU_Device`` map and wires them to the kernel ``MapEntry`` / ``MapExit`` so the
+allocator pins their ``__shared__`` declaration to the kernel scope. Topology asserted directly."""
 
 import dace
 from dace import SDFG, dtypes, nodes
@@ -41,8 +32,7 @@ def _build_inner_sdfg_with_shared(name: str, mode: str) -> SDFG:
 
 
 def _wrap_in_gpu_kernel(inner: SDFG, *, with_inputs: bool, with_outputs: bool) -> SDFG:
-    """Wrap ``inner`` in an outer SDFG with a GPU_Device map around the
-    NestedSDFG. Returns the outer SDFG."""
+    """Wrap ``inner`` in an outer SDFG with a GPU_Device map around the NestedSDFG."""
     outer = SDFG('outer')
     outer.add_array('A', [4], dace.float32, storage=dtypes.StorageType.GPU_Global)
     outer.add_array('B', [4], dace.float32, storage=dtypes.StorageType.GPU_Global)
@@ -114,8 +104,7 @@ def test_lift_shared_read_and_written():
 
 
 def test_lift_shared_write_only_anchors_via_map_entry():
-    """Write-only path still needs an incoming dep edge from MapEntry; the
-    pass adds it explicitly in that branch."""
+    """Write-only path still gets an incoming dep edge from MapEntry."""
     inner = _build_inner_sdfg_with_shared('inner_w', mode='write')
     outer = _wrap_in_gpu_kernel(inner, with_inputs=True, with_outputs=False)
 
@@ -132,9 +121,7 @@ def test_lift_shared_write_only_anchors_via_map_entry():
 
 
 def test_lift_shared_unused_is_skipped():
-    """When the inner Shared transient is declared but neither read nor
-    written, the pass must NOT lift it — moving the descriptor without
-    adding any wiring would corrupt the SDFG."""
+    """An inner Shared transient that is never read or written is not lifted."""
     inner = _build_inner_sdfg_with_shared('inner_unused', mode='none')
     outer = _wrap_in_gpu_kernel(inner, with_inputs=False, with_outputs=False)
 

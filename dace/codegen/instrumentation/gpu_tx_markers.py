@@ -23,9 +23,9 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def __init__(self):
         self.backend = common.get_gpu_backend()
         # Check if ROCm TX libraries and headers are available. Only meaningful
-        # when the backend is HIP — on a CUDA host that happens to also have
+        # when the backend is HIP -- on a CUDA host that happens to also have
         # ROCm installed we must not flip into rocTX mode (would suppress
-        # NVTX init markers via the `enable_rocTX` short-circuits below).
+        # NVTX init markers via the ``enable_rocTX`` short-circuits below).
         rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
         roctx_header_paths = [
             os.path.join(rocm_path, 'roctracer/include/roctx.h'),
@@ -179,7 +179,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         # Bracket host-side cudaMemcpyAsync tasklets emitted by expanded
         # CopyLibraryNode instances. These tasklets bypass the legacy
         # _emit_copy() path that fires on_copy_begin, so without an explicit
-        # hook here the experimental codegen ends up with no `copy_*` ranges.
+        # hook here the experimental codegen ends up with no ``copy_*`` ranges.
         if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if not isinstance(node, nodes.Tasklet):

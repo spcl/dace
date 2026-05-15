@@ -2,20 +2,10 @@
 """Shared graph-mutation primitives for GPU stream-scheduling strategies.
 
 Strategies (:class:`GPUStreamSchedulingStrategy` subclasses) own the
-*decisions* — which stream, which sync points. The mutations these
-decisions produce are identical across strategies and live here:
-
-* :func:`allocate_stream_array` — add the ``gpu_streams`` transient at the
-  root SDFG and propagate it (non-transient) into every nested SDFG that
-  hosts a stream consumer.
-* :func:`wire_stream_connectors` — for each stream id, build the
-  per-stream chain of ``gpu_streams`` AccessNodes that feed each
-  consumer's ``__stream`` connector. Routes through ``Sequential``-map
-  scopes via ``IN___stream`` / ``OUT___stream`` pass-through connectors.
-* :func:`insert_state_end_syncs` / :func:`insert_per_node_syncs` — emit
-  ``cudaStreamSynchronize`` tasklets at the requested locations.
-
-No policy lives here.
+policy -- which stream, which sync points. The resulting mutations are
+identical across strategies and live here: :func:`allocate_stream_array`,
+:func:`wire_stream_connectors`, :func:`insert_state_end_syncs`,
+:func:`insert_per_node_syncs`. No policy lives here.
 """
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -59,9 +49,9 @@ def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, 
 
 
 def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):
-    """Add ``stream_name`` to ``child_sdfg`` and every parent SDFG up to the
-    first ancestor that already has it; wire the NestedSDFG-node connector
-    at each level."""
+    """Add ``stream_name`` to ``child_sdfg`` and every parent up to the first
+    ancestor that already has it, wiring the NestedSDFG connector at each
+    level."""
     _add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
     slice_str = f"{stream_name}[0:{num_streams}]"
 
@@ -74,8 +64,8 @@ def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: 
 
 
 def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
-    """Identify all nested SDFGs that need the GPU stream array (host-side
-    stream-bound calls). NestedSDFGs executing as device code are skipped."""
+    """Nested SDFGs that need the GPU stream array (host-side stream-bound
+    calls); device-code NestedSDFGs are skipped."""
     requiring = set()
     for child_sdfg in sdfg.all_sdfgs_recursive():
         if child_sdfg is sdfg:
@@ -114,11 +104,9 @@ def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet)
 def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]):
     """Wire each consumer's stream connector to a ``gpu_streams[<i>]`` source.
 
-    Top-level consumers form a per-stream chain
-    ``src → n0 → mid → n1 → … → sink`` of ``gpu_streams[i]`` AccessNodes.
-    Consumers nested inside ``Sequential``-map scopes get the stream
-    threaded via ``IN_stream`` / ``OUT_stream`` pass-through connectors
-    instead of crossing scope boundaries.
+    Top-level consumers form a per-stream chain of ``gpu_streams[i]``
+    AccessNodes; consumers in ``Sequential``-map scopes get the stream
+    threaded via ``IN_stream``/``OUT_stream`` pass-through connectors.
     """
     stream_array_name = get_gpu_stream_array_name()
 
@@ -140,15 +128,14 @@ def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], st
         stream_id = assignments.get(node)
         if stream_id is None:
             continue
-        # Skip nodes inside a GPU_Device map's scope: they're already running
-        # on the kernel's stream and shouldn't be linked into the outer chain.
+        # Inside a GPU_Device scope: already on the kernel's stream, don't
+        # link into the outer chain.
         if innermost_enclosing_map(state, node, dtypes.ScheduleType.GPU_Device) is not None:
             continue
         if is_gpu_stream_consumer(node, state.sdfg, state):
             per_stream[stream_id].append(node)
         elif isinstance(node, nodes.LibraryNode):
-            # Generic GPU library nodes (cuBLAS / cuSolverDn etc.) also need
-            # the stream connector when they land in a GPU-relevant component.
+            # cuBLAS / cuSolverDn etc. also need the stream connector.
             per_stream[stream_id].append(node)
 
     for stream_id, stream_users in per_stream.items():
@@ -192,19 +179,14 @@ def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.Ma
                                     get_source_access: 'Callable[[], nodes.AccessNode]',
                                     memlet_factory: 'Callable[[], Memlet]'):
     """Thread a stream handle from a source AccessNode through every map in
-    ``scope_chain`` (outermost → innermost) into ``target.target_conn``.
+    ``scope_chain`` (outermost -> innermost) into ``target.target_conn``.
 
-    Each map gets ``IN_<STREAM_CONNECTOR>`` / ``OUT_<STREAM_CONNECTOR>``
-    pass-through connectors. ``IN_<STREAM_CONNECTOR>`` accepts only one
-    incoming edge, so the routing is idempotent: a sibling consumer that
-    already routed through the same map reuses the existing wire and
-    only the inner-most segment is added.
-
-    Parameterised so both top-level wiring (``wire_stream_connectors``,
-    sourcing from a fresh ``gpu_streams[<i>]`` AccessNode) and post-
-    expansion reconnect (``ReconnectWithinExpandedSDFGs``, sourcing from
-    the wrapper SDFG's ``stream`` Scalar) can share the routing logic
-    without duplicating it.
+    Each map gets ``IN_<STREAM_CONNECTOR>``/``OUT_<STREAM_CONNECTOR>``
+    pass-through connectors. ``IN_<STREAM_CONNECTOR>`` takes a single
+    incoming edge, so routing is idempotent (a sibling reuses the wire and
+    only the innermost segment is added). ``get_source_access`` and
+    ``memlet_factory`` are parameterised so both top-level wiring and
+    post-expansion reconnect share this logic.
     """
     in_conn = f"IN_{STREAM_CONNECTOR}"
     out_conn = f"OUT_{STREAM_CONNECTOR}"
@@ -242,10 +224,8 @@ def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
 
 
 def _stream_in_connector_name(node: Node) -> str:
-    """Single canonical connector name across every consumer class —
-    kernel ``MapEntry``, libnode, runtime tasklet, sync tasklet. The
-    stream id rides on the wired ``gpu_streams[<i>]`` memlet, not the
-    connector name."""
+    """One canonical connector name for every consumer class; the stream id
+    rides on the wired ``gpu_streams[<i>]`` memlet, not the name."""
     return STREAM_CONNECTOR
 
 
@@ -256,22 +236,19 @@ def _stream_in_connector_name(node: Node) -> str:
 
 def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
     """Emit one fused ``cudaStreamSynchronize`` tasklet at the end of each
-    state, syncing every stream the state needs to wait on.
+    state, syncing every stream the state must wait on.
 
-    The fused tasklet carries one ``__stream_<id>`` in-connector per stream
-    (where ``<id>`` is the offset into the ``gpu_streams`` array), each
-    typed ``gpuStream_t``. The body chains one ``cudaStreamSynchronize``
-    call per connector. Fusing keeps the SDFG compact and gives the
-    codegen a single deterministic sync site per state.
+    Carries one ``gpuStream_t`` ``__stream_<id>`` in-connector per stream
+    (one sync call each); fusing gives the codegen a single deterministic
+    per-state sync site.
     """
     stream_array_name = get_gpu_stream_array_name()
 
     for state, streams in sync_state.items():
         if not streams:
             continue
-        # Pair each stream with its chain-trailing ``gpu_streams``
-        # AccessNode (lets the sync tasklet hook onto the existing chain
-        # rather than adding a fresh access).
+        # Pair each stream with its chain-trailing ``gpu_streams`` AccessNode
+        # so the sync tasklet hooks the existing chain, not a fresh access.
         stream_sinks: Dict[int, nodes.AccessNode] = {}
         for node in state.nodes():
             if (not isinstance(node, nodes.AccessNode) or node.data != stream_array_name
@@ -281,7 +258,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], as
             if sid is not None and sid not in stream_sinks:
                 stream_sinks[sid] = node
 
-        # Sinks the sync tasklet must run after — captured before adding
+        # Sinks the sync tasklet must run after -- captured before adding
         # the new tasklet so the bookkeeping doesn't pick up our own work.
         existing_sinks = list(state.sink_nodes())
 
@@ -319,7 +296,7 @@ def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignme
 
 
 def _stream_connector_name(stream_id: int) -> str:
-    """Connector name on a sync tasklet for stream ``<stream_id>`` — the
+    """Connector name on a sync tasklet for stream ``<stream_id>`` -- the
     suffix is the offset into the ``gpu_streams`` array bound by the
     matching memlet."""
     return f"{STREAM_CONNECTOR}_{stream_id}"

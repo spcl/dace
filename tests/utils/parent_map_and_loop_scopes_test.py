@@ -1,10 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for ``dace.sdfg.construction_utils.get_parent_map_and_loop_scopes``.
-
-Uses the DaCe Python frontend (``@dace.program``, ``dace.map``, ``range``)
-to build a realistic HPC-style SDFG that mixes maps, loops, nested SDFGs,
-scalar-dependent dynamic ranges, and 3D tensor accesses::
+"""Tests ``dace.sdfg.construction_utils.get_parent_map_and_loop_scopes`` on an SDFG mixing maps,
+loops, nested SDFGs, scalar-dependent ranges, and 3D tensor accesses::
 
     @dace.program kernel(A, offsets):
         for i in dace.map[0:N]:                 # Map "kernel_*"
@@ -76,13 +72,8 @@ def _find_inner_tasklet(sdfg):
 
 
 def test_inner_map_sees_two_loops_and_outer_map():
-    """
-    The k-map inside inner_compute sits inside:
-      LoopRegion(idx) -> LoopRegion(j) -> NestedSDFG -> Map(i)
-
-    get_parent_map_and_loop_scopes should return 3 scopes:
-      2 LoopRegions + 1 MapEntry.
-    """
+    """The k-map's parents are ``LoopRegion(idx) -> LoopRegion(j) -> NestedSDFG -> Map(i)``: 2
+    LoopRegions + 1 MapEntry."""
     sdfg = _get_sdfg()
     me, st = _find_inner_map(sdfg)
     parents = get_parent_map_and_loop_scopes(sdfg, me, st)
@@ -97,12 +88,8 @@ def test_inner_map_sees_two_loops_and_outer_map():
 
 
 def test_inner_tasklet_sees_inner_map_plus_all_scopes():
-    """
-    The increment tasklet is inside the k-map, so it should see
-    one extra MapEntry compared to the k-map itself:
-      MapEntry(k-map) + LoopRegion(idx) + LoopRegion(j) + MapEntry(i-map)
-    = 2 maps + 2 loops = 4 parent scopes.
-    """
+    """The increment tasklet adds the k-map to the k-map's own parents:
+    ``MapEntry(k) + LoopRegion(idx) + LoopRegion(j) + MapEntry(i)`` = 4 scopes."""
     sdfg = _get_sdfg()
     t, st = _find_inner_tasklet(sdfg)
     parents = get_parent_map_and_loop_scopes(sdfg, t, st)

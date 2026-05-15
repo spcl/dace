@@ -1,15 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pipeline-level tests for the gpu_specialization package.
-
-D2: ``GPUSpecializationPipeline`` is idempotent — applying it twice on
-    the same SDFG must not double-add the stream array, double-thread
-    connectors, or otherwise mutate the topology after the first run.
-
-D4: ``is_inside_gpu_device_kernel`` returns the right value for the three
-    important nesting shapes: NestedSDFG inside a Sequential map, inside
-    a GPU_Device map, and as a sibling-scope downstream consumer of a
-    kernel.
-"""
+"""Pipeline-level tests for the gpu_specialization package: ``GPUSpecializationPipeline`` idempotency
+(D2) and ``is_inside_gpu_device_kernel`` across the three nesting shapes (D4)."""
 import dace
 from dace import SDFG, dtypes
 from dace.memlet import Memlet
@@ -21,15 +12,13 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
 )
 
 # ---------------------------------------------------------------------------
-# D2 — pipeline idempotency
+# D2 -- pipeline idempotency
 # ---------------------------------------------------------------------------
 
 
 def _build_simple_gpu_copy_sdfg() -> SDFG:
-    """Tiny CPU→GPU→CPU pipeline: one host array staged into a GPU_Global
-    transient and copied straight back. Enough to trigger the full
-    gpu_specialization pipeline (lifts the implicit copy, schedules a
-    stream, threads the array, inserts sync)."""
+    """Tiny CPU->GPU->CPU pipeline: a host array staged into a GPU_Global transient and copied back,
+    enough to trigger the full gpu_specialization pipeline."""
     sdfg = SDFG('idem_pipeline')
     sdfg.add_array('A', [16], dace.float32)
     sdfg.add_array('B', [16], dace.float32)
@@ -54,8 +43,7 @@ def _topology_signature(sdfg: SDFG):
 
 
 def test_pipeline_idempotent_on_simple_sdfg():
-    """Two pipeline applications on the same SDFG: the second is a no-op
-    (returns ``{}`` and leaves topology untouched)."""
+    """Re-applying the pipeline is a no-op (returns ``{}``, topology untouched)."""
     sdfg = _build_simple_gpu_copy_sdfg()
 
     pipeline = GPUSpecializationPipeline()
@@ -75,21 +63,19 @@ def test_pipeline_idempotent_on_simple_sdfg():
 
 
 # ---------------------------------------------------------------------------
-# D4 — is_inside_gpu_device_kernel contract
+# D4 -- is_inside_gpu_device_kernel contract
 # ---------------------------------------------------------------------------
 
 
 def _trivial_inner_sdfg(name: str) -> SDFG:
-    """Empty NestedSDFG with one state and a host-side scalar so it has
-    something to declare."""
+    """Empty NestedSDFG with one state."""
     inner = SDFG(name)
     inner.add_state('s0')
     return inner
 
 
 def _wrap_with_outer_map(inner: SDFG, schedule: dtypes.ScheduleType) -> SDFG:
-    """Wrap ``inner`` inside an outer SDFG with a single map of the given
-    schedule. Returns the outer SDFG."""
+    """Wrap ``inner`` inside an outer SDFG with a single map of the given schedule."""
     outer = SDFG(f'outer_{schedule.name}')
     state = outer.add_state('s0')
     nsdfg_node = state.add_nested_sdfg(inner, set(), set())
@@ -112,11 +98,8 @@ def test_is_inside_gpu_device_kernel_false_for_inside_sequential_map():
 
 
 def test_is_inside_gpu_device_kernel_false_for_sibling_consumer():
-    """Sibling-scope NSDFG that consumes a kernel's output — not nested
-    inside the GPU_Device scope, so the answer must be ``False``. A naive
-    data-flow predecessor walk would get this wrong; the helper walks
-    parent_nsdfg_node / parent_sdfg directly to avoid the trap.
-    """
+    """Sibling-scope NSDFG consuming a kernel's output is not nested in the GPU_Device scope, so the
+    answer is ``False`` (a naive data-flow predecessor walk would get this wrong)."""
     outer = SDFG('sibling')
     outer.add_array('G', [16], dace.float32, storage=dtypes.StorageType.GPU_Global, transient=True)
     state = outer.add_state('s0')

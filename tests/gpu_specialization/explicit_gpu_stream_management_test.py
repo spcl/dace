@@ -32,11 +32,8 @@ def _sync_tasklets(state):
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_basic():
-    """
-    Single-component GPU program: exactly one stream, one end-of-state sync tasklet.
-    Under the new path-based chain, the sync tasklet is itself a sink (no output
-    edges); we verify that and its input wiring.
-    """
+    """Single-component GPU program: one stream, one end-of-state sync tasklet
+    that is a sink with correct input wiring."""
 
     @dace.program
     def simple_copy(A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
@@ -72,11 +69,8 @@ def test_basic():
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_extended():
-    """
-    Two independent connected components -> two streams -> one sync tasklet
-    with two stream in-connectors.  Memcpy tasklets must also be wired to
-    a stream.
-    """
+    """Two independent components -> two streams -> one sync tasklet with two
+    stream in-connectors; memcpy tasklets are stream-wired too."""
 
     @dace.program
     def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
@@ -121,9 +115,7 @@ def test_extended():
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness():
-    """
-    Simple element-wise computation, CPU vs. GPU parity.
-    """
+    """Element-wise computation: CPU vs. GPU parity."""
     import numpy as np
 
     @dace.program
@@ -154,9 +146,7 @@ def test_numerical_correctness():
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness_complex():
-    """
-    Two dependent maps, CPU vs. GPU parity including the intermediate array.
-    """
+    """Two dependent maps: CPU vs. GPU parity including the intermediate array."""
     import numpy as np
 
     @dace.program
@@ -369,14 +359,9 @@ def test_single_memset_library_node():
 
 
 def test_conditional_gpu_kernel_in_sequential_map():
-    """
-    Outer sequential map with a conditional guarding a GPU kernel.  After GPU
-    transformations the inner kernel lives inside a nested SDFG reached via
-    the outer Sequential map.  The stream pipeline must:
-      * propagate the ``gpu_streams`` array down to the nested SDFG,
-      * assign the inner GPU map to a stream,
-      * add a sync tasklet where required.
-    """
+    """Conditional GPU kernel under an outer Sequential map (kernel ends up in
+    a nested SDFG): the stream pipeline must propagate ``gpu_streams`` into
+    the nested SDFG, assign the inner GPU map a stream, and add a sync tasklet."""
 
     @dace.program
     def conditional_gpu(A: dace.float64[10], B: dace.float64[128]):
@@ -421,25 +406,10 @@ def test_conditional_gpu_kernel_in_sequential_map():
 
 
 def test_libnode_expansion_propagates_stream_to_child_libnode():
-    """
-    A library node whose expansion produces another library node (e.g.
-    ``MatMul`` -> ``Gemm`` via ``SpecializeMatMul``) must have its stream
-    binding propagated to the child. After the GPU stream pipeline +
-    one level of expansion, the resulting child library node must have
-    the same ``stream`` in-connector wiring as the original outer node.
-
-    Pre-fix this fails because:
-    - ``NaiveGPUStreamScheduler`` only assigns streams to ``CopyLibraryNode``
-      / ``MemsetLibraryNode`` / GPU ``MapEntry`` (see ``_is_gpu_copy_or_memset``).
-      ``MatMul`` is a generic GPU library node and is ignored.
-    - Even if the parent were wired, ``ExpandTransformation.apply`` would
-      have nothing to copy onto the child because the replacement
-      (``Gemm``) declares no ``stream`` in-connector.
-
-    The fix is twofold: extend the stream pass to cover all GPU library
-    nodes, and add a follow-up pass that, after each round of library
-    expansion, wires newly-introduced library nodes onto the parent's
-    stream.
+    """A library node whose expansion produces another library node
+    (``MatMul`` -> ``Gemm`` via ``SpecializeMatMul``) must propagate its
+    stream binding to the child: after the pipeline plus one expansion the
+    child has the same ``stream`` in-connector wiring as the parent.
     """
     from dace.libraries.blas.nodes.matmul import MatMul
 
@@ -464,11 +434,11 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays, ("Stream array must be present after the pipeline runs")
-    # The MatMul itself must have been wired with a `stream` in-connector
-    # from a `gpu_streams` AccessNode (currently fails: scheduler ignores
+    # The MatMul itself must have been wired with a ``stream`` in-connector
+    # from a ``gpu_streams`` AccessNode (currently fails: scheduler ignores
     # generic GPU library nodes).
     assert STREAM_CONNECTOR in matmul.in_connectors, (
-        "MatMul (a GPU library node) should be wired with a `stream` connector "
+        "MatMul (a GPU library node) should be wired with a ``stream`` connector "
         "by the stream pipeline before it is expanded")
     matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == STREAM_CONNECTOR]
     assert len(matmul_stream_in) == 1
@@ -487,7 +457,7 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     # The child must have inherited the parent's stream wiring.
     assert STREAM_CONNECTOR in child.in_connectors, (
         f"Child library node {type(child).__name__} (produced by expanding MatMul) "
-        f"must have a `stream` in-connector inherited from the parent")
+        f"must have a ``stream`` in-connector inherited from the parent")
     child_stream_in = [e for e in state.in_edges(child) if e.dst_conn == STREAM_CONNECTOR]
     assert len(child_stream_in) == 1
     assert isinstance(child_stream_in[0].src, dace.nodes.AccessNode)
@@ -495,17 +465,10 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
 
 
 def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
-    """
-    A library node whose expansion produces a *nested SDFG* containing more
-    library nodes (e.g. ``Cholesky`` (cuSolverDn) -> NestedSDFG{Potrf,
-    Transpose, Transpose}) must have stream wiring propagated to every
-    nested runtime call.
-
-    Under the unified post-expansion pipeline, ``expand_library_nodes(
-    recursive=True)`` flattens the chain in one pass; the stream
-    scheduler then walks every kernel ``MapEntry`` and runtime Tasklet
-    directly and wires each one's ``__stream`` connector. No follow-up
-    pass / re-run is needed.
+    """A library node whose expansion produces a nested SDFG of more library
+    nodes (``Cholesky`` cuSolverDn -> NestedSDFG{Potrf, Transpose, Transpose})
+    must propagate stream wiring to every nested runtime call after the
+    unified recursive-expand + stream-scheduler pipeline.
     """
     from dace.libraries.linalg.nodes.cholesky import Cholesky
 
@@ -539,4 +502,4 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     assert runtime_tasklets, "Cholesky cuSolverDn expansion should leave at least one runtime call Tasklet."
     for t in runtime_tasklets:
         assert STREAM_CONNECTOR in t.in_connectors, (
-            f"Runtime tasklet {t.label} must have its `__stream` in-connector wired by the unified pipeline")
+            f"Runtime tasklet {t.label} must have its ``__stream`` in-connector wired by the unified pipeline")

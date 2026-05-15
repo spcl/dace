@@ -1560,7 +1560,7 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
 def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
     """
     Checks if the given node is enclosed within a Map whose schedule type
-    matches any in the `schedules` set.
+    matches any in the ``schedules`` set.
 
     Parameters
     ----------
@@ -1574,7 +1574,7 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     Returns
     ----------
     bool
-        True if the node is enclosed by a Map with a schedule type in `schedules`, False otherwise.
+        True if the node is enclosed by a Map with a schedule type in ``schedules``, False otherwise.
     """
     current = node
 
@@ -2103,7 +2103,7 @@ def _is_structure_view(obj) -> bool:
 def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
     """
     Checks if the given node is enclosed within a Map whose schedule type
-    matches any in the `schedules` set.
+    matches any in the ``schedules`` set.
     Parameters
     ----------
     state : SDFGState
@@ -2115,7 +2115,7 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     Returns
     ----------
     bool
-        True if the node is enclosed by a Map with a schedule type in `schedules`, False otherwise.
+        True if the node is enclosed by a Map with a schedule type in ``schedules``, False otherwise.
     """
     current = node
 

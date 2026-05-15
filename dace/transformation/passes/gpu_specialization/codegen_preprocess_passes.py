@@ -1,10 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Wrapper :class:`Pass` classes exposing the ``experimental_cuda.preprocess``
-steps as composable Pipeline members.
-
-Each pass wraps one codegen-preprocess operation
-(``sdfg.expand_library_nodes``, ``apply_transformations_once_everywhere(AddThreadBlockMap)``,
-etc.) so the ordering is declarative and testable.
+"""Wrapper :class:`Pass` classes exposing the ``experimental_cuda.preprocess`` steps as composable
+Pipeline members, so codegen-preprocess ordering is declarative and testable.
 """
 from typing import Any, Dict, Optional
 
@@ -15,9 +11,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ExpandLibraryNodes(ppl.Pass):
-    """Wraps :meth:`SDFG.expand_library_nodes` (recursive) as a Pipeline
-    Pass so library-node expansion can be ordered declaratively
-    alongside other transformations."""
+    """Recursive :meth:`SDFG.expand_library_nodes` as a Pipeline Pass."""
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -38,20 +32,12 @@ class ExpandLibraryNodes(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AddThreadBlockMaps(ppl.Pass):
-    """Tile every ``GPU_Device`` map without an inner ``GPU_ThreadBlock``
-    map (via :class:`AddThreadBlockMap`) and infer the resulting
-    ``(grid, block)`` dimensions for codegen.
+    """Tile every ``GPU_Device`` map lacking an inner ``GPU_ThreadBlock`` map (via
+    :class:`AddThreadBlockMap`) and infer the resulting ``(grid, block)`` dimensions.
 
-    Returns a dict ``{'kernel_dimensions_map': …, 'tb_inserted_kernels':
-    set(MapEntry)}`` that callers (the codegen target) read out of
-    ``pipeline_results``.
-
-    Tiles late on purpose: the kernel-internal transient hoist
-    (``MoveArrayOutOfKernel``) sees user-authored kernel shapes, not
-    post-tile shapes — tiling earlier introduces an inner-map range like
-    ``Min(N-1, b_i+31) - b_i + 1`` whose ``b_i`` outer-loop symbol then
-    leaks into host-side ``cudaMalloc`` size expressions for any
-    transient lifted out of the kernel.
+    Returns ``{'kernel_dimensions_map': ..., 'tb_inserted_kernels': set(MapEntry)}`` in
+    ``pipeline_results``. Tiled late on purpose: tiling first leaks the inner-map outer-loop
+    symbol into host-side ``cudaMalloc`` size expressions for kernel-hoisted transients.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -81,14 +67,11 @@ class AddThreadBlockMaps(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ReinferConnectorTypes(ppl.Pass):
-    """Re-derive NestedSDFG connector types from their inner descriptors.
+    """Clear and re-derive NestedSDFG connector types from their inner descriptors.
 
-    Earlier passes mutate descriptors (e.g. ``PromoteGPUScalarsToArrays``
-    widens a ``Scalar`` into a length-1 ``Array``); connectors typed at
-    construction time still carry the old scalar dtype and the codegen
-    emits ``T name`` while the body indexes ``name[0]`` — compile error.
-    Clear those connector annotations on every NestedSDFG (recursively),
-    then re-infer them so they become pointer-typed.
+    Earlier passes mutate descriptors (e.g. ``PromoteGPUScalarsToArrays`` widens a ``Scalar`` to a
+    length-1 ``Array``), leaving stale scalar-typed connectors that miscompile (``T name`` vs.
+    ``name[0]``). Re-inference makes them pointer-typed.
     """
 
     def modifies(self) -> ppl.Modifies:

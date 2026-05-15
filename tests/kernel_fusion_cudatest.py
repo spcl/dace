@@ -5,7 +5,7 @@ import numpy as np
 
 # All tests in this file fuse GPU_Device kernels with nested GPU_Device children.
 # The experimental codegen rejects nested GPU_Device schedules (dynamic
-# parallelism, see ExperimentalCUDACodeGen check) — only the legacy codegen
+# parallelism, see ExperimentalCUDACodeGen check) -- only the legacy codegen
 # supports this pattern.
 pytestmark = pytest.mark.old_gpu_codegen_only
 

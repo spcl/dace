@@ -115,7 +115,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
             # Without an inner ThreadBlock map the kernel-map variables bind
-            # to thread indices instead — same blockIdx-based formulas.
+            # to thread indices instead -- same blockIdx-based formulas.
             _emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype,
                                         callsite_stream, cfg, state_id, kernel_entry_node, self._dispatcher)
 
@@ -387,11 +387,9 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
 
 class ScopeManager:
-    """
-    A helper class to manage opening and closing brackets in a structured way using the 'with' statement.
-    This class simplifies the process of correctly opening and closing brackets. It also supports an optional
-    debug mode to include comments in the generated code, which can help with debugging and understanding
-    the code structure.
+    """RAII context manager that balances ``{`` / ``}`` for a generated scope.
+
+    Optional ``debug`` mode annotates each bracket with ``comment`` for readability.
     """
 
     def __init__(self,
@@ -405,19 +403,12 @@ class ScopeManager:
                  comment: str = None,
                  brackets_on_enter: bool = True,
                  debug: bool = False):
-        """
-        Initializes the KernelScopeManager.
+        """Initialize the scope manager.
 
-        :param frame_codegen: The frame codegenerator used for allocation and deallocation of arrays in scopes
-        :param sdfg: The SDFG instance for context.
-        :param cfg: The ControlFlowRegion instance for context.
-        :param dfg_scope: The ScopeSubgraphView instance for context.
-        :param state_id: The ID of the current state for context.
-        :param function_stream: The CodeIOStream for function-level code.
-        :param callsite_stream: The CodeIOStream for callsite-level code.
-        :param comment: A descriptive comment explaining the purpose of the code block being opened. Default is None.
-        :param brackets_on_enter: Whether on entering (i.e. when using "with", there should be a bracket opened). Default is True.
-        :param debug: Whether to include debug comments in the output. Defaults to False.
+        :param frame_codegen: frame codegen used for in-scope array (de)allocation.
+        :param comment: label describing the opened block, used by ``debug`` mode.
+        :param brackets_on_enter: open a bracket on ``__enter__``.
+        :param debug: annotate brackets with ``comment``.
         """
         self.frame_codegen = frame_codegen
         self.sdfg = sdfg

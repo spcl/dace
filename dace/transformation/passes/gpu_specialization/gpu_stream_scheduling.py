@@ -1,26 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU stream scheduling strategies.
 
-A *strategy* owns the end-to-end stream-lowering work for a single SDFG.
-It does three things, in order:
-
-1. **Assign streams.** ``assign_streams(sdfg) -> Dict[Node, int]`` — pick
-   a backend stream id for every kernel / GPU copy / GPU memset
-   consumer. Strategy-specific (WCC for the naive strategy, all-zero for
-   the monolithic single-stream strategy).
-2. **Lower the assignments to graph mutations.** Allocate the
-   ``gpu_streams`` array (with propagation to nested SDFGs that need
-   it), wire each consumer's stream connector. *Shared* — both
-   strategies use the same module-level helpers in
-   :mod:`stream_lowering_helpers`.
-3. **Insert sync tasklets.** ``insert_sync_tasklets(sdfg, assignments)``
-   — strategy-specific again. Naive uses a per-edge classifier; the
-   monolithic strategy emits one sync per copy state plus a trailing
-   sync at program exit.
-
-Strategies act on the **root** SDFG only. Nested SDFGs are reached via
-``all_sdfgs_recursive`` from the root and share the root's decisions.
-Calling :meth:`apply_pass` on a non-root SDFG raises.
+A strategy owns end-to-end stream lowering for one SDFG: assign a stream
+id per consumer (strategy-specific), allocate ``gpu_streams`` and wire
+connectors (shared, via :mod:`stream_lowering_helpers`), then insert sync
+tasklets (strategy-specific). Strategies act on the root SDFG only;
+nested SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
 """
 import warnings
 from dataclasses import dataclass
@@ -70,13 +55,8 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
             raise ValueError(f"{type(self).__name__}: stream scheduling must run on the root SDFG. "
                              f"Got nested SDFG '{sdfg.name}' (parent '{sdfg.parent_sdfg.name}'). "
                              "Nested SDFGs share the root's decisions; do not invoke the strategy on them.")
-        # Self-idempotency: if a caller pre-wired streams (typically via
-        # ``GPUStreamPipeline`` before invoking ``compile()``, which then
-        # runs ``GPUCodegenPreprocessPipeline`` and reaches this strategy
-        # again as a pipeline step) the SDFG already has its ``gpu_streams``
-        # array and every consumer is connected. Re-wiring would corrupt
-        # the chains; return the cached assignment dict so downstream
-        # passes still see the same assignment.
+        # Self-idempotency: if streams were already wired, re-wiring would corrupt the chains.
+        # Return the cached assignment so downstream passes see the same result.
         from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_lowering_applied
         if is_gpu_lowering_applied(sdfg):
             return getattr(sdfg, '_gpu_stream_assignments', {})
@@ -95,10 +75,8 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         wire_stream_connectors(sdfg, assignments)
         self.insert_sync_tasklets(sdfg, assignments)
 
-        # Cache on the SDFG so a re-application that's gated (the pipeline
-        # short-circuits) can still recover the full assignment dict —
-        # downstream consumers (e.g. memory-pool codegen) need the stream
-        # id of every WCC-coloured AccessNode, not just the wired consumers.
+        # Cache the full dict on the SDFG: downstream consumers (e.g. memory-pool codegen)
+        # need every WCC-coloured AccessNode's id, not just wired consumers.
         sdfg._gpu_stream_assignments = assignments
         return assignments
 
@@ -112,7 +90,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
 
 
 # ---------------------------------------------------------------------------
-# Naive strategy — WCC stream assignment + per-edge sync rules
+# Naive strategy -- WCC stream assignment + per-edge sync rules
 # ---------------------------------------------------------------------------
 
 
@@ -161,20 +139,20 @@ class _SyncRule:
 
 
 _NAIVE_SYNC_RULES: List[_SyncRule] = [
-    # GPU AccessNode → host AccessNode (host needs to wait on the GPU stream).
+    # GPU AccessNode -> host AccessNode (host needs to wait on the GPU stream).
     _SyncRule(
         predicate=lambda c:
         (_is_gpu_global_access(c.src, c.state) and _is_non_gpu_accessible(c.dst, c.state) and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
         per_node_sync_target=lambda c: c.dst if not c.is_sink else None,
     ),
-    # host AccessNode → GPU AccessNode (GPU needs to see the host write).
+    # host AccessNode -> GPU AccessNode (GPU needs to see the host write).
     _SyncRule(
         predicate=lambda c:
         (_is_non_gpu_accessible(c.src, c.state) and _is_gpu_global_access(c.dst, c.state) and not c.in_kernel),
         stream_id=lambda c, s: s[c.dst],
     ),
-    # Kernel exit → GPU AccessNode: sync the kernel's own stream.
+    # Kernel exit -> GPU AccessNode: sync the kernel's own stream.
     _SyncRule(
         predicate=lambda c: _is_gpu_device_exit(c.src) and _is_gpu_global_access(c.dst, c.state),
         stream_id=lambda c, s: s[c.dst if c.is_sink else c.src],
@@ -186,7 +164,7 @@ _NAIVE_SYNC_RULES: List[_SyncRule] = [
         stream_id=lambda c, s: s[c.src],
     ),
     # Already-lowered GPU runtime tasklet (``cudaMemcpyAsync`` /
-    # ``cudaMemsetAsync`` etc.). Treated like the libnode rule above —
+    # ``cudaMemsetAsync`` etc.). Treated like the libnode rule above --
     # state-end sync on the tasklet's assigned stream.
     _SyncRule(
         predicate=lambda c: is_already_lowered_gpu_runtime_call(c.src),
@@ -200,14 +178,9 @@ _NAIVE_SYNC_RULES: List[_SyncRule] = [
 class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     """Stream assignment via weakly-connected-component grouping; per-edge sync rules.
 
-    Assignment:
-    - Nodes in the same weakly connected component share one stream.
-    - Top-level states start each new component on a fresh stream
-      (wrapping per ``compiler.cuda.max_concurrent_streams``).
-    - In nested SDFGs, all internal components inherit the parent component's stream.
-
-    Sync placement: per-edge classifier (``_NAIVE_SYNC_RULES``) covering
-    GPU↔host, kernel-exit→GPU, and stream-bound copy/memset libnodes.
+    Nodes in one weakly connected component share a stream. Each top-level component gets a fresh
+    stream (wrapping per ``compiler.cuda.max_concurrent_streams``); nested-SDFG components inherit
+    the parent's. Sync placement uses the ``_NAIVE_SYNC_RULES`` per-edge classifier.
     """
 
     def __init__(self):
@@ -305,7 +278,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
 
 
 # ---------------------------------------------------------------------------
-# Monolithic single-stream strategy — all-on-GPU, syncs only after copy states
+# Monolithic single-stream strategy -- all-on-GPU, syncs only after copy states
 # ---------------------------------------------------------------------------
 
 
@@ -314,16 +287,9 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
 class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     """All-on-GPU strategy: every consumer lands on stream 0; syncs only after copy states.
 
-    Validates the SDFG fits the single-stream model — every Tasklet must
-    execute inside a ``GPU_Device`` map; every LibraryNode must either be
-    a pipeline-wired ``CopyLibraryNode`` / ``MemsetLibraryNode`` or have
-    ``GPU_Device`` schedule (or be inside one). Mismatches raise — the
-    strategy is opted into explicitly, so silent fallback would mask intent.
-
-    Sync placement: one state-end sync in every state with a
-    ``CopyLibraryNode`` (host transfers are the only ordering-relevant
-    points in the single-stream model), plus one trailing sync on every
-    program-sink state that doesn't already have one.
+    Validates that every Tasklet/LibraryNode runs on-device (mismatches raise, since the strategy
+    is opted into explicitly). Syncs only at host-transfer states plus a trailing sync per
+    program-sink state.
     """
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
@@ -343,18 +309,10 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     @staticmethod
     def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
-        """Return a one-line reason if ``node`` violates the all-on-GPU
-        contract, or ``None`` if it's acceptable.
-
-        Composes the existing predicates instead of re-classifying:
-
-        * Tasklets must execute inside a ``GPU_Device`` scope OR be
-          recognised as already-lowered GPU runtime calls (the strategy
-          will assign them a stream).
-        * Library nodes must be pipeline-managed Copy/Memset libnodes,
-          have ``GPU_Device`` schedule, or sit inside a kernel scope.
-        * Other node classes (AccessNode, MapEntry/Exit, NestedSDFG, …)
-          are unrestricted by this strategy.
+        """One-line reason ``node`` violates the all-on-GPU contract, or
+        ``None`` if acceptable. Tasklets must be device-level or
+        already-lowered runtime calls; LibraryNodes must be Copy/Memset
+        libnodes or device-level; other node classes are unrestricted.
         """
         from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
         from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
@@ -374,13 +332,10 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         return None
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
-        """Sync after states that perform HOST↔DEVICE transfers (the only
-        ordering-relevant points in the single-stream model), plus a
-        trailing sync on every program-sink state that doesn't already.
-
-        Same-side GPU↔GPU copies don't need a sync — they share stream 0
-        and execute in submit order. Only edges crossing the CPU/GPU
-        boundary make an outside observer (the host) wait on the stream.
+        """Sync after host<->device transfer states plus a trailing sync
+        per program-sink state. Same-side GPU<->GPU copies need no sync --
+        they share stream 0 and run in submit order; only CPU/GPU-boundary
+        edges make the host wait on the stream.
         """
         host_copy_states: Set[SDFGState] = set()
         for nsdfg in sdfg.all_sdfgs_recursive():
@@ -398,17 +353,10 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     @staticmethod
     def _state_has_host_boundary_copy(state: SDFGState, sdfg: SDFG) -> bool:
-        """True iff ``state`` performs a host↔device transfer.
-
-        Recognises two shapes:
-
-        * ``CopyLibraryNode`` whose ``_in``/``_out`` arrays straddle the
-          CPU/GPU storage boundary — the canonical pre-expansion shape.
-        * An already-lowered Tasklet (``cudaMemcpyAsync`` /
-          ``hipMemcpyAsync``) whose body names a host↔device direction
-          (``HostToDevice`` or ``DeviceToHost``) — the canonical
-          post-expansion shape, e.g. when a caller pre-expanded library
-          nodes before invoking the pipeline.
+        """True iff ``state`` performs a host<->device transfer. Recognises
+        a ``CopyLibraryNode`` straddling the CPU/GPU storage boundary
+        (pre-expansion shape) or an already-lowered memcpy Tasklet whose
+        body names a host<->device direction (post-expansion shape).
         """
         from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
         cpu_storages = {

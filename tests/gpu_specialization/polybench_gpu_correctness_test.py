@@ -1,11 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU-offloading correctness tests for npbench polybench kernels.
-
-Each test builds a CPU SDFG (reference) and a GPU-transformed SDFG from the same
-``@dc.program``, runs both on independent copies of the inputs at a small size
-(no dimension equals 1), and compares the results element-wise.  Kernels are
-imported from ``tests/npbench/polybench`` so the canonical source is exercised.
-"""
+"""GPU-offloading correctness tests for npbench polybench kernels: CPU SDFG vs GPU-transformed SDFG
+compared element-wise at small sizes (kernels imported from ``tests/npbench/polybench``)."""
 import os
 import sys
 from typing import Callable, Dict
@@ -73,7 +68,7 @@ def _run_gpu_vs_cpu(kernel,
                     *,
                     rtol: float = 1e-10,
                     atol: float = 1e-12) -> None:
-    """Run ``kernel`` on CPU (reference) and on a GPU-transformed SDFG, compare outputs.
+    """Run ``kernel`` on CPU and on a GPU-transformed SDFG, compare outputs.
 
     :param kernel: the ``@dc.program`` to exercise.
     :param build_args: callable returning a fresh ``{name: array}`` argument dict per call.

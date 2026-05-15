@@ -1,16 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end pins for WCR (write-conflict-resolution / atomic
-accumulator) survival through the experimental GPU codegen pipeline.
-
-``InsertExplicitGPUGlobalMemoryCopies`` demotes per-thread transient
-GPU_Global scalars to ``Register`` to avoid a host-side ``cudaMalloc``,
-but it must skip the demotion when the array has any incoming WCR
-memlet — otherwise the kernel loses atomic semantics and silently
-produces wrong totals.
-
-Storages and schedules are annotated directly on the ``@dace.program``
-so the tests don't depend on ``auto_optimize``'s tile-size heuristic.
-"""
+"""End-to-end pins that ``InsertExplicitGPUGlobalMemoryCopies`` does not demote a WCR (atomic
+accumulator) array to ``Register`` -- doing so would lose atomic semantics and produce wrong totals."""
 import numpy as np
 import pytest
 
@@ -19,10 +9,7 @@ import dace
 
 @pytest.mark.gpu
 def test_wcr_via_augmented_assign():
-    """``acc[0] += A[i]`` inside a GPU_Device map: DaCe emits a memlet
-    with ``wcr = lambda a, b: a + b``. The codegen must atomically
-    accumulate; the experimental pipeline must not demote the
-    accumulator to a per-thread Register."""
+    """``acc[0] += A[i]`` in a GPU_Device map accumulates atomically; the accumulator is not demoted."""
 
     @dace.program
     def aug_assign(A: dace.float64[64] @ dace.StorageType.GPU_Global,
@@ -39,9 +26,7 @@ def test_wcr_via_augmented_assign():
 
 @pytest.mark.gpu
 def test_wcr_via_reduction_kernel():
-    """Row-reduction kernel: 2D map atomically accumulating each row of
-    ``A`` into ``row_sums[i]`` via WCR. Multiple WCR targets (one per
-    row), each with cross-thread atomic adds along the ``j`` axis."""
+    """Row-reduction kernel: a 2D map atomically accumulates each row of ``A`` into ``row_sums[i]``."""
 
     @dace.program
     def row_reduce(A: dace.float64[8, 8] @ dace.StorageType.GPU_Global,
@@ -58,12 +43,8 @@ def test_wcr_via_reduction_kernel():
 
 @pytest.mark.gpu
 def test_wcr_np_sum_small_n_auto_staging():
-    """``total[0] = np.sum(A)`` over 64 elements with NO explicit
-    storage annotations. DaCe's runtime auto-stages host arrays to GPU
-    around the compiled SDFG; ``auto_optimize``'s decision to
-    sequentialize the small reduce map is then valid because the inputs
-    are visible on the host. Reference behaviour for the explicit-storage
-    sibling test below."""
+    """``total[0] = np.sum(A)`` with no storage annotations: runtime auto-staging makes
+    ``auto_optimize``'s sequentialized small reduce valid. Reference for the explicit-storage tests."""
     from dace.dtypes import DeviceType
     from dace.transformation.auto.auto_optimize import auto_optimize
 

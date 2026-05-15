@@ -1,24 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``PromoteGPUScalarsToArrays`` — replace ``Scalar`` descriptors that cannot
-remain scalars under a GPU codegen with length-1 ``Array`` descriptors.
-Runs after default storage / schedule inference; depends on
-``InferDefaultSchedulesAndStorages``.
+"""``PromoteGPUScalarsToArrays`` -- replace GPU-incompatible ``Scalar``
+descriptors with length-1 ``Array`` descriptors (after storage/schedule
+inference; depends on ``InferDefaultSchedulesAndStorages``).
 
-Two promotion rules:
-
-1. **Storage-incompatible scalars.** A ``Scalar`` with ``GPU_Global`` /
-   ``GPU_Shared`` storage cannot be addressed as a value-typed scalar from
-   the host. Widen to a length-1 ``Array`` keeping the same storage.
-
-2. **Kernel-write scalars.** A ``Scalar`` written to inside a ``GPU_Device``
-   kernel scope must materialize as device-resident memory. Widen to
-   length-1 ``Array`` and force ``storage = GPU_Global``. ``Register`` is
-   exempt (those are thread-local stack variables).
-
-Memlets referencing a promoted name are rewritten via ``Memlet.from_array``;
-interstate-edge assignments referring to it as a bare identifier get a
-``[0]`` subscript appended. Nested SDFGs that re-declare the same name as
-a Scalar are recursively promoted to keep connector types consistent.
+Two rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage keeps
+its storage and is widened to length-1; (2) a ``Scalar`` written inside a
+``GPU_Device`` kernel is widened and forced to ``GPU_Global`` (``Register``
+is exempt -- thread-local stack). Memlets are rewritten via
+``Memlet.from_array``, bare-identifier interstate assignments get a ``[0]``
+subscript, and nested SDFGs re-declaring the name are promoted recursively.
 """
 from typing import Any, Dict, Optional
 
@@ -56,7 +46,7 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     """Pipeline-shaped wrapper around
     :func:`dace.sdfg.infer_types.set_default_schedule_and_storage_types`.
 
-    The function itself is the actual implementation — this class exists
+    The function itself is the actual implementation -- this class exists
     so the call can participate in a ``Pipeline`` with a real
     ``depends_on`` edge from later passes. ``PromoteGPUScalarsToArrays``
     in particular relies on every descriptor having a final, non-default
@@ -103,7 +93,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         promoted = 0
         # Top-down so a parent's promotion is visible when we visit the
         # child's matching descriptor (children inherit the parent's choice
-        # — see ``_promote_one`` for the recursion into nested SDFGs).
+        # -- see ``_promote_one`` for the recursion into nested SDFGs).
         for nsdfg in list(sdfg.all_sdfgs_recursive()):
             for name in list(nsdfg.arrays):
                 if not self._needs_promotion(nsdfg, name):
@@ -178,7 +168,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         # Interstate edge assignments referencing the promoted name as a
         # bare identifier (e.g. the frontend's ``__sym_X = X`` symbol-promotion
         # assignment for indirect indexing) must be rewritten to subscript
-        # the new length-1 array (``__sym_X = X[0]``) — otherwise the codegen
+        # the new length-1 array (``__sym_X = X[0]``) -- otherwise the codegen
         # emits ``int = const int*``.
         self._rewrite_interstate_assignments(sdfg, name)
 

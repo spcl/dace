@@ -23,11 +23,11 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
-    # cuSolverDn writes the LAPACK info code via a device pointer, so `_info`
-    # must stay on the GPU. We additionally allocate `_info_host` on the CPU
-    # and connect an implicit edge `_info -> _info_host` so the new GPU
+    # cuSolverDn writes the LAPACK info code via a device pointer, so ``_info``
+    # must stay on the GPU. We additionally allocate ``_info_host`` on the CPU
+    # and connect an implicit edge ``_info -> _info_host`` so the new GPU
     # pipeline's InsertExplicitGPUGlobalMemoryCopies lowers it to an explicit
-    # D2H copy — the host then has a readable status code.
+    # D2H copy -- the host then has a readable status code.
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
     if implementation == 'cuSolverDn':
         info_host_arr = sdfg.add_array('_info_host', [1],
@@ -148,9 +148,9 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
 
     def expand(self, state, sdfg=None, *args, **kwargs):
         # Storage-aware auto-pick: cuSolverDn for GPU input, OpenBLAS otherwise.
-        # Without this, `apply_gpu_transformations + expand_library_nodes` lands
+        # Without this, ``apply_gpu_transformations + expand_library_nodes`` lands
         # on OpenBLAS for a GPU-resident matrix (alphabetical default), which
-        # then puts `_info` on GPU storage but writes it from a CPU library and
+        # then puts ``_info`` on GPU storage but writes it from a CPU library and
         # fails validation.
         actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
         if self.implementation is None:
@@ -168,8 +168,8 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        # Filter on the data connector — the GPU stream pipeline may attach
-        # a separate `stream` in-edge to GPU library nodes which is not part
+        # Filter on the data connector -- the GPU stream pipeline may attach
+        # a separate ``stream`` in-edge to GPU library nodes which is not part
         # of the data flow and must not be counted here.
         in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
         if len(in_edges) != 1:

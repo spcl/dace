@@ -2,7 +2,7 @@
 """Strategy-selection tests.
 
 The strategy is chosen via the pipeline constructor argument
-``GPUStreamPipeline(scheduling_strategy=…)``. This file pins the
+``GPUStreamPipeline(scheduling_strategy=...)``. This file pins the
 selection contract.
 """
 from typing import Dict
@@ -58,15 +58,14 @@ def test_pipeline_accepts_user_defined_strategy():
 
 
 def test_abstract_assign_streams_raises():
-    """The base class enforces the contract — a strategy must override
-    ``assign_streams``."""
+    """A strategy must override ``assign_streams`` (base class enforces it)."""
     with pytest.raises(NotImplementedError, match="assign_streams"):
         GPUStreamSchedulingStrategy().assign_streams(dace.SDFG('abc'))
 
 
 def test_abstract_apply_pass_also_raises():
-    """``apply_pass`` routes through ``assign_streams``, so the same
-    contract holds when the pass machinery invokes the strategy."""
+    """``apply_pass`` routes through ``assign_streams``, so the contract holds
+    via the pass machinery too."""
     with pytest.raises(NotImplementedError):
         GPUStreamSchedulingStrategy().apply_pass(dace.SDFG('abc'), {})
 

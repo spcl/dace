@@ -1,21 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift ``GPU_Shared`` transients out of nested SDFGs into the SDFG that
-owns the enclosing GPU_Device map.
+"""Lift ``GPU_Shared`` transients out of nested SDFGs into the SDFG owning
+the enclosing ``GPU_Device`` map.
 
-Why: ``__shared__ T name[N]`` is only valid inside a CUDA kernel function.
-When a Shared transient lives inside an inner NestedSDFG, the framecode
-allocation walker has no signal that the array's home is the kernel — by
-default it routes the declaration to whichever scope the inner SDFG
-hierarchy points at, which often ends up at the top SDFG. The generated
-``__shared__`` declaration then never lands inside any ``__global__``
-function, and the inner ``DACE_DFI`` body references an undeclared
-identifier (compile error).
-
-This pass promotes the descriptor to the SDFG that owns the kernel
-``MapEntry`` and wires it through the NestedSDFG via connectors. A
-dependency edge ``MapEntry -> AccessNode`` pins the array to the kernel
-scope so the framecode allocates it there. A symmetric edge to
-``MapExit`` keeps it live through kernel exit.
+``__shared__`` is only valid inside a CUDA kernel; a Shared transient buried
+in an inner NestedSDFG escapes the ``__global__`` function (the framecode
+allocation walker loses the kernel-home signal), leaving an undeclared
+identifier. This pass promotes the descriptor to the kernel-owning SDFG,
+wires it through the NestedSDFG via connectors, and adds kernel
+``MapEntry``/``MapExit`` dependency edges to pin allocation to the kernel.
 """
 import copy as _copy
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,18 +24,15 @@ from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_me
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LiftSharedOutOfNestedSDFG(ppl.Pass):
-    """Promote every ``GPU_Shared`` transient living inside a nested SDFG that
-    sits inside a ``GPU_Device`` map up into the SDFG that owns the kernel
-    map. Wires the transient through the NSDFG via an out-connector and adds
-    dependency edges to the kernel map's entry/exit so the framecode walker
-    pins allocation to the kernel scope."""
+    """Promote every ``GPU_Shared`` transient in a nested SDFG inside a
+    ``GPU_Device`` map up to the kernel-owning SDFG, wired through the NSDFG
+    via connectors with kernel entry/exit dependency edges."""
 
     def depends_on(self):
-        # Real dependencies for ordering when chained through a Pipeline:
-        # * ``InsertExplicitGPUGlobalMemoryCopies`` lifts AccessNode→AccessNode
-        #   Shared edges into ``CopyLibraryNode`` instances; without it,
-        #   inner Shared transients used only on the copy edge wouldn't
-        #   surface as descriptors with ``transient=True``.
+        # ``InsertExplicitGPUGlobalMemoryCopies`` must run first: it lifts
+        # AccessNode->AccessNode Shared edges into ``CopyLibraryNode``s;
+        # without it, Shared transients used only on a copy edge never
+        # surface as ``transient=True`` descriptors.
         return {InsertExplicitGPUGlobalMemoryCopies}
 
     def modifies(self) -> ppl.Modifies:
@@ -84,22 +73,17 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
             MapEntry --(empty, dep)--> AN_read --(in:name)--> NSDFG
             NSDFG --(out:name)--> AN_write --(empty, dep)--> MapExit
 
-        Two ``AccessNode``s for the same outer descriptor (read side +
-        write side) keep the state acyclic when the inner mutates the
-        array — DaCe rejects a single-AN read+write cycle around an NSDFG.
-        ``force=True`` on the connector adds is required because the same
-        name appears in both ``in_connectors`` and ``out_connectors`` (the
-        standard DaCe pattern for inout arrays).
+        Separate read/write ``AccessNode``s keep the state acyclic when the
+        inner SDFG mutates the array (DaCe rejects a single-AN read+write
+        cycle around an NSDFG). ``force=True`` is needed because the name
+        appears in both in- and out-connectors (the inout pattern).
 
-        Returns ``True`` if the descriptor was lifted, ``False`` if the inner
-        Shared transient is unused (no read/write) and was left in place — a
-        bare lift would leave the SDFG inconsistent (descriptor moved, no
-        connectors / edges to wire it through)."""
+        Returns ``False`` (lift skipped) when the inner transient is unused:
+        a bare descriptor move with no edges/connectors would corrupt the
+        SDFG."""
         is_read, is_written = _classify_inner_usage(inner_sdfg, name)
         if not is_read and not is_written:
-            # Unused inner Shared transient — moving the descriptor without
-            # adding any edges/connectors corrupts the SDFG. Skip the lift.
-            return False
+            return False  # unused: lifting without edges/connectors corrupts the SDFG
 
         inner_desc = inner_sdfg.arrays[name]
 
@@ -128,14 +112,12 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
                                  Memlet(data=outer_name, subset=_copy.deepcopy(full_subset)))
             outer_state.add_edge(an_write, None, kernel_exit, None, dependency_edge())
 
-        # Write-only case still needs allocation anchoring — without a read
-        # side the AN_write has no incoming dep from MapEntry, so add one.
+        # Write-only: AN_write has no incoming dep from MapEntry, so anchor it.
         if is_written and not is_read:
             outer_state.add_edge(kernel_entry, None, an_write, None, dependency_edge())
 
-        # Local re-invalidation: this lift mutated topology in ``outer_state``
-        # and a subsequent ``_lift_one`` on a sibling NSDFG in the same state
-        # would otherwise hit the stale cache from before this mutation.
+        # Topology changed: drop the scope cache so a sibling ``_lift_one``
+        # in the same state doesn't read it stale.
         outer_state._clear_scopedict_cache()
         return True
 
@@ -152,9 +134,8 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
 
 
 def _classify_inner_usage(inner_sdfg: SDFG, name: str) -> Tuple[bool, bool]:
-    """``(is_read, is_written)`` for ``name`` inside ``inner_sdfg``, via
-    each state's ``read_and_write_sets`` (DaCe's authoritative source for
-    connector-direction inference)."""
+    """``(is_read, is_written)`` for ``name`` inside ``inner_sdfg``, from
+    each state's ``read_and_write_sets``."""
     is_read = False
     is_written = False
     for state in inner_sdfg.states():
