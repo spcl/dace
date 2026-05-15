@@ -7,7 +7,7 @@ from dace import ControlFlowRegion
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 
-# Conditions the pass must recognize as constant ``True``.
+# Conditions the pass must recognize as constant ``True`` .
 _ALWAYS_TRUE = [
     "True",
     "1 == 1",
@@ -19,7 +19,7 @@ _ALWAYS_TRUE = [
     "max(1, 2, 3) == 3",
 ]
 
-# Conditions the pass must recognize as constant ``False``.
+# Conditions the pass must recognize as constant ``False`` .
 _ALWAYS_FALSE = [
     "False",
     "1 == 2",
@@ -30,7 +30,7 @@ _ALWAYS_FALSE = [
     "abs(-5) == -5",
 ]
 
-# Conditions that reference unbound symbols — the pass must leave these alone.
+# Conditions that reference unbound symbols -- the pass must leave these alone.
 _CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
 
 # Conditions where pystr_to_symbolic yields an unevaluated symbolic expression
@@ -40,7 +40,7 @@ _DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
 def _get_sdfg(condition: str):
-    """Build a one-state SDFG inside a single-branch ``ConditionalBlock``.
+    """Build a one-state SDFG inside a single-branch ``ConditionalBlock`` .
 
     :param condition: Python condition expression for the branch.
     :returns: The SDFG with the conditional as its start block.
@@ -132,7 +132,7 @@ def _get_nested_sdfg(condition1: str, condition2: str):
 def _get_sdfg_with_many_states():
     """Build an SDFG with non-conditional states surrounding a nested conditional.
 
-    :returns: An SDFG where the conditional sits between ``so1`` and ``so2``.
+    :returns: An SDFG where the conditional sits between ``so1`` and ``so2`` .
     """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
@@ -173,7 +173,7 @@ def test_single_condition(condition: str):
 
 @pytest.mark.parametrize("condition", _CANT_EVAL)
 def test_single_condition_cant_eval(condition: str):
-    """Free-symbol condition is left in place — the pass can't prove it constant."""
+    """Free-symbol condition is left in place -- the pass can't prove it constant."""
     sdfg = _get_sdfg(condition)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -205,7 +205,7 @@ def test_nested_condition_cant_eval(condition1: str, condition2: str):
 
 @pytest.mark.parametrize("condition", _ALWAYS_TRUE)
 def test_if_else_cond_is_trivially_true(condition: str):
-    """``if/else`` with provably-true ``if`` keeps the ``if`` body."""
+    """ ``if/else`` with provably-true ``if`` keeps the ``if`` body."""
     sdfg = _get_if_else_sdfg(condition, False)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -215,7 +215,7 @@ def test_if_else_cond_is_trivially_true(condition: str):
 
 @pytest.mark.parametrize("condition", _ALWAYS_FALSE)
 def test_if_else_cond_is_trivially_false(condition: str):
-    """``if/else`` with provably-false ``if`` keeps the ``else`` body."""
+    """ ``if/else`` with provably-false ``if`` keeps the ``else`` body."""
     sdfg = _get_if_else_sdfg(condition, True)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -258,7 +258,7 @@ def test_dynamic_runtime_cond_not_trivial(condition: str):
 
 
 def test_simplify_pipeline_includes_lift_trivial_if():
-    """``SimplifyPass`` wires ``LiftTrivialIf`` in — running simplify removes trivial ifs."""
+    """ ``SimplifyPass`` wires ``LiftTrivialIf`` in -- running simplify removes trivial ifs."""
     from dace.transformation.passes.simplify import SimplifyPass
     sdfg = _get_sdfg("True")
     sdfg.validate()
