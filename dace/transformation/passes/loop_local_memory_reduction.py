@@ -280,7 +280,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                         k = int(abs(read_span / a)) + 1
                         if self.next_power_of_two:
                             # k is the highest accessed index; round the eventual size (k + 1) to the next power of two.
-                            next_power_size = 1 << k.bit_length()
+                            next_power_size = 1 << int(k).bit_length()
                             k_p2 = next_power_size - 1
                             ineq = symbolic.resolve_symbol_to_constant(k_p2 + 1 >= sdfg.arrays[array_name].shape[dim],
                                                                        sdfg)
