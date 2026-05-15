@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Simplification pass that removes ``ConditionalBlock``s whose condition is provably constant."""
 import re
 import dace
 from typing import Any, Dict, Optional, Set, Union
@@ -7,7 +8,7 @@ from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
 from dace.sdfg.state import ControlFlowBlock
-from dace.sdfg.construction_utils import move_branch_cfg_up_discard_conditions
+from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 import sympy
@@ -16,6 +17,13 @@ from sympy import pycode
 
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
+    """Remove ``ConditionalBlock``s whose condition statically evaluates to a literal.
+
+    Handles two shapes: a single-branch ``if`` (drop or replace with an empty
+    branch depending on the truth value) and an ``if/else`` pair (drop the side
+    that is unreachable). Runs to a fixed point at each region level and recurses
+    into nested SDFGs.
+    """
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States

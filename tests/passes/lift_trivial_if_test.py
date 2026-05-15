@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for the :class:`LiftTrivialIf` simplification pass."""
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
@@ -6,8 +7,8 @@ from dace import ControlFlowRegion
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 
-# Always True conditions
-always_true = [
+# Conditions the pass must recognize as constant ``True``.
+_ALWAYS_TRUE = [
     "True",
     "1 == 1",
     "2 > 1",
@@ -18,8 +19,8 @@ always_true = [
     "max(1, 2, 3) == 3",
 ]
 
-# Always False conditions
-always_false = [
+# Conditions the pass must recognize as constant ``False``.
+_ALWAYS_FALSE = [
     "False",
     "1 == 2",
     "5 < 3",
@@ -29,16 +30,21 @@ always_false = [
     "abs(-5) == -5",
 ]
 
-cant_eval = ["a < 5", "c == 0", "d >= 1"]
+# Conditions that reference unbound symbols — the pass must leave these alone.
+_CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
 
-# Conditions where pystr_to_symbolic yields an unevaluated symbolic
-# expression (Function/Indexed/Symbol). bool() of such an expression is
-# truthy, which would mis-classify dynamic dataflow conditions like
-# `A[0]` as trivially true.
-dynamic_runtime_cond = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
+# Conditions where pystr_to_symbolic yields an unevaluated symbolic expression
+# (Function/Indexed/Symbol). bool() of such an expression is truthy, which would
+# mis-classify dynamic dataflow conditions like ``A[0]`` as trivially true.
+_DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
 def _get_sdfg(condition: str):
+    """Build a one-state SDFG inside a single-branch :class:`ConditionalBlock`.
+
+    :param condition: Python condition expression for the branch.
+    :returns: The SDFG with the conditional as its start block.
+    """
     sdfg = dace.SDFG("basic1")
     _, A = sdfg.add_array(name="A", shape=[
         5,
@@ -59,6 +65,13 @@ def _get_sdfg(condition: str):
 
 
 def _get_if_else_sdfg(condition: str, body_in_else_branch: bool):
+    """Build an if/else SDFG with the body on the requested branch.
+
+    :param condition: Python condition expression for the ``if`` arm.
+    :param body_in_else_branch: If ``True`` put the access-node body on the ``else``
+        branch (otherwise on the ``if`` arm).
+    :returns: The SDFG with the conditional as its start block.
+    """
     sdfg = dace.SDFG("if_else_1")
     _, A = sdfg.add_array(name="A", shape=[
         5,
@@ -86,6 +99,12 @@ def _get_if_else_sdfg(condition: str, body_in_else_branch: bool):
 
 
 def _get_nested_sdfg(condition1: str, condition2: str):
+    """Build a conditional nested inside another conditional.
+
+    :param condition1: Outer condition.
+    :param condition2: Inner condition.
+    :returns: The SDFG with the outer conditional as its start block.
+    """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
     _, A = sdfg.add_array(name="A", shape=[
@@ -111,6 +130,10 @@ def _get_nested_sdfg(condition1: str, condition2: str):
 
 
 def _get_sdfg_with_many_states():
+    """Build an SDFG with non-conditional states surrounding a nested conditional.
+
+    :returns: An SDFG where the conditional sits between ``so1`` and ``so2``.
+    """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
     _, A = sdfg.add_array(name="A", shape=[
@@ -138,8 +161,9 @@ def _get_sdfg_with_many_states():
     return sdfg
 
 
-@pytest.mark.parametrize("condition", always_true)
+@pytest.mark.parametrize("condition", _ALWAYS_TRUE)
 def test_single_condition(condition: str):
+    """Trivially-true single-branch ``if`` is removed."""
     sdfg = _get_sdfg(condition)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -147,8 +171,9 @@ def test_single_condition(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-@pytest.mark.parametrize("condition", cant_eval)
+@pytest.mark.parametrize("condition", _CANT_EVAL)
 def test_single_condition_cant_eval(condition: str):
+    """Free-symbol condition is left in place — the pass can't prove it constant."""
     sdfg = _get_sdfg(condition)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -157,8 +182,9 @@ def test_single_condition_cant_eval(condition: str):
 
 
 @pytest.mark.parametrize("condition1,condition2",
-                         [(always_true[i], always_true[i + 1]) for i in range(len(always_true) - 1)])
+                         [(_ALWAYS_TRUE[i], _ALWAYS_TRUE[i + 1]) for i in range(len(_ALWAYS_TRUE) - 1)])
 def test_nested_condition(condition1: str, condition2: str):
+    """Trivially-true ``if`` inside trivially-true ``if`` collapses to plain dataflow."""
     sdfg = _get_nested_sdfg(condition1, condition2)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -166,8 +192,10 @@ def test_nested_condition(condition1: str, condition2: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-@pytest.mark.parametrize("condition1,condition2", [(cant_eval[i], cant_eval[i + 1]) for i in range(len(cant_eval) - 1)])
+@pytest.mark.parametrize("condition1,condition2",
+                         [(_CANT_EVAL[i], _CANT_EVAL[i + 1]) for i in range(len(_CANT_EVAL) - 1)])
 def test_nested_condition_cant_eval(condition1: str, condition2: str):
+    """Nested unresolvable conditions are both preserved."""
     sdfg = _get_nested_sdfg(condition1, condition2)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -175,8 +203,9 @@ def test_nested_condition_cant_eval(condition1: str, condition2: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 2
 
 
-@pytest.mark.parametrize("condition", always_true)
+@pytest.mark.parametrize("condition", _ALWAYS_TRUE)
 def test_if_else_cond_is_trivially_true(condition: str):
+    """``if/else`` with provably-true ``if`` keeps the ``if`` body."""
     sdfg = _get_if_else_sdfg(condition, False)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -184,8 +213,9 @@ def test_if_else_cond_is_trivially_true(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-@pytest.mark.parametrize("condition", always_false)
+@pytest.mark.parametrize("condition", _ALWAYS_FALSE)
 def test_if_else_cond_is_trivially_false(condition: str):
+    """``if/else`` with provably-false ``if`` keeps the ``else`` body."""
     sdfg = _get_if_else_sdfg(condition, True)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -194,6 +224,7 @@ def test_if_else_cond_is_trivially_false(condition: str):
 
 
 def test_cfg_is_a_middle_node():
+    """The conditional being mid-graph (with predecessor + successor) doesn't break the splice."""
     sdfg = _get_sdfg_with_many_states()
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -206,6 +237,7 @@ def test_cfg_is_a_middle_node():
 # If these ever stop folding to True/False the pass would silently miss real trivial-if cases in Fortran SDFGs.
 @pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(2 == 2) == 1", "(0 == 1) == 0"])
 def test_fortran_style_nested_comparison_true(condition: str):
+    """The boolean-arithmetic fallback handles the Fortran-frontend ``(x == y) == k`` shape."""
     sdfg = _get_sdfg(condition)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -213,9 +245,9 @@ def test_fortran_style_nested_comparison_true(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-# Dynamic (runtime-dataflow) conditions must NOT be treated as trivially true/false.
-@pytest.mark.parametrize("condition", dynamic_runtime_cond)
+@pytest.mark.parametrize("condition", _DYNAMIC_RUNTIME_COND)
 def test_dynamic_runtime_cond_not_trivial(condition: str):
+    """Dynamic (runtime-dataflow) conditions must NOT be treated as trivially true/false."""
     sdfg = _get_sdfg(condition)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
@@ -226,6 +258,7 @@ def test_dynamic_runtime_cond_not_trivial(condition: str):
 
 
 def test_simplify_pipeline_includes_lift_trivial_if():
+    """``SimplifyPass`` wires ``LiftTrivialIf`` in — running simplify removes trivial ifs."""
     from dace.transformation.passes.simplify import SimplifyPass
     sdfg = _get_sdfg("True")
     sdfg.validate()
@@ -235,18 +268,18 @@ def test_simplify_pipeline_includes_lift_trivial_if():
 
 
 if __name__ == "__main__":
-    for c in always_true:
+    for c in _ALWAYS_TRUE:
         test_single_condition(c)
 
-    for i in range(len(always_true) - 1):
-        c1 = always_true[i]
-        c2 = always_true[i + 1]
+    for i in range(len(_ALWAYS_TRUE) - 1):
+        c1 = _ALWAYS_TRUE[i]
+        c2 = _ALWAYS_TRUE[i + 1]
         test_nested_condition(c1, c2)
 
-    for c in always_true:
+    for c in _ALWAYS_TRUE:
         test_if_else_cond_is_trivially_true(c)
 
-    for c in always_false:
+    for c in _ALWAYS_FALSE:
         test_if_else_cond_is_trivially_false(c)
 
     test_cfg_is_a_middle_node()
