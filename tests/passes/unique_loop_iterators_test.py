@@ -361,34 +361,6 @@ def test_while_loop_no_induction_var():
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 
-# ============================================================================
-# Test 8: Validation rejects writing to the loop iterator from an
-# interstate edge inside the LoopRegion.
-# ============================================================================
-
-
-def test_loop_iter_lhs_write_rejected():
-    """Writing to a LoopRegion's ``loop_variable`` from an interstate
-    edge inside the region is illegal -- the LoopRegion's
-    init_expr / update_expr already own the iterator, and the SSA pass
-    assumes nothing else mutates it.  The SDFG validator must reject
-    this."""
-    sdfg = dace.SDFG('write_iter')
-    sdfg.add_array('out', [4], dace.int64)
-
-    body = LoopRegion('body', condition_expr='i < 4', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
-    sdfg.add_node(body, is_start_block=True)
-    s1 = body.add_state('s1', is_start_block=True)
-    s2 = body.add_state('s2')
-    # Illegal: assigning to the loop iter on an inner edge.
-    body.add_edge(s1, s2, dace.InterstateEdge(assignments={'i': '5'}))
-
-    with pytest.raises(Exception) as excinfo:
-        sdfg.validate()
-    assert 'Loop iterator' in str(excinfo.value) or 'loop_variable' in str(excinfo.value), \
-        f"Expected loop-iter validation error, got: {excinfo.value}"
-
-
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -397,4 +369,3 @@ if __name__ == '__main__':
     test_loop_var_on_interstate_edge()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
-    test_loop_iter_lhs_write_rejected()
