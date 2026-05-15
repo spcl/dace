@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unit tests for the :class:`UniqueLoopIterators` pass."""
+"""Unit tests for the ``UniqueLoopIterators`` pass."""
 
 import dace
 import numpy as np
