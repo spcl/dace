@@ -13,8 +13,7 @@ from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
-from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import SameWriteSetIfElseToMergeCFG
-from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
+from dace.transformation.passes.vectorization.branch_normalization import BranchNormalizationPipeline
 from dace.transformation.passes.vectorization.detect_gather import DetectGather
 from dace.transformation.passes.vectorization.detect_scatter import DetectScatter
 from dace.transformation.passes.vectorization.detect_strided_load import DetectStridedLoad
@@ -231,8 +230,7 @@ class VectorizeCPU(ppl.Pipeline):
             if branch_normalization:
                 passes = [
                     LowerInterstateConditionalAssignmentsToTasklets(),
-                    SameWriteSetIfElseToMergeCFG(),
-                    BranchNormalization(),
+                    BranchNormalizationPipeline(),
                     RemoveRedundantAssignments(),
                 ]
             else:

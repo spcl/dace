@@ -400,3 +400,77 @@ class BranchNormalization(ppl.Pass):
                 state.add_edge(tmp_an, None, merge_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
                 state.add_edge(old_an, None, merge_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
                 state.add_edge(merge_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+
+
+def _count_conditional_blocks(sdfg: dace.SDFG) -> int:
+    """Count every :class:`ConditionalBlock` anywhere in ``sdfg``.
+
+    :param sdfg: SDFG to scan (recurses through nested SDFGs and regions).
+    :returns: number of remaining conditional blocks.
+    """
+    return sum(1 for cfg in sdfg.all_control_flow_regions(recursive=True) for b in cfg.nodes()
+               if isinstance(b, ConditionalBlock))
+
+
+@properties.make_properties
+class BranchNormalizationPipeline(ppl.Pass):
+    """Drive M3.1b + M3.2 to a fixed point, fusing branch-arm states with
+    :class:`StateFusionExtended` between cycles.
+
+    A ``ConditionalBlock`` whose arm body itself holds a
+    ``ConditionalBlock`` (TSVC s2710) is *multi-state*, so the single-state
+    guards in :meth:`SameWriteSetIfElseToMergeCFG._matches` and
+    :class:`BranchNormalization` bail and the outer block never normalises.
+    Flattening the inner block first explodes the arm into a 4-5 state
+    sequence (the 3-CFG ``compute_then``/``compute_else``/``apply_merge``
+    split); ``StateFusionExtended`` collapses that sequence back into one
+    state *without* dropping tasklets, so the next iteration's single-state
+    path normalises the now-shrunk outer block.
+
+    ``StateFusionExtended`` is required here: plain
+    :class:`StateFusion` / ``fuse_states`` discards the arm tasklets on
+    these states (it bails on the data-hazard reconstruction), producing an
+    empty body and silently wrong results. The extended variant inserts the
+    happens-before edges needed to fuse them safely.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    MAX_ITERS = 8
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return {}
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (  # avoid import cycle
+            SameWriteSetIfElseToMergeCFG, )
+        from dace.transformation.interstate import StateFusionExtended
+
+        results = pipeline_results if pipeline_results is not None else {}
+        rewritten = 0
+        for _ in range(self.MAX_ITERS):
+            before = _count_conditional_blocks(sdfg)
+            if before == 0:
+                break
+            SameWriteSetIfElseToMergeCFG().apply_pass(sdfg, results)
+            BranchNormalization().apply_pass(sdfg, results)
+            # Collapse the multi-state arms the 3-CFG split produced so the
+            # next cycle's single-state guards can match the outer block.
+            sdfg.apply_transformations_repeated(StateFusionExtended)
+            after = _count_conditional_blocks(sdfg)
+            rewritten += max(0, before - after)
+            if after >= before:  # no progress: unsupported shape remains
+                break
+
+        remaining = _count_conditional_blocks(sdfg)
+        if remaining:
+            raise NotImplementedError(
+                f"BranchNormalizationPipeline: {remaining} ConditionalBlock(s) remain after "
+                f"{self.MAX_ITERS} fixed-point iterations; unsupported branch shape")
+        return rewritten or None

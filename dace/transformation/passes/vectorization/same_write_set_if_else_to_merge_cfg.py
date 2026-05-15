@@ -292,17 +292,29 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             assert_connector_role_matches_edges(s)
 
     def _clone_with_redirect(self, src: dace.SDFGState, dst: dace.SDFGState, rename: dict):
-        """Deep-copy ``src`` into ``dst``; access nodes whose ``.data`` is a key
-        in ``rename`` get retargeted to ``rename[old]``, and every memlet that
-        names the same array follows."""
+        """Deep-copy ``src`` into ``dst``; redirect only the *write* of each
+        renamed array to its private temp.
+
+        Only access nodes that are written in the arm (in-degree > 0 in the
+        clone) are retargeted to ``rename[old]``; read-only access nodes
+        keep the original name. This is load-bearing for read-modify-write
+        arms: ``a[i] = a[i] + b[i]*d[i]`` must clone as
+        ``_then_a = a + b*d`` (RHS reads the *original* ``a``), not
+        ``_then_a = _then_a + b*d`` (RHS would read the uninitialised temp
+        and propagate garbage through the merge — TSVC s2710). Memlets are
+        rebound only on edges incident to a redirected write node, so the
+        RHS read memlet keeps naming the original array.
+        """
         node_map = copy_state_contents(src, dst)
+        redirected_nodes = set()
         for old, new in node_map.items():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
-            if new.data in rename:
+            if new.data in rename and dst.in_degree(new) > 0:
                 new.data = rename[new.data]
+                redirected_nodes.add(new)
         for e in dst.edges():
-            if e.data.data in rename:
+            if (e.src in redirected_nodes or e.dst in redirected_nodes) and e.data.data in rename:
                 # Rebind memlet to the new array name; keep subset (writes are
                 # element-wise per the slice's restriction).
                 e.data.data = rename[e.data.data]

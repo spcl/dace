@@ -241,17 +241,17 @@ DACE_VEC_DEFINE_BINOP_W_SCALAR(pow_w_scalar, std::pow(a[i], constant))
 // ============================================================================
 // vector_select: 3-input conditional ``out = cond ? t : e``.
 //
-// The masked variant is well-defined and load-bearing for a masked
-// remainder: an active lane performs the select; an INACTIVE lane keeps
-// the ``e`` operand. In every merge emitted by branch-normalization the
-// ``e`` operand is the merge's destination (``&dst[tile_i]``), so an
-// inactive lane yields ``out[i] = dst[i]`` and the W-wide writeback is a
-// value-preserving no-op there — the same RMW semantics the
-// ``*_av_masked`` binops use. Without it a masked remainder over
-// ``R < W`` lanes runs the select on the trailing inactive lanes whose
-// ``cond`` was never filled (stays 0 -> false -> selects ``e``), which
-// is only accidentally OK and OOB-reads/writes past the array (the
-// TSVC s1161 masked-merge-65 failure).
+// The masked variant is load-bearing for a masked remainder: an active
+// lane performs the select; an INACTIVE lane is left *untouched* — the
+// same gated-store form the ``*_av_masked`` binops use
+// (``if (mask[i]) out[i] = EXPR``). It must NOT write inactive lanes,
+// not even with ``e``: a masked remainder over ``R < W`` lanes binds
+// ``out = arr + tile_i`` so the trailing ``W - R`` lanes index past the
+// array end; storing there (any value) corrupts the heap (TSVC s2710
+// masked-merge-65 segfault). Skipping the store leaves that memory
+// alone and, for the in-place RMW merge target where ``e`` aliases the
+// destination, preserves ``arr``'s old value on inactive valid lanes
+// exactly as ``out[i] = e`` would have — minus the OOB.
 // ============================================================================
 template<typename T, int vector_width, typename CondT = bool>
 inline void vector_select_pscalar(T* __restrict__ out,
@@ -277,7 +277,7 @@ inline void vector_select_av_masked(T* __restrict__ out,
                                     const T* __restrict__ e,
                                     const bool* __restrict__ mask) {
     _dace_vectorize(vector_width)
-    for (int i = 0; i < vector_width; i++) out[i] = mask[i] ? (cond[i] ? t[i] : e[i]) : e[i];
+    for (int i = 0; i < vector_width; i++) { if (mask[i]) out[i] = cond[i] ? t[i] : e[i]; }
 }
 
 // ----------------------------------------------------------------------------

@@ -198,11 +198,22 @@ inline void vector_add_w_scalar(T* __restrict__ out,
 #endif
 }
 
-// vector_add_masked: lanes where mask[i] == false leave out[i] unchanged
-// (RMW). The bool[W] mask is loaded byte-wise into a uint64/uint32 lane
-// vector, compared against zero to derive a svbool_t predicate. The sum
-// is computed unmasked under svwhilelt_b{64,32} (the VLS tile predicate)
-// and svsel blends it against the prior out where mask is false.
+// vector_add_masked: store ONLY lanes where mask[i] == true; inactive
+// lanes are left untouched.
+//
+// The bool[W] mask is loaded byte-wise under the VLS iteration predicate
+// ``pg`` and compared against zero to derive the active-lane predicate
+// ``m`` (m is a subset of pg, so its active lanes are always in-bounds).
+// The operand loads and the store are then predicated by ``m``: per the
+// Arm C Language Extensions, a predicated ``svld1`` does not access
+// memory for inactive lanes (no fault) and a predicated ``svst1`` does
+// not write them. The previous form computed under ``pg`` and
+// ``svsel``-blended against ``svld1(pg, out)``, then stored under ``pg``
+// — that store wrote all ``pg`` lanes, so at a masked remainder where
+// ``out = arr + tile_i`` the trailing inactive lanes index past the
+// array end -> OOB heap write (the TSVC s2710 masked-merge-65 segfault).
+// Predicating the store by ``m`` removes both the OOB store and the
+// (also-OOB) ``vold`` load.
 template<typename T, int vector_width>
 inline void vector_add_masked(T* __restrict__ out,
                               const T* __restrict__ a,
@@ -217,11 +228,10 @@ inline void vector_add_masked(T* __restrict__ out,
             svbool_t pg = svwhilelt_b32(i, vector_width);
             svuint32_t mv = svld1ub_u32(pg, (const uint8_t*)(mask + i));
             svbool_t m = svcmpne_n_u32(pg, mv, 0);
-            svfloat32_t va = svld1_f32(pg, a + i);
-            svfloat32_t vb = svld1_f32(pg, b + i);
-            svfloat32_t vold = svld1_f32(pg, out + i);
-            svfloat32_t sum = svadd_f32_x(pg, va, vb);
-            svst1_f32(pg, out + i, svsel_f32(m, sum, vold));
+            svfloat32_t va = svld1_f32(m, a + i);
+            svfloat32_t vb = svld1_f32(m, b + i);
+            svfloat32_t sum = svadd_f32_x(m, va, vb);
+            svst1_f32(m, out + i, sum);
             i += svcntw();
         }
         return;
@@ -233,11 +243,10 @@ inline void vector_add_masked(T* __restrict__ out,
             svbool_t pg = svwhilelt_b64(i, vector_width);
             svuint64_t mv = svld1ub_u64(pg, (const uint8_t*)(mask + i));
             svbool_t m = svcmpne_n_u64(pg, mv, 0);
-            svfloat64_t va = svld1_f64(pg, a + i);
-            svfloat64_t vb = svld1_f64(pg, b + i);
-            svfloat64_t vold = svld1_f64(pg, out + i);
-            svfloat64_t sum = svadd_f64_x(pg, va, vb);
-            svst1_f64(pg, out + i, svsel_f64(m, sum, vold));
+            svfloat64_t va = svld1_f64(m, a + i);
+            svfloat64_t vb = svld1_f64(m, b + i);
+            svfloat64_t sum = svadd_f64_x(m, va, vb);
+            svst1_f64(m, out + i, sum);
             i += svcntd();
         }
         return;
@@ -251,7 +260,8 @@ inline void vector_add_masked(T* __restrict__ out,
 #endif
 }
 
-// vector_add_w_scalar_masked
+// vector_add_w_scalar_masked: same mask-predicated load/store as
+// vector_add_masked above (drops the OOB pg-wide store + vold load).
 template<typename T, int vector_width>
 inline void vector_add_w_scalar_masked(T* __restrict__ out,
                                        const T* __restrict__ a,
@@ -267,10 +277,9 @@ inline void vector_add_w_scalar_masked(T* __restrict__ out,
             svbool_t pg = svwhilelt_b32(i, vector_width);
             svuint32_t mv = svld1ub_u32(pg, (const uint8_t*)(mask + i));
             svbool_t m = svcmpne_n_u32(pg, mv, 0);
-            svfloat32_t va = svld1_f32(pg, a + i);
-            svfloat32_t vold = svld1_f32(pg, out + i);
-            svfloat32_t sum = svadd_f32_x(pg, va, vconst);
-            svst1_f32(pg, out + i, svsel_f32(m, sum, vold));
+            svfloat32_t va = svld1_f32(m, a + i);
+            svfloat32_t sum = svadd_f32_x(m, va, vconst);
+            svst1_f32(m, out + i, sum);
             i += svcntw();
         }
         return;
@@ -283,10 +292,9 @@ inline void vector_add_w_scalar_masked(T* __restrict__ out,
             svbool_t pg = svwhilelt_b64(i, vector_width);
             svuint64_t mv = svld1ub_u64(pg, (const uint8_t*)(mask + i));
             svbool_t m = svcmpne_n_u64(pg, mv, 0);
-            svfloat64_t va = svld1_f64(pg, a + i);
-            svfloat64_t vold = svld1_f64(pg, out + i);
-            svfloat64_t sum = svadd_f64_x(pg, va, vconst);
-            svst1_f64(pg, out + i, svsel_f64(m, sum, vold));
+            svfloat64_t va = svld1_f64(m, a + i);
+            svfloat64_t sum = svadd_f64_x(m, va, vconst);
+            svst1_f64(m, out + i, sum);
             i += svcntd();
         }
         return;
