@@ -634,6 +634,21 @@ _builtin_userfunctions = {
 }
 
 
+def builtin_userfunctions() -> frozenset:
+    """Names that name a built-in user-function, not a symbol.
+
+    Symbol-extraction utilities (:func:`symbols_in_code`,
+    :func:`free_symbols_and_functions`, the tasklet splitter) consult this
+    set to avoid treating a call target such as ``int_floor`` or ``merge``
+    as a per-lane variable. Prefer this accessor over reaching into the
+    private module set so a single name (e.g. a newly registered SymPy
+    ``Function``) is added in exactly one place.
+
+    :returns: an immutable copy of the built-in user-function names.
+    """
+    return frozenset(_builtin_userfunctions)
+
+
 def contains_sympy_functions(expr):
     """ Returns True if expression contains Sympy functions. """
     if is_sympy_userfunction(expr):

@@ -137,7 +137,7 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
     lhs = lhs.strip()
     rhs = rhs.strip()
     # Also ignore log functions
-    function_names = dace.symbolic._builtin_userfunctions.union({
+    function_names = dace.symbolic.builtin_userfunctions().union({
         "log",
         "Log",
         "ln",
