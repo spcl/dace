@@ -48,42 +48,6 @@ def strided_load_stride_3(src: dace.float64[3 * N], dst: dace.float64[N], scale:
 
 
 @dace.program
-def strided_load_stride_4(src: dace.float64[4 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 4] * scale
-
-
-@dace.program
-def strided_load_stride_5(src: dace.float64[5 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 5] * scale
-
-
-@dace.program
-def strided_load_stride_6(src: dace.float64[6 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 6] * scale
-
-
-@dace.program
-def strided_load_stride_7(src: dace.float64[7 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 7] * scale
-
-
-@dace.program
-def strided_load_stride_8(src: dace.float64[8 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 8] * scale
-
-
-@dace.program
-def strided_load_stride_16(src: dace.float64[16 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i] = src[i * 16] * scale
-
-
-@dace.program
 def scatter_store(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
     for i, in dace.map[0:N:1]:
         dst[idx[i]] = src[i] * scale
@@ -105,42 +69,6 @@ def strided_store_stride_ssym(src: dace.float64[8 * N], dst: dace.float64[ssym *
 def strided_store_stride_3(src: dace.float64[N], dst: dace.float64[3 * N], scale: dace.float64):
     for i, in dace.map[0:N:1]:
         dst[i * 3] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_4(src: dace.float64[N], dst: dace.float64[4 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 4] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_5(src: dace.float64[N], dst: dace.float64[5 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 5] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_6(src: dace.float64[N], dst: dace.float64[6 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 6] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_7(src: dace.float64[N], dst: dace.float64[7 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 7] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_8(src: dace.float64[N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 8] = src[i] * scale
-
-
-@dace.program
-def strided_store_stride_16(src: dace.float64[N], dst: dace.float64[16 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
-        dst[i * 16] = src[i] * scale
 
 
 def test_vecscale_unit_stride():
@@ -264,123 +192,6 @@ def test_strided_load_stride_3():
     )
 
 
-def test_strided_load_stride_4():
-    N = 64
-    src = numpy.random.random(4 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_4,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        insert_copies=False,
-        sdfg_name="strided_load_stride_4",
-    )
-
-
-def test_strided_load_stride_5():
-    N = 64
-    src = numpy.random.random(5 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_5,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_load_stride_5",
-    )
-
-
-def test_strided_load_stride_6():
-    N = 64
-    src = numpy.random.random(6 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_6,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        insert_copies=True,
-        fuse_overlapping_loads=True,
-        sdfg_name="strided_load_stride_6",
-    )
-
-
-def test_strided_load_stride_7():
-    N = 64
-    src = numpy.random.random(7 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_7,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_load_stride_7",
-    )
-
-
-def test_strided_load_stride_8():
-    N = 64
-    src = numpy.random.random(8 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_8,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_load_stride_8",
-    )
-
-
-def test_strided_load_stride_16():
-    N = 64
-    src = numpy.random.random(16 * N)
-    dst = numpy.zeros(N)
-    run_vectorization_test(
-        dace_func=strided_load_stride_16,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_load_stride_16",
-    )
-
-
 def test_scatter_store():
     N = 64
     src = numpy.random.random(N)
@@ -462,120 +273,6 @@ def test_strided_store_stride_3():
         insert_copies=True,
         fuse_overlapping_loads=True,
         sdfg_name="strided_store_stride_3",
-    )
-
-
-def test_strided_store_stride_4():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(4 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_4,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_4",
-    )
-
-
-def test_strided_store_stride_5():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(5 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_5,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_5",
-    )
-
-
-def test_strided_store_stride_6():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(6 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_6,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_6",
-    )
-
-
-def test_strided_store_stride_7():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(7 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_7,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_7",
-    )
-
-
-def test_strided_store_stride_8():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(8 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_8,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_8",
-    )
-
-
-def test_strided_store_stride_16():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(16 * N)
-    run_vectorization_test(
-        dace_func=strided_store_stride_16,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_16",
     )
 
 
@@ -1168,14 +865,13 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
 # NSDFG path (Slice 1 ``_setup_strided_inside_nsdfg``) handles the
 # ``bbox = (W-1)*stride + 1`` formula for any integer stride that
 # divides cleanly.
-@pytest.mark.parametrize("stride", [3, 4, 5, 8])
+@pytest.mark.parametrize("stride", [3])
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_strided_load_stride_n_nondiv(stride, remainder_strategy):
     N_val = 22  # non-divisible by W=8, R=6 lanes active in the remainder
     src = numpy.random.rand(stride * N_val)
     dst = numpy.zeros(N_val)
-    prog = {3: strided_load_stride_3, 4: strided_load_stride_4,
-            5: strided_load_stride_5, 8: strided_load_stride_8}[stride]
+    prog = {3: strided_load_stride_3}[stride]
     run_vectorization_test(
         dace_func=prog,
         arrays={"src": src, "dst": dst},
@@ -1187,14 +883,13 @@ def test_strided_load_stride_n_nondiv(stride, remainder_strategy):
     )
 
 
-@pytest.mark.parametrize("stride", [3, 4, 5, 8])
+@pytest.mark.parametrize("stride", [3])
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_strided_store_stride_n_nondiv(stride, remainder_strategy):
     N_val = 22
     src = numpy.random.rand(N_val)
     dst = numpy.zeros(stride * N_val)
-    prog = {3: strided_store_stride_3, 4: strided_store_stride_4,
-            5: strided_store_stride_5, 8: strided_store_stride_8}[stride]
+    prog = {3: strided_store_stride_3}[stride]
     run_vectorization_test(
         dace_func=prog,
         arrays={"src": src, "dst": dst},

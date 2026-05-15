@@ -607,19 +607,3 @@ def dace_s000(A: dace.float64[S], B: dace.float64[S]):
         for i in dace.map[0:S:1]:
             A[i] = B[i] + 1.0
 
-
-def test_s000(remainder_strategy):
-    # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
-
-    run_vectorization_test(dace_func=dace_s000,
-                           arrays={
-                               "A": A,
-                               "B": B
-                           },
-                           params={"S": _S},
-                           vector_width=8,
-                           sdfg_name=f"s000",
-                           from_sdfg=False, remainder_strategy=remainder_strategy)

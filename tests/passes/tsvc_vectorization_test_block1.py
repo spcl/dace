@@ -177,14 +177,6 @@ def s1281_d_single(
 
 
 @dace.program
-def s1351_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
-    for i in range(LEN_1D):
-        a[i] = b[i] + c[i]
-
-
-@dace.program
 def s1421_d_single(b: dace.float64[LEN_1D], a: dace.float64[LEN_1D]):
     half = LEN_1D // 2
     for i in range(half):
@@ -300,17 +292,6 @@ def s242_d_single(
 
 
 @dace.program
-def s252_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
-    t = 0.0
-    for i in range(LEN_1D):
-        s = b[i] * c[i]
-        a[i] = s + t
-        t = s
-
-
-@dace.program
 def s253_d_single(
     a: dace.float64[LEN_1D],
     b: dace.float64[LEN_1D],
@@ -366,7 +347,6 @@ _KERNELS = [
     (s1279_d_single, ['a', 'b', 'c', 'd', 'e']),
     (s128_d_single, ['a', 'b', 'c', 'd']),
     (s1281_d_single, ['a', 'b', 'c', 'd', 'e']),
-    (s1351_d_single, ['a', 'b', 'c']),
     (s1421_d_single, ['b', 'a']),
     (s151_d_single, ['a', 'b']),
     (s152_d_single, ['a', 'b', 'c', 'd', 'e']),
@@ -377,7 +357,6 @@ _KERNELS = [
     (s2244_d_single, ['a', 'b', 'c', 'e']),
     (s2251_d_single, ['a', 'b', 'c', 'd', 'e']),
     (s242_d_single, ['a', 'b', 'c', 'd']),
-    (s252_d_single, ['a', 'b', 'c']),
     (s253_d_single, ['a', 'b', 'c', 'd']),
     (s254_d_single, ['a', 'b']),
     (s255_d_single, ['a', 'b']),

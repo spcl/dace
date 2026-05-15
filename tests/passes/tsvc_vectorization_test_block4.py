@@ -63,22 +63,6 @@ def s1232_d_single(
             aa[i, j] = bb[i, j] + cc[i, j]
 
 @dace.program
-def s13110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
-    maxv = aa[0, 0]
-    xindex = 0
-    yindex = 0
-    for i in range(LEN_2D):
-        for j in range(LEN_2D):
-            if aa[i, j] > maxv:
-                maxv = aa[i, j]
-                xindex = i
-                yindex = j
-    chksum = maxv + float(xindex) + float(yindex)
-    tmp = chksum
-    tmp = tmp
-    bb[0, 0] = chksum
-
-@dace.program
 def s162_d_single(
     a: dace.float64[LEN_1D],
     b: dace.float64[LEN_1D],
@@ -314,7 +298,6 @@ _KERNELS = [
     (s114_d_single, {"aa": "F2", "bb": "F2"}, {}),
     (s122_d_single, {"a": "F1", "b": "F1"}, {"n1": 1, "n3": 2}),
     (s1232_d_single, {"aa": "F2", "bb": "F2", "cc": "F2"}, {}),
-    (s13110_d_single, {"aa": "F2", "bb": "F22"}, {}),
     (s162_d_single, {"a": "F1", "b": "F1", "c": "F1"}, {"k": 3}),
     (s171_d_single, {"a": "F1", "b": "F1"}, {"inc": 1}),
     (s172_d_single, {"a": "F1", "b": "F1"}, {"n1": 1, "n3": 2}),

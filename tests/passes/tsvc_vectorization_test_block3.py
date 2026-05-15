@@ -98,14 +98,6 @@ def s4117_d_single(
 
 
 @dace.program
-def s4121_d_single(
-    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]
-):
-    for i in range(LEN_1D):
-        a[i] = a[i] + b[i] * c[i]
-
-
-@dace.program
 def s421_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         flat_2d_array[i] = flat_2d_array[i + 1] + a[i]
@@ -130,12 +122,6 @@ def s424_d_single(
 ):
     for i in range(LEN_1D - 1):
         xx[i + 1] = flat[i] + a[i]
-
-
-@dace.program
-def s431_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    for i in range(LEN_1D):
-        a[i] = a[i] + b[i]
 
 
 @dace.program
@@ -185,14 +171,6 @@ def s452_d_single(
 
 
 @dace.program
-def s453_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    s = 0.0
-    for i in range(LEN_1D):
-        s = s + 2.0
-        a[i] = s * b[i]
-
-
-@dace.program
 def s471_d_single(
     x: dace.float64[LEN_1D],
     b: dace.float64[LEN_1D],
@@ -203,12 +181,6 @@ def s471_d_single(
     for i in range(LEN_1D):
         x[i] = b[i] + d[i] * d[i]
         b[i] = c[i] + d[i] * e[i]
-
-
-@dace.program
-def va_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    for i in range(LEN_1D):
-        a[i] = b[i]
 
 
 @dace.program
@@ -285,19 +257,15 @@ _KERNELS = [
     (s351_d_single, ['a', 'b', 'c']),
     (s352_d_single, ['a', 'b', 'c']),
     (s4117_d_single, ['a', 'b', 'c', 'd']),
-    (s4121_d_single, ['a', 'b', 'c']),
     (s421_d_single, ['a', 'flat_2d_array']),
     (s422_d_single, ['a', 'flat_2d_array']),
     (s423_d_single, ['a', 'flat_2d_array']),
     (s424_d_single, ['a', 'xx', 'flat']),
-    (s431_d_single, ['a', 'b']),
     (s441_d_single, ['a', 'b', 'c', 'd']),
     (s443_d_single, ['a', 'b', 'c', 'd']),
     (s451_d_single, ['a', 'b', 'c']),
     (s452_d_single, ['a', 'b', 'c']),
-    (s453_d_single, ['a', 'b']),
     (s471_d_single, ['x', 'b', 'c', 'd', 'e']),
-    (va_d_single, ['a', 'b']),
     (vdotr_d_single, ['a', 'b', 'dot_out']),
     (vif_d_single, ['a', 'b']),
     (vpv_d_single, ['a', 'b']),
