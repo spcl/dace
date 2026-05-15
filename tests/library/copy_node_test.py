@@ -162,7 +162,7 @@ def test_copy_copynd_rejects_non_c_packed():
 
 def test_copy_copynd_rejects_padded_strides():
     """Padded strides (e.g. ``[20, 21, 22]`` with strides ``(1, 32, 32*21)``
-    where 32 != 20) are *also* not C-packed. CopyND must reject them — the
+    where 32 != 20) are *also* not C-packed. CopyND must reject them -- the
     test from ``copy_to_map_test::test_preprocess`` exercises exactly this
     case; the new pipeline should fall through to a different lowering."""
     sdfg = dace.SDFG("copy_copynd_rejects_padded")
@@ -373,7 +373,7 @@ def _fortran_strides(shape):
 
 def test_copy_fortran_packed_cpu_default_pure():
     """Same-side CPU copy with Fortran-packed strides lowers via the
-    default ``pure`` mapped tasklet — DaCe's stride-aware element indexing
+    default ``pure`` mapped tasklet -- DaCe's stride-aware element indexing
     handles arbitrary packing without any refine-time intervention."""
     shape = (4, 5, 6)
     f_strides = _fortran_strides(shape)
@@ -505,7 +505,7 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
 def test_copy_no_common_stride1_axis_raises():
     """Cross-CPU/GPU copy where src and dst have no common stride-1 axis
     cannot be expressed as a chunked cudaMemcpy and must raise at refine
-    time (per design — no element-wise fallback across the boundary).
+    time (per design -- no element-wise fallback across the boundary).
 
     Uses a non-contiguous partial subset so the contiguous-subset early
     exit doesn't mask the strided-pattern check.
@@ -513,7 +513,7 @@ def test_copy_no_common_stride1_axis_raises():
     sdfg = dace.SDFG("copy_no_common_stride1")
     # src: C-packed (innermost stride 1). dst: Fortran-packed (outermost
     # stride 1). After the partial slice neither subset is contiguous in
-    # its own layout — refine sees rank-3 src strides (30,6,1) and rank-3
+    # its own layout -- refine sees rank-3 src strides (30,6,1) and rank-3
     # dst strides (1,4,20), with no shared stride-1 axis.
     shape = (4, 5, 6)
     sdfg.add_array("src",
@@ -573,7 +573,7 @@ def test_copy_node_storage_defaults_when_unattached():
 
 def test_copy_cross_storage_validation_rejects_without_flag():
     """A same-storage expansion (``MemcpyCPU``) must reject mismatched
-    storages — its ``validate(allow_cross_storage=False)`` call catches
+    storages -- its ``validate(allow_cross_storage=False)`` call catches
     the CPU<->GPU case before any C++ is emitted."""
     sdfg, src_name, dst_name = _make_cross_storage_sdfg("MemcpyCPU",
                                                         dace.dtypes.StorageType.CPU_Heap,
@@ -704,7 +704,7 @@ def test_direct_assignment_register_to_register():
             found_tasklet = True
         if isinstance(n, dace.sdfg.nodes.MapEntry):
             found_map = True
-    assert found_tasklet, "Tasklet impl should produce a Python tasklet with `_cpy_out = _cpy_in`."
+    assert found_tasklet, "Tasklet impl should produce a Python tasklet with ``_cpy_out = _cpy_in``."
     assert not found_map, "Tasklet impl should NOT produce a map."
 
 
@@ -1073,7 +1073,7 @@ def test_copy_single_element_h2d():
 @pytest.mark.new_gpu_codegen_only
 def test_copy_two_element_h2d():
     """Same direction as the failing single-element case but with a 2-element
-    subset — the codegen passes the host array by pointer here, so the
+    subset -- the codegen passes the host array by pointer here, so the
     tasklet input binding works regardless."""
     pytest.importorskip('cupy')
     import cupy as cp
@@ -1142,7 +1142,7 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
 
     The MappedTasklet path collapses every length-1 dim, ends up with a
     0-D map, and crashes propagation (``NoneType`` subset). This fired on
-    heat_3d's ``__map_fusion_gpu_B`` Register → GPU_Global scalar copy
+    heat_3d's ``__map_fusion_gpu_B`` Register -> GPU_Global scalar copy
     inside the kernel scope produced by ``auto_optimize``.
     """
     sdfg = dace.SDFG('reg_to_gpuglobal_in_kernel')

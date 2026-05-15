@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`MemsetLibraryNode` and its pure / CPU / CUDA expansions."""
+"""Tests for :class:``MemsetLibraryNode`` and its pure / CPU / CUDA expansions."""
 import dace
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
