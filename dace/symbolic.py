@@ -1444,7 +1444,13 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _pow(a, b):
-        return sympy.Pow(a, b, evaluate=False)
+        a = sympy.sympify(a)
+        b = sympy.sympify(b)
+        obj = sympy.Expr.__new__(sympy.Pow, a, b)
+        obj = sympy.Pow._exec_constructor_postprocessors(obj)
+        if isinstance(obj, sympy.Pow):
+            obj.is_commutative = a.is_commutative and b.is_commutative
+        return obj
 
     @staticmethod
     def _binop_add(a, b):

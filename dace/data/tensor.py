@@ -662,7 +662,7 @@ class Tensor(Structure):
         self.indices, self.index_ordering = list(indices), list(index_ordering)
 
         num_dims = len(tensor_shape)
-        dimension_order = [idx for idx in self.index_ordering if isinstance(idx, int)]
+        dimension_order = [int(idx) for idx in index_ordering if isinstance(idx, (int, symbolic.sympy.Integer))]
 
         # all tensor dimensions must occure exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):

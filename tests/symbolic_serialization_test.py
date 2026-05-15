@@ -150,6 +150,14 @@ def test_pystr_to_symbolic_preserves_typed_symbols():
     assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int64)'
 
 
+def test_power_deserialization_preserves_typed_symbols_after_plain_power():
+    symbolic.deserialize_symbolic('$N**2')
+
+    typed_power = symbolic.deserialize_symbolic('symbol($N, dtype=dace.int64)**2')
+
+    assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int64)**2'
+
+
 @pytest.mark.parametrize('simplify', [None, False])
 def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default(simplify):
     expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)

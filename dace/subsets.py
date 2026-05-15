@@ -396,16 +396,16 @@ class Range(Subset):
         if for_codegen:
             int_ceil = symbolic.int_ceil
             return [
-                ts * int_ceil(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
-                               (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)),
-                              (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                sp.simplify(ts * int_ceil(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
+                                           (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)),
+                                          (step.approx if isinstance(step, symbolic.SymExpr) else step)))
                 for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
         else:
             return [
-                ts * sp.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
-                                 (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                sp.simplify(ts * sp.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
+                                             (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                                            (step.approx if isinstance(step, symbolic.SymExpr) else step)))
                 for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
 

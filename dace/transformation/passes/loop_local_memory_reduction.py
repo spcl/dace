@@ -272,6 +272,20 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 k = sp.Max(span, max_indices[dim])
                 not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
+                # Frontend-lowered symbolic write indices can appear as generated temporaries, which makes the write
+                # position opaque even though the read window still determines a safe modulo size.
+                if a != 0 and dim_write_indices and all(i[0] == 0 for i in dim_write_indices):
+                    read_span = symbolic.resolve_symbol_to_constant(read_ub - read_lb, sdfg)
+                    if read_span is not None:
+                        k = int(abs(read_span / a)) + 1
+                        if self.next_power_of_two:
+                            k_p2 = (1 << k.bit_length()) - 1
+                            ineq = symbolic.resolve_symbol_to_constant(k_p2 + 1 >= sdfg.arrays[array_name].shape[dim],
+                                                                       sdfg)
+                            if ineq is not None and not ineq:
+                                k = k_p2
+                        k_values.append(k + 1)
+                        continue
                 k_values.append(None)
                 continue
 
@@ -379,11 +393,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if any(i is None for il in read_indices + all_write_indices for i in il):
             return
 
-        # None of the indices can depend on changing symbols (i.e. symbols updated in the loop).
-        for il in read_indices + all_write_indices:
-            for (a, b) in il:
-                if any(s.name in changing_syms for s in a.free_symbols.union(b.free_symbols)):
-                    return
+        if any(
+                b.has(sp.Mod) and any(s.name in changing_syms for s in b.free_symbols)
+                for il in read_indices + all_write_indices for _, b in il):
+            return
 
         # Combine the read and write indices into a 1D array access for easier analysis
         collapsed_read_indices = []
@@ -438,12 +451,6 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if a != 0 and any(i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices
                           for i in il if i[0] != 0):
             return
-
-        # All constants (a == 0) must be in the same dimension.
-        for dim in range(len(collapsed_read_indices[0])):
-            if any(il[dim][0] == 0 for il in collapsed_read_indices + collapsed_all_write_indices) and any(
-                    il[dim][0] != 0 for il in collapsed_read_indices + collapsed_all_write_indices):
-                return
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
         if not self._write_is_loop_local(array_name, collapsed_all_write_indices, sdfg, loop):
