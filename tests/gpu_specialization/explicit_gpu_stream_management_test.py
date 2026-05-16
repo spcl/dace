@@ -503,3 +503,32 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     for t in runtime_tasklets:
         assert STREAM_CONNECTOR in t.in_connectors, (
             f"Runtime tasklet {t.label} must have its ``__stream`` in-connector wired by the unified pipeline")
+
+
+def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
+    """A tasklet that baked ``__dace_current_stream`` with no stream connector
+    (a libnode expanded before stream scheduling) gets an in-connector of that
+    exact name wired, so the experimental codegen does not see an undeclared
+    identifier."""
+    sdfg = dace.SDFG('legacy_ambient_stream')
+    sdfg.add_array('A', [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array('B', [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    a = state.add_read('A')
+    b = state.add_write('B')
+    cp = state.add_tasklet('copy_A_to_B', {'_cpy_in'}, {'_cpy_out'},
+                           'cudaMemcpyAsync(_cpy_out, _cpy_in, 128 * sizeof(dace::uint), '
+                           'cudaMemcpyDeviceToDevice, __dace_current_stream);',
+                           language=dace.Language.CPP)
+    cp.in_connectors = {'_cpy_in': dace.pointer(dace.uint32)}
+    cp.out_connectors = {'_cpy_out': dace.pointer(dace.uint32)}
+    state.add_edge(a, None, cp, '_cpy_in', dace.Memlet('A[0:128]'))
+    state.add_edge(cp, '_cpy_out', b, None, dace.Memlet('B[0:128]'))
+    sdfg.validate()
+
+    gpu_stream_pipeline.apply_pass(sdfg, {})
+
+    assert cp.in_connectors.get('__dace_current_stream') == dace.dtypes.gpuStream_t, \
+        f"expected a ``__dace_current_stream`` gpuStream_t in-connector, got {dict(cp.in_connectors)}"
+    assert any(e.dst_conn == '__dace_current_stream' for e in state.in_edges(cp)), \
+        "the ``__dace_current_stream`` connector must be fed by a wired gpu_streams edge"

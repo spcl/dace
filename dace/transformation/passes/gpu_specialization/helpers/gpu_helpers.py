@@ -19,6 +19,12 @@ STREAM_CONNECTOR = "__stream"
 # use :data:`STREAM_CONNECTOR`.
 COPY_MEMSET_STREAM_CONNECTOR = STREAM_CONNECTOR
 
+# Legacy ambient-stream symbol baked into a libnode's CUDA expansion when it
+# is expanded with no stream descriptor (the experimental codegen, unlike the
+# legacy one, never declares it). The stream scheduler turns this into a real
+# in-connector of the same name so the already-emitted body stays valid.
+LEGACY_AMBIENT_STREAM = "__dace_current_stream"
+
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
@@ -139,7 +145,27 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
     if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
         return True
     code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-    return '__dace_current_stream' in code
+    return LEGACY_AMBIENT_STREAM in code
+
+
+def uses_legacy_ambient_stream(node) -> bool:
+    """True iff ``node`` is a Tasklet whose body references the legacy ambient
+    stream but has no ``gpuStream_t`` in-connector to bind it.
+
+    Such a Tasklet is an already-expanded GPU copy/memset libnode that baked
+    :data:`LEGACY_AMBIENT_STREAM` because it was expanded before stream
+    scheduling. The scheduler wires it a connector of that exact name so the
+    emitted ``cudaMemcpyAsync(..., __dace_current_stream)`` stays valid.
+
+    :param node: Node to test.
+    :returns: ``True`` for an unbound legacy-ambient-stream Tasklet.
+    """
+    if not isinstance(node, nodes.Tasklet) or is_pipeline_sync_tasklet(node):
+        return False
+    if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
+        return False
+    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
+    return LEGACY_AMBIENT_STREAM in code
 
 
 SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization")
