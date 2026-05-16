@@ -82,9 +82,8 @@ def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFG
 
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
     has_stream = stream_input is not None
-    stream_expr = _STREAM_CONN if has_stream else "__dace_current_stream"
     code = (f"cudaMemsetAsync({_OUTPUT_CONNECTOR_NAME}, 0, "
-            f"{sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {stream_expr});")
+            f"{sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {_STREAM_CONN});")
 
     in_conns = {_STREAM_CONN: dace.dtypes.gpuStream_t} if has_stream else {}
     return nodes.Tasklet(node.name,
