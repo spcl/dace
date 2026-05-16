@@ -277,9 +277,7 @@ def test_three_kernels_dependent_and_independent():
             assert crosses
 
 
-# ---------------------------------------------------------------------------
 # Structural sanity tests (no compile / run).
-# ---------------------------------------------------------------------------
 
 
 def test_empty_state():

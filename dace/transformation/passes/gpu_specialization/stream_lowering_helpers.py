@@ -22,9 +22,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     get_gpu_stream_array_name, has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node,
     is_gpu_stream_consumer, is_inside_gpu_device_kernel, uses_legacy_ambient_stream)
 
-# ---------------------------------------------------------------------------
-# Stream-array allocation + propagation
-# ---------------------------------------------------------------------------
+# Stream-array allocation + propagation.
 
 
 def allocate_stream_array(sdfg: SDFG, num_streams: int):
@@ -96,9 +94,7 @@ def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet)
     parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
 
 
-# ---------------------------------------------------------------------------
-# Stream-connector wiring (per-stream chains + Sequential-scope routing)
-# ---------------------------------------------------------------------------
+# Stream-connector wiring (per-stream chains + Sequential-scope routing).
 
 
 def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]):
@@ -241,9 +237,7 @@ def _stream_in_connector_name(node: Node) -> str:
     return STREAM_CONNECTOR
 
 
-# ---------------------------------------------------------------------------
-# Sync-tasklet emission
-# ---------------------------------------------------------------------------
+# Sync-tasklet emission.
 
 
 def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
