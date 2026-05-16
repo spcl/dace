@@ -1,25 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``gather_intrinsic`` / ``scatter_intrinsic`` ``VectorizeCPU`` knobs.
 
-Three concerns:
+The gather and scatter intrinsic paths are symmetric: a ``_packed``
+buffer with a per-lane ``assign_<i>`` fan that ``DetectGather`` /
+``DetectScatter`` collapse to the ``gather`` / ``scatter`` intrinsic.
+The knob controls the *main* loop (``True`` -> intrinsic, ``False`` ->
+per-lane scalar fan); the masked vector remainder always collapses to
+the intrinsic regardless (a scalar fan would fault on inactive lanes).
 
-* ``test_gather_intrinsic_emission`` — on a clean ``a[i] = b[idx[i]]``
-  gather the knob must actually change emitted code: the unmasked
-  main-loop ``gather<`` intrinsic appears iff ``gather_intrinsic`` is
-  ``True``; the masked remainder ``gather_masked<`` is forced whenever
-  ``remainder_strategy == "masked"`` (a per-lane scalar fan would fault
-  on inactive lanes), independent of the knob. Also numerically checked.
-* ``test_gather_scatter_numeric`` — the knob never changes results, on a
+An indirect *write* ``a[ip[i]]`` is only conflict-free when ``ip`` has no
+duplicate indices, so plain ``LoopToMap`` conservatively refuses it; the
+test opts in with ``permissive=True`` (the same permutation contract the
+indirect *read* gather path already relies on, and the index arrays here
+are the identity ``arange``, a valid permutation with every access in
+bounds).
+
+* ``test_gather_intrinsic_emission`` / ``test_scatter_intrinsic_emission``
+  — the knob must change emitted code: the unmasked main-loop ``op<``
+  intrinsic appears iff the knob is ``True``; the masked-remainder
+  ``op_masked<`` is forced iff ``remainder_strategy == "masked"``. Also
+  numerically checked against a non-transformed reference.
+* ``test_gather_scatter_numeric`` — the knobs never change results, over a
   broader kernel set crossed with both remainder strategies and a
   vector-width-divisible (64) and non-divisible (65) length.
-* ``test_scatter_collapse_is_a_known_gap`` — documents that
-  ``DetectScatter`` does not currently collapse an ``a[ip[i]]`` scatter
-  fan in this pipeline, so ``scatter_intrinsic`` is wired but inert for
-  these patterns (numerics stay correct via the scalar fan). The assert
-  flips when scatter collapse is implemented.
-
-Index arrays are the identity ``arange`` so scatters are a valid
-permutation and every access is in bounds.
 """
 import copy
 
@@ -47,6 +50,12 @@ def idx_table_gather(out: dace.float64[LEN_1D], table: dace.float64[LEN_1D], idx
 
 
 @dace.program
+def vas(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
+    for i in range(LEN_1D):
+        a[ip[i]] = b[i]
+
+
+@dace.program
 def s491(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
          ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
@@ -71,9 +80,13 @@ _GATHER_KERNELS = {
     "vag": (vag, ("a", "b", "ip")),
     "idx_table_gather": (idx_table_gather, ("out", "table", "idx")),
 }
+_SCATTER_KERNELS = {
+    "vas": (vas, ("a", "b", "ip")),
+    "s491": (s491, ("a", "b", "c", "d", "ip")),
+}
 _NUMERIC_KERNELS = {
     **_GATHER_KERNELS,
-    "s491": (s491, ("a", "b", "c", "d", "ip")),
+    **_SCATTER_KERNELS,
     "s4113": (s4113, ("a", "b", "c", "ip")),
     "s4115": (s4115, ("a", "b", "ip", "sum_out")),
 }
@@ -95,7 +108,11 @@ def _vectorize(prog,
                scatter_intrinsic=True,
                remainder_strategy="scalar",
                name_prefix=""):
-    """Build ref + vectorized SDFGs and return ``(ref_sdfg, vec_sdfg, ref_args, vec_args)``.
+    """Build ref + vectorized SDFGs; return ``(ref_sdfg, vec_sdfg, ref_args, vec_args)``.
+
+    ``LoopToMap`` is applied ``permissive=True`` so an indirect-write
+    scatter loop maps (and flows through the same packed-fan path as
+    gather); the identity index arrays make that conflict-free.
 
     :param name_prefix: disambiguates the generated SDFG (hence the
         ``.dacecache`` build dir) so concurrent ``-n`` workers running
@@ -109,7 +126,7 @@ def _vectorize(prog,
     sdfg = copy.deepcopy(prog.to_sdfg(simplify=False))
     sdfg.name = f"ref_{tag}"
     sdfg.simplify()
-    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.apply_transformations_repeated(LoopToMap, permissive=True)
     sdfg.simplify()
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = f"vec_{tag}"
@@ -127,6 +144,24 @@ def _tasklet_code(sdfg):
     return "\n".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
 
 
+def _assert_emission(vsdfg, *, op, knob_on, masked_remainder):
+    code = _tasklet_code(vsdfg)
+    has_unmasked = f"{op}<" in code.replace(f"{op}_masked<", "")
+    has_masked = f"{op}_masked<" in code
+    assert has_unmasked is knob_on, \
+        f"{op}<: expected unmasked-present={knob_on}, got {has_unmasked}"
+    assert has_masked is masked_remainder, \
+        f"{op}_masked<: expected masked-present={masked_remainder}, got {has_masked}"
+
+
+def _check_numeric(sdfg, vsdfg, ref_args, vec_args, argnames, len_1d, tag):
+    sdfg.compile()(**ref_args, LEN_1D=len_1d)
+    vsdfg.compile()(**vec_args, LEN_1D=len_1d)
+    for nm in argnames:
+        diff = np.max(np.abs(ref_args[nm] - vec_args[nm]))
+        assert diff < 1e-10, f"{tag}/{nm}: max abs diff = {diff}"
+
+
 @pytest.mark.parametrize("kernel_name", list(_GATHER_KERNELS))
 @pytest.mark.parametrize("gather_intrinsic", [True, False])
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
@@ -138,25 +173,25 @@ def test_gather_intrinsic_emission(kernel_name, gather_intrinsic, remainder_stra
                                                  len_1d,
                                                  gather_intrinsic=gather_intrinsic,
                                                  remainder_strategy=remainder_strategy,
-                                                 name_prefix="emit_")
-    code = _tasklet_code(vsdfg)
-    has_unmasked = "gather<" in code.replace("gather_masked<", "")
-    has_masked = "gather_masked<" in code
+                                                 name_prefix="gemit_")
+    _assert_emission(vsdfg, op="gather", knob_on=gather_intrinsic, masked_remainder=(remainder_strategy == "masked"))
+    _check_numeric(sdfg, vsdfg, ref_args, vec_args, argnames, len_1d, kernel_name)
 
-    # The main loop uses the gather intrinsic iff the knob is on.
-    assert has_unmasked is gather_intrinsic, \
-        f"gather<: expected {gather_intrinsic}, got {has_unmasked} ({kernel_name} {remainder_strategy} {len_1d})"
-    # The masked vector remainder always collapses to the intrinsic
-    # (a per-lane scalar fan would fault on inactive lanes), regardless
-    # of the knob.
-    assert has_masked is (remainder_strategy == "masked"), \
-        f"gather_masked<: expected {remainder_strategy == 'masked'}, got {has_masked}"
 
-    sdfg.compile()(**ref_args, LEN_1D=len_1d)
-    vsdfg.compile()(**vec_args, LEN_1D=len_1d)
-    for nm in argnames:
-        diff = np.max(np.abs(ref_args[nm] - vec_args[nm]))
-        assert diff < 1e-10, f"{kernel_name}/{nm}: max abs diff = {diff}"
+@pytest.mark.parametrize("kernel_name", list(_SCATTER_KERNELS))
+@pytest.mark.parametrize("scatter_intrinsic", [True, False])
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
+@pytest.mark.parametrize("len_1d", [64, 65])
+def test_scatter_intrinsic_emission(kernel_name, scatter_intrinsic, remainder_strategy, len_1d):
+    prog, argnames = _SCATTER_KERNELS[kernel_name]
+    sdfg, vsdfg, ref_args, vec_args = _vectorize(prog,
+                                                 argnames,
+                                                 len_1d,
+                                                 scatter_intrinsic=scatter_intrinsic,
+                                                 remainder_strategy=remainder_strategy,
+                                                 name_prefix="semit_")
+    _assert_emission(vsdfg, op="scatter", knob_on=scatter_intrinsic, masked_remainder=(remainder_strategy == "masked"))
+    _check_numeric(sdfg, vsdfg, ref_args, vec_args, argnames, len_1d, kernel_name)
 
 
 @pytest.mark.parametrize("kernel_name", list(_NUMERIC_KERNELS))
@@ -176,27 +211,4 @@ def test_gather_scatter_numeric(kernel_name, gather_intrinsic, scatter_intrinsic
                                                      name_prefix="num_")
     except NotImplementedError as ex:
         pytest.skip(f"vectorize NotImplementedError on {kernel_name}: {ex}")
-    sdfg.compile()(**ref_args, LEN_1D=len_1d)
-    vsdfg.compile()(**vec_args, LEN_1D=len_1d)
-    for nm in argnames:
-        diff = np.max(np.abs(ref_args[nm] - vec_args[nm]))
-        assert diff < 1e-10, f"{kernel_name}/{nm}: max abs diff = {diff}"
-
-
-@pytest.mark.parametrize("kernel_name", ["s491", "s4113"])
-def test_scatter_collapse_is_a_known_gap(kernel_name):
-    # DetectScatter does not currently match an ``a[ip[i]]`` scatter fan,
-    # so the scatter intrinsic is never emitted for these even with
-    # scatter_intrinsic=True. The knob is wired and numerically safe (the
-    # scalar fan is correct); this asserts the *current* gap so it flips
-    # loudly when scatter collapse is implemented.
-    prog, argnames = _NUMERIC_KERNELS[kernel_name]
-    _, vsdfg, _, _ = _vectorize(prog,
-                                argnames,
-                                64,
-                                scatter_intrinsic=True,
-                                remainder_strategy="masked",
-                                name_prefix="gap_")
-    code = _tasklet_code(vsdfg)
-    assert "scatter<" not in code.replace("scatter_masked<", "") and "scatter_masked<" not in code, \
-        f"scatter collapse now fires for {kernel_name} — update test_gather_intrinsic_emission to cover scatter"
+    _check_numeric(sdfg, vsdfg, ref_args, vec_args, argnames, len_1d, kernel_name)
