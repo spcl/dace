@@ -8,8 +8,7 @@ from dace.codegen import common
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (COPY_MEMSET_STREAM_CONNECTOR,
-                                                                               has_stream_connector,
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR, has_stream_connector,
                                                                                is_already_lowered_gpu_runtime_call)
 
 
@@ -65,7 +64,7 @@ def test_naive_strategy_wires_stream_connector_on_pre_expanded_tasklet():
         assert has_stream_connector(tasklet), (
             f"Pre-expanded tasklet '{tasklet.label}' must have a stream in-connector "
             f"after the pipeline runs.")
-        assert COPY_MEMSET_STREAM_CONNECTOR in tasklet.in_connectors
+        assert STREAM_CONNECTOR in tasklet.in_connectors
 
 
 @pytest.mark.gpu

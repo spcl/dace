@@ -18,9 +18,9 @@ from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    LEGACY_AMBIENT_STREAM, STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain,
-    get_gpu_stream_array_name, has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node,
-    is_gpu_stream_consumer, is_inside_gpu_device_kernel, uses_legacy_ambient_stream)
+    STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
+    has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node, is_gpu_stream_consumer,
+    is_inside_gpu_device_kernel)
 
 # Stream-array allocation + propagation.
 
@@ -145,7 +145,7 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
 
     for node in stream_users:
         entry, exit_ = _entry_exit(state, node)
-        in_conn = _stream_in_connector_name(node)
+        in_conn = STREAM_CONNECTOR
 
         if has_stream_connector(entry):
             continue
@@ -217,24 +217,6 @@ def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
     if isinstance(node, nodes.MapEntry):
         return node, state.exit_node(node)
     return node, node
-
-
-def _stream_in_connector_name(node: Node) -> str:
-    """Connector name to wire the stream into for ``node``.
-
-    :data:`STREAM_CONNECTOR` for every consumer class -- the stream id rides
-    on the wired ``gpu_streams[<i>]`` memlet, not the name -- except an
-    already-expanded libnode that baked the legacy ambient-stream symbol
-    (:func:`uses_legacy_ambient_stream`): that one gets a connector named
-    :data:`LEGACY_AMBIENT_STREAM` so its emitted body references the wired
-    connector instead of an undeclared identifier.
-
-    :param node: Consumer the stream is wired into.
-    :returns: The in-connector name to add and feed.
-    """
-    if uses_legacy_ambient_stream(node):
-        return LEGACY_AMBIENT_STREAM
-    return STREAM_CONNECTOR
 
 
 # Sync-tasklet emission.

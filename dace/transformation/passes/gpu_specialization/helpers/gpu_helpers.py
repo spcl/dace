@@ -9,22 +9,18 @@ from typing import List, Optional
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
-# Canonical GPU-stream in-connector name. Every stream consumer uses it.
-# The single stream in-connector name, shared by libnode expansions
-# (``dace.libraries.standard.helper.CURRENT_STREAM_NAME``) and the scheduler.
-# Named after the legacy ambient-stream symbol so the same expanded IR is
-# valid under both the legacy codegen (which declares it) and the
-# experimental codegen (whose type-based prelude binds the connector).
-# MUST match ``helper.CURRENT_STREAM_NAME``.
-STREAM_CONNECTOR = "__dace_current_stream"
+# The single stream in-connector name, owned by the libnode layer
+# (:data:`dace.libraries.standard.helper.CURRENT_STREAM_NAME`) and imported
+# here so producers and the scheduler cannot drift. Named after the legacy
+# ambient-stream symbol so the same expanded IR is valid under both the
+# legacy codegen (which declares it) and the experimental codegen (whose
+# type-based prelude binds the connector).
+STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
-# Back-compat alias. Pre-existing callers use this name; new code should
-# use :data:`STREAM_CONNECTOR`.
-COPY_MEMSET_STREAM_CONNECTOR = STREAM_CONNECTOR
-
-# Same symbol under its semantic name, for the scheduler shim that detects
-# already-expanded tasklets which baked it without a connector.
+# Same symbol under its semantic name: the literal scanned for in tasklet
+# bodies to recognize an already-expanded GPU runtime call.
 LEGACY_AMBIENT_STREAM = STREAM_CONNECTOR
 
 
@@ -133,12 +129,17 @@ def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def is_already_lowered_gpu_runtime_call(node) -> bool:
-    """True for a Tasklet that issues a stream-bound GPU runtime call (the post-libnode-expansion
-    shape), detected by either a ``gpuStream_t`` in-connector or a ``__dace_current_stream``
-    reference in its body.
+    """True for a Tasklet that issues a stream-bound GPU runtime call.
 
-    Pipeline-emitted sync tasklets (:func:`is_pipeline_sync_tasklet`) are excluded -- they aren't
-    consumers in the WCC sense.
+    Detected either by a ``gpuStream_t`` in-connector (cuBLAS / cuSolver
+    expansions that wire one) or by a :data:`LEGACY_AMBIENT_STREAM`
+    reference in the body (Copy/Memset libnode expansions, which carry no
+    connector and rely on the scheduler binding it post-expansion).
+    Pipeline-emitted sync tasklets (:func:`is_pipeline_sync_tasklet`) are
+    excluded -- they are not consumers in the WCC sense.
+
+    :param node: Node to test.
+    :returns: ``True`` for a stream-bound GPU runtime-call Tasklet.
     """
     if not isinstance(node, nodes.Tasklet):
         return False
@@ -146,26 +147,6 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
         return False
     if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
         return True
-    code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-    return LEGACY_AMBIENT_STREAM in code
-
-
-def uses_legacy_ambient_stream(node) -> bool:
-    """True iff ``node`` is a Tasklet whose body references the legacy ambient
-    stream but has no ``gpuStream_t`` in-connector to bind it.
-
-    Such a Tasklet is an already-expanded GPU copy/memset libnode that baked
-    :data:`LEGACY_AMBIENT_STREAM` because it was expanded before stream
-    scheduling. The scheduler wires it a connector of that exact name so the
-    emitted ``cudaMemcpyAsync(..., __dace_current_stream)`` stays valid.
-
-    :param node: Node to test.
-    :returns: ``True`` for an unbound legacy-ambient-stream Tasklet.
-    """
-    if not isinstance(node, nodes.Tasklet) or is_pipeline_sync_tasklet(node):
-        return False
-    if any(t == dtypes.gpuStream_t for t in node.in_connectors.values() if t is not None):
-        return False
     code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
     return LEGACY_AMBIENT_STREAM in code
 
