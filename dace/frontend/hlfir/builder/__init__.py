@@ -498,7 +498,20 @@ class SDFGBuilder:
         # transient that *is* written-before-read is unaffected.
         import dace
         from dace.data import Array, Scalar
-        for nsdfg in [sdfg] + [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]:
+
+        def _all_sdfgs(root):
+            """Yield ``root`` and every nested SDFG at any depth."""
+            yield root
+            for nd, _ in root.all_nodes_recursive():
+                if isinstance(nd, dace.nodes.NestedSDFG):
+                    yield from _all_sdfgs(nd.sdfg)
+
+        for nsdfg in _all_sdfgs(sdfg):
+            # Stamp every transient Array/Scalar AccessNode in every
+            # state at any control-flow-region depth.  ``all_states``
+            # already recurses LoopRegion / ControlFlowRegion bodies;
+            # ``_all_sdfgs`` adds the arbitrary nested-SDFG depth the
+            # earlier single-level walk missed.
             for state in nsdfg.all_states():
                 for node in state.nodes():
                     if not isinstance(node, dace.nodes.AccessNode):
