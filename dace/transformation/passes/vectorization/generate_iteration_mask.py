@@ -39,23 +39,14 @@ class GenerateIterationMask(ppl.Pass):
                                "mode names match the ``VectorizeCPU.remainder_strategy`` knob.")
 
     def __init__(self, vector_width: int = 8, mode: str = "step_w_only"):
-        """Initialize the pass.
-
-        :param vector_width: Number of lanes in the mask.
-        :param mode: ``step_w_only`` masks maps with step==``vector_width``;
-            ``all_innermost`` masks every innermost map; ``masked`` masks
-            maps tagged ``__masked_rem``.
-        """
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
 
     def modifies(self) -> ppl.Modifies:
-        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.Descriptors | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Return whether the pass should run again after modifications."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:

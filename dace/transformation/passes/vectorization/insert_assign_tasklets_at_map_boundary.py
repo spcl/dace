@@ -26,15 +26,12 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
-        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Return whether the pass should run again after modifications."""
         return False
 
     def depends_on(self):
-        """Return the set of passes this pass depends on."""
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:

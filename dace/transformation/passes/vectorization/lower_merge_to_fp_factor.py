@@ -16,7 +16,6 @@ class _MergeToFpFactor(ast.NodeTransformer):
     """Replaces every ``merge(c, t, e)`` call with ``(c)*(t) + (1 - c)*(e)``."""
 
     def __init__(self):
-        """Initialize with no rewrite recorded yet."""
         self.changed = False
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
@@ -46,11 +45,9 @@ class LowerMergeToFpFactor(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """This pass never needs reapplication."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:

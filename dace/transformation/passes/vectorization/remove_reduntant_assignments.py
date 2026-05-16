@@ -17,15 +17,12 @@ class RemoveRedundantAssignments(ppl.Pass):
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
-        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Report whether this pass should run again after other passes."""
         return False
 
     def depends_on(self):
-        """Report the passes this pass depends on."""
         return {EliminateBranches}
 
     def _detect_access_node_tasklet_access_node(

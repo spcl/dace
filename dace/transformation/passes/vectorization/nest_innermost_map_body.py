@@ -33,19 +33,13 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     vector_width = properties.Property(dtype=int, default=8, allow_none=False)
 
     def __init__(self, vector_width: int = 8):
-        """Initialize the pass.
-
-        :param vector_width: SIMD lane count used for the divisibility check.
-        """
         super().__init__()
         self.vector_width = vector_width
 
     def modifies(self) -> ppl.Modifies:
-        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Return whether the pass should run again after modifications."""
         return False
 
     def _trip_is_provably_divisible(self, map_entry: dace.nodes.MapEntry) -> bool:

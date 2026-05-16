@@ -95,15 +95,12 @@ class Vectorize(ppl.Pass):
         self.user_skip_nsdfg_arrays = set(user_skip_nsdfg_arrays) if user_skip_nsdfg_arrays else set()
 
     def modifies(self) -> ppl.Modifies:
-        """This pass may modify everything."""
         return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """Preprocessing passes that must run before vectorization."""
         return {
             PowerOperatorExpansion, SplitTasklets, RemoveFPTypeCasts, RemoveIntTypeCasts,
             CleanDataToScalarSliceToTaskletPattern
@@ -1657,11 +1654,6 @@ class Vectorize(ppl.Pass):
         return candidate2
 
     def _vector_memlet(self, new_dataname: str) -> dace.memlet.Memlet:
-        """Build a ``new_dataname[0:vector_width]`` step-1 memlet.
-
-        :param new_dataname: the vector-copy array name.
-        :returns: a full-width step-1 memlet over that array.
-        """
         return dace.memlet.Memlet(
             data=new_dataname,
             subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,

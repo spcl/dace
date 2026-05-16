@@ -47,14 +47,6 @@ def _validate(op: str, vector_width: int) -> None:
 
 
 def _wrap_pair(op: str, left: str, right: str) -> str:
-    """Combine two operands using ``op``.
-
-    :param op: Reduction operator string.
-    :param left: Left operand expression.
-    :param right: Right operand expression.
-    :returns: ``(left op right)`` for infix ops, ``op(left, right)`` for
-        the ``max``/``min`` function-call ops.
-    """
     if op in _INFIX_OPS:
         return f"({left} {op} {right})"
     return f"{op}({left}, {right})"

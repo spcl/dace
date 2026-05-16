@@ -32,22 +32,14 @@ class SplitMapForVectorRemainder(ppl.Pass):
                                "remainder that P3 will attach the iter-mask connector to")
 
     def __init__(self, vector_width: int = 8, mode: str = "scalar"):
-        """Initialize the pass.
-
-        :param vector_width: SIMD lane count; the main map's vector width.
-        :param mode: ``scalar`` for a sequential step-1 remainder, ``masked``
-            for a step-``vector_width`` remainder masked by a later pass.
-        """
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
 
     def modifies(self) -> ppl.Modifies:
-        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.Nodes | ppl.Modifies.States
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Return whether the pass should run again after modifications."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:

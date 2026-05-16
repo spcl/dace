@@ -14,11 +14,6 @@ import dace.sdfg.tasklet_utils as tutil
 
 
 def _is_scalar_or_shape_one(arr: dace.data.Data) -> bool:
-    """Check whether ``arr`` is scalar-like.
-
-    :param arr: Data descriptor to test.
-    :returns: True for a Scalar descriptor or an Array of shape ``(1,)``.
-    """
     return isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, ))
 
 

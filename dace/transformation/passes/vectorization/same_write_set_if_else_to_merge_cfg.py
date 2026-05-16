@@ -105,11 +105,9 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        """CFG, states and access nodes."""
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Never (single fixed-point sweep over all blocks)."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
@@ -232,13 +230,6 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
         else_writes = self._collect_write_subsets(else_state)
 
         def _alloc(prefix: str, arr_name: str) -> str:
-            """Add a register transient ``<prefix>_<arr_name>`` mirroring
-            ``arr_name``'s shape/dtype.
-
-            :param prefix: ``"_then"`` or ``"_else"``.
-            :param arr_name: array whose shape/dtype to mirror.
-            :returns: the new (possibly renamed) transient's name.
-            """
             base = local_sdfg.arrays[arr_name]
             name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
                                            shape=base.shape,

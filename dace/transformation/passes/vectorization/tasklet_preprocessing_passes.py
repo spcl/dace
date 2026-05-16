@@ -121,10 +121,6 @@ class DaceCastRemover(ast.NodeTransformer):
     """Strips ``dace.floatNN(...)`` / ``dace.intNN(...)`` casts, keeping the cast value."""
 
     def __init__(self, call_name: str):
-        """Bind the cast prefix to strip (e.g. ``"float"`` or ``"int"``).
-
-        :param call_name: the cast-name prefix to match.
-        """
         self.call_name = call_name
 
     def visit_Call(self, node):
@@ -163,11 +159,6 @@ class FunctionRenamer(ast.NodeTransformer):
     """Renames ``f(...)`` and ``math.f(...)`` calls from one function name to another."""
 
     def __init__(self, src_function_name: str, dst_function_name: str):
-        """Bind the source and destination function names.
-
-        :param src_function_name: the call name to rename.
-        :param dst_function_name: the replacement name.
-        """
         self.src_function_name = src_function_name
         self.dst_function_name = dst_function_name
 
@@ -288,24 +279,15 @@ class _BodyRewritePass(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """This pass has no dependencies."""
         return {}
 
     def _rewrite(self, src: str) -> str:
-        """Rewrite a single tasklet source string; subclasses must override.
-
-        :param src: the tasklet source string.
-        :returns: the rewritten source.
-        :raises NotImplementedError: if the subclass does not override this.
-        """
         raise NotImplementedError
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
@@ -326,11 +308,6 @@ class PowerOperatorExpansion(_BodyRewritePass):
     """Pass that expands power operators/calls in every Python tasklet body."""
 
     def _rewrite(self, src: str) -> str:
-        """Expand power operators/calls in a tasklet body.
-
-        :param src: the tasklet source string.
-        :returns: the rewritten source.
-        """
         return _expand_pow(src)
 
 
@@ -340,11 +317,6 @@ class RemoveFPTypeCasts(_BodyRewritePass):
     """Pass that removes ``dace.floatNN(...)`` casts from every Python tasklet body."""
 
     def _rewrite(self, src: str) -> str:
-        """Remove float casts from a tasklet body.
-
-        :param src: the tasklet source string.
-        :returns: the rewritten source.
-        """
         return _remove_dace_float_casts(src)
 
 
@@ -354,11 +326,6 @@ class RemoveIntTypeCasts(_BodyRewritePass):
     """Pass that removes ``dace.intNN(...)`` casts from every Python tasklet body."""
 
     def _rewrite(self, src: str) -> str:
-        """Remove int casts from a tasklet body.
-
-        :param src: the tasklet source string.
-        :returns: the rewritten source.
-        """
         return _remove_dace_int_casts(src)
 
 
@@ -370,15 +337,12 @@ class RemoveMathCall(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """This pass has no dependencies."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
@@ -476,15 +440,12 @@ class ReplaceSTDLogWithDaCeLog(ppl.Pass):
     use_safe_implementation = dace.properties.Property(dtype=bool, default=False, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """This pass has no dependencies."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
@@ -511,15 +472,12 @@ class ReplaceSTDExpWithDaCeExp(ppl.Pass):
     use_safe_implementation = dace.properties.Property(dtype=bool, default=False, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """This pass has no dependencies."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
@@ -546,15 +504,12 @@ class ReplaceSTDPowWithDaCePow(ppl.Pass):
     use_safe_implementation = dace.properties.Property(dtype=bool, default=False, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
-        """This pass modifies tasklets."""
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        """This pass never needs reapplication."""
         return False
 
     def depends_on(self):
-        """This pass has no dependencies."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:

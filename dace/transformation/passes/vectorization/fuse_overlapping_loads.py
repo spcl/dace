@@ -18,11 +18,9 @@ class FuseOverlappingLoads(ppl.Pass):
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
-        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Report whether this pass should run again after other passes."""
         return False
 
     def _collect_loads(

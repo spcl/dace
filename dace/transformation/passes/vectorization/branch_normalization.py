@@ -143,11 +143,9 @@ class BranchNormalization(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        """CFG, states and access nodes."""
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Never (internal fixed-point loop)."""
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
@@ -297,11 +295,6 @@ class BranchNormalization(ppl.Pass):
         return True
 
     def _collect_write_subsets(self, state: dace.SDFGState):
-        """Thin wrapper around the shared helper.
-
-        See :func:`dace.transformation.passes.vectorization.utils.queries.collect_element_write_subsets`
-        for semantics.
-        """
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         return collect_element_write_subsets(state)
 

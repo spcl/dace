@@ -81,13 +81,6 @@ UNARY_OPERATORS = {"!", "-"}
 
 
 def _str_to_float_or_str(s: Union[int, float, str, None]):
-    """Convert ``s`` to ``float`` iff it parses, else return it unchanged.
-
-    ``None`` passes through. ``"inf"`` / ``"nan"`` parse as floats.
-
-    :param s: Value to fold.
-    :returns: ``float(s)`` if parseable, else ``s`` unchanged.
-    """
     if s is None:
         return s
     try:
@@ -97,11 +90,6 @@ def _str_to_float_or_str(s: Union[int, float, str, None]):
 
 
 def _is_number(s: str) -> bool:
-    """Check whether ``s`` is a numeric literal.
-
-    :param s: String to test.
-    :returns: True iff ``float(s)`` parses; ``None`` returns ``False``.
-    """
     return s is not None and _str_to_float_or_str(s) != s
 
 
@@ -290,16 +278,6 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
 
 
 def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> None:
-    """Set ``ctx.node.code`` from the template-or-fallback dispatcher.
-
-    :param ctx: Emission context.
-    :param rhs1_: First array operand, or ``None``.
-    :param rhs2_: Second array operand, or ``None``.
-    :param const1_: First constant operand, or ``None``.
-    :param const2_: Second constant operand, or ``None``.
-    :param lhs_: Output connector name.
-    :param op_: Operator string.
-    """
     ctx.node.code = dace.properties.CodeBlock(
         code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
         language=dace.Language.CPP,

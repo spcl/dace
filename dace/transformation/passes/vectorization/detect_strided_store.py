@@ -29,15 +29,12 @@ class DetectStridedStore(ppl.Pass):
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:
-        """Report the SDFG elements this pass may change."""
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Report whether this pass should run again after other passes."""
         return False
 
     def depends_on(self):
-        """Report the passes this pass depends on."""
         return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:

@@ -30,15 +30,12 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     apply_once = properties.Property(dtype=bool, default=False)
 
     def modifies(self) -> ppl.Modifies:
-        """Return the set of SDFG elements this pass may modify."""
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Return whether the pass should run again after modifications."""
         return False
 
     def depends_on(self):
-        """Return the set of passes this pass depends on."""
         return {}
 
     def _apply(self, cfg: ControlFlowRegion) -> bool:
