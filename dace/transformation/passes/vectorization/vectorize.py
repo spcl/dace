@@ -639,7 +639,8 @@ class Vectorize(ppl.Pass):
         # And the loop parameter is not involved in a multiplication, otherwise wee need to pack it:
         # Consider loop (i=0; i<N; i++) and accessing an array [i*2] this means we have stride-2 access and this also
         # needs to be packed
-        vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
+        vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars,
+                                                               int(self.vector_width))
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
         non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]

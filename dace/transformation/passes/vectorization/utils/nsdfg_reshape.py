@@ -23,6 +23,29 @@ from dace import SDFGState
 from dace.transformation.passes.vectorization.utils.code_rewrite import drop_dims
 from dace.transformation.passes.vectorization.utils.name_schemes import PackedNameScheme, VecNameScheme
 
+_ITER_MASK_PREFIX = "_iter_mask"
+
+
+def _iter_mask_name(sdfg: dace.SDFG) -> Optional[str]:
+    """Return the ``_iter_mask`` array name in ``sdfg.arrays``, or ``None``.
+
+    When a strided load / store runs inside a masked-remainder NSDFG
+    (``GenerateIterationMask`` attached ``_iter_mask: bool[W]`` to it),
+    the boundary ``strided_{load,store}`` must use the ``_masked``
+    runtime variant: at the tail only ``R < W`` lanes are in bounds, so
+    an unmasked W-wide store writes ``arr[N .. base + (W-1)*stride]``
+    past the real array (the diagonal-scatter OOB write that corrupts
+    the heap and aborts later innocent tests with ``free(): invalid
+    size``). Returns ``None`` for the unmasked main body.
+
+    :param sdfg: The inner SDFG receiving the prep / finish state.
+    :returns: The mask array name, or ``None`` if absent.
+    """
+    for name in sdfg.arrays:
+        if name == _ITER_MASK_PREFIX or name.startswith(_ITER_MASK_PREFIX + "_"):
+            return name
+    return None
+
 
 def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
     """Map each vector-map param to the end bound of the outer data-parallel map.
@@ -707,22 +730,42 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
                     node.data = vec_name
 
         # Insert prep state at the start: strided_load(connector, vec).
+        # Masked remainder: the ``_iter_mask`` fill state (the current
+        # start block, prepended by ``GenerateIterationMask``) MUST run
+        # before the masked load, otherwise the mask is still all-zero
+        # and ``strided_load_masked`` skips every lane (an all-zero
+        # result). Splice prep AFTER ``old_start`` instead of making it
+        # the new start block.
         old_start = inner_sdfg.start_block
-        prep = inner_sdfg.add_state("_strided_load_prep_" + inner_conn, is_start_block=True)
+        mask_name = _iter_mask_name(inner_sdfg)
+        prep = inner_sdfg.add_state("_strided_load_prep_" + inner_conn, is_start_block=(mask_name is None))
         bbox_an = prep.add_access(inner_conn)
         vec_an = prep.add_access(vec_name)
+        if mask_name is not None:
+            code = f"strided_load_masked<{dtype_ctype}>(_in, _out, {vector_width}, {stride}, _mask);"
+        else:
+            code = f"strided_load<{dtype_ctype}>(_in, _out, {vector_width}, {stride});"
         tasklet = prep.add_tasklet(
             name=f"_strided_load_{inner_conn}",
             inputs={"_in"},
             outputs={"_out"},
-            code=f"strided_load<{dtype_ctype}>(_in, _out, {vector_width}, {stride});",
+            code=code,
             language=dace.dtypes.Language.CPP,
         )
         prep.add_edge(bbox_an, None, tasklet, "_in",
                       dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
         prep.add_edge(tasklet, "_out", vec_an, None, dace.memlet.Memlet.from_array(vec_name,
                                                                                    inner_sdfg.arrays[vec_name]))
-        if old_start is not None and old_start is not prep:
+        if mask_name is not None:
+            tasklet.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
+            mask_an = prep.add_access(mask_name)
+            prep.add_edge(mask_an, None, tasklet, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{vector_width}]"))
+            # old_start (mask fill) -> prep -> old_start's former successors.
+            for se in list(inner_sdfg.out_edges(old_start)):
+                inner_sdfg.add_edge(prep, se.dst, se.data)
+                inner_sdfg.remove_edge(se)
+            inner_sdfg.add_edge(old_start, prep, dace.InterstateEdge())
+        elif old_start is not None and old_start is not prep:
             inner_sdfg.add_edge(prep, old_start, dace.InterstateEdge())
 
         # Outer edge: re-attach with the bbox subset directly to the NSDFG.
@@ -753,17 +796,26 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         finish = inner_sdfg.add_state("_strided_store_finish_" + inner_conn)
         vec_an = finish.add_access(vec_name)
         bbox_an = finish.add_access(inner_conn)
+        mask_name = _iter_mask_name(inner_sdfg)
+        if mask_name is not None:
+            code = f"strided_store_masked<{dtype_ctype}>(_in, _out, {vector_width}, {stride}, _mask);"
+        else:
+            code = f"strided_store<{dtype_ctype}>(_in, _out, {vector_width}, {stride});"
         tasklet = finish.add_tasklet(
             name=f"_strided_store_{inner_conn}",
             inputs={"_in"},
             outputs={"_out"},
-            code=f"strided_store<{dtype_ctype}>(_in, _out, {vector_width}, {stride});",
+            code=code,
             language=dace.dtypes.Language.CPP,
         )
         finish.add_edge(vec_an, None, tasklet, "_in",
                         dace.memlet.Memlet.from_array(vec_name, inner_sdfg.arrays[vec_name]))
         finish.add_edge(tasklet, "_out", bbox_an, None,
                         dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+        if mask_name is not None:
+            tasklet.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
+            mask_an = finish.add_access(mask_name)
+            finish.add_edge(mask_an, None, tasklet, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{vector_width}]"))
         for sink in sink_states:
             if sink is finish:
                 continue
@@ -882,23 +934,40 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
 
     if direction == "in":
         # Prep state: K ``strided_load`` tasklets, each at stride K with offset p.
+        # Masked remainder: splice prep AFTER the ``_iter_mask`` fill
+        # state (see the single-element path) so the mask is filled
+        # before the masked load runs.
         old_start = inner_sdfg.start_block
-        prep = inner_sdfg.add_state("_multi_elem_load_prep_" + inner_conn, is_start_block=True)
+        mask_name = _iter_mask_name(inner_sdfg)
+        prep = inner_sdfg.add_state("_multi_elem_load_prep_" + inner_conn, is_start_block=(mask_name is None))
         bbox_an = prep.add_access(inner_conn)
         for p in range(K):
             vec_an = prep.add_access(phase_names[p])
+            if mask_name is not None:
+                code = f"strided_load_masked<{dtype_ctype}>(_in + {p}, _out, {W}, {S}, _mask);"
+            else:
+                code = f"strided_load<{dtype_ctype}>(_in + {p}, _out, {W}, {S});"
             tasklet = prep.add_tasklet(
                 name=f"_multi_elem_load_{inner_conn}_p{p}",
                 inputs={"_in"},
                 outputs={"_out"},
-                code=f"strided_load<{dtype_ctype}>(_in + {p}, _out, {W}, {S});",
+                code=code,
                 language=dace.dtypes.Language.CPP,
             )
             prep.add_edge(bbox_an, None, tasklet, "_in",
                           dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
             prep.add_edge(tasklet, "_out", vec_an, None,
                           dace.memlet.Memlet.from_array(phase_names[p], inner_sdfg.arrays[phase_names[p]]))
-        if old_start is not None and old_start is not prep:
+            if mask_name is not None:
+                tasklet.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
+                mask_an = prep.add_access(mask_name)
+                prep.add_edge(mask_an, None, tasklet, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{W}]"))
+        if mask_name is not None:
+            for se in list(inner_sdfg.out_edges(old_start)):
+                inner_sdfg.add_edge(prep, se.dst, se.data)
+                inner_sdfg.remove_edge(se)
+            inner_sdfg.add_edge(old_start, prep, dace.InterstateEdge())
+        elif old_start is not None and old_start is not prep:
             inner_sdfg.add_edge(prep, old_start, dace.InterstateEdge())
 
         state.remove_edge(edge)
@@ -909,19 +978,28 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         sink_states = [s for s in inner_sdfg.states() if len(inner_sdfg.out_edges(s)) == 0]
         finish = inner_sdfg.add_state("_multi_elem_store_finish_" + inner_conn)
         bbox_an = finish.add_access(inner_conn)
+        mask_name = _iter_mask_name(inner_sdfg)
         for p in range(K):
             vec_an = finish.add_access(phase_names[p])
+            if mask_name is not None:
+                code = f"strided_store_masked<{dtype_ctype}>(_in, _out + {p}, {W}, {S}, _mask);"
+            else:
+                code = f"strided_store<{dtype_ctype}>(_in, _out + {p}, {W}, {S});"
             tasklet = finish.add_tasklet(
                 name=f"_multi_elem_store_{inner_conn}_p{p}",
                 inputs={"_in"},
                 outputs={"_out"},
-                code=f"strided_store<{dtype_ctype}>(_in, _out + {p}, {W}, {S});",
+                code=code,
                 language=dace.dtypes.Language.CPP,
             )
             finish.add_edge(vec_an, None, tasklet, "_in",
                             dace.memlet.Memlet.from_array(phase_names[p], inner_sdfg.arrays[phase_names[p]]))
             finish.add_edge(tasklet, "_out", bbox_an, None,
                             dace.memlet.Memlet.from_array(inner_conn, inner_sdfg.arrays[inner_conn]))
+            if mask_name is not None:
+                tasklet.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
+                mask_an = finish.add_access(mask_name)
+                finish.add_edge(mask_an, None, tasklet, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{W}]"))
         for sink in sink_states:
             if sink is finish:
                 continue

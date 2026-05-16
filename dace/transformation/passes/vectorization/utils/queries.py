@@ -150,7 +150,7 @@ def parse_int_or_default(value, default=8):
 
 
 def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: dace.SDFGState,
-                                invariant_scalars: Set[str]) -> Dict[str, bool]:
+                                invariant_scalars: Set[str], vector_width: int) -> Dict[str, bool]:
     """Determine which arrays can be vectorized through a NestedSDFG.
 
     An array is not vectorizable if its access is strided in the map
@@ -162,6 +162,10 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     :param parent_state: State containing the NestedSDFG.
     :param invariant_scalars: Scalar names invariant across lanes (these do
         not prevent vectorization).
+    :param vector_width: SIMD lane count; a 1-D array already sized exactly
+        to this width is an already-packed buffer and is skipped (a
+        concrete-size real array, e.g. ``A[64]``, must NOT be skipped or
+        an indirect gather ``A[B[i]]`` is misclassified as contiguous).
     :returns: Dictionary mapping array names to a boolean indicating
         vectorizability.
     :raises NotImplementedError: if a memlet carries an ``other_subset``.
@@ -254,7 +258,16 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             shape = tuple(arr_obj.shape)
             if len(shape) == 1:
                 try:
-                    if int(shape[0]) > 1:
+                    # Only skip buffers already sized *exactly* to the
+                    # vector width (the W-wide packed transients/connectors
+                    # this guard targets). The old ``> 1`` test also
+                    # deleted every concrete-size real array (e.g.
+                    # ``A[64]``) before the indirection check below ran, so
+                    # an indirect gather ``A[B[i]]`` was misclassified as a
+                    # contiguous load. Symbolic ``N`` raised here (caught)
+                    # and was correctly classified — concrete sizes were
+                    # not; this restores parity.
+                    if int(shape[0]) == vector_width:
                         del all_accesses_to_arrays[arr_name]
                         continue
                 except (TypeError, ValueError):
