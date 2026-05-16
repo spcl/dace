@@ -20,12 +20,17 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 
 def invalidate_array_connectors(sdfg: SDFG):
-    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` to
-    ``typeclass(None)`` so a follow-up ``infer_connector_types`` re-derives
-    them as pointer-typed. Needed because a connector typed at construction
-    time as a scalar dtype against an Array inner descriptor produces a
-    wrapper signature ``T name`` that the body indexes ``name[0]`` (compile
-    error). Common cause: cuBLAS expansion's ``gpu_streams`` connector."""
+    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` so a follow-up
+    ``infer_connector_types`` re-derives them as pointer-typed.
+
+    A connector typed at construction time as a scalar dtype against an
+    ``Array`` inner descriptor produces a wrapper signature ``T name`` that the
+    body indexes ``name[0]`` (compile error); resetting to ``typeclass(None)``
+    forces re-inference. Common cause: cuBLAS expansion's ``gpu_streams``
+    connector.
+
+    :param sdfg: SDFG whose nested-SDFG connectors are reset in place.
+    """
     uninferred = dtypes.typeclass(None)
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
@@ -88,8 +93,12 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Return the number of scalars promoted across the SDFG hierarchy,
-        or ``None`` if nothing changed."""
+        """Promote every GPU-incompatible scalar across the SDFG hierarchy.
+
+        :param sdfg: Root SDFG to promote scalars in (modified in place).
+        :param pipeline_results: Results of prior pipeline passes (unused).
+        :returns: Number of scalars promoted, or ``None`` if nothing changed.
+        """
         promoted = 0
         # Top-down so a parent's promotion is visible when we visit the
         # child's matching descriptor (children inherit the parent's choice
@@ -130,9 +139,14 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         return False
 
     def _promote_one(self, sdfg: SDFG, name: str):
-        """Replace ``sdfg.arrays[name]`` (a Scalar) with a length-1 Array,
-        rewrite memlets referencing it, and recurse into nested SDFGs that
-        re-declare the same name as a Scalar."""
+        """Replace a Scalar descriptor with a length-1 Array and propagate the change.
+
+        Rewrites memlets referencing it and recurses into nested SDFGs that
+        re-declare the same name as a Scalar.
+
+        :param sdfg: SDFG owning the descriptor (modified in place).
+        :param name: Name of the Scalar descriptor to promote.
+        """
         scalar_desc: data.Scalar = sdfg.arrays[name]
 
         # Rule 2 promotes Default / CPU-side scalars to GPU_Global because
@@ -183,10 +197,15 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
 
     @staticmethod
     def _rewrite_interstate_assignments(sdfg: SDFG, name: str):
-        """Replace bare-identifier references to ``name`` in this SDFG's
-        interstate-edge assignment expressions with ``name[0]`` so that
-        post-promotion code reads the length-1 Array element rather than
-        treating the array pointer as a scalar value."""
+        """Subscript bare-identifier references to ``name`` in interstate-edge assignments.
+
+        Rewrites ``name`` to ``name[0]`` so post-promotion code reads the
+        length-1 Array element rather than treating the array pointer as a
+        scalar value.
+
+        :param sdfg: SDFG whose interstate-edge assignments are rewritten.
+        :param name: Promoted descriptor name to subscript.
+        """
         import re as _re
         # Word-boundary regex; subscripted (``name[``) and dotted (``.name``)
         # references are intentionally skipped.

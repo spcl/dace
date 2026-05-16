@@ -23,6 +23,8 @@ _QUOTED_LITERAL = re.compile(r"['\"](?:_cpy_in|_cpy_out|_mset_out)['\"]")
 
 
 def test_no_libnode_connector_literals_outside_definitions():
+    """No repo ``.py`` file outside the libnode definition files contains a quoted ``_cpy_in`` /
+    ``_cpy_out`` / ``_mset_out`` connector literal."""
     offenders = []
     for path in REPO_ROOT.glob("**/*.py"):
         if path in _ALLOWED_FILES:

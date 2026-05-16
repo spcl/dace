@@ -14,17 +14,17 @@ from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, Kern
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
 from dace.transformation.dataflow.add_threadblock_map import product
 
-# GPU Scope Generation Strategies
-
 
 def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
                                 state_id: int, anchor_node, dispatcher: TargetDispatcher):
-    """Emit ``{ctype} {var_name} = {expr};`` per map dim using the symbolic-
-    coordinate substitution. ``axis`` is ``'blockIdx'`` (kernel scope) or
-    ``'threadIdx'`` (thread-block scope). First three dims map directly to
-    ``axis.{x|y|z}``; further dims delinearize off ``axis.z``. Returns
-    ``(map_range, sym_indices, sym_coords)`` for callers that need the
-    symbolic forms downstream (e.g. for guard conditions)."""
+    """Emit ``{ctype} {var_name} = {expr};`` per map dim using the symbolic-coordinate substitution.
+
+    ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
+    three dims map directly to ``axis.{x|y|z}``; further dims delinearize off ``axis.z``.
+
+    :returns: ``(map_range, sym_indices, sym_coords)`` for callers that need the symbolic forms
+              downstream (e.g. for guard conditions).
+    """
     map_range = subsets.Range(scope_map.range[::-1])  # reversed for memory coalescing
     dimensions = len(map_range)
     dim_sizes = map_range.size()
@@ -109,8 +109,6 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           callsite_stream=callsite_stream,
                           comment=self.SCOPE_COMMENT) as scope_manager:
 
-            # ----------------- Retrieve kernel configuration -----------------------
-
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
@@ -181,10 +179,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
-            # ----------------- Guard Conditions for Block Execution -----------------------
-
-            # Generate conditions for this block's execution using min and max
-            # element, e.g. skipping out-of-bounds threads in trailing block
+            # Guard each dim so out-of-bounds threads in a trailing block are skipped.
             minels = map_range.min_element()
             maxels = map_range.max_element()
             for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
@@ -244,7 +239,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             map_range = subsets.Range(scope_map.range[::-1])  # Reversed for potential better performance
             warp_dim = len(map_range)
 
-            # The following sizes and bounds are be symbolic
+            # These sizes and bounds may be symbolic.
             num_threads_in_block = product(block_dims)
             warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
             num_warps = product(warp_dim_bounds)
@@ -252,14 +247,10 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             # The C type that defines the (flat) threadId and warpId variables
             ids_ctype = kernel_spec.gpu_index_ctype
 
-            # ----------------- Guard checks -----------------------
-
-            # handles checks either at compile time or runtime (i.e. checks in the generated code)
             self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
                                                callsite_stream, scope_manager)
 
-            # ----------------- Define (flat) Thread ID within Block -----------------------
-
+            # Define the flat thread ID within the block.
             flattened_terms = []
 
             for i, dim_size in enumerate(block_dims):
@@ -282,8 +273,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                   state_id, node)
             self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, ids_ctype)
 
-            # ----------------- Compute Map indices (= Warp indices) -----------------------
-
+            # Compute the map indices (the warp indices).
             for i in range(warp_dim):
                 var_name = scope_map.params[-i - 1]  # reverse order
                 previous_sizes = warp_dim_bounds[:i]
@@ -299,8 +289,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
-            # ----------------- Guard Conditions for Warp Execution -----------------------
-
+            # Guard conditions for warp execution.
             if num_warps * warpSize != num_threads_in_block:
                 condition = f'{threadID_name} < {num_warps}'
                 scope_manager.open(condition)
@@ -383,9 +372,6 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                 raise ValueError(f"Warp ID value {min_element} must be non-negative.")
 
 
-# Scope Manager: handles brackets and allocation/deallocation of arrays in scopes
-
-
 class ScopeManager:
     """RAII context manager that balances ``{`` / ``}`` for a generated scope.
 
@@ -426,18 +412,13 @@ class ScopeManager:
         self.exit_node = self.dfg_scope.sink_nodes()[0]
 
     def __enter__(self):
-        """
-        Writes the opening bracket in case self.brackets_on_enter
-        is set to true, which it is by default.
-        """
+        """Open a bracket when ``brackets_on_enter`` is set (the default)."""
         if self.brackets_on_enter:
             self.open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """
-        Writes the closing brackets to the stream.
-        """
+        """Write the closing bracket for every bracket opened by this manager."""
         for i in range(self._opened):
             line = "}"
             if self.debug:
@@ -445,11 +426,9 @@ class ScopeManager:
             self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
 
     def open(self, condition: str = None):
-        """
-        Opens a bracket. If a condition is given, emits 'if (condition) {', otherwise just '{'.
-        Tracks the number of open brackets for closing later.
+        """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{``.
 
-        :param condition: Optional condition for the opening bracket.
+        :param condition: optional guard condition for the opening bracket.
         """
         line = f"if ({condition}) {{" if condition else "{"
         if self.debug:

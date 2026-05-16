@@ -36,6 +36,8 @@ def _build_pooled_sdfg():
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_mempool_runs_correctly_and_emits_expected_calls():
+    """A pooled-transient kernel computes the correct result and emits the pool setup plus
+    one ``cudaMallocAsync``/``cudaFreeAsync`` per pooled array."""
     sdfg, pooled = _build_pooled_sdfg()
     compiled = sdfg.compile()
 

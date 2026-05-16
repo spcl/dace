@@ -204,7 +204,7 @@ class CoreDialectCompliant:
         """Return ``(feature_label, offenders)`` pairs for every failing feature, in report order.
 
         :param sdfg: the SDFG to inspect.
-        :return: a list of ``(label, offenders)`` tuples; empty if ``sdfg`` is compliant.
+        :returns: a list of ``(label, offenders)`` tuples; empty if ``sdfg`` is compliant.
         """
         out: List[Tuple[str, List[str]]] = []
         for label, getter in cls._CHECKS:

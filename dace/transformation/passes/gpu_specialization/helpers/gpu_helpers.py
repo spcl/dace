@@ -32,17 +32,20 @@ def dependency_edge():
 
 
 def is_gpu_lowering_applied(sdfg: SDFG) -> bool:
-    """True iff the gpu_specialization lowering has already run on ``sdfg``, signalled by the
-    ``gpu_streams`` transient. Used to short-circuit a re-application.
+    """True iff the gpu_specialization lowering has already run on ``sdfg``.
+
+    Signalled by the ``gpu_streams`` transient; used to short-circuit a re-application.
     """
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
-    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that
-    enclose ``node`` in ``state``. Empty when none. Invalidates the
-    state's ``scope_dict`` cache first because earlier pipeline passes
-    can mutate topology in ways that leave the cache stale."""
+    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that enclose ``node``.
+
+    Empty when none. Invalidates the state's ``scope_dict`` cache first
+    because earlier pipeline passes can mutate topology in ways that
+    leave the cache stale.
+    """
     state._clear_scopedict_cache()
     sdict = state.scope_dict()
     chain: List[nodes.MapEntry] = []
@@ -150,9 +153,12 @@ def is_pipeline_sync_tasklet(node) -> bool:
 
 
 def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes implying the enclosing component/SDFG involves GPU work: the union of stream
-    consumers (:func:`is_gpu_stream_consumer`) and AccessNodes for ``GPU_Global`` arrays. Only
-    ``is_gpu_stream_consumer`` nodes get a stream connector wired; AccessNodes have none to bind.
+    """True for nodes implying the enclosing component/SDFG involves GPU work.
+
+    The union of stream consumers (:func:`is_gpu_stream_consumer`) and
+    AccessNodes for ``GPU_Global`` arrays. Only
+    :func:`is_gpu_stream_consumer` nodes get a stream connector wired;
+    AccessNodes have none to bind.
     """
     if is_gpu_stream_consumer(node, sdfg, state):
         return True
@@ -162,9 +168,11 @@ def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def is_stream_typed_connector(node, conn_name: str) -> bool:
-    """True iff ``conn_name`` is an in-connector on ``node`` typed ``gpuStream_t``. The codebase
-    uses one connector name (:data:`STREAM_CONNECTOR`) for all consumers, but detection is
-    type-based -- the type is the contract.
+    """True iff ``conn_name`` is an in-connector on ``node`` typed ``gpuStream_t``.
+
+    The codebase uses one connector name (:data:`STREAM_CONNECTOR`) for
+    all consumers, but detection is type-based -- the type is the
+    contract.
     """
     t = node.in_connectors.get(conn_name)
     return t is not None and t == dtypes.gpuStream_t
@@ -190,8 +198,9 @@ def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
 
 
 def find_inner_gpu_consumers(sdfg: SDFG):
-    """Yield ``(node, sdfg, state)`` for every GPU stream consumer reachable
-    inside ``sdfg`` (recursively). Used by the stream-wiring passes to
+    """Yield ``(node, sdfg, state)`` for every GPU stream consumer reachable inside ``sdfg``.
+
+    Recurses into nested SDFGs. Used by the stream-wiring passes to
     enumerate kernels and library nodes that need a stream bound.
     """
     for nsdfg in sdfg.all_sdfgs_recursive():
@@ -202,10 +211,12 @@ def find_inner_gpu_consumers(sdfg: SDFG):
 
 
 def read_stream_assignments_from_wired_sdfg(sdfg: SDFG):
-    """Recover ``{node: stream_id}`` from a post-pipeline SDFG by reading the ``gpu_streams[<i>]``
-    subset wired into each consumer's stream in-connector. Re-running the scheduler instead would
-    differ because pipeline-internal nodes stitch otherwise-independent components together.
-    Returns ``{}`` if the lowering hasn't run yet.
+    """Recover ``{node: stream_id}`` from a post-pipeline SDFG.
+
+    Reads the ``gpu_streams[<i>]`` subset wired into each consumer's
+    stream in-connector. Re-running the scheduler instead would differ
+    because pipeline-internal nodes stitch otherwise-independent
+    components together. Returns ``{}`` if the lowering hasn't run yet.
     """
     if not is_gpu_lowering_applied(sdfg):
         return {}

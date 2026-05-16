@@ -309,10 +309,11 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     @staticmethod
     def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
-        """One-line reason ``node`` violates the all-on-GPU contract, or
-        ``None`` if acceptable. Tasklets must be device-level or
-        already-lowered runtime calls; LibraryNodes must be Copy/Memset
-        libnodes or device-level; other node classes are unrestricted.
+        """One-line reason ``node`` violates the all-on-GPU contract, or ``None`` if acceptable.
+
+        Tasklets must be device-level or already-lowered runtime calls;
+        LibraryNodes must be Copy/Memset libnodes or device-level; other
+        node classes are unrestricted.
         """
         from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
         from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
@@ -332,10 +333,11 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         return None
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
-        """Sync after host<->device transfer states plus a trailing sync
-        per program-sink state. Same-side GPU<->GPU copies need no sync --
-        they share stream 0 and run in submit order; only CPU/GPU-boundary
-        edges make the host wait on the stream.
+        """Sync after host<->device transfer states plus a trailing sync per program-sink state.
+
+        Same-side GPU<->GPU copies need no sync -- they share stream 0 and
+        run in submit order; only CPU/GPU-boundary edges make the host
+        wait on the stream.
         """
         host_copy_states: Set[SDFGState] = set()
         for nsdfg in sdfg.all_sdfgs_recursive():
@@ -353,10 +355,12 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     @staticmethod
     def _state_has_host_boundary_copy(state: SDFGState, sdfg: SDFG) -> bool:
-        """True iff ``state`` performs a host<->device transfer. Recognises
-        a ``CopyLibraryNode`` straddling the CPU/GPU storage boundary
-        (pre-expansion shape) or an already-lowered memcpy Tasklet whose
-        body names a host<->device direction (post-expansion shape).
+        """True iff ``state`` performs a host<->device transfer.
+
+        Recognises a ``CopyLibraryNode`` straddling the CPU/GPU storage
+        boundary (pre-expansion shape) or an already-lowered memcpy
+        Tasklet whose body names a host<->device direction (post-expansion
+        shape).
         """
         from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
         cpu_storages = {

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pins the I1 regression: a CPU scalar -> GPU scalar transient -> CPU array
-round-trip must not segfault (``_replace_direct_copies`` previously skipped
-the ``Scalar -> Array`` edge, writing a host pointer into device memory).
-"""
+"""Asserts a CPU scalar -> GPU scalar transient -> CPU array round-trip runs and preserves the value."""
 import numpy as np
 import pytest
 
@@ -12,6 +9,7 @@ from dace import StorageType
 
 @pytest.mark.gpu
 def test_cpu_gpu_cpu_scalar_roundtrip():
+    """A scalar copied host -> GPU transient -> host array yields the original value at ``output[0]``."""
     sdfg = dace.SDFG('h2d_d2h_scalar')
     sdfg.add_scalar('scal_in', dace.float32)
     sdfg.add_scalar('gpu_scal', dace.float32, StorageType.GPU_Global, transient=True)

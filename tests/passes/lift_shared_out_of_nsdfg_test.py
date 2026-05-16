@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unit tests for ``LiftSharedOutOfNestedSDFG``, which promotes ``GPU_Shared`` transients out of
-NSDFGs inside a ``GPU_Device`` map and wires them to the kernel ``MapEntry`` / ``MapExit`` so the
-allocator pins their ``__shared__`` declaration to the kernel scope. Topology asserted directly."""
+"""``LiftSharedOutOfNestedSDFG`` promotes ``GPU_Shared`` NSDFG transients to the kernel scope."""
 
 import dace
 from dace import SDFG, dtypes, nodes
@@ -74,26 +72,26 @@ def _find_nsdfg_node(outer: SDFG):
 
 
 def test_lift_shared_read_and_written():
+    """A read-and-written inner Shared transient is lifted to the outer SDFG with both NSDFG
+    connectors and ``MapEntry`` / ``MapExit`` anchor edges."""
     inner = _build_inner_sdfg_with_shared('inner_rw', mode='both')
     outer = _wrap_in_gpu_kernel(inner, with_inputs=True, with_outputs=True)
 
     LiftSharedOutOfNestedSDFG().apply_pass(outer, {})
 
-    # Outer SDFG now owns a transient with the lifted name and Shared storage.
     assert 'shared_arr' in outer.arrays, 'lift should add the descriptor on the outer SDFG'
     out_desc = outer.arrays['shared_arr']
     assert out_desc.transient is True
     assert out_desc.storage == dtypes.StorageType.GPU_Shared
 
-    # Inner descriptor is now non-transient (a connector parameter).
+    # Inner descriptor becomes a non-transient connector parameter.
     assert inner.arrays['shared_arr'].transient is False
 
-    # NSDFG node has both connectors (read + write).
     nsdfg_node, state = _find_nsdfg_node(outer)
     assert 'shared_arr' in nsdfg_node.in_connectors
     assert 'shared_arr' in nsdfg_node.out_connectors
 
-    # Dependency edge from MapEntry exists (anchors allocation in kernel scope).
+    # Dep edges through MapEntry/MapExit anchor the allocation in the kernel scope.
     me = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
     mx = state.exit_node(me)
     me_to_an = [e for e in state.out_edges(me) if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'shared_arr']

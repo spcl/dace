@@ -43,8 +43,8 @@ def test_wcr_via_reduction_kernel():
 
 @pytest.mark.gpu
 def test_wcr_np_sum_small_n_auto_staging():
-    """``total[0] = np.sum(A)`` with no storage annotations: runtime auto-staging makes
-    ``auto_optimize``'s sequentialized small reduce valid. Reference for the explicit-storage tests."""
+    """``total[0] = np.sum(A)`` with no storage annotations reduces correctly after
+    ``auto_optimize`` for GPU."""
     from dace.dtypes import DeviceType
     from dace.transformation.auto.auto_optimize import auto_optimize
 

@@ -40,9 +40,11 @@ def _is_register_demotable(desc, max_elements: int) -> bool:
 
 
 def _has_wcr_incoming(sdfg, data_name: str) -> bool:
-    """True if any memlet writes ``data_name`` with a WCR (atomic
-    accumulator). Such arrays must stay shared -- demoting to Register
-    would silently break the accumulation."""
+    """True if any memlet writes ``data_name`` with a WCR (atomic accumulator).
+
+    Such arrays must stay shared -- demoting to Register would silently
+    break the accumulation.
+    """
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for e in state.edges():
@@ -56,14 +58,15 @@ def _has_wcr_incoming(sdfg, data_name: str) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
-    """Hoist transient ``GPU_Global`` arrays out of kernel scopes, then lift
-    every implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
+    """Hoist transient ``GPU_Global`` arrays out of kernel scopes, then lift every implicit copy.
 
-    The hoist runs ``MoveArrayOutOfKernel`` per transient ``GPU_Global``
+    Implicit copy edges become ``Auto``-impl ``CopyLibraryNode``s. The
+    hoist runs ``MoveArrayOutOfKernel`` per transient ``GPU_Global``
     array inside a ``GPU_Device`` map; afterwards the array is a
     non-transient connector parameter on the kernel-owning SDFG. A
     post-hoist guard raises with the offender list if any in-kernel
-    transient ``GPU_Global`` copy survives."""
+    transient ``GPU_Global`` copy survives.
+    """
 
     register_demotion_max_elements = properties.Property(
         dtype=int,

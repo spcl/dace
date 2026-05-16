@@ -31,12 +31,13 @@ class DefaultSharedMemorySync(ppl.Pass):
         self._node_to_parent_state: Dict[Node, SDFGState] = dict()
 
     def apply_pass(self, sdfg: SDFG, _) -> None:
-        """Insert ``__syncthreads()`` barriers so shared-memory writes are
-        visible to subsequent reads.
+        """Insert ``__syncthreads()`` barriers so shared-memory writes are visible to subsequent reads.
 
         Collects TB MapExits and collaborative shared-memory write AccessNodes,
         determines which TB exits need a barrier, then inserts barriers after
         those exits and after the collaborative writes.
+
+        :param sdfg: SDFG to insert barriers into (modified in place).
         """
 
         # 1. Find all GPU_ThreadBlock-scheduled Maps and all collaborative writes to
@@ -65,6 +66,7 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         :param node: Candidate access node.
         :param state: State containing ``node``.
+        :returns: True if ``node`` is a collaborative shared-memory write.
         """
         # 1. node is not stored in shared memory - skip
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:

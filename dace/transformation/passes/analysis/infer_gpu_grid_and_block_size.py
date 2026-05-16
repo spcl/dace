@@ -26,7 +26,14 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         """
         Determine the 3D grid and block sizes for all ``GPU_Device`` map entries.
 
-        :return: a dict mapping each ``GPU_Device`` ``MapEntry`` to ``(grid_dimensions, block_dimensions)``.
+        :param sdfg: the SDFG whose ``GPU_Device`` maps are configured.
+        :param kernels_with_added_tb_maps: kernel map entries whose thread-block map was inserted
+                                           by ``AddThreadBlockMap`` (their block size is read from
+                                           ``gpu_block_size`` rather than inferred).
+        :returns: a dict mapping each ``GPU_Device`` ``MapEntry`` to ``(grid_dimensions,
+                  block_dimensions)``.
+        :raises ValueError: if a kernel has neither a set ``gpu_block_size`` nor a nested
+                            ``GPU_ThreadBlock`` map, or if explicit and inferred block sizes conflict.
         """
         # Collect all GPU_Device map entries across the SDFG
         kernel_maps: Set[Tuple[

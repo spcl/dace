@@ -34,9 +34,13 @@ def generate_sync_debug_call() -> str:
 
 
 def get_defined_type(data: dt.Data) -> DefinedType:
-    """
-    Return the DefinedType for a data descriptor.
-    Currently supports only scalars and arrays; extend if others are needed.
+    """Return the ``DefinedType`` for a data descriptor.
+
+    Only scalars and arrays are supported; extend if others are needed.
+
+    :param data: the data descriptor to classify.
+    :returns: ``DefinedType.Scalar`` for a ``Scalar``, ``DefinedType.Pointer`` for an ``Array``.
+    :raises NotImplementedError: if ``data`` is neither a ``Scalar`` nor an ``Array``.
     """
     if isinstance(data, dt.Scalar):
         return DefinedType.Scalar
@@ -53,6 +57,7 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     :param state: state where ``node`` resides.
     :param node: node to check.
     :param schedules: schedule types to match (e.g. ``{dtypes.ScheduleType.GPU_Device}``).
+    :returns: ``True`` if an enclosing Map matches one of ``schedules``, else ``False``.
     """
     current = node
 

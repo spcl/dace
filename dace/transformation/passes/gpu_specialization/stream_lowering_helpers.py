@@ -303,11 +303,13 @@ def _stream_connector_name(stream_id: int) -> str:
 
 
 def _make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
-    """Build a side-effect-only fused-sync tasklet with one
-    ``__stream_<id>`` in-connector per requested stream id (typed
-    ``gpuStream_t``). The body chains one ``cudaStreamSynchronize`` call
-    per connector. Caller wires each connector to the matching
-    ``gpu_streams[<id>]`` AccessNode after construction."""
+    """Build a side-effect-only fused-sync tasklet.
+
+    Carries one ``__stream_<id>`` in-connector per requested stream id
+    (typed ``gpuStream_t``). The body chains one ``cudaStreamSynchronize``
+    call per connector. Caller wires each connector to the matching
+    ``gpu_streams[<id>]`` AccessNode after construction.
+    """
     backend: str = common.get_gpu_backend()
     sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({_stream_connector_name(sid)}));" for sid in stream_ids]
     sync_code = "\n".join(sync_lines)

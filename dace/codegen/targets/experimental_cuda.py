@@ -625,8 +625,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             result += f' + gridDim.x * gridDim.y * blockIdx.z'
         return result
 
-    # Array Declaration, Allocation and Deallocation
-
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                       declaration_stream: CodeIOStream):
@@ -634,10 +632,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         ptrname = ptr(node.data, nodedesc, sdfg, self._frame)
         fsymbols = self._frame.symbols_and_constants(sdfg)
 
-        # ----------------- Guard checks --------------------
-
-        # NOTE: ``dfg`` is None iff ``nodedesc`` is non-free symbol dependent (see DaCeCodeGenerator.determine_allocation_lifetime).
-        # We avoid ``is_nonfree_sym_dependent`` when dfg is None and ``nodedesc`` is a View.
+        # ``dfg`` is None iff ``nodedesc`` is non-free-symbol dependent (see
+        # DaCeCodeGenerator.determine_allocation_lifetime); skip the
+        # ``is_nonfree_sym_dependent`` check when dfg is None and ``nodedesc`` is a View.
         if dfg and not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "declare_array is only for variables that require separate declaration and allocation.")

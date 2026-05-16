@@ -141,8 +141,7 @@ class MoveArrayOutOfKernel(Pass):
                               Memlet.from_array(array_name, array_desc))
 
     def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str):
-        """Move a transient ``GPU_Global`` array out of a kernel when its
-        accesses span nested SDFGs.
+        """Move a transient ``GPU_Global`` array out of a kernel when its accesses span nested SDFGs.
 
         Reshapes/rewrites memlets, renames on descriptor-name conflicts, and
         lifts the array through every intermediate nested SDFG.

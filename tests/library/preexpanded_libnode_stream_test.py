@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pins that the stream pipeline treats pre-expanded ``cudaMemcpyAsync`` / ``cudaMemsetAsync``
-tasklets as stream consumers: stream connector wired, syncs emitted, monolithic strategy accepts
-them, and the codegen prelude has a wired connector to bind ``__dace_current_stream`` from."""
+"""The stream pipeline treats pre-expanded ``cudaMemcpyAsync`` / ``cudaMemsetAsync`` tasklets as
+stream consumers (connectors wired, syncs emitted, monolithic strategy accepting)."""
 import pytest
 
 import dace
@@ -93,8 +92,7 @@ def test_monolithic_strategy_accepts_pre_expanded_sdfg():
 
 
 def test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet():
-    """Pipeline wires a ``gpuStream_t`` connector onto every pre-expanded runtime tasklet, which is
-    what lets the codegen prelude bind ``__dace_current_stream`` (else ill-formed C++)."""
+    """Pipeline wires a ``gpuStream_t`` in-connector onto every pre-expanded runtime tasklet."""
     sdfg = _build_h2d_d2h_pre_expanded_sdfg()
     GPUStreamPipeline().apply_pass(sdfg, {})
     for tasklet, _ in _runtime_tasklets(sdfg):

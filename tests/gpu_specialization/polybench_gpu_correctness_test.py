@@ -68,14 +68,7 @@ def _run_gpu_vs_cpu(kernel,
                     *,
                     rtol: float = 1e-10,
                     atol: float = 1e-12) -> None:
-    """Run ``kernel`` on CPU and on a GPU-transformed SDFG, compare outputs.
-
-    :param kernel: the ``@dc.program`` to exercise.
-    :param build_args: callable returning a fresh ``{name: array}`` argument dict per call.
-    :param symbols: symbol values passed to both SDFGs.
-    :param rtol: relative tolerance for ``np.testing.assert_allclose``.
-    :param atol: absolute tolerance for ``np.testing.assert_allclose``.
-    """
+    """Run ``kernel`` on a CPU SDFG and a GPU-transformed SDFG and assert the outputs match."""
     cpu_sdfg = kernel.to_sdfg(simplify=True)
     cpu_args = build_args()
     cpu_ret = cpu_sdfg(**cpu_args, **symbols)

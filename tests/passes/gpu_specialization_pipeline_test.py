@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pipeline-level tests for the gpu_specialization package: ``GPUSpecializationPipeline`` idempotency
-(D2) and ``is_inside_gpu_device_kernel`` across the three nesting shapes (D4)."""
+"""``GPUSpecializationPipeline`` idempotency and ``is_inside_gpu_device_kernel`` across nesting shapes."""
 import dace
 from dace import SDFG, dtypes
 from dace.memlet import Memlet
@@ -10,10 +9,6 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     is_gpu_lowering_applied,
     is_inside_gpu_device_kernel,
 )
-
-# ---------------------------------------------------------------------------
-# D2 -- pipeline idempotency
-# ---------------------------------------------------------------------------
 
 
 def _build_simple_gpu_copy_sdfg() -> SDFG:
@@ -60,11 +55,6 @@ def test_pipeline_idempotent_on_simple_sdfg():
 
     # Defensive: still exactly one ``gpu_streams`` array.
     assert sum(1 for k in sdfg.arrays if k == get_gpu_stream_array_name()) == 1
-
-
-# ---------------------------------------------------------------------------
-# D4 -- is_inside_gpu_device_kernel contract
-# ---------------------------------------------------------------------------
 
 
 def _trivial_inner_sdfg(name: str) -> SDFG:

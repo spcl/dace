@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`MonolithicSingleStreamGPUScheduler`: every kernel on stream 0, with syncs only at
-host-transfer boundaries (copy-in/iterate/copy-out yields two sync tasklets)."""
+"""Asserts ``MonolithicSingleStreamGPUScheduler`` places every kernel on one stream with syncs only at
+host-transfer boundaries, and rejects CPU-only programs."""
 import dace
 import numpy as np
 import pytest
@@ -58,6 +58,7 @@ def _build_gpu_sdfg(program, *, monolithic: bool):
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_monolithic_jacobi_2d_two_syncs_and_correctness():
+    """Monolithic-scheduled ``jacobi_2d`` emits exactly two sync tasklets and matches the CPU reference."""
     TSTEPS, n_val = 20, 30
     rng = np.random.default_rng(0)
     A = rng.standard_normal((n_val, n_val), dtype=np.float32)
@@ -80,6 +81,7 @@ def test_monolithic_jacobi_2d_two_syncs_and_correctness():
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
 def test_monolithic_heat_3d_two_syncs_and_correctness():
+    """Monolithic-scheduled ``heat_3d`` emits exactly two sync tasklets and matches the CPU reference."""
     TSTEPS, n_val = 20, 10
     rng = np.random.default_rng(0)
     A = rng.standard_normal((n_val, n_val, n_val), dtype=np.float64)

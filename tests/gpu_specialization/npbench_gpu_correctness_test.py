@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Numerical-validation matrix for NPBench kernels through the new GPU pipeline: CPU SDFG vs
-GPU-transformed SDFG element-wise, with compile/numerical failures tagged in the report."""
+"""NPBench kernels through the new GPU stream pipeline compared element-wise against the CPU SDFG."""
 import os
 import sys
 from typing import Callable, Dict
@@ -23,7 +22,6 @@ for sub in ('npbench/polybench', 'npbench/misc', 'npbench/weather_stencils'):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# Polybench (already in this branch).
 import adi_test  # noqa: E402
 import atax_test  # noqa: E402
 import bicg_test  # noqa: E402
@@ -54,7 +52,6 @@ import syrk_test  # noqa: E402
 import trisolv_test  # noqa: E402
 import trmm_test  # noqa: E402
 
-# NPBench misc / weather (added as part of this PR).
 import cavity_flow_test  # noqa: E402
 import channel_flow_test  # noqa: E402
 import hdiff_test  # noqa: E402
@@ -91,7 +88,7 @@ def _run_through_new_gpu_pipeline(kernel,
                                   *,
                                   rtol: float = 1e-10,
                                   atol: float = 1e-12) -> None:
-    """Build CPU and GPU SDFGs, run both, compare; failures surface as tagged ``pytest.fail``."""
+    """Run ``kernel`` on a CPU SDFG and a GPU-transformed SDFG and assert the outputs match."""
     cpu_sdfg = kernel.to_sdfg(simplify=True)
     cpu_args = build_args()
     cpu_ret = cpu_sdfg(**cpu_args, **symbols)
@@ -100,7 +97,7 @@ def _run_through_new_gpu_pipeline(kernel,
     gpu_sdfg.apply_gpu_transformations()
 
     # ``ExperimentalCUDACodeGen.preprocess`` runs the stream pipeline itself; pre-applying it here
-    # double-wires the per-stream chains and faults at runtime. Hand the SDFG to ``compile()`` raw.
+    # would double-wire the per-stream chains and fault at runtime.
 
     try:
         compiled = gpu_sdfg.compile()
@@ -118,9 +115,6 @@ def _run_through_new_gpu_pipeline(kernel,
         _compare_returns(cpu_ret, gpu_ret, rtol, atol)
     except AssertionError as e:
         pytest.fail(f'NUMERICAL_FAIL: {e}', pytrace=False)
-
-
-# --- Polybench kernel cases -----------------------------------------------------
 
 
 @pytest.mark.gpu
@@ -383,12 +377,9 @@ def test_fdtd_2d():
                                   atol=1e-6)
 
 
-# --- NPBench misc / weather kernels (newly ported) -----------------------------
-
-
 @pytest.mark.gpu
 def test_cavity_flow():
-    """Lid-driven cavity flow (NPBench misc), a small Navier-Stokes solver."""
+    """The cavity-flow kernel's GPU SDFG matches the CPU SDFG element-wise."""
     ny, nx, nt, nit, rho, nu = 21, 21, 4, 5, 1.0, 0.1
     u, v, p, dx, dy, dt = cavity_flow_test.initialize(ny, nx)
     build_args = lambda: dict(nt=nt, nit=nit, u=u.copy(), v=v.copy(), dt=dt, dx=dx, dy=dy, p=p.copy(), rho=rho, nu=nu)
@@ -401,7 +392,7 @@ def test_cavity_flow():
 
 @pytest.mark.gpu
 def test_channel_flow():
-    """Channel flow with periodic BC (NPBench misc)."""
+    """The channel-flow kernel's GPU SDFG matches the CPU SDFG element-wise."""
     ny, nx, nit, rho, nu, F = 21, 21, 5, 1.0, 0.1, 1.0
     u, v, p, dx, dy, dt = channel_flow_test.initialize(ny, nx)
     build_args = lambda: dict(nit=nit, u=u.copy(), v=v.copy(), dt=dt, dx=dx, dy=dy, p=p.copy(), rho=rho, nu=nu, F=F)
@@ -414,7 +405,7 @@ def test_channel_flow():
 
 @pytest.mark.gpu
 def test_hdiff():
-    """Horizontal diffusion stencil (NPBench weather)."""
+    """The hdiff stencil kernel's GPU SDFG matches the CPU SDFG element-wise."""
     I, J, K = 16, 16, 8
     in_field, out_field, coeff = hdiff_test.initialize(I, J, K)
     build_args = lambda: dict(in_field=in_field.copy(), out_field=out_field.copy(), coeff=coeff.copy())
@@ -423,7 +414,7 @@ def test_hdiff():
 
 @pytest.mark.gpu
 def test_vadv():
-    """Vertical advection stencil (NPBench weather)."""
+    """The vadv stencil kernel's GPU SDFG matches the CPU SDFG element-wise."""
     I, J, K = 16, 16, 8
     dtr_stage, utens_stage, u_stage, wcon, u_pos, utens = vadv_test.initialize(I, J, K)
     build_args = lambda: dict(utens_stage=utens_stage.copy(),
