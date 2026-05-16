@@ -212,7 +212,10 @@ def s161_d_single(
     d: dace.float64[LEN_1D],
     e: dace.float64[LEN_1D],
 ):
-    for i in range(LEN_1D):
+    # Upstream TSVC s161 loops ``for (i = 0; i < LEN_1D-1; ++i)`` so the
+    # ``c[i+1]`` write stays in bounds; the original port mis-transcribed
+    # this as ``range(LEN_1D)``, writing ``c[LEN_1D]`` OOB even unvectorized.
+    for i in range(LEN_1D - 1):
         if b[i] < 0.0:
             c[i + 1] = a[i] + d[i] * d[i]
         else:
