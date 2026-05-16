@@ -11,19 +11,22 @@ from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
 
 # Canonical GPU-stream in-connector name. Every stream consumer uses it.
-# Detection is type-based (``gpuStream_t``-typed in-connector); this
-# constant only keeps producers naming the connector consistently.
-STREAM_CONNECTOR = "__stream"
+# The single stream in-connector name, shared by libnode expansions
+# (``dace.libraries.standard.helper.STREAM_CONN``) and the scheduler.
+# Named after the legacy ambient-stream symbol so the same expanded IR is
+# valid under both the legacy codegen (which declares it) and the
+# experimental codegen (whose type-based prelude binds the connector).
+# Detection is type-based (``gpuStream_t``-typed in-connector); the name
+# only keeps producers/consumers consistent. MUST match ``helper.STREAM_CONN``.
+STREAM_CONNECTOR = "__dace_current_stream"
 
 # Back-compat alias. Pre-existing callers use this name; new code should
 # use :data:`STREAM_CONNECTOR`.
 COPY_MEMSET_STREAM_CONNECTOR = STREAM_CONNECTOR
 
-# Legacy ambient-stream symbol baked into a libnode's CUDA expansion when it
-# is expanded with no stream descriptor (the experimental codegen, unlike the
-# legacy one, never declares it). The stream scheduler turns this into a real
-# in-connector of the same name so the already-emitted body stays valid.
-LEGACY_AMBIENT_STREAM = "__dace_current_stream"
+# Same symbol under its semantic name, for the scheduler shim that detects
+# already-expanded tasklets which baked it without a connector.
+LEGACY_AMBIENT_STREAM = STREAM_CONNECTOR
 
 
 def get_gpu_stream_array_name() -> str:
