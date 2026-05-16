@@ -30,6 +30,15 @@ class DetectGather(ppl.Pass):
     # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'
 
+    only_masked = properties.Property(dtype=bool,
+                                      default=False,
+                                      desc="Collapse only masked (vector-remainder) fan-outs; leave the "
+                                      "main loop's per-lane scalar gather untouched.")
+
+    def __init__(self, only_masked: bool = False):
+        super().__init__()
+        self.only_masked = only_masked
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
 
@@ -50,5 +59,6 @@ class DetectGather(ppl.Pass):
                                  pattern="contiguous",
                                  intrinsic_template=_GATHER_TEMPLATE,
                                  intrinsic_template_masked=_GATHER_TEMPLATE_MASKED,
-                                 intrinsic_tasklet_name="gather_load")
+                                 intrinsic_tasklet_name="gather_load",
+                                 skip_unmasked=self.only_masked)
         sdfg.validate()

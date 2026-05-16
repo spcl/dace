@@ -69,6 +69,8 @@ class VectorizeCPU(ppl.Pipeline):
                  use_fp_factor: bool = True,
                  branch_normalization: bool = False,
                  lower_to_intrinsics: bool = False,
+                 gather_intrinsic: bool = True,
+                 scatter_intrinsic: bool = True,
                  force_autovec_ops: Optional[Set[str]] = None,
                  force_pscalar_ops: Optional[Set[str]] = None,
                  remainder_strategy: str = "scalar"):
@@ -86,7 +88,15 @@ class VectorizeCPU(ppl.Pipeline):
         :param user_skip_nsdfg_arrays: NSDFG array names to exclude from copy-in/out.
         :param use_fp_factor: branch lowering via ``c*x + (1-c)*y`` (mutually exclusive with ``branch_normalization``).
         :param branch_normalization: branch lowering via the M3 ``merge`` normalization.
-        :param lower_to_intrinsics: append the gather/scatter/strided detect passes.
+        :param lower_to_intrinsics: also collapse strided / multi-dim-strided
+            per-lane fans to intrinsics (gather/scatter collapse is always on
+            — see ``gather_intrinsic``/``scatter_intrinsic``).
+        :param gather_intrinsic: ``True`` (default) emits the ``gather``
+            intrinsic for the main loop; ``False`` keeps the main loop's
+            per-lane scalar gather fan. The masked vector remainder always
+            uses the intrinsic regardless (per-lane scalar fan faults on
+            inactive lanes).
+        :param scatter_intrinsic: as ``gather_intrinsic`` but for scatter.
         :param force_autovec_ops: ops to emit as ``vector_<op>_av`` (autovec hint).
         :param force_pscalar_ops: ops to emit as ``vector_<op>_pscalar`` (no autovec hint).
         :param remainder_strategy: ``"scalar"`` (scalar postamble), ``"masked"`` (iter-mask
@@ -336,10 +346,17 @@ class VectorizeCPU(ppl.Pipeline):
         # pattern differ. Default ``False`` keeps the scalar shape (the
         # ``assign_<i>`` fan stays in the SDFG and the C++ compiler
         # auto-vectorizes it if it can).
+        # Gather/scatter fan collapse runs unconditionally: the masked
+        # vector remainder MUST use the intrinsic (a per-lane scalar fan
+        # faults on inactive lanes). ``gather_intrinsic``/``scatter_intrinsic``
+        # only control the *main* loop — when ``False`` the pass collapses
+        # the masked remainder only and the main loop keeps its per-lane
+        # scalar fan (which the C++ compiler may still auto-vectorize).
+        passes.append(DetectGather(only_masked=not gather_intrinsic))
+        passes.append(DetectScatter(only_masked=not scatter_intrinsic))
+        # Strided / multi-dim-strided collapse stays opt-in.
         if lower_to_intrinsics:
             passes.extend([
-                DetectGather(),
-                DetectScatter(),
                 DetectStridedLoad(),
                 DetectStridedStore(),
                 DetectMultiDimStridedLoad(),

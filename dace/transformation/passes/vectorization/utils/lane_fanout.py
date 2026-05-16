@@ -333,7 +333,8 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                              pattern: str,
                              intrinsic_template: str,
                              intrinsic_tasklet_name: str,
-                             intrinsic_template_masked: Optional[str] = None) -> int:
+                             intrinsic_template_masked: Optional[str] = None,
+                             skip_unmasked: bool = False) -> int:
     """
     Collapse a 1-D ``assign_<i>`` fan around a ``_packed`` node into one intrinsic call.
 
@@ -349,6 +350,12 @@ def detect_lane_fanout_apply(sdfg: SDFG,
     :param intrinsic_tasklet_name: Label for the collapsed tasklet.
     :param intrinsic_template_masked: Optional masked-variant template,
         used when an iteration mask is in scope.
+    :param skip_unmasked: When ``True``, only collapse fans in masked
+        states (an ``_iter_mask`` in scope, i.e. the vector remainder);
+        leave the per-lane scalar fan in unmasked states (the main loop)
+        untouched. The masked remainder must always collapse - per-lane
+        scalar fan faults on inactive lanes - so this only opts the main
+        loop out to scalar gather/scatter.
     :returns: The number of fans collapsed.
     """
     assert direction in ("gather", "scatter", "load", "store"), direction
@@ -374,6 +381,10 @@ def detect_lane_fanout_apply(sdfg: SDFG,
 
             dtype_cpp = state.sdfg.arrays[node.data].dtype.ctype
             iter_mask_name = _find_iter_mask(state.sdfg) if intrinsic_template_masked is not None else None
+            # ``skip_unmasked``: keep the main loop's per-lane scalar fan.
+            # The masked remainder (iter_mask in scope) must still collapse.
+            if skip_unmasked and iter_mask_name is None:
+                continue
             template = intrinsic_template_masked if iter_mask_name is not None else intrinsic_template
 
             if pattern == "contiguous":
