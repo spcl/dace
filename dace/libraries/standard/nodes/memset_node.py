@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-MemsetLibraryNode representing 0-memsets over contiguous subsets. Each expansion accepts
-an optional ``stream`` in-connector so the generated memset is bound to a
-caller-provided ``gpuStream_t`` instead of default ``__dace_current_stream``.
+"""``MemsetLibraryNode`` representing 0-memsets over contiguous subsets.
+
+The CUDA expansion emits the ambient ``__dace_current_stream`` symbol; the
+GPU stream scheduler binds it post-expansion (legacy codegen declares it
+directly), so the libnode carries no stream input connector itself.
 """
 from functools import reduce
 import operator
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Tuple
 
 import dace
 from dace import library, nodes
@@ -14,9 +15,7 @@ from dace.codegen.common import sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import (STREAM_CONN as _STREAM_CONN, add_dynamic_inputs, add_stream_descriptor as
-                                            _add_stream_descriptor, extract_stream_and_dynamic_inputs, wire_stream_to as
-                                            _wire_stream_to)
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, add_dynamic_inputs, extract_dynamic_inputs
 
 # Outer connector name this libnode publishes. Republished as
 # ``MemsetLibraryNode.OUTPUT_CONNECTOR_NAME`` so external consumers
@@ -26,17 +25,16 @@ _OUTPUT_CONNECTOR_NAME = "_mset_out"
 
 def _make_memset_skeleton(
     node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
-) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any],
-           Optional[dace.data.Data]]:
+) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any]]:
     """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: ``(sdfg, state, out_name, out, out_subset, map_lengths,
-        out_shape_collapsed, stream_input)``.
+        out_shape_collapsed)``.
     """
-    out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
     keep = [(e + 1 - b) // s != 1 for (b, e, s) in out_subset]
     out_shape_collapsed = [(e + 1 - b) // s for (b, e, s), k in zip(out_subset, keep) if k]
     out_strides_collapsed = [stride for stride, k in zip(out.strides, keep) if k]
@@ -47,9 +45,8 @@ def _make_memset_skeleton(
 
     state = sdfg.add_state(f"{node.label}_state")
     map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
-    _add_stream_descriptor(sdfg, stream_input)
 
-    return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed, stream_input
+    return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed
 
 
 def _validate_no_dynamic_inputs(node: "MemsetLibraryNode", dynamic_inputs):
@@ -77,17 +74,15 @@ def _make_cuda_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFG
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: The CUDA memset tasklet.
     """
-    out_name, out, out_subset, dynamic_inputs, stream_input = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
-    has_stream = stream_input is not None
     code = (f"cudaMemsetAsync({_OUTPUT_CONNECTOR_NAME}, 0, "
-            f"{sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {_STREAM_CONN});")
+            f"{sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), {CURRENT_STREAM_NAME});")
 
-    in_conns = {_STREAM_CONN: dace.dtypes.gpuStream_t} if has_stream else {}
     return nodes.Tasklet(node.name,
-                         inputs=in_conns,
+                         inputs={},
                          outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
@@ -102,7 +97,7 @@ def _make_cpu_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGS
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: The CPU memset tasklet.
     """
-    out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
     _validate_no_dynamic_inputs(node, dynamic_inputs)
 
     cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
@@ -131,7 +126,7 @@ def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
     """
     from dace.sdfg.scope import is_devicelevel_gpu
 
-    out_name, out, out_subset, dynamic_inputs, _stream = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
 
     if is_devicelevel_gpu(parent_sdfg, parent_state, node) or dynamic_inputs:
         return 'pure'
@@ -162,24 +157,20 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        sdfg, state, out_name, out, _out_subset, map_lengths, _, stream_input = _make_memset_skeleton(
-            node, parent_state, parent_sdfg)
+        sdfg, state, out_name, out, _out_subset, map_lengths, _ = _make_memset_skeleton(node, parent_state, parent_sdfg)
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         outputs = {"_memset_out": dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
         schedule = (dace.dtypes.ScheduleType.GPU_Device
                     if out.storage == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default)
-        _, map_entry, _ = state.add_mapped_tasklet(f"{node.label}_tasklet",
-                                                   map_rng,
-                                                   dict(),
-                                                   "_memset_out = 0",
-                                                   outputs,
-                                                   schedule=schedule,
-                                                   external_edges=True)
-
-        if schedule == dace.dtypes.ScheduleType.GPU_Device:
-            _wire_stream_to(sdfg, state, map_entry, _STREAM_CONN, stream_input)
+        state.add_mapped_tasklet(f"{node.label}_tasklet",
+                                 map_rng,
+                                 dict(),
+                                 "_memset_out = 0",
+                                 outputs,
+                                 schedule=schedule,
+                                 external_edges=True)
 
         return sdfg
 
@@ -215,14 +206,12 @@ class MemsetLibraryNode(nodes.LibraryNode):
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
 
-    def validate(
-            self, sdfg: dace.SDFG,
-            state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict, Optional[dace.data.Data]]:
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict]:
         """Validate the node's wiring and resolve its output and inputs.
 
         :param sdfg: The SDFG owning the data descriptors.
         :param state: The state containing this node.
-        :returns: ``(out_name, out, out_subset, dynamic_inputs, stream_input)``.
+        :returns: ``(out_name, out, out_subset, dynamic_inputs)``.
         :raises ValueError: If the node does not have exactly one output edge.
         """
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
@@ -235,6 +224,6 @@ class MemsetLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        stream_input, dynamic_inputs = extract_stream_and_dynamic_inputs(self, sdfg, state, reserved_conns=())
+        dynamic_inputs = extract_dynamic_inputs(self, sdfg, state, reserved_conns=())
 
-        return out_name, out, out_subset, dynamic_inputs, stream_input
+        return out_name, out, out_subset, dynamic_inputs
