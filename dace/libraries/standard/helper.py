@@ -2,107 +2,39 @@
 """
 Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import dace
 import copy
 from dace.sdfg import nodes
 
-# The stream in-connector libnode CUDA expansions emit. Named after the
-# legacy ambient-stream symbol so the same expanded IR is valid under both
-# the legacy codegen (which declares ``__dace_current_stream``) and the
-# experimental codegen (whose type-based prelude binds the connector).
-STREAM_CONN = "__dace_current_stream"
+# The ambient GPU stream symbol libnode CUDA expansions reference. There is
+# no pre-existing global constant for it -- the legacy codegen hardcodes the
+# bare literal -- so this is the canonical declaration. The name keeps the
+# same expanded IR valid under both the legacy codegen (which declares
+# ``__dace_current_stream``) and the experimental codegen (whose type-based
+# prelude binds it once the stream scheduler wires the connector).
+CURRENT_STREAM_NAME = "__dace_current_stream"
 
 
-def add_stream_descriptor(sdfg: dace.SDFG, stream_input: Optional[dace.data.Data]):
-    """Add a single Scalar(``gpuStream_t``) ``stream`` descriptor to the expansion SDFG.
+def extract_dynamic_inputs(node: nodes.Node, sdfg: dace.SDFG, state: dace.SDFGState,
+                           reserved_conns: Tuple[str, ...]) -> Dict[str, dace.data.Data]:
+    """Extract the dynamic scalar inputs of a library node.
 
-    The libnode's ``stream`` connector is bound as one ``gpuStream_t`` value
-    regardless of how the parent sources it (e.g. as a slice of
-    ``gpu_streams[id]``). No-op when ``stream_input`` is ``None``.
-
-    :param sdfg: The expansion SDFG to add the descriptor to.
-    :param stream_input: The parent's stream descriptor, or ``None``.
-    """
-    if stream_input is None:
-        return
-    sdfg.add_scalar(STREAM_CONN, dace.dtypes.gpuStream_t, storage=dace.dtypes.StorageType.Register, transient=False)
-
-
-def wire_stream_to(sdfg: dace.SDFG, state: dace.SDFGState, target: nodes.Node, target_conn: str,
-                   stream_input: Optional[dace.data.Data]):
-    """Connect the SDFG-level ``stream`` access node to ``target`` on ``target_conn``.
-
-    No-op when no stream is wired. For map entries the connector is added on
-    the target typed as ``gpuStream_t`` so a type-based scan can recognize the
-    libnode-wired consumer as already wired and avoid threading a duplicate edge.
-
-    :param sdfg: The expansion SDFG owning the ``stream`` descriptor.
-    :param state: The state to add the connecting edge in.
-    :param target: The node consuming the stream value.
-    :param target_conn: The input connector on ``target`` to wire.
-    :param stream_input: The parent's stream descriptor, or ``None``.
-    """
-    if stream_input is None:
-        return
-    stream_access = state.add_access(STREAM_CONN)
-    if isinstance(target, nodes.MapEntry):
-        target.add_in_connector(target_conn, dace.dtypes.gpuStream_t)
-    state.add_edge(stream_access, None, target, target_conn,
-                   dace.memlet.Memlet.from_array(STREAM_CONN, sdfg.arrays[STREAM_CONN]))
-
-
-def wire_stream_through_map(sdfg: dace.SDFG, state: dace.SDFGState, map_entry: nodes.MapEntry, target: nodes.Node,
-                            target_conn: str):
-    """Wire the SDFG-level ``stream`` access node through ``map_entry`` into ``target``.
-
-    Adds ``IN_stream`` / ``OUT_stream`` pass-through connectors on the map and
-    the two memlet edges ``stream -> MapEntry.IN_stream`` and
-    ``MapEntry.OUT_stream -> target``. Used when a Sequential map encloses a
-    stream-using consumer and the DaCe convention requires the connector to
-    thread through the scope. The caller must have already added the
-    ``target_conn`` in-connector on ``target``.
-
-    :param sdfg: The expansion SDFG owning the ``stream`` descriptor.
-    :param state: The state to add the connecting edges in.
-    :param map_entry: The map scope the stream must thread through.
-    :param target: The node consuming the stream value.
-    :param target_conn: The input connector on ``target`` to wire.
-    """
-    stream_access = state.add_access(STREAM_CONN)
-    in_conn = f"IN_{STREAM_CONN}"
-    out_conn = f"OUT_{STREAM_CONN}"
-    map_entry.add_in_connector(in_conn)
-    map_entry.add_out_connector(out_conn)
-    state.add_edge(stream_access, None, map_entry, in_conn,
-                   dace.memlet.Memlet.from_array(STREAM_CONN, sdfg.arrays[STREAM_CONN]))
-    state.add_edge(map_entry, out_conn, target, target_conn,
-                   dace.memlet.Memlet.from_array(STREAM_CONN, sdfg.arrays[STREAM_CONN]))
-
-
-def extract_stream_and_dynamic_inputs(
-        node: nodes.Node, sdfg: dace.SDFG, state: dace.SDFGState,
-        reserved_conns: Tuple[str, ...]) -> Tuple[Optional[dace.data.Data], Dict[str, dace.data.Data]]:
-    """Extract the optional ``stream`` descriptor and dynamic scalar inputs of a library node.
-
-    Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to ``STREAM_CONN`` are skipped,
-    as are empty-memlet dependency edges. ``stream_input`` is ``None`` when no stream edge is wired.
+    Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to
+    ``CURRENT_STREAM_NAME`` are skipped, as are empty-memlet dependency
+    edges. The stream is no longer wired into the libnode: expansions emit
+    ``CURRENT_STREAM_NAME`` (the legacy ambient-stream name) directly and
+    the GPU stream scheduler binds it post-expansion.
 
     :param node: The library node whose input edges are inspected.
     :param sdfg: The SDFG owning the data descriptors.
     :param state: The state containing ``node``.
     :param reserved_conns: Connector names that are not dynamic inputs.
-    :returns: ``(stream_input, dynamic_inputs)``.
-    :raises ValueError: If more than one ``stream`` edge is wired, or a dynamic
-        input is not a scalar.
+    :returns: ``{connector: scalar descriptor}`` for each dynamic input.
+    :raises ValueError: If a dynamic input is not a scalar.
     """
-    stream_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == STREAM_CONN]
-    if len(stream_ies) > 1:
-        raise ValueError(f"{type(node).__name__} expects at most one '{STREAM_CONN}' input edge.")
-    stream_input = sdfg.arrays[stream_ies[0].data.data] if stream_ies else None
-
-    reserved = set(reserved_conns) | {STREAM_CONN}
+    reserved = set(reserved_conns) | {CURRENT_STREAM_NAME}
     dynamic_inputs = {}
     for ie in state.in_edges(node):
         if ie.dst_conn in reserved or ie.data.is_empty():
@@ -112,7 +44,7 @@ def extract_stream_and_dynamic_inputs(
             raise ValueError("Dynamic inputs (not connected to ``_in``) must be scalars.")
         dynamic_inputs[ie.dst_conn] = datadesc
 
-    return stream_input, dynamic_inputs
+    return dynamic_inputs
 
 
 def collapse_shape_and_strides(
