@@ -1457,14 +1457,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         b = sympy.sympify(b)
         if hasattr(sympy.Pow, '_from_args'):
             return sympy.Pow._from_args((a, b))
-        # SymPy 1.14 does not provide Pow._from_args. Recreate the non-evaluating
-        # constructor path directly to avoid the cached Pow.__new__ constructor,
-        # which can conflate same-name DaCe symbols with different dtypes.
-        obj = sympy.Expr.__new__(sympy.Pow, a, b)
-        obj = sympy.Pow._exec_constructor_postprocessors(obj)
-        if isinstance(obj, sympy.Pow):
-            obj.is_commutative = a.is_commutative and b.is_commutative
-        return obj
+        if hasattr(sympy.Pow, '__xnew__'):
+            return sympy.Pow.__xnew__(sympy.Pow, a, b)
+        return sympy.Pow.__new__.__wrapped__(sympy.Pow, a, b, evaluate=False)
 
     @staticmethod
     def _binop_add(a, b):
