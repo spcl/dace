@@ -469,5 +469,6 @@ def detect_lane_fanout_apply(sdfg: SDFG,
                                                   pattern=pattern,
                                                   intrinsic_template=intrinsic_template,
                                                   intrinsic_tasklet_name=intrinsic_tasklet_name,
-                                                  intrinsic_template_masked=intrinsic_template_masked)
+                                                  intrinsic_template_masked=intrinsic_template_masked,
+                                                  skip_unmasked=skip_unmasked)
     return found
