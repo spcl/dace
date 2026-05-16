@@ -1415,6 +1415,15 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
 
 
 class _SerializedSymbolicParser(ast.NodeVisitor):
+    """
+    Parser for the deterministic expression strings produced by
+    :func:`serialize_symbolic`.
+
+    The visitor reconstructs symbolic expressions with non-evaluating SymPy
+    constructors so that serialization round-trips preserve tree structure and
+    typed-symbol metadata instead of depending on SymPy's automatic
+    simplification and constructor caches.
+    """
 
     @staticmethod
     def _python_bool(value):
@@ -1446,6 +1455,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def _pow(a, b):
         a = sympy.sympify(a)
         b = sympy.sympify(b)
+        if hasattr(sympy.Pow, '_from_args'):
+            return sympy.Pow._from_args((a, b))
+        # SymPy 1.14 does not provide Pow._from_args. Recreate the non-evaluating
+        # constructor path directly to avoid the cached Pow.__new__ constructor,
+        # which can conflate same-name DaCe symbols with different dtypes.
         obj = sympy.Expr.__new__(sympy.Pow, a, b)
         obj = sympy.Pow._exec_constructor_postprocessors(obj)
         if isinstance(obj, sympy.Pow):

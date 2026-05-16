@@ -804,6 +804,7 @@ if __name__ == '__main__':
     test_multisubset(True)
     test_scoped(False)
     test_scoped(True)
+    test_scoped_roundtrip_is_stable()
     test_scoped_empty_memlet(False)
     test_scoped_empty_memlet(True)
     test_reference_neighbors(False)
