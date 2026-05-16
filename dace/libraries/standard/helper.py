@@ -8,7 +8,11 @@ import dace
 import copy
 from dace.sdfg import nodes
 
-STREAM_CONN = "__stream"
+# The stream in-connector libnode CUDA expansions emit. Named after the
+# legacy ambient-stream symbol so the same expanded IR is valid under both
+# the legacy codegen (which declares ``__dace_current_stream``) and the
+# experimental codegen (whose type-based prelude binds the connector).
+STREAM_CONN = "__dace_current_stream"
 
 
 def add_stream_descriptor(sdfg: dace.SDFG, stream_input: Optional[dace.data.Data]):

@@ -372,15 +372,17 @@ def _memcpy_kind(inp, out) -> str:
 def _stream_expr(stream_input, conn_name: str = _STREAM_CONN) -> Tuple[bool, str]:
     """Resolve the GPU stream expression for a memcpy tasklet.
 
-    :param stream_input: stream descriptor, or ``None`` for the ambient stream.
-    :param conn_name: connector name to use when a stream is wired.
-    :returns: ``(has_stream, expr)`` -- the connector name when a stream is
-              wired, ``__dace_current_stream`` (the ambient placeholder the
-              codegen binds) otherwise.
+    The expression is always ``conn_name`` (the legacy-ambient-stream name);
+    ``has_stream`` only controls whether the expansion provisions the
+    in-connector itself -- when there is no stream descriptor the stream
+    scheduler wires the connector of that name post-expansion.
+
+    :param stream_input: stream descriptor, or ``None`` to leave the
+        connector for the scheduler to add.
+    :param conn_name: connector name the emitted call references.
+    :returns: ``(has_stream, expr)``.
     """
-    if stream_input is None:
-        return False, "__dace_current_stream"
-    return True, conn_name
+    return stream_input is not None, conn_name
 
 
 def _memcpy_connector_typing(inp, out, one_elem: bool, in_is_cpu: bool, out_is_cpu: bool, in_conn: str, out_conn: str):
