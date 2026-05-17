@@ -22,7 +22,7 @@ Scope is limited to:
 from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, properties, symbolic
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -90,6 +90,14 @@ def _simplify_loop(loop: LoopRegion) -> int:
     # assignment sits on a mid-body edge (e.g. TSVC s292 ``im1 = i`` right
     # before the latch, with reads upstream in the body's first state).
     derived = [iv for iv in derived if _assignment_dominates_uses(loop, iv.name, iv_edge_sites[iv.name])]
+    # A symbol assigned only under a ``ConditionalBlock`` and live past the
+    # loop (e.g. an argmax ``index``) is not a per-iteration IV: folding it
+    # is unsound and its defining assignment cannot be removed, so the fold
+    # never converges against ``ScalarToSymbolPromotion``.
+    derived = [
+        iv for iv in derived if not (_assignment_is_conditional_in_loop(loop, iv_edge_sites[iv.name])
+                                     and not _symbol_is_dead_outside_loop(loop, iv.name))
+    ]
     derived.sort(key=_depth, reverse=True)
 
     applied = 0
@@ -131,6 +139,24 @@ def _collect_interstate_iv_sites(loop: LoopRegion) -> Dict[str, list]:
         for name in edge.data.assignments:
             sites.setdefault(name, []).append(edge)
     return sites
+
+
+def _assignment_is_conditional_in_loop(loop: LoopRegion, edges: list) -> bool:
+    """Whether the symbol's assignment is branch-guarded inside the loop.
+
+    :param loop: The enclosing ``LoopRegion``.
+    :param edges: The interstate edges that assign the symbol.
+    :returns: ``True`` iff a defining edge has a ``ConditionalBlock``
+        ancestor below ``loop`` (it does not run on every iteration).
+    """
+    for edge in edges:
+        for endpoint in (edge.src, edge.dst):
+            g = getattr(endpoint, 'parent_graph', None)
+            while g is not None and g is not loop:
+                if isinstance(g, ConditionalBlock):
+                    return True
+                g = getattr(g, 'parent_graph', None)
+    return False
 
 
 def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool:

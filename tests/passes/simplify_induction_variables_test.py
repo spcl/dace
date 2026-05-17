@@ -2,6 +2,8 @@
 """Tests for SimplifyInductionVariables pass."""
 
 import copy
+import signal
+
 import numpy as np
 import pytest
 
@@ -584,6 +586,48 @@ def test_llvm_two_independent_derived_ivs_same_basis():
         assert 'j' not in syms and 'k' not in syms
         if e.data.data in ('A', 'B'):
             assert 'i' in syms
+
+
+def test_does_not_fold_conditional_argmax_iv():
+    """Argmax ``index`` is conditionally carried and live past the loop.
+
+    It is not a per-iteration induction variable, so SIV must not fold it.
+    Folding it made ``SimplifyInductionVariables`` claim a change every
+    round while ``ScalarToSymbolPromotion`` regenerated ``index = i``,
+    so ``SDFG.simplify()`` never reached a fixed point (TSVC s315 hang).
+    The timeout converts a regression back into a fast failure instead of
+    an indefinite CI hang.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def argmax(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        index = 0
+        for i in range(N):
+            if a[i] > x:
+                x = a[i]
+                index = i
+        result[0] = x + float(index)
+
+    sdfg = copy.deepcopy(argmax.to_sdfg(simplify=False))
+
+    def _timeout(signum, frame):
+        raise TimeoutError('SDFG.simplify() did not converge (s315 regression)')
+
+    old = signal.signal(signal.SIGALRM, _timeout)
+    signal.alarm(60)
+    try:
+        sdfg.simplify(validate=True, validate_all=True)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+    n = 65
+    a = (np.arange(n) * 7 % n).astype(np.float64)
+    result = np.zeros(1, dtype=np.float64)
+    sdfg(a=a.copy(), result=result, N=n)
+    assert result[0] == a.max() + float(int(np.argmax(a)))
 
 
 if __name__ == '__main__':
