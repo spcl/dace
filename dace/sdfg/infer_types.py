@@ -13,7 +13,15 @@ from typing import Callable, Dict, List, Optional, Set, Union
 
 
 def _is_single_element_subset(subset) -> bool:
-    return subset is not None and symbolic.equal(subset.num_elements(), 1) is True
+    if subset is None:
+        return False
+    num_elements = subset.num_elements()
+    if num_elements == 1:
+        return True
+    try:
+        return symbolic.simplify(num_elements - 1) == 0
+    except (AttributeError, TypeError):
+        return False
 
 
 def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
