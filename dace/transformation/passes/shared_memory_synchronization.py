@@ -5,7 +5,6 @@ from typing import Dict, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
-from dace.codegen.targets.experimental_cuda_helpers import gpu_utils
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
@@ -83,8 +82,8 @@ class DefaultSharedMemorySync(ppl.Pass):
             return False
 
         # 4. It is a collaborative copy if it is within a kernel but not within a GPU_ThreadBlock map
-        if (not gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device])
-                or gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
+        if (not helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device])
+                or helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
             return False
 
         return True

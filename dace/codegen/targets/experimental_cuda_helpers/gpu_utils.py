@@ -1,12 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Small shared helpers for the experimental CUDA codegen (block-size math, schedule checks)."""
-from typing import Set
 
-from dace import Config, data as dt, dtypes
-from dace.sdfg import nodes, SDFGState
+from dace import Config, data as dt
 from dace.codegen import common
 from dace.codegen.dispatcher import DefinedType
-from dace.transformation.helpers import get_parent_map
 
 # CUDA / HIP launch grids and blocks have exactly three dimensions
 # (x, y, z); accessor helpers index into that fixed-width tuple.
@@ -49,24 +46,3 @@ def get_defined_type(data: dt.Data) -> DefinedType:
     else:
         raise NotImplementedError(f"Data type '{type(data).__name__}' is not supported for defined type inference."
                                   "Only Scalars and Arrays are expected for Kernels.")
-
-
-def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
-    """Return True iff ``node`` is enclosed by a Map whose schedule is in ``schedules``.
-
-    :param state: state where ``node`` resides.
-    :param node: node to check.
-    :param schedules: schedule types to match (e.g. ``{dtypes.ScheduleType.GPU_Device}``).
-    :returns: ``True`` if an enclosing Map matches one of ``schedules``, else ``False``.
-    """
-    current = node
-
-    while current is not None:
-        if isinstance(current, nodes.MapEntry):
-            if current.map.schedule in schedules:
-                return True
-
-        parent = get_parent_map(state, current)
-        if parent is None:
-            return False
-        current, state = parent

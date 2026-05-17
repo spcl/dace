@@ -201,19 +201,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
                     # Release at end of the last memlet path out of the terminator access node;
                     # if the terminator sits inside a scope, defer release to the end of state.
+                    # If the terminator sits inside a scope, defer release to the
+                    # end of state (empty set); otherwise release at the common
+                    # descendant following the ends of all memlet paths
+                    # (e.g., (a)->...->[tasklet]-->...->(b)).
                     terminators = set()
-                    if terminator is not None:
-                        parent = state.entry_node(terminator)
-                        if parent is not None:
-                            terminators = set()
-                        else:
-                            # Otherwise, find common descendant (or end of state) following the ends of
-                            # all memlet paths (e.g., (a)->...->[tasklet]-->...->(b))
-                            for e in state.out_edges(terminator):
-                                if isinstance(e.dst, nodes.EntryNode):
-                                    terminators.add(state.exit_node(e.dst))
-                                else:
-                                    terminators.add(e.dst)
+                    if terminator is not None and state.entry_node(terminator) is None:
+                        for e in state.out_edges(terminator):
+                            if isinstance(e.dst, nodes.EntryNode):
+                                terminators.add(state.exit_node(e.dst))
+                            else:
+                                terminators.add(e.dst)
 
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
@@ -253,7 +251,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if not self._in_device_code:
 
             state = cfg.state(state_id)
-            scope_entry = dfg_scope.source_nodes()[0]
             scope_exit = dfg_scope.sink_nodes()[0]
             scope_entry_stream = CodeIOStream()
             scope_exit_stream = CodeIOStream()
