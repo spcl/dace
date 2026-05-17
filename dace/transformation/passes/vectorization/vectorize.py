@@ -21,6 +21,7 @@ from dace.transformation.passes.vectorization.utils import *
 from dace.transformation.passes.vectorization.utils.nsdfg_reshape import (
     _setup_strided_inside_nsdfg,
     _setup_multi_element_strided_inside_nsdfg,
+    emit_staging_copy,
 )
 import dace.sdfg.tasklet_utils as tutil
 
@@ -1675,6 +1676,26 @@ class Vectorize(ppl.Pass):
                 f"Vectorize: other_subset not supported, found {memlet.other_subset} on memlet {memlet} "
                 f"(edge {edge}, state {state.label})")
 
+    @staticmethod
+    def _map_is_masked_remainder(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+        """Whether ``map_entry`` is a masked vector remainder.
+
+        ``GenerateIterationMask`` (P3) attaches an ``_iter_mask: bool[W]``
+        transient only to the body NSDFG of the masked remainder; the main
+        map and the scalar remainder never carry it. Detect it by scanning
+        the map scope for a NestedSDFG whose inner SDFG declares one.
+
+        :param state: State containing the map.
+        :param map_entry: The vectorized map entry.
+        :returns: True iff this map is the masked remainder.
+        """
+        for n in state.scope_subgraph(map_entry).nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                for nm in n.sdfg.arrays:
+                    if nm == "_iter_mask" or nm.startswith("_iter_mask_"):
+                        return True
+        return False
+
     def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int,
                               vectorizable_arrays: Dict[str, bool]):
         """Insert vector-staging copies before and after a vectorized map.
@@ -1686,6 +1707,7 @@ class Vectorize(ppl.Pass):
         :raises RuntimeError: if a map-exit out-edge has no data.
         """
         map_exit = state.exit_node(map_entry)
+        masked = self._map_is_masked_remainder(state, map_entry)
         data_and_offsets = list()
         in_datas = set()
         for ie in state.in_edges(map_entry):
@@ -1735,7 +1757,11 @@ class Vectorize(ppl.Pass):
                 an.setzero = True
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
-                state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
+                if masked:
+                    emit_staging_copy(state, src, src_conn, an, None, data, arr_name_to_use,
+                                      int(self.vector_width), "in", gate_extent=True)
+                else:
+                    state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
                 state.add_edge(an, None, map_entry, ie.dst_conn,
                                dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
 
@@ -1788,7 +1814,11 @@ class Vectorize(ppl.Pass):
                 state.remove_edge(oe)
                 state.add_edge(map_exit, src_conn, an, None,
                                dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
-                state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
+                if masked:
+                    emit_staging_copy(state, an, None, dst, dst_conn, data, arr_name_to_use,
+                                      int(self.vector_width), "out", gate_extent=True)
+                else:
+                    state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
 
                 memlet: dace.memlet.Memlet = oe.data
                 dataname: str = memlet.data

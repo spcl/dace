@@ -47,6 +47,109 @@ def _iter_mask_name(sdfg: dace.SDFG) -> Optional[str]:
     return None
 
 
+def emit_staging_copy(state: SDFGState, src: dace.nodes.Node, src_conn, dst: dace.nodes.Node, dst_conn,
+                      real_memlet: dace.memlet.Memlet, buf_name: str, vector_width: int, direction: str, *,
+                      mask_name: Optional[str] = None, gate_extent: bool = False) -> None:
+    """Splice one staging copy between a real array and a W-wide buffer.
+
+    The single emitter behind every vector-staging boundary copy
+    (``_emit_unmovable_copy``, ``_process_edges`` movable in/out, and
+    ``Vectorize._copy_in_and_copy_out``). In a masked remainder only
+    ``R < W`` lanes are in bounds, so an unconditional W-wide copy
+    OOB-reads / -writes the real (caller, non-W-padded) array at the
+    tail — an OOB write corrupts the heap. Each lane is gated:
+
+    - ``mask_name`` set: the copy lives inside the masked-remainder body
+      NSDFG; gate by the in-scope ``_iter_mask`` and wire a ``_mask``
+      connector.
+    - ``gate_extent`` set: the copy lives at the outer NSDFG boundary
+      where ``_iter_mask`` is not in scope; gate by the real array's own
+      extent (``base + l < extent``) — the algebraic equivalent of the
+      iteration mask, correct for every access shape.
+    - neither: plain ``vector_copy<T, W>`` (main loop / scalar remainder;
+      unchanged, no per-lane overhead).
+
+    A length-1 array or ``Scalar`` source on the ``"in"`` side is a
+    loop-invariant broadcast (e.g. TSVC s293 ``a0 = a[0]; a[i] = a0``):
+    it must replicate element 0 to every lane, never read ``W`` elements
+    from a 1-element source (that OOB-reads ``W-1`` elements past it and
+    corrupts the heap). This case ignores the mask/extent guards — a
+    broadcast is in-bounds and valid for every lane.
+
+    :param state: State to splice into.
+    :param src: Edge source node.
+    :param src_conn: Edge source connector.
+    :param dst: Edge destination node.
+    :param dst_conn: Edge destination connector.
+    :param real_memlet: Memlet on the real array (its W-wide subset).
+    :param buf_name: The W-wide staging-buffer array name.
+    :param vector_width: Lane count.
+    :param direction: ``"in"`` (real -> buffer) or ``"out"`` (buffer -> real).
+    :param mask_name: In-scope ``_iter_mask`` name, or ``None``.
+    :param gate_extent: Gate by the real array's extent instead of a mask.
+    """
+    assert direction in ("in", "out"), direction
+    W = int(vector_width)
+    buf_arr = state.sdfg.arrays[buf_name]
+    ctype = dace.dtypes.TYPECLASS_TO_STRING[buf_arr.dtype]
+
+    src_desc = state.sdfg.arrays.get(real_memlet.data)
+    is_broadcast = (direction == "in" and src_desc is not None
+                    and (isinstance(src_desc, dace.data.Scalar) or str(src_desc.total_size) == "1"))
+    if is_broadcast:
+        # Read element 0 once (single-element memlet -> scalar connector)
+        # and replicate to every lane. Never a W-wide read of a 1-element
+        # source.
+        t = state.add_tasklet(name=f"_stage_in_bcast_{buf_name}",
+                               inputs={"_in"},
+                               outputs={"_out"},
+                               code=f"for (int _l = 0; _l < {W}; ++_l) {{ _out[_l] = _in; }}",
+                               language=dace.dtypes.Language.CPP)
+        state.add_edge(src, src_conn, t, "_in", dace.memlet.Memlet(f"{real_memlet.data}[0]"))
+        state.add_edge(t, "_out", dst, dst_conn, dace.memlet.Memlet(f"{buf_name}[0:{W}]"))
+        return
+
+    if mask_name is not None:
+        guard = "_mask[_l]"
+    elif gate_extent:
+        arr = state.sdfg.arrays[real_memlet.data]
+        strides = list(arr.strides)
+        contig = strides.index(1) if 1 in strides else len(strides) - 1
+        base = real_memlet.subset[contig][0]
+        extent = arr.shape[contig]
+        guard = f"(({base}) + _l) < ({extent})"
+    else:
+        guard = None
+
+    if guard is None:
+        code = f"vector_copy<{ctype}, {W}>(_out, _in);"
+    elif direction == "in":
+        code = (f"for (int _l = 0; _l < {W}; ++_l) {{\n"
+                f"    if ({guard}) _out[_l] = _in[_l]; else _out[_l] = 0;\n"
+                f"}}")
+    else:
+        code = (f"for (int _l = 0; _l < {W}; ++_l) {{\n"
+                f"    if ({guard}) _out[_l] = _in[_l];\n"
+                f"}}")
+
+    t = state.add_tasklet(name=f"_stage_{direction}_{buf_name}",
+                          inputs={"_in"},
+                          outputs={"_out"},
+                          code=code,
+                          language=dace.dtypes.Language.CPP)
+    buf_memlet = dace.memlet.Memlet(f"{buf_name}[0:{W}]")
+    if direction == "in":
+        state.add_edge(src, src_conn, t, "_in", copy.deepcopy(real_memlet))
+        state.add_edge(t, "_out", dst, dst_conn, buf_memlet)
+    else:
+        state.add_edge(src, src_conn, t, "_in", buf_memlet)
+        state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(real_memlet))
+    if mask_name is not None:
+        t.add_in_connector("_mask", dtype=dace.dtypes.pointer(dace.bool_), force=True)
+        mask_an = state.add_access(mask_name)
+        state.add_edge(mask_an, None, t, "_mask", dace.memlet.Memlet(f"{mask_name}[0:{W}]"))
+
+
 def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
     """Map each vector-map param to the end bound of the outer data-parallel map.
 
@@ -1221,19 +1324,33 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
             state.remove_edge(e)
 
             vec_arr_desc = state.sdfg.arrays[vector_dataname]
+            # Masked remainder: ``_iter_mask`` lives inside the NSDFG, not
+            # at this outer boundary, so the real<->buffer staging copy is
+            # gated by the real array's own extent. The main loop / scalar
+            # remainder keep the raw W-wide memlet (codegen ``CopyND<W>``,
+            # the fast path) unchanged.
+            masked = _iter_mask_name(inner_sdfg) is not None
+            orig_memlet = dace.memlet.Memlet(data=orig_data, subset=copy_subset)
+            vec_memlet = dace.memlet.Memlet.from_array(vector_dataname, vec_arr_desc)
             if direction == "in":
                 # src --[orig, copy_subset]--> an --[vec_from_array]--> nsdfg
-                state.add_edge(e.src, e.src_conn, an, None, dace.memlet.Memlet(data=orig_data, subset=copy_subset))
-                state.add_edge(an, None, e.dst, e.dst_conn,
-                               dace.memlet.Memlet.from_array(vector_dataname, vec_arr_desc))
+                if masked:
+                    emit_staging_copy(state, e.src, e.src_conn, an, None, orig_memlet, vector_dataname, vector_width,
+                                      "in", gate_extent=True)
+                else:
+                    state.add_edge(e.src, e.src_conn, an, None, orig_memlet)
+                state.add_edge(an, None, e.dst, e.dst_conn, vec_memlet)
             else:
                 # nsdfg --[vec_from_array]--> an --[orig, copy_subset]--> dst
                 assert e.src == nsdfg_node
                 assert e.src_conn is not None
                 assert len(set(state.out_edges_by_connector(nsdfg_node, e.src_conn))) == 0
-                state.add_edge(e.src, e.src_conn, an, None,
-                               dace.memlet.Memlet.from_array(vector_dataname, vec_arr_desc))
-                state.add_edge(an, None, e.dst, e.dst_conn, dace.memlet.Memlet(data=orig_data, subset=copy_subset))
+                state.add_edge(e.src, e.src_conn, an, None, vec_memlet)
+                if masked:
+                    emit_staging_copy(state, an, None, e.dst, e.dst_conn, orig_memlet, vector_dataname, vector_width,
+                                      "out", gate_extent=True)
+                else:
+                    state.add_edge(an, None, e.dst, e.dst_conn, orig_memlet)
 
     return vectorized_datanames
 
@@ -1468,22 +1585,16 @@ def add_copies_before_and_after_nsdfg(
         orig_access.setzero = True
         v_access = target_state.add_access(vec_name)
         v_access.setzero = True
-        vec_arr = target_state.sdfg.arrays[vec_name]
-        tasklet_name = "_unmovable_copy_in" if direction == "in" else "_unmovable_copy_out"
-        t = target_state.add_tasklet(
-            name=tasklet_name,
-            inputs={"_in"},
-            outputs={"_out"},
-            code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
-            language=dace.dtypes.Language.CPP)
         orig_memlet = dace.memlet.Memlet(data=unmovable_name, subset=copy.deepcopy(subset))
-        vec_memlet = dace.memlet.Memlet.from_array(vec_name, vec_arr)
+        # The copy lives inside the body NSDFG, so the masked-remainder
+        # ``_iter_mask`` (if any) is in scope and gates each lane.
+        mask_name = _iter_mask_name(target_state.sdfg)
         if direction == "in":
-            target_state.add_edge(orig_access, None, t, "_in", orig_memlet)
-            target_state.add_edge(t, "_out", v_access, None, vec_memlet)
+            emit_staging_copy(target_state, orig_access, None, v_access, None, orig_memlet, vec_name, vector_width,
+                              "in", mask_name=mask_name)
         else:
-            target_state.add_edge(v_access, None, t, "_in", vec_memlet)
-            target_state.add_edge(t, "_out", orig_access, None, orig_memlet)
+            emit_staging_copy(target_state, v_access, None, orig_access, None, orig_memlet, vec_name, vector_width,
+                              "out", mask_name=mask_name)
 
     # Insert copy-ins and outs
     name_to_subset_map = dict()
