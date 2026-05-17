@@ -130,8 +130,8 @@ class BlockGraphView(object):
         (i.e., an SDFG or a scope block).
 
         :param predicate: An optional predicate function that decides on whether the traversal should recurse or not.
-        If the predicate returns False, traversal is not recursed any further into the graph found under NodeT for
-        a given [NodeT, GraphT] pair.
+                          If the predicate returns False, traversal is not recursed any further into the graph found
+                          under NodeT for a given [NodeT, GraphT] pair.
         """
         return []
 
@@ -2604,13 +2604,14 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                 ControlFlowBlock, abc.ABC):
     """
     Abstract superclass to represent all kinds of control flow regions in an SDFG.
-    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock``s,
-    ``SDFGState``s, and nested ``AbstractControlFlowRegion``s. An ``AbstractControlFlowRegion`` can further be either a
-    region that directly contains a control flow graph (``ControlFlowRegion``s and subclasses thereof), or something
+
+    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock`` s,
+    ``SDFGState`` s, and nested ``AbstractControlFlowRegion`` s. An ``AbstractControlFlowRegion`` can further be either a
+    region that directly contains a control flow graph (``ControlFlowRegion`` s and subclasses thereof), or something
     that acts like and has the same utilities as a control flow region, including the same API, but is itself not
     directly a single graph. An example of this is the ``ConditionalBlock``, which acts as a single control flow region
     to the outside, but contains multiple actual graphs (one per branch). As such, there are very few but important
-    differences between the subclasses of ``AbstractControlFlowRegion``s, such as how traversals are performed, how many
+    differences between the subclasses of ``AbstractControlFlowRegion`` s, such as how traversals are performed, how many
     start blocks there are, etc.
     """
 
@@ -3164,6 +3165,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 class ControlFlowRegion(AbstractControlFlowRegion):
     """
     A ``ControlFlowRegion`` represents a control flow graph node that itself contains a control flow graph.
+
     This can be an arbitrary control flow graph, but may also be a specific type of control flow region with additional
     semantics, such as a loop or a function call.
     """
@@ -3228,34 +3230,27 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition=True,
+                 update_before_condition: bool = True,
                  unroll: bool = False,
                  unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
-        if initialize_expr is not None:
-            if isinstance(initialize_expr, CodeBlock):
-                self.init_statement = initialize_expr
-            else:
-                self.init_statement = CodeBlock(initialize_expr)
+        if initialize_expr is None or isinstance(initialize_expr, CodeBlock):
+            self.init_statement = initialize_expr
         else:
-            self.init_statement = None
+            self.init_statement = CodeBlock(initialize_expr)
 
-        if condition_expr:
-            if isinstance(condition_expr, CodeBlock):
-                self.loop_condition = condition_expr
-            else:
-                self.loop_condition = CodeBlock(condition_expr)
-        else:
+        if condition_expr is None:
             self.loop_condition = CodeBlock('True')
-
-        if update_expr is not None:
-            if isinstance(update_expr, CodeBlock):
-                self.update_statement = update_expr
-            else:
-                self.update_statement = CodeBlock(update_expr)
+        elif isinstance(condition_expr, CodeBlock):
+            self.loop_condition = condition_expr
         else:
-            self.update_statement = None
+            self.loop_condition = CodeBlock(condition_expr)
+
+        if update_expr is None or isinstance(update_expr, CodeBlock):
+            self.update_statement = update_expr
+        else:
+            self.update_statement = CodeBlock(update_expr)
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
@@ -3549,14 +3544,23 @@ class LoopRegion(ControlFlowRegion):
             codes.append(self.update_statement)
         return codes
 
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self, arrays: Optional[Dict[str, dt.Data]] = None) -> List[mm.Memlet]:
+        """
+        Get a list of all (read) memlets in meta codeblocks.
+
+        :param arrays: An optional dictionary mapping array names to their data descriptors.
+            If not not given defaults to ``self.sdfg.arrays``.
+        """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
-        read_memlets = memlets_in_ast(self.loop_condition.code[0], self.sdfg.arrays)
+
+        arrays = arrays if arrays is not None else self.sdfg.arrays
+
+        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays)
         if self.init_statement:
-            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], self.sdfg.arrays))
+            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays))
         if self.update_statement:
-            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], self.sdfg.arrays))
+            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays))
         return read_memlets
 
     def replace_meta_accesses(self, replacements):

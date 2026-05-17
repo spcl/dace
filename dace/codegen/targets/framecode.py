@@ -878,16 +878,17 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
                       cfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
-        """ Generate frame code for a given SDFG, calling registered targets'
-            code generation callbacks for them to generate their own code.
+        """
+        Generate frame code for a given SDFG, calling registered targets'
+        code generation callbacks for them to generate their own code.
 
-            :param sdfg: The SDFG to generate code for.
-            :param schedule: The schedule the SDFG is currently located, or
-                             None if the SDFG is top-level.
-            :param cfg_id An optional string id given to the SDFG label
-            :return: A tuple of the generated global frame code, local frame
-                     code, and a set of targets that have been used in the
-                     generation of this SDFG.
+        :param sdfg: The SDFG to generate code for.
+        :param schedule: The schedule the SDFG is currently located, or
+                         None if the SDFG is top-level.
+        :param cfg_id: An optional string id given to the SDFG label
+        :return: A tuple of the generated global frame code, local frame
+                 code, and a set of targets that have been used in the
+                 generation of this SDFG.
         """
         if len(cfg_id) == 0 and sdfg.cfg_id != 0:
             cfg_id = '_%d' % sdfg.cfg_id

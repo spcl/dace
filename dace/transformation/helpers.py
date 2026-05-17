@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import ast
 import copy
@@ -787,13 +787,14 @@ def isolate_nested_sdfg(
 ) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
     """Isolate the nested SDFG.
 
-    The function will split `state` into three states:
-    - Pre State: Contains the data flow that is needed to compute the dependency
-        of the nested SDFG.
-    - Middle State: This state contains the nested SDFG and the nodes that are needed
-        as input or output to the nested SDFG.
-    - Post State: Contains the data flow that uses the data that was computed
-        by the nested SDFG.
+    The function will split ``state`` into three states:
+
+        - Pre State: Contains the data flow that is needed to compute the dependency
+          of the nested SDFG.
+        - Middle State: This state contains the nested SDFG and the nodes that are needed
+          as input or output to the nested SDFG.
+        - Post State: Contains the data flow that uses the data that was computed
+          by the nested SDFG.
 
     The important aspect of this function is, that it will not increase the
     number of AccessNodes that are written to, it might, however, add new AccessNodes
@@ -801,8 +802,11 @@ def isolate_nested_sdfg(
 
     :param state: The state on which we operate.
     :param nested_sdfg: The nested SDFG node that should be isolated.
-    :param test_if_applicable: If `True` then do not perform the splitting, only verify
-        that it can be performed by returning either `True` or `False`.
+    :param test_if_applicable: If ``True`` then do not perform the splitting, only verify
+        that it can be performed by returning either ``True`` or ``False``.
+    :return: If ``test_if_applicable`` is ``False`` then the function will return a tuple of the three states
+        (pre, middle, post). If ``test_if_applicable`` is ``True``, then the function will return ``True``
+        if the split can be performed and ``False`` otherwise.
     """
 
     # We can only isolate the nested SDFG if it is on global scope, for example
@@ -2062,3 +2066,49 @@ def _is_pointer(obj) -> bool:
 def _is_structure_view(obj) -> bool:
     """Check if object is a StructureView."""
     return isinstance(obj, data.StructureView)
+
+
+def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
+    """
+    Move a branch of a ``ConditionalBlock`` up into its parent CFG, replacing the
+    conditional with the selected branch body and discarding the condition check
+    and every other branch. Incoming and outgoing edges of the conditional are
+    rewired to the spliced branch's start and end nodes.
+
+    :param if_block: The conditional block to dissolve.
+    :param body_to_take: The branch body whose nodes and edges are spliced into
+        ``if_block.parent_graph`` in place of ``if_block``.
+    """
+    bodies = {b for _, b in if_block.branches}
+    assert body_to_take in bodies
+    assert isinstance(if_block, ConditionalBlock)
+
+    graph = if_block.parent_graph
+
+    node_map = dict()
+    new_start_block = None
+    new_end_block = None
+
+    for node in body_to_take.nodes():
+        copynode = copy.deepcopy(node)
+        node_map[node] = copynode
+        start_block_case = (body_to_take.start_block == node) and (graph.start_block == if_block)
+        if body_to_take.start_block == node:
+            assert new_start_block is None
+            new_start_block = copynode
+        if body_to_take.out_degree(node) == 0:
+            assert new_end_block is None
+            new_end_block = copynode
+        graph.add_node(copynode, is_start_block=start_block_case)
+
+    for edge in body_to_take.edges():
+        src = node_map[edge.src]
+        dst = node_map[edge.dst]
+        graph.add_edge(src, dst, copy.deepcopy(edge.data))
+
+    for ie in graph.in_edges(if_block):
+        graph.add_edge(ie.src, new_start_block, copy.deepcopy(ie.data))
+    for oe in graph.out_edges(if_block):
+        graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
+
+    graph.remove_node(if_block)
