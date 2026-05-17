@@ -197,6 +197,65 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
+    def _subst_and_overapprox(self, data_range: List, range_list: dict, data_name: str,
+                              sdfg: dace.SDFG) -> Optional[List]:
+        """Substitute map parameters into ``data_range`` and, when
+        ``overapproximate_first_dimension`` is set, widen the stride-1 axis
+        to the array's full contiguous extent.
+
+        :param data_range: ``(begin, end, step)`` per dimension (map-relative).
+        :param range_list: map symbol -> ``(begin, end, step)``.
+        :param data_name: array the subset addresses.
+        :param sdfg: SDFG owning ``data_name``.
+        :returns: the rewritten range, or ``None`` if it cannot be lowered.
+        """
+        new_range = []
+        for (b, e, s) in data_range:
+            nb, ne, ns = b, e, s
+            for (p, (b2, e2, s2)) in range_list.items():
+                nb = nb.subs(p, b2)
+                ne = ne.subs(p, e2)
+                assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
+            new_range.append((nb, ne, ns))
+
+        if self.overapproximate_first_dimension:
+            arr = sdfg.arrays[data_name]
+            stride_one = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
+            assert len(stride_one) <= 1  # a view inside a nested SDFG can have 0
+            if len(stride_one) == 0:
+                return None
+            dim_offset, extent = stride_one.pop()
+            new_range[dim_offset] = (0, extent - 1, 1)
+        return new_range
+
+    @staticmethod
+    def _reject_if_not_contiguous(new_range: List, data_name: str, sdfg: dace.SDFG, *, is_input: bool) -> bool:
+        """Warn and return ``False`` when ``new_range`` is non-contiguous in its array.
+
+        :param new_range: the rewritten subset range.
+        :param data_name: array the range addresses.
+        :param sdfg: SDFG owning ``data_name``.
+        :param is_input: selects the input vs output warning message.
+        :returns: ``True`` iff the subset is contiguous (safe to lower).
+        """
+        if dace.subsets.Range(new_range).is_contiguous_subset(sdfg.arrays[data_name]):
+            return True
+        if is_input:
+            warnings.warn(f"Input array {data_name} is not contiguous, cannot remove memcpy/memset.", UserWarning)
+        else:
+            warnings.warn(
+                f"Output array {data_name} subset {new_range} is not contiguous, "
+                "cannot remove memcpy/memset.", UserWarning)
+        return False
+
+    @staticmethod
+    def _collapsed_length(new_range: List) -> dace.symbolic.SymExpr:
+        """Product of per-dimension lengths of a (contiguous) subset range."""
+        total = dace.symbolic.SymExpr(1)
+        for (b, e, s) in new_range:
+            total *= (e + 1) - b
+        return total
+
     def _get_write_begin_and_length(
             self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
             tasklet: dace.nodes.Tasklet) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
@@ -204,114 +263,33 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dace.symbolic.symbol(p): (b, e, s)
             for (p, (b, e, s)) in zip(map_entry.map.params, map_entry.map.range)
         }
-
         in_edge = state.in_edges(tasklet)[0]
         out_edge = state.out_edges(tasklet)[0]
+        has_in = in_edge.data.data is not None
 
-        if in_edge.data.data is not None:
-            in_data_range = [(b, e, s) for (b, e, s) in in_edge.data.subset]
-        out_data_range = [(b, e, s) for (b, e, s) in out_edge.data.subset]
-
-        new_in_data_range = []
-        new_out_data_range = []
-
-        if in_edge.data.data is not None:
-            for (b, e, s) in in_data_range:
-                nb: dace.symbolic.SymExpr = b
-                ne: dace.symbolic.SymExpr = e
-                ns: dace.symbolic.SymExpr = s
-                for (p, (b2, e2, s2)) in range_list.items():
-                    nb = nb.subs(p, b2)
-                    ne = ne.subs(p, e2)
-                    assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
-                new_in_data_range.append((nb, ne, ns))
-
-            # If we overapproximate the first dimension, we assume it is contiguous
-            if self.overapproximate_first_dimension:
-                arr = state.sdfg.arrays[in_edge.data.data]
-                stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
-                assert len(stride_one_dimension) <= 1  # If a view inside a nested SDFG it can be 0 too
-                # If no stride-one-dimension then we can't remove this
-                if len(stride_one_dimension) == 0:
-                    return None, None, None
-                dim_offset, stride_one_dimension = stride_one_dimension.pop()
-                new_in_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
-
-        for (b, e, s) in out_data_range:
-            nb: dace.symbolic.SymExpr = b
-            ne: dace.symbolic.SymExpr = e
-            ns: dace.symbolic.SymExpr = s
-            for (p, (b2, e2, s2)) in range_list.items():
-                nb = nb.subs(p, b2)
-                ne = ne.subs(p, e2)
-                assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
-            new_out_data_range.append((nb, ne, ns))
-
-        # If we overapproximate the first dimension, we assume it is contiguous
-        if self.overapproximate_first_dimension:
-            arr = state.sdfg.arrays[out_edge.data.data]
-            stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
-            assert len(stride_one_dimension) <= 1  # If a view inside a nested SDFG it can be 0 too
-            # If no stride-one-dimension then we can't remove this
-            if len(stride_one_dimension) == 0:
-                return None, None, None
-            dim_offset, stride_one_dimension = stride_one_dimension.pop()
-            new_out_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
-
-        new_in_data_subset = dace.subsets.Range(new_in_data_range) if in_edge.data.data is not None else None
-        new_out_data_subset = dace.subsets.Range(new_out_data_range) if out_edge.data.data is not None else None
-
-        if in_edge.data.data is not None:
-            contig_subset = new_in_data_subset.is_contiguous_subset(state.sdfg.arrays[in_edge.data.data])
-            if not contig_subset:
-                warnings.warn(f"Input array {in_edge.data.data} is not contiguous, cannot remove memcpy/memset.",
-                              UserWarning)
+        new_out = self._subst_and_overapprox([(b, e, s) for (b, e, s) in out_edge.data.subset], range_list,
+                                             out_edge.data.data, state.sdfg)
+        if new_out is None:
+            return None, None, None
+        new_in = []
+        if has_in:
+            new_in = self._subst_and_overapprox([(b, e, s) for (b, e, s) in in_edge.data.subset], range_list,
+                                                in_edge.data.data, state.sdfg)
+            if new_in is None:
                 return None, None, None
 
-        if out_edge.data.data is not None:
-            contig_subset = new_out_data_subset.is_contiguous_subset(state.sdfg.arrays[out_edge.data.data])
-            if not contig_subset:
-                warnings.warn(
-                    f"Output array {out_edge.data.data} subset {new_out_data_range} is not contiguous, "
-                    "cannot remove memcpy/memset.", UserWarning)
-                return None, None, None
+        if has_in and not self._reject_if_not_contiguous(new_in, in_edge.data.data, state.sdfg, is_input=True):
+            return None, None, None
+        if out_edge.data.data is not None and not self._reject_if_not_contiguous(
+                new_out, out_edge.data.data, state.sdfg, is_input=False):
+            return None, None, None
 
-        if in_edge.data.data is not None:
-            in_begin_exprs = [b for (b, e, s) in new_in_data_range]
-            in_length_exprs = [(e + 1) - b for (b, e, s) in new_in_data_range]
-        out_begin_exprs = [b for (b, e, s) in new_out_data_range]
-        out_length_exprs = [(e + 1) - b for (b, e, s) in new_out_data_range]
+        out_length_collapsed = self._collapsed_length(new_out)
+        # Reject when the inner access spans a non-unit-stride dimension.
+        if has_in and self._collapsed_length(new_in) != out_length_collapsed:
+            return None, None, None
 
-        if in_edge.data.data is not None:
-            in_begin_collapsed = dace.symbolic.SymExpr(1)
-            in_length_collapsed = dace.symbolic.SymExpr(1)
-        out_begin_collapsed = dace.symbolic.SymExpr(1)
-        out_length_collapsed = dace.symbolic.SymExpr(1)
-
-        # We ensured the subset is contiguous, so we can get the length by multiplying each dimension's length
-        if in_edge.data.data is not None:
-            for i, b in enumerate(in_begin_exprs):
-                in_begin_collapsed *= b
-
-            for i, l in enumerate(in_length_exprs):
-                in_length_collapsed *= l
-
-        for i, b in enumerate(out_begin_exprs):
-            out_begin_collapsed *= b
-
-        for i, l in enumerate(out_length_exprs):
-            out_length_collapsed *= l
-
-        if in_edge.data.data is None:
-            in_begin_collapsed = None
-            in_length_collapsed = None
-
-        if in_length_collapsed is not None:
-            # Inner access is over a non-unit stride dimension
-            if in_length_collapsed != out_length_collapsed:
-                return None, None, None
-
-        return new_in_data_range, new_out_data_range, out_length_collapsed
+        return new_in, new_out, out_length_collapsed
 
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         """Lift every pure element-wise-copy path under map ``node`` to a ``CopyLibraryNode``.
