@@ -3,7 +3,6 @@
 import dace
 import multiprocessing
 from dace import library, nodes, properties
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from numbers import Number
@@ -63,14 +62,16 @@ class ExpandHPTT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
+
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
-        axes = ','.join([symstr(a) for a in node.axes])
-        shape = ','.join([symstr(s) for s in inp_tensor.shape])
+        axes = ','.join([sym2cpp(a) for a in node.axes])
+        shape = ','.join([sym2cpp(s) for s in inp_tensor.shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
-        alpha = symstr(node.alpha)
-        beta = symstr(node.beta)
+        alpha = sym2cpp(node.alpha)
+        beta = sym2cpp(node.beta)
         code = f"""
             int perm[{len(inp_tensor.shape)}] = {{{axes}}};
             int size[{len(inp_tensor.shape)}] = {{{shape}}};
@@ -108,6 +109,8 @@ class ExpandCuTensor(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
+
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
@@ -134,10 +137,10 @@ class ExpandCuTensor(ExpandTransformation):
 
         modes_a_str = ', '.join(str(m) for m in modes_a)
         modes_c_str = ', '.join(str(m) for m in modes_c)
-        extent_a_str = ', '.join(symstr(s) for s in inp_tensor.shape)
-        extent_c_str = ', '.join(symstr(s) for s in out_tensor.shape)
-        stride_a_str = ', '.join(symstr(s) for s in inp_tensor.strides)
-        stride_c_str = ', '.join(symstr(s) for s in out_tensor.strides)
+        extent_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.shape)
+        extent_c_str = ', '.join(sym2cpp(s) for s in out_tensor.shape)
+        stride_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.strides)
+        stride_c_str = ', '.join(sym2cpp(s) for s in out_tensor.strides)
 
         code = f"""\
 {environments.cuTensor.handle_setup_code(node)}
