@@ -599,11 +599,19 @@ class SameWriteSetIfElseToMergeCFG(ppl.Pass):
             # Prefer the subset the RHS itself wrote (``arr[i, j]`` → ``[i, j]``);
             # only fall back to ``[0]`` for shape-1 scalars and ``subset_str`` for
             # bare references where the RHS gave us no per-array subset.
+            # A length-1 / Scalar operand is a loop-invariant value (a
+            # non-transient scalar source like the kernel arg ``c`` in
+            # ``a[i, j] > c``). It must stay a 1-element ``[0]`` read so
+            # the vectorizer broadcasts it (array-op-scalar) — never the
+            # captured / W-wide per-lane subset, which OOB-reads a
+            # 1-element source and cannot be reshaped (it is a parent-fed
+            # connector). Otherwise prefer the subset the RHS wrote
+            # (``arr[i, j]`` → ``[i, j]``), or ``subset_str``.
             captured = extracted_subsets.get(arr)
-            if captured:
-                arr_subset = captured.strip("[]")
-            elif sdfg.arrays[arr].total_size == 1:
+            if sdfg.arrays[arr].total_size == 1:
                 arr_subset = "0"
+            elif captured:
+                arr_subset = captured.strip("[]")
             else:
                 arr_subset = subset_str
             state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
