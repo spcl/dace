@@ -50,6 +50,24 @@ def dependent_inner_maps(t: dace.float64[N, M], y: dace.float64[N, M]):
 
 
 @dace.program
+def three_independent(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for i in dace.map[0:N]:
+            x[i, j] = 1.0
+        for i in dace.map[0:N]:
+            y[i, j] = 2.0
+        for i in dace.map[0:N]:
+            z[i, j] = 3.0
+
+
+@dace.program
+def single_inner_map(x: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for i in dace.map[0:N]:
+            x[i, j] = 1.0
+
+
+@dace.program
 def three_level(x: dace.float64[N, M], y: dace.float64[N, M]):
     for j in dace.map[0:M]:
         for jj in dace.map[0:P]:
@@ -147,6 +165,29 @@ def test_three_level_nest_cascades():
     sdfg(x=x1, y=y1, N=n, M=m, P=p)
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
     assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
+
+
+def test_three_independent_maps_split_into_three():
+    n, m = 5, 4
+    sdfg = three_independent.to_sdfg(simplify=True)
+    assert len(_toplevel_map_entries(sdfg)) == 1
+
+    x0, y0, z0 = (np.zeros((n, m)) for _ in range(3))
+    copy.deepcopy(sdfg)(x=x0, y=y0, z=z0, N=n, M=m)
+
+    sdfg.apply_transformations_repeated(PerfLoopNesting)
+    sdfg.validate()
+    assert len(_toplevel_map_entries(sdfg)) == 3
+
+    x1, y1, z1 = (np.zeros((n, m)) for _ in range(3))
+    sdfg(x=x1, y=y1, z=z1, N=n, M=m)
+    assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0) and np.allclose(z1, 3.0)
+
+
+def test_single_inner_map_is_noop():
+    sdfg = single_inner_map.to_sdfg(simplify=True)
+    # Only one inner map: nothing to duplicate, the pass must not apply.
+    assert sdfg.apply_transformations_repeated(PerfLoopNesting) == 0
 
 
 if __name__ == "__main__":

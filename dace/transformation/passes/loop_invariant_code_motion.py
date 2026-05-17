@@ -547,6 +547,11 @@ def _hoist_tasklet_to_preheader(
     for src in orphans:
         if src in body.nodes() and body.degree(src) == 0:
             body.remove_node(src)
+    # The output access node stays only if something in ``body`` still reads
+    # it; with no remaining consumers it is now fully produced in the
+    # preheader and would otherwise be left isolated (invalid SDFG).
+    if out_access in body.nodes() and body.degree(out_access) == 0:
+        body.remove_node(out_access)
 
     return True
 
