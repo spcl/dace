@@ -704,8 +704,21 @@ class Vectorize(ppl.Pass):
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
             readwrite_data = set()
             for n in inner_state.nodes():
-                if (isinstance(n, dace.nodes.AccessNode) and inner_state.in_degree(n) > 0
-                        and inner_state.out_degree(n) > 0 and inner_state.sdfg.arrays[n.data].transient is False):
+                # Step 4.1 expands ARRAY memlets to a W-wide view ("This
+                # should be performed only for arrays"). A non-transient
+                # Scalar / length-1 source (e.g. the loop-invariant kernel
+                # arg ``c`` in ``a[i,j] > c``, which the merge-CFG arm
+                # clone leaves with an in+out edge) is not an array view:
+                # widening its 1-element memlet to ``[0:W]`` reads past it
+                # (OOB) and it cannot be reshaped (parent-fed connector).
+                # It must stay ``[0]`` and be broadcast. Mirror step 4's
+                # scalar exclusion.
+                if not isinstance(n, dace.nodes.AccessNode):
+                    continue
+                desc = inner_state.sdfg.arrays[n.data]
+                if (inner_state.in_degree(n) > 0 and inner_state.out_degree(n) > 0
+                        and desc.transient is False and isinstance(desc, dace.data.Array)
+                        and str(desc.total_size) != "1"):
                     readwrite_data.add(n.data)
             for rw in readwrite_data:
                 array_data.add(rw)
