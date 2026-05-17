@@ -7,7 +7,7 @@ This exposes the two maps to fusion/collapsing passes that otherwise refuse to
 cross the conditional block.
 """
 import copy
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, memlet as mm, symbolic
 from dace import sdfg as sd
@@ -17,7 +17,9 @@ from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG, AccessNode
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
+from dace.transformation import helpers as xfh
 
 
 @transformation.explicit_cf_compatible
@@ -34,17 +36,45 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             ConditionalBlock(<cond>):
                 single branch with a control-flow region containing
                     (optional empty states) -> branch_state
-                    branch_state contains:
-                        ... -> inner_map_entry -> inner_nsdfg -> inner_map_exit -> ...
+                    branch_state contains one or more sibling top-level maps,
+                    each whose body is a single NestedSDFG:
+                        ... -> inner_map_entry_k -> inner_nsdfg_k -> inner_map_exit_k -> ...
 
     After the transformation, the conditional block at the outer nested SDFG
-    level is replaced by ``branch_state`` (so the two maps become neighbours),
-    and a new conditional block with the original condition is placed *inside*
-    ``inner_nsdfg.sdfg`` wrapping its original contents. The condition value
-    is materialised as an ``int32`` symbol on the interstate edge leading to
-    the branch state and passed through to ``inner_nsdfg`` via
-    ``symbol_mapping`` so it is evaluated exactly once, at the outer level
-    where all its free symbols are still in scope.
+    level is replaced by ``branch_state`` (so the inner maps become neighbours
+    of the surrounding maps), and a new conditional block with the original
+    condition is placed *inside* every ``inner_nsdfg_k.sdfg`` wrapping its
+    original contents. The condition value is materialised as a symbol on the
+    interstate edge leading to the branch state and passed through to each
+    ``inner_nsdfg_k`` via ``symbol_mapping`` so it is evaluated exactly once,
+    at the outer level where all its free symbols are still in scope.
+
+    Design -- patterns this transformation accepts and the soundness argument:
+
+    * **Single guarded map** (the original supported case). One sibling map
+      under a one-branch condition.
+    * **Multiple sibling maps under one condition** (``if c: map1; map2; ...``).
+      The single guard is pushed independently into each sibling map's nested
+      SDFG. This is the highest-value extension: it turns ``k`` maps that a
+      blocking conditional kept apart into ``k`` adjacent maps that fusion /
+      ``MapCollapse`` can then combine. Soundness holds because the condition
+      is identical for every sibling, evaluated once at the outer interstate
+      edge, and merely replicated as a guard inside each inner body -- the
+      per-map semantics are unchanged.
+
+    Soundness guard (applies to every accepted pattern): the moved condition
+    is evaluated *once*, before the outer map body runs, instead of once per
+    outer-map iteration. That is only equivalent if the condition is invariant
+    with respect to the outer map's parameters. ``can_be_applied`` therefore
+    rejects the match if any free symbol of the condition resolves (through
+    ``outer_nsdfg.symbol_mapping``) to an expression that mentions an
+    outer-map parameter. This both closes a latent unsoundness in the original
+    single-map matcher and is what makes the multi-map extension safe.
+
+    Not accepted (deliberately out of scope to keep the change surgical):
+    conditions with an ``else``/``elif`` branch (``len(branches) != 1``) and
+    conditions that depend on the outer map parameters (rejected by the
+    invariance guard above).
     """
 
     cond_block = transformation.PatternNode(ConditionalBlock)
@@ -71,39 +101,125 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return non_empty[0]
 
     @staticmethod
-    def _find_inner_map_pieces(branch_state: SDFGState) -> Optional[Tuple[MapEntry, MapExit, NestedSDFG]]:
-        """Returns (map_entry, map_exit, inner_nsdfg) if ``branch_state`` has
-        exactly one top-level map whose body is a single NestedSDFG (with
-        access-node taps allowed around it)."""
+    def _find_all_inner_map_pieces(branch_state: SDFGState) -> Optional[List[Tuple[MapEntry, MapExit, NestedSDFG]]]:
+        """Returns the list of ``(map_entry, map_exit, inner_nsdfg)`` tuples for
+        every top-level map in ``branch_state``.
+
+        The state must contain one or more top-level maps; every top-level node
+        must be a map entry/exit or an :class:`AccessNode` tap, and each map's
+        body must be a single NestedSDFG (again with access-node taps allowed).
+        These are exactly the maps that the Python frontend emits for sibling
+        ``dace.map`` loops under one condition.
+
+        :param branch_state: The state to inspect.
+        :returns: A non-empty list of per-map pieces, or ``None`` if the state
+                  does not match the expected sibling-maps shape.
+        """
         map_entries = [n for n in branch_state.nodes() if isinstance(n, MapEntry)]
-        if len(map_entries) != 1:
+        if len(map_entries) < 1:
             return None
-        map_entry = map_entries[0]
-        map_exit = branch_state.exit_node(map_entry)
+
+        map_pairs = [(me, branch_state.exit_node(me)) for me in map_entries]
+        scope_nodes: Set = set()
+        for me, mx in map_pairs:
+            scope_nodes.add(me)
+            scope_nodes.add(mx)
 
         for node in branch_state.nodes():
             if branch_state.entry_node(node) is not None:
                 continue
-            if node is map_entry or node is map_exit:
+            if node in scope_nodes:
                 continue
             if isinstance(node, AccessNode):
                 continue
             return None
 
-        body = list(branch_state.all_nodes_between(map_entry, map_exit))
-        nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
-        if len(nsdfgs) != 1:
-            return None
-        inner_nsdfg = nsdfgs[0]
+        pieces: List[Tuple[MapEntry, MapExit, NestedSDFG]] = []
+        for map_entry, map_exit in map_pairs:
+            body = list(branch_state.all_nodes_between(map_entry, map_exit))
+            nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
+            if len(nsdfgs) != 1:
+                return None
+            inner_nsdfg = nsdfgs[0]
+            for node in body:
+                if node is inner_nsdfg:
+                    continue
+                if isinstance(node, AccessNode):
+                    continue
+                return None
+            pieces.append((map_entry, map_exit, inner_nsdfg))
 
-        for node in body:
-            if node is inner_nsdfg:
-                continue
-            if isinstance(node, AccessNode):
-                continue
-            return None
+        return pieces
 
-        return map_entry, map_exit, inner_nsdfg
+    @staticmethod
+    def _inner_maps_shape_ok(branch_state: SDFGState) -> bool:
+        """Returns whether ``branch_state`` is the sibling-maps shape.
+
+        Requires at least one top-level map, every top-level node to be a map
+        entry/exit or an :class:`AccessNode` tap, and every map to have a
+        non-empty body. Unlike :meth:`_find_all_inner_map_pieces` the body need
+        not already be a single ``NestedSDFG``; :meth:`_normalize_inner_map_bodies`
+        wraps plain ``Tasklet`` bodies (the common Python-frontend shape).
+
+        :param branch_state: The conditional branch state to inspect.
+        :returns: ``True`` if the shape is the normalizable sibling-maps shape.
+        """
+        map_entries = [n for n in branch_state.nodes() if isinstance(n, MapEntry)]
+        if len(map_entries) < 1:
+            return False
+        scope_nodes: Set = set()
+        for me in map_entries:
+            scope_nodes.add(me)
+            scope_nodes.add(branch_state.exit_node(me))
+        for node in branch_state.nodes():
+            if branch_state.entry_node(node) is not None:
+                continue
+            if node in scope_nodes or isinstance(node, AccessNode):
+                continue
+            return False
+        for me in map_entries:
+            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            if not any(not isinstance(n, AccessNode) for n in body):
+                return False
+        return True
+
+    @staticmethod
+    def _normalize_inner_map_bodies(branch_state: SDFGState, enclosing_sdfg: sd.SDFG):
+        """Ensures every top-level inner map's body is a single ``NestedSDFG``.
+
+        The Python frontend emits sibling ``dace.map`` bodies as plain
+        ``Tasklet`` subgraphs, whereas the per-map rewrite expects a single
+        ``NestedSDFG``. Any map whose body is not already exactly one
+        ``NestedSDFG`` has its body nested into one in place, after which the
+        proven NestedSDFG path applies uniformly.
+
+        :param branch_state: The conditional branch state holding the maps.
+        :param enclosing_sdfg: The SDFG that owns ``branch_state``.
+        """
+        for me in [n for n in branch_state.nodes() if isinstance(n, MapEntry)]:
+            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
+            non_access = [n for n in body if not isinstance(n, AccessNode)]
+            if len(nsdfgs) == 1 and len(non_access) == 1:
+                continue
+            xfh.nest_state_subgraph(enclosing_sdfg, branch_state, SubgraphView(branch_state, body))
+
+    @staticmethod
+    def _outer_map_params(outer_state: SDFGState, outer_nsdfg: NestedSDFG) -> Set[str]:
+        """Collects the parameters of every map enclosing ``outer_nsdfg`` in
+        ``outer_state``.
+
+        :param outer_state: The state containing the outer NestedSDFG.
+        :param outer_nsdfg: The NestedSDFG whose enclosing map scope is queried.
+        :returns: The set of enclosing map parameter names.
+        """
+        params: Set[str] = set()
+        scope = outer_state.entry_node(outer_nsdfg)
+        while scope is not None:
+            if isinstance(scope, MapEntry):
+                params.update(str(p) for p in scope.map.params)
+            scope = outer_state.entry_node(scope)
+        return params
 
     # ---- Pattern matching ------------------------------------------------
 
@@ -141,42 +257,58 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         if branch_state is None:
             return False
 
-        if self._find_inner_map_pieces(branch_state) is None:
+        if not self._inner_maps_shape_ok(branch_state):
             return False
+
+        # Soundness: the condition is hoisted out of the per-iteration body of
+        # the outer map and evaluated once. That is only equivalent to the
+        # original program if the condition does not vary with the outer map's
+        # parameters. Resolve each free symbol of the condition through the
+        # outer NestedSDFG's symbol mapping and reject the match if any of them
+        # depends on an enclosing outer-map parameter.
+        try:
+            cond_free_syms = {str(s) for s in branch_cond.get_free_symbols()}
+        except Exception:
+            return False
+        outer_params = self._outer_map_params(outer_state, outer_nsdfg)
+        if outer_params:
+            for sym in cond_free_syms:
+                mapped = outer_nsdfg.symbol_mapping.get(sym, sym)
+                try:
+                    mapped_syms = {str(s) for s in symbolic.pystr_to_symbolic(str(mapped)).free_symbols}
+                except Exception:
+                    mapped_syms = {str(mapped)}
+                if mapped_syms & outer_params:
+                    return False
 
         return True
 
     # ---- Application -----------------------------------------------------
 
-    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        cond_block: ConditionalBlock = self.cond_block
-        enclosing_sdfg: sd.SDFG = cond_block.parent_graph  # type: ignore[assignment]
+    def _rewrite_inner_sdfg(self, cond_block: ConditionalBlock, branch_cond: CodeBlock, enclosing_sdfg: sd.SDFG,
+                            inner_nsdfg: NestedSDFG, cond_free_syms: Set[str],
+                            moved_assignments: Dict[str, str]) -> Set[str]:
+        """Wraps the body of one inner NestedSDFG in a copy of the moved
+        condition and threads in the symbols/arrays it needs.
 
-        branch_cond: CodeBlock = cond_block.branches[0][0]
-        branch_cfr: ControlFlowRegion = cond_block.branches[0][1]
-        branch_state: SDFGState = self._single_meaningful_state(branch_cfr)  # type: ignore[assignment]
+        This is the per-map core of :meth:`apply`; it is invoked once for every
+        sibling map under the condition so that each inner body receives its own
+        guard. The guard is identical across siblings (same ``branch_cond``),
+        which keeps the per-map semantics unchanged.
 
-        inner_map_entry, _, inner_nsdfg = self._find_inner_map_pieces(branch_state)  # type: ignore[misc]
+        :param cond_block: The conditional block being pushed in (used for
+                           naming the new blocks).
+        :param branch_cond: The condition to replicate inside the inner body.
+        :param enclosing_sdfg: The SDFG that currently owns ``cond_block``.
+        :param inner_nsdfg: The NestedSDFG whose body is wrapped.
+        :param cond_free_syms: Free symbol names of the condition.
+        :param moved_assignments: Interstate assignments pulled out of the
+                                  outer edges that the condition depends on.
+        :returns: The set of array names that had to be piped into
+                  ``inner_nsdfg`` (so the caller can wire them on the copied
+                  branch state).
+        """
         inner_sdfg: sd.SDFG = inner_nsdfg.sdfg
-
-        try:
-            cond_free_syms = {str(s) for s in branch_cond.get_free_symbols()}
-        except Exception:
-            cond_free_syms = set()
-
-        # Pull out any interstate-edge assignment feeding ``cond_block``
-        # whose LHS is referenced by the guard condition. Those assignments
-        # must move inside the inner NSDFG together with the condition they
-        # define so that none of them is left orphaned on the outer edges
-        # (they would otherwise add an always-true pre-state to the outer
-        # map body, blocking collapse).
-        in_edges = list(enclosing_sdfg.in_edges(cond_block))
-        moved_assignments: Dict[str, str] = {}
-        for e in in_edges:
-            for k in list(e.data.assignments.keys()):
-                if k in cond_free_syms:
-                    moved_assignments[k] = e.data.assignments[k]
-                    del e.data.assignments[k]
 
         # Identify arrays referenced by the moved assignments -- they must
         # be piped as inputs into the inner NSDFG so the moved-inside
@@ -248,26 +380,72 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             inner_sdfg.add_edge(inner_pre, new_cond_block, InterstateEdge(assignments=dict(moved_assignments)))
             inner_sdfg.start_block = inner_sdfg.node_id(inner_pre)
 
+        return arrays_to_pipe
+
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        cond_block: ConditionalBlock = self.cond_block
+        enclosing_sdfg: sd.SDFG = cond_block.parent_graph  # type: ignore[assignment]
+
+        branch_cond: CodeBlock = cond_block.branches[0][0]
+        branch_cfr: ControlFlowRegion = cond_block.branches[0][1]
+        branch_state: SDFGState = self._single_meaningful_state(branch_cfr)  # type: ignore[assignment]
+
+        # Wrap plain-Tasklet inner-map bodies (the Python-frontend shape) into a
+        # single NestedSDFG so the per-map rewrite below applies uniformly.
+        self._normalize_inner_map_bodies(branch_state, enclosing_sdfg)
+
+        all_pieces = self._find_all_inner_map_pieces(branch_state)  # type: ignore[assignment]
+
+        try:
+            cond_free_syms = {str(s) for s in branch_cond.get_free_symbols()}
+        except Exception:
+            cond_free_syms = set()
+
+        # Pull out any interstate-edge assignment feeding ``cond_block``
+        # whose LHS is referenced by the guard condition. Those assignments
+        # must move inside the inner NSDFG together with the condition they
+        # define so that none of them is left orphaned on the outer edges
+        # (they would otherwise add an always-true pre-state to the outer
+        # map body, blocking collapse).
+        in_edges = list(enclosing_sdfg.in_edges(cond_block))
+        moved_assignments: Dict[str, str] = {}
+        for e in in_edges:
+            for k in list(e.data.assignments.keys()):
+                if k in cond_free_syms:
+                    moved_assignments[k] = e.data.assignments[k]
+                    del e.data.assignments[k]
+
+        # Wrap each sibling map's inner body with its own copy of the guard.
+        # All siblings share the identical condition and moved assignments;
+        # the union of arrays that needed piping is rewired below.
+        arrays_to_pipe: Set[str] = set()
+        for _, _, inner_nsdfg in all_pieces:
+            arrays_to_pipe |= self._rewrite_inner_sdfg(cond_block, branch_cond, enclosing_sdfg, inner_nsdfg,
+                                                       cond_free_syms, moved_assignments)
+
         new_branch_state = copy.deepcopy(branch_state)
         enclosing_sdfg.add_node(new_branch_state, ensure_unique_name=True)
 
-        # Wire the newly-needed array inputs through the copied inner map
-        # to the copied inner NSDFG node. The copied ``new_branch_state``
-        # has its own MapEntry/NestedSDFG; we look them up again.
+        # Wire the newly-needed array inputs through every copied inner map
+        # to its copied inner NSDFG node. The copied ``new_branch_state`` has
+        # its own MapEntry/NestedSDFG nodes; we look them up again.
         if arrays_to_pipe:
-            copied_entry, _, copied_nsdfg = self._find_inner_map_pieces(new_branch_state)
-            for arr_name in arrays_to_pipe:
-                if arr_name not in copied_nsdfg.in_connectors:
-                    copied_nsdfg.add_in_connector(arr_name)
-                if "IN_" + arr_name not in copied_entry.in_connectors:
-                    copied_entry.add_in_connector("IN_" + arr_name)
-                if "OUT_" + arr_name not in copied_entry.out_connectors:
-                    copied_entry.add_out_connector("OUT_" + arr_name)
-                arr_read = new_branch_state.add_read(arr_name)
-                new_branch_state.add_edge(arr_read, None, copied_entry, "IN_" + arr_name,
-                                          mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
-                new_branch_state.add_edge(copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
-                                          mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+            copied_pieces = self._find_all_inner_map_pieces(new_branch_state)
+            for copied_entry, _, copied_nsdfg in copied_pieces:
+                for arr_name in arrays_to_pipe:
+                    if arr_name not in copied_nsdfg.sdfg.arrays:
+                        continue
+                    if arr_name not in copied_nsdfg.in_connectors:
+                        copied_nsdfg.add_in_connector(arr_name)
+                    if "IN_" + arr_name not in copied_entry.in_connectors:
+                        copied_entry.add_in_connector("IN_" + arr_name)
+                    if "OUT_" + arr_name not in copied_entry.out_connectors:
+                        copied_entry.add_out_connector("OUT_" + arr_name)
+                    arr_read = new_branch_state.add_read(arr_name)
+                    new_branch_state.add_edge(arr_read, None, copied_entry, "IN_" + arr_name,
+                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+                    new_branch_state.add_edge(copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
+                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
 
         out_edges = list(enclosing_sdfg.out_edges(cond_block))
         was_start = enclosing_sdfg.start_block is cond_block
