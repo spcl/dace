@@ -3,7 +3,7 @@
 import collections
 import dace
 
-from dace.libraries.standard import environments
+from dace.libraries.linalg import environments
 from dace import library, nodes, properties
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
@@ -155,7 +155,7 @@ class ExpandTTGT(ExpandTransformation):
             right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes, outname="ttgt_right_transposed")
             right_tt_arr = sdfg.arrays[right_tt]
 
-        from dace.libraries.blas import Gemm
+        from dace.libraries.blas import Gemm  # Avoid import loop
         prv_state = state
         state = sdfg.add_state(f"{node.label}_gemm_state")
         sdfg.add_edge(prv_state, state, dace.InterstateEdge())
@@ -234,7 +234,8 @@ class ExpandTTGT(ExpandTransformation):
             state.add_edge(tasklet, '_c', dot_vnode, None, dace.Memlet.from_array(dot_vname, dot_view))
             state.add_edge(dot_vnode, 'views', dot_anode, None, dace.Memlet.from_array(dot_name, dot_arr))
             out_node = state.add_write('_out_tensor')
-            from dace.libraries.standard import TensorTranspose
+            # Avoid import loop: TensorTranspose is a sibling node in dace.libraries.linalg
+            from dace.libraries.linalg import TensorTranspose
             tasklet = TensorTranspose('_TensorTranspose', node.permutation)
             state.add_edge(dot_anode, None, tasklet, '_inp_tensor', dace.Memlet.from_array(dot_name, dot_arr))
             state.add_edge(tasklet, '_out_tensor', out_node, None, dace.Memlet.from_array('_out_tensor', out_arr))

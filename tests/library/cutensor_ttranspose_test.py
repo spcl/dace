@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import dace
 from dace import dtypes
-from dace.libraries.standard import TensorTranspose
+from dace.libraries.linalg import TensorTranspose
 
 
 def _build_transpose_sdfg(

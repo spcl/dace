@@ -5,8 +5,9 @@ import multiprocessing
 from dace import library, nodes, properties
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.libraries.blas import blas_helpers
 from numbers import Number
-from .. import environments
+from dace.libraries.linalg import environments
 import warnings
 
 
@@ -62,8 +63,6 @@ class ExpandHPTT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        from dace.libraries.linalg import blas_helpers
-
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
