@@ -116,6 +116,16 @@ class MapFission(transformation.SingleStateTransformation):
             return False
 
         if expr_index == 0:  # Map with subgraph
+            # The subgraph reconnection in ``apply`` rewires the fissioned
+            # scope's boundary access nodes through the *state-level* memlet
+            # paths of ``map_entry`` / ``map_exit``. When ``map_node`` is itself
+            # nested inside another map that assumption breaks: the boundary
+            # access nodes are left without edges (isolated), which later makes
+            # ``scope_dict`` raise "Leftover nodes in queue". Refuse the
+            # unsupported nested-parent case instead of producing an invalid
+            # SDFG. See ``map_fission_nested_parent_test``.
+            if graph.entry_node(map_node) is not None:
+                return False
             subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
             nsdfg_node = dcpy(self.nested_sdfg)
