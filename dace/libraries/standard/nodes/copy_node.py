@@ -97,8 +97,8 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     #     device pointers).
     #   - same-side, outside a kernel, at least one host-accessible ->
     #     ``Tasklet`` (host runs the assignment).
-    in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
-    out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
+    in_volume = in_subset.num_elements()
+    out_volume = out_subset.num_elements()
     if in_volume == 1 and out_volume == 1:
         if _is_cross_cpu_gpu(inp.storage, out.storage):
             return 'MemcpyCUDA1D'
@@ -403,7 +403,7 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
     _require_contiguous_subset(inp_name, in_subset, inp, "input")
     _require_contiguous_subset(out_name, out_subset, out, "output")
 
-    cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
+    cp_size = in_subset.num_elements()
     in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
         inp,
         out,
@@ -612,7 +612,7 @@ class ExpandMemcpyCPU(ExpandTransformation):
         if dynamic_inputs:
             raise NotImplementedError("MemcpyCPU doesn't yet support dynamic input scalars.")
 
-        cp_size = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
+        cp_size = in_subset.num_elements()
         in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(inp,
                                                                                 out,
                                                                                 one_elem=(cp_size == 1),
@@ -826,8 +826,8 @@ class ExpandTasklet(ExpandTransformation):
             raise ValueError(f"Tasklet expansion: storage types must match (no CPU/GPU boundary); "
                              f"got {inp.storage} -> {out.storage}. Use a MemcpyCUDA1D variant instead.")
 
-        in_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in in_subset], 1)
-        out_volume = reduce(operator.mul, [(e + 1 - b) // s for (b, e, s) in out_subset], 1)
+        in_volume = in_subset.num_elements()
+        out_volume = out_subset.num_elements()
         if in_volume != 1 or out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got input volume {in_volume}, output volume {out_volume}). "
