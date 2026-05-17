@@ -195,8 +195,11 @@ _all_tests/
 /*.onnx
 /*.bin
 
-# Fortran module files (from test f2py runs, etc.)
+# Fortran / flang / object build artifacts (test f2py / -emit-hlfir runs).
 *.mod
+*.smod
+*.hlfir
+*.o
 
 # pytest-xdist per-worker DaCe caches (.dacecache_gw0, ...) and any
 # nested .dacecache* — build artifacts, never committed.

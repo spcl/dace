@@ -38,8 +38,8 @@ from dace.frontend.hlfir.bindings.block_builders import effective_module_sources
 # shim + allocation helpers; reuse them verbatim so there is one
 # source of truth.  The bindings test directory is not on sys.path
 # (conftest only adds ``tests/hlfir``), so load it by file path.
-_VF_PATH = Path(__file__).resolve().parent / "velocity_full_bindings_e2e_test.py"
-_spec = importlib.util.spec_from_file_location("velocity_full_bindings_e2e_test", _VF_PATH)
+_VF_PATH = Path(__file__).resolve().parent / "test_velocity_full_bindings_e2e.py"
+_spec = importlib.util.spec_from_file_location("test_velocity_full_bindings_e2e", _VF_PATH)
 vf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vf)
 

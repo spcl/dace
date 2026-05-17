@@ -4,7 +4,7 @@ provenance merge (``effective_module_sources``) and the
 field.
 
 The end-to-end recovery of ``_QM<mod>E<entity>`` provenance from real
-HLFIR is exercised by ``velocity_full_auto_module_e2e_test``; this
+HLFIR is exercised by ``test_velocity_full_auto_module_e2e``; this
 file pins the cheaper invariants: explicit override precedence, the
 auto-only path, and serialisation stability.
 """

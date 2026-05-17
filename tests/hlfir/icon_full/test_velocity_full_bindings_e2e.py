@@ -48,9 +48,8 @@ pytestmark = [
 ]
 
 _HERE = Path(__file__).resolve().parent
-_TESTS = _HERE.parent
-_DRIVER_PATH = _TESTS / "velocity_full.f90"
-_CALLER_PATH = _TESTS / "velocity_full_caller.f90"
+_DRIVER_PATH = _HERE / "velocity_full.f90"
+_CALLER_PATH = _HERE / "velocity_full_caller.f90"
 _ENTRY = "_QMmo_velocity_advectionPvelocity_tendencies"
 
 # Caller subroutine flat-array dummy order -- matches velocity_full_caller.f90
