@@ -39,10 +39,10 @@ def test_canonicalization_stages_apply_to_cloudsc():
 
 
 @pytest.mark.skipif(not os.path.exists(_CLOUDSC), reason="CloudSC fixture not present")
-@pytest.mark.xfail(reason="The final maximal_fusion stage (existing FullMapFusion / "
-                   "TaskletFusion) produces an InvalidSDFGNodeError on the "
-                   "canonicalized CloudSC SDFG. Pre-existing fusion-pass "
-                   "limitation, tracked as a follow-up; out of the "
+@pytest.mark.xfail(reason="Localized: in the maximal_fusion stage SimplifyPass keeps "
+                   "CloudSC valid, then FullMapFusion raises InvalidSDFGNodeError "
+                   "on the canonicalized CloudSC SDFG. Pre-existing core "
+                   "fusion-pass bug, tracked as a follow-up; out of the "
                    "canonicalization sub-pass scope.",
                    strict=True)
 def test_full_pipeline_on_cloudsc():
