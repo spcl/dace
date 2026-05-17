@@ -13,8 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _util import have_flang  # noqa: E402
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "dace" / "frontend" / "hlfir"))
-from build_bridge import hb  # noqa: E402
+from dace.frontend.hlfir.build_bridge import hb  # noqa: E402
 
 from dace.frontend.hlfir.bindings import FlattenPlan  # noqa: E402
 

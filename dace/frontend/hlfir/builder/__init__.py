@@ -36,23 +36,9 @@ NOTE on nanobind bindings:
     Hot paths cache such attributes into locals.
 """
 
-import sys as _sys
-from pathlib import Path as _Path
-
 from dace import InterstateEdge, SDFG
 
-from build_bridge import hb
-
-# intrinsics/ lives alongside this file but uses absolute imports
-# (``dace.frontend.hlfir.intrinsics``).  hlfir_to_sdfg is usually imported
-# via the ``sys.path.insert(<hlfir_dir>, ...)`` pattern in build_bridge.py,
-# which does not expose the full ``dace.frontend.hlfir`` package.  Add the
-# DaCe source root so the package import resolves either way.
-_BUILDER_DIR = _Path(__file__).resolve().parent
-# parents: builder/ -> hlfir/ -> frontend/ -> dace/ -> <repo root>.
-_REPO_ROOT = _BUILDER_DIR.parents[3]
-if str(_REPO_ROOT) not in _sys.path:
-    _sys.path.insert(0, str(_REPO_ROOT))
+from dace.frontend.hlfir.build_bridge import hb
 
 from dace.frontend.hlfir.builder.context import _Ctx
 from dace.frontend.hlfir.builder.descriptors import (
@@ -400,7 +386,7 @@ class SDFGBuilder:
          --  but the path supports them with a trivial 1-element array.
         """
         import numpy as np
-        from dace.data import Scalar as _Scalar
+        from dace.data import Scalar
         for v in self.variables:
             if not v.const_data:
                 continue
@@ -415,7 +401,7 @@ class SDFGBuilder:
             # ``constexpr <T> name = <val>`` (not the array form which
             # tries to ``sym2cpp`` a numpy array and chokes with
             # ``unhashable type: 'numpy.ndarray'``).
-            if isinstance(desc, _Scalar) or v.rank == 0:
+            if isinstance(desc, Scalar) or v.rank == 0:
                 if arr.size != 1:
                     continue
                 sdfg.add_constant(v.fortran_name, arr.item(), desc)
@@ -450,6 +436,7 @@ class SDFGBuilder:
               wrapping in a numpy 1-array.
         """
         from dace.sdfg.construction_utils import replace_length_one_arrays_with_scalars
+        from dace.frontend.hlfir.integer_power_exponents import IntegerizePowerExponents
         from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
         # Empty-region cleanup: any ControlFlowRegion (LoopRegion,
@@ -480,45 +467,10 @@ class SDFGBuilder:
         # ``descriptors.py`` and don't need this pass.
         replace_length_one_arrays_with_scalars(sdfg, recursive=True, transient_only=True)
 
-        # Zero-initialise every transient Scalar AND transient Array in
-        # the SDFG (and every nested SDFG).  Fortran semantics: a local
-        # REAL/INTEGER scalar or array is undefined until written -- but
-        # for code paths that read it under data-dependent IF branches
-        # without a guaranteed prior write (common after a kernel is
-        # carved down -- the producer of a still-read local lives in a
-        # deleted section), gfortran and the bridge see DIFFERENT
-        # garbage: the gfortran reference is built with
-        # ``-finit-local-zero`` (locals, scalar and array, start at 0),
-        # while the bridge's transients are ``new``-allocated and hold
-        # heap garbage (~1e228), causing divergent IF outcomes and
-        # cascading drift.  Forcing zero-init on every transient pins
-        # the bit pattern across both paths -- matching
-        # ``-finit-local-zero`` -- and eliminates this class of
-        # divergence.  ``setzero`` only adds an initialiser, so a
-        # transient that *is* written-before-read is unaffected.
-        import dace
-        from dace.data import Array, Scalar
-
-        def _all_sdfgs(root):
-            """Yield ``root`` and every nested SDFG at any depth."""
-            yield root
-            for nd, _ in root.all_nodes_recursive():
-                if isinstance(nd, dace.nodes.NestedSDFG):
-                    yield from _all_sdfgs(nd.sdfg)
-
-        for nsdfg in _all_sdfgs(sdfg):
-            # Stamp every transient Array/Scalar AccessNode in every
-            # state at any control-flow-region depth.  ``all_states``
-            # already recurses LoopRegion / ControlFlowRegion bodies;
-            # ``_all_sdfgs`` adds the arbitrary nested-SDFG depth the
-            # earlier single-level walk missed.
-            for state in nsdfg.all_states():
-                for node in state.nodes():
-                    if not isinstance(node, dace.nodes.AccessNode):
-                        continue
-                    desc = nsdfg.arrays.get(node.data)
-                    if isinstance(desc, (Scalar, Array)) and desc.transient:
-                        node.setzero = True
+        # Retype integer-valued float ``**`` exponents to ``int`` so
+        # codegen uses repeated-multiply ``ipow`` (bit-matching the
+        # Fortran reference) rather than libm ``pow``.
+        IntegerizePowerExponents().apply_pass(sdfg, {})
 
     def _attach_frozen_signature(self, sdfg: SDFG):
         """Snapshot ``sdfg.arglist()`` + free symbols into a
@@ -534,8 +486,21 @@ class SDFGBuilder:
         """
         # Local import keeps the binding machinery optional -- plain
         # ``import dace.frontend.hlfir`` doesn't drag it in.
-        from dace.data import Array as _Array, Scalar as _Scalar
+        from dace.data import Array, Scalar
         from dace.frontend.hlfir.bindings.frozen_signature import FrozenArg, FrozenSignature
+
+        # Auto-detected Fortran module-global provenance, keyed by the
+        # bridge's short Fortran name.  Populated from every VarInfo
+        # the bridge tagged with a ``_QM<mod>E<entity>`` origin (see
+        # ``extract_vars.cpp``); consumed both for module-global args
+        # below and for free symbols (a scalar module global lifted
+        # into a shape / bound).  The binding generator merges this
+        # with any hand-authored override map.
+        origin_by_name = {
+            v.fortran_name: (v.module_origin_mod, v.module_origin_name)
+            for v in self.variables if getattr(v, 'module_origin_mod', '') and getattr(v, 'module_origin_name', '')
+        }
+        module_symbol_origins: dict = {}
 
         args_list = []
         # Reverse the rename map so we can recover the user-source
@@ -547,15 +512,18 @@ class SDFGBuilder:
             v = (self.arrays.get(user_key) or self.symbols.get(user_key) or self.scalars.get(user_key))
             if user_key in self.symbols:
                 kind = 'symbol'
-            elif isinstance(desc, _Scalar):
+            elif isinstance(desc, Scalar):
                 kind = 'scalar'
-            elif isinstance(desc, _Array):
+            elif isinstance(desc, Array):
                 kind = 'array'
             else:
                 kind = 'scalar'
             dtype_obj = getattr(desc, 'dtype', None)
             dtype_str = (getattr(dtype_obj, 'to_string', lambda: str(dtype_obj))() if dtype_obj is not None else '?')
             shape = tuple(str(s) for s in getattr(desc, 'shape', ()))
+            origin = origin_by_name.get(user_key)
+            if origin is not None:
+                module_symbol_origins[sdfg_name_] = origin
             args_list.append(
                 FrozenArg(
                     fortran_name=v.fortran_name if v is not None else user_key,
@@ -566,11 +534,20 @@ class SDFGBuilder:
                     shape=shape,
                     intent=(v.intent if v is not None else ''),
                 ))
+        # Free symbols carrying module-global provenance: a scalar
+        # module global the bridge lifted into a shape / bound symbol
+        # (no SDFG arg, so the loop above never saw it).  The SDFG
+        # symbol name is the bridge's short Fortran name.
+        free_syms = tuple(sorted(str(s) for s in sdfg.free_symbols))
+        for s in free_syms:
+            if s not in module_symbol_origins and s in origin_by_name:
+                module_symbol_origins[s] = origin_by_name[s]
         fs = FrozenSignature(
             entry=sdfg.name,
             mangled=next((v.mangled_name for v in self.arrays.values() if getattr(v, 'mangled_name', '')), sdfg.name),
             args=tuple(args_list),
-            free_symbols=tuple(sorted(str(s) for s in sdfg.free_symbols)),
+            free_symbols=free_syms,
+            module_symbol_origins=module_symbol_origins,
         )
         sdfg._frozen_signature = fs
 

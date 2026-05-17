@@ -207,18 +207,18 @@ def emit_reduce(builder, ctx, n, region):
     # not ``+/-inf``.  Substitute the identity per destination dtype so
     # the empty-array case matches gfortran exactly and the integer
     # path doesn't truncate ``inf`` to a garbage int.
-    import numpy as _np
+    import numpy as np
     tgt_desc = ctx.sdfg.arrays[n.target]
     identity_val = None
     if n.reduce_identity:
         identity_val = eval(n.reduce_identity, {'math': math, 'inf': math.inf})
         if identity_val in (math.inf, -math.inf):
             np_dt = tgt_desc.dtype.as_numpy_dtype()
-            if _np.issubdtype(np_dt, _np.integer):
-                info = _np.iinfo(np_dt)
+            if np.issubdtype(np_dt, np.integer):
+                info = np.iinfo(np_dt)
                 identity_val = info.max if identity_val == math.inf else info.min
-            elif _np.issubdtype(np_dt, _np.floating):
-                info = _np.finfo(np_dt)
+            elif np.issubdtype(np_dt, np.floating):
+                info = np.finfo(np_dt)
                 identity_val = float(info.max if identity_val == math.inf else info.min)
 
     red = state.add_reduce(n.reduce_wcr, axes, identity_val)

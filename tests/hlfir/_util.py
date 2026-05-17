@@ -44,12 +44,6 @@ def have_flang() -> bool:
     return _FLANG is not None
 
 
-def _ensure_on_path():
-    p = str(_HLFIR_DIR)
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-
 def f2py_compile(
     src,
     out_dir: Path,
@@ -65,10 +59,10 @@ def f2py_compile(
     missing, so test files can call this unconditionally.
 
     ``extra_f90flags``: optional space-separated string of gfortran flags
-    appended via ``--f90flags=``.  Use for source-specific defensive
-    flags like ``-finit-local-zero`` when the Fortran source has known
-    UB (uninitialized-local reads) that must agree with the bridge's
-    zero-init behavior.
+    appended via ``--f90flags=``.  The FP comparison flags should stay on
+    the LLVM-flang-portable core ``-O0 -fno-fast-math -ffp-contract=off``;
+    ``-ffree-line-length-none`` is acceptable as a non-semantic parser
+    flag for long-line sources (gfortran-only -- flang has no line limit).
 
     ``only``: optional tuple of subroutine names that f2py should
     expose; everything else in the source is compiled but not
@@ -223,8 +217,7 @@ def build_sdfg(source: str, out_dir: Path, name: str = "src", pipeline=None, ent
                   declares into the variable extraction.
     :return: ``SDFGBuilder`` with variables classified and the AST extracted.
     """
-    _ensure_on_path()
-    from hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE
+    from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE
     hlfir = compile_to_hlfir(source, out_dir, name)
     builder = SDFGBuilder(str(hlfir), pipeline=(pipeline or DEFAULT_PIPELINE), entry=entry)
     suffix = _per_test_suffix()
@@ -241,8 +234,7 @@ def run_passes_dump(source: str, out_dir: Path, name: str = "src", pipeline: str
     through SDFG extraction  --  handy for passes whose downstream tracing is
     still being wired in.
     """
-    _ensure_on_path()
-    from build_bridge import hb
+    from dace.frontend.hlfir.build_bridge import hb
     hlfir = compile_to_hlfir(source, out_dir, name)
     mod = hb.HLFIRModule()
     if not mod.parse_file(str(hlfir)):

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from _util import _ensure_on_path, compile_to_hlfir, have_flang
+from _util import compile_to_hlfir, have_flang
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
@@ -30,8 +30,7 @@ _REWRITE = "hlfir-rewrite-sequence-association"
 
 
 def _run(source: str, out_dir: Path, name: str, extra: str = ""):
-    _ensure_on_path()
-    from build_bridge import hb
+    from dace.frontend.hlfir.build_bridge import hb
     hlfir = compile_to_hlfir(source, out_dir, name)
     m = hb.HLFIRModule()
     assert m.parse_file(str(hlfir))

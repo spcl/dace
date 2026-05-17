@@ -11,26 +11,11 @@ If it fails, the bug is in 4.2-4.4 (Sedimentation/Autoconv/Melt/Freeze).
 from pathlib import Path
 import numpy as np
 import pytest
-import dace
 from _util import build_sdfg, f2py_compile, have_flang
-from cloudsc_full._registries import get_inputs, get_outputs
+from cloudsc_full._registries import CLOUDSC_F90FLAGS, get_inputs_physical, get_outputs
 
 _HERE = Path(__file__).resolve().parent
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
-
-
-@pytest.fixture
-def _strict_fp_cpu_args():
-    prev = dace.Config.get('compiler', 'cpu', 'args')
-    dace.Config.set('compiler',
-                    'cpu',
-                    'args',
-                    value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off -frounding-math '
-                    '-Wno-unused-parameter -Wno-unused-label')
-    try:
-        yield
-    finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=prev)
 
 
 def _sdfg_call_args(sdfg, scalar_values):
@@ -78,11 +63,15 @@ def _f2py_a(tmp_path_factory):
         src,
         ref_dir,
         "cloudsc_bottom_upper_a_ref",
-        extra_f90flags="-O0 -fno-fast-math -ffp-contract=off -frounding-math -finit-local-zero -ffree-line-length-none",
+        # ``-ffree-line-length-none`` is the sole intentionally
+        # gfortran-only flag: it is a non-semantic parser necessity for
+        # the long-line cloudsc source; LLVM-flang has no line limit and
+        # needs no equivalent.  The FP set is the flang-portable core.
+        extra_f90flags=CLOUDSC_F90FLAGS,
         only=("cloudscouter", ))
 
 
-@pytest.mark.xfail(strict=False, reason="bottom-UPPER-A bisection step")
+# Physical (NaN-free) inputs: the bridge is bit-identical to gfortran here.
 def test_cloudsc_bottom_upper_a_numerical(tmp_path, _f2py_a, _strict_fp_cpu_args):
     src = (_HERE / "cloudsc_bottom_upper_a.F90").read_text()
     sdfg_dir = tmp_path / "sdfg"
@@ -90,7 +79,7 @@ def test_cloudsc_bottom_upper_a_numerical(tmp_path, _f2py_a, _strict_fp_cpu_args
     sdfg = build_sdfg(src, sdfg_dir, name="cloudsc_bottom_upper_a", entry="_QPcloudscouter").build()
 
     rng = np.random.default_rng(42)
-    inputs = get_inputs(rng)
+    inputs = get_inputs_physical(rng)
     outputs_ref = {k.lower(): v for k, v in get_outputs(rng).items()}
     outputs_sdfg = {k: v.copy(order="F") for k, v in outputs_ref.items()}
 
@@ -107,6 +96,6 @@ def test_cloudsc_bottom_upper_a_numerical(tmp_path, _f2py_a, _strict_fp_cpu_args
 
     np.testing.assert_allclose(outputs_sdfg["pcovptot"],
                                outputs_ref["pcovptot"],
-                               rtol=1e-12,
-                               atol=1e-12,
+                               rtol=1e-15,
+                               atol=1e-15,
                                err_msg="PCOVPTOT mismatch in bottom-upper-A (Sed/Autoconv/Melt/Freeze)")

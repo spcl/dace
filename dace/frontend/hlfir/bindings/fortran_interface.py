@@ -65,3 +65,13 @@ class OriginalInterface:
     # Modules the wrapper needs to ``use <mod>, only: <syms>`` so the
     # derived types resolve when gfortran compiles the binding.
     used_modules: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
+    # Free SDFG symbols that the kernel reads from Fortran *module*
+    # data (e.g. ICON's ``mo_parallel_config::nproma``) rather than
+    # from a dummy argument.  The flatten plan can never supply these
+    # via ``size(...)`` -- the binding has no dummy to query.  Maps
+    # ``sym -> (module, member)``; the emitter renames the import to
+    # ``<sym>__mod => <member>`` (the wrapper declares its own local
+    # ``<sym>`` for the by-value SDFG call) and assigns
+    # ``<sym> = int(<sym>__mod, c_int)`` in the symbol-population
+    # block.  Default-empty: a no-op for flat kernels.
+    module_symbol_sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)

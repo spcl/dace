@@ -8,7 +8,7 @@ ZSOLQA / ZSOLQB / ZCOVPTOT remain at zero (from their reset above the
 deleted region), and the solvers + flux/tendency chain runs on those
 zeros.
 
-Expectation: this PASSES at rtol=atol=1e-12.  The bisection chain says:
+Expectation: this PASSES at rtol=atol=1e-15.  The bisection chain says:
   * test_cloudsc_top_half          PASS  -> bug in bottom half
   * test_cloudsc_bottom_half       FAIL  -> bug confirmed in bottom half
   * test_cloudsc_bottom_upper      FAIL  -> bug in bottom-upper physics
@@ -21,26 +21,11 @@ tendency portion of cloudsc lowers bit-correctly under the bridge.
 from pathlib import Path
 import numpy as np
 import pytest
-import dace
 from _util import build_sdfg, f2py_compile, have_flang
-from cloudsc_full._registries import get_inputs, get_outputs, program_outputs
+from cloudsc_full._registries import CLOUDSC_F90FLAGS, get_inputs_physical, get_outputs, program_outputs
 
 _HERE = Path(__file__).resolve().parent
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
-
-
-@pytest.fixture
-def _strict_fp_cpu_args():
-    prev = dace.Config.get('compiler', 'cpu', 'args')
-    dace.Config.set('compiler',
-                    'cpu',
-                    'args',
-                    value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off -frounding-math '
-                    '-Wno-unused-parameter -Wno-unused-label')
-    try:
-        yield
-    finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=prev)
 
 
 def _sdfg_call_args(sdfg, scalar_values):
@@ -88,7 +73,11 @@ def _f2py_lo(tmp_path_factory):
         src,
         ref_dir,
         "cloudsc_bottom_lower_ref",
-        extra_f90flags="-O0 -fno-fast-math -ffp-contract=off -frounding-math -finit-local-zero -ffree-line-length-none",
+        # ``-ffree-line-length-none`` is the sole intentionally
+        # gfortran-only flag: it is a non-semantic parser necessity for
+        # the long-line cloudsc source; LLVM-flang has no line limit and
+        # needs no equivalent.  The FP set is the flang-portable core.
+        extra_f90flags=CLOUDSC_F90FLAGS,
         only=("cloudscouter", ))
 
 
@@ -99,7 +88,7 @@ def test_cloudsc_bottom_lower_numerical(tmp_path, _f2py_lo, _strict_fp_cpu_args)
     sdfg = build_sdfg(src, sdfg_dir, name="cloudsc_bottom_lower", entry="_QPcloudscouter").build()
 
     rng = np.random.default_rng(42)
-    inputs = get_inputs(rng)
+    inputs = get_inputs_physical(rng)
     outputs_ref = {k.lower(): v for k, v in get_outputs(rng).items()}
     outputs_sdfg = {k: v.copy(order="F") for k, v in outputs_ref.items()}
 
@@ -119,6 +108,6 @@ def test_cloudsc_bottom_lower_numerical(tmp_path, _f2py_lo, _strict_fp_cpu_args)
     for name in program_outputs:
         np.testing.assert_allclose(outputs_sdfg[name.lower()],
                                    outputs_ref[name.lower()],
-                                   rtol=1e-12,
-                                   atol=1e-12,
+                                   rtol=1e-15,
+                                   atol=1e-15,
                                    err_msg=f"PCOVPTOT mismatch in bottom-lower (solvers/flux/tendency only): {name}")

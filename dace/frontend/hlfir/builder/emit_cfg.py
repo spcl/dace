@@ -241,9 +241,9 @@ def emit_symbol_init(builder, ctx: '_Ctx', n, region):
     # subscript.  Drop the subscript so the interstate edge reads the
     # Scalar value directly.  Non-scalar arrays keep the usual 0-based
     # Fortran-to-DaCe index conversion.
-    from dace.data import Scalar as _Scalar
+    from dace.data import Scalar
     src_desc = ctx.sdfg.arrays.get(arr)
-    if isinstance(src_desc, _Scalar):
+    if isinstance(src_desc, Scalar):
         read_expr = arr
     else:
         read_expr = f"{arr}[{one_based - 1}]"

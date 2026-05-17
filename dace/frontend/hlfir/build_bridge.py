@@ -193,22 +193,26 @@ def build(clean: bool = False, verbose: bool = True):
 # Import-or-build
 # ---------------------------------------------------------------------------
 
+_BRIDGE_MODULE = "dace.frontend.hlfir.hlfir_bridge"
+
 
 def ensure_bridge():
-    """Import hlfir_bridge, building first if necessary."""
+    """Import the compiled bridge, building first if necessary.
+
+    The extension is imported as the package submodule
+    ``dace.frontend.hlfir.hlfir_bridge`` (``build`` symlinks the freshly
+    built ``.so`` next to this file, i.e. into the ``dace.frontend.hlfir``
+    package), so no ``sys.path`` manipulation is required.
+    """
     try:
-        return importlib.import_module("hlfir_bridge")
+        return importlib.import_module(_BRIDGE_MODULE)
     except ImportError:
         pass
 
     print("[build_bridge] hlfir_bridge not found, building...", file=sys.stderr)
     build()
-
-    here_str = str(_HERE)
-    if here_str not in sys.path:
-        sys.path.insert(0, here_str)
-
-    return importlib.import_module("hlfir_bridge")
+    importlib.invalidate_caches()
+    return importlib.import_module(_BRIDGE_MODULE)
 
 
 def ensure_fresh():

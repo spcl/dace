@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"
@@ -66,7 +67,34 @@ struct VarInfo {
   /// Non-trivial sections (strided / sub-range) stay on the
   /// ``view_alias`` path.
   std::vector<std::string> view_dim_map;
+  /// Fortran *module*-global provenance.  Non-empty only when this
+  /// declare's storage traces (through ``fir.address_of``) to a
+  /// module-scope ``fir.global`` whose mangled symbol has the
+  /// ``_QM<module>E<entity>`` form  --  i.e. the value is read from
+  /// module data (``USE <module>, ONLY: <entity>``), not received as
+  /// a dummy argument.  ``module_origin_mod`` is the (lowercased)
+  /// Fortran module name; ``module_origin_name`` is the entity name.
+  /// The binding generator consumes these to auto-emit the
+  /// ``use``-import + assignment WITHOUT a hand-authored
+  /// ``module_symbol_sources`` map.  Both empty for ordinary
+  /// dummies / locals and for the read-only literal constant pool
+  /// (those carry ``const_data`` instead).
+  std::string module_origin_mod;
+  std::string module_origin_name;
 };
+
+/// Decode a Flang module-global mangled symbol of the form
+/// ``_QM<module>E<entity>`` into its ``(module, entity)`` pair.
+///
+/// :param sym: mangled symbol (no leading ``@``), e.g.
+///     ``_QMmo_parallel_configEnproma``.
+/// :returns: ``(module, entity)`` on a successful module-scope
+///     decode (``_QMmo_parallel_config``, ``nproma``); an empty
+///     pair when ``sym`` is not a ``_QM..E..`` module global
+///     (function-scope ``_QF..``, program ``_QP..``, the
+///     ``_QQro`` constant pool, or any non-conforming name).
+std::pair<std::string, std::string> decodeModuleGlobalSymbol(
+    const std::string &sym);
 
 /// Walk the module and build one VarInfo per hlfir.declare.
 std::vector<VarInfo> extractVariables(mlir::ModuleOp module);

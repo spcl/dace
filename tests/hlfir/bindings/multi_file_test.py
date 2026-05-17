@@ -12,8 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _util import have_flang  # noqa: E402
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "dace" / "frontend" / "hlfir"))
-from hlfir_to_sdfg import SDFGBuilder  # noqa: E402
+from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 

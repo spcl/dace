@@ -4,8 +4,10 @@
 
 #include "bridge/extract_vars.h"
 
+#include <cctype>
 #include <limits>
 #include <set>
+#include <utility>
 
 #include "bridge/trace_utils.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
@@ -698,6 +700,38 @@ static std::string traceToGlobalSymbol(mlir::Value memref) {
     return {};
   }
   return {};
+}
+
+std::pair<std::string, std::string> decodeModuleGlobalSymbol(
+    const std::string &sym) {
+  llvm::StringRef s(sym);
+  // Module data only.  ``_QF`` = function-scope SAVE local (private,
+  // not caller-bindable), ``_QP`` = program/procedure, ``_QQ`` =
+  // compiler-synthesised (read-only literal constant pool); none of
+  // those is a ``USE``-importable module global.
+  if (!s.consume_front("_QM")) return {};
+  // The entity is the segment after the FINAL scope separator.  For a
+  // plain module variable the symbol is ``_QM<mod>E<entity>``; for a
+  // submodule / nested-module member Flang inserts further ``S`` / ``N``
+  // scope letters before the terminal ``E`` (``_QM<mod>S<sub>E<ent>``).
+  // We split on the last ``E`` so the module segment carries whatever
+  // inner scoping Flang produced  --  the emitter only needs a name it
+  // can ``USE``; the top-level module name is its leading token, and
+  // ``USE`` of a submodule member resolves through the parent module.
+  auto eP = s.rfind('E');
+  if (eP == llvm::StringRef::npos || eP == 0 || eP + 1 >= s.size()) return {};
+  std::string mod = s.substr(0, eP).str();
+  std::string name = s.substr(eP + 1).str();
+  // Reject names that still contain scope letters or dots  --  those
+  // are compiler-internal (type-info tables, constructor thunks), not
+  // user module data.  A real Fortran entity name is lower-case
+  // identifier characters only (Flang lowercases source identifiers).
+  for (char c : name)
+    if (!(std::islower(static_cast<unsigned char>(c)) ||
+          std::isdigit(static_cast<unsigned char>(c)) || c == '_'))
+      return {};
+  if (mod.empty()) return {};
+  return {mod, name};
 }
 
 // ---------------------------------------------------------------------------
@@ -1749,6 +1783,27 @@ std::vector<VarInfo> extractVariables(mlir::ModuleOp module) {
             (gop.getConstant().has_value() && *gop.getConstant());
         bool isModuleScope = llvm::StringRef(sym).starts_with("_QM");
         if (!isParameter && isModuleScope) v.intent = "inout";
+      }
+      // Module-global provenance.  Independent of the intent gate
+      // above: a module global that ALSO has an initialiser (so it
+      // took the ``const_data`` path and is a transient) still needs
+      // its ``(module, name)`` recorded so the binding can ``USE``-
+      // import + assign it rather than leaving the SDFG free symbol /
+      // arg unbound.  Skip the read-only literal constant pool and
+      // ``parameter`` constants  --  ``decodeModuleGlobalSymbol``
+      // already filters non-``_QM..E..`` shapes; the explicit
+      // ``isParameter`` guard keeps Flang-synthesised PARAMETER
+      // globals (compile-time constants, not caller-supplied) out.
+      if (gop) {
+        bool isParameter =
+            (gop.getConstant().has_value() && *gop.getConstant());
+        if (!isParameter) {
+          auto origin = decodeModuleGlobalSymbol(sym);
+          if (!origin.first.empty()) {
+            v.module_origin_mod = origin.first;
+            v.module_origin_name = origin.second;
+          }
+        }
       }
     }
 

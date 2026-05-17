@@ -10,18 +10,10 @@ ones; more intricate cases (``allocate``-based entry points, PROGRAM
 wrappers, etc.) wait until the matching HLFIR lowerings land.
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from _util import have_flang
-# The HLFIR fortran_parser module lives next to hlfir_to_sdfg; make sure
-# it's importable from tests.
-_HLFIR_DIR = Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"
-if str(_HLFIR_DIR) not in sys.path:
-    sys.path.insert(0, str(_HLFIR_DIR))
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not available")
 
@@ -31,7 +23,7 @@ pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not avail
 
 
 def test_fortran_frontend_loop_region_basic_loop():
-    from fortran_parser import create_sdfg_from_string
+    from dace.frontend.hlfir.fortran_parser import create_sdfg_from_string
 
     # The legacy version wraps the subroutine in a PROGRAM + CALL; the HLFIR
     # frontend runs on the subroutine directly (cross-subroutine lowering is

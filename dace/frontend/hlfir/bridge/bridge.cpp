@@ -323,6 +323,8 @@ NB_MODULE(hlfir_bridge, m) {
       .def_ro("view_source", &VarInfo::view_source)
       .def_ro("view_subset", &VarInfo::view_subset)
       .def_ro("view_dim_map", &VarInfo::view_dim_map)
+      .def_ro("module_origin_mod", &VarInfo::module_origin_mod)
+      .def_ro("module_origin_name", &VarInfo::module_origin_name)
       .def("__repr__", [](const VarInfo &v) {
         std::string s = "<" + v.role + " '" + v.fortran_name + "'";
         if (v.rank > 0) {

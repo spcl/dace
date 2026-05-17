@@ -130,8 +130,8 @@ post-generation cleanup pipeline below, then snapshots
 `sdfg.arglist()` + free symbols into a `FrozenSignature` and pins
 it on the SDFG.
 
-**(4b) Post-generation cleanup.** Two passes run over the freshly-
-built SDFG, in order:
+**(4b) Post-generation cleanup.** The following passes run over the
+freshly-built SDFG, in order:
 
 1. **`SSALoopIterators`** (`dace.transformation.passes.ssa_loop_iterators`).
    Renames every `LoopRegion.loop_variable` to a globally-unique
@@ -162,6 +162,21 @@ built SDFG, in order:
    stay as length-1 ``Array`` so callers can pass a numpy 1-element
    buffer to receive the value.  Recurses into nested SDFGs (their
    transient-only sub-cleanup follows the same rule).
+
+3. **`IntegerizePowerExponents`**
+   (`dace.frontend.hlfir.integer_power_exponents`).  Retypes
+   every integer-valued floating-point ``**`` exponent in a Python
+   tasklet (``base**2.0``, ``base**-3.0``) to the corresponding
+   ``int``.  C++ codegen routes a float exponent through libm
+   ``dace::math::pow`` but an integer exponent through
+   ``dace::math::ipow`` (plain left-to-right repeated multiply,
+   ``base*base``)  --  the latter is bit-identical to what a
+   Fortran/C reference compiler emits for a small integer power, so
+   retyping removes a trailing-bit divergence on long real(8) chains.
+   Only the exponent literal changes (no base duplication, no
+   connector renumbering), which is why it is safe as a post-split
+   cleanup.  Genuinely fractional exponents (``0.5``, ``0.333``) are
+   left untouched.
 
 The pipeline runs **before** the `FrozenSignature` snapshot is taken
 so the bindings emitter sees the post-cleanup signature.

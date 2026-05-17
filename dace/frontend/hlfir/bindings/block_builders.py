@@ -12,10 +12,12 @@ called from ``build_wrapper_body`` / ``build_wrapper_tail``.
 
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dace.frontend.hlfir.bindings.flatten_plan import (
-    FlattenPlan, )
+    FlattenPlan,
+    strip_index_args,
+)
 from dace.frontend.hlfir.bindings.fortran_interface import OriginalInterface
 from dace.frontend.hlfir.bindings.frozen_signature import FrozenSignature
 from dace.frontend.hlfir.bindings.loop_copy import (
@@ -194,10 +196,33 @@ def build_wrapper_head(frozen: FrozenSignature, iface: OriginalInterface, plan: 
             for flat in r.flat_names:
                 scratch_lines.append(f"    {ftype}, allocatable, target :: {flat}{shape_dims}")
 
-    symbol_decls = "\n".join(f"    integer(c_int) :: {s}" for s in frozen.free_symbols if s not in outer_dummy_set)
+    # A free symbol that is also a frozen arg (an ``<arr>_d<i>``
+    # extent / ``offset_...`` lower bound the bridge passes by value)
+    # must be declared with *that arg's* C type  --  the bridge sizes
+    # these as ``int64`` on real ICON signatures, and the C interface
+    # block already binds them ``integer(c_long_long), value``.  A
+    # hardcoded ``integer(c_int)`` local mismatches the bind(c) dummy.
+    sym_dtype = {a.sdfg_name: a.dtype for a in frozen.args if a.kind in ('scalar', 'symbol')}
+    # A rank-0 scalar struct member (``p_patch%nlev``) is BOTH a flat
+    # companion (declared above as a ``pointer``) and a free symbol
+    # the SDFG wants by value.  It already has storage from the
+    # flat-companion decl  --  re-declaring it here is a duplicate
+    # ``already has basic type`` error.  Skip any free symbol that is
+    # also a flat companion.
+    flat_names = {f for entry in plan.entries for f in entry.recipe.flat_names}
+    symbol_decls = "\n".join(f"    {_fortran_c_value_type(sym_dtype.get(s, 'int32'))} :: {s}"
+                             for s in frozen.free_symbols if s not in outer_dummy_set and s not in flat_names)
     if max_loop_rank:
         iter_decl = "    integer(c_int) :: " + ", ".join(f"i{d + 1}" for d in range(max_loop_rank))
         symbol_decls = (symbol_decls + "\n" + iter_decl) if symbol_decls else iter_decl
+
+    # Orphan module-global args: a wrapper-local ``target`` per arg,
+    # filled from the renamed module import in build_wrapper_body.
+    for a, _mod, _member in _orphan_module_args(frozen, iface, plan):
+        ftype = _fortran_c_value_type(a.dtype)
+        spec = "(" + ", ".join(":" for _ in range(a.rank)) + ")" if a.rank > 0 else ""
+        kw = "allocatable, target" if a.rank > 0 else "target"
+        scratch_lines.append(f"    {ftype}, {kw} :: {a.sdfg_name}{spec}")
 
     bridge_decls, _, _, _ = _build_logical_bridges(frozen, iface)
     if bridge_decls:
@@ -252,7 +277,26 @@ def build_wrapper_body(frozen: FrozenSignature, iface: OriginalInterface, plan: 
         body.append("    ! ----- LOGICAL -> logical(c_bool) bridge (copy-in) -----")
         body.extend(copy_in_lines)
 
-    sym_lines = _build_symbol_assigns(frozen, plan, outer_dummy_set)
+    orphans = _orphan_module_args(frozen, iface, plan)
+    if orphans:
+        body.append("")
+        body.append("    ! ----- Module-global args sourced from use-imports -----")
+        for a, _mod, _member in orphans:
+            alias = _module_symbol_alias(a.sdfg_name)
+            if a.rank > 0:
+                # Allocate to the SDFG arg's own concrete extent
+                # (``FrozenArg.shape``)  --  NOT ``size(alias)``: the
+                # source can be a *scalar* module global (ICON timer
+                # handles, ``i_am_accel_node``) the bridge lifted to a
+                # length-1 array, and ``size(scalar)`` is a hard
+                # Fortran error.  Scalar-source -> scalar broadcast
+                # into the length-1 buffer; array-source -> conformant
+                # array assign.
+                dims = ", ".join(a.shape) if a.shape else "1"
+                body.append(f"    allocate({a.sdfg_name}({dims}))")
+            body.append(f"    {a.sdfg_name} = {alias}")
+
+    sym_lines = _build_symbol_assigns(frozen, plan, outer_dummy_set, iface)
     if sym_lines:
         body.append("")
         body.append("    ! ----- Symbol population -----")
@@ -385,8 +429,17 @@ def assemble_module(iface: OriginalInterface, frozen: FrozenSignature, blocks: d
         statements, c-interface, handle state, wrapper body,
         finalize body) plus the entry name + schema version.
     """
-    use_statements = "\n".join(f"  use {mod}, only: {', '.join(syms)}"
-                               for mod, syms in sorted(iface.used_modules.items()))
+    use_lines = [f"  use {mod}, only: {', '.join(syms)}" for mod, syms in sorted(iface.used_modules.items())]
+    # Module-sourced free symbols: import each member under a
+    # ``<sym>__mod`` alias so it doesn't clash with the wrapper's own
+    # local ``<sym>`` (declared for the by-value SDFG call).  Group by
+    # module to keep one ``use`` per module.
+    by_mod: dict = {}
+    for sym, (mod, member) in sorted(effective_module_sources(frozen, iface).items()):
+        by_mod.setdefault(mod, []).append(f"{_module_symbol_alias(sym)} => {member}")
+    for mod, renames in sorted(by_mod.items()):
+        use_lines.append(f"  use {mod}, only: {', '.join(sorted(set(renames)))}")
+    use_statements = "\n".join(use_lines)
     wrapper_body = (blocks['wrapper_head'] + "\n" + blocks['wrapper_body'] + "\n" + blocks['wrapper_tail'])
     return _load("module.f90.in").format(
         entry=iface.entry,
@@ -491,11 +544,27 @@ def _build_logical_bridges(frozen: FrozenSignature, iface: OriginalInterface):
             scratch = f"{fa.fortran_name}_cbool"
             shape_dim = "(" + ",".join(":" for _ in range(fa.rank)) + ")"
             decl_lines.append(f"    logical(c_bool), allocatable, target :: {scratch}{shape_dim}")
-            shape_args = ", ".join(f"size({oa.name}, dim={d + 1})" for d in range(fa.rank))
-            copy_in_lines.append(f"    allocate({scratch}({shape_args}))")
-            copy_in_lines.append(f"    {scratch} = {oa.name}")
-            if oa.intent in ('out', 'inout', ''):
-                copy_out_lines.append(f"    {oa.name} = {scratch}")
+            # A scalar ``intent(out)/inout`` LOGICAL is a *scalar* on the
+            # caller side (``oa.rank == 0``) but the bridge lifts it to a
+            # length-1 ``Array`` on the SDFG signature (the scalar-output
+            # convention -- see ``descriptors.py``).  ``size(oa.name)`` on
+            # the outer scalar is a hard Fortran error and a bare
+            # ``scratch = oa.name`` is a rank-0/rank-1 mismatch, so the
+            # scratch must be allocated to the SDFG arg's own concrete
+            # extent (``FrozenArg.shape``) and the scalar bridged through
+            # element ``(1)`` -- mirroring the orphan-module-global path.
+            if oa.rank == 0:
+                dims = ", ".join(fa.shape) if fa.shape else "1"
+                copy_in_lines.append(f"    allocate({scratch}({dims}))")
+                copy_in_lines.append(f"    {scratch}(1) = {oa.name}")
+                if oa.intent in ('out', 'inout', ''):
+                    copy_out_lines.append(f"    {oa.name} = {scratch}(1)")
+            else:
+                shape_args = ", ".join(f"size({oa.name}, dim={d + 1})" for d in range(fa.rank))
+                copy_in_lines.append(f"    allocate({scratch}({shape_args}))")
+                copy_in_lines.append(f"    {scratch} = {oa.name}")
+                if oa.intent in ('out', 'inout', ''):
+                    copy_out_lines.append(f"    {oa.name} = {scratch}")
             copy_out_lines.append(f"    deallocate({scratch})")
             name_override[fa.sdfg_name] = scratch
         # Scalar bool dummy (fa.rank == 0): the SDFG declares the C
@@ -569,7 +638,73 @@ def _sym_from_intrinsic(sym: str, frozen: FrozenSignature) -> Optional[Tuple[str
     return None
 
 
-def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dummy_set: set) -> List[str]:
+def _module_symbol_alias(sym: str) -> str:
+    """Local rename for a module-sourced free symbol's import.
+
+    The wrapper already declares its own local ``<sym>`` (passed
+    by value to the SDFG), so the module member is imported under a
+    distinct ``<sym>__mod`` alias to avoid the name clash.
+    """
+    return f"{sym}__mod"
+
+
+def effective_module_sources(frozen: FrozenSignature, iface: OriginalInterface) -> Dict[str, Tuple[str, str]]:
+    """Merge bridge-auto-detected module-global provenance with any
+    hand-authored ``OriginalInterface.module_symbol_sources``.
+
+    The bridge tags every SDFG symbol / arg that traces to a Fortran
+    module global (``_QM<mod>E<entity>``) with its ``(module, entity)``
+    origin (``FrozenSignature.module_symbol_origins``).  This is the
+    primary source: kernels need NO hand-authored list.  The explicit
+    ``iface.module_symbol_sources`` is kept as an override / fallback
+    and wins on conflict  --  it lets a caller correct a mis-decoded
+    origin or supply one the bridge could not recover.
+
+    :param frozen: the SDFG-side frozen signature carrying
+        auto-detected ``module_symbol_origins``.
+    :param iface: the caller-facing interface; its
+        ``module_symbol_sources`` is the explicit override layer.
+    :returns: ``sdfg_name -> (module, entity)`` for every
+        module-global-sourced symbol / arg, auto + explicit merged.
+    """
+    merged: Dict[str, Tuple[str, str]] = dict(getattr(frozen, 'module_symbol_origins', {}) or {})
+    merged.update(iface.module_symbol_sources)  # explicit override wins
+    return merged
+
+
+def _orphan_module_args(frozen: FrozenSignature, iface: OriginalInterface, plan: FlattenPlan):
+    """SDFG args that are neither an outer dummy nor a flat companion
+    nor an extent / offset symbol  --  Fortran *module* globals the
+    kernel reads directly that the bridge lifted onto the SDFG
+    signature (ICON's ``nrdmax`` / ``nflatlev`` / ``i_am_accel_node``
+    / timer handles).  Each origin is bridge-auto-detected (or
+    explicitly overridden via ``iface.module_symbol_sources``); each
+    becomes a wrapper-local ``target`` initialised from the renamed
+    module import so the ``c_loc(<name>)`` SDFG-call actual resolves.
+
+    :returns: list of ``(FrozenArg, module, member)`` in signature
+        order, restricted to those with a known module origin.
+    """
+    sources = effective_module_sources(frozen, iface)
+    dummy = {a.name for a in iface.args}
+    flat = {f for e in plan.entries for f in e.recipe.flat_names}
+    out = []
+    for a in frozen.args:
+        n = a.sdfg_name
+        if n in dummy or n in flat:
+            continue
+        if _OFFSET_SYM_RE.match(n) or (a.kind == 'symbol'):
+            continue
+        if _EXTENT_SYM_RE.match(n) and n not in sources:
+            continue
+        src = sources.get(n)
+        if src is not None:
+            out.append((a, src[0], src[1]))
+    return out
+
+
+def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dummy_set: set,
+                          iface: OriginalInterface) -> List[str]:
     """Emit one assignment per free SDFG symbol from the caller's
     actual Fortran storage.
 
@@ -582,6 +717,7 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
     lower-bound dummies, which have no flatten entry).  Symbols that
     are themselves outer dummies are left for the caller to pass.
     """
+    _module_sources = effective_module_sources(frozen, iface)
     # Cap symbols of aos_alloc recipes are populated by the pack-in
     # code (``render_aos_alloc_pack_in`` writes ``cap_<m> = max_i(...)``)
     # before the SDFG call  --  skip them here so we don't emit a stray
@@ -590,29 +726,41 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
         entry.recipe.cap_symbol
         for entry in plan.entries if entry.recipe.aos_alloc and entry.recipe.cap_symbol
     }
+    # An extent symbol ``<flat>_d<i>`` is the i-th extent of exactly
+    # the flat companion named ``<flat>``, so it must take *that*
+    # entry's ``shape_exprs[i]`` (substring-scanning the shape list
+    # mis-binds every symbol to the first entry's dim-1 on a
+    # multi-member struct).
+    flat_shapes: dict = {}
+    # A rank-0 plan entry whose single flat companion *is* the symbol
+    # name is a scalar struct member (``p_patch%nlev``) lifted to a
+    # free symbol.  It carries no ``size(...)`` shape  --  its value is
+    # the member itself.  ``read_exprs[0]`` is the dotted access with
+    # ``$i`` placeholders (none for rank 0); strip them to the bare
+    # path so the assignment reads ``p_patch%nlev`` directly.
+    scalar_member: dict = {}
+    for entry in plan.entries:
+        r = entry.recipe
+        for flat in r.flat_names:
+            flat_shapes[flat] = r.shape_exprs
+        if r.rank == 0 and len(r.flat_names) == 1 and r.read_exprs:
+            scalar_member[r.flat_names[0]] = strip_index_args(r.read_exprs[0])
+
     out: List[str] = []
     for sym in frozen.free_symbols:
         if sym in outer_dummy_set:
             continue
         if sym in aos_cap_syms:
             continue
-        found = False
-        for entry in plan.entries:
-            r = entry.recipe
-            for d, shape in enumerate(r.shape_exprs):
-                # Cheap substring check  --  ``size(st%a, dim=1)`` doesn't
-                # mention the symbol directly; we'd need the shape to be
-                # recorded symbolically ("n") for this to match.  Left as
-                # a simple heuristic for now; future work: extend recipes
-                # with symbolic shape metadata alongside the Fortran
-                # ``size(...)`` expressions.
-                if f"size({entry.outer_expr}, dim={d + 1})" in shape:
-                    out.append(f"    {sym} = int({shape}, c_int)")
-                    found = True
-                    break
-            if found:
-                break
-        if found:
+        m = _EXTENT_SYM_RE.match(sym)
+        if m and not _OFFSET_SYM_RE.match(sym):
+            flat, dim = m.group(1), int(m.group(2))
+            shapes = flat_shapes.get(flat)
+            if shapes is not None and dim < len(shapes):
+                out.append(f"    {sym} = int({shapes[dim]}, c_int)")
+                continue
+        if sym in scalar_member:
+            out.append(f"    {sym} = int({scalar_member[sym]}, c_int)")
             continue
         # No flatten-plan size expr: derive the value directly from the
         # caller's array via lbound/size (closes the gap for plain
@@ -622,6 +770,13 @@ def _build_symbol_assigns(frozen: FrozenSignature, plan: FlattenPlan, outer_dumm
         if intr is not None:
             fn, expr, dim = intr
             out.append(f"    {sym} = int({fn}({expr}, dim={dim}), c_int)")
-        else:
-            out.append(f"    ! TODO: no plan entry gives size for free symbol {sym!r}")
+            continue
+        # Last resort: a Fortran module global the kernel reads
+        # directly (no dummy to query).  Bridge-auto-detected (or
+        # explicitly overridden); ``use``-imported under the
+        # ``__mod`` alias  --  assign from that import.
+        if sym in _module_sources:
+            out.append(f"    {sym} = int({_module_symbol_alias(sym)}, c_int)")
+            continue
+        out.append(f"    ! TODO: no plan entry gives size for free symbol {sym!r}")
     return out

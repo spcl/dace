@@ -37,8 +37,7 @@ import pytest
 
 from _util import have_flang
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"))
-from hlfir_to_sdfg import SDFGBuilder  # noqa: E402
+from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 
@@ -108,9 +107,7 @@ def test_inlined_hlfir_has_assumed_shape_alias_declare(tmp_path: Path):
     ``fir.shape_shift``-bounded declare.  This test asserts the shape
     of the IR that subsequent frontend work needs to handle; it does
     NOT yet require the SDFG to be correct."""
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"))
-    from build_bridge import hb  # noqa: E402
+    from dace.frontend.hlfir.build_bridge import hb  # noqa: E402
 
     callee_hlfir = _hlfir(_CALLEE_SRC, tmp_path / "callee.hlfir")
     driver_hlfir = _hlfir(_DRIVER_SRC, tmp_path / "driver.hlfir")

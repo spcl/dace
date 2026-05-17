@@ -16,8 +16,8 @@ from pathlib import Path
 
 from dace import SDFG
 
-from build_bridge import hb  # noqa: F401   --  ensures the bridge is built
-from hlfir_to_sdfg import DEFAULT_PIPELINE, SDFGBuilder
+from dace.frontend.hlfir.build_bridge import hb  # noqa: F401   --  ensures the bridge is built
+from dace.frontend.hlfir.hlfir_to_sdfg import DEFAULT_PIPELINE, SDFGBuilder
 
 
 def _find_flang() -> str:

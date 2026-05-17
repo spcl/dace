@@ -15,7 +15,7 @@ compile-time, not SDFG-time.
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 class SignatureDriftError(RuntimeError):
@@ -85,6 +85,15 @@ class FrozenSignature:
     args: Tuple[FrozenArg, ...]
     free_symbols: Tuple[str, ...] = field(default_factory=tuple)
     schema_version: int = 1
+    # Auto-detected Fortran module-global provenance for SDFG names
+    # that are NOT outer dummies  --  free symbols (a scalar module
+    # global lifted into a shape / bound) and module-global args
+    # (the bridge ``intent=inout`` lift).  Maps ``sdfg_name ->
+    # (module, entity)``.  The binding emitter merges this with any
+    # hand-authored ``OriginalInterface.module_symbol_sources`` (the
+    # explicit map wins on conflict) so no hand-authored list is
+    # required for kernels the bridge can resolve on its own.
+    module_symbol_origins: Dict[str, Tuple[str, str]] = field(default_factory=dict)
 
     # ----- I/O ---------------------------------------------------------
 
@@ -97,6 +106,10 @@ class FrozenSignature:
                     'args': [a.to_dict() for a in self.args],
                     'free_symbols': list(self.free_symbols),
                     'schema_version': self.schema_version,
+                    'module_symbol_origins': {
+                        k: list(v)
+                        for k, v in self.module_symbol_origins.items()
+                    },
                 },
                 fh,
                 indent=2)
@@ -111,6 +124,10 @@ class FrozenSignature:
             args=tuple(FrozenArg.from_dict(a) for a in d['args']),
             free_symbols=tuple(d.get('free_symbols', [])),
             schema_version=d.get('schema_version', 1),
+            module_symbol_origins={
+                k: tuple(v)
+                for k, v in d.get('module_symbol_origins', {}).items()
+            },
         )
 
     # ----- Drift check -------------------------------------------------

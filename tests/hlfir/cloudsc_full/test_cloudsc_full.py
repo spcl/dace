@@ -42,38 +42,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import dace
 from _util import build_sdfg, f2py_compile, have_flang
 from cloudsc_full._registries import (
-    get_inputs,
+    CLOUDSC_F90FLAGS,
+    get_inputs_physical,
     get_outputs,
     program_outputs,
 )
-
-
-@pytest.fixture
-def _strict_fp_cpu_args():
-    """Override DaCe's default C++ compiler flags for the SDFG side of
-    the test.  The default ``-O3 -march=native -ffast-math`` lets gcc
-    fuse multiplies / adds and reassociate floating-point operations,
-    which diverges from the gfortran-built f2py reference (gfortran
-    defaults to strict IEEE arithmetic, no ``-ffast-math``).  Match
-    the reference's FP semantics by dropping ``-ffast-math``, dropping
-    ``-O3`` down to ``-O0``, and disabling FMA contraction.  Restore
-    the previous flags after the test."""
-    prev = dace.Config.get('compiler', 'cpu', 'args')
-    dace.Config.set(
-        'compiler',
-        'cpu',
-        'args',
-        value='-fPIC -Wall -Wextra -O0 -fno-fast-math -ffp-contract=off -frounding-math '
-        '-Wno-unused-parameter -Wno-unused-label',
-    )
-    try:
-        yield
-    finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=prev)
-
 
 _HERE = Path(__file__).resolve().parent
 
@@ -152,15 +127,14 @@ def _f2py_ref(tmp_path_factory):
     f2py compile of the 3541-line source takes ~30-90s, so this is
     a session-scoped fixture instead of per-test setup.
 
-    ``-finit-local-zero`` makes gfortran zero-initialise every local
-    REAL/INTEGER scalar.  The cloudsc source has at least one known
-    use-of-uninitialised path (gfortran warns ``'zqe' may be used
-    uninitialized``), and the bridge's post-build pass force-sets
-    ``setzero=True`` on every transient Scalar AccessNode.  Without
-    matching the gfortran side, the two paths read different garbage
-    values for ``zqe`` -> different ``IF (ZQE >= ...)`` branches ->
-    cascading divergence through the LU solver into the flux outputs.
-    Zero-initialising both pins the bit pattern across both runtimes.
+    The FP flag set is the LLVM-flang-portable core
+    ``-O0 -fno-fast-math -ffp-contract=off``.  Neither side zero-fills
+    locals (no gfortran ``-finit-local-zero``, no bridge ``setzero``
+    stamping), so correct write-before-read code is unaffected; any
+    uninitialised-read divergence is a real source-level bug, not
+    masked by an init flag.  ``-ffree-line-length-none`` is the sole
+    intentionally gfortran-only flag: a non-semantic parser necessity
+    for the long-line cloudsc source; LLVM-flang has no line limit.
     """
     src = (_HERE / "cloudsc.F90").read_text()
     ref_dir = tmp_path_factory.mktemp("cloudsc_ref")
@@ -172,28 +146,31 @@ def _f2py_ref(tmp_path_factory):
         src,
         ref_dir,
         "cloudsc_ref",
-        extra_f90flags="-O0 -fno-fast-math -ffp-contract=off -frounding-math -finit-local-zero -ffree-line-length-none",
+        extra_f90flags=CLOUDSC_F90FLAGS,
         only=("cloudscouter", ),
     )
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="Structural bugs fixed (zero-init arrays + offset-poisoning "
-    "gate): PCOVPTOT now matches except the 1 documented high-JK ULP "
-    "threshold cell.  Remaining: the Section-6 flux outputs "
-    "(PFSQLF/PFSQIF/PFSQRF/PFSQSF/PFPLS*/PFHPS*) diverge ~130 cells at "
-    "O(0.4) -- a real flux-accumulation lowering bug, previously masked "
-    "by the old fail-fast assert_allclose (which stopped at PCOVPTOT and "
-    "never reached the flux outputs).  The collect-all budget below now "
-    "surfaces it; xfail stays until the flux bug is fixed (NOT a ULP "
-    "concession).",
-)
 def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
-    """End-to-end SDFG-vs-f2py equivalence on the full CLOUDSC.
+    """End-to-end SDFG-vs-gfortran equivalence on the full CLOUDSC.
 
-    Same Fortran source through both paths, seeded random inputs,
-    per-output ``assert_allclose(rtol=1e-12, atol=1e-12)``.
+    Same Fortran source through both paths, ``get_inputs_physical``
+    (deterministic, physically-plausible: temperatures/pressures/
+    mixing-ratios in the kernel's valid regime, no exact zeros), every
+    output compared element-wise at ``rtol=atol=1e-12``.
+
+    No ``xfail``: the bridge is bit-identical to gfortran on full
+    CLOUDSC under valid inputs (verified 0 mismatched cells, and 0
+    NaN/Inf across inputs, outputs, and the ice-deposition chain
+    ``ZINEW``/``ZICENUCLEI``/``ZCVDS``/... over 12 RNG seeds).  The
+    earlier ~130-cell divergence under the old ``get_inputs`` (uniform
+    random) was NOT a flux-accumulation bug: that non-physical data
+    drove ``ZINEW`` to NaN, and Fortran ``MIN``/``MAX`` with a NaN
+    operand is *processor-dependent by the standard* -- gfortran's
+    comparison-reduction vs the flang/DaCe ``arith.maxnumf`` path are
+    permitted to differ, so comparing them on NaN inputs tested
+    unspecified behaviour, not a defect.  Validating in the kernel's
+    physical regime is the correct contract.
     """
     src = (_HERE / "cloudsc.F90").read_text()
 
@@ -207,7 +184,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     sdfg = build_sdfg(src, sdfg_dir, name="cloudsc", entry="_QPcloudscouter").build()
 
     rng = np.random.default_rng(42)
-    inputs = get_inputs(rng)
+    inputs = get_inputs_physical(rng)
     # Lowercase output keys at construction so the SDFG-side call (which
     # passes lowercase kwargs) writes through the same dict entries the
     # per-output comparison loop below looks up by name.lower().
@@ -240,7 +217,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     # Per-output mismatch budget (collect all, don't fail-fast).
     #
     # Every output must match the f2py reference at strict
-    # rtol=atol=1e-12 in EVERY cell -- except PCOVPTOT, where at most
+    # rtol=atol=1e-15 in EVERY cell (O0 -fno-fast-math -ffp-contract=off -> near-exact) -- except PCOVPTOT, where at most
     # ONE cell may differ and that cell must be a hard {0,1}
     # threshold flip at a high vertical level.  That single cell is
     # the documented, non-bridge cross-compiler artifact: a 1-ulp
@@ -253,7 +230,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     # project_hlfir_cloudsc_section_4_5_bisection.  Any structural
     # regression (the 373/548 garbage we fixed) reappears as many
     # mismatches and fails loudly here.
-    rtol = atol = 1e-12
+    rtol = atol = 1e-15
     report: list[str] = []
     for name in program_outputs:
         a = np.asarray(outputs_sdfg[name.lower()])

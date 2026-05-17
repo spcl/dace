@@ -768,17 +768,48 @@ static std::string dtypeName(mlir::Type t) {
   return "";
 }
 
-/// Element type of a member  --  unwraps fir.array to its element, or
-/// returns the scalar itself.  Used to pick the recipe dtype.
-static mlir::Type memberElementType(mlir::Type memTy) {
-  if (auto seq = mlir::dyn_cast<fir::SequenceType>(memTy))
-    return seq.getEleTy();
-  return memTy;
+/// Peel the descriptor wrappers a struct member's declared type may
+/// carry before its array / scalar core.  A POINTER or ALLOCATABLE
+/// array member is typed ``fir.box<fir.ptr<fir.array<...>>>`` (or
+/// ``fir.heap`` for ALLOCATABLE); a CLASS member adds ``fir.class``.
+/// ``memberRank`` / ``memberElementType`` need the core
+/// ``fir.array<...>`` (or scalar) underneath, not the box  --  without
+/// peeling, every deferred-shape struct member looks rank-0 and the
+/// flatten plan emits a scalar ``c_f_pointer`` alias for what is
+/// really a multidimensional array.
+static mlir::Type peelMemberWrappers(mlir::Type t) {
+  for (;;) {
+    if (auto x = mlir::dyn_cast<fir::ClassType>(t)) {
+      t = x.getEleTy();
+    } else if (auto x = mlir::dyn_cast<fir::BoxType>(t)) {
+      t = x.getEleTy();
+    } else if (auto x = mlir::dyn_cast<fir::ReferenceType>(t)) {
+      t = x.getEleTy();
+    } else if (auto x = mlir::dyn_cast<fir::HeapType>(t)) {
+      t = x.getEleTy();
+    } else if (auto x = mlir::dyn_cast<fir::PointerType>(t)) {
+      t = x.getEleTy();
+    } else {
+      return t;
+    }
+  }
 }
 
-/// Return the rank of a member type (0 for scalars).
+/// Element type of a member  --  unwraps any descriptor wrappers and
+/// fir.array to its element, or returns the scalar itself.  Used to
+/// pick the recipe dtype.
+static mlir::Type memberElementType(mlir::Type memTy) {
+  mlir::Type core = peelMemberWrappers(memTy);
+  if (auto seq = mlir::dyn_cast<fir::SequenceType>(core)) return seq.getEleTy();
+  return core;
+}
+
+/// Return the rank of a member type (0 for scalars).  Peels POINTER /
+/// ALLOCATABLE / CLASS descriptor wrappers first so deferred-shape
+/// array members report their true rank.
 static int memberRank(mlir::Type memTy) {
-  if (auto seq = mlir::dyn_cast<fir::SequenceType>(memTy))
+  mlir::Type core = peelMemberWrappers(memTy);
+  if (auto seq = mlir::dyn_cast<fir::SequenceType>(core))
     return seq.getShape().size();
   return 0;
 }
@@ -1628,27 +1659,28 @@ struct FlattenStructsPass
     }
   }
 
-  /// Nested-DT companion of ``recordStructArgEntry``: emit a single
-  /// FlattenEntry whose recipe carries one flat name + one read_expr
-  /// per leaf, with the leaf's full ``%``-path preserved.
+  /// Nested-DT companion of ``recordStructArgEntry``: emit one
+  /// FlattenEntry per leaf, each carrying the leaf's own rank,
+  /// shape_exprs, dtype and full dotted ``%``-path.
   ///
   /// Example  --  ``type(t_outer)`` whose ``a%v`` and ``b%v`` are
-  /// scalar-record members containing ``v(NX, NY)`` produces:
-  ///     outer_expr = "st"
-  ///     recipe = {
-  ///       flat_names  = ["st_a_v", "st_b_v"],
-  ///       read_exprs  = ["st%a%v($i1, $i2)", "st%b%v($i1, $i2)"],
-  ///       rank        = max(leaf rank),
+  /// scalar-record members containing ``v(NX, NY)`` produces two
+  /// entries:
+  ///     outer_expr = "st%a%v", recipe = {
+  ///       flat_names  = ["st_a_v"],
+  ///       read_exprs  = ["st%a%v($i1, $i2)"],
+  ///       rank        = 2,
   ///       shape_exprs = ["size(st%a%v, dim=1)", "size(st%a%v, dim=2)"],
-  ///       aliasable   = true,
-  ///       scratch_dtype = "float64",
-  ///     }
+  ///       aliasable   = true, scratch_dtype = "float64" }
+  ///     outer_expr = "st%b%v", recipe = { ... "st_b_v" ... }
   ///
   /// The bindings emitter then renders one ``c_f_pointer(c_loc(st%a%v),
-  /// st_a_v, [...])`` alias per leaf -- zero-copy, same shape as the
-  /// non-nested ``recordStructArgEntry`` output.  Static-shape leaves
-  /// only; ``collectFlatLeaves`` rejects dynamic-extent leaves
-  /// upstream so we never see them here.
+  /// st_a_v, [...])`` alias per entry -- zero-copy, same shape as the
+  /// non-nested ``recordStructArgEntry`` output.  Per-leaf entries (vs
+  /// a single shared-tuple recipe) keep heterogeneous nested structs
+  /// correct: a leaf's rank / dtype no longer leaks onto its
+  /// siblings.  ``collectFlatLeaves`` rejects unsupported leaf shapes
+  /// upstream.
   void recordNestedStructArgEntry(hlfir::DeclareOp argDecl,
                                   llvm::ArrayRef<FlatLeaf> leaves,
                                   llvm::StringRef intentStr) {
@@ -1665,18 +1697,13 @@ struct FlattenStructsPass
       argDecl.getResult(0).getType().print(os);
     }
 
-    llvm::SmallVector<mlir::Attribute, 4> flatNames;
-    llvm::SmallVector<mlir::Attribute, 4> readExprs;
-    std::string scratchDtype = "float64";
-    int64_t maxRank = 0;
-    // First leaf's dotted path -- used as the shape_exprs sample
-    // (every leaf has its own shape but the recipe carries one
-    // shape tuple, so we pick the first leaf as canonical;
-    // mismatched ranks across leaves would be a recipe-level
-    // violation and the per-leaf shape would be needed instead).
-    std::string firstLeafPath;
-    int firstLeafRank = 0;
-
+    // Emit one FlattenEntry per leaf: a heterogeneous nested struct
+    // (differing rank / dtype / deferred-shape per leaf) needs each
+    // alias to carry its own rank, shape_exprs, dtype and dotted
+    // outer_expr -- the same per-member shape ``recordStructArgEntry``
+    // emits.  A single shared recipe only round-trips a homogeneous
+    // struct.
+    bool emittedAny = false;
     for (auto &leaf : leaves) {
       // Joined ``a_v`` style suffix (same convention as
       // ``replaceStructArgNested``'s declare uniq_name).
@@ -1686,10 +1713,8 @@ struct FlattenStructsPass
         joined += leaf.path[i];
       }
       std::string flat = outerName + "_" + joined;
-      flatNames.push_back(mkStr(flat));
 
       int leafRank = memberRank(leaf.leafTy);
-      if (leafRank > maxRank) maxRank = leafRank;
 
       // Dotted path ``st%a%v`` for the read_expr / shape_expr.
       std::string dotted = outerName;
@@ -1706,45 +1731,39 @@ struct FlattenStructsPass
         }
         read += ")";
       }
-      readExprs.push_back(mkStr(read));
 
-      if (firstLeafPath.empty()) {
-        firstLeafPath = dotted;
-        firstLeafRank = leafRank;
+      std::string scratchDtype = dtypeName(memberElementType(leaf.leafTy));
+      if (scratchDtype.empty()) scratchDtype = "float64";
+
+      llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
+      for (int i = 1; i <= leafRank; ++i) {
+        std::string s = "size(" + dotted + ", dim=" + std::to_string(i) + ")";
+        shapeExprs.push_back(mkStr(s));
       }
-      if (std::string dt = dtypeName(memberElementType(leaf.leafTy));
-          !dt.empty())
-        scratchDtype = dt;
+
+      auto recipe = b.getDictionaryAttr({
+          b.getNamedAttr("flat_names", b.getArrayAttr({mkStr(flat)})),
+          b.getNamedAttr("read_exprs", b.getArrayAttr({mkStr(read)})),
+          b.getNamedAttr("write_expr", mkStr("")),
+          b.getNamedAttr("rank", b.getI64IntegerAttr(leafRank)),
+          b.getNamedAttr("shape_exprs", b.getArrayAttr(shapeExprs)),
+          b.getNamedAttr("aliasable", b.getBoolAttr(true)),
+          b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
+          b.getNamedAttr("aos_alloc", b.getBoolAttr(false)),
+          b.getNamedAttr("cap_symbol", mkStr("")),
+      });
+
+      auto entry = b.getDictionaryAttr({
+          b.getNamedAttr("outer_expr", mkStr(dotted)),
+          b.getNamedAttr("outer_type", mkStr(outerType)),
+          b.getNamedAttr("writeback_intent", mkStr(intentStr)),
+          b.getNamedAttr("recipe", recipe),
+      });
+      planEntries.push_back(entry);
+      emittedAny = true;
     }
 
-    if (flatNames.empty()) return;
-
-    llvm::SmallVector<mlir::Attribute, 4> shapeExprs;
-    for (int i = 1; i <= firstLeafRank; ++i) {
-      std::string s =
-          "size(" + firstLeafPath + ", dim=" + std::to_string(i) + ")";
-      shapeExprs.push_back(mkStr(s));
-    }
-
-    auto recipe = b.getDictionaryAttr({
-        b.getNamedAttr("flat_names", b.getArrayAttr(flatNames)),
-        b.getNamedAttr("read_exprs", b.getArrayAttr(readExprs)),
-        b.getNamedAttr("write_expr", mkStr("")),
-        b.getNamedAttr("rank", b.getI64IntegerAttr(maxRank)),
-        b.getNamedAttr("shape_exprs", b.getArrayAttr(shapeExprs)),
-        b.getNamedAttr("aliasable", b.getBoolAttr(true)),
-        b.getNamedAttr("scratch_dtype", mkStr(scratchDtype)),
-        b.getNamedAttr("aos_alloc", b.getBoolAttr(false)),
-        b.getNamedAttr("cap_symbol", mkStr("")),
-    });
-
-    auto entry = b.getDictionaryAttr({
-        b.getNamedAttr("outer_expr", mkStr(outerName)),
-        b.getNamedAttr("outer_type", mkStr(outerType)),
-        b.getNamedAttr("writeback_intent", mkStr(intentStr)),
-        b.getNamedAttr("recipe", recipe),
-    });
-    planEntries.push_back(entry);
+    if (!emittedAny) return;
   }
 
   /// Phase 5c-B (true SDFG-boundary): emit one FlattenEntry per

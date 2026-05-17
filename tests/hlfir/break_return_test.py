@@ -21,18 +21,10 @@ turns the EXIT into an ``scf.while`` keep-going condition); these tests
 are the focused unit-test for the emit handlers themselves.
 """
 
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import pytest
-
-_HLFIR_DIR = Path(__file__).resolve().parents[2] / "dace" / "frontend" / "hlfir"
-if str(_HLFIR_DIR) not in sys.path:
-    sys.path.insert(0, str(_HLFIR_DIR))
-if str(_HLFIR_DIR / "build") not in sys.path:
-    sys.path.insert(0, str(_HLFIR_DIR / "build"))
 
 
 @dataclass
@@ -65,7 +57,7 @@ def test_return_block_wired_at_top_level(tmp_path):
     return."""
     import dace
     from dace import SDFG
-    from hlfir_to_sdfg import SDFGBuilder
+    from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder
 
     builder = SDFGBuilder.__new__(SDFGBuilder)
     builder.variables = []
@@ -77,7 +69,7 @@ def test_return_block_wired_at_top_level(tmp_path):
     sdfg.add_symbol("n", dace.int64)
     sdfg.add_array("a", shape=(dace.symbol("n"), ), dtype=dace.float64, transient=False)
 
-    from hlfir_to_sdfg import _Ctx
+    from dace.frontend.hlfir.hlfir_to_sdfg import _Ctx
     ctx = _Ctx(sdfg, builder)
 
     ast = [_Node(kind="return")]
@@ -101,7 +93,7 @@ def test_break_block_inside_loop_region(tmp_path):
     import dace
     from dace import SDFG
     from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
-    from hlfir_to_sdfg import SDFGBuilder, _Ctx
+    from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder, _Ctx
 
     builder = SDFGBuilder.__new__(SDFGBuilder)
     builder.variables = []
