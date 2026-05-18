@@ -290,14 +290,25 @@ class MapFission(transformation.SingleStateTransformation):
                     if (isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
                 ]
 
-            # Map external edges to outer memlets
+            # Enclosing scope of the fissioned map (``None`` if top-level).
+            # The new per-component fission maps live in this scope, so
+            # boundary edges with no outer feeder/consumer are rewired
+            # through it instead of through the about-to-be-removed map.
+            parent_entry = state.entry_node(map_entry) if self.expr_index == 0 else None
+            parent_exit = state.exit_node(parent_entry) if parent_entry is not None else None
+
+            # Map external edges to outer memlets. ``None`` marks a boundary
+            # edge with no outer feeder/consumer (e.g. an empty dependency
+            # edge straight off ``map_entry``, whose memlet path is just the
+            # edge itself): ``path[eindex - 1]`` would wrap to the edge and
+            # alias the new maps onto the deleted original map.
             edge_to_outer = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
                     # Subgraphs use the corresponding outer map edges
                     path = state.memlet_path(edge)
                     eindex = path.index(edge)
-                    edge_to_outer[edge] = path[eindex - 1]
+                    edge_to_outer[edge] = path[eindex - 1] if eindex > 0 else None
                 else:
                     outer_edge = next((e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data), None)
                     if outer_edge is None:
@@ -308,7 +319,7 @@ class MapFission(transformation.SingleStateTransformation):
                 if self.expr_index == 0:
                     path = state.memlet_path(edge)
                     eindex = path.index(edge)
-                    edge_to_outer[edge] = path[eindex + 1]
+                    edge_to_outer[edge] = path[eindex + 1] if eindex + 1 < len(path) else None
                 else:
                     # Nested SDFGs use the internal map edges of the node
                     outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
@@ -375,8 +386,15 @@ class MapFission(transformation.SingleStateTransformation):
                     state.add_edge(me, out_conn, e.dst, e.dst_conn, dcpy(e.data))
                     # Reconnect inner edges at source directly to external nodes
                     if self.expr_index == 0 and e in external_edges_entry:
-                        state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, in_conn,
-                                       dcpy(edge_to_outer[e].data))
+                        outer = edge_to_outer[e]
+                        if outer is None:
+                            # No outer feeder (empty dependency edge): keep the
+                            # new map inside the enclosing scope via an empty
+                            # edge instead of aliasing the removed map_entry.
+                            if parent_entry is not None:
+                                state.add_edge(parent_entry, None, me, None, mm.Memlet())
+                        else:
+                            state.add_edge(outer.src, outer.src_conn, me, in_conn, dcpy(outer.data))
                     else:
                         state.add_edge(e.src, e.src_conn, me, in_conn, dcpy(e.data))
                     state.remove_edge(e)
@@ -398,8 +416,16 @@ class MapFission(transformation.SingleStateTransformation):
                     state.add_edge(e.src, e.src_conn, mx, in_conn, dcpy(e.data))
                     # Reconnect inner edges at sink directly to external nodes
                     if self.expr_index == 0 and e in external_edges_exit:
-                        state.add_edge(mx, out_conn, edge_to_outer[e].dst, edge_to_outer[e].dst_conn,
-                                       dcpy(edge_to_outer[e].data))
+                        outer = edge_to_outer[e]
+                        if outer is None:
+                            # No outer consumer (empty dependency edge): keep
+                            # the new map inside the enclosing scope via an
+                            # empty edge instead of aliasing the removed
+                            # map_exit.
+                            if parent_exit is not None:
+                                state.add_edge(mx, None, parent_exit, None, mm.Memlet())
+                        else:
+                            state.add_edge(mx, out_conn, outer.dst, outer.dst_conn, dcpy(outer.data))
                     else:
                         state.add_edge(mx, out_conn, e.dst, e.dst_conn, dcpy(e.data))
                     state.remove_edge(e)
@@ -412,7 +438,9 @@ class MapFission(transformation.SingleStateTransformation):
                 for node in sources:
                     if isinstance(node, nodes.AccessNode):
                         for edge in state.in_edges(node):
-                            outer_edge = edge_to_outer[edge]
+                            outer_edge = edge_to_outer.get(edge)
+                            if outer_edge is None:  # No outer feeder: nothing to rewire.
+                                continue
                             memlet = dcpy(edge.data)
                             memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
                             state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
@@ -420,7 +448,9 @@ class MapFission(transformation.SingleStateTransformation):
                 for node in sinks:
                     if isinstance(node, nodes.AccessNode):
                         for edge in state.out_edges(node):
-                            outer_edge = edge_to_outer[edge]
+                            outer_edge = edge_to_outer.get(edge)
+                            if outer_edge is None:  # No outer consumer: nothing to rewire.
+                                continue
                             state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
                                            dcpy(outer_edge.data))
 

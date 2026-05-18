@@ -77,6 +77,17 @@ def three_level(x: dace.float64[N, M], y: dace.float64[N, M]):
                 y[i, j] = 2.0
 
 
+@dace.program
+def nested_intervening(a: dace.float64[M], x: dace.float64[N, M], y: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for jj in dace.map[0:P]:
+            s = a[j] * 2.0
+            for i in dace.map[0:N]:
+                x[i, j] = s
+            for i in dace.map[0:N]:
+                y[i, j] = s + 1.0
+
+
 def _toplevel_map_entries(sdfg: dace.SDFG):
     """Top-level (outermost) ``MapEntry`` nodes across all states.
 
@@ -144,11 +155,6 @@ def test_dependent_inner_maps_stay_correct():
     assert np.allclose(t1, expected) and np.allclose(y1, expected + 1.0)
 
 
-@pytest.mark.xfail(reason="Cascading the no-NSDFG split through a nested parent "
-                   "exposes a MapFission border-array limitation on nested "
-                   "maps (leftover access nodes); tracked as a follow-up in "
-                   "MapFission, out of PerfLoopNesting's scope.",
-                   strict=True)
 def test_three_level_nest_cascades():
     n, m, p = 4, 3, 2
     sdfg = three_level.to_sdfg(simplify=True)
@@ -165,6 +171,26 @@ def test_three_level_nest_cascades():
     sdfg(x=x1, y=y1, N=n, M=m, P=p)
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
     assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
+
+
+def test_nested_parent_with_intervening_producer():
+    """A three-level nest whose middle map has an intervening producer feeding
+    both inner maps: the structured fission must cascade the nested split
+    *and* replicate the producer, staying valid and numerically exact."""
+    n, m, p = 4, 3, 2
+    a = np.random.rand(m)
+    sdfg = nested_intervening.to_sdfg(simplify=True)
+
+    x0, y0 = np.zeros((n, m)), np.zeros((n, m))
+    copy.deepcopy(sdfg)(a=a.copy(), x=x0, y=y0, N=n, M=m, P=p)
+
+    sdfg.apply_transformations_repeated(PerfLoopNesting)
+    sdfg.validate()
+
+    x1, y1 = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(a=a.copy(), x=x1, y=y1, N=n, M=m, P=p)
+    assert np.allclose(x1, x0) and np.allclose(y1, y0)
+    assert np.allclose(x1, (a * 2.0)[None, :]) and np.allclose(y1, (a * 2.0 + 1.0)[None, :])
 
 
 def test_three_independent_maps_split_into_three():
