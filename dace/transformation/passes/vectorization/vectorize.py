@@ -299,7 +299,6 @@ class Vectorize(ppl.Pass):
         :raises NotImplementedError: if a strided edge does not match a
             supported stride/element pattern.
         """
-        import sympy as _sp
         inner_sdfg = nsdfg_node.sdfg
         for direction in ("in", "out"):
             edges = (list(state.in_edges(nsdfg_node)) if direction == "in" else list(state.out_edges(nsdfg_node)))
@@ -313,7 +312,7 @@ class Vectorize(ppl.Pass):
                 # - any_param_dims: param appears in begin (regardless of bbox)
                 param_dims_wide = []
                 any_param_dims = []
-                map_sym = _sp.Symbol(map_param)
+                map_sym = dace.symbolic.symbol(map_param)
                 for d, (b, ee, s) in enumerate(e.data.subset):
                     if not hasattr(b, "free_symbols"):
                         continue
@@ -356,10 +355,17 @@ class Vectorize(ppl.Pass):
                 inter_lane_stride = None
                 if len(param_dims_wide) == 1:
                     wb = e.data.subset[param_dims_wide[0][0]][0]
+                    # Inter-lane stride = begin(map_param + 1) - begin(map_param),
+                    # computed on the dace symbolic begin expression itself.
+                    # ``map_sym`` is the dace symbol named ``map_param`` (not a
+                    # raw ``sympy.Symbol``): a raw sympy symbol does not unify
+                    # with the dace symbol carried in ``wb``, so ``.subs``
+                    # would no-op and the ``int(...)`` would raise "Cannot
+                    # convert symbols to int", silently disabling every
+                    # genuinely strided edge (the K-elements-per-iter bug).
                     try:
-                        wb_sym = _sp.sympify(wb)
-                        inter_lane_stride = int(_sp.simplify(wb_sym.subs(map_sym, map_sym + 1) - wb_sym))
-                    except Exception:
+                        inter_lane_stride = int(dace.symbolic.simplify(wb.subs(map_sym, map_sym + 1) - wb))
+                    except (TypeError, ValueError):
                         inter_lane_stride = None
                 is_single_dim_strided = (len(param_dims_wide) == 1 and len(stride_one_dims) == 1
                                          and param_dims_wide[0][0] == stride_one_dims[0]
