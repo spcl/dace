@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map Fission transformation.
-
-TODO: fission a map containing a conditional by replicating the branch into
-each fissioned map; needs MapFusion (vertical and horizontal) to fuse
-branches. Tracked as a future MapFission/MapFusion extension.
-"""
+""" Map Fission transformation. """
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
