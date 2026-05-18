@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 import warnings
+from typing import Dict, Iterable, List, Optional, Tuple
+
 import dace
 from dace import properties
 from dace.memlet import Memlet
-from dace.sdfg.graph import Edge, MultiConnectorEdge
+from dace.sdfg import graph
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from typing import Dict, Iterable, List, Optional, Tuple
+from dace.libraries.standard.nodes import copy_node, memset_node
 
 
 @properties.make_properties
@@ -52,7 +52,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _get_edges_from_path(self, state: dace.SDFGState, node_path: List[dace.nodes.Node]) -> List[MultiConnectorEdge]:
+    def _get_edges_from_path(self, state: dace.SDFGState,
+                             node_path: List[dace.nodes.Node]) -> List[graph.MultiConnectorEdge]:
         if len(node_path) == 1:
             return []
         edges = []
@@ -113,7 +114,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return [p for p in in_order if p in shared] == [p for p in out_order if p in shared]
 
     def _detect_contiguous_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry,
-                                 is_memset: bool) -> List[List[MultiConnectorEdge]]:
+                                 is_memset: bool) -> List[List[graph.MultiConnectorEdge]]:
         """Find ``MapEntry -> tasklet -> MapExit`` data-movement paths under a map.
 
         Matches a tasklet that is a pure element-wise copy (``is_memset=False``)
@@ -183,14 +184,32 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return paths
 
     def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState,
-                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
+                                        node: dace.nodes.MapEntry) -> List[List[graph.MultiConnectorEdge]]:
+        """Element-wise-copy specialization of :meth:`_detect_contiguous_paths`.
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :returns: One edge list per matched copy path; empty if none match.
+        """
         return self._detect_contiguous_paths(state, node, is_memset=False)
 
     def _detect_contiguous_memset_paths(self, state: dace.SDFGState,
-                                        node: dace.nodes.MapEntry) -> List[List[MultiConnectorEdge]]:
+                                        node: dace.nodes.MapEntry) -> List[List[graph.MultiConnectorEdge]]:
+        """Constant-zero-write specialization of :meth:`_detect_contiguous_paths`.
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :returns: One edge list per matched memset path; empty if none match.
+        """
         return self._detect_contiguous_paths(state, node, is_memset=True)
 
     def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry) -> int:
+        """Count the tasklets nested inside the scope of map ``node``.
+
+        :param state: State containing the map.
+        :param node: Map entry whose body is scanned.
+        :returns: Number of distinct tasklets between the map entry and its exit.
+        """
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
         assert isinstance(node, dace.nodes.MapEntry), f"Node {node} is not a MapEntry"
         assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
@@ -366,8 +385,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # expansion wrapper whose parameter arrays are exactly those
             # names -- re-lifting inside it would recreate the clash that
             # motivated the original libnode connector rename.
-            clashes = ({CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME}
-                       & set(state.sdfg.arrays))
+            clashes = (
+                {copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME}
+                & set(state.sdfg.arrays))
             if clashes:
                 if verbose:
                     warnings.warn(
@@ -385,13 +405,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             else:
                 new_dst_access_node = dst_access_node
 
-            tasklet = CopyLibraryNode(
+            tasklet = copy_node.CopyLibraryNode(
                 name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}", )
             state.add_node(tasklet)
             self.rmid += 1
-            state.add_edge(new_src_access_node, None, tasklet, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+            state.add_edge(new_src_access_node, None, tasklet, copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME,
                            dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
-            state.add_edge(tasklet, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, new_dst_access_node, None,
+            state.add_edge(tasklet, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME, new_dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=new_dst_access_node.data))
             # Map-entry in-edges are either IN_* data passthroughs (already
             # handled by the libnode's _cpy_in / _cpy_out) or dynamic map-range
@@ -465,19 +485,19 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # Same connector-vs-array-name clash guard as the memcpy
             # path above (see comment there).
-            if MemsetLibraryNode.OUTPUT_CONNECTOR_NAME in state.sdfg.arrays:
+            if memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME in state.sdfg.arrays:
                 if verbose:
                     warnings.warn(
                         f"Skipping memset lift in map {map_entry.map.label}: parent SDFG "
                         f"already has an array named "
-                        f"``{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` which would clash "
+                        f"``{memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` which would clash "
                         f"with the new MemsetLibraryNode's connector.", UserWarning)
                 continue
 
-            tasklet = MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
+            tasklet = memset_node.MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
             state.add_node(tasklet)
             self.rmid += 1
-            state.add_edge(tasklet, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
+            state.add_edge(tasklet, memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                            dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             # Map-entry in-edges are either IN_* data passthroughs or dynamic
             # map-range scalars (any non-IN_*); neither belongs on the libnode.
@@ -490,6 +510,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return rmed_count
 
     def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
+        """Whether ``n`` carries scope-passthrough connectors.
+
+        :param n: Node to inspect (typically a map entry/exit).
+        :returns: True if any connector is an ``IN_`` / ``OUT_`` passthrough pair.
+        """
         in_conns = n.in_connectors
         out_conns = n.out_connectors
 
@@ -498,7 +523,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return has_passtrough
 
-    def rm_edges(self, state: dace.SDFGState, edges: Iterable[Edge[Memlet]]):
+    def rm_edges(self, state: dace.SDFGState, edges: Iterable[graph.Edge[Memlet]]):
         nodes_to_check = set()
         for i, e in enumerate(edges):
             assert e in state.edges(), f"{e} not in {state.edges()}"
