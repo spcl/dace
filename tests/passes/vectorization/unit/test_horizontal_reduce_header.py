@@ -123,5 +123,55 @@ def test_avx512_horizontal_reduce_compiles_and_is_correct(tmp_path):
     assert "ALL OK" in run_res.stdout, run_res.stdout
 
 
+_ARM_TU = textwrap.dedent("""
+    #define __DACE_USE_INTRINSICS 1
+    #include "dace/cpu_vectorizable_math.h"
+    template <typename T> void use_fp() {
+      T a[16] = {};
+      volatile T r = T(0);
+      r += horizontal_reduce_add<T,16>(a); r += horizontal_reduce_mul<T,16>(a);
+      r += horizontal_reduce_max<T,16>(a); r += horizontal_reduce_min<T,16>(a);
+      (void)r;
+    }
+    template <typename T> void use_int() {
+      T a[8] = {};
+      volatile T r = T(0);
+      r += horizontal_reduce_add<T,8>(a);  r += horizontal_reduce_band<T,8>(a);
+      r += horizontal_reduce_bor<T,8>(a);  r += horizontal_reduce_bxor<T,8>(a);
+      (void)r;
+    }
+    int main() { use_fp<double>(); use_fp<float>(); use_int<int>();
+                 use_int<long long>(); return 0; }
+    """)
+
+
+def _aarch64_cxx():
+    """An aarch64 C++ driver able to find a C++/glibc sysroot, or None."""
+    g = shutil.which("aarch64-linux-gnu-g++")
+    if g:
+        return [g]
+    return None
+
+
+def _syntax_only_ok(driver, march_flags, tmp_path, name):
+    src = tmp_path / f"{name}.cpp"
+    src.write_text(_ARM_TU)
+    res = subprocess.run(
+        driver + ["-std=c++17", "-fsyntax-only"] + march_flags + ["-I", _INCLUDE, str(src)],
+        capture_output=True, text=True)
+    return res.returncode == 0, res.stderr
+
+
+@pytest.mark.skipif(_aarch64_cxx() is None,
+                    reason="no aarch64 C++ cross toolchain (NEON/SVE syntax-test skipped)")
+@pytest.mark.parametrize("variant,flags", [
+    ("neon", ["-march=armv8-a"]),
+    ("sve", ["-march=armv8-a+sve", "-D__DACE_USE_SVE=1"]),
+])
+def test_arm_horizontal_reduce_syntax_only(variant, flags, tmp_path):
+    ok, err = _syntax_only_ok(_aarch64_cxx(), flags, tmp_path, f"hred_{variant}")
+    assert ok, f"{variant} -fsyntax-only failed:\n{err}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
