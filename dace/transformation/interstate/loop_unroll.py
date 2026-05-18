@@ -140,7 +140,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         block_map = {}
 
         for block in loop.nodes():
-            # Using to/from JSON copies faster than deep copying.
+            # Using to/from JSON is faster for copying blocks than deep copying.
             new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
             assert block not in block_map
             block_map[block] = new_block
