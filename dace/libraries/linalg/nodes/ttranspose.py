@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 import dace
 import multiprocessing
 from dace import library, nodes, properties
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.libraries.blas import blas_helpers
 from numbers import Number
-from .. import environments
-from dace.libraries.environments.cutensor import cuTensor
+from dace.libraries.linalg import environments
 import warnings
 
 
@@ -62,16 +62,16 @@ class ExpandHPTT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        from dace.libraries.linalg import blas_helpers
+        from dace.codegen.common import sym2cpp  # Avoid import loop
 
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
-        axes = ','.join([symstr(a) for a in node.axes])
-        shape = ','.join([symstr(s) for s in inp_tensor.shape])
+        axes = ','.join([sym2cpp(a) for a in node.axes])
+        shape = ','.join([sym2cpp(s) for s in inp_tensor.shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
-        alpha = symstr(node.alpha)
-        beta = symstr(node.beta)
+        alpha = sym2cpp(node.alpha)
+        beta = sym2cpp(node.beta)
         code = f"""
             int perm[{len(inp_tensor.shape)}] = {{{axes}}};
             int size[{len(inp_tensor.shape)}] = {{{shape}}};
@@ -98,35 +98,19 @@ class ExpandCuTensor(ExpandTransformation):
     where modesA is the identity [0, 1, ..., n-1] and modesC encodes the
     axis permutation.
 
-    NOTE: beta != 0 is not supported by cutensorPermute. For
-    C = alpha * perm(A) + beta * C, use ExpandPure or implement via
-    cutensorElementwiseBinary.
+    NOTE: beta != 0 is not supported by cutensorPermute (its signature is
+    ``(handle, plan, alpha, A, B, stream)`` -- out-of-place ``B = alpha*op(A)``,
+    no beta term). For C = alpha * perm(A) + beta * C, use ExpandPure or
+    implement via cutensorElementwiseBinary.
+    See https://docs.nvidia.com/cuda/cutensor/latest/api/cutensor.html#cutensorpermute
     """
 
-    environments = [cuTensor]
-
-    # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, alpha C type)
-    #
-    # Only floating-point and complex types are supported.
-    # Integer types are NOT supported by cutensorPermute:
-    #   - Native integer descriptors (CUTENSOR_R_32I etc.) are accepted by the
-    #     API but the kernel segfaults at execution time.
-    #   - Reinterpret-casting integers as same-width floats does not work either:
-    #     cutensorPermute computes B = alpha * op(A), and GPU hardware
-    #     canonicalizes NaN bit patterns during float multiplication. Negative
-    #     integers have bit patterns that are NaN when read as float, so
-    #     1.0 * NaN destroys the original bits (e.g., -83 -> 2147483647).
-    # For integer types, we fall back to the pure (map-based) expansion.
-    _TYPE_MAP = {
-        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
-        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-    }
+    environments = [environments.cuTensor]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
+
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
@@ -136,32 +120,32 @@ class ExpandCuTensor(ExpandTransformation):
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
 
-        if dtype not in ExpandCuTensor._TYPE_MAP:
+        if dtype not in environments.cuTensor.TYPE_MAP:
             # Fall back to pure expansion for unsupported types (integers, etc.).
             # The pure expansion generates a GPU map when data is GPU_Global,
             # so integer transposes still execute on the GPU.
             warnings.warn("CuTensor does not support integer tensors, falling back to pure implementation")
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
 
-        cutensor_dtype, compute_desc, alpha_type = ExpandCuTensor._TYPE_MAP[dtype]
+        cutensor_dtype, compute_desc, alpha_type = environments.cuTensor.TYPE_MAP[dtype]
         alpha_val = f"({alpha_type}){node.alpha}"
 
-        # Input modes: identity mapping  [0, 1, …, n-1]
+        # Input modes: identity mapping  [0, 1, ..., n-1]
         modes_a = list(range(ndim))
-        # Output modes: the permutation   [axes[0], axes[1], …]
+        # Output modes: the permutation   [axes[0], axes[1], ...]
         modes_c = list(node.axes)
 
         modes_a_str = ', '.join(str(m) for m in modes_a)
         modes_c_str = ', '.join(str(m) for m in modes_c)
-        extent_a_str = ', '.join(symstr(s) for s in inp_tensor.shape)
-        extent_c_str = ', '.join(symstr(s) for s in out_tensor.shape)
-        stride_a_str = ', '.join(symstr(s) for s in inp_tensor.strides)
-        stride_c_str = ', '.join(symstr(s) for s in out_tensor.strides)
+        extent_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.shape)
+        extent_c_str = ', '.join(sym2cpp(s) for s in out_tensor.shape)
+        stride_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.strides)
+        stride_c_str = ', '.join(sym2cpp(s) for s in out_tensor.strides)
 
         code = f"""\
-{cuTensor.handle_setup_code(node)}
+{environments.cuTensor.handle_setup_code(node)}
 {{
-    // ---- cuTENSOR v2 permutation ----------------------------------------
+    // cuTENSOR v2 permutation
     const uint32_t kNdim = {ndim};
 
     int32_t  modesA[{ndim}]   = {{{modes_a_str}}};
@@ -173,7 +157,7 @@ class ExpandCuTensor(ExpandTransformation):
 
     {alpha_type} alpha = {alpha_val};
 
-    // --- tensor descriptors (v2: alignment hint in bytes, 256 is safe) ---
+    // tensor descriptors (v2: alignment hint in bytes, 256 is safe)
     cutensorTensorDescriptor_t descA, descC;
     dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
         __dace_cutensor_handle, &descA, kNdim,
@@ -182,7 +166,7 @@ class ExpandCuTensor(ExpandTransformation):
         __dace_cutensor_handle, &descC, kNdim,
         extentC, stridesC, {cutensor_dtype}, 256));
 
-    // --- operation descriptor (permutation) ------------------------------
+    // operation descriptor (permutation)
     cutensorOperationDescriptor_t opDesc;
     dace::linalg::CheckCuTensorError(cutensorCreatePermutation(
         __dace_cutensor_handle, &opDesc,
@@ -190,23 +174,23 @@ class ExpandCuTensor(ExpandTransformation):
         descC, modesC,
         {compute_desc}));
 
-    // --- plan preference & plan ------------------------------------------
+    // plan preference & plan
     cutensorPlanPreference_t planPref;
     dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
         __dace_cutensor_handle, &planPref,
-        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_NONE));
+        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
 
     cutensorPlan_t plan;
     dace::linalg::CheckCuTensorError(cutensorCreatePlan(
         __dace_cutensor_handle, &plan, opDesc, planPref, 0));
 
-    // --- execute ---------------------------------------------------------
+    // execute
     dace::linalg::CheckCuTensorError(cutensorPermute(
         __dace_cutensor_handle, plan,
         (const void*)&alpha, _inp_tensor, _out_tensor,
         __dace_current_stream));
 
-    // --- cleanup ---------------------------------------------------------
+    // cleanup
     cutensorDestroyPlan(plan);
     cutensorDestroyPlanPreference(planPref);
     cutensorDestroyOperationDescriptor(opDesc);
