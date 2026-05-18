@@ -143,6 +143,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             new_block = copy.deepcopy(block)
             assert block not in block_map
             block_map[block] = new_block
+            # Add before replacing so the copied block and its nested blocks have SDFG/parent context.
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
             new_block.replace_dict({loop.loop_variable: value})
 
