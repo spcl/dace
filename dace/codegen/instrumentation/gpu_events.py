@@ -207,7 +207,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         stream = _stream_from_in_edges(node)
 
         # MapExit's out-edge to gpu_streams carries an empty dependency memlet
-        # (see ConnectGPUStreamsToNodes._build_chain). Resolve via the matching
+        # (see ``stream_lowering_helpers._build_chain``). Resolve via the matching
         # MapEntry, which has the real ``gpu_streams[i]`` in-edge.
         if stream == -1 and isinstance(node, nodes.MapExit):
             entry = state.entry_node(node)

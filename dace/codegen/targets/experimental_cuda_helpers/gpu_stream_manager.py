@@ -18,7 +18,8 @@ class GPUStreamManager:
         self.sdfg = sdfg
         self._stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
         self._assignments = assignments
-        # Stream count comes from the descriptor shape set by ``InsertGPUStreams``, not from
+        # Stream count comes from the ``gpu_streams`` descriptor shape (set by the GPU stream
+        # scheduler via ``allocate_stream_array``), not from
         # ``max(assignments) + 1`` -- the latter is not invariant under pipeline re-application
         # (the scheduler's WCC walk is graph-shape-dependent and the pipeline mutates the graph).
         stream_array = get_gpu_stream_array_name()

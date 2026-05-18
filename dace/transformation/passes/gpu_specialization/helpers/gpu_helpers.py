@@ -85,8 +85,9 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
 
 
 # Storages that mark a copy/memset library node as "GPU-relevant" -- i.e.
-# its expansion wires the ``stream`` connector to a cudaMemcpy /
-# cudaMemset runtime call. Hoisted to module scope because
+# its expansion emits a cudaMemcpy / cudaMemset runtime call on the
+# ambient stream (the scheduler binds the stream post-expansion; the
+# libnode itself carries no stream connector). Hoisted to module scope because
 # :func:`is_gpu_copy_or_memset_libnode` is called per node visited and
 # rebuilding the set on every call shows up in profiles.
 _GPU_COPY_STORAGES = frozenset(
