@@ -10,6 +10,7 @@ from typing import Any, List, Tuple
 import dace
 from dace import library, nodes
 from dace.codegen.common import sym2cpp
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -106,8 +107,6 @@ def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
     """
-    from dace.sdfg.scope import is_devicelevel_gpu
-
     out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
 
     if is_devicelevel_gpu(parent_sdfg, parent_state, node) or dynamic_inputs:
