@@ -1,7 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for LoopFission (loop distribution), the LoopRegion equivalent of
-    MapFission. Kernels use the dace Python frontend with plain ``for`` loops;
-    every test checks numerical equivalence against a deep-copied pre-pass run.
+    MapFission. Mirrors the map-fission frontend kernels with ``dace.map``
+    replaced by ``range`` so the frontend emits loops. Every test checks
+    numerical equivalence against a deep-copied pre-pass run; loop counts are
+    asserted where the independent-group partition is deterministic.
+
+    LoopFission only distributes a single-body-state loop; data-dependent
+    statements (and bodies with control flow / nested loops) stay in one
+    loop -- those mirror as value-preserving no-ops.
 """
 import copy
 
@@ -13,6 +19,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
 N = dace.symbol('N')
+START, STOP, STEP = (dace.symbol(s) for s in ('START', 'STOP', 'STEP'))
 
 
 @dace.program
@@ -49,29 +56,85 @@ def loop_carried(A: dace.float64[N]):
         A[i] = A[i - 1] + 1.0
 
 
+@dace.program
+def loop_strided(a: dace.float64[40], A: dace.float64[40], B: dace.float64[40]):
+    for i in range(0, 9, 2):
+        A[i] = a[i] + 1.0
+        B[i] = a[i] * 2.0
+
+
+@dace.program
+def loop_offset_strided(a: dace.float64[40], A: dace.float64[40], B: dace.float64[40]):
+    for i in range(10, 29, 3):
+        A[i] = a[i] + 1.0
+        B[i] = a[i] * 2.0
+
+
+@dace.program
+def loop_symbolic_strided(a: dace.float64[64], A: dace.float64[64], B: dace.float64[64]):
+    for i in range(START, STOP, STEP):
+        A[i] = a[i] + 1.0
+        B[i] = a[i] * 2.0
+
+
+@dace.program
+def loop_five_set_five_cpy(s0: dace.float64[N], s1: dace.float64[N], s2: dace.float64[N], s3: dace.float64[N],
+                           s4: dace.float64[N], a0: dace.float64[N], a1: dace.float64[N], a2: dace.float64[N],
+                           a3: dace.float64[N], a4: dace.float64[N], c0: dace.float64[N], c1: dace.float64[N],
+                           c2: dace.float64[N], c3: dace.float64[N], c4: dace.float64[N]):
+    for i in range(N):
+        s0[i] = 0.0
+        s1[i] = 1.0
+        s2[i] = 2.0
+        s3[i] = 3.0
+        s4[i] = 4.0
+        c0[i] = a0[i]
+        c1[i] = a1[i]
+        c2[i] = a2[i]
+        c3[i] = a3[i]
+        c4[i] = a4[i]
+
+
+@dace.program
+def loop_nested_two(x: dace.float64[N, N], y: dace.float64[N, N]):
+    for j in range(N):
+        for i in range(N):
+            x[i, j] = 1.0
+        for i in range(N):
+            y[i, j] = 2.0
+
+
+@dace.program
+def loop_conditional(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], c: dace.int32[1]):
+    for i in range(N):
+        if c[0] > 0:
+            A[i] = a[i] + 1.0
+            B[i] = a[i] * 2.0
+
+
 def _loop_count(sdfg: dace.SDFG) -> int:
     return sum(1 for cfg in sdfg.all_control_flow_regions(recursive=True) if isinstance(cfg, LoopRegion))
 
 
-def _run(prog, args, n, expect_loops):
-    """Apply LoopFission, validate, and check e2e numerics.
+def _run(prog, args, kw, expect_loops):
+    """Apply LoopFission, validate, assert loop count and e2e numerics.
 
     :param prog: The dace program.
-    :param args: Keyword arrays (without ``N``).
-    :param n: Value bound to symbol ``N``.
+    :param args: Keyword arrays compared before/after.
+    :param kw: Extra scalar kwargs (symbols) for the calls.
     :param expect_loops: Expected LoopRegion count after fission.
     :returns: The transformed SDFG.
     """
     sdfg = prog.to_sdfg(simplify=True)
     ref = {k: v.copy() for k, v in args.items()}
-    copy.deepcopy(sdfg)(**ref, N=n)
+    copy.deepcopy(sdfg)(**ref, **kw)
 
     LoopFission().apply_pass(sdfg, {})
     sdfg.validate()
     assert _loop_count(sdfg) == expect_loops, f"expected {expect_loops} loops, got {_loop_count(sdfg)}"
 
     out = {k: v.copy() for k, v in args.items()}
-    sdfg(**out, N=n)
+    sdfg(**out, **kw)
     for k in args:
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
     return sdfg
@@ -80,13 +143,13 @@ def _run(prog, args, n, expect_loops):
 def test_loop_fission_two():
     n = 16
     a = np.random.rand(n)
-    _run(loop_two, dict(a=a, A=np.zeros(n), B=np.zeros(n)), n, 2)
+    _run(loop_two, dict(a=a, A=np.zeros(n), B=np.zeros(n)), dict(N=n), 2)
 
 
 def test_loop_fission_three():
     n = 12
     a = np.random.rand(n)
-    _run(loop_three, dict(a=a, A=np.zeros(n), B=np.zeros(n), C=np.zeros(n)), n, 3)
+    _run(loop_three, dict(a=a, A=np.zeros(n), B=np.zeros(n), C=np.zeros(n)), dict(N=n), 3)
 
 
 def test_loop_fission_single_is_noop():
@@ -101,12 +164,10 @@ def test_loop_fission_single_is_noop():
 
 
 def test_loop_fission_dependent_kept_together():
-    """B reads T written in the same loop: the two statements share a written
-    container, so they must stay in ONE loop (not distributed)."""
     n = 10
     a = np.random.rand(n)
     sdfg = loop_dependent.to_sdfg(simplify=True)
-    assert LoopFission().apply_pass(sdfg, {}) is None  # one group -> no-op
+    assert LoopFission().apply_pass(sdfg, {}) is None
     sdfg.validate()
     T, B = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), T=T, B=B, N=n)
@@ -114,7 +175,6 @@ def test_loop_fission_dependent_kept_together():
 
 
 def test_loop_fission_loop_carried_is_noop():
-    """A loop-carried dependency is a single component: no-op, stays correct."""
     n = 9
     sdfg = loop_carried.to_sdfg(simplify=True)
     assert LoopFission().apply_pass(sdfg, {}) is None
@@ -126,6 +186,59 @@ def test_loop_fission_loop_carried_is_noop():
         ref[i] = ref[i - 1] + 1.0
     sdfg(A=A, N=n)
     assert np.allclose(A, ref)
+
+
+def test_loop_fission_strided():
+    a = np.random.rand(40)
+    _run(loop_strided, dict(a=a, A=np.full(40, -1.0), B=np.full(40, -1.0)), {}, 2)
+
+
+def test_loop_fission_offset_strided():
+    a = np.random.rand(40)
+    _run(loop_offset_strided, dict(a=a, A=np.full(40, -1.0), B=np.full(40, -1.0)), {}, 2)
+
+
+def test_loop_fission_symbolic_strided():
+    a = np.random.rand(64)
+    _run(loop_symbolic_strided, dict(a=a, A=np.full(64, -1.0), B=np.full(64, -1.0)),
+         dict(START=0, STOP=64, STEP=5), 2)
+
+
+def test_loop_fission_many_set_cpy():
+    n = 8
+    arrs = {f'a{i}': np.random.rand(n) for i in range(5)}
+    arrs.update({f's{i}': np.zeros(n) for i in range(5)})
+    arrs.update({f'c{i}': np.zeros(n) for i in range(5)})
+    _run(loop_five_set_five_cpy, arrs, dict(N=n), 10)
+
+
+def test_loop_fission_nested_outer_kept():
+    """Nested loop body is not a single state: conservative no-op, valid."""
+    n = 5
+    sdfg = loop_nested_two.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    x0, y0 = np.zeros((n, n)), np.zeros((n, n))
+    copy.deepcopy(loop_nested_two.to_sdfg(simplify=True))(x=x0, y=y0, N=n)
+    x1, y1 = np.zeros((n, n)), np.zeros((n, n))
+    sdfg(x=x1, y=y1, N=n)
+    assert np.allclose(x1, x0) and np.allclose(y1, y0)
+    assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
+
+
+def test_loop_fission_conditional_body_kept():
+    """A conditional body is not a single state: conservative no-op, valid."""
+    n = 7
+    a = np.random.rand(n)
+    sdfg = loop_conditional.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    A, B = np.zeros(n), np.zeros(n)
+    sdfg(a=a.copy(), A=A, B=B, c=np.array([1], np.int32), N=n)
+    assert np.allclose(A, a + 1.0) and np.allclose(B, a * 2.0)
+    A0, B0 = np.full(n, 9.0), np.full(n, 9.0)
+    sdfg(a=a.copy(), A=A0, B=B0, c=np.array([0], np.int32), N=n)
+    assert np.allclose(A0, 9.0) and np.allclose(B0, 9.0)
 
 
 if __name__ == "__main__":
