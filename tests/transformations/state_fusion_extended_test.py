@@ -1,6 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.sdfg.utils as sdutil
 from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
 from dace.transformation.interstate import StateFusionExtended
@@ -64,20 +62,17 @@ def test_extended_fusion():
     assert sdfg.number_of_nodes() == 1
 
 
-def test_extended_fusion_preserves_war_ordering():
-    """Fusing a read state with a later in-place write must keep the
-    write ordered after the reads (write-after-read / anti-dependency).
+def test_extended_fusion_refuses_unsafe_write_after_read():
+    """A read state followed by an in-place write of the same array must
+    not be fused (write-after-read / anti-dependency).
 
     ``s1`` reads ``A[k]`` in two tasklets; the later ``s2`` does
-    ``A[k] = A[k] + 1``. ``A`` is an input of the first connected
-    component and an in-out of the second, landing in the same fused
-    cc. The same-cc read-write branch of ``can_be_applied`` previously
-    neither rejected nor registered a happens-before connection for this
-    shape, so no ordering edge was inserted and the fused-in write could
-    be scheduled before the reads. Assert structurally that, after
-    fusion, every ``A`` reader is ordered before the ``A`` write (a
-    graph path exists), which the dropped happens-before edge previously
-    broke.
+    ``A[k] = A[k] + 1``. Safely fusing would need a dependency edge to
+    every first-state sink reading ``A`` (arbitrarily fanned out), so
+    ``StateFusionExtended`` must refuse and leave the two states
+    separate; the interstate edge then keeps the write ordered after the
+    reads. Previously it fused without that ordering and the write
+    clobbered the still-pending reads.
     """
     sdfg = SDFG('state_fusion_war_ordering')
     sdfg.add_array('A', [8], dtypes.float64)
@@ -108,24 +103,11 @@ def test_extended_fusion_preserves_war_ordering():
     s2.add_edge(ti, '_out', aw2, None, Memlet('A[k]'))
     sdfg.validate()
 
-    sdfg.apply_transformations_repeated(StateFusionExtended)
-    assert sdfg.number_of_nodes() == 1, 'states were not fused'
-    fused = sdfg.nodes()[0]
-
-    a_readers = [t for t in fused.nodes() if isinstance(t, dace.nodes.Tasklet) and t.label in ('rb', 'rc')]
-    a_writers = {
-        n
-        for n in fused.nodes()
-        if isinstance(n, dace.nodes.AccessNode) and n.data == 'A' and fused.in_degree(n) > 0
-    }
-    assert len(a_readers) == 2 and len(a_writers) >= 1
-
-    for r in a_readers:
-        reachable = set(sdutil.dfs_conditional(fused, sources=[r]))
-        assert a_writers & reachable, \
-            f'WAR ordering lost: reader {r.label} is not ordered before the in-place A write'
+    applied = sdfg.apply_transformations_repeated(StateFusionExtended)
+    assert applied == 0, 'write-after-read fusion must be refused'
+    assert sdfg.number_of_nodes() == 2, 'the two states must remain separate'
 
 
 if __name__ == '__main__':
     test_extended_fusion()
-    test_extended_fusion_preserves_war_ordering()
+    test_extended_fusion_refuses_unsafe_write_after_read()
