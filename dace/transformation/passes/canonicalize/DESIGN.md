@@ -50,10 +50,11 @@ usable from outside.
 | 0 | `pre_simplify` | `SimplifyPass()` | wired |
 | 1 | Undo tiling | `Untile` | **TODO** (lives outside this dir) |
 | 1b | `split_tasklets` | `SplitTasklets()` | wired |
+| 1c | `prepare_fission` | `PatternMatchAndApplyRepeated([MoveIfIntoMap])` → `SimplifyPass()` (inline SDFGs + structure) — run before fission so conditionals/nested SDFGs don't block it | wired |
 | 2 | `maximal_fission` | `PatternMatchAndApplyRepeated([MapExpansion, MapFission])` → `SimplifyPass()` | partial (loop-fission step **TODO**) |
-| 3 | `reorder_offsets` | `OffsetLoopsAndMaps(0, 0, convert_leq_to_lt, normalize_loops)` | wired |
+| 3 | `reorder_offsets` | `OffsetLoopsAndMaps(0, 0, convert_leq_to_lt, normalize_loops)` → `SimplifyPass()` | wired |
 | 4 | `perfect_loop_nesting` | `MoveIfIntoMap` → `MapExpansion` (= "map uncollapse", `map[i,j]`→`map[i];map[j]`) → `PerfLoopNesting` → `MapCollapse` (re-collapse maximally) → `MinimizeStridePermutation` (permute to minimize strides) → `SimplifyPass()` | being generalized |
-| 5 | `normalize` | `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` | wired |
+| 5 | `normalize` | `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` → `SimplifyPass()` | wired |
 | 6 | `loop_to_map` | `PatternMatchAndApplyRepeated([LoopToMap])` | wired |
 | 7 | `maximal_fusion` | `SimplifyPass()` → `Pipeline([FullMapFusion])` → `PatternMatchAndApplyRepeated([TaskletFusion, TrivialTaskletElimination])` | wired |
 | 8 | `hoist_if` | hoist invariant conditionals above maps | **no-op for now** |
@@ -123,6 +124,14 @@ fuses *states* (`FuseStates`) and inlines nested SDFGs (`InlineSDFGs`), but
 contains no `MapFusion`/`FullMapFusion`. Map fusion happens only in Stage 7.
 (`LoopToReduce` is not in yakup/dev `SIMPLIFY_PASSES`, so it is never lifted
 early — no `skip` needed.)
+
+Structure simplification between steps: `SimplifyPass` (`InlineSDFGs`,
+`InlineControlFlowRegions`, `FuseStates`, `Dead{Dataflow,State}Elimination`,
+`ArrayElimination`, `ConsolidateEdges`, `EmptyLoopElimination`,
+`PruneEmptyConditionalBranches`, …) now runs at the end of every transforming
+stage (`prepare_fission`, `maximal_fission`, `reorder_offsets`,
+`perfect_loop_nesting`, `normalize`) and at the start of `maximal_fusion`, so
+each stage hands the next a clean, flattened graph.
 
 ### Ordering constraints (must hold)
 

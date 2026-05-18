@@ -28,6 +28,7 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 
 #: A stage is an ordered list of passes applied directly. ``Pipeline`` and
 #: ``PatternMatchAndApplyRepeated`` are unhashable, so they cannot be composed
@@ -50,6 +51,14 @@ def _split_tasklets() -> List[ppl.Pass]:
     return [SplitTasklets()]
 
 
+def _prepare_fission() -> List[ppl.Pass]:
+    """Stage 1c: push conditionals into maps and flatten structure so the
+    next stage can fission maximally. ``SimplifyPass`` inlines nested SDFGs
+    (and fuses states / prunes dead structure) -- the structure-simplifying
+    passes fission depends on."""
+    return [PatternMatchAndApplyRepeated([MoveIfIntoMap()]), SimplifyPass()]
+
+
 def _maximal_fission() -> List[ppl.Pass]:
     """Stage 2: fission every independent computation into its own map.
 
@@ -60,8 +69,12 @@ def _maximal_fission() -> List[ppl.Pass]:
 
 
 def _reorder_offsets() -> List[ppl.Pass]:
-    """Stage 3: normalize nests to a zero-based, unit-stride, half-open form."""
-    return [OffsetLoopsAndMaps(offset_expr="0", begin_expr="0", convert_leq_to_lt=True, normalize_loops=True)]
+    """Stage 3: normalize nests to a zero-based, unit-stride, half-open form;
+    then simplify structure before the next stage."""
+    return [
+        OffsetLoopsAndMaps(offset_expr="0", begin_expr="0", convert_leq_to_lt=True, normalize_loops=True),
+        SimplifyPass(),
+    ]
 
 
 def _perfect_loop_nesting() -> List[ppl.Pass]:
@@ -76,7 +89,7 @@ def _normalize() -> List[ppl.Pass]:
     canonicalization, then loop-invariant code motion, then ``LoopToReduce``
     (strictly after maximal fission).
     """
-    return [SSALoopIterators(), SimplifyInductionVariables(), LoopInvariantCodeMotion(), LoopToReduce()]
+    return [SSALoopIterators(), SimplifyInductionVariables(), LoopInvariantCodeMotion(), LoopToReduce(), SimplifyPass()]
 
 
 def _loop_to_map() -> List[ppl.Pass]:
@@ -107,6 +120,7 @@ def _hoist_if() -> List[ppl.Pass]:
 CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [
     ('pre_simplify', _pre_simplify),
     ('split_tasklets', _split_tasklets),
+    ('prepare_fission', _prepare_fission),
     ('maximal_fission', _maximal_fission),
     ('reorder_offsets', _reorder_offsets),
     ('perfect_loop_nesting', _perfect_loop_nesting),
