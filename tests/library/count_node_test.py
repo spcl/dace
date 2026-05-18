@@ -52,8 +52,8 @@ def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out
 
     mask_subset = ", ".join(f"0:{s}" for s in mask_shape)
     out_subset = ", ".join(f"0:{s}" for s in out_shape_used)
-    state.add_edge(mask_in, None, node, "_mask", dace.Memlet(f"mask[{mask_subset}]"))
-    state.add_edge(node, "_out", out_w, None, dace.Memlet(f"out[{out_subset}]"))
+    state.add_edge(mask_in, None, node, CountLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"mask[{mask_subset}]"))
+    state.add_edge(node, CountLibraryNode.OUTPUT_CONNECTOR_NAME, out_w, None, dace.Memlet(f"out[{out_subset}]"))
     sdfg.validate()
     return sdfg
 
@@ -142,8 +142,8 @@ def test_mode_c_sectioned_input_subset():
     mask_in = state.add_access("mask")
     out_w = state.add_access("out")
     # Section of length 4 (indices 2..5 inclusive).
-    state.add_edge(mask_in, None, node, "_mask", dace.Memlet("mask[2:6]"))
-    state.add_edge(node, "_out", out_w, None, dace.Memlet("out[0]"))
+    state.add_edge(mask_in, None, node, CountLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("mask[2:6]"))
+    state.add_edge(node, CountLibraryNode.OUTPUT_CONNECTOR_NAME, out_w, None, dace.Memlet("out[0]"))
     sdfg.validate()
 
     mask = np.array([1, 0, 1, 1, 0, 1, 1, 0], dtype=np.int32)  # 5 ones total

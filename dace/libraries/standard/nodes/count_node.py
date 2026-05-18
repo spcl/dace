@@ -24,6 +24,13 @@ from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
 from .reduce import Reduce
 
+# Outer connector names this libnode publishes. Republished as
+# ``CountLibraryNode.INPUT_CONNECTOR_NAME`` / ``.OUTPUT_CONNECTOR_NAME``
+# so external consumers reference a class constant instead of a string
+# literal (mirrors ``copy_node`` / ``memset_node``).
+_INPUT_CONNECTOR_NAME = "_cnt_in"
+_OUTPUT_CONNECTOR_NAME = "_cnt_out"
+
 
 def _validate_count_edges(node, sdfg, state):
     """Validate the COUNT node's edges and return
@@ -33,17 +40,19 @@ def _validate_count_edges(node, sdfg, state):
     ``memset_node`` -- one edge per connector, no surprises, dtype
     checked at the boundary.
     """
-    in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == "_mask"]
+    in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == _INPUT_CONNECTOR_NAME]
     if len(in_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one `_mask` input edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one "
+                         f"``{_INPUT_CONNECTOR_NAME}`` input edge.")
     ie = in_edges[0]
     mask = sdfg.arrays[ie.data.data]
     mask_subset = ie.data.subset
     mask_name = ie.dst_conn
 
-    out_edges = [oe for oe in state.out_edges(node) if oe.src_conn == "_out"]
+    out_edges = [oe for oe in state.out_edges(node) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
     if len(out_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one `_out` output edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one "
+                         f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
     oe = out_edges[0]
     out = sdfg.arrays[oe.data.data]
     out_subset = oe.data.subset
@@ -166,6 +175,13 @@ class CountLibraryNode(nodes.LibraryNode):
     implementations = {"pure": ExpandPure}
     default_implementation = "pure"
 
+    # Connector names this libnode publishes. External consumers (tests,
+    # the Fortran frontend's emitter) must reference these constants
+    # instead of string literals so a future rename is a single-line
+    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
+    INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
+    OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
+
     dim = properties.Property(
         dtype=int,
         default=-1,
@@ -173,7 +189,11 @@ class CountLibraryNode(nodes.LibraryNode):
     )
 
     def __init__(self, name, dim=-1, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_mask"}, outputs={"_out"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={CountLibraryNode.INPUT_CONNECTOR_NAME},
+                         outputs={CountLibraryNode.OUTPUT_CONNECTOR_NAME},
+                         **kwargs)
         self.dim = dim
 
     def validate(self, sdfg, state):

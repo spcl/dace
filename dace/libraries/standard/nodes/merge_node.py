@@ -27,6 +27,15 @@ import dace
 from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
 
+# Outer connector names this libnode publishes. Republished as
+# ``MergeLibraryNode.{TRUE,FALSE,MASK,OUTPUT}_CONNECTOR_NAME`` so
+# external consumers reference class constants instead of string
+# literals (mirrors ``copy_node`` / ``memset_node``).
+_TRUE_CONNECTOR_NAME = "_mrg_t"
+_FALSE_CONNECTOR_NAME = "_mrg_f"
+_MASK_CONNECTOR_NAME = "_mrg_mask"
+_OUTPUT_CONNECTOR_NAME = "_mrg_out"
+
 
 def _subset_volume(subset):
     """Number of elements covered by ``subset``.  ``1`` means the input
@@ -85,22 +94,22 @@ class ExpandPure(ExpandTransformation):
             sdfg.add_array(conn, inner_shape, arr.dtype, arr.storage)
             return idx_expr
 
-        t_idx = add_input("_t", t_oe)
-        f_idx = add_input("_f", f_oe)
-        m_idx = add_input("_mask", m_oe)
-        sdfg.add_array("_out", iter_shape, out_arr.dtype, out_arr.storage, strides=out_arr.strides)
+        t_idx = add_input(_TRUE_CONNECTOR_NAME, t_oe)
+        f_idx = add_input(_FALSE_CONNECTOR_NAME, f_oe)
+        m_idx = add_input(_MASK_CONNECTOR_NAME, m_oe)
+        sdfg.add_array(_OUTPUT_CONNECTOR_NAME, iter_shape, out_arr.dtype, out_arr.storage, strides=out_arr.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         state.add_mapped_tasklet(
             f"{node.label}_tasklet",
             rng,
             inputs={
-                "_in_t": dace.memlet.Memlet(f"_t[{t_idx}]"),
-                "_in_f": dace.memlet.Memlet(f"_f[{f_idx}]"),
-                "_in_mask": dace.memlet.Memlet(f"_mask[{m_idx}]"),
+                "_in_t": dace.memlet.Memlet(f"{_TRUE_CONNECTOR_NAME}[{t_idx}]"),
+                "_in_f": dace.memlet.Memlet(f"{_FALSE_CONNECTOR_NAME}[{f_idx}]"),
+                "_in_mask": dace.memlet.Memlet(f"{_MASK_CONNECTOR_NAME}[{m_idx}]"),
             },
             code="_out_v = (_in_t if _in_mask else _in_f)",
-            outputs={"_out_v": dace.memlet.Memlet(f"_out[{full_idx}]")},
+            outputs={"_out_v": dace.memlet.Memlet(f"{_OUTPUT_CONNECTOR_NAME}[{full_idx}]")},
             external_edges=True,
         )
         return sdfg
@@ -120,17 +129,31 @@ class MergeLibraryNode(nodes.LibraryNode):
     implementations = {"pure": ExpandPure}
     default_implementation = "pure"
 
+    # Connector names this libnode publishes. External consumers (tests,
+    # the Fortran frontend's emitter) must reference these constants
+    # instead of string literals so a future rename is a single-line
+    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
+    TRUE_CONNECTOR_NAME = _TRUE_CONNECTOR_NAME
+    FALSE_CONNECTOR_NAME = _FALSE_CONNECTOR_NAME
+    MASK_CONNECTOR_NAME = _MASK_CONNECTOR_NAME
+    OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
+
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_t", "_f", "_mask"}, outputs={"_out"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={_TRUE_CONNECTOR_NAME, _FALSE_CONNECTOR_NAME, _MASK_CONNECTOR_NAME},
+                         outputs={_OUTPUT_CONNECTOR_NAME},
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """Return the four edge descriptors after asserting the expected
         connector layout.  Each connector takes exactly one edge."""
-        t_es = [ie for ie in state.in_edges(self) if ie.dst_conn == "_t"]
-        f_es = [ie for ie in state.in_edges(self) if ie.dst_conn == "_f"]
-        m_es = [ie for ie in state.in_edges(self) if ie.dst_conn == "_mask"]
-        o_es = [oe for oe in state.out_edges(self) if oe.src_conn == "_out"]
+        t_es = [ie for ie in state.in_edges(self) if ie.dst_conn == _TRUE_CONNECTOR_NAME]
+        f_es = [ie for ie in state.in_edges(self) if ie.dst_conn == _FALSE_CONNECTOR_NAME]
+        m_es = [ie for ie in state.in_edges(self) if ie.dst_conn == _MASK_CONNECTOR_NAME]
+        o_es = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
         if len(t_es) != 1 or len(f_es) != 1 or len(m_es) != 1 or len(o_es) != 1:
-            raise ValueError(f"{type(self).__name__} expects exactly one edge per "
-                             f"connector (_t, _f, _mask, _out)")
+            raise ValueError(f"{type(self).__name__} expects exactly one edge per connector "
+                             f"({_TRUE_CONNECTOR_NAME}, {_FALSE_CONNECTOR_NAME}, "
+                             f"{_MASK_CONNECTOR_NAME}, {_OUTPUT_CONNECTOR_NAME})")
         return t_es[0], f_es[0], m_es[0], o_es[0]
