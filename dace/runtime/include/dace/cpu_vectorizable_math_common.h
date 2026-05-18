@@ -275,6 +275,63 @@ inline void vector_select_av_masked(T* __restrict__ out,
   }
 }
 
+// ============================================================================
+// Horizontal reduction — fold a ``vector_width``-wide buffer to one scalar.
+//
+// ``_dace_horizontal_tree_<op>`` is the portable, arch-independent
+// baseline: a balanced log-depth pairwise tree (critical path
+// ``O(log W)`` so the compiler can re-vectorize the partials), matching
+// ``utils.reductions.emit_tree_reduction`` (consecutive pairs
+// ``(0,1)(2,3)…``; an odd trailing element forwards unchanged). The
+// scalar backend's ``horizontal_reduce_<op>`` delegates straight here;
+// the SIMD backends call their single-instruction reduce intrinsic for
+// the floating-point types and fall back to this tree for the integer
+// / bitwise ops that have no one-shot intrinsic. ``vector_width`` is a
+// compile-time constant, so the fixed-size scratch buffer and the loop
+// bounds unroll. Bitwise ops are only ever instantiated for integer
+// ``T`` (the emitter never emits ``&|^`` on a float accumulator), so
+// the templates stay lazily well-formed for ``T = double``.
+// ============================================================================
+#define _DACE_HREDUCE_TREE(NAME, OP)                            \
+  template <typename T, int vector_width>                       \
+  inline T _dace_horizontal_tree_##NAME(const T* __restrict__ a) { \
+    T buf[vector_width];                                        \
+    for (int i = 0; i < vector_width; i++) buf[i] = a[i];       \
+    int n = vector_width;                                       \
+    while (n > 1) {                                             \
+      int half = n / 2;                                         \
+      for (int i = 0; i < half; i++) buf[i] = OP(buf[2 * i], buf[2 * i + 1]); \
+      if (n & 1) buf[half] = buf[n - 1];                        \
+      n = half + (n & 1);                                       \
+    }                                                           \
+    return buf[0];                                              \
+  }
+
+#define _DACE_HREDUCE_ADD(x, y) ((x) + (y))
+#define _DACE_HREDUCE_MUL(x, y) ((x) * (y))
+#define _DACE_HREDUCE_MAXOP(x, y) (std::max((x), (y)))
+#define _DACE_HREDUCE_MINOP(x, y) (std::min((x), (y)))
+#define _DACE_HREDUCE_AND(x, y) ((x) & (y))
+#define _DACE_HREDUCE_OR(x, y) ((x) | (y))
+#define _DACE_HREDUCE_XOR(x, y) ((x) ^ (y))
+
+_DACE_HREDUCE_TREE(add, _DACE_HREDUCE_ADD)
+_DACE_HREDUCE_TREE(mul, _DACE_HREDUCE_MUL)
+_DACE_HREDUCE_TREE(max, _DACE_HREDUCE_MAXOP)
+_DACE_HREDUCE_TREE(min, _DACE_HREDUCE_MINOP)
+_DACE_HREDUCE_TREE(band, _DACE_HREDUCE_AND)
+_DACE_HREDUCE_TREE(bor, _DACE_HREDUCE_OR)
+_DACE_HREDUCE_TREE(bxor, _DACE_HREDUCE_XOR)
+
+#undef _DACE_HREDUCE_TREE
+#undef _DACE_HREDUCE_ADD
+#undef _DACE_HREDUCE_MUL
+#undef _DACE_HREDUCE_MAXOP
+#undef _DACE_HREDUCE_MINOP
+#undef _DACE_HREDUCE_AND
+#undef _DACE_HREDUCE_OR
+#undef _DACE_HREDUCE_XOR
+
 // ----------------------------------------------------------------------------
 // Cleanup macros — keep namespace tight; downstream files do not need them.
 // ----------------------------------------------------------------------------

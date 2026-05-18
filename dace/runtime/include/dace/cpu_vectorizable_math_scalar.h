@@ -397,3 +397,35 @@ inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
     if (mask[i]) B[i * stride] = A[i];
   }
 }
+
+// ---------------------- horizontal reductions ----------------------
+// Scalar backend: delegate straight to the portable log-depth tree in
+// the common header (no SIMD intrinsic available / needed here).
+template <typename T, int vector_width>
+inline T horizontal_reduce_add(const T* __restrict__ a) {
+  return _dace_horizontal_tree_add<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_mul(const T* __restrict__ a) {
+  return _dace_horizontal_tree_mul<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_max(const T* __restrict__ a) {
+  return _dace_horizontal_tree_max<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_min(const T* __restrict__ a) {
+  return _dace_horizontal_tree_min<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_band(const T* __restrict__ a) {
+  return _dace_horizontal_tree_band<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bor<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bxor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bxor<T, vector_width>(a);
+}
