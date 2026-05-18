@@ -947,8 +947,8 @@ def test_mapfission_refuses_conditional_component_stays_valid():
                 continue
             has_cond = any(
                 isinstance(e.dst, nodes.NestedSDFG) and any(
-                    type(b).__name__ == 'ConditionalBlock'
-                    for b in e.dst.sdfg.all_control_flow_regions(recursive=True)) for e in st.out_edges(me))
+                    type(b).__name__ == 'ConditionalBlock' for b in e.dst.sdfg.all_control_flow_regions(recursive=True))
+                for e in st.out_edges(me))
             if has_cond:
                 assert MapFission.can_be_applied_to(sdfg, map_entry=me) is False
 
