@@ -16,8 +16,8 @@ from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, collapse_shape_and_strides,
                                             extract_dynamic_inputs)
-from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
