@@ -1779,7 +1779,8 @@ class Vectorize(ppl.Pass):
                     f"subset {ie.data.subset} (volume {src_volume_int}) > vector_width "
                     f"({self.vector_width}); strided handling should have intercepted earlier.")
                 # Add new array, if not there
-                arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
+                arr_name_to_use = self._find_new_name(
+                    f"{VecNameScheme.make_k(ie.data.data)}{vectorization_number}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
@@ -1832,8 +1833,12 @@ class Vectorize(ppl.Pass):
                     f"_copy_in_and_copy_out: output memlet on {oe.data.data} has "
                     f"subset {oe.data.subset} (volume {out_volume_int}) > vector_width "
                     f"({self.vector_width}); strided handling should have intercepted earlier.")
-                # If the name exists in the inputs, reuse the name
-                arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
+                # If the name exists in the inputs, reuse the name. No
+                # ``_find_new_name`` here (unlike the in-edge side): the
+                # out-edge buffer must keep the *same* name as the
+                # matching in-edge buffer so an inout connector's two
+                # directions agree (the ``VecNameScheme`` contract).
+                arr_name_to_use = f"{VecNameScheme.make_k(oe.data.data)}{vectorization_number}"
 
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
