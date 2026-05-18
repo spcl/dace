@@ -469,7 +469,7 @@ class Memlet(object):
         for symbol in repl_dict:
             if str(symbol) != str(repl_dict[symbol]):
                 intermediate = symbolic.symbol('__dacesym_' + str(symbol))
-                repl_to_intermediate[symbolic.symbol(symbol)] = intermediate
+                repl_to_intermediate[symbol] = intermediate
                 repl_to_final[intermediate] = repl_dict[symbol]
 
         if len(repl_to_intermediate) > 0:
