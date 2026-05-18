@@ -1,8 +1,0 @@
-  ! ----------------- Reference-counted handle state --------------------
-  ! First call to {entry}_dace allocates the DaCe state via
-  ! __dace_init_{entry}; further calls increment the ref counter.
-  ! {entry}_dace_finalize decrements; the counter reaching zero calls
-  ! __dace_exit_{entry} and nulls the handle.  This keeps one DaCe
-  ! state per entry-point per process, shared across all call sites.
-  type(c_ptr), save :: dace_handle = c_null_ptr
-  integer,     save :: init_count  = 0

@@ -1,4 +1,0 @@
-    ! {inner_name} -> {outer_expr} (copy-out, intent={intent})
-{loop_prologue}
-      {writeback_expr}
-{loop_epilogue}
