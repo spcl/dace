@@ -285,5 +285,68 @@ def test_plain_python_integer_deserialization_uses_sympy_integer(value):
     assert isinstance(restored, sympy.Integer)
 
 
+def test_default_constants_off_by_default_keeps_plain_literals():
+    """Existing behavior must be unchanged when ``default_constants`` is unset."""
+    assert symbolic.deserialize_symbolic('5') == sympy.Integer(5)
+    assert isinstance(symbolic.deserialize_symbolic('5'), sympy.Integer)
+    assert isinstance(symbolic.deserialize_symbolic('5.0'), sympy.Float)
+
+
+@pytest.mark.parametrize(
+    'text,value,ctype',
+    [
+        ('5', 5, 'int64_t'),  # bare int -> int64 (matches dtypes.typeclass(int))
+        ('5.0', 5.0, 'double'),  # bare float -> float64
+    ])
+def test_default_constants_type_untyped_literals(text, value, ctype):
+    restored = symbolic.deserialize_symbolic(text, default_constants=True)
+    assert isinstance(restored, symbolic.TypedConstant)
+    assert restored.dtype.ctype == ctype
+    assert float(restored.value) == value
+
+
+@pytest.mark.parametrize(
+    'text,ctype',
+    [
+        ('double(5)', 'double'),  # float64 cast-wrapper form
+        ('int(5)', 'int'),  # int32 cast-wrapper form
+        ('float(5)', 'float'),  # float32
+        ('int64_t(5)', 'int64_t'),  # explicit-suffix dtype as a ctype cast
+    ])
+def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
+    """``double(5)``/``int(5)`` (the C++ printer's cast fallback) must round-trip
+    into a TypedConstant, both with and without default-constant typing."""
+    for default_constants in (False, True):
+        restored = symbolic.deserialize_symbolic(text, default_constants=default_constants)
+        assert isinstance(restored, symbolic.TypedConstant), (text, default_constants)
+        assert restored.dtype.ctype == ctype
+
+
+def test_typed_suffix_still_wins_over_default():
+    """An explicit ``5i32``/``5.0f64`` suffix is unaffected by default typing."""
+    assert symbolic.deserialize_symbolic('5i16', default_constants=True).dtype == dace.int16
+    assert symbolic.deserialize_symbolic('5.0f32', default_constants=True).dtype == dace.float32
+
+
+def test_default_constants_in_expression():
+    """In a non-evaluating context the parser types the constant as float64
+    and leaves the symbol untouched."""
+    restored = symbolic.deserialize_symbolic('$N + 5.0', default_constants=True)
+    consts = list(restored.atoms(symbolic.TypedConstant))
+    assert len(consts) == 1 and consts[0].dtype == dace.float64
+    assert any(isinstance(a, symbolic.symbol) for a in restored.atoms(symbolic.symbol))
+
+
+@pytest.mark.xfail(strict=True,
+                   reason="TypedConstant lacks ._prec, so a float-valued TypedConstant crashes "
+                   "sympy._should_evalf inside Min/Max construction (separate TypedConstant defect)")
+def test_default_typed_float_constant_in_min_is_robust():
+    """The interstate-edge shape ``Min(5.0, N)``: a float64 default constant
+    must survive sympy.Min construction. Currently raises AttributeError."""
+    restored = symbolic.deserialize_symbolic('Min(5.0, $N)', default_constants=True)
+    consts = list(restored.atoms(symbolic.TypedConstant))
+    assert len(consts) == 1 and consts[0].dtype == dace.float64
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

@@ -495,8 +495,22 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
         raise TypeError(f'Unsupported typed constant dtype {dtype.to_string()}') from ex
 
 
+def _format_float(value: float) -> str:
+    # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
+    s = f'{float(value):.15g}'
+    if 'e' in s or 'E' in s:
+        return s
+    if '.' not in s:
+        return s + '.0'
+    int_part, frac_part = s.split('.')
+    return f'{int_part}.{frac_part.rstrip("0") or "0"}'
+
+
 def _typed_constant_to_string(expr: TypedConstant) -> str:
-    value = sympy.printing.str.sstr(expr.value)
+    if isinstance(expr.value, sympy.Float):
+        value = _format_float(float(expr.value))
+    else:
+        value = sympy.printing.str.sstr(expr.value)
     return f'{value}{_typed_constant_suffix(expr.dtype)}'
 
 
@@ -1414,6 +1428,18 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+# Default typeclasses for untyped literals (matches dtypes.typeclass(int|float)).
+_DEFAULT_INTEGER_TYPECLASS = dtypes.int64
+_DEFAULT_FLOAT_TYPECLASS = dtypes.float64
+
+# C++ ctype spelling (e.g. ``double(5)``) -> typeclass, to parse cast fallbacks.
+_CPP_CTYPE_TO_TYPECLASS = {
+    t.ctype: t
+    for t in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16, dtypes.uint32,
+              dtypes.uint64, dtypes.float16, dtypes.float32, dtypes.float64)
+}
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1424,6 +1450,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     typed-symbol metadata instead of depending on SymPy's automatic
     simplification and constructor caches.
     """
+
+    def __init__(self, default_constants: bool = False):
+        self._default_constants = default_constants
 
     @staticmethod
     def _python_bool(value):
@@ -1606,8 +1635,12 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if node.value is None:
             return symbol('NoneSymbol')
         if isinstance(node.value, int):
+            if self._default_constants:
+                return TypedConstant(node.value, _DEFAULT_INTEGER_TYPECLASS)
             return sympy.Integer(node.value)
         if isinstance(node.value, float):
+            if self._default_constants:
+                return TypedConstant(node.value, _DEFAULT_FLOAT_TYPECLASS)
             return sympy.Float(node.value)
         raise TypeError(f'Unsupported literal {node.value!r}')
 
@@ -1665,6 +1698,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
             args = [self.visit(arg) for arg in node.args]
             return SymExpr(*args)
+
+        if (isinstance(node.func, ast.Name) and node.func.id in _CPP_CTYPE_TO_TYPECLASS and len(node.args) == 1):
+            return _cast_symbolic_value(self.visit(node.args[0]), _CPP_CTYPE_TO_TYPECLASS[node.func.id])
 
         func = self._resolve_function(node.func)
         args = [self.visit(arg) for arg in node.args]
@@ -1737,7 +1773,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return super()._print_Float(expr)
+        return _format_float(float(sympy_numeric_fix(expr)))
 
     def _print_Add(self, expr):
         flat_args = []
@@ -1822,7 +1858,13 @@ def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> s
 
 
 @lru_cache(maxsize=16384)
-def deserialize_symbolic(expr) -> SymbolicType:
+def deserialize_symbolic(expr, default_constants: bool = False) -> SymbolicType:
+    """
+    Deserialize a string produced by :func:`serialize_symbolic`.
+
+    :param default_constants: If True, untyped literals become default-typed
+                              ``TypedConstant`` s (``5`` -> ``int64``, ``5.0`` -> ``float64``).
+    """
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
     if isinstance(expr, numpy.generic):
@@ -1843,7 +1885,7 @@ def deserialize_symbolic(expr) -> SymbolicType:
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
-    return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
+    return _SerializedSymbolicParser(default_constants=default_constants).visit(ast.parse(expr, mode='eval'))
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
