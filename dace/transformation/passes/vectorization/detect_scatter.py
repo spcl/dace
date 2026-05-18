@@ -7,17 +7,21 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 from dace.transformation.passes.vectorization.utils.lane_fanout import detect_lane_fanout_apply
 
+# Reserved ``__vec_lane_idx`` name (not bare ``idx``) — see the rationale
+# in ``detect_gather.py``: a bare ``idx`` collides with the common
+# map-param name and gets shadow-bound to a parent-scope symbol by
+# ``SDFG.replace_dict`` when a scaffolding map is removed.
 _SCATTER_TEMPLATE = """
 {{
-int64_t idx[{vector_length}] = {{ {initializer_values} }};
-scatter<{dtype}>(_in, idx, _out, {vector_length});
+int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
+scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
 }}
 """
 
 _SCATTER_TEMPLATE_MASKED = """
 {{
-int64_t idx[{vector_length}] = {{ {initializer_values} }};
-scatter_masked<{dtype}>(_in, idx, _out, {vector_length}, _mask);
+int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
+scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 }}
 """
 

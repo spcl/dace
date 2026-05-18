@@ -7,17 +7,24 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 from dace.transformation.passes.vectorization.utils.lane_fanout import detect_lane_fanout_apply
 
+# The lane-index buffer uses a DaCe-internal reserved name (``__``
+# prefix) rather than a bare ``idx``: the latter collides with the very
+# common map/loop parameter name ``idx``, and when a residual scaffolding
+# map is removed, ``SDFG.replace_dict`` shadows that token in CPP tasklet
+# bodies by prepending ``auto idx = <range-begin>;`` — binding to a
+# parent-scope symbol that is not threaded into an out-of-line body
+# NestedSDFG (the spmv ``auto idx = tile_idx;`` undeclared-symbol bug).
 _GATHER_TEMPLATE = """
 {{
-int64_t idx[{vector_length}] = {{ {initializer_values} }};
-gather<{dtype}>(_in, idx, _out, {vector_length});
+int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
+gather<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
 }}
 """
 
 _GATHER_TEMPLATE_MASKED = """
 {{
-int64_t idx[{vector_length}] = {{ {initializer_values} }};
-gather_masked<{dtype}>(_in, idx, _out, {vector_length}, _mask);
+int64_t __vec_lane_idx[{vector_length}] = {{ {initializer_values} }};
+gather_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 }}
 """
 
