@@ -15,7 +15,7 @@ Three rough sub-families:
   surrounding map.
 """
 import copy
-from typing import Dict, Iterable, List, Set, Union
+from typing import Dict, Iterable, List, Optional, Set, Union
 
 import dace
 from dace import SDFGState, typeclass
@@ -183,21 +183,38 @@ def replace_memlet_expression(state: SDFGState,
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
 
 
-def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], edges_to_skip: Set[Edge[Memlet]],
-                             vector_width: int) -> Set[Edge[Memlet]]:
-    """Expand single-element memlet subsets along stride-1 dims to ``vector_width``.
+def expand_memlet_expression(state: SDFGState,
+                             edges: Iterable[Edge[Memlet]],
+                             edges_to_skip: Set[Edge[Memlet]],
+                             vector_width: int,
+                             vector_map_param: Optional[str] = None) -> Set[Edge[Memlet]]:
+    """Widen single-element memlet subsets to ``vector_width`` on the lane dim.
 
-    For each edge, a single-element subset on the array's stride-1 dimension
-    is widened to ``vector_width`` elements.
+    The W lanes step the dimension that carries the vectorized map
+    parameter, *not* necessarily the array's storage-contiguous dim. For
+    a contiguous body access (``A[..., i]`` with ``i`` in the stride-1
+    dim) the two coincide. But a *transposed* read — e.g. a branch
+    condition ``zqx[z1, i, j]`` where ``i`` (the lane var) sits in a
+    non-contiguous dim while the stride-1 dim holds the outer-loop
+    constant ``j`` — must widen the ``i`` dim (the memory gather stride
+    is then implicit in the array layout). Widening the storage-stride-1
+    dim there would read ``W`` wrong elements along the constant ``j``
+    and corrupt the per-lane condition.
 
     :param state: The SDFG state containing the edges.
     :param edges: The memlet edges to inspect and possibly modify.
     :param edges_to_skip: Edges that must not be expanded.
-    :param vector_width: Number of elements to expand contiguous subsets to.
+    :param vector_width: Number of elements to widen the lane dim to.
+    :param vector_map_param: The vectorized map parameter. When given,
+        the dim whose ``begin`` references it is widened (index step 1);
+        the array's per-dim stride supplies the memory gather stride
+        downstream. When ``None`` (or the param is absent from every
+        dim's ``begin``), fall back to widening the storage-stride-1 dim.
     :returns: The set of edges whose memlets were modified.
     :raises Exception: if a subset is neither all length-1 nor has exactly
         one ``vector_width``-length dim.
     """
+    param_sym = dace.symbolic.symbol(vector_map_param) if vector_map_param is not None else None
     modified_edges = set()
     for edge in edges:
         if edge.data is not None:
@@ -215,16 +232,37 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
                 else:
                     # Do not do anything
                     continue
+
+            subset = edge.data.subset
+            # The dim(s) whose ``begin`` references the vectorized map
+            # parameter are the lane dim(s) — those, not the storage
+            # stride-1 dim, must be widened.
+            lane_dims = []
+            if param_sym is not None:
+                for d, (b, _e, _s) in enumerate(subset):
+                    if hasattr(b, "free_symbols") and param_sym in b.free_symbols:
+                        lane_dims.append(d)
+
             new_subset_list = []
-            for (b, e, s), stride in zip(edge.data.subset, state.sdfg.arrays[edge.data.data].strides):
-                if stride == 1:
-                    assert b == e
-                    assert s == 1
-                    new_subset_list.append((b, b + vector_width - 1, s))
-                else:
-                    assert b == e
-                    assert s == 1
-                    new_subset_list.append((b, e, s))
+            if len(lane_dims) == 1:
+                ld = lane_dims[0]
+                for d, (b, e, s) in enumerate(subset):
+                    assert b == e and s == 1
+                    if d == ld:
+                        new_subset_list.append((b, b + vector_width - 1, s))
+                    else:
+                        new_subset_list.append((b, e, s))
+            else:
+                # No (or ambiguous multi-dim) lane param in the subset —
+                # keep the legacy storage-stride-1 widening (unchanged
+                # behaviour for contiguous accesses and the param-free
+                # boundary case).
+                for (b, e, s), stride in zip(subset, state.sdfg.arrays[edge.data.data].strides):
+                    assert b == e and s == 1
+                    if stride == 1:
+                        new_subset_list.append((b, b + vector_width - 1, s))
+                    else:
+                        new_subset_list.append((b, e, s))
             new_subset_expr = dace.subsets.Range(new_subset_list)
 
             if new_subset_expr != edge.data.subset:

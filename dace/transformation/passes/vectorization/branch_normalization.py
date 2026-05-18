@@ -181,6 +181,14 @@ class BranchNormalization(ppl.Pass):
         :param cb: the conditional block to attempt.
         :returns: ``True`` if a rewrite was applied.
         """
+        # Hoist branch-invariant interstate symbol bindings (e.g. the
+        # python-frontend ``__sym_z1 = z1`` alias state) out of the arms
+        # first, so an arm that is only "empty-assign state -> compute
+        # state" reduces to its single substantive state and the existing
+        # single-state merge path applies. Genuinely branch-variant
+        # assignments are left in place and refused loudly downstream.
+        self._hoist_branch_invariant_assignments(cb)
+
         branches = cb.branches
         if len(branches) == 1:
             cond, body = branches[0]
@@ -192,11 +200,141 @@ class BranchNormalization(ppl.Pass):
         if len(branches) == 2:
             (cond0, body0), (cond1, body1) = branches
             if cond0 is not None and cond1 is None:
+                # Asymmetric arms (different state counts, or not both a
+                # single substantive SDFGState) cannot go through the
+                # symmetric same-write-set / disjoint single-state path.
+                # Serialize ``if c: A else: B`` into ``if c: A`` then
+                # ``if not c: B`` (exactly one fires; ``c`` is arm-invariant
+                # here so this is value-preserving even for a shared write
+                # set), and let later cycles normalize each single arm.
+                if self._arms_are_asymmetric(body0, body1):
+                    return self._serialize_two_arm(cb, cond0, body0, body1)
                 # Two-arm if/else: split disjoint writes into two single-arm
                 # conditionals first, then let the next pass cycle handle each.
                 return self._split_two_arm_disjoint(sdfg, cb, cond0, body0, body1)
 
         return False
+
+    def _hoist_branch_invariant_assignments(self, cb: ConditionalBlock) -> bool:
+        """Hoist branch-invariant interstate symbol bindings out of each arm.
+
+        The python frontend often begins an arm with an empty
+        ``SDFGState`` whose only effect is an interstate ``assignments``
+        binding (e.g. ``__sym_z1 = z1``, aliasing a kernel symbol used by
+        the arm's array accesses). Such a binding is *branch-invariant*
+        when its RHS is computable before the ``ConditionalBlock`` — its
+        free symbols are not produced by any arm — and the bound symbol
+        is neither a branch-predicate symbol nor already bound to a
+        different expression on an edge entering ``cb``. It then has the
+        same value whichever arm runs, so moving it onto the edges
+        entering ``cb`` is value-preserving and reduces the arm to its
+        substantive compute (which the single-state merge normalization
+        handles). Genuinely branch-variant assignments are left in place
+        and refused loudly by :meth:`_normalize_single_arm`.
+
+        :param cb: the conditional block whose arms are simplified.
+        :returns: ``True`` if any assignment was hoisted.
+        """
+        parent = cb.parent_graph
+        in_edges = list(parent.in_edges(cb))
+        if not in_edges:
+            # ``cb`` is its parent region's entry; no edge to hoist onto
+            # without restructuring the start block. Leave as-is (rare).
+            return False
+        # Symbols produced inside any arm are NOT available before ``cb``.
+        arm_assigned: Set[str] = set()
+        for _c, br in cb.branches:
+            for e in br.edges():
+                arm_assigned |= set(e.data.assignments.keys())
+        # Branch-predicate symbols must keep their pre-``cb`` value.
+        pred_syms: Set[str] = set()
+        for c, _br in cb.branches:
+            if c is not None:
+                pred_syms |= symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c))
+        hoisted = False
+        for _c, br in cb.branches:
+            sb = br.start_block
+            if not (isinstance(sb, dace.SDFGState) and sb.is_empty()):
+                continue
+            oes = br.out_edges(sb)
+            if len(oes) != 1 or not oes[0].data.assignments:
+                continue
+            e = oes[0]
+            assigns = dict(e.data.assignments)
+            hoistable = True
+            for sym, expr in assigns.items():
+                if symbolic.symbols_in_code(str(expr)) & arm_assigned:
+                    hoistable = False  # RHS depends on an arm-produced symbol
+                    break
+                if sym in pred_syms:
+                    hoistable = False  # would change which branch is taken
+                    break
+                for ie in in_edges:
+                    if sym in ie.data.assignments and str(ie.data.assignments[sym]) != str(expr):
+                        hoistable = False  # conflicting pre-``cb`` binding
+                        break
+                if not hoistable:
+                    break
+            if not hoistable:
+                continue
+            for ie in in_edges:
+                ie.data.assignments.update(assigns)
+            # The empty state stays as a pure pass-through (now no
+            # assignments); the multi-state normalization lifts it
+            # harmlessly.
+            e.data.assignments.clear()
+            hoisted = True
+        return hoisted
+
+    @staticmethod
+    def _substantive_states(body: ControlFlowRegion):
+        """SDFGStates in ``body`` that hold compute (non-empty)."""
+        return [n for n in body.nodes() if isinstance(n, dace.SDFGState) and not n.is_empty()]
+
+    def _arms_are_asymmetric(self, body0: ControlFlowRegion, body1: ControlFlowRegion) -> bool:
+        """Whether the two arms cannot use the symmetric single-state path.
+
+        True when the arms differ in state count, or either arm is not a
+        single substantive ``SDFGState`` (e.g. an empty symbol-assignment
+        entry state preceding the body, as the python frontend emits).
+        """
+        if not (isinstance(body0, ControlFlowRegion) and isinstance(body1, ControlFlowRegion)):
+            return False
+        if len(body0.nodes()) != len(body1.nodes()):
+            return True
+        return len(self._substantive_states(body0)) != 1 or len(self._substantive_states(body1)) != 1
+
+    def _serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
+                           body1: ControlFlowRegion) -> bool:
+        """Serialize ``if c: A else: B`` into ``if c: A`` then ``if not c: B``.
+
+        Pure CFG rewrite (no disjoint-write or single-state requirement):
+        ``cb`` keeps only the if-arm; a new negated single-arm block holds
+        the else-arm and is stitched sequentially after ``cb``. Subsequent
+        normalization cycles handle each single-arm form. Valid for a
+        shared write set because the condition is not mutated by the arms,
+        so exactly one arm's writes take effect — identical to the
+        original if/else.
+
+        :param cb: the two-arm conditional (becomes the if-arm only).
+        :param cond0: the if condition.
+        :param body0: the if-arm body (kept on ``cb``).
+        :param body1: the else-arm body (moved to the negated block).
+        :returns: ``True`` (always serializes).
+        """
+        parent = cb.parent_graph
+        cond_text = cond0.as_string if isinstance(cond0, CodeBlock) else str(cond0)
+        cb.remove_branch(body1)
+        neg_block = ConditionalBlock(label=f"{cb.label}_negated", sdfg=parent.sdfg, parent=parent)
+        neg_block.add_branch(CodeBlock(f"not ({cond_text})"), body1)
+        parent.add_node(neg_block)
+        out_edges = list(parent.out_edges(cb))
+        for oe in out_edges:
+            parent.remove_edge(oe)
+            parent.add_edge(neg_block, oe.dst, copy.deepcopy(oe.data))
+        parent.add_edge(cb, neg_block, dace.InterstateEdge())
+        parent.reset_cfg_list()
+        return True
 
     def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,
                               body: ControlFlowRegion) -> bool:
@@ -207,10 +345,37 @@ class BranchNormalization(ppl.Pass):
         :param cond: the arm condition.
         :param body: the arm body (one tasklet/access-node state).
         :returns: ``True`` if normalized, ``False`` if the shape is unsupported.
+        :raises NotImplementedError: if the arm region carries an interstate
+            assignment. Lifting the region wholesale makes that binding
+            unconditional; that is value-preserving only if every assigned
+            symbol is consumed solely within the arm — which we do not
+            prove. Refuse loudly rather than silently rebind a symbol that
+            another block may read (conservative, like MapFission /
+            StateFusionExtended refusing unprovable shapes).
         """
-        if len(body.nodes()) != 1 or not isinstance(body.nodes()[0], dace.SDFGState):
+        # The arm may be a linear chain of states: empty entry states (the
+        # python frontend emits an ``if_<n>`` state) followed by one
+        # substantive compute state. The wholesale lift preserves the
+        # region's structure and gates only the escaping writes via
+        # ``merge``; the side-effect-free compute runs unconditionally and
+        # the merge selects. But an interstate *assignment* inside the arm
+        # is a conditional symbol binding — lifting it makes it
+        # unconditional, which silently corrupts any out-of-arm consumer of
+        # that symbol. We don't prove arm-locality, so refuse.
+        states = [n for n in body.nodes() if isinstance(n, dace.SDFGState)]
+        if len(states) != len(body.nodes()):
             return False
-        body_state: dace.SDFGState = body.nodes()[0]
+        for e in body.edges():
+            if e.data.assignments:
+                raise NotImplementedError(
+                    f"BranchNormalization: IF arm {body.label!r} carries interstate assignment(s) "
+                    f"{dict(e.data.assignments)}; lifting the arm would make this conditional symbol "
+                    f"binding unconditional (unsafe unless the symbol is provably arm-local). "
+                    f"Unsupported branch shape.")
+        substantive = [s for s in states if not s.is_empty()]
+        if len(substantive) != 1:
+            return False
+        body_state: dace.SDFGState = substantive[0]
         for n in body_state.nodes():
             if not isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
                 return False

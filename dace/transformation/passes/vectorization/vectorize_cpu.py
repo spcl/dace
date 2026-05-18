@@ -28,6 +28,29 @@ from dace.transformation.passes.vectorization.generate_iteration_mask import Gen
 from dace.transformation.passes.vectorization.utils.iteration import assert_no_lane_memlet_reads
 
 
+
+class _LoopToMapPass(ppl.Pass):
+    """Thin Pass wrapper running :class:`LoopToMap` to a fixed point.
+
+    Runs after branch normalization (which removes the
+    ``ConditionalBlock`` s that block the conversion) so a data-parallel
+    ``for i in range(...)`` loop body becomes a Map the vectorizer can
+    stride. Kernels written with ``dace.map`` have no ``LoopRegion`` s so
+    this is a no-op for them; loops that are not provably parallel are
+    left alone by ``LoopToMap``'s own safety analysis.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes
+
+    def should_reapply(self, modified) -> bool:
+        return False
+
+    def apply_pass(self, sdfg, _pipeline_results):
+        from dace.transformation.interstate import LoopToMap
+        return sdfg.apply_transformations_repeated(LoopToMap)
+
+
 class _AssertNoLaneMemletReadsPass(ppl.Pass):
     """Thin Pass wrapper that runs ``assert_no_lane_memlet_reads`` after
     the vectorizer. Lands in the pipeline only when ``remainder_strategy='masked'``
@@ -281,6 +304,12 @@ class VectorizeCPU(ppl.Pipeline):
                 ]
             passes += [
                 RemoveEmptyStates(),
+                # Branch normalization has removed the ConditionalBlocks
+                # that block loop->map conversion; a data-parallel
+                # ``for i in range(...)`` body now becomes a Map the
+                # vectorizer can stride. Runs before the Vectorize / prep
+                # passes. No-op for ``dace.map`` kernels.
+                _LoopToMapPass(),
                 RemoveFPTypeCasts(),
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),

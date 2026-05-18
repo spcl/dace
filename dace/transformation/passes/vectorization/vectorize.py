@@ -744,7 +744,8 @@ class Vectorize(ppl.Pass):
                 for edge in inner_state.edges()
                 if edge not in modified_edges and edge.data is not None and edge.data.data in array_data
             }
-            expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width)
+            expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width,
+                                      vector_map_param)
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
         # There two types of doing this, assume the map parameters are (i, j) and we vectorize over j with vector simd length > 2

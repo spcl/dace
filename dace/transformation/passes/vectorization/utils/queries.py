@@ -75,6 +75,28 @@ def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGSta
                 array_is_vectorizable[arr_name] = False
                 continue
 
+            # Transposed / non-contiguous access: the map parameter
+            # appears in a dimension whose array stride is not 1 (e.g. a
+            # branch condition ``zqx[z1, i, j]`` where the lane var ``i``
+            # sits in a non-contiguous dim while the stride-1 dim holds
+            # the outer-loop constant ``j``). The W lanes are then
+            # ``arr.strides[d]`` apart in memory — a strided gather, not a
+            # contiguous load. Mark the array non-vectorizable so it is
+            # routed through the packed / strided gather path (same
+            # treatment as the ``A[i*2]`` multiplicative-stride case);
+            # emitting a contiguous ``vector_copy`` here would read W
+            # adjacent elements along the wrong (constant) dim.
+            arr_strides = sdfg.arrays[arr_name].strides
+            transposed = False
+            for d, (dim_b, _, _) in enumerate(access_subset):
+                if (hasattr(dim_b, "free_symbols") and any(str(s) == map_param for s in dim_b.free_symbols)
+                        and arr_strides[d] != 1):
+                    transposed = True
+                    break
+            if transposed:
+                array_is_vectorizable[arr_name] = False
+                continue
+
             # Get the stride 1 dimension
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
             b, e, s = access_subset[stride_one_dim]
@@ -277,6 +299,28 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 
     for arr_name, accesses in all_accesses_to_arrays.items():
         for access_subset in accesses:
+            # Transposed / non-contiguous access through the NSDFG: the
+            # map parameter appears in a dimension whose array stride is
+            # not 1 (e.g. a branch condition ``zqx[z1, i, j]`` where the
+            # lane var ``i`` sits in a non-contiguous dim while the
+            # stride-1 dim holds the outer-loop constant ``j``). The W
+            # lanes are then ``arr.strides[d]`` apart in memory — a
+            # strided gather, not a contiguous load. Only inspecting the
+            # stride-1 dim's begin (below) misses this. Mark the array
+            # non-vectorizable so it routes through the packed / strided
+            # gather path; a contiguous ``vector_copy`` would read W
+            # adjacent elements along the wrong (constant) dim.
+            arr_strides = sdfg.arrays[arr_name].strides
+            transposed = False
+            for d, (dim_b, _de, _ds) in enumerate(access_subset):
+                if (hasattr(dim_b, "free_symbols") and any(str(s) == map_param for s in dim_b.free_symbols)
+                        and arr_strides[d] != 1):
+                    transposed = True
+                    break
+            if transposed:
+                array_is_vectorizable[arr_name] = False
+                continue
+
             # Get the stride 1 dimension
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
             b, e, s = access_subset[stride_one_dim]
