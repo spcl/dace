@@ -1,0 +1,34 @@
+[run]
+concurrency = multiprocessing
+
+[report]
+# Regexes for lines to exclude from consideration
+exclude_lines =
+    # Have to re-enable the standard pragma
+    pragma: no cover
+
+    # Don't complain about missing debug-only code:
+    def __repr__
+    if self\.debug
+
+    # Don't complain if tests don't hit defensive assertion code:
+    raise .
+
+    # Don't complain if non-runnable code isn't run:
+    if 0:
+    if False:
+    if __name__ == .__main__.:
+    pass
+    if TYPE_CHECKING:
+    if typing.TYPE_CHECKING:
+
+omit =
+    # Omit files that cannot be tested
+    dace/jupyter.py
+
+    # Omit deprecated files
+    dace/frontend/ml/tensorflow/__init__.py
+    dace/frontend/ml/tensorflow/tensorflow.py
+    dace/frontend/ml/tensorflow/winograd.py
+    dace/frontend/ml/tensorflow/transformations/__init__.py
+    dace/frontend/ml/tensorflow/transformations/redundant_array.py
