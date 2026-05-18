@@ -261,25 +261,53 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: i
             e.src.code = dace.properties.CodeBlock(ncode_str)
 
 
+#: Reduction op token (from ``recognize_reduction`` / the legacy
+#: ``_extract_single_op``) -> the ``Reduce`` node ``wcr`` lambda. Only
+#: associative ops with a horizontal-reduce primitive; ``-`` / ``/`` and
+#: anything else raise (a hand-rolled ``_in[0] - _in[1] - …`` chain was
+#: numerically wrong for those anyway).
+_OP_TO_WCR = {
+    "+": "lambda a, b: a + b",
+    "*": "lambda a, b: a * b",
+    "max": "lambda a, b: max(a, b)",
+    "min": "lambda a, b: min(a, b)",
+    "&": "lambda a, b: a & b",
+    "|": "lambda a, b: a | b",
+    "^": "lambda a, b: a ^ b",
+}
+
+
 def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str, tree: bool = False):
-    """Insert a reduction tasklet that scalarizes a vectorized array before its use.
+    """Scalarize a vectorized ``(W,)`` accumulator via a ``Reduce`` libnode.
+
+    Inserts a ``dace.libraries.standard.Reduce`` node
+    (``implementation='vectorized'``) over ``name[0:W]`` -> ``name_scl``
+    before each reader and expands it inline, so the final W-fold is the
+    registered ``horizontal_reduce_<op>`` kernel (RV-2). This replaces
+    the former hand-rolled chain/tree scalarize tasklet.
 
     :param state: The SDFG state.
-    :param name: Array to reduce.
-    :param vector_width: Number of vector elements.
-    :param op: Reduction operation (e.g. ``"+"``, ``"*"``, ``"max"``, ``"min"``).
-    :param tree: When True emit the log-depth tree form instead of the linear
-        chain. The forms are not bit-exact for non-associative ops, so pass
-        ``True`` only when reassociation is acceptable.
+    :param name: The ``(vector_width,)`` accumulator array to scalarize.
+    :param vector_width: Number of vector lanes.
+    :param op: Reduction op token (``"+"``, ``"*"``, ``"max"``,
+        ``"min"``, ``"&"``, ``"|"``, ``"^"``).
+    :param tree: Unused (kept for call-site compatibility); the
+        intrinsic vs. log-depth-tree choice is made inside the runtime
+        ``horizontal_reduce_<op>`` primitive.
+    :raises NotImplementedError: if ``op`` is not an associative
+        reduction with a horizontal-reduce primitive.
     """
-    # Any time a tasklet reads name[0:vector_width] then we need to reduce it before
-    # In a reduction tasklet
-    from dace.transformation.passes.vectorization.utils.reductions import (
-        emit_chain_reduction,
-        emit_tree_reduction,
-    )
-    emit = emit_tree_reduction if tree else emit_chain_reduction
-    for edge in state.edges():
+    del tree  # decision now lives in the runtime horizontal_reduce_<op>
+    from dace.libraries.standard.nodes.reduce import Reduce
+    # Ensure the 'vectorized' Reduce implementation is registered.
+    from dace.transformation.passes.vectorization import reduce_expansion  # noqa: F401
+
+    if op not in _OP_TO_WCR:
+        raise NotImplementedError(
+            f"reduce_before_use: unsupported reduction op {op!r}; supported "
+            f"{sorted(_OP_TO_WCR)} (- / / and custom ops have no associative horizontal reduce)")
+
+    for edge in list(state.edges()):
         dst = edge.dst
         src = edge.src
         if isinstance(dst, dace.nodes.Tasklet) and edge.data is not None and edge.data.data == name:
@@ -291,15 +319,19 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                                   lifetime=arr.lifetime)
             an = state.add_access(name + "_scl")
             an.setzero = True
-            reduction_code = f"_out = {emit('_in', vector_width, op)}"
-            t = state.add_tasklet(name=f"scalarize_{name}", inputs={"_in"}, outputs={"_out"}, code=reduction_code)
-            t.add_in_connector("_in")
-            t.add_out_connector("_out")
-            state.add_edge(src, None, t, "_in", copy.deepcopy(edge.data))
-            state.add_edge(t, "_out", an, None, dace.memlet.Memlet(f"{name}_scl[0]"))
+            red = Reduce(f"scalarize_{name}", wcr=_OP_TO_WCR[op], axes=[0])
+            red.implementation = "vectorized"
+            red.schedule = dace.dtypes.ScheduleType.Sequential
+            state.add_node(red)
+            state.add_edge(src, None, red, None, copy.deepcopy(edge.data))
+            state.add_edge(red, None, an, None, dace.memlet.Memlet(f"{name}_scl[0]"))
             state.add_edge(an, None, edge.dst, edge.dst_conn, dace.memlet.Memlet(f"{name}_scl[0]"))
-
             state.remove_edge(edge)
+            # Expand inline via the registered schedule-aware
+            # ``ExpandReduceVectorized`` (Sequential -> the vectorized
+            # horizontal_reduce_<op> kernel). New ``expand(state)``
+            # interface uses ``node.implementation`` ('vectorized').
+            red.expand(state)
 
 
 def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, inner_sdfg: dace.SDFG,
