@@ -86,9 +86,95 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
     return sorted(groups, key=lambda g: order[g[0]])
 
 
+def _block_rw(block):
+    """Recursively collect (reads, writes) data containers of a CFG block.
+
+    :param block: An ``SDFGState`` or control-flow region.
+    :returns: ``(reads, writes)`` sets of data-container names.
+    """
+    reads: Set[str] = set()
+    writes: Set[str] = set()
+    states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+    for st in states:
+        for n in st.nodes():
+            if isinstance(n, nodes.AccessNode):
+                if st.in_degree(n) > 0:
+                    writes.add(n.data)
+                if st.out_degree(n) > 0 or st.in_degree(n) == 0:
+                    reads.add(n.data)
+    return reads, writes
+
+
+def _linear_blocks(loop: LoopRegion) -> Optional[List]:
+    """Return ``loop``'s body blocks in execution order if it is a simple
+    linear chain of unconditional, assignment-free edges; else ``None``.
+
+    :param loop: The loop whose body CFG is inspected.
+    :returns: The ordered block list, or ``None`` if not a plain chain.
+    """
+    blocks = list(loop.nodes())
+    edges = list(loop.edges())
+    if len(edges) != len(blocks) - 1:
+        return None
+    for e in edges:
+        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+            return None
+    succ = {e.src: e.dst for e in edges}
+    order = [loop.start_block]
+    while order[-1] in succ:
+        order.append(succ[order[-1]])
+    return order if len(order) == len(blocks) else None
+
+
+def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
+    """Partition ``loop``'s body blocks into data-independent groups.
+
+    Only a plain linear chain of >= 2 blocks qualifies. Blocks touching a
+    common written container are merged (a real dependency); read-only
+    sharing does not merge. This realizes perfect-loop-nesting for loops:
+    distribute the parent loop over its independent inner blocks.
+
+    :param loop: The parent loop.
+    :returns: Ordered list of block groups, or ``None`` if not applicable.
+    """
+    order = _linear_blocks(loop)
+    if order is None or len(order) < 2:
+        return None
+    pos = {b: i for i, b in enumerate(order)}
+    rw = {b: _block_rw(b) for b in order}
+    parent: Dict = {b: b for b in order}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    written: Set[str] = set()
+    for _r, w in rw.values():
+        written |= w
+    for data in written:
+        touch = [b for b in order if data in rw[b][0] or data in rw[b][1]]
+        for b in touch[1:]:
+            parent[find(b)] = find(touch[0])
+
+    classes: Dict = {}
+    for b in order:
+        classes.setdefault(find(b), []).append(b)
+    groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()),
+                    key=lambda g: pos[g[0]])
+    return groups if len(groups) >= 2 else None
+
+
 @transformation.explicit_cf_compatible
 class LoopFission(ppl.Pass):
-    """Distribute a single-body-state loop into one loop per independent group."""
+    """Distribute a loop into one loop per independent group.
+
+    Two shapes: a single-body-``SDFGState`` loop split by independent node
+    groups, and a multi-block linear body split by independent blocks
+    (perfect-loop-nesting for loops -- the LoopRegion analogue of how
+    map-side ``PerfLoopNesting`` delegates to ``MapFission``).
+    """
     CATEGORY: str = 'Canonicalization'
 
     def modifies(self) -> ppl.Modifies:
@@ -111,13 +197,56 @@ class LoopFission(ppl.Pass):
             if not isinstance(loop, LoopRegion):
                 continue
             body = list(loop.nodes())
-            if len(body) != 1 or not isinstance(body[0], SDFGState):
-                continue  # Conservative: only the simple single-state body.
-            if len(_independent_groups(body[0])) < 2:
-                continue
-            self._fission(loop)
-            count += 1
+            if len(body) == 1 and isinstance(body[0], SDFGState):
+                if len(_independent_groups(body[0])) < 2:
+                    continue
+                self._fission(loop)
+                count += 1
+            else:
+                groups = _independent_block_groups(loop)
+                if groups is None:
+                    continue
+                self._fission_blocks(loop, groups)
+                count += 1
         return count or None
+
+    @staticmethod
+    def _fission_blocks(loop: LoopRegion, groups: List[List]):
+        """Distribute ``loop`` over independent body-block groups."""
+        parent = loop.parent_graph
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
+        is_start = parent.start_block is loop
+        orig_order = _linear_blocks(loop)
+        keep_idx = [sorted(orig_order.index(b) for b in g) for g in groups]
+
+        clones: List[LoopRegion] = []
+        for gi, idxs in enumerate(keep_idx):
+            clone = copy.deepcopy(loop)
+            clone.label = f"{loop.label}_fis{gi}"
+            parent.add_node(clone)
+            corder = _linear_blocks(clone)
+            keep = [corder[i] for i in idxs]
+            for b in [b for b in clone.nodes() if b not in keep]:
+                clone.remove_node(b)
+            for e in list(clone.edges()):
+                clone.remove_edge(e)
+            for a, b in zip(keep, keep[1:]):
+                clone.add_edge(a, b, InterstateEdge())
+            clone.start_block = clone.node_id(keep[0])
+            clones.append(clone)
+
+        for e in in_edges:
+            parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))
+        for a, b in zip(clones, clones[1:]):
+            parent.add_edge(a, b, InterstateEdge())
+        for e in out_edges:
+            parent.add_edge(clones[-1], e.dst, copy.deepcopy(e.data))
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(loop)
+        if is_start:
+            parent.start_block = parent.node_id(clones[0])
 
     @staticmethod
     def _fission(loop: LoopRegion):

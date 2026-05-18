@@ -212,14 +212,21 @@ def test_loop_fission_many_set_cpy():
     _run(loop_five_set_five_cpy, arrs, dict(N=n), 10)
 
 
-def test_loop_fission_nested_outer_kept():
-    """Nested loop body is not a single state: conservative no-op, valid."""
+def test_loop_fission_perfect_nesting():
+    """Parent loop with 2 independent inner loops -> 2 parent loops, each
+    wrapping one inner loop (perfect-loop-nesting for loops)."""
     n = 5
-    sdfg = loop_nested_two.to_sdfg(simplify=True)
-    LoopFission().apply_pass(sdfg, {})
-    sdfg.validate()
+    base = loop_nested_two.to_sdfg(simplify=True)
     x0, y0 = np.zeros((n, n)), np.zeros((n, n))
-    copy.deepcopy(loop_nested_two.to_sdfg(simplify=True))(x=x0, y=y0, N=n)
+    copy.deepcopy(base)(x=x0, y=y0, N=n)
+
+    sdfg = loop_nested_two.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    top = [c for c in sdfg.nodes() if isinstance(c, LoopRegion)]
+    assert len(top) == 2, f"expected 2 parent loops, got {len(top)}"
+    assert _loop_count(sdfg) == 4  # 2 parent + 2 inner
+
     x1, y1 = np.zeros((n, n)), np.zeros((n, n))
     sdfg(x=x1, y=y1, N=n)
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
