@@ -1,0 +1,163 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""T2: CLOUDSC loopnest shapes ported from the dace-fortran corpus.
+
+Faithful Python ``@dace.program`` ports of the characteristic loopnest
+shapes in ``dace-fortran/tests/cloudsc_full/cloudsc_bottom_lower.F90``
+(the CLOUDSC microphysics kernel) — distinct from the
+``cloudsc_snippet_{one..four}`` fixtures in ``test_cloudsc.py``:
+
+- the 2-D affine multi-output initialisation
+  (``ZTP1 = PT + PTSPHY*PTEND_T`` …),
+- the 3-D species x level x column initialisation
+  (``ZQX(JL,JK,JM) = PCLV + PTSPHY*PTEND_CLD``),
+- the branchy read-modify-write "tidy up very small cloud water" nest
+  (a guarded multi-array accumulation — the CLOUDSC-characteristic
+  conditional pattern).
+
+The physics constants are baked in as literals (the contract is e2e
+numerical equivalence of the vectorised SDFG vs the non-vectorised
+reference via ``run_vectorization_test`` — exact constant values are
+irrelevant, only consistency). The innermost loop is over the
+contiguous column dimension (the vectorisation axis), mirroring the
+Fortran ``JL=KIDIA,KFDIA`` inner loop.
+"""
+import numpy
+import pytest
+import dace
+
+from tests.passes.vectorization._harness import run_vectorization_test
+
+KLEV = dace.symbol("KLEV")
+KLON = dace.symbol("KLON")
+NCLV = dace.symbol("NCLV")
+
+_PTSPHY = 50.0
+_RLMIN = 1.0e-8
+_RAMIN = 1.0e-8
+_RALVDCP = 2.5008e6 / 1004.7
+_RALSDCP = 2.8345e6 / 1004.7
+_ZQTMST = 1.0 / _PTSPHY
+
+
+@dace.program
+def cloudsc_init_affine(pt: dace.float64[KLEV, KLON], pa: dace.float64[KLEV, KLON],
+                        ptend_t: dace.float64[KLEV, KLON], ptend_a: dace.float64[KLEV, KLON],
+                        ztp1: dace.float64[KLEV, KLON], za: dace.float64[KLEV, KLON]):
+    # cloudsc_bottom_lower.F90: "non CLV initialization" nest.
+    for jk in range(KLEV):
+        for jl in range(KLON):
+            ztp1[jk, jl] = pt[jk, jl] + _PTSPHY * ptend_t[jk, jl]
+            za[jk, jl] = pa[jk, jl] + _PTSPHY * ptend_a[jk, jl]
+
+
+def test_cloudsc_init_affine(remainder_strategy, branch_mode):
+    klev, klon = 16, 64
+    pt = numpy.random.rand(klev, klon)
+    pa = numpy.random.rand(klev, klon)
+    ptend_t = numpy.random.rand(klev, klon)
+    ptend_a = numpy.random.rand(klev, klon)
+    ztp1 = numpy.zeros((klev, klon))
+    za = numpy.zeros((klev, klon))
+    run_vectorization_test(
+        dace_func=cloudsc_init_affine,
+        arrays={"pt": pt, "pa": pa, "ptend_t": ptend_t, "ptend_a": ptend_a,
+                "ztp1": ztp1, "za": za},
+        params={"KLEV": klev, "KLON": klon},
+        sdfg_name="cloudsc_init_affine",
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+    )
+
+
+@dace.program
+def cloudsc_species_init(pclv: dace.float64[NCLV, KLEV, KLON],
+                         ptend_cld: dace.float64[NCLV, KLEV, KLON],
+                         zqx: dace.float64[NCLV, KLEV, KLON]):
+    # cloudsc_bottom_lower.F90: "initialization for CLV family" 3-D nest.
+    for jm in range(NCLV):
+        for jk in range(KLEV):
+            for jl in range(KLON):
+                zqx[jm, jk, jl] = pclv[jm, jk, jl] + _PTSPHY * ptend_cld[jm, jk, jl]
+
+
+def test_cloudsc_species_init(remainder_strategy, branch_mode):
+    nclv, klev, klon = 5, 16, 64
+    pclv = numpy.random.rand(nclv, klev, klon)
+    ptend_cld = numpy.random.rand(nclv, klev, klon)
+    zqx = numpy.zeros((nclv, klev, klon))
+    run_vectorization_test(
+        dace_func=cloudsc_species_init,
+        arrays={"pclv": pclv, "ptend_cld": ptend_cld, "zqx": zqx},
+        params={"NCLV": nclv, "KLEV": klev, "KLON": klon},
+        sdfg_name="cloudsc_species_init",
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+    )
+
+
+@dace.program
+def cloudsc_tidy_branch(zqx_l: dace.float64[KLEV, KLON], zqx_i: dace.float64[KLEV, KLON],
+                        zqx_v: dace.float64[KLEV, KLON], za: dace.float64[KLEV, KLON],
+                        ptend_q: dace.float64[KLEV, KLON], ptend_t: dace.float64[KLEV, KLON]):
+    # cloudsc_bottom_lower.F90: "Tidy up very small cloud cover or total
+    # cloud water" — guarded read-modify-write over several arrays (the
+    # CLOUDSC-characteristic conditional accumulation pattern).
+    for jk in range(KLEV):
+        for jl in range(KLON):
+            if zqx_l[jk, jl] + zqx_i[jk, jl] < _RLMIN or za[jk, jl] < _RAMIN:
+                zqadj_l = zqx_l[jk, jl] * _ZQTMST
+                ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_l
+                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALVDCP * zqadj_l
+                zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_l[jk, jl]
+                zqx_l[jk, jl] = 0.0
+                zqadj_i = zqx_i[jk, jl] * _ZQTMST
+                ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_i
+                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALSDCP * zqadj_i
+                zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_i[jk, jl]
+                zqx_i[jk, jl] = 0.0
+                za[jk, jl] = 0.0
+
+
+def test_cloudsc_tidy_branch(remainder_strategy, branch_mode, request):
+    if branch_mode == "merge":
+        # Tracked tripwire (A1 finding): BranchNormalization cannot
+        # normalize this CLOUDSC-characteristic shape — a single-arm
+        # conditional whose body is a ~9-statement multi-array
+        # read-modify-write accumulation. branch_normalization.py:645
+        # raises "N ConditionalBlock(s) remain ... unsupported branch
+        # shape" because _normalize_single_arm only handles an
+        # assignment-prefix + 1 substantive state, not a many-statement
+        # RMW arm. The fp_factor path lowers it correctly (passes).
+        # strict=True: this flips to a hard failure (forcing un-xfail)
+        # the moment BranchNormalization learns this shape in A1.
+        request.applymarker(
+            pytest.mark.xfail(
+                reason="BranchNormalization gap: multi-statement single-arm RMW "
+                "conditional (CLOUDSC tidy-up) not normalized; fp_factor path OK",
+                strict=True))
+    klev, klon = 16, 64
+    # Mix of tiny (trigger the guard) and normal magnitudes.
+    zqx_l = numpy.where(numpy.random.rand(klev, klon) < 0.5,
+                        numpy.random.rand(klev, klon) * 1e-12,
+                        numpy.random.rand(klev, klon))
+    zqx_i = numpy.random.rand(klev, klon) * 1e-12
+    zqx_v = numpy.random.rand(klev, klon)
+    za = numpy.where(numpy.random.rand(klev, klon) < 0.5,
+                     numpy.random.rand(klev, klon) * 1e-12,
+                     numpy.random.rand(klev, klon))
+    ptend_q = numpy.random.rand(klev, klon)
+    ptend_t = numpy.random.rand(klev, klon)
+    run_vectorization_test(
+        dace_func=cloudsc_tidy_branch,
+        arrays={"zqx_l": zqx_l, "zqx_i": zqx_i, "zqx_v": zqx_v, "za": za,
+                "ptend_q": ptend_q, "ptend_t": ptend_t},
+        params={"KLEV": klev, "KLON": klon},
+        sdfg_name="cloudsc_tidy_branch",
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+    )
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__, "-q"])
