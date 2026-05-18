@@ -381,6 +381,26 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                                              nodes_second, True, False):
                                     return False
 
+                                # Same-cc Read-Write (WAR) race: the first
+                                # state *reads* ``d`` and the second state
+                                # *writes* it, but ``d`` is not a first-state
+                                # output, so neither the has_path nor the
+                                # _check_all_paths checks above reject or
+                                # serialise it. Without an explicit
+                                # happens-before, fusing the two states lets
+                                # the second-state write be scheduled before
+                                # the first-state read completes (WAR
+                                # violation). Register the read-before-write
+                                # connection here exactly as the cross-cc
+                                # branch below does, so ``apply`` orders every
+                                # first-state reader of ``d`` before the
+                                # fused-in second-state write.
+                                if d in fused_cc.first_inputs:
+                                    nf = [n for n in first_input if n.data == d]
+                                    if StateFusionExtended.memlets_intersect(first_state, nf, True, second_state,
+                                                                             nodes_second, False):
+                                        self.connections_to_make.append([nf, nodes_second])
+
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -539,8 +559,32 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
                         if ((paths != None and len(paths) > 0) or len(direct_edges) > 0):
                             for j in conn[0]:
+                                # ``conn[0]`` holds the first-state nodes that
+                                # must be ordered before the second-state
+                                # write reached from source ``i``.
                                 if j in first_output:
+                                    # Write-write race: ``j`` is a first-state
+                                    # write *sink* and topologically gathers
+                                    # all its producers, so a single
+                                    # ``j -> i`` happens-before edge orders
+                                    # the whole first write before the second.
                                     first_state.add_nedge(j, i, memlet.Memlet())
+                                elif j in first_input:
+                                    # Read-write (WAR / anti-dependency) race:
+                                    # ``can_be_applied`` put the first-state
+                                    # *read* source node ``j`` here. ``j`` is
+                                    # a source (immediately ready), so a
+                                    # ``j -> i`` edge would only order the
+                                    # node, NOT its reader tasklets — the
+                                    # fused-in second-state write could still
+                                    # be scheduled before the first-state
+                                    # reads complete (wrong result). The read
+                                    # must finish before the write, so order
+                                    # every first-state consumer of ``j``
+                                    # before the second-state write source.
+                                    for re in first_state.out_edges(j):
+                                        if re.dst is not i:
+                                            first_state.add_nedge(re.dst, i, memlet.Memlet())
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
