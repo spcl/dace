@@ -355,6 +355,14 @@ class Vectorize(ppl.Pass):
                 inter_lane_stride = None
                 if len(param_dims_wide) == 1:
                     wb = e.data.subset[param_dims_wide[0][0]][0]
+                    # This is the same inter-lane step that
+                    # ``lane_access.classify_lane_access`` exposes as
+                    # ``LaneAccess.inter_lane_stride``; it is recomputed
+                    # locally (not delegated) because the strided-handler
+                    # selects the wide dim by per-dim bounding-box volume,
+                    # which the lane-access classifier intentionally does
+                    # not model — delegating would change which dim is
+                    # picked for multi-param edges.
                     # Inter-lane stride = begin(map_param + 1) - begin(map_param),
                     # computed on the dace symbolic begin expression itself.
                     # ``map_sym`` is the dace symbol named ``map_param`` (not a

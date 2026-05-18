@@ -16,6 +16,7 @@ import dace
 from dace import properties
 from dace.data import add_mask
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
@@ -118,27 +119,16 @@ class GenerateIterationMask(ppl.Pass):
     def _subset_fans_out(sub, strides, iter_var: str) -> bool:
         """Whether one ``(subset, array-strides)`` pair fans out per lane.
 
-        ``True`` iff ``iter_var`` appears in a dimension whose array
-        stride is not 1 (transposed, e.g. ``zqx[z1, i, j]``), or is a
-        direct multiplicative factor of a stride-1 dim's begin (strided,
-        e.g. ``A[2*i]``). Either lowers to a per-lane gather fan that is
-        unsafe under a masked remainder without a masked intrinsic.
+        ``True`` iff the access is strided (``A[2*i]``), transposed
+        (``iter_var`` in a non-stride-1 dim, e.g. ``zqx[z1, i, j]``) or
+        diagonal (``iter_var`` in >1 dims). Each lowers to a per-lane
+        gather fan that is unsafe under a masked remainder without a
+        masked intrinsic. Delegates to the canonical
+        :func:`classify_lane_access`.
         """
-        import sympy
         if strides is None or sub is None or len(strides) != len(sub):
             return False
-        stride1 = {d for d, s in enumerate(strides) if str(s) == "1"}
-        for d, (b, _ee, _s) in enumerate(sub):
-            if not hasattr(b, "free_symbols"):
-                continue
-            if not any(str(fs) == iter_var for fs in b.free_symbols):
-                continue
-            if d not in stride1:
-                return True
-            for term in sympy.sympify(b).atoms(sympy.Mul):
-                if any(isinstance(f, sympy.Symbol) and str(f) == iter_var for f in term.args):
-                    return True
-        return False
+        return classify_lane_access(sub, strides, iter_var).fans_out_per_lane
 
     @classmethod
     def _body_fans_out_per_lane(cls, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,

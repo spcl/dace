@@ -21,6 +21,7 @@ import dace
 from dace import SDFGState, typeclass
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
+from dace.transformation.passes.vectorization.utils.lane_access import classify_lane_access
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -234,18 +235,20 @@ def expand_memlet_expression(state: SDFGState,
                     continue
 
             subset = edge.data.subset
-            # The dim(s) whose ``begin`` references the vectorized map
-            # parameter are the lane dim(s) — those, not the storage
-            # stride-1 dim, must be widened.
-            lane_dims = []
+            # The dim whose ``begin`` references the vectorized map
+            # parameter is the lane dim — that, not the storage
+            # stride-1 dim, must be widened. ``classify_lane_access``
+            # is the single source of truth: ``lane_dim`` is set for a
+            # single-param dim (CONTIGUOUS / STRIDED / TRANSPOSED) and
+            # ``None`` for the param-free (CONSTANT) and multi-param
+            # (DIAGONAL) cases, which both take the legacy path.
+            ld = None
             if param_sym is not None:
-                for d, (b, _e, _s) in enumerate(subset):
-                    if hasattr(b, "free_symbols") and param_sym in b.free_symbols:
-                        lane_dims.append(d)
+                ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides,
+                                          vector_map_param).lane_dim
 
             new_subset_list = []
-            if len(lane_dims) == 1:
-                ld = lane_dims[0]
+            if ld is not None:
                 for d, (b, e, s) in enumerate(subset):
                     assert b == e and s == 1
                     if d == ld:
