@@ -12,7 +12,6 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
-from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalizationPipeline
 from dace.transformation.passes.vectorization.detect_gather import DetectGather
@@ -21,7 +20,7 @@ from dace.transformation.passes.vectorization.detect_strided_load import DetectS
 from dace.transformation.passes.vectorization.detect_strided_store import DetectStridedStore
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_load import DetectMultiDimStridedLoad
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_store import DetectMultiDimStridedStore
-from dace.transformation.passes.vectorization.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.passes.vectorization.split_map_for_vector_remainder import SplitMapForVectorRemainder
 from dace.transformation.passes.vectorization.generate_iteration_mask import GenerateIterationMask
@@ -78,7 +77,9 @@ class VectorizeCPU(ppl.Pipeline):
 
         :param vector_width: SIMD lane count.
         :param try_to_demote_symbols_in_nsdfgs: demote NSDFG symbols to scalars when safe.
-        :param fuse_overlapping_loads: append ``FuseOverlappingLoads``.
+        :param fuse_overlapping_loads: fuse an array read at multiple
+            overlapping subsets into one shared union-window staging buffer
+            at the NSDFG boundary instead of one ``vector_copy`` per subset.
         :param apply_on_maps: restrict vectorization to these map entries.
         :param insert_copies: insert copy-in/out around NSDFG boundaries.
         :param only_apply_vectorization_pass: run only ``Vectorize`` (skip prep/cleanup).
@@ -249,7 +250,8 @@ class VectorizeCPU(ppl.Pipeline):
                                insert_copies=insert_copies,
                                fail_on_unvectorizable=fail_on_unvectorizable,
                                eliminate_trivial_vector_map=eliminate_trivial_vector_map,
-                               user_skip_nsdfg_arrays=user_skip_nsdfg_arrays)
+                               user_skip_nsdfg_arrays=user_skip_nsdfg_arrays,
+                               fuse_overlapping_loads=fuse_overlapping_loads)
         if not only_apply_vectorization_pass:
             # Pick the branch-lowering front of the pipeline. ``use_fp_factor``
             # keeps today's behaviour, ``EliminateBranches`` collapses if/else
@@ -329,15 +331,20 @@ class VectorizeCPU(ppl.Pipeline):
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]
-        # TODO: ``fuse_overlapping_loads`` is one of the optional optimisation
-        # knobs the pipeline exposes (alongside ``lower_to_intrinsics``,
-        # ``insert_copies``, ``try_to_demote_symbols_in_nsdfgs``, etc.). The
-        # plan should record these as opt-in optimisation passes the user can
-        # enable per-call; they default ``False`` to keep the baseline
-        # pipeline minimal. A future slice should collect them under a
-        # dedicated ``optimisations`` group / preset for ergonomics.
-        if fuse_overlapping_loads:
-            passes.append(FuseOverlappingLoads())
+        # ``fuse_overlapping_loads`` is now baked into the staging-copy
+        # boundary (``add_copies_before_and_after_nsdfg``): when on, an
+        # array read at multiple overlapping subsets gets one shared
+        # union-window buffer instead of one ``vector_copy`` per subset, so
+        # it composes with the movable / unmovable classification. The
+        # former standalone post-vectorizer ``FuseOverlappingLoads`` pass is
+        # no longer appended here for the CPU pipeline (the GPU pipeline
+        # still uses the standalone pass).
+        #
+        # TODO: ``fuse_overlapping_loads`` is one of the optional
+        # optimisation knobs the pipeline exposes (alongside
+        # ``lower_to_intrinsics``, ``insert_copies``,
+        # ``try_to_demote_symbols_in_nsdfgs``, etc.). A future slice should
+        # collect them under a dedicated ``optimisations`` group / preset.
         # Lower the scalar ``assign_<i>`` fans the vectorizer leaves around
         # each ``_packed`` access node into single ``gather_double`` /
         # ``scatter_double`` / ``strided_{load,store}_double`` intrinsic

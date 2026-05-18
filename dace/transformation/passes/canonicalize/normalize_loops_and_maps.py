@@ -21,8 +21,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.vectorization.insert_assign_tasklets_at_map_boundary import (
-    InsertAssignTaskletsAtMapBoundary)
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import (InsertAssignTaskletsAtMapBoundary)
 
 
 @properties.make_properties
