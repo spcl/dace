@@ -72,6 +72,70 @@ def _compute_subset_union(subsets):
     return union_subset, union_shape
 
 
+def _is_trivial_exact_vlen_copy(subset, arr: dace.data.Array, vector_width: int, masked: bool) -> bool:
+    """Decide whether a single-subset NSDFG-boundary access may stay *outside*.
+
+    The R4/R5 copy-inside rule: a boundary access is materialised as a
+    plain ``vector_copy<T, W>`` access node *outside* the NSDFG (the
+    "movable" path) **only** when it is a trivial exact-VLEN, step-1,
+    contiguous window — i.e. exactly ``vector_width`` consecutive
+    elements on the array's stride-1 dimension with every other
+    dimension collapsed to length 1. Anything else must be staged
+    *inside* the NSDFG body, where :func:`emit_staging_copy` is in scope
+    and gates every lane against the in-scope ``_iter_mask`` / the real
+    array's extent. The outside path has no such gate, so a non-trivial
+    access placed there silently produces wrong results:
+
+    - **Strided** (step ``> 1`` on the contiguous dim, e.g. ``b[4*i]``):
+      an outside ``vector_copy`` reads ``W`` *contiguous* elements, not
+      the strided lanes — wrong numerics. Belongs inside via the
+      ``strided_{load,store}`` handlers.
+    - **Non-exact-W extent** (e.g. a masked-remainder tail with only
+      ``R < W`` valid elements, or an un-collapsed multi-dim window):
+      an outside W-wide copy OOB-reads / -writes the real array.
+    The ``masked`` flag is accepted for call-site clarity but does *not*
+    by itself force the inside path: a trivial exact-W contiguous copy
+    in a masked-remainder body is already correctly per-lane gated by
+    :func:`emit_staging_copy` (``mask_name`` / ``gate_extent``) on the
+    movable path, and strided masked accesses are already routed inside
+    by the ``strided_{load,store}`` handlers. Forcing *every* masked
+    single-subset access inside instead reclassifies those
+    already-correct accesses into the per-subset ``_emit_unmovable_copy``
+    path, which does not handle masked strided / diagonal shapes —
+    regressing them. The genuine correctness gain here is therefore the
+    *shape* gate (strided / partial / non-collapsed → inside), not a
+    blanket masked rule.
+
+    Multi-subset arrays are handled by the union / per-subset
+    classifier before this predicate is consulted; this only refines the
+    single-subset decision (previously: movable iff its free symbols are
+    available outside — which silently kept strided / partial accesses
+    outside and corrupted them).
+
+    :param subset: The single boundary access :class:`dace.subsets.Range`.
+    :param arr: The inner-SDFG array descriptor for the accessed data.
+    :param vector_width: The SIMD lane count ``W``.
+    :param masked: ``True`` if the enclosing NSDFG is a masked-remainder
+        body (an ``_iter_mask`` is in scope). Accepted for call-site
+        clarity; does not by itself force the inside path (see above).
+    :returns: ``True`` iff the access may stay outside as a plain
+        ``vector_copy<T, W>``; ``False`` to force inside staging.
+    """
+    strides = list(arr.strides)
+    contig = strides.index(1) if 1 in strides else len(strides) - 1
+    for d, (b, e, s) in enumerate(subset):
+        extent = e - b + 1
+        if d == contig:
+            if s != 1:
+                return False
+            if str(dace.symbolic.simplify(extent - vector_width)) != "0":
+                return False
+        else:
+            if str(dace.symbolic.simplify(extent - 1)) != "0":
+                return False
+    return True
+
+
 def emit_staging_copy(state: SDFGState, src: dace.nodes.Node, src_conn, dst: dace.nodes.Node, dst_conn,
                       real_memlet: dace.memlet.Memlet, buf_name: str, vector_width: int, direction: str, *,
                       mask_name: Optional[str] = None, gate_extent: bool = False) -> None:
@@ -1466,12 +1530,23 @@ def add_copies_before_and_after_nsdfg(
             if dataname not in skip:
                 unmovable_arrays[dataname] = set(memlets)
         else:
-            # Single access pattern - check if symbols are available outside
+            # Single access pattern. R4/R5 copy-inside rule: it may stay
+            # *outside* (the movable ``vector_copy<T, W>`` path) only when
+            # (a) every free symbol is available outside the NSDFG AND
+            # (b) it is a trivial exact-VLEN, step-1, contiguous window
+            # (see ``_is_trivial_exact_vlen_copy``). A strided / partial /
+            # masked-remainder single-subset access fails (b) and is
+            # staged *inside* instead, where ``emit_staging_copy`` gates
+            # each lane — the outside path has no such gate and would
+            # silently corrupt those accesses.
             memlet = next(iter(memlets))
             memlet_syms = {str(s) for s in memlet.free_symbols}
             avaialble_syms = {str(s) for s in state.symbols_defined_at(nsdfg_node)}
+            masked = _iter_mask_name(inner_sdfg) is not None
 
-            if all({s in avaialble_syms for s in memlet_syms}):
+            syms_available = all({s in avaialble_syms for s in memlet_syms})
+            if syms_available and _is_trivial_exact_vlen_copy(memlet, inner_sdfg.arrays[dataname], vector_width,
+                                                              masked):
                 if dataname not in skip:
                     movable_arrays.add((dataname, memlet))
             else:
