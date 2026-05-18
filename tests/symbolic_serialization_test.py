@@ -208,6 +208,8 @@ def test_scalar_memlet_connector_type_after_symbolic_range_roundtrip():
     restored = subsets.Range.from_json(rng.to_json())
     restored.replace({i: stencil_i})
 
+    assert restored.ranges[0][0] == 1
+    assert restored.ranges[0][1] == 1
     assert restored.num_elements() == 1
 
     sdfg = dace.SDFG('scalar_memlet_connector_after_symbolic_roundtrip')
