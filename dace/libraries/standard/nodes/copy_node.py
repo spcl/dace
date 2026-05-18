@@ -958,8 +958,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         return sdfg.arrays[outer.data].storage
 
     def validate(self, sdfg, state, allow_cross_storage=True):
-        """Resolve in/out edges, names, subsets, dynamic inputs, and an
-        optional stream descriptor.
+        """Resolve in/out edges, names, subsets, and dynamic inputs.
 
         :param sdfg: SDFG containing ``state``.
         :param state: state containing this libnode.
