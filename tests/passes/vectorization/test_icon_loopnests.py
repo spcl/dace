@@ -1,0 +1,104 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""T3: ICON velocity-tendency loopnest shapes ported from dace-fortran.
+
+Faithful Python ``@dace.program`` ports of the two computational
+loopnests in ``dace-fortran/tests/velocity_one_loop.f90`` and
+``velocity_zekinh_block.f90`` (ICON non-hydrostatic dynamical core):
+
+- ``icon_one_loop``      — the ``one_loop_nest`` 3-D edge x level x
+  block stencil: a multi-output update with a vertical (``jk-1``)
+  backward reference that lives on the *outer* loop (the inner,
+  vectorised, ``je`` axis is plain elementwise).
+- ``icon_zekinh_gather`` — the ``zekinh_block`` cell-from-edges
+  bilinear interpolation: ``z_ekinh = Σ_m e_bln(m) *
+  z_kin_hor_e[edge_idx(m), jk, edge_blk(m)]`` — an indirect
+  (index-table) gather over the inner ``jc`` axis (the ICON-
+  characteristic indirect-addressing pattern, analogous to spmv).
+
+Layout is C-order ``[nblks, nlev, nproma]`` so the innermost loop runs
+over the contiguous ``nproma`` dimension (the vectorisation axis),
+mirroring the Fortran ``je``/``jc`` inner loop. Contract: e2e numeric
+equivalence of the vectorised SDFG vs the non-vectorised reference via
+``run_vectorization_test``.
+"""
+import numpy
+import pytest
+import dace
+
+from tests.passes.vectorization._harness import run_vectorization_test
+
+NB = dace.symbol("NB")
+NLEV = dace.symbol("NLEV")
+NPROMA = dace.symbol("NPROMA")
+
+
+@dace.program
+def icon_one_loop(vn: dace.float64[NB, NLEV, NPROMA], wgtfac_e: dace.float64[NB, NLEV, NPROMA],
+                  vt: dace.float64[NB, NLEV, NPROMA], vn_ie: dace.float64[NB, NLEV, NPROMA],
+                  zkh: dace.float64[NB, NLEV, NPROMA]):
+    for jb in range(NB):
+        for jk in range(1, NLEV):
+            for je in range(NPROMA):
+                vn_ie[jb, jk, je] = vn[jb, jk, je] - vn[jb, jk - 1, je]
+                zkh[jb, jk, je] = vt[jb, jk, je] - wgtfac_e[jb, jk, je]
+
+
+def test_icon_one_loop(remainder_strategy, branch_mode):
+    nb, nlev, nproma = 2, 16, 64
+    vn = numpy.random.rand(nb, nlev, nproma)
+    wgtfac_e = numpy.random.rand(nb, nlev, nproma)
+    vt = numpy.random.rand(nb, nlev, nproma)
+    vn_ie = numpy.zeros((nb, nlev, nproma))
+    zkh = numpy.zeros((nb, nlev, nproma))
+    run_vectorization_test(
+        dace_func=icon_one_loop,
+        arrays={"vn": vn, "wgtfac_e": wgtfac_e, "vt": vt, "vn_ie": vn_ie, "zkh": zkh},
+        params={"NB": nb, "NLEV": nlev, "NPROMA": nproma},
+        sdfg_name="icon_one_loop",
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+    )
+
+
+@dace.program
+def icon_zekinh_gather(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA, 3],
+                       edge_blk: dace.int32[NB, NPROMA, 3], z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+                       z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+    for jb in range(NB):
+        for jk in range(NLEV):
+            for jc in range(NPROMA):
+                z_ekinh[jb, jk, jc] = (
+                    e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
+                    e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
+                    e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
+
+
+@pytest.mark.xfail(
+    reason="BUG FINDING #2: 2-level indirect gather "
+    "z_kin_hor_e[edge_blk[jb,jc,m], jk, edge_idx[jb,jc,m]] (ICON cell-from-edges "
+    "bilinear interp) breaks the vectorizer with InvalidSDFGEdgeError 'Memlet data "
+    "does not match source/destination' — the double index-table gather over the "
+    "vectorised jc axis is not handled. Tracked; flips to hard-fail when fixed.",
+    strict=True)
+def test_icon_zekinh_gather(remainder_strategy, branch_mode):
+    nb, nlev, nproma = 2, 16, 64
+    e_bln = numpy.random.rand(nb, 3, nproma)
+    # Valid 0-based index tables into [NB] (blk) and [NPROMA] (idx).
+    edge_idx = numpy.random.randint(0, nproma, size=(nb, nproma, 3)).astype(numpy.int32)
+    edge_blk = numpy.random.randint(0, nb, size=(nb, nproma, 3)).astype(numpy.int32)
+    z_kin_hor_e = numpy.random.rand(nb, nlev, nproma)
+    z_ekinh = numpy.zeros((nb, nlev, nproma))
+    run_vectorization_test(
+        dace_func=icon_zekinh_gather,
+        arrays={"e_bln": e_bln, "edge_idx": edge_idx, "edge_blk": edge_blk,
+                "z_kin_hor_e": z_kin_hor_e, "z_ekinh": z_ekinh},
+        params={"NB": nb, "NLEV": nlev, "NPROMA": nproma},
+        sdfg_name="icon_zekinh_gather",
+        remainder_strategy=remainder_strategy,
+        branch_mode=branch_mode,
+    )
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__, "-q"])
