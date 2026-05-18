@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
@@ -364,24 +365,55 @@ def test_loop_fission_tsvc_carried_dep_not_split(prog, arrs):
     _assert_noop_numeric(prog, args, n)
 
 
-def test_loop_fission_tsvc_s222_legal_split():
-    """TSVC s222: the ``a`` group (a+=bc; a-=bc) and the ``e`` recurrence
-    (e[i]=e[i-1]^2) are data-independent, so distribution is LEGAL -- the
-    pass splits them while keeping the recurrence intact and exact."""
-    n = 32
-    args = {k: np.random.rand(n) for k in "abce"}
+def test_loop_fission_tsvc_s222_correct_split():
+    """TSVC s222 distributes legally into the ``a``-group loop and the ``e``
+    recurrence loop. Rigorous oracle: a controlled *growing* ``e`` seed
+    (e[i]=e[i-1]^2 stays distinct & order-sensitive, so a wrong split or a
+    reordered recurrence is detected), an independent analytic reference for
+    ``e``, the net-zero invariant on ``a``, and an explicit check that the
+    two resulting loops partition the data (one touches only ``e``, the
+    other only ``a/b/c``)."""
+    n = 8
+    a = np.random.rand(n)
+    b = np.random.rand(n)
+    c = np.random.rand(n)
+    e = np.zeros(n)
+    e[0] = 1.1  # >1 -> recurrence grows, all e[i] distinct (no underflow)
+
     base = tsvc_s222.to_sdfg(simplify=True)
-    ref = {k: v.copy() for k, v in args.items()}
+    ref = dict(a=a.copy(), b=b.copy(), c=c.copy(), e=e.copy())
     copy.deepcopy(base)(**ref, N=n)
 
     sdfg = tsvc_s222.to_sdfg(simplify=True)
     assert LoopFission().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert _loop_count(sdfg) == 2, f"expected 2 loops, got {_loop_count(sdfg)}"
-    out = {k: v.copy() for k, v in args.items()}
+    loops = [cfg for cfg in sdfg.all_control_flow_regions(recursive=True) if isinstance(cfg, LoopRegion)]
+    assert len(loops) == 2, f"expected 2 loops, got {len(loops)}"
+
+    # Partition check: one loop's body touches only `e`, the other only a/b/c.
+    def touched(loop):
+        return {
+            nd.data
+            for st in loop.all_states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)
+        }
+    e_loops = [L for L in loops if 'e' in touched(L)]
+    a_loops = [L for L in loops if 'a' in touched(L)]
+    assert len(e_loops) == 1 and len(a_loops) == 1 and e_loops[0] is not a_loops[0], \
+        "loops did not partition into one a-group loop and one e-recurrence loop"
+    assert 'a' not in touched(e_loops[0]) and 'b' not in touched(e_loops[0]), "e-loop touched a/b"
+    assert 'e' not in touched(a_loops[0]), "a-loop touched the e recurrence"
+
+    out = dict(a=a.copy(), b=b.copy(), c=c.copy(), e=e.copy())
     sdfg(**out, N=n)
-    for k in args:
-        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+    # Independent analytic reference for the recurrence.
+    e_exp = e.copy()
+    for i in range(1, n):
+        e_exp[i] = e_exp[i - 1] * e_exp[i - 1]
+    assert np.allclose(out['e'], e_exp), f"recurrence wrong after split: {out['e']} vs {e_exp}"
+    assert np.allclose(out['a'], a), "a must be unchanged (a+=bc; a-=bc nets to zero)"
+    for k in ('a', 'b', 'c', 'e'):
+        assert np.allclose(out[k], ref[k]), f"split not value-preserving on {k}"
 
 
 def test_loop_fission_recurrence_plus_independent_splits():
