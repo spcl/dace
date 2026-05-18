@@ -160,7 +160,7 @@ class MoveIfIntoLoop(ppl.Pass):
             loop_c.remove_node(b)
         rc.remove_node(loop_c)
         for b in lb_blocks:
-            rc.add_node(b)
+            rc.add_node(b, ensure_unique_name=True)
         for e in lb_edges:
             rc.add_edge(e.src, e.dst, copy.deepcopy(e.data))
         if edge_into_loop is not None:
@@ -175,9 +175,9 @@ class MoveIfIntoLoop(ppl.Pass):
         new_loop = copy.deepcopy(loop_c)
         for b in list(new_loop.nodes()):
             new_loop.remove_node(b)
-        new_loop.add_node(inner_cb, is_start_block=True)
+        new_loop.add_node(inner_cb, is_start_block=True, ensure_unique_name=True)
 
-        parent.add_node(new_loop)
+        parent.add_node(new_loop, ensure_unique_name=True)
         for e in in_edges:
             parent.add_edge(e.src, new_loop, copy.deepcopy(e.data))
         for e in out_edges:

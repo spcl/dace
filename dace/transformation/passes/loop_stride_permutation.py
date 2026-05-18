@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Permute perfectly-nested loops to maximize unit-stride array accesses.
 
-The ``LoopRegion`` analogue of ``MinimizeStridePermutation``, intended to run
-before ``LoopToMap`` so the parallel maps it produces already have the
-contiguous axis innermost. Like the map version it must stay conservative:
-if the per-loop stride order cannot be deduced from concrete (symbol-free)
-strides it must do nothing rather than guess. Not implemented yet -- this is
-a structurally-complete no-op placeholder so the pipeline has a real, named
-slot before ``LoopToMap``.
+The ``LoopRegion`` analogue of ``MinimizeStridePermutation``, slotted before
+``LoopToMap``. Intentionally a **no-op**: a sound loop-level interchange
+would need a loop-interchange primitive (none exists) plus loop-carried
+dependence analysis. The canonicalization pipeline instead permutes the
+loops that *can* become maps as maps, right after ``LoopToMap``, via the
+proven, symbolic-safe ``MinimizeStridePermutation`` (dependence-free by the
+Map contract). This named slot is kept so a future direct loop-level
+implementation has an honest place; until then the work happens post-L2M.
 """
 from typing import Any, Dict, Optional
 
@@ -17,12 +18,9 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 @transformation.explicit_cf_compatible
 class LoopStridePermutation(ppl.Pass):
-    """Reorder loop nests for unit stride (no-op until implemented).
-
-    When implemented it must reuse the conservative scoring of
-    ``MinimizeStridePermutation``: undeducible/symbolic strides => no
-    permutation (a safe, idempotent no-op rather than a guess).
-    """
+    """Reorder loop nests for unit stride -- intentional no-op (see module
+    docstring): the pipeline permutes map-eligible loops as maps post-L2M
+    via the symbolic-safe ``MinimizeStridePermutation`` instead."""
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
@@ -35,7 +33,7 @@ class LoopStridePermutation(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """No-op until loop interchange for unit-stride is implemented.
+        """Intentional no-op; stride permutation runs post-LoopToMap on maps.
 
         :param sdfg: The SDFG (unmodified).
         :param pipeline_results: Results from previous passes (unused).

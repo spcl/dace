@@ -22,6 +22,7 @@ from dace.transformation.passes.conditional_component_fission import Conditional
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
+from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -92,8 +93,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # reduce / ssa: lift accumulator loops, unique loop iterators.
     s += [('reduce', LoopToReduce()), ('ssa', SSALoopIterators())]
 
-    # loop_stride_permutation (before LoopToMap): permute loops for unit
-    # stride (no-op stub until implemented; symbolic-safe by design).
+    # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
+    # interchange would need a loop-interchange primitive (none exists) and
+    # loop-carried-dependence analysis; instead the loops that *can* become
+    # maps are permuted as maps right after LoopToMap (see 'reorder' below),
+    # which is dependence-free by the Map contract and reuses the proven,
+    # symbolic-safe MinimizeStridePermutation.
     s += [('loop_stride_permutation', LoopStridePermutation())]
 
     # parallelize: canonical loops -> parallel maps.
@@ -103,6 +108,11 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
+
+    # reorder: permute the now-parallel map nests for unit stride (the loops
+    # that were LoopToMap-eligible). Symbolic-safe: undeducible strides ->
+    # no permutation.
+    s += [('reorder', MinimizeStridePermutation())]
 
     # fuse: vertical and horizontal map fusion in one fixpoint -- vertical is
     # listed first (priority), but horizontal can expose further vertical
