@@ -1,3 +1,6 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import dace
+import dace.sdfg.utils as sdutil
 from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
 from dace.transformation.interstate import StateFusionExtended
@@ -61,5 +64,68 @@ def test_extended_fusion():
     assert sdfg.number_of_nodes() == 1
 
 
+def test_extended_fusion_preserves_war_ordering():
+    """Fusing a read state with a later in-place write must keep the
+    write ordered after the reads (write-after-read / anti-dependency).
+
+    ``s1`` reads ``A[k]`` in two tasklets; the later ``s2`` does
+    ``A[k] = A[k] + 1``. ``A`` is an input of the first connected
+    component and an in-out of the second, landing in the same fused
+    cc. The same-cc read-write branch of ``can_be_applied`` previously
+    neither rejected nor registered a happens-before connection for this
+    shape, so no ordering edge was inserted and the fused-in write could
+    be scheduled before the reads. Assert structurally that, after
+    fusion, every ``A`` reader is ordered before the ``A`` write (a
+    graph path exists), which the dropped happens-before edge previously
+    broke.
+    """
+    sdfg = SDFG('state_fusion_war_ordering')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_array('C', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('read_A', is_start_block=True)
+    s2 = sdfg.add_state('increment_A')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    ar_b = s1.add_read('A')
+    bw = s1.add_write('B')
+    tb = s1.add_tasklet('rb', {'_in'}, {'_out'}, '_out = _in')
+    s1.add_edge(ar_b, None, tb, '_in', Memlet('A[k]'))
+    s1.add_edge(tb, '_out', bw, None, Memlet('B[k]'))
+
+    ar_c = s1.add_read('A')
+    cw = s1.add_write('C')
+    tc = s1.add_tasklet('rc', {'_in'}, {'_out'}, '_out = _in')
+    s1.add_edge(ar_c, None, tc, '_in', Memlet('A[k]'))
+    s1.add_edge(tc, '_out', cw, None, Memlet('C[k]'))
+
+    ar2 = s2.add_read('A')
+    aw2 = s2.add_write('A')
+    ti = s2.add_tasklet('inc', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s2.add_edge(ar2, None, ti, '_in', Memlet('A[k]'))
+    s2.add_edge(ti, '_out', aw2, None, Memlet('A[k]'))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    assert sdfg.number_of_nodes() == 1, 'states were not fused'
+    fused = sdfg.nodes()[0]
+
+    a_readers = [t for t in fused.nodes() if isinstance(t, dace.nodes.Tasklet) and t.label in ('rb', 'rc')]
+    a_writers = {
+        n
+        for n in fused.nodes()
+        if isinstance(n, dace.nodes.AccessNode) and n.data == 'A' and fused.in_degree(n) > 0
+    }
+    assert len(a_readers) == 2 and len(a_writers) >= 1
+
+    for r in a_readers:
+        reachable = set(sdutil.dfs_conditional(fused, sources=[r]))
+        assert a_writers & reachable, \
+            f'WAR ordering lost: reader {r.label} is not ordered before the in-place A write'
+
+
 if __name__ == '__main__':
     test_extended_fusion()
+    test_extended_fusion_preserves_war_ordering()
