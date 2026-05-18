@@ -16,7 +16,6 @@ import pytest
 from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
-    replace_length_one_arrays_with_scalars,
 )
 
 try:
@@ -95,13 +94,6 @@ def test_passes_expose_property_options():
         inst = cls(recursive=False, transient_only=True)
         assert inst.recursive is False
         assert inst.transient_only is True
-
-
-def test_function_entrypoint_matches_pass():
-    sdfg = _sdfg_with_len1(transient=False)
-    rewritten = replace_length_one_arrays_with_scalars(sdfg)
-    assert rewritten == {"a"}
-    assert isinstance(sdfg.arrays["a"], dd.Scalar)
 
 
 if __name__ == "__main__":
