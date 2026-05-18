@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from dace import data, dtypes, symbolic
+from dace import data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
@@ -10,18 +10,6 @@ from typing import Callable, Dict, List, Optional, Set, Union
 
 #############################################################################
 # Connector type inference
-
-
-def _is_single_element_subset(subset) -> bool:
-    if subset is None:
-        return False
-    num_elements = subset.num_elements()
-    if num_elements == 1:
-        return True
-    try:
-        return symbolic.simplify(num_elements - 1) == 0
-    except (AttributeError, TypeError):
-        return False
 
 
 def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
@@ -38,7 +26,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     e = next(state.out_edges_by_connector(node, cname))
     if cname is None:
         return None
-    scalar = (_is_single_element_subset(e.data.subset)
+    scalar = (bool(e.data.subset) and e.data.subset.num_elements() == 1
               and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
@@ -76,7 +64,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = _is_single_element_subset(e.data.subset)
+                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
                 if e.data.data is not None:
                     allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
