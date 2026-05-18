@@ -13,6 +13,7 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
+from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalizationPipeline
 from dace.transformation.passes.vectorization.detect_gather import DetectGather
 from dace.transformation.passes.vectorization.detect_scatter import DetectScatter
@@ -78,8 +79,11 @@ class VectorizeCPU(ppl.Pipeline):
         :param vector_width: SIMD lane count.
         :param try_to_demote_symbols_in_nsdfgs: demote NSDFG symbols to scalars when safe.
         :param fuse_overlapping_loads: fuse an array read at multiple
-            overlapping subsets into one shared union-window staging buffer
-            at the NSDFG boundary instead of one ``vector_copy`` per subset.
+            overlapping subsets into one shared union window. With
+            ``insert_copies=True`` this is baked into the NSDFG staging copy
+            (one union buffer instead of one ``vector_copy`` per subset);
+            with ``insert_copies=False`` the standalone ``FuseOverlappingLoads``
+            pass fuses the post-vectorization between-maps load fan.
         :param apply_on_maps: restrict vectorization to these map entries.
         :param insert_copies: insert copy-in/out around NSDFG boundaries.
         :param only_apply_vectorization_pass: run only ``Vectorize`` (skip prep/cleanup).
@@ -331,20 +335,30 @@ class VectorizeCPU(ppl.Pipeline):
             passes.append(vectorizer)
         else:
             passes = [RemoveMathCall(), vectorizer]
-        # ``fuse_overlapping_loads`` is now baked into the staging-copy
-        # boundary (``add_copies_before_and_after_nsdfg``): when on, an
-        # array read at multiple overlapping subsets gets one shared
-        # union-window buffer instead of one ``vector_copy`` per subset, so
-        # it composes with the movable / unmovable classification. The
-        # former standalone post-vectorizer ``FuseOverlappingLoads`` pass is
-        # no longer appended here for the CPU pipeline (the GPU pipeline
-        # still uses the standalone pass).
+        # ``fuse_overlapping_loads`` covers two distinct patterns:
+        #
+        # 1. ``insert_copies=True``: an array read at multiple overlapping
+        #    subsets is fused into one shared union-window staging buffer
+        #    *inside* ``add_copies_before_and_after_nsdfg`` (baked here so it
+        #    composes with the movable / unmovable classification).
+        # 2. ``insert_copies=False``: the post-vectorization between-maps
+        #    ``MapEntry -> [AccessNode x N] -> MapEntry`` load fan, which is
+        #    not produced by the copy-staging path. This is still handled by
+        #    the standalone post-vectorizer ``FuseOverlappingLoads`` pass,
+        #    appended only when there is no copy-staging path to bake into.
+        #
+        # The two are mutually exclusive on ``insert_copies`` so fusion
+        # never runs twice. (The GPU pipeline always uses the standalone
+        # pass.)
         #
         # TODO: ``fuse_overlapping_loads`` is one of the optional
         # optimisation knobs the pipeline exposes (alongside
         # ``lower_to_intrinsics``, ``insert_copies``,
         # ``try_to_demote_symbols_in_nsdfgs``, etc.). A future slice should
-        # collect them under a dedicated ``optimisations`` group / preset.
+        # collect them under a dedicated ``optimisations`` group / preset,
+        # and could fully bake pattern (2) to retire the standalone pass.
+        if fuse_overlapping_loads and not insert_copies:
+            passes.append(FuseOverlappingLoads())
         # Lower the scalar ``assign_<i>`` fans the vectorizer leaves around
         # each ``_packed`` access node into single ``gather_double`` /
         # ``scatter_double`` / ``strided_{load,store}_double`` intrinsic

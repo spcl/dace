@@ -47,6 +47,31 @@ def _iter_mask_name(sdfg: dace.SDFG) -> Optional[str]:
     return None
 
 
+def _compute_subset_union(subsets):
+    """Bounding-box union of overlapping subsets and its per-dim shape.
+
+    Reuses the exact union / extent math of the standalone
+    :class:`~dace.transformation.passes.vectorization.fuse_overlapping_loads.FuseOverlappingLoads`
+    pass, so the baked-in fusion (knob ``fuse_overlapping_loads``) and the
+    legacy standalone pass stay numerically identical: the bounding box is
+    the left fold of :meth:`dace.subsets.Range.union` over ``subsets`` and
+    each dimension extent is ``int_floor((end + 1) - begin, step)``.
+    ``int_floor`` (not sympy ``//``) is used so a strided window emits a
+    correct C++ integer extent rather than a broken ``floor((x - 1) / s)``.
+
+    :param subsets: Iterable of :class:`dace.subsets.Range` accesses to the
+        same array (the multiple per-lane / per-stencil-arm views that the
+        unmovable-array classification gathered).
+    :returns: ``(union_subset, union_shape)`` — the bounding-box
+        :class:`dace.subsets.Range` and its integer per-dim shape list.
+    """
+    union_subset = None
+    for s in subsets:
+        union_subset = s if union_subset is None else union_subset.union(s)
+    union_shape = [dace.symbolic.int_floor((e + 1) - b, s) for (b, e, s) in union_subset]
+    return union_subset, union_shape
+
+
 def emit_staging_copy(state: SDFGState, src: dace.nodes.Node, src_conn, dst: dace.nodes.Node, dst_conn,
                       real_memlet: dace.memlet.Memlet, buf_name: str, vector_width: int, direction: str, *,
                       mask_name: Optional[str] = None, gate_extent: bool = False) -> None:
@@ -1389,6 +1414,7 @@ def add_copies_before_and_after_nsdfg(
     vector_width: int,
     vector_storage: dace.dtypes.StorageType,
     skip: Set[str],
+    fuse_overlapping_loads: bool = False,
 ) -> Set[str]:
     """Add vector copy operations before and after a nested SDFG node.
 
@@ -1401,6 +1427,12 @@ def add_copies_before_and_after_nsdfg(
     :param vector_width: The width of vector operations.
     :param vector_storage: Storage type for vector arrays.
     :param skip: Data names never copied (used for unstructured loads).
+    :param fuse_overlapping_loads: when True, an array read at multiple
+        overlapping subsets is fused into one shared union-window staging
+        buffer (consumers become offset views into it) instead of one
+        independent copy per subset (jacobi2d-style stencils). Replaces
+        the former standalone post-vectorizer ``FuseOverlappingLoads``
+        pass; baked here so it composes with the staging classification.
     :returns: The set of vector data names inserted at the boundary.
     """
     # ``collect_all_memlets_to_dataname`` lives in ``utils.queries`` (S1b);
@@ -1463,24 +1495,58 @@ def add_copies_before_and_after_nsdfg(
             if k in unmovable_arrays:
                 del unmovable_arrays[k]
 
-    # Generate name mappings
+    # Generate name mappings.
+    #
+    # Default (knob off / single subset): one independent ``(W,)`` staging
+    # buffer per subset (``A_vec_0``, ``A_vec_1``, ...), each filled by its
+    # own ``vector_copy<T, W>``. For a jacobi2d-style stencil this emits 5
+    # redundant copies of overlapping windows of the same inner array.
+    #
+    # Fused (``fuse_overlapping_loads`` and >= 2 subsets): one shared
+    # N-D buffer ``A_vec`` shaped to the bounding-box union of all subsets,
+    # staged once; the N consumers become offset-slice views into it
+    # (``fused_targets``). This bakes in the former standalone
+    # ``FuseOverlappingLoads`` pass at the staging boundary so it composes
+    # with the movable / unmovable classification (knob default off keeps
+    # the legacy per-subset behaviour byte-identical).
     subset_to_name_map = dict()
+    fused_targets = dict()
+    fused_arrays = dict()
     for unmovable_arr_name, subsets in unmovable_arrays.items():
         # Insert copy-ins
         desc = inner_sdfg.arrays[unmovable_arr_name]
-        for i, subset in enumerate(subsets):
-            vec_arr_name = VecNameScheme.make_indexed(unmovable_arr_name, i)
+        if fuse_overlapping_loads and len(subsets) >= 2:
+            union_subset, union_shape = _compute_subset_union(subsets)
+            vec_arr_name = VecNameScheme.make(unmovable_arr_name)
             if vec_arr_name not in inner_sdfg.arrays:
                 inner_sdfg.add_array(
                     name=vec_arr_name,
-                    shape=(vector_width, ),
+                    shape=tuple(union_shape),
                     dtype=desc.dtype,
                     location=desc.location,
                     transient=True,
-                    strides=(1, ),
                     find_new_name=False,
                 )
-            subset_to_name_map[(unmovable_arr_name, subset)] = vec_arr_name
+            fused_arrays[unmovable_arr_name] = (vec_arr_name, union_subset)
+            union_begin = dace.subsets.Range([(b, b, 1) for (b, _, _) in union_subset])
+            for subset in subsets:
+                offsetted = copy.deepcopy(subset).offset_new(union_begin, True)
+                subset_to_name_map[(unmovable_arr_name, subset)] = vec_arr_name
+                fused_targets[(unmovable_arr_name, subset)] = offsetted
+        else:
+            for i, subset in enumerate(subsets):
+                vec_arr_name = VecNameScheme.make_indexed(unmovable_arr_name, i)
+                if vec_arr_name not in inner_sdfg.arrays:
+                    inner_sdfg.add_array(
+                        name=vec_arr_name,
+                        shape=(vector_width, ),
+                        dtype=desc.dtype,
+                        location=desc.location,
+                        transient=True,
+                        strides=(1, ),
+                        find_new_name=False,
+                    )
+                subset_to_name_map[(unmovable_arr_name, subset)] = vec_arr_name
 
     # For every memlet, replace the subset and
     # First replace all memlets, then access nodes
@@ -1496,9 +1562,14 @@ def add_copies_before_and_after_nsdfg(
                 continue
             if (edge.data.data, edge.data.subset) in subset_to_name_map:
                 vec_name = subset_to_name_map[(edge.data.data, edge.data.subset)]
-                # Then we need to get the new nae
-                vec_subset = dace.subsets.Range([(0, vector_width - 1, 1)])
-                edge.data = dace.memlet.Memlet(data=vec_name, subset=vec_subset)
+                fused_subset = fused_targets.get((edge.data.data, edge.data.subset))
+                if fused_subset is not None:
+                    # Fused: offset-slice view into the one shared buffer.
+                    edge.data = dace.memlet.Memlet(data=vec_name, subset=copy.deepcopy(fused_subset))
+                else:
+                    # Per-subset: the whole ``(W,)`` independent buffer.
+                    vec_subset = dace.subsets.Range([(0, vector_width - 1, 1)])
+                    edge.data = dace.memlet.Memlet(data=vec_name, subset=vec_subset)
 
     for inner_state in inner_sdfg.all_states():
         for node in inner_state.data_nodes():
@@ -1596,12 +1667,68 @@ def add_copies_before_and_after_nsdfg(
             emit_staging_copy(target_state, v_access, None, orig_access, None, orig_memlet, vec_name, vector_width,
                               "out", mask_name=mask_name)
 
+    def _emit_fused_union_copy(target_state, unmovable_name, vec_name, union_subset, direction):
+        """Splice ONE shared-buffer staging copy for a fused unmovable array.
+
+        Unlike :func:`_emit_unmovable_copy` (one ``vector_copy<T, W>`` per
+        subset), this copies the whole bounding-box union window once into
+        the single N-D shared buffer. The buffer is shaped to the union
+        extent (not ``W``), so a plain AccessNode -> AccessNode memlet copy
+        is emitted (lowered by DaCe codegen); the N consumers are already
+        rewritten as offset-slice views into this one buffer (via
+        ``fused_targets``). Mirrors the proven union-copy edge of the
+        standalone ``FuseOverlappingLoads`` pass.
+
+        :param target_state: State to splice into (copy-in / copy-out).
+        :param unmovable_name: Original (unmovable) data name.
+        :param vec_name: Shared union-window buffer name.
+        :param union_subset: Bounding-box subset on the original array.
+        :param direction: ``"in"`` (orig -> buffer) or ``"out"``
+            (buffer -> orig).
+        """
+        assert direction in ("in", "out"), direction
+        orig_access = target_state.add_access(unmovable_name)
+        orig_access.setzero = True
+        v_access = target_state.add_access(vec_name)
+        v_access.setzero = True
+        union_memlet = dace.memlet.Memlet(data=unmovable_name, subset=copy.deepcopy(union_subset))
+        if direction == "in":
+            target_state.add_edge(orig_access, None, v_access, None, union_memlet)
+        else:
+            target_state.add_edge(v_access, None, orig_access, None, union_memlet)
+
     # Insert copy-ins and outs
     name_to_subset_map = dict()
     for unmovable_arr_name, subsets in unmovable_arrays.items():
         # If a packed stored, then continue
         # Add a unique vector array for each unique subset
         desc = inner_sdfg.arrays[unmovable_arr_name]
+
+        if unmovable_arr_name in fused_arrays:
+            # Fused: one union-window copy in / out instead of one per
+            # subset. The shared buffer is N-D (union extent, != W), so the
+            # masked-remainder per-lane ``_iter_mask`` gate of
+            # ``emit_staging_copy`` does not apply; fail loud rather than
+            # silently OOB / un-gated when both are requested together.
+            vec_arr_name, union_subset = fused_arrays[unmovable_arr_name]
+            if unmovable_arr_name in read_set:
+                copy_in_state = find_copy_in_state(inner_sdfg, nsdfg_node,
+                                                   {str(s)
+                                                    for s in union_subset.free_symbols}, unmovable_arr_name)
+                if _iter_mask_name(copy_in_state.sdfg) is not None:
+                    raise NotImplementedError(
+                        "fuse_overlapping_loads with a masked remainder is not supported yet: the shared "
+                        f"union-window staging copy for {unmovable_arr_name!r} is not iter_mask-gated. Use "
+                        "fuse_overlapping_loads=False or a non-masked remainder strategy.")
+                _emit_fused_union_copy(copy_in_state, unmovable_arr_name, vec_arr_name, union_subset, "in")
+            if unmovable_arr_name in write_set:
+                if _iter_mask_name(copy_out_state.sdfg) is not None:
+                    raise NotImplementedError(
+                        "fuse_overlapping_loads with a masked remainder is not supported yet: the shared "
+                        f"union-window staging copy for {unmovable_arr_name!r} is not iter_mask-gated. Use "
+                        "fuse_overlapping_loads=False or a non-masked remainder strategy.")
+                _emit_fused_union_copy(copy_out_state, unmovable_arr_name, vec_arr_name, union_subset, "out")
+            continue
 
         if unmovable_arr_name in read_set:
             for i, subset in enumerate(subsets):

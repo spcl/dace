@@ -61,7 +61,8 @@ class Vectorize(ppl.Pass):
                  insert_copies: bool,
                  fail_on_unvectorizable: bool,
                  eliminate_trivial_vector_map: bool,
-                 user_skip_nsdfg_arrays: Optional[Set[str]] = None):
+                 user_skip_nsdfg_arrays: Optional[Set[str]] = None,
+                 fuse_overlapping_loads: bool = False):
         """Configure the vectorizer.
 
         :param templates: op-name to C++ vector-template string mapping.
@@ -77,6 +78,13 @@ class Vectorize(ppl.Pass):
         :param fail_on_unvectorizable: raise instead of skipping unvectorizable maps.
         :param eliminate_trivial_vector_map: remove trivial single-lane vector maps.
         :param user_skip_nsdfg_arrays: array names to skip during NSDFG copying.
+        :param fuse_overlapping_loads: when True, the NSDFG-boundary copy
+            classifier fuses multiple overlapping read subsets of the same
+            array into a single shared union-window staging buffer (the
+            consumers become offset views into it) instead of emitting one
+            independent copy per subset. Baked into the copy-emission
+            classifier so it composes with the staging path, replacing the
+            former standalone post-vectorizer ``FuseOverlappingLoads`` pass.
         """
         super().__init__()
 
@@ -89,6 +97,7 @@ class Vectorize(ppl.Pass):
         self.vector_op_numeric_type = vector_op_numeric_type
         self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
         self.insert_copies = insert_copies
+        self.fuse_overlapping_loads = fuse_overlapping_loads
         self.fail_on_unvectorizable = fail_on_unvectorizable
         self._used_names = set()
         self._apply_on_maps = apply_on_maps
@@ -247,7 +256,9 @@ class Vectorize(ppl.Pass):
                 # `skip` parameter — replaces the previously-hardcoded cloudsc array names.
                 copy_skip = unstructured_data | self.user_skip_nsdfg_arrays
                 inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
-                                                                         self.vector_input_storage, copy_skip)
+                                                                         self.vector_input_storage, copy_skip,
+                                                                         fuse_overlapping_loads=self.
+                                                                         fuse_overlapping_loads)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:

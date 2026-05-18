@@ -180,6 +180,54 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     return copy_sdfg
 
 
+def assert_fused_nsdfg_structure(sdfg: dace.SDFG, bases):
+    """Verify the baked ``fuse_overlapping_loads`` collapsed the staging buffers.
+
+    Two invariants are checked per fused array base name:
+
+    1. **Collapse**: no legacy per-subset ``<base>_vec_0 .. <base>_vec_n``
+       buffer survives anywhere — the knob must have replaced the N
+       independent ``vector_copy`` staging buffers with a single shared
+       union-window buffer ``<base>_vec``.
+    2. **Wiring**: at least one body NSDFG holds a ``<base>_vec`` access
+       node that is *both* produced (the union staging copy-in writes it)
+       *and* consumed (the inner map body reads it). This is the genuine
+       fused-read buffer; it proves the union copy is connected to the map
+       body and did not orphan it.
+
+    The shared name ``<base>_vec`` is also used for unrelated *movable*
+    boundary buffers (e.g. a written output) which are produced-only inside
+    their NSDFG — those are not fusion products, so the wiring check is
+    satisfied by *any* NSDFG (existential), not all. Graph well-formedness
+    and numerical correctness are already covered by ``sdfg.validate()`` and
+    the e2e compare inside :func:`run_vectorization_test`; this adds the
+    fusion-specific structural guarantee on top so a test cannot silently
+    pass e2e while the fusion is structurally broken.
+
+    :param sdfg: The vectorized SDFG returned by :func:`run_vectorization_test`.
+    :param bases: Array base names expected to be load-fused (e.g. ``("A",)``).
+    """
+    for base in bases:
+        prefix = f"{base}_vec_"
+        fully_wired = False
+        for nsdfg in (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)):
+            inner = nsdfg.sdfg
+            indexed = [a for a in inner.arrays if a.startswith(prefix) and a[len(prefix):].isdigit()]
+            assert not indexed, (f"fuse_overlapping_loads on, but per-subset buffers {indexed} survived for "
+                                 f"{base!r} in NSDFG {inner.label}: fusion did not collapse them")
+            shared = f"{base}_vec"
+            if shared not in inner.arrays:
+                continue
+            produced = any(st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
+                           if an.data == shared)
+            consumed = any(st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
+                           if an.data == shared)
+            if produced and consumed:
+                fully_wired = True
+        assert fully_wired, (f"no NSDFG holds a fully-wired shared fused buffer {base}_vec (produced by the union "
+                             f"staging copy-in and consumed by the map body) — fusion did not connect the buffer")
+
+
 def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> dace.SDFG:
     sd1 = dace.SDFG("disjoint_chain")
     cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
