@@ -1,14 +1,31 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Replicate a conditional per independent output so it can be fissioned.
+""" Replicate a non-fissionable NestedSDFG per independent output so it can
+be fissioned.
 
-The dace frontend lowers ``for i: if c: A[i]=..; B[i]=..`` to a map whose
-body is one ``NestedSDFG`` holding a ``ConditionalBlock``. ``MapFission``
-refuses such a node (the branch cannot be split in place). This pass clones
-the NestedSDFG once per independent output connector group -- the shared
-condition is deep-copied into every clone -- and prunes each clone to its
-group. The map then has several independent NestedSDFG children, which
-ordinary ``MapFission`` splits into one map per output. It is a no-op when a
-NestedSDFG has a single output group (nothing to fission).
+The dace frontend lowers two patterns to a map whose body is one
+``NestedSDFG`` that ``MapFission`` refuses to split in place:
+
+  * ``for i: if c: A[i]=..; B[i]=..`` -- the NestedSDFG holds a
+    ``ConditionalBlock`` (the branch cannot be split in place); and
+  * ``for i: A[i]=B[idx[i]]; C[i]=D[idx[i]]`` -- indirect (gather/scatter)
+    access, where ``idx[i]`` becomes an interstate-edge symbol assignment
+    (``__sym = __tmp``) that depends on the map iterator, which
+    ``MapFission`` rejects (it cannot hoist that assignment out of the
+    fissioned maps).
+
+Both are the same shape: one NestedSDFG with several independent outputs.
+This pass clones the NestedSDFG once per independent output connector group
+-- the shared condition / shared indirection-symbol interstate assignments
+are deep-copied into every clone, so each clone keeps the symbols and their
+defining assignments it needs -- and prunes each clone to its group. The map
+then has several independent NestedSDFG children, which ordinary
+``MapFission`` (subgraph case) splits into one map per output. It is a no-op
+when a NestedSDFG has a single output group (nothing to fission).
+
+Despite the historical name, the trigger is *not* limited to conditionals:
+any interstate-edge assignment also qualifies (by the canonicalization
+convention these only ever encode indirect-access index symbols, never
+computation).
 """
 import copy
 from typing import Any, Dict, Optional, Set
@@ -22,6 +39,17 @@ from dace.transformation import pass_pipeline as ppl, transformation
 def _has_conditional(sdfg: SDFG) -> bool:
     """Whether ``sdfg`` contains a ``ConditionalBlock`` (recursively)."""
     return any(isinstance(cfg, ConditionalBlock) for cfg in sdfg.all_control_flow_regions(recursive=True))
+
+
+def _has_interstate_assignments(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` has any interstate edge carrying an assignment.
+
+    By the canonicalization convention these encode indirect-access index
+    symbols (``__sym = idx[i]``); ``MapFission`` refuses to split a map
+    whose NestedSDFG body has such a map-iterator-dependent assignment, so
+    the NestedSDFG must be replicated per output group first.
+    """
+    return any(e.data.assignments for e in sdfg.all_interstate_edges())
 
 
 def _output_dependency(sdfg: SDFG, out_name: str, input_names: Set[str]) -> Set[str]:
@@ -57,7 +85,8 @@ def _output_dependency(sdfg: SDFG, out_name: str, input_names: Set[str]) -> Set[
 
 @transformation.explicit_cf_compatible
 class ConditionalComponentFission(ppl.Pass):
-    """Replicate a NestedSDFG's conditional per independent output group."""
+    """Replicate a MapFission-blocking NestedSDFG (conditional or
+    indirection-symbol bearing) per independent output group."""
     CATEGORY: str = 'Canonicalization'
 
     def modifies(self) -> ppl.Modifies:
@@ -95,9 +124,10 @@ class ConditionalComponentFission(ppl.Pass):
         :param state: The state owning ``node``.
         :param node: The NestedSDFG node.
         :returns: A list of connector-name sets, or ``None`` if the node is
-            not a clean conditional-bearing candidate.
+            not a clean candidate (no conditional and no indirection-symbol
+            interstate assignment that would block in-place ``MapFission``).
         """
-        if not _has_conditional(node.sdfg):
+        if not _has_conditional(node.sdfg) and not _has_interstate_assignments(node.sdfg):
             return None
         out_conns = [c for c in node.out_connectors]
         if len(out_conns) < 2:
