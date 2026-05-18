@@ -1471,7 +1471,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return TypedConstant(-a.value, dtype=a.dtype)
         if isinstance(a, sympy.Number):
             return -a
-        return _SerializedSymbolicParser._mul(sympy.S.NegativeOne, a)
+        return _SerializedSymbolicParser._binop_mul(sympy.S.NegativeOne, a)
 
     @staticmethod
     def _binop_sub(a, b):
@@ -1483,6 +1483,17 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
         if len(args) > 1:
             args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
+        coeff = sympy.S.One
+        nonnumeric_args = []
+        for arg in args:
+            if not isinstance(arg, TypedConstant) and _is_sympy_number(arg):
+                coeff *= arg
+            else:
+                nonnumeric_args.append(arg)
+        if coeff != 1 or not nonnumeric_args:
+            args = [coeff] + nonnumeric_args
+        else:
+            args = nonnumeric_args
         if not args:
             return sympy.Integer(1)
         return _SerializedSymbolicParser._mul(*args)

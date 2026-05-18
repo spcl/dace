@@ -7,6 +7,7 @@ import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
 from dace.properties import DictProperty, ListProperty
+from dace.sdfg.infer_types import infer_connector_types
 import sympy
 
 
@@ -197,6 +198,31 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int64)'
     assert symbolic.serialize_symbolic(rng.ranges[0][2]) == '1'
     assert symbolic.serialize_symbolic(rng.tile_sizes[0]) == '1'
+
+
+def test_scalar_memlet_connector_type_after_symbolic_range_roundtrip():
+    i = symbolic.symbol('i', dtype=dace.int64)
+    stencil_i = symbolic.symbol('stencil_i')
+    start = 2 * i - 2 * stencil_i + 1
+    rng = subsets.Range([(start, start, 1)])
+    restored = subsets.Range.from_json(rng.to_json())
+    restored.replace({i: stencil_i})
+
+    assert restored.num_elements() == 1
+
+    sdfg = dace.SDFG('scalar_memlet_connector_after_symbolic_roundtrip')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_scalar('B', dace.float64)
+    state = sdfg.add_state()
+    read = state.add_read('A')
+    tasklet = state.add_tasklet('use_scalar', {'inp'}, {'out'}, 'out = inp')
+    write = state.add_write('B')
+    state.add_edge(read, None, tasklet, 'inp', dace.Memlet(data='A', subset=restored))
+    state.add_edge(tasklet, 'out', write, None, dace.Memlet('B[0]'))
+
+    infer_connector_types(sdfg)
+
+    assert tasklet.in_connectors['inp'] == dace.float64
 
 
 def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
