@@ -30,53 +30,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from _util import build_sdfg, f2py_compile, have_flang
+from _util import f2py_compile, have_flang
 from cloudsc_full._registries import (
     CLOUDSC_F90FLAGS,
-    get_inputs_physical,
-    get_outputs,
     program_outputs,
 )
+from cloudsc_full._harness import run_cloudsc
 
 _HERE = Path(__file__).resolve().parent
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
-
-
-def _sdfg_call_args(sdfg, scalar_values):
-    from dace.data import Scalar
-    arglist = sdfg.arglist()
-    out = {}
-    for k, v in scalar_values.items():
-        desc = arglist.get(k)
-        if desc is None or isinstance(desc, Scalar):
-            out[k] = v
-        else:
-            decl_dtype = str(desc.dtype) if hasattr(desc, "dtype") else ""
-            if "bool" in decl_dtype.lower():
-                out[k] = np.array([bool(v)], dtype=np.bool_)
-            elif isinstance(v, float):
-                out[k] = np.array([v], dtype=np.float64)
-            else:
-                out[k] = np.array([v], dtype=np.int32)
-    return out
-
-
-def _lower_keys(d):
-    return {k.lower(): v for k, v in d.items()}
-
-
-def _f2py_argnames(fn):
-    import re
-    doc = fn.__doc__ or ""
-    match = re.match(r"\s*\w+\((.*?)\)", doc, re.DOTALL)
-    if not match:
-        return set()
-    arglist = match.group(1)
-    optional = set()
-    for m in re.finditer(r"\[([^\]]+)\]", arglist):
-        optional.update(s.strip() for s in m.group(1).split(","))
-    arglist = re.sub(r"\[[^\]]*\]", "", arglist)
-    return {s.strip() for s in arglist.split(",") if s.strip()} | optional
 
 
 @pytest.fixture(scope="module")
@@ -99,26 +61,7 @@ def _f2py_bottom_half(tmp_path_factory):
 # Physical (NaN-free) inputs: the bridge is bit-identical to gfortran here.
 def test_cloudsc_bottom_half_numerical(tmp_path, _f2py_bottom_half, _strict_fp_cpu_args):
     src = (_HERE / "cloudsc_bottom_half.F90").read_text()
-
-    sdfg_dir = tmp_path / "sdfg"
-    sdfg_dir.mkdir(parents=True, exist_ok=True)
-    sdfg = build_sdfg(src, sdfg_dir, name="cloudsc_bottom_half", entry="_QPcloudscouter").build()
-
-    rng = np.random.default_rng(42)
-    inputs = get_inputs_physical(rng)
-    outputs_ref = {k.lower(): v for k, v in get_outputs(rng).items()}
-    outputs_sdfg = {k: v.copy(order="F") for k, v in outputs_ref.items()}
-
-    accepted = _f2py_argnames(_f2py_bottom_half.cloudscouter)
-    all_kw_ref = {**_lower_keys(inputs), **_lower_keys(outputs_ref)}
-    _f2py_bottom_half.cloudscouter(**{k: v for k, v in all_kw_ref.items() if k in accepted})
-
-    _scalar_types = (bool, int, float, np.bool_, np.integer, np.floating)
-    scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, _scalar_types)}
-    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, _scalar_types)}
-    sdfg_kwargs.update(_lower_keys(outputs_sdfg))
-    sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
-    sdfg(**sdfg_kwargs)
+    outputs_sdfg, outputs_ref = run_cloudsc(src, "cloudsc_bottom_half", _f2py_bottom_half, tmp_path / "sdfg")
 
     for name in program_outputs:
         np.testing.assert_allclose(

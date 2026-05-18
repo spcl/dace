@@ -42,82 +42,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from _util import build_sdfg, f2py_compile, have_flang
+from _util import f2py_compile, have_flang
 from cloudsc_full._registries import (
     CLOUDSC_F90FLAGS,
-    get_inputs_physical,
-    get_outputs,
     program_outputs,
 )
+from cloudsc_full._harness import run_cloudsc
 
 _HERE = Path(__file__).resolve().parent
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
-
-
-def _sdfg_call_args(sdfg, scalar_values: dict) -> dict:
-    """Route each scalar arg in ``scalar_values`` to either a plain
-    Python scalar (if the SDFG classified it as a symbol or Scalar)
-    or a length-1 numpy array (if classified as a length-1 Array).
-    Per `feedback_scalar_io_convention` the bridge can register a
-    Fortran scalar dummy as either Scalar (intent(in)) or length-1
-    Array (intent(inout)/(out))  --  this helper picks the binding the
-    SDFG actually expects.
-
-    For LOGICAL scalars the bridge declares the length-1 array as
-    ``bool *`` (1-byte element).  Routing them as ``np.int32`` (4
-    bytes) only accidentally works for ``{0, 1}`` because the LSB
-    happens to match -- any value with bit-0 = 0 (e.g. 256, -2)
-    would read as ``false``.  Match the declared dtype explicitly.
-    """
-    from dace.data import Scalar
-
-    arglist = sdfg.arglist()
-    out = {}
-    for k, v in scalar_values.items():
-        desc = arglist.get(k)
-        if desc is None or isinstance(desc, Scalar):
-            out[k] = v
-        else:
-            # Pick the numpy dtype that matches the bridge's
-            # declaration -- bool stays 1-byte, float stays 8-byte,
-            # everything else int32.
-            decl_dtype = str(desc.dtype) if hasattr(desc, "dtype") else ""
-            if "bool" in decl_dtype.lower():
-                out[k] = np.array([bool(v)], dtype=np.bool_)
-            elif isinstance(v, float):
-                out[k] = np.array([v], dtype=np.float64)
-            else:
-                out[k] = np.array([v], dtype=np.int32)
-    return out
-
-
-def _lower_keys(d: dict) -> dict:
-    """Fortran-source identifier names are case-sensitive in flang's
-    HLFIR output but the Python wrappers expect lowercase kwargs.
-    Normalise the registry keys at call time."""
-    return {k.lower(): v for k, v in d.items()}
-
-
-def _f2py_argnames(fn) -> set:
-    """Parse ``cloudsc_ref.cloudscouter.__doc__`` to extract the actual
-    argument-name list f2py exposes.  f2py auto-derives shape symbols
-    (``klon``, ``klev``, ``nblocks``, ...) from array shapes and lists
-    them in brackets at the end of the signature.  Return a set of
-    accepted kwargs (lowercased)."""
-    import re
-
-    doc = fn.__doc__ or ""
-    match = re.match(r"\s*\w+\((.*?)\)", doc, re.DOTALL)
-    if not match:
-        return set()
-    arglist = match.group(1)
-    # Brackets enclose auto-derived shape symbols.
-    optional = set()
-    for m in re.finditer(r"\[([^\]]+)\]", arglist):
-        optional.update(s.strip() for s in m.group(1).split(","))
-    arglist = re.sub(r"\[[^\]]*\]", "", arglist)
-    return {s.strip() for s in arglist.split(",") if s.strip()} | optional
 
 
 @pytest.fixture(scope="module")
@@ -173,46 +107,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     physical regime is the correct contract.
     """
     src = (_HERE / "cloudsc.F90").read_text()
-
-    # SDFG via HLFIR bridge.  Use the DEFAULT_PIPELINE (the full
-    # bridge pipeline including inline-all / flatten-structs /
-    # lift-alloc-array-of-records / etc.)  --  the minimal
-    # ``hlfir-propagate-shapes`` pipeline used by the per-loopnest
-    # tests isn't enough for the full kernel.
-    sdfg_dir = tmp_path / "sdfg"
-    sdfg_dir.mkdir(parents=True, exist_ok=True)
-    sdfg = build_sdfg(src, sdfg_dir, name="cloudsc", entry="_QPcloudscouter").build()
-
-    rng = np.random.default_rng(42)
-    inputs = get_inputs_physical(rng)
-    # Lowercase output keys at construction so the SDFG-side call (which
-    # passes lowercase kwargs) writes through the same dict entries the
-    # per-output comparison loop below looks up by name.lower().
-    outputs_ref = {k.lower(): v for k, v in get_outputs(rng).items()}
-    outputs_sdfg = {k: v.copy(order="F") for k, v in outputs_ref.items()}
-
-    # Fortran-side call: gfortran-compiled CLOUDSCOUTER.  f2py
-    # auto-derives shape symbols from array shapes and accepts only
-    # the args in its parsed signature  --  filter our kwarg dict to
-    # avoid ``TypeError: takes at most N keyword arguments``.
-    accepted = _f2py_argnames(_f2py_ref.cloudscouter)
-    all_kwargs = {**_lower_keys(inputs), **_lower_keys(outputs_ref)}
-    _f2py_ref.cloudscouter(**{k: v for k, v in all_kwargs.items() if k in accepted})
-
-    # SDFG-side call: same kwargs, plus the scalar-arg routing that
-    # handles Scalar-vs-length-1-Array classification for every
-    # 0-d Python/numpy value (per feedback_scalar_io_convention).
-    # `np.bool_` must be included -- Fortran ``LOGICAL :: LAERICEAUTO``
-    # with no explicit intent defaults to ``intent(inout)`` and the
-    # bridge surfaces that as ``Array(dtype=bool, shape=(1,))``, so
-    # the caller needs ``_sdfg_call_args`` to box it as a length-1
-    # numpy bool array.
-    _scalar_types = (bool, int, float, np.bool_, np.integer, np.floating)
-    scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, _scalar_types)}
-    sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, _scalar_types)}
-    sdfg_kwargs.update(_lower_keys(outputs_sdfg))
-    sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
-    sdfg(**sdfg_kwargs)
+    outputs_sdfg, outputs_ref = run_cloudsc(src, "cloudsc", _f2py_ref, tmp_path / "sdfg")
 
     # Per-output mismatch budget (collect all, don't fail-fast).
     #

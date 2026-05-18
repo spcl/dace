@@ -34,6 +34,7 @@ import numpy as np
 import pytest
 
 from _util import build_sdfg, have_flang
+from icon_full._harness import _INIT_ARRAY_ORDER, _OUTPUT_NAMES, _allocate
 
 from dace.frontend.hlfir.bindings import (
     FlattenPlan,
@@ -52,92 +53,9 @@ _DRIVER_PATH = _HERE / "velocity_full.f90"
 _CALLER_PATH = _HERE / "velocity_full_caller.f90"
 _ENTRY = "_QMmo_velocity_advectionPvelocity_tendencies"
 
+
 # Caller subroutine flat-array dummy order -- matches velocity_full_caller.f90
 # (identical list to velocity_full_test.py::_INIT_ARRAY_ORDER).
-_INIT_ARRAY_ORDER = (
-    'p_patch_cells_area',
-    'p_patch_cells_neighbor_idx',
-    'p_patch_cells_neighbor_blk',
-    'p_patch_cells_edge_idx',
-    'p_patch_cells_edge_blk',
-    'p_patch_cells_start_index',
-    'p_patch_cells_end_index',
-    'p_patch_cells_start_block',
-    'p_patch_cells_end_block',
-    'p_patch_cells_decomp_info_owner_mask',
-    'p_patch_edges_cell_idx',
-    'p_patch_edges_cell_blk',
-    'p_patch_edges_vertex_idx',
-    'p_patch_edges_vertex_blk',
-    'p_patch_edges_quad_idx',
-    'p_patch_edges_quad_blk',
-    'p_patch_edges_tangent_orientation',
-    'p_patch_edges_inv_primal_edge_length',
-    'p_patch_edges_inv_dual_edge_length',
-    'p_patch_edges_area_edge',
-    'p_patch_edges_f_e',
-    'p_patch_edges_fn_e',
-    'p_patch_edges_ft_e',
-    'p_patch_edges_start_index',
-    'p_patch_edges_end_index',
-    'p_patch_edges_start_block',
-    'p_patch_edges_end_block',
-    'p_patch_verts_cell_idx',
-    'p_patch_verts_cell_blk',
-    'p_patch_verts_edge_idx',
-    'p_patch_verts_edge_blk',
-    'p_patch_verts_start_index',
-    'p_patch_verts_end_index',
-    'p_patch_verts_start_block',
-    'p_patch_verts_end_block',
-    'p_int_c_lin_e',
-    'p_int_e_bln_c_s',
-    'p_int_cells_aw_verts',
-    'p_int_rbf_vec_coeff_e',
-    'p_int_geofac_grdiv',
-    'p_int_geofac_rot',
-    'p_int_geofac_n2s',
-    'p_prog_w',
-    'p_prog_vn',
-    'p_diag_vn_ie_ubc',
-    'p_diag_vt',
-    'p_diag_vn_ie',
-    'p_diag_w_concorr_c',
-    'p_diag_ddt_vn_apc_pc',
-    'p_diag_ddt_vn_cor_pc',
-    'p_diag_ddt_w_adv_pc',
-    'p_metrics_ddxn_z_full',
-    'p_metrics_ddxt_z_full',
-    'p_metrics_ddqz_z_full_e',
-    'p_metrics_ddqz_z_half',
-    'p_metrics_wgtfac_c',
-    'p_metrics_wgtfac_e',
-    'p_metrics_wgtfacq_e',
-    'p_metrics_coeff_gradekin',
-    'p_metrics_coeff1_dwdz',
-    'p_metrics_coeff2_dwdz',
-    'p_metrics_deepatmo_gradh_mc',
-    'p_metrics_deepatmo_invr_mc',
-    'p_metrics_deepatmo_gradh_ifc',
-    'p_metrics_deepatmo_invr_ifc',
-)
-
-_OUTPUT_NAMES = (
-    'p_prog_w',
-    'p_prog_vn',
-    'p_diag_vn_ie_ubc',
-    'p_diag_vt',
-    'p_diag_vn_ie',
-    'p_diag_w_concorr_c',
-    'p_diag_ddt_vn_apc_pc',
-    'p_diag_ddt_vn_cor_pc',
-    'p_diag_ddt_w_adv_pc',
-    'z_w_concorr_me',
-    'z_kin_hor_e',
-    'z_vt_ie',
-)
-
-
 def _scalar(name, ftype, intent, stype=None):
     return OriginalArg(name=name, fortran_type=ftype, rank=0, shape=(), intent=intent, struct_type=stype)
 
@@ -227,79 +145,6 @@ def _gfortran(out_so: Path, *sources, mod_dir: Path, link_so: Path | None = None
     if link_so is not None:
         cmd += [f"-L{link_so.parent}", f"-Wl,-rpath,{link_so.parent}", f"-l:{link_so.name}"]
     subprocess.check_call(cmd, cwd=mod_dir)
-
-
-def _allocate(nproma, nlev, nlevp1, nblks_c, nblks_e, nblks_v):
-    F = lambda *s: np.zeros(s, dtype=np.float64, order='F')
-    I = lambda *s: np.zeros(s, dtype=np.int32, order='F')
-    B = lambda *s: np.zeros(s, dtype=np.int8, order='F')
-    return dict(
-        p_patch_cells_area=F(nproma, nblks_c),
-        p_patch_cells_neighbor_idx=I(nproma, nblks_c, 3),
-        p_patch_cells_neighbor_blk=I(nproma, nblks_c, 3),
-        p_patch_cells_edge_idx=I(nproma, nblks_c, 3),
-        p_patch_cells_edge_blk=I(nproma, nblks_c, 3),
-        p_patch_cells_start_index=I(33),
-        p_patch_cells_end_index=I(33),
-        p_patch_cells_start_block=I(33),
-        p_patch_cells_end_block=I(33),
-        p_patch_cells_decomp_info_owner_mask=B(nproma, nblks_c),
-        p_patch_edges_cell_idx=I(nproma, nblks_e, 2),
-        p_patch_edges_cell_blk=I(nproma, nblks_e, 2),
-        p_patch_edges_vertex_idx=I(nproma, nblks_e, 4),
-        p_patch_edges_vertex_blk=I(nproma, nblks_e, 4),
-        p_patch_edges_quad_idx=I(nproma, nblks_e, 4),
-        p_patch_edges_quad_blk=I(nproma, nblks_e, 4),
-        p_patch_edges_tangent_orientation=F(nproma, nblks_e),
-        p_patch_edges_inv_primal_edge_length=F(nproma, nblks_e),
-        p_patch_edges_inv_dual_edge_length=F(nproma, nblks_e),
-        p_patch_edges_area_edge=F(nproma, nblks_e),
-        p_patch_edges_f_e=F(nproma, nblks_e),
-        p_patch_edges_fn_e=F(nproma, nblks_e),
-        p_patch_edges_ft_e=F(nproma, nblks_e),
-        p_patch_edges_start_index=I(33),
-        p_patch_edges_end_index=I(33),
-        p_patch_edges_start_block=I(33),
-        p_patch_edges_end_block=I(33),
-        p_patch_verts_cell_idx=I(nproma, nblks_v, 6),
-        p_patch_verts_cell_blk=I(nproma, nblks_v, 6),
-        p_patch_verts_edge_idx=I(nproma, nblks_v, 6),
-        p_patch_verts_edge_blk=I(nproma, nblks_v, 6),
-        p_patch_verts_start_index=I(33),
-        p_patch_verts_end_index=I(33),
-        p_patch_verts_start_block=I(33),
-        p_patch_verts_end_block=I(33),
-        p_int_c_lin_e=F(nproma, 2, nblks_e),
-        p_int_e_bln_c_s=F(nproma, 3, nblks_c),
-        p_int_cells_aw_verts=F(nproma, 6, nblks_v),
-        p_int_rbf_vec_coeff_e=F(4, nproma, nblks_e),
-        p_int_geofac_grdiv=F(nproma, 5, nblks_e),
-        p_int_geofac_rot=F(nproma, 6, nblks_v),
-        p_int_geofac_n2s=F(nproma, 4, nblks_c),
-        p_prog_w=F(nproma, nlevp1, nblks_c),
-        p_prog_vn=F(nproma, nlev, nblks_e),
-        p_diag_vn_ie_ubc=F(nproma, 2, nblks_e),
-        p_diag_vt=F(nproma, nlev, nblks_e),
-        p_diag_vn_ie=F(nproma, nlevp1, nblks_e),
-        p_diag_w_concorr_c=F(nproma, nlev, nblks_c),
-        p_diag_ddt_vn_apc_pc=F(nproma, nlev, nblks_e, 3),
-        p_diag_ddt_vn_cor_pc=F(nproma, nlev, nblks_e, 3),
-        p_diag_ddt_w_adv_pc=F(nproma, nlevp1, nblks_c, 3),
-        p_metrics_ddxn_z_full=F(nproma, nlev, nblks_e),
-        p_metrics_ddxt_z_full=F(nproma, nlev, nblks_e),
-        p_metrics_ddqz_z_full_e=F(nproma, nlev, nblks_e),
-        p_metrics_ddqz_z_half=F(nproma, nlevp1, nblks_c),
-        p_metrics_wgtfac_c=F(nproma, nlevp1, nblks_c),
-        p_metrics_wgtfac_e=F(nproma, nlevp1, nblks_e),
-        p_metrics_wgtfacq_e=F(nproma, 3, nblks_e),
-        p_metrics_coeff_gradekin=F(nproma, 2, nblks_e),
-        p_metrics_coeff1_dwdz=F(nproma, nlev, nblks_c),
-        p_metrics_coeff2_dwdz=F(nproma, nlev, nblks_c),
-        p_metrics_deepatmo_gradh_mc=F(nlev),
-        p_metrics_deepatmo_invr_mc=F(nlev),
-        p_metrics_deepatmo_gradh_ifc=F(nlevp1),
-        p_metrics_deepatmo_invr_ifc=F(nlevp1),
-    )
 
 
 def _run(lib, fn, dims, bufs, z_arrays):

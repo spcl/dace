@@ -33,47 +33,10 @@ from cloudsc_full._registries import (
     get_inputs_physical,
     get_outputs,
 )
+from cloudsc_full._harness import f2py_argnames, lower_keys, sdfg_call_args
 
 _HERE = Path(__file__).resolve().parent
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
-
-
-def _sdfg_call_args(sdfg, scalar_values):
-    """Same as test_cloudsc_full -- route scalars to Scalar-or-length-1."""
-    from dace.data import Scalar
-    arglist = sdfg.arglist()
-    out = {}
-    for k, v in scalar_values.items():
-        desc = arglist.get(k)
-        if desc is None or isinstance(desc, Scalar):
-            out[k] = v
-        else:
-            decl_dtype = str(desc.dtype) if hasattr(desc, "dtype") else ""
-            if "bool" in decl_dtype.lower():
-                out[k] = np.array([bool(v)], dtype=np.bool_)
-            elif isinstance(v, float):
-                out[k] = np.array([v], dtype=np.float64)
-            else:
-                out[k] = np.array([v], dtype=np.int32)
-    return out
-
-
-def _lower_keys(d):
-    return {k.lower(): v for k, v in d.items()}
-
-
-def _f2py_argnames(fn):
-    import re
-    doc = fn.__doc__ or ""
-    match = re.match(r"\s*\w+\((.*?)\)", doc, re.DOTALL)
-    if not match:
-        return set()
-    arglist = match.group(1)
-    optional = set()
-    for m in re.finditer(r"\[([^\]]+)\]", arglist):
-        optional.update(s.strip() for s in m.group(1).split(","))
-    arglist = re.sub(r"\[[^\]]*\]", "", arglist)
-    return {s.strip() for s in arglist.split(",") if s.strip()} | optional
 
 
 @pytest.fixture(scope="module")
@@ -120,10 +83,10 @@ def test_cloudsc_top_half_zsolqa_zsolqb(tmp_path, _f2py_top_half, _strict_fp_cpu
     zsolqa_out_sdfg = np.zeros_like(zsolqa_out_ref, order="F")
     zsolqb_out_sdfg = np.zeros_like(zsolqb_out_ref, order="F")
 
-    accepted = _f2py_argnames(_f2py_top_half.cloudscouter)
+    accepted = f2py_argnames(_f2py_top_half.cloudscouter)
     all_kw_ref = {
-        **_lower_keys(inputs),
-        **_lower_keys(outputs_ref),
+        **lower_keys(inputs),
+        **lower_keys(outputs_ref),
         "zsolqa_out": zsolqa_out_ref,
         "zsolqb_out": zsolqb_out_ref,
     }
@@ -132,10 +95,10 @@ def test_cloudsc_top_half_zsolqa_zsolqb(tmp_path, _f2py_top_half, _strict_fp_cpu
     _scalar_types = (bool, int, float, np.bool_, np.integer, np.floating)
     scalar_kwargs = {k.lower(): v for k, v in inputs.items() if isinstance(v, _scalar_types)}
     sdfg_kwargs = {k.lower(): v for k, v in inputs.items() if not isinstance(v, _scalar_types)}
-    sdfg_kwargs.update(_lower_keys(outputs_sdfg))
+    sdfg_kwargs.update(lower_keys(outputs_sdfg))
     sdfg_kwargs["zsolqa_out"] = zsolqa_out_sdfg
     sdfg_kwargs["zsolqb_out"] = zsolqb_out_sdfg
-    sdfg_kwargs.update(_sdfg_call_args(sdfg, scalar_kwargs))
+    sdfg_kwargs.update(sdfg_call_args(sdfg, scalar_kwargs))
     sdfg(**sdfg_kwargs)
 
     # Compare ZSOLQA / ZSOLQB across all JK iterations.  Strict tolerance
