@@ -337,9 +337,6 @@ def test_default_constants_in_expression():
     assert any(isinstance(a, symbolic.symbol) for a in restored.atoms(symbolic.symbol))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="TypedConstant lacks ._prec, so a float-valued TypedConstant crashes "
-                   "sympy._should_evalf inside Min/Max construction (separate TypedConstant defect)")
 def test_default_typed_float_constant_in_min_is_robust():
     """The interstate-edge shape ``Min(5.0, N)``: a float64 default constant
     must survive sympy.Min construction. Currently raises AttributeError."""
