@@ -86,6 +86,33 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
     return sorted(groups, key=lambda g: order[g[0]])
 
 
+def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
+    """The loop body's unique non-empty ``SDFGState`` if the body is that
+    state plus only empty states joined by unconditional edges; else
+    ``None``.
+
+    The dace frontend commonly emits ``empty-state --(idx_index=idx[i])-->
+    compute-state`` for an indirect (gather/scatter) loop body: the
+    interstate-edge assignments are the indirect-access index symbols (by
+    convention these body edges only ever carry indirection symbols, never
+    computation, and -- being structured control flow -- never a condition).
+    They are loop-body-local and side-effect-free, so node-group fission
+    still applies to the single compute state -- the empty states and the
+    symbol-defining edges ride along unchanged in every clone (``_fission``
+    deep-copies the whole loop), porting each tasklet together with the
+    symbols it needs.
+
+    :param loop: The loop whose body shape is inspected.
+    :returns: The sole compute ``SDFGState``, or ``None`` if the body is not
+        of that shape.
+    """
+    blocks = list(loop.nodes())
+    if any(not isinstance(b, SDFGState) for b in blocks):
+        return None
+    nonempty = [s for s in blocks if s.nodes()]
+    return nonempty[0] if len(nonempty) == 1 else None
+
+
 def _block_rw(block):
     """Recursively collect (reads, writes) data containers of a CFG block.
 
@@ -196,11 +223,11 @@ class LoopFission(ppl.Pass):
         for loop in list(sdfg.all_control_flow_regions(recursive=True)):
             if not isinstance(loop, LoopRegion):
                 continue
-            body = list(loop.nodes())
-            if len(body) == 1 and isinstance(body[0], SDFGState):
-                if len(_independent_groups(body[0])) < 2:
+            compute = _single_compute_state(loop)
+            if compute is not None:
+                if len(_independent_groups(compute)) < 2:
                     continue
-                self._fission(loop)
+                self._fission(loop, compute)
                 count += 1
             else:
                 groups = _independent_block_groups(loop)
@@ -249,20 +276,27 @@ class LoopFission(ppl.Pass):
             parent.start_block = parent.node_id(clones[0])
 
     @staticmethod
-    def _fission(loop: LoopRegion):
-        """Replace ``loop`` with one header-replicated loop per group."""
+    def _fission(loop: LoopRegion, compute: SDFGState):
+        """Replace ``loop`` with one header-replicated loop per independent
+        node group of its single compute state.
+
+        :param loop: The loop to distribute.
+        :param compute: ``loop``'s sole non-empty body state (any empty no-op
+            states ride along unchanged in every clone).
+        """
         parent = loop.parent_graph
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
-        ngroups = len(_independent_groups(loop.nodes()[0]))
+        cidx = list(loop.nodes()).index(compute)
+        ngroups = len(_independent_groups(compute))
 
         clones: List[LoopRegion] = []
         for gi in range(ngroups):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone)
-            cstate = clone.nodes()[0]
+            cstate = list(clone.nodes())[cidx]
             keep = set(_independent_groups(cstate)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:
                 cstate.remove_node(n)
