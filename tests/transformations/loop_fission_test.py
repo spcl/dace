@@ -105,6 +105,24 @@ def loop_nested_two(x: dace.float64[N, N], y: dace.float64[N, N]):
 
 
 @dace.program
+def loop_nested_dependent(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    for j in range(N):
+        for i in range(N):
+            B[i, j] = A[i, j] + 1.0
+        for i in range(N):
+            C[i, j] = B[i, j] * 2.0
+
+
+@dace.program
+def loop_nested_cycle(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for j in range(1, N):
+        for i in range(N):
+            A[i, j] = B[i, j - 1] + 1.0
+        for i in range(N):
+            B[i, j] = A[i, j] * 2.0
+
+
+@dace.program
 def loop_conditional(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], c: dace.int32[1]):
     for i in range(N):
         if c[0] > 0:
@@ -231,6 +249,39 @@ def test_loop_fission_perfect_nesting():
     sdfg(x=x1, y=y1, N=n)
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
     assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
+
+
+def test_loop_fission_nested_dependent_inner_loops_not_split():
+    """Loop-in-loop where inner loop 2 reads what inner loop 1 writes
+    (RAW across blocks): perfect-nesting fission must NOT distribute them."""
+    n = 6
+    A = np.random.rand(n, n)
+    sdfg = loop_nested_dependent.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is None  # dependent -> kept together
+    sdfg.validate()
+    assert sum(1 for c in sdfg.nodes() if isinstance(c, LoopRegion)) == 1, \
+        "dependent inner loops were illegally distributed"
+    B, C = np.zeros((n, n)), np.zeros((n, n))
+    sdfg(A=A.copy(), B=B, C=C, N=n)
+    assert np.allclose(B, A + 1.0) and np.allclose(C, (A + 1.0) * 2.0)
+
+
+def test_loop_fission_nested_cycle_not_split():
+    """Two inner loops with a cross/loop-carried cycle (loop1 writes A reads
+    B; loop2 writes B reads A): fission is illegal -> kept together, valid."""
+    n = 5
+    base = loop_nested_cycle.to_sdfg(simplify=True)
+    A0 = np.random.rand(n, n)
+    B0 = np.random.rand(n, n)
+    refA, refB = A0.copy(), B0.copy()
+    copy.deepcopy(base)(A=refA, B=refB, N=n)
+
+    sdfg = loop_nested_cycle.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+    A1, B1 = A0.copy(), B0.copy()
+    sdfg(A=A1, B=B1, N=n)
+    assert np.allclose(A1, refA) and np.allclose(B1, refB)
 
 
 def test_loop_fission_conditional_body_kept():
