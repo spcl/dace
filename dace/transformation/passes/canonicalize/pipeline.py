@@ -15,120 +15,105 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
-from dace.transformation.passes.simplify_induction_variables import SimplifyInductionVariables
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
-from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.loop_fission import LoopFission
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
-from dace.transformation.dataflow.map_expansion import MapExpansion
-from dace.transformation.dataflow.map_fission import MapFission
-from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
+from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
-def _cleanup(loop_to_reduce: bool) -> List[ppl.Pass]:
-    """Copy/WCR normalization cleanup, reused in preparation and between
-    transforming stages.
+def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
+    """Between-pass structural cleanup -- ``StateFusionExtended`` then
+    ``InlineSDFG`` (never ``SimplifyPass`` mid-pipeline).
 
-    Decomposes write-conflict resolutions into explicit augmented-assignment
-    subgraphs (``WCRToAugAssign``) and removes copy-shaped edges that later
-    subset-substituting passes (e.g. ``NormalizeLoopsAndMaps``) would have to
-    special-case: map-boundary staging and ``other_subset`` copies
-    (``InsertAssignTaskletsAtMapBoundary``) and single-element
-    ``AccessNode -> AccessNode`` copies (``InsertAssignTaskletsForUnitCopies``).
-
-    ``LoopToReduce`` is gated by ``loop_to_reduce`` because it is only sound
-    *after* maximal fission has isolated each accumulator into its own
-    stride-1 loop (it must never run in early preparation); the
-    ``maximal_fission`` / ``perfect_loop_nesting`` / ``normalize`` stages are
-    the re-run points where a fresh reducible loop can appear (see
-    ``DESIGN.md``).
-
-    :param loop_to_reduce: Also lift scalar-accumulator loops to ``Reduce``.
+    :param label: The owning stage label.
     """
-    passes: List[ppl.Pass] = [
-        PatternMatchAndApplyRepeated([WCRToAugAssign()]),
-        InsertAssignTaskletsAtMapBoundary(),
-        InsertAssignTaskletsForUnitCopies(),
-    ]
-    if loop_to_reduce:
-        passes.append(LoopToReduce())
-    return passes
+    return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+            (label, PatternMatchAndApplyRepeated([InlineSDFG()]))]
 
 
 def _build_stages() -> List[Tuple[str, ppl.Pass]]:
-    """Build the canonicalization recipe as one flat ordered list.
+    """Build the loop-centric canonicalization recipe as one flat list.
 
-    Returns ``(stage_label, pass)`` pairs in application order, with fresh
-    pass instances each call (passes are stateful). The label repeats per
-    pass and is only used for ``validate_all`` reporting. Ordering is
-    load-bearing; ``DESIGN.md`` is the authoritative rationale, summarized in
-    one comment per stage boundary here. ``Untile`` (Stage 1) and the Stage-2
-    loop-fission step are intentionally absent until their code lands (it
-    lives outside this subpackage).
+    Every map is lowered to a ``LoopRegion`` up front so all canonicalization
+    runs on a single representation (one fission/normalize/reduce path, no
+    map/loop duplication, no hybrids); ``LoopToMap`` recovers parallelism near
+    the end, then maps are fused. Returns ``(stage_label, pass)`` pairs with
+    fresh instances each call.
 
-    Composites (``SimplifyPass``, ``PatternMatchAndApplyRepeated``, the
-    ``Pipeline`` around ``FullMapFusion``) stay nested by necessity: they are
-    fixed-point / dependency-resolving machinery and cannot collapse into a
-    flat pass list. ``FullMapFusion`` in particular *must* be wrapped in a
-    ``Pipeline`` so its ``FindSingleUseData`` dependency is resolved.
+    ``SimplifyPass`` runs **only** at the very start, after the cleaning
+    passes (unique loop iterators, split tasklets, trivial-tasklet cleanup),
+    and once at the end -- never between transforming stages. Between-stage
+    structural cleanup is ``StateFusionExtended`` + ``InlineSDFG`` instead.
+    Passes not yet implemented (``MoveIfIntoLoop``, ``LoopStridePermutation``)
+    are explicit no-ops so the pipeline shape is honest and slottable.
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
-    # Stage 0 pre_simplify: unique loop iterators first so no later pattern
-    # match / fusion is blocked by name reuse, then stable explicit-CF form.
-    s += [('pre_simplify', SSALoopIterators()), ('pre_simplify', SimplifyPass())]
+    # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
+    # -> the single SimplifyPass (only here and at the end).
+    s += [('clean', SSALoopIterators()), ('clean', SplitTasklets()),
+          ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
+          ('clean', SimplifyPass())]
 
-    # Stage 1b split_tasklets: atomic single-op tasklets so fission isolates each.
-    s += [('split_tasklets', SplitTasklets())]
+    # prep (still maps): push guarding conditionals into maps, then replicate
+    # a conditional per independent output so it can fission later.
+    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])),
+          ('prep', ConditionalComponentFission())]
 
-    # Stage 1c prepare_fission: clean copy/WCR shapes (no LoopToReduce yet --
-    # accumulators are still fused pre-fission), push conditionals into maps,
-    # then SimplifyPass inlines nested SDFGs / flattens structure.
-    s += [('prepare_fission', p) for p in _cleanup(loop_to_reduce=False)]
-    s += [('prepare_fission', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prepare_fission', SimplifyPass())]
+    # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
+    # structural cleanup (no SimplifyPass).
+    s += [('lower', PatternMatchAndApplyRepeated([MapToForLoop()]))]
+    s += _structural_cleanup('lower')
 
-    # Stage 2 maximal_fission: replicate conditionals per independent output
-    # so the conditional-bearing maps can fission, then fission every
-    # independent computation into its own map. First point LoopToReduce is
-    # sound (accumulators just isolated).
-    s += [('maximal_fission', ConditionalComponentFission()),
-          ('maximal_fission', PatternMatchAndApplyRepeated([MapExpansion(), MapFission()])),
-          ('maximal_fission', SimplifyPass())]
-    s += [('maximal_fission', p) for p in _cleanup(loop_to_reduce=True)]
+    # move_if_into_loop: push guarding conditionals into loop bodies
+    # (no-op stub until implemented).
+    s += [('move_if_into_loop', MoveIfIntoLoop())]
 
-    # Stage 3 reorder_offsets: every map range -> 0-based / unit-step.
-    s += [('reorder_offsets', NormalizeLoopsAndMaps()), ('reorder_offsets', SimplifyPass())]
+    # fission: loop distribution + block-level perfect-loop-nesting.
+    s += [('fission', LoopFission())]
 
-    # Stage 4 perfect_loop_nesting: parent-nest duplication can expose new
-    # isolated accumulator loops, so the cleanup re-runs with LoopToReduce.
-    s += [('perfect_loop_nesting', PatternMatchAndApplyRepeated([PerfLoopNesting()])),
-          ('perfect_loop_nesting', SimplifyPass())]
-    s += [('perfect_loop_nesting', p) for p in _cleanup(loop_to_reduce=True)]
+    # normalize: every loop range -> 0:trip:1.
+    s += [('normalize', NormalizeLoopsAndMaps())]
 
-    # Stage 5 normalize: load-bearing order -- unique iterators, IV canon, LICM,
-    # then LoopToReduce (canonical run, after IV canonicalization).
-    s += [('normalize', SSALoopIterators()), ('normalize', SimplifyInductionVariables()),
-          ('normalize', LoopInvariantCodeMotion()), ('normalize', LoopToReduce()), ('normalize', SimplifyPass())]
+    # reduce / ssa: lift accumulator loops, unique loop iterators.
+    s += [('reduce', LoopToReduce()), ('ssa', SSALoopIterators())]
 
-    # Stage 6 loop_to_map: canonical sequential loops -> parallel maps.
-    s += [('loop_to_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    # loop_stride_permutation (before LoopToMap): permute loops for unit
+    # stride (no-op stub until implemented; symbolic-safe by design).
+    s += [('loop_stride_permutation', LoopStridePermutation())]
 
-    # Stage 7 maximal_fusion: simplify, fuse maps maximally, recompose tasklets.
-    s += [('maximal_fusion', SimplifyPass()), ('maximal_fusion', ppl.Pipeline([FullMapFusion()])),
-          ('maximal_fusion', PatternMatchAndApplyRepeated([TaskletFusion(),
-                                                           TrivialTaskletElimination()]))]
+    # parallelize: canonical loops -> parallel maps.
+    s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
-    # Stage 8 hoist_if: terminal, no-op until the hoisting transformation lands.
+    # post_l2m: insert assign tasklets at map boundary, then structural
+    # cleanup (state fusion + inline SDFG) -- after LoopToMap.
+    s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
+    s += _structural_cleanup('post_l2m')
+
+    # fuse: vertical and horizontal map fusion in one fixpoint -- vertical is
+    # listed first (priority), but horizontal can expose further vertical
+    # opportunities, so both must iterate together (no FindSingleUseData).
+    s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+
+    # licm: hoist loop-invariant code (after LoopToMap, on maps).
+    s += [('licm', LoopInvariantCodeMotion())]
+
+    # end: the final SimplifyPass.
+    s += [('end', SimplifyPass())]
     return s
 
 

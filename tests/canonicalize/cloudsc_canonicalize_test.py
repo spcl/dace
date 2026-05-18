@@ -3,12 +3,12 @@
 
     Uses the in-repo Python-frontend-derived CloudSC SDFG (306 states, 139
     LoopRegions, 79 conditional blocks) as a realistic structural fixture --
-    "copy parts from CloudSC and ensure we can apply". Every canonicalization
-    stage through ``loop_to_map`` must apply and keep the SDFG valid. The final
-    ``maximal_fusion`` stage currently invalidates CloudSC inside the existing
-    ``FullMapFusion`` / ``TaskletFusion`` passes; that is a pre-existing fusion
-    limitation, tracked as a strict xfail and out of the canonicalization
-    sub-pass scope.
+    "copy parts from CloudSC and ensure we can apply". In the loop-centric
+    pipeline every stage through ``parallelize`` (``LoopToMap``) must apply
+    and keep the SDFG valid. ``test_full_pipeline_on_cloudsc`` remains a
+    strict xfail pending end-to-end re-validation of the loop-centric
+    pipeline on the full 306-state CloudSC SDFG (its prior ``FullMapFusion``
+    failure reason no longer applies -- that pass was removed).
 """
 import os
 
@@ -34,8 +34,8 @@ def test_canonicalization_stages_apply_to_cloudsc():
     for label, unit in _build_stages():
         if prev is not None and label != prev:
             sdfg.validate()  # each stage boundary must preserve a valid SDFG
-            if prev == "loop_to_map":
-                return  # proven-valid canonicalization-sub-pass scope
+            if prev == "parallelize":
+                return  # proven-valid canonicalization-sub-pass scope (through LoopToMap)
         unit.apply_pass(sdfg, {})
         prev = label
     sdfg.validate()
