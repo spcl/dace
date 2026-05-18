@@ -202,7 +202,7 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
 
 def test_scalar_memlet_connector_type_after_symbolic_range_roundtrip():
     i = symbolic.symbol('i', dtype=dace.int64)
-    stencil_i = symbolic.symbol('stencil_i')
+    stencil_i = symbolic.symbol('stencil_i', dtype=dace.int64)
     start = 2 * i - 2 * stencil_i + 1
     rng = subsets.Range([(start, start, 1)])
     restored = subsets.Range.from_json(rng.to_json())

@@ -144,6 +144,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
             assert block not in block_map
             block_map[block] = new_block
+            # The JSON copy is created with SDFG context, so replacement can run before insertion.
             new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
