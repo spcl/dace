@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Analysis pass that infers CUDA grid and block dimensions for GPU device maps."""
 import warnings
 from typing import Dict, List, Set, Tuple

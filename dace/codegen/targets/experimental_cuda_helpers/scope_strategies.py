@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Scope-emission strategies (RAII bracket managers) for the experimental CUDA codegen."""
 from abc import ABC, abstractmethod
 

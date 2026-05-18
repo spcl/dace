@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Small shared helpers for the experimental CUDA codegen (block-size math, schedule checks)."""
 
 from dace import Config, data as dt

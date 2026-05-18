@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 import warnings
 from typing import Dict, Set, Tuple
@@ -29,7 +29,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         # Cache each node's parent state during apply_pass()
         self._node_to_parent_state: Dict[Node, SDFGState] = dict()
 
-    def apply_pass(self, sdfg: SDFG, _) -> None:
+    def apply_pass(self, sdfg: SDFG, _):
         """Insert ``__syncthreads()`` barriers so shared-memory writes are visible to subsequent reads.
 
         Collects TB MapExits and collaborative shared-memory write AccessNodes,
@@ -251,7 +251,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         # No writes to shared memory found
         return False
 
-    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]) -> None:
+    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
         """Insert a ``__syncthreads()`` tasklet after each given node.
 
         :param nodes: Nodes mapped to their parent state.

@@ -219,7 +219,7 @@ class CoreDialectCompliant:
         return not cls.collect(sdfg)
 
 
-def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
+def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass'):
     """Emit a ``UserWarning`` if ``sdfg`` violates Core Dialect.
 
     The warning enumerates each offending feature together with up to five concrete locators.
@@ -255,7 +255,7 @@ def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
     )
 
 
-def require_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
+def require_core_dialect(sdfg: SDFG, source: str = 'pass'):
     """Raise ``ValueError`` if ``sdfg`` violates Core Dialect. Strict counterpart to ``warn_if_not_core_dialect``."""
     offenders_by_feature = CoreDialectCompliant.collect(sdfg)
     if not offenders_by_feature:

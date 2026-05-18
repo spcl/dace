@@ -80,7 +80,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         sdfg._gpu_stream_assignments = assignments
         return assignments
 
-    # ----- strategy-specific overrides -----
+    # Strategy-specific overrides.
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
         raise NotImplementedError(f"{type(self).__name__} did not implement assign_streams(sdfg).")
@@ -89,9 +89,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         raise NotImplementedError(f"{type(self).__name__} did not implement insert_sync_tasklets(sdfg, assignments).")
 
 
-# ---------------------------------------------------------------------------
 # Naive strategy -- WCC stream assignment + per-edge sync rules
-# ---------------------------------------------------------------------------
 
 
 def _is_gpu_global_access(node, state: SDFGState) -> bool:
@@ -186,7 +184,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     def __init__(self):
         self._max_concurrent_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
-    # ----- assignment (WCC) -----
+    # Assignment (WCC).
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
         assignments: Dict[nodes.Node, int] = dict()
@@ -245,7 +243,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 return True
         return False
 
-    # ----- sync placement (per-edge rule table) -----
+    # Sync placement (per-edge rule table).
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
         state_end, per_node = self._classify_sync_points(sdfg, assignments)
@@ -277,9 +275,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         return {s: ids for s, ids in state_end.items() if ids}, per_node
 
 
-# ---------------------------------------------------------------------------
 # Monolithic single-stream strategy -- all-on-GPU, syncs only after copy states
-# ---------------------------------------------------------------------------
 
 
 @properties.make_properties

@@ -621,14 +621,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if self.simplify:
             sdfg.simplify()
 
-        ########################################################################
-        # In case the ExperimentalCUDACodeGen is selected, we handle, for backwards
-        # compatibility, the use of in-kernel, transient GPU_Global stored array here.
+        # When the ExperimentalCUDACodeGen is selected, handle in-kernel transient
+        # GPU_Global arrays here for backwards compatibility. Imports are local: this
+        # block only runs under the experimental codegen, and importing the pass at
+        # module scope would create a transformation <-> pass import cycle.
         from dace.config import Config
         if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
             return
 
-        # import needed modules
         from dace.transformation import helpers
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         import warnings
@@ -638,7 +638,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         transient_outside_kernels: Set[Tuple[str, data.Array]] = set()
 
         for node, parent in sdfg.all_nodes_recursive():
-            # ---------- Consider only transient GPU_Global arrays -------
+            # Consider only transient GPU_Global arrays.
             if not isinstance(node, nodes.AccessNode):
                 continue
 
@@ -650,7 +650,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if desc.storage != dtypes.StorageType.GPU_Global:
                 continue
 
-            #------- Check whether transient/access node occurs within a kernel --------
+            # Check whether the transient/access node occurs within a kernel.
             in_kernel = False
             parent_map_info = helpers.get_parent_map(state=parent, node=node)
             while parent_map_info is not None:
