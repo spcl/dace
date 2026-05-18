@@ -692,9 +692,6 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj['attributes'])
-        legacy_pgrids = attrs.pop('_pgrids', None)
-        legacy_subarrays = attrs.pop('_subarrays', None)
-        legacy_rdistrarrays = attrs.pop('_rdistrarrays', None)
         json_obj = dict(json_obj)
         json_obj['attributes'] = attrs
         nodes = json_obj['nodes']
@@ -708,11 +705,6 @@ class SDFG(ControlFlowRegion):
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
-
-        for legacy_store in (legacy_pgrids, legacy_subarrays, legacy_rdistrarrays):
-            for name, desc in _arrays_from_json(legacy_store, context).items():
-                if name not in ret._arrays:
-                    ret.add_datadesc(name, desc)
 
         nodelist = []
         for n in nodes:
