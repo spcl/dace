@@ -1,12 +1,12 @@
-// Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include <cuda_runtime.h>
 #include <cutensor.h>
 
-#include <cstddef>    // size_t
-#include <stdexcept>  // std::runtime_error
-#include <string>     // std::to_string
+#include <cstddef>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 namespace dace {
@@ -30,11 +30,6 @@ static cutensorHandle_t CreateCuTensorHandle(int device) {
   return handle;
 }
 
-/**
- * cuTENSOR wrapper class for DaCe. Once constructed, the class can be used to
- * get or create a cuTENSOR library handle (cutensorHandle_t) for a given
- * GPU ID. The class is constructed when the cuTENSOR DaCe library is used.
- **/
 class CuTensorHandle {
  public:
   CuTensorHandle() = default;

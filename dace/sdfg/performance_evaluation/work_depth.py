@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Work depth analysis for any input SDFG. Can be used with the DaCe VS Code extension or
 from command line as a Python script. """
 
@@ -11,8 +11,9 @@ from typing import List, Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
-from dace.libraries.standard import Reduce, Transpose
+from dace.libraries.blas import MatMul
+from dace.libraries.standard import Reduce
+from dace.libraries.linalg import Transpose
 from dace.symbolic import pystr_to_symbolic
 import ast
 import astunparse

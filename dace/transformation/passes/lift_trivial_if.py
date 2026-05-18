@@ -1,5 +1,5 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
 import re
 import dace
 from typing import Any, Dict, Optional, Set, Union
@@ -8,14 +8,22 @@ from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
 from dace.sdfg.state import ControlFlowBlock
+from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
+import sympy
 from sympy import pycode
-import dace.sdfg.construction_utils as cutil
 
 
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
+    """Remove ``ConditionalBlock`` nodes whose condition statically evaluates to a literal.
+
+    Handles two shapes: a single-branch ``if`` (drop or replace with an empty
+    branch depending on the truth value) and an ``if/else`` pair (drop the side
+    that is unreachable). Runs to a fixed point at each region level and recurses
+    into nested SDFGs.
+    """
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States
@@ -32,50 +40,43 @@ class LiftTrivialIf(ppl.Pass):
             for n, _ in sdfg.all_nodes_recursive()
             if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
         }
-        all_labels = set()
-
-        def _find_new_name(cfg: ControlFlowRegion) -> str:
-            candidate_label = cfg.label
-            i = 0
-            while candidate_label in all_labels:
-                candidate_label = cfg.label + "_" + str(i)
-                i += 1
-            if candidate_label in all_labels:
-                assert False
-            all_labels.add(candidate_label)
-            return candidate_label
-
+        all_labels: Set[str] = set()
         for n in all_blocks:
-            new_label = _find_new_name(n)
+            new_label = dace.utils.find_new_name(n.label, all_labels)
+            all_labels.add(new_label)
             n.label = new_label
 
     def _trivial_cond_check(self, code: CodeBlock, val: bool):
         if code.language != dace.dtypes.Language.Python:
             return False
+
+        # Primary: pystr_to_symbolic already handles Python and/or/not and
+        # comparison operators, We require a concrete literal back -- bool() of
+        # an unevaluated sympy expression (e.g. ``A[0]`` -> Function(0)) is
+        # truthy, which would mis-classify dynamic conditions as trivial.
         try:
+            expr = symbolic.pystr_to_symbolic(code.as_string)
+            result = symbolic.evaluate(expr, symbols={})
+            if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
+                return bool(result) is val
+        except Exception:
+            pass
 
-            def _token_replace_dict(string_to_check: str, dict) -> str:
-                # Split while keeping delimiters
-                tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-                # Replace tokens that exactly match src
-                tokens = [dict[token.strip()] if token.strip() in dict else token.strip() for token in tokens]
-
-                return " ".join(tokens).strip()
-
-            symbolic_expr = dace.symbolic.SymExpr(
-                _token_replace_dict(code.as_string, {
-                    "True": "1",
-                    "and": " * ",
-                    "or": "+",
-                    "False": "0"
-                }))
-            symbolic_expr = symbolic_expr.simplify()
-            pystring = pycode(symbolic_expr)
-            result = symbolic.evaluate(expr=dace.symbolic.SymExpr(pystring), symbols=dict())
-            return bool(result) is val
-        except Exception as e:
-            return False
+        # Fallback: Some SDFGs (e.g. Fortran frontend) produce nested comparisons like
+        # ``(a == 1) == 0`` that sympy refuses to compare bool against an int.
+        # Try as best effort to rewrite boolean ops/literals to arithmetic over 0/1 and let
+        # SymExpr.simplify reduce it.
+        try:
+            tokens = re.split(r'(\s+|[()\[\]])', code.as_string)
+            replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
+            rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+            simplified = dace.symbolic.SymExpr(rewritten).simplify()
+            result = symbolic.evaluate(dace.symbolic.SymExpr(pycode(simplified)), symbols={})
+            if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
+                return bool(result) is val
+        except Exception:
+            pass
+        return False
 
     def _trivially_true(self, code: CodeBlock):
         return self._trivial_cond_check(code, True)
@@ -90,7 +91,7 @@ class LiftTrivialIf(ppl.Pass):
             if isinstance(cfb, ConditionalBlock):
                 # Supported variants:
                 # 1. if (cond) where cond is always true
-                # 2. if (cond) else
+                # 2. if (cond) else ()
                 # 2.1 where cond is always true
                 # 2.2 cond is always false
                 conditions_and_cfgs = cfb.branches
@@ -118,9 +119,8 @@ class LiftTrivialIf(ppl.Pass):
                     elif self._trivially_false(not_none_cond):  #2.2
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
-        # Remove trivial Ifs
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
-            cutil.move_branch_cfg_up_discard_conditions(cfb, cfg)
+            move_branch_cfg_up_discard_conditions(cfb, cfg)
             assert cfb not in graph.nodes()
             rmed_count += 1
 
@@ -133,12 +133,9 @@ class LiftTrivialIf(ppl.Pass):
         # We might now have trivial control flow blocks at top level, apply in fixpoint
         rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
         local_rmed_count = rmed_count
-        graph.sdfg.validate()
         while local_rmed_count > 0:
             local_rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
             rmed_count += local_rmed_count
-
-        graph.sdfg.validate()
 
         # Now go one one more level in the node list
         for node in graph.all_control_flow_blocks():

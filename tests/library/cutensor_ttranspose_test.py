@@ -1,19 +1,15 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Unit tests for the TensorTranspose library node with the cuTENSOR v2 expansion.
 Tests float64 and int32 tensors using parametrization.
 """
 import numpy as np
 import pytest
-
 import dace
 from dace import dtypes
-from dace.libraries.standard import TensorTranspose
+from dace.libraries.linalg import TensorTranspose
 
 
-# ---------------------------------------------------------------------------
-#  Helper: build an SDFG  host -> GPU -> TensorTranspose -> GPU -> host
-# ---------------------------------------------------------------------------
 def _build_transpose_sdfg(
     name: str,
     inp_shape: tuple,
@@ -177,7 +173,6 @@ def test_transpose_pure_3d_jik(dtype_np, dtype_dace, type_name):
     np.testing.assert_allclose(B, expected, rtol=rtol, atol=atol, err_msg=f"Pure transpose failed for {dtype_np}")
 
 
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     for (nptype, dacetype, strtype) in dtype_params:
         test_transpose_pure_3d_jik(nptype, dacetype, strtype)
