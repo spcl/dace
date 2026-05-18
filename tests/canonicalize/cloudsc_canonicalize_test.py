@@ -16,7 +16,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import CanonicalizationPipeline
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
+from dace.transformation.passes.canonicalize.pipeline import _build_stages
 
 _CLOUDSC = os.path.join(os.path.dirname(__file__), os.pardir, "sdfg", "data", "sdfg_reconstruction",
                         "cloudsc_simplified.sdfgz")
@@ -30,12 +30,15 @@ def _load() -> dace.SDFG:
 def test_canonicalization_stages_apply_to_cloudsc():
     sdfg = _load()
     sdfg.validate()  # fixture must start valid
-    for name, factory in CANONICALIZE_STAGES:
-        for unit in factory():
-            unit.apply_pass(sdfg, {})
-        sdfg.validate()  # each stage must preserve a valid SDFG
-        if name == "loop_to_map":
-            break  # proven-valid canonicalization-sub-pass scope
+    prev = None
+    for label, unit in _build_stages():
+        if prev is not None and label != prev:
+            sdfg.validate()  # each stage boundary must preserve a valid SDFG
+            if prev == "loop_to_map":
+                return  # proven-valid canonicalization-sub-pass scope
+        unit.apply_pass(sdfg, {})
+        prev = label
+    sdfg.validate()
 
 
 @pytest.mark.skipif(not os.path.exists(_CLOUDSC), reason="CloudSC fixture not present")

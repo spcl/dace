@@ -33,21 +33,6 @@ from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 
-#: A stage is an ordered list of passes applied directly. ``Pipeline`` and
-#: ``PatternMatchAndApplyRepeated`` are unhashable, so they cannot be composed
-#: as nodes of an outer :class:`~dace.transformation.pass_pipeline.Pipeline`.
-StageFactory = Callable[[], List[ppl.Pass]]
-
-
-def _pre_simplify() -> List[ppl.Pass]:
-    """Stage 0: preparation.
-
-    Make every loop iterator name unique up front (``SSALoopIterators``) so no
-    later pattern match or fusion is blocked by incidental name reuse, then
-    bring the SDFG into a stable explicit-control-flow form (``SimplifyPass``).
-    """
-    return [SSALoopIterators(), SimplifyPass()]
-
 
 def _cleanup(loop_to_reduce: bool) -> List[ppl.Pass]:
     """Copy/WCR normalization cleanup, reused in preparation and between
@@ -62,9 +47,10 @@ def _cleanup(loop_to_reduce: bool) -> List[ppl.Pass]:
 
     ``LoopToReduce`` is gated by ``loop_to_reduce`` because it is only sound
     *after* maximal fission has isolated each accumulator into its own
-    stride-1 loop (it must never run in early preparation); see
-    :func:`_maximal_fission` / :func:`_perfect_loop_nesting` / :func:`_normalize`
-    for the re-run points where a fresh reducible loop can appear.
+    stride-1 loop (it must never run in early preparation); the
+    ``maximal_fission`` / ``perfect_loop_nesting`` / ``normalize`` stages are
+    the re-run points where a fresh reducible loop can appear (see
+    ``DESIGN.md``).
 
     :param loop_to_reduce: Also lift scalar-accumulator loops to ``Reduce``.
     """
@@ -78,99 +64,103 @@ def _cleanup(loop_to_reduce: bool) -> List[ppl.Pass]:
     return passes
 
 
-def _split_tasklets() -> List[ppl.Pass]:
-    """Stage 1b: split compound tasklets into single-op tasklets."""
-    return [SplitTasklets()]
+def _build_stages() -> List[Tuple[str, ppl.Pass]]:
+    """Build the canonicalization recipe as one flat ordered list.
 
+    Returns ``(stage_label, pass)`` pairs in application order, with fresh
+    pass instances each call (passes are stateful). The label repeats per
+    pass and is only used for ``validate_all`` reporting. Ordering is
+    load-bearing; ``DESIGN.md`` is the authoritative rationale, summarized in
+    one comment per stage boundary here. ``Untile`` (Stage 1) and the Stage-2
+    loop-fission step are intentionally absent until their code lands (it
+    lives outside this subpackage).
 
-def _prepare_fission() -> List[ppl.Pass]:
-    """Stage 1c: clean copy/WCR shapes, push conditionals into maps and
-    flatten structure so the next stage can fission maximally.
-
-    The ``_cleanup`` step runs here (not inside ``NormalizeLoopsAndMaps``) so
-    every later stage sees ``other_subset``-free copies. ``LoopToReduce`` is
-    *not* run yet -- accumulators are still fused pre-fission. ``SimplifyPass``
-    inlines nested SDFGs (and fuses states / prunes dead structure)."""
-    return [*_cleanup(loop_to_reduce=False), PatternMatchAndApplyRepeated([MoveIfIntoMap()]), SimplifyPass()]
-
-
-def _maximal_fission() -> List[ppl.Pass]:
-    """Stage 2: fission every independent computation into its own map.
-
-    The loop-level fission step is a TODO (its code lives outside this
-    subpackage). This is the first point where ``LoopToReduce`` is sound:
-    fission has just isolated each accumulator into its own stride-1 loop, so
-    the cleanup re-runs with ``loop_to_reduce=True``.
+    Composites (``SimplifyPass``, ``PatternMatchAndApplyRepeated``, the
+    ``Pipeline`` around ``FullMapFusion``) stay nested by necessity: they are
+    fixed-point / dependency-resolving machinery and cannot collapse into a
+    flat pass list. ``FullMapFusion`` in particular *must* be wrapped in a
+    ``Pipeline`` so its ``FindSingleUseData`` dependency is resolved.
     """
-    return [
-        PatternMatchAndApplyRepeated([MapExpansion(), MapFission()]),
-        SimplifyPass(),
-        *_cleanup(loop_to_reduce=True),
-    ]
+    s: List[Tuple[str, ppl.Pass]] = []
+
+    # Stage 0 pre_simplify: unique loop iterators first so no later pattern
+    # match / fusion is blocked by name reuse, then stable explicit-CF form.
+    s += [('pre_simplify', SSALoopIterators()), ('pre_simplify', SimplifyPass())]
+
+    # Stage 1b split_tasklets: atomic single-op tasklets so fission isolates each.
+    s += [('split_tasklets', SplitTasklets())]
+
+    # Stage 1c prepare_fission: clean copy/WCR shapes (no LoopToReduce yet --
+    # accumulators are still fused pre-fission), push conditionals into maps,
+    # then SimplifyPass inlines nested SDFGs / flattens structure.
+    s += [('prepare_fission', p) for p in _cleanup(loop_to_reduce=False)]
+    s += [('prepare_fission', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prepare_fission', SimplifyPass())]
+
+    # Stage 2 maximal_fission: fission every independent computation into its
+    # own map. First point LoopToReduce is sound (accumulators just isolated).
+    s += [('maximal_fission', PatternMatchAndApplyRepeated([MapExpansion(), MapFission()])),
+          ('maximal_fission', SimplifyPass())]
+    s += [('maximal_fission', p) for p in _cleanup(loop_to_reduce=True)]
+
+    # Stage 3 reorder_offsets: every map range -> 0-based / unit-step.
+    s += [('reorder_offsets', NormalizeLoopsAndMaps()), ('reorder_offsets', SimplifyPass())]
+
+    # Stage 4 perfect_loop_nesting: parent-nest duplication can expose new
+    # isolated accumulator loops, so the cleanup re-runs with LoopToReduce.
+    s += [('perfect_loop_nesting', PatternMatchAndApplyRepeated([PerfLoopNesting()])),
+          ('perfect_loop_nesting', SimplifyPass())]
+    s += [('perfect_loop_nesting', p) for p in _cleanup(loop_to_reduce=True)]
+
+    # Stage 5 normalize: load-bearing order -- unique iterators, IV canon, LICM,
+    # then LoopToReduce (canonical run, after IV canonicalization).
+    s += [('normalize', SSALoopIterators()), ('normalize', SimplifyInductionVariables()),
+          ('normalize', LoopInvariantCodeMotion()), ('normalize', LoopToReduce()), ('normalize', SimplifyPass())]
+
+    # Stage 6 loop_to_map: canonical sequential loops -> parallel maps.
+    s += [('loop_to_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # Stage 7 maximal_fusion: simplify, fuse maps maximally, recompose tasklets.
+    s += [('maximal_fusion', SimplifyPass()), ('maximal_fusion', ppl.Pipeline([FullMapFusion()])),
+          ('maximal_fusion', PatternMatchAndApplyRepeated([TaskletFusion(),
+                                                           TrivialTaskletElimination()]))]
+
+    # Stage 8 hoist_if: terminal, no-op until the hoisting transformation lands.
+    return s
 
 
-def _reorder_offsets() -> List[ppl.Pass]:
-    """Stage 3: normalize every map range to 0-based / unit-step; then
-    simplify structure before the next stage."""
-    return [NormalizeLoopsAndMaps(), SimplifyPass()]
+#: A stage factory returns that stage's fresh passes, in order.
+StageFactory = Callable[[], List[ppl.Pass]]
 
 
-def _perfect_loop_nesting() -> List[ppl.Pass]:
-    """Stage 4: make nests perfectly nested, then inline produced nested SDFGs.
-
-    Duplicating a parent nest per independent inner map can expose new
-    isolated accumulator loops, so the cleanup re-runs with
-    ``loop_to_reduce=True`` here too."""
-    return [PatternMatchAndApplyRepeated([PerfLoopNesting()]), SimplifyPass(), *_cleanup(loop_to_reduce=True)]
+def _stage_factory(label: str) -> StageFactory:
+    """Return a factory yielding fresh passes for the named stage."""
+    return lambda: [p for lbl, p in _build_stages() if lbl == label]
 
 
-def _normalize() -> List[ppl.Pass]:
-    """Stage 5: canonicalize iterators/IVs/invariants, then lift reductions.
+#: Backward-compatible grouped view of :func:`_build_stages`: ``(label,
+#: factory)`` per stage, in order, where ``factory()`` builds that stage's
+#: fresh passes. ``_build_stages`` (flat ``(label, pass)``) is the source of
+#: truth used by the pipeline; this view exists for callers that iterate
+#: stage-by-stage (``for name, factory in CANONICALIZE_STAGES:
+#: for unit in factory(): ...``).
+CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [(label, _stage_factory(label))
+                                                       for label in dict.fromkeys(lbl for lbl, _ in _build_stages())]
 
-    Order is load-bearing: unique iterators, then induction-variable
-    canonicalization, then loop-invariant code motion, then ``LoopToReduce``
-    (strictly after maximal fission).
+
+def _assert_self_contained(unit: ppl.Pass):
+    """Guard the empty-``pipeline_results`` invariant.
+
+    Every unit is applied with an empty results dict, so it must either have
+    no dependencies or be a self-resolving ``Pipeline`` (e.g. ``SimplifyPass``,
+    or the ``Pipeline`` wrapping ``FullMapFusion``). A bare dependency-bearing
+    pass placed directly in a stage would silently lose its inputs.
+
+    :param unit: The pass about to be applied.
+    :raises AssertionError: If ``unit`` has unresolved dependencies.
     """
-    return [SSALoopIterators(), SimplifyInductionVariables(), LoopInvariantCodeMotion(), LoopToReduce(), SimplifyPass()]
-
-
-def _loop_to_map() -> List[ppl.Pass]:
-    """Stage 6: convert canonical sequential loops into parallel maps."""
-    return [PatternMatchAndApplyRepeated([LoopToMap()])]
-
-
-def _maximal_fusion() -> List[ppl.Pass]:
-    """Stage 7: simplify, fuse maps maximally, recompose split tasklets."""
-    return [
-        SimplifyPass(),
-        ppl.Pipeline([FullMapFusion()]),
-        PatternMatchAndApplyRepeated([TaskletFusion(), TrivialTaskletElimination()]),
-    ]
-
-
-def _hoist_if() -> List[ppl.Pass]:
-    """Stage 8: hoist loop-invariant conditionals above their maps.
-
-    No-op for now; the hoisting transformation is not yet wired.
-    """
-    return []
-
-
-#: Ordered pipeline stages, applied once top to bottom. Stage 1 (``Untile``) and
-#: the Stage-2 loop-fission step are intentionally absent until their code lands
-#: (it lives outside this subpackage).
-CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [
-    ('pre_simplify', _pre_simplify),
-    ('split_tasklets', _split_tasklets),
-    ('prepare_fission', _prepare_fission),
-    ('maximal_fission', _maximal_fission),
-    ('reorder_offsets', _reorder_offsets),
-    ('perfect_loop_nesting', _perfect_loop_nesting),
-    ('normalize', _normalize),
-    ('loop_to_map', _loop_to_map),
-    ('maximal_fusion', _maximal_fusion),
-    ('hoist_if', _hoist_if),
-]
+    assert not unit.depends_on() or isinstance(
+        unit, ppl.Pipeline), (f"{type(unit).__name__} has dependencies but is not a self-resolving "
+                              f"Pipeline; wrap it so its depends_on() is satisfied.")
 
 
 @properties.make_properties
@@ -178,12 +168,12 @@ CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [
 class CanonicalizationPipeline(ppl.Pass):
     """Rewrite an SDFG into its canonical form.
 
-    Stages (:data:`CANONICALIZE_STAGES`) are applied once, imperatively, in
-    order, as ``auto_optimize`` does. A single
+    The recipe (:func:`_build_stages`) is one flat ordered list of passes
+    applied once, imperatively, as ``auto_optimize`` does. A single
     :class:`~dace.transformation.pass_pipeline.Pipeline` cannot be used because
     it forbids duplicate pass types and the recipe reuses ``SimplifyPass`` and
-    ``PatternMatchAndApplyRepeated`` across stages. Stages that need iteration
-    iterate internally; the pipeline itself does not re-run.
+    ``PatternMatchAndApplyRepeated`` across stages. Composites that need
+    iteration iterate internally; the pipeline itself does not re-run.
 
     :param validate: Validate the SDFG once at the end.
     :param validate_all: Validate the SDFG after each stage.
@@ -211,16 +201,17 @@ class CanonicalizationPipeline(ppl.Pass):
         """Canonicalize ``sdfg`` in place.
 
         :param sdfg: The SDFG to canonicalize.
-        :returns: The number of stages applied.
+        :returns: The number of passes applied.
         """
-        for _name, factory in CANONICALIZE_STAGES:
-            for unit in factory():
-                unit.apply_pass(sdfg, {})
-                if self.validate_all:
-                    sdfg.validate()
+        stages = _build_stages()
+        for _label, unit in stages:
+            _assert_self_contained(unit)
+            unit.apply_pass(sdfg, {})
+            if self.validate_all:
+                sdfg.validate()
         if self.validate:
             sdfg.validate()
-        return len(CANONICALIZE_STAGES)
+        return len(stages)
 
 
 def canonicalize(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -> SDFG:
