@@ -22,7 +22,7 @@ import ctypes
 
 import dace
 
-from dace.sdfg.construction_utils import replace_length_one_arrays_with_scalars
+from dace.transformation.passes import replace_length_one_arrays_with_scalars
 
 try:
     ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)

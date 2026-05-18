@@ -19,7 +19,7 @@ scalar-dependent dynamic ranges, and 3D tensor accesses::
 """
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
 N, M, K = 4, 4, 5
 COLS = M + 10  # enough room for j + offset + 9
