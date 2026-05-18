@@ -38,10 +38,21 @@ class GenerateIterationMask(ppl.Pass):
                                "``__masked_rem`` by SplitMapForVectorRemainder(mode='masked'). The "
                                "mode names match the ``VectorizeCPU.remainder_strategy`` knob.")
 
-    def __init__(self, vector_width: int = 8, mode: str = "step_w_only"):
+    lower_to_intrinsics = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Whether the pipeline collapses per-lane gather/scatter/strided "
+        "fans to masked intrinsics. When False, a masked remainder whose "
+        "body has an access that fans out per-lane (transposed / strided "
+        "over the lane var) cannot be made safe — the per-lane reads would "
+        "fault on inactive tail lanes. Such a map is auto-degraded to a "
+        "scalar (Sequential, step-1) remainder instead of being masked.")
+
+    def __init__(self, vector_width: int = 8, mode: str = "step_w_only", lower_to_intrinsics: bool = False):
         super().__init__()
         self.vector_width = vector_width
         self.mode = mode
+        self.lower_to_intrinsics = lower_to_intrinsics
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -79,9 +90,93 @@ class GenerateIterationMask(ppl.Pass):
                 raise NotImplementedError(f"GenerateIterationMask requires every innermost map's body to be a single "
                                           f"NestedSDFG (run NestInnermostMapBodyIntoNSDFG first); map {n.label!r} has "
                                           f"a bare-tasklet body")
+            # Auto-degrade an unsafe masked remainder to a scalar one.
+            # A masked remainder runs the W-wide body and relies on each
+            # per-lane gather/scatter/strided fan collapsing to a *masked*
+            # intrinsic that honours ``_iter_mask`` (so inactive tail lanes
+            # never dereference an out-of-bounds address). Without
+            # ``lower_to_intrinsics`` that collapse cannot happen, so a
+            # body whose access fans out per-lane (transposed / strided
+            # over the lane variable) would OOB-fault on inactive lanes.
+            # Rather than mask it (and have ``assert_no_lane_memlet_reads``
+            # raise downstream), degrade THIS map to a scalar remainder:
+            # strip the ``__masked_rem`` marker and force ``Sequential`` so
+            # the vectorizer skips it and codegen emits a plain scalar
+            # tail. The main (vectorised) map is unaffected. The scalar
+            # postamble is universally correct for any access pattern.
+            if (self.mode == "masked" and not self.lower_to_intrinsics
+                    and self._body_fans_out_per_lane(g, n, nsdfg_node, n.map.params[-1])):
+                if n.map.label.endswith("__masked_rem"):
+                    n.map.label = n.map.label[:-len("__masked_rem")]
+                n.map.schedule = dace.dtypes.ScheduleType.Sequential
+                continue
             if self._attach_mask(nsdfg_node, n.map.params[-1], lb, ub, W):
                 applied += 1
         return applied or None
+
+    @staticmethod
+    def _subset_fans_out(sub, strides, iter_var: str) -> bool:
+        """Whether one ``(subset, array-strides)`` pair fans out per lane.
+
+        ``True`` iff ``iter_var`` appears in a dimension whose array
+        stride is not 1 (transposed, e.g. ``zqx[z1, i, j]``), or is a
+        direct multiplicative factor of a stride-1 dim's begin (strided,
+        e.g. ``A[2*i]``). Either lowers to a per-lane gather fan that is
+        unsafe under a masked remainder without a masked intrinsic.
+        """
+        import sympy
+        if strides is None or sub is None or len(strides) != len(sub):
+            return False
+        stride1 = {d for d, s in enumerate(strides) if str(s) == "1"}
+        for d, (b, _ee, _s) in enumerate(sub):
+            if not hasattr(b, "free_symbols"):
+                continue
+            if not any(str(fs) == iter_var for fs in b.free_symbols):
+                continue
+            if d not in stride1:
+                return True
+            for term in sympy.sympify(b).atoms(sympy.Mul):
+                if any(isinstance(f, sympy.Symbol) and str(f) == iter_var for f in term.args):
+                    return True
+        return False
+
+    @classmethod
+    def _body_fans_out_per_lane(cls, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                                nsdfg_node: dace.nodes.NestedSDFG, iter_var: str) -> bool:
+        """Whether the remainder map accesses an array transposed/strided over ``iter_var``.
+
+        Such an access lowers to a per-lane gather/scatter fan, only safe
+        under a masked remainder if collapsed to a masked intrinsic
+        (``lower_to_intrinsics``). The per-lane index can live in two
+        places, so both are checked:
+
+        - the NSDFG **boundary** edges in the parent state (outer array
+          strides) — e.g. ``t[i, 1]`` passed sliced into the body; or
+        - the **inner** NSDFG memlets (inner array strides) — e.g.
+          cloudsc_one passes ``zqx`` whole and indexes ``zqx[z1, i, j]``
+          inside.
+
+        :param state: Parent state containing ``nsdfg_node``.
+        :param map_entry: The remainder map entry (its body is the NSDFG).
+        :param nsdfg_node: The body NestedSDFG of the remainder map.
+        :param iter_var: The remainder map's innermost loop parameter.
+        :returns: ``True`` if any boundary or inner memlet fans out per lane.
+        """
+        for e in state.in_edges(nsdfg_node) + state.out_edges(nsdfg_node):
+            if e.data.data is None or e.data.data not in state.sdfg.arrays:
+                continue
+            arr = state.sdfg.arrays[e.data.data]
+            if cls._subset_fans_out(e.data.subset, getattr(arr, "strides", None), iter_var):
+                return True
+        inner = nsdfg_node.sdfg
+        for st in inner.all_states():
+            for e in st.edges():
+                if e.data.data is None or e.data.data not in inner.arrays:
+                    continue
+                arr = inner.arrays[e.data.data]
+                if cls._subset_fans_out(e.data.subset, getattr(arr, "strides", None), iter_var):
+                    return True
+        return False
 
     def _attach_mask(self, nsdfg_node: dace.nodes.NestedSDFG, iter_var: str, lb, ub, W: int) -> bool:
         """Add and fill the ``_iter_mask`` transient inside one body NestedSDFG.

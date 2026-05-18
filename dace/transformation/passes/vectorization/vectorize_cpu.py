@@ -359,7 +359,8 @@ class VectorizeCPU(ppl.Pipeline):
                 passes.extend([
                     NestInnermostMapBodyIntoNSDFG(vector_width=vector_width),
                     SplitMapForVectorRemainder(vector_width=vector_width, mode="masked"),
-                    GenerateIterationMask(vector_width=vector_width, mode="masked"),
+                    GenerateIterationMask(vector_width=vector_width, mode="masked",
+                                          lower_to_intrinsics=lower_to_intrinsics),
                 ])
             passes.append(vectorizer)
         else:

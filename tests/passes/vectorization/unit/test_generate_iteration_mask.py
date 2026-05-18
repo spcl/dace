@@ -103,3 +103,57 @@ def test_bare_tasklet_body_raises_not_implemented():
     sdfg = add_one.to_sdfg(simplify=True)
     with pytest.raises(NotImplementedError, match="NestInnermostMapBodyIntoNSDFG"):
         GenerateIterationMask(vector_width=8, mode="all_innermost").apply_pass(sdfg, {})
+
+
+@dace.program
+def transposed_read(a: dace.float64[N], t: dace.float64[N, 4]):
+    # ``t[i, 1]``: the lane var ``i`` is in dim-0 (stride 4, non-contiguous)
+    # while the stride-1 dim (dim-1) holds the constant ``1`` -> a
+    # transposed access that fans out per lane.
+    for i in dace.map[0:N]:
+        a[i] = t[i, 1]
+
+
+def _remainder_maps(sdfg):
+    """Maps P2 split off as the remainder (label contains ``rem`` or
+    Sequential schedule), excluding the main vectorised map."""
+    out = []
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState):
+            if "rem" in n.map.label or n.map.schedule == dace.dtypes.ScheduleType.Sequential:
+                out.append(n)
+    return out
+
+
+def test_masked_remainder_with_per_lane_fan_degrades_to_scalar():
+    """A masked remainder whose body fans out per lane (transposed
+    access) without ``lower_to_intrinsics`` must auto-degrade to a
+    SCALAR remainder: Sequential schedule, no ``__masked_rem`` marker,
+    no ``_iter_mask`` attached anywhere."""
+    sdfg = transposed_read.to_sdfg(simplify=True)
+    NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
+    SplitMapForVectorRemainder(vector_width=8, mode="masked").apply_pass(sdfg, {})
+    applied = GenerateIterationMask(vector_width=8, mode="masked", lower_to_intrinsics=False).apply_pass(sdfg, {})
+
+    assert applied is None
+    assert not any(name.startswith("_iter_mask") for s in sdfg.all_sdfgs_recursive() for name in s.arrays)
+    assert not any(
+        isinstance(n, dace.nodes.MapEntry) and n.map.label.endswith("__masked_rem")
+        for n, _ in sdfg.all_nodes_recursive())
+    rems = _remainder_maps(sdfg)
+    assert rems, "expected a remainder map after the split"
+    assert all(r.map.schedule == dace.dtypes.ScheduleType.Sequential for r in rems), \
+        "degraded remainder must be Sequential (scalar)"
+
+
+def test_masked_remainder_with_per_lane_fan_kept_when_intrinsics_on():
+    """With ``lower_to_intrinsics=True`` the per-lane fan is collapsed to
+    a masked intrinsic downstream, so the masked remainder is NOT
+    degraded — the ``_iter_mask`` is attached as usual."""
+    sdfg = transposed_read.to_sdfg(simplify=True)
+    NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
+    SplitMapForVectorRemainder(vector_width=8, mode="masked").apply_pass(sdfg, {})
+    applied = GenerateIterationMask(vector_width=8, mode="masked", lower_to_intrinsics=True).apply_pass(sdfg, {})
+
+    assert applied is not None and applied >= 1
+    assert any(name.startswith("_iter_mask") for s in sdfg.all_sdfgs_recursive() for name in s.arrays)
