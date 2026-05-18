@@ -20,12 +20,15 @@ from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantC
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_fission import MapFission
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
@@ -46,26 +49,64 @@ def _pre_simplify() -> List[ppl.Pass]:
     return [SSALoopIterators(), SimplifyPass()]
 
 
+def _cleanup(loop_to_reduce: bool) -> List[ppl.Pass]:
+    """Copy/WCR normalization cleanup, reused in preparation and between
+    transforming stages.
+
+    Decomposes write-conflict resolutions into explicit augmented-assignment
+    subgraphs (``WCRToAugAssign``) and removes copy-shaped edges that later
+    subset-substituting passes (e.g. ``NormalizeLoopsAndMaps``) would have to
+    special-case: map-boundary staging and ``other_subset`` copies
+    (``InsertAssignTaskletsAtMapBoundary``) and single-element
+    ``AccessNode -> AccessNode`` copies (``InsertAssignTaskletsForUnitCopies``).
+
+    ``LoopToReduce`` is gated by ``loop_to_reduce`` because it is only sound
+    *after* maximal fission has isolated each accumulator into its own
+    stride-1 loop (it must never run in early preparation); see
+    :func:`_maximal_fission` / :func:`_perfect_loop_nesting` / :func:`_normalize`
+    for the re-run points where a fresh reducible loop can appear.
+
+    :param loop_to_reduce: Also lift scalar-accumulator loops to ``Reduce``.
+    """
+    passes: List[ppl.Pass] = [
+        PatternMatchAndApplyRepeated([WCRToAugAssign()]),
+        InsertAssignTaskletsAtMapBoundary(),
+        InsertAssignTaskletsForUnitCopies(),
+    ]
+    if loop_to_reduce:
+        passes.append(LoopToReduce())
+    return passes
+
+
 def _split_tasklets() -> List[ppl.Pass]:
     """Stage 1b: split compound tasklets into single-op tasklets."""
     return [SplitTasklets()]
 
 
 def _prepare_fission() -> List[ppl.Pass]:
-    """Stage 1c: push conditionals into maps and flatten structure so the
-    next stage can fission maximally. ``SimplifyPass`` inlines nested SDFGs
-    (and fuses states / prunes dead structure) -- the structure-simplifying
-    passes fission depends on."""
-    return [PatternMatchAndApplyRepeated([MoveIfIntoMap()]), SimplifyPass()]
+    """Stage 1c: clean copy/WCR shapes, push conditionals into maps and
+    flatten structure so the next stage can fission maximally.
+
+    The ``_cleanup`` step runs here (not inside ``NormalizeLoopsAndMaps``) so
+    every later stage sees ``other_subset``-free copies. ``LoopToReduce`` is
+    *not* run yet -- accumulators are still fused pre-fission. ``SimplifyPass``
+    inlines nested SDFGs (and fuses states / prunes dead structure)."""
+    return [*_cleanup(loop_to_reduce=False), PatternMatchAndApplyRepeated([MoveIfIntoMap()]), SimplifyPass()]
 
 
 def _maximal_fission() -> List[ppl.Pass]:
     """Stage 2: fission every independent computation into its own map.
 
     The loop-level fission step is a TODO (its code lives outside this
-    subpackage).
+    subpackage). This is the first point where ``LoopToReduce`` is sound:
+    fission has just isolated each accumulator into its own stride-1 loop, so
+    the cleanup re-runs with ``loop_to_reduce=True``.
     """
-    return [PatternMatchAndApplyRepeated([MapExpansion(), MapFission()]), SimplifyPass()]
+    return [
+        PatternMatchAndApplyRepeated([MapExpansion(), MapFission()]),
+        SimplifyPass(),
+        *_cleanup(loop_to_reduce=True),
+    ]
 
 
 def _reorder_offsets() -> List[ppl.Pass]:
@@ -75,8 +116,12 @@ def _reorder_offsets() -> List[ppl.Pass]:
 
 
 def _perfect_loop_nesting() -> List[ppl.Pass]:
-    """Stage 4: make nests perfectly nested, then inline produced nested SDFGs."""
-    return [PatternMatchAndApplyRepeated([PerfLoopNesting()]), SimplifyPass()]
+    """Stage 4: make nests perfectly nested, then inline produced nested SDFGs.
+
+    Duplicating a parent nest per independent inner map can expose new
+    isolated accumulator loops, so the cleanup re-runs with
+    ``loop_to_reduce=True`` here too."""
+    return [PatternMatchAndApplyRepeated([PerfLoopNesting()]), SimplifyPass(), *_cleanup(loop_to_reduce=True)]
 
 
 def _normalize() -> List[ppl.Pass]:

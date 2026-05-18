@@ -14,6 +14,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 
 N, S = dace.symbol('N'), dace.symbol('S')
 
@@ -104,6 +106,12 @@ def _run(program, simplify_inputs, **kw):
 
     pre = {k: v.copy() for k, v in simplify_inputs.items()}
     ref(**pre, **kw)
+
+    # Mirror the pipeline: the preparation cleanup removes ``other_subset``
+    # copies before ``NormalizeLoopsAndMaps`` runs (the pass no longer does
+    # this itself).
+    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
 
     changed = NormalizeLoopsAndMaps().apply_pass(sdfg, {})
     assert changed is not None, "pass did not normalize a non-canonical map"

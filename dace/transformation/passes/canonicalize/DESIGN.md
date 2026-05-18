@@ -50,10 +50,10 @@ usable from outside.
 | 0 | `pre_simplify` | `SimplifyPass()` | wired |
 | 1 | Undo tiling | `Untile` | **TODO** (lives outside this dir) |
 | 1b | `split_tasklets` | `SplitTasklets()` | wired |
-| 1c | `prepare_fission` | `PatternMatchAndApplyRepeated([MoveIfIntoMap])` → `SimplifyPass()` (inline SDFGs + structure) — run before fission so conditionals/nested SDFGs don't block it | wired |
-| 2 | `maximal_fission` | `PatternMatchAndApplyRepeated([MapExpansion, MapFission])` → `SimplifyPass()` | partial (loop-fission step **TODO**) |
+| 1c | `prepare_fission` | `_cleanup(loop_to_reduce=False)` → `PatternMatchAndApplyRepeated([MoveIfIntoMap])` → `SimplifyPass()` (inline SDFGs + structure) — run before fission so conditionals/nested SDFGs don't block it | wired |
+| 2 | `maximal_fission` | `PatternMatchAndApplyRepeated([MapExpansion, MapFission])` → `SimplifyPass()` → `_cleanup(loop_to_reduce=True)` | partial (loop-fission step **TODO**) |
 | 3 | `reorder_offsets` | `NormalizeLoopsAndMaps` (every map range → `0:trip:1`) → `SimplifyPass()` | wired |
-| 4 | `perfect_loop_nesting` | `MoveIfIntoMap` → `MapExpansion` (= "map uncollapse", `map[i,j]`→`map[i];map[j]`) → `PerfLoopNesting` → `MapCollapse` (re-collapse maximally) → `MinimizeStridePermutation` (permute to minimize strides) → `SimplifyPass()` | being generalized |
+| 4 | `perfect_loop_nesting` | `MoveIfIntoMap` → `MapExpansion` (= "map uncollapse", `map[i,j]`→`map[i];map[j]`) → `PerfLoopNesting` → `MapCollapse` (re-collapse maximally) → `MinimizeStridePermutation` (permute to minimize strides) → `SimplifyPass()` → `_cleanup(loop_to_reduce=True)` | being generalized |
 | 5 | `normalize` | `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` → `SimplifyPass()` | wired |
 | 6 | `loop_to_map` | `PatternMatchAndApplyRepeated([LoopToMap])` | wired |
 | 7 | `maximal_fusion` | `SimplifyPass()` → `Pipeline([FullMapFusion])` → `PatternMatchAndApplyRepeated([TaskletFusion, TrivialTaskletElimination])` | wired |
@@ -133,6 +133,54 @@ stage (`prepare_fission`, `maximal_fission`, `reorder_offsets`,
 `perfect_loop_nesting`, `normalize`) and at the start of `maximal_fusion`, so
 each stage hands the next a clean, flattened graph.
 
+### `_cleanup` (copy/WCR normalization) and `LoopToReduce` re-run points
+
+`_cleanup(loop_to_reduce)` is a reusable composition, not a numbered stage:
+
+1. `PatternMatchAndApplyRepeated([WCRToAugAssign])` — decompose every
+   write-conflict resolution into an explicit augmented-assignment subgraph
+   (``a = a + b``), the canonical "minimal unit" form. Recomposed by
+   `AugAssignToWCR` only as a backend concern, never here.
+2. `InsertAssignTaskletsAtMapBoundary` — split map-boundary staging and
+   ``other_subset`` ``AccessNode -> AccessNode`` copies into ``_out = _in``
+   tasklets.
+3. `InsertAssignTaskletsForUnitCopies` (new, `passes/`, general — companion to
+   #2) — split a plain ``AccessNode -> AccessNode`` copy into
+   ``AN -> (_out = _in) -> AN`` **only** when the moved region is provably a
+   single element (``num_elements() == 1`` and every dimension extent ``== 1``,
+   on the subset and on ``other_subset`` if present); WCR edges are skipped
+   (left to #1). A symbolic extent that is not structurally ``1`` is treated
+   as non-unit (conservative).
+4. `LoopToReduce` — only when ``loop_to_reduce=True``.
+
+Why #2/#3 here and not inside `NormalizeLoopsAndMaps`: running them in
+`prepare_fission` guarantees every later stage sees ``other_subset``-free
+copies, so subset-substituting passes never special-case copy memlets.
+`NormalizeLoopsAndMaps._create_new_memlet` keeps its override only for the
+genuine reason (dace-symbol-correct substitution; the base mis-parses a symbol
+named ``S`` as ``sympy.S``), with a thin defensive ``other_subset`` branch for
+standalone callers that skip the cleanup.
+
+**`LoopToReduce` re-run points** (``loop_to_reduce=True``): it is sound only
+once maximal fission has isolated each accumulator into its own stride-1 loop,
+so it must **not** run in `pre_simplify`/`prepare_fission`. A *new* reducible
+loop can appear exactly at three points, and it re-runs at each:
+`maximal_fission` (loops first isolated — the first sound point),
+`perfect_loop_nesting` (parent-nest duplication can expose new inner
+accumulators), and `normalize` (canonical run, after IV canonicalization). It
+need not re-run after `reorder_offsets` (pure range rewrite — no new
+accumulator loops), after `loop_to_map` (would be a map already), or in
+`maximal_fusion`.
+
+### Future TODO — map-writes-full-array → reduced array → OpenMP reduction
+
+Pattern: a map writes every element of an array, and that array is then
+reduced. This should lower to an OpenMP-style reduction: each core
+accumulates into its **own** padded slot (each partial padded to ≥ 64 bytes /
+one cache line so distinct cores never share a line — avoids false sharing),
+followed by a single small final reduction over the per-core partials. Not yet
+a pass; capture as a planned canonicalize/codegen optimization.
+
 ### Ordering constraints (must hold)
 
 - Split tasklets before fission (atomic ops → isolatable by `MapFission`);
@@ -143,7 +191,11 @@ each stage hands the next a clean, flattened graph.
 - `SimplifyInductionVariables` before LICM / `LoopToReduce` / loop→map.
 - LICM after fission, before loop→map; never hoists a WCR/accumulator update.
 - PLN after fission, before fusion.
-- `LoopToReduce` strictly after maximal fission; before loop→map.
+- `LoopToReduce` strictly after maximal fission, before loop→map; re-run at
+  the three points where a fresh reducible loop can appear (see the
+  ``_cleanup`` / re-run-points section above).
+- `WCRToAugAssign` (in `_cleanup`) decomposes WCR everywhere; the inverse
+  `AugAssignToWCR` is a backend concern and never runs in this pipeline.
 - `hoist_if` is terminal (last stage), currently a no-op.
 
 ## References

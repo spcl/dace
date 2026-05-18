@@ -21,7 +21,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import (InsertAssignTaskletsAtMapBoundary)
 
 
 @properties.make_properties
@@ -53,10 +52,11 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     def _create_new_memlet(self, edge_data, repldict):
         """Subset-substitute a memlet via proper dace symbols.
 
-        Overrides the base (which sympifies string values and so mis-parses a
-        symbol literally named ``S`` as ``sympy.S``, and raises on
-        ``other_subset``). ``other_subset`` AN->AN copies are removed first by
-        ``InsertAssignTaskletsAtMapBoundary``; handle it defensively anyway.
+        Overrides the base, which sympifies string values and so mis-parses a
+        symbol literally named ``S`` as ``sympy.S`` (and raises on
+        ``other_subset``). The pipeline's preparation ``_cleanup`` removes
+        ``other_subset`` copies before this pass runs; the ``other_subset``
+        branch below only guards standalone callers that skip that cleanup.
         """
         if edge_data is None or edge_data.subset is None:
             return None
@@ -157,10 +157,6 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         :param sdfg: The SDFG to normalize in place.
         :return: The number of maps/loops rewritten, or ``None`` if unchanged.
         """
-        # Split ``AccessNode -[other_subset]-> AccessNode`` copies into assign
-        # tasklets so the reused memlet-replacement never hits ``other_subset``.
-        InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
-
         count = 0
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and isinstance(parent, dace.SDFGState):
