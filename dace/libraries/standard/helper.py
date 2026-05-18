@@ -2,47 +2,63 @@
 """
 Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 """
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import dace
 import copy
+from dace.sdfg import nodes
 
-STREAM_CONN = "stream"
+# The ambient GPU stream symbol libnode CUDA expansions reference. There is
+# no pre-existing global constant for it -- the legacy codegen hardcodes the
+# bare literal -- so this is the canonical declaration. The name keeps the
+# same expanded IR valid under both the legacy codegen (which declares
+# ``__dace_current_stream``) and the experimental codegen (whose type-based
+# prelude binds it once the stream scheduler wires the connector).
+CURRENT_STREAM_NAME = "__dace_current_stream"
 
 
-def extract_stream_and_dynamic_inputs(node, sdfg, state, reserved_conns: Tuple[str, ...]) -> Tuple[object, dict]:
-    """Extract the optional ``stream`` descriptor and dynamic scalar inputs of a
-    library node. Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to
-    ``STREAM_CONN`` are skipped, as are empty-memlet dependency edges.
-    Returns ``(stream_input, dynamic_inputs)``; ``stream_input`` is ``None``
-    when no ``stream`` edge is connected.
+def extract_dynamic_inputs(node: nodes.Node, sdfg: dace.SDFG, state: dace.SDFGState,
+                           reserved_conns: Tuple[str, ...]) -> Dict[str, dace.data.Data]:
+    """Extract the dynamic scalar inputs of a library node.
+
+    Edges whose ``dst_conn`` is in ``reserved_conns`` or equal to
+    ``CURRENT_STREAM_NAME`` are skipped, as are empty-memlet dependency
+    edges. The stream is no longer wired into the libnode: expansions emit
+    ``CURRENT_STREAM_NAME`` (the legacy ambient-stream name) directly and
+    the GPU stream scheduler binds it post-expansion.
+
+    :param node: The library node whose input edges are inspected.
+    :param sdfg: The SDFG owning the data descriptors.
+    :param state: The state containing ``node``.
+    :param reserved_conns: Connector names that are not dynamic inputs.
+    :returns: ``{connector: scalar descriptor}`` for each dynamic input.
+    :raises ValueError: If a dynamic input is not a scalar.
     """
-    stream_ies = [ie for ie in state.in_edges(node) if ie.dst_conn == STREAM_CONN]
-    if len(stream_ies) > 1:
-        raise ValueError(f"{type(node).__name__} expects at most one '{STREAM_CONN}' input edge.")
-    stream_input = sdfg.arrays[stream_ies[0].data.data] if stream_ies else None
-
-    reserved = set(reserved_conns) | {STREAM_CONN}
+    reserved = set(reserved_conns) | {CURRENT_STREAM_NAME}
     dynamic_inputs = {}
     for ie in state.in_edges(node):
         if ie.dst_conn in reserved or ie.data.is_empty():
             continue
         datadesc = sdfg.arrays[ie.data.data]
         if not isinstance(datadesc, dace.data.Scalar):
-            raise ValueError("Dynamic inputs (not connected to `_in`) must be scalars.")
+            raise ValueError("Dynamic inputs (not connected to ``_in``) must be scalars.")
         dynamic_inputs[ie.dst_conn] = datadesc
 
-    return stream_input, dynamic_inputs
+    return dynamic_inputs
 
 
-def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[dace.symbolic.SymExpr]):
-    """Remove singleton dimensions (length 1) from a subset/stride pair.
+def collapse_shape_and_strides(
+        subset: dace.subsets.Range,
+        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    """Drop length-1 dimensions from a (subset, strides) pair.
 
-    The resulting strides describe the access pattern of the subset as a
-    view into the parent array, so each parent stride is scaled by the
-    subset's step (``stride * s``).  For unit-step subsets this is a
-    no-op; for strided subsets it yields the effective per-element
-    distance in the underlying memory.
+    Surviving strides are scaled by the subset step (``stride * s``) so they describe the access
+    pattern as a view into the parent array -- a no-op for unit-step subsets, and the effective
+    per-element distance for strided ones.
+
+    :param subset: The access range, one ``(begin, end, step)`` per dimension.
+    :param strides: The parent array strides, aligned with ``subset``.
+    :returns: ``(collapsed_shape, collapsed_strides)`` with singletons removed.
     """
     collapsed_shape = []
     collapsed_strides = []
@@ -54,15 +70,20 @@ def collapse_shape_and_strides(subset: List[dace.subsets.Range], strides: List[d
     return collapsed_shape, collapsed_strides
 
 
-def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Range, state: dace.SDFGState):
+def add_dynamic_inputs(dynamic_inputs: Dict[str, dace.data.Data], sdfg: dace.SDFG, subset: dace.subsets.Range,
+                       state: dace.SDFGState) -> List[dace.symbolic.SymExpr]:
     """Promote dynamic map-range inputs to SDFG-level data descriptors.
 
-    For each dynamic input not already present in the SDFG (e.g., a
-    runtime-determined array dimension), the function adds the descriptor,
-    renames existing symbolic references with a ``sym_`` prefix, and
-    inserts a pre-assignment state that reads the concrete value into the
-    symbol.  If no promotion is needed, the SDFG is left unchanged.
-    Returns the collapsed (non-singleton) map lengths after substitution.
+    For each dynamic input not already in the SDFG (e.g. a runtime-determined array dimension),
+    the descriptor is added, existing symbolic references are renamed with a ``sym_`` prefix, and
+    a pre-assignment state reads the concrete value into the symbol. No-op when nothing needs
+    promoting.
+
+    :param dynamic_inputs: Map from connector name to its data descriptor.
+    :param sdfg: The expansion SDFG to add descriptors to.
+    :param subset: The output access range whose map lengths are derived.
+    :param state: The state before which the pre-assignment state is inserted.
+    :returns: The collapsed (non-singleton) map lengths after substitution.
     """
     pre_assignments = dict()
     map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in subset]
@@ -82,9 +103,7 @@ def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, subset: dace.subsets.Ran
         if isinstance(ndesc, dace.data.Scalar):
             pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}"
         else:
-            assert ndesc.shape == (1, ) or ndesc.shape == [
-                1,
-            ]
+            assert tuple(ndesc.shape) == (1, )
             pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}[0]"
 
         new_map_lengths = []
