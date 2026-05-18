@@ -93,7 +93,7 @@ def test_cloudsc_full_numerical(tmp_path, _f2py_ref, _strict_fp_cpu_args):
     mixing-ratios in the kernel's valid regime, no exact zeros), every
     output compared element-wise at ``rtol=atol=1e-12``.
 
-    No ``xfail``: the bridge is bit-identical to gfortran on full
+    No ``xfail``: the bridge matches gfortran on full
     CLOUDSC under valid inputs (verified 0 mismatched cells, and 0
     NaN/Inf across inputs, outputs, and the ice-deposition chain
     ``ZINEW``/``ZICENUCLEI``/``ZCVDS``/... over 12 RNG seeds).  The

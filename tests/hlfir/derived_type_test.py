@@ -9,7 +9,7 @@ from ``fir.SequenceType`` when the synthesised per-field declare
 carries no ``fir.shape`` operand.
 
 Each test compares an SDFG run against a gfortran/f2py reference for
-bit-exact validation, matching the saved e2e-numerical rule.
+numerical validation, matching the saved e2e-numerical rule.
 
 A negative test ensures the bridge throws a ``RuntimeError`` (not
 silent wrong values) when ``hlfir-flatten-structs`` could not lower
@@ -236,7 +236,7 @@ def test_batched_csr_fixed_capacity(tmp_path: Path):
 
     Real Fortran code that needs runtime-jagged CSR (each instance
     with its own ``allocatable`` of a different real size) is Phase 3
-    territory  --  see ``test_batched_csr_allocatable_xfail`` below.
+    territory  --  see ``test_batched_csr_allocatable_jagged`` below.
     """
     src = """
 module lib
@@ -986,9 +986,13 @@ end subroutine main
     assert out[0] == 3.0
 
 
-def test_batched_csr_allocatable_xfail(tmp_path: Path):
+def test_batched_csr_allocatable_jagged(tmp_path: Path):
     """Genuinely jagged batched CSR  --  each instance's CSR arrays are
     runtime-allocated to different (compile-time-constant) sizes.
+
+    SDFG output is compared against the gfortran/f2py reference
+    (``rtol=1e-12``) compiled from the same source (the e2e-numerical rule),
+    exercising the allocatable-array-of-records lowering end to end.
 
     Lowering chain:
       * ``aosAllocMaxConstSize`` records ``max_i(N_i)`` per allocatable
@@ -1043,9 +1047,13 @@ subroutine main(out)
   end do
 end subroutine main
 """
+    mod = f2py_compile(src, tmp_path / "ref", "batched_csr_jagged_ref")
+    out_ref = mod.main()
+
     sdfg = _build(src, tmp_path)
     out = np.zeros((2, 3), order='F', dtype=np.float64)
     sdfg(out=out)
+    np.testing.assert_allclose(out, out_ref, rtol=1e-12)
 
 
 def test_static_polymorphism_devirtualised(tmp_path: Path):
@@ -1065,7 +1073,7 @@ def test_static_polymorphism_devirtualised(tmp_path: Path):
     inlining and devirtualisation the SDFG sees plain flat scalars.
 
     Verifies the bridge handles these cleanly: SDFG builds, output
-    bit-exact against gfortran/f2py.  Pairs with the bail-out test
+    matches gfortran/f2py to ``rtol=1e-12``.  Pairs with the bail-out test
     in ``noncontig_unsupported_test.py`` which proves the reject
     pass fires when polymorphic-op can't resolve everything.
     """

@@ -112,7 +112,7 @@ def test_e2e_mixed_rank_struct(tmp_path: Path):
     """``type(t_w)`` with a rank-3 array member ``vol`` and a rank-0
     scalar member ``coef``.  The kernel does
     ``w%vol = w%vol * w%coef + (i+j+k)``.  Binding AND direct SDFG vs a
-    gfortran reference, bit-exact; the FlattenPlan must be non-empty."""
+    gfortran reference (``rtol=1e-12``); the FlattenPlan must be non-empty."""
     iface = OriginalInterface(
         entry="scale3d",
         args=(OriginalArg(name="w", fortran_type="type(t_w)", rank=0, intent="inout", struct_type="t_w"), ),

@@ -383,7 +383,7 @@ def test_cloudsc_full_microphysics_solve_sdfg_matches_f2py(tmp_path: Path):
     back-sub on pre-built matrices).  This reproducer extends scope
     to the LHS/RHS assembly  --  the suspected source of the 1-9 ulp
     ``ZQXN`` drift observed at JK=NCLDTOP=15 in the full-CLOUDSC run
-    (cloudsc_full xfail).  If this loopnest passes bit-exactly while
+    (cloudsc_full xfail).  If this loopnest passes (to ``rtol=atol=1e-15``) while
     full-CLOUDSC still diverges, the bug is in JK-loop-carried state
     further upstream (ZFALLSINK / ZSOLQA / ZSOLQB assembly across
     iterations).  If this loopnest also diverges, the assembly +
@@ -436,7 +436,7 @@ def test_cloudsc_full_microphysics_solve_sdfg_matches_f2py(tmp_path: Path):
     # at rtol=atol=1e-15 we catch ~5 ulps and above.  cloudsc_lu_solver
     # uses 1e-10 because that test does many more sequential ops; for
     # this bigger loopnest at smaller klon/nclv the bridge should match
-    # gfortran nearly bit-exactly.
+    # gfortran to within a few ulps.
     np.testing.assert_allclose(zqlhs_sdfg, zqlhs_ref, atol=1e-15, rtol=1e-15)
     np.testing.assert_allclose(zqxn_sdfg, zqxn_ref, atol=1e-15, rtol=1e-15)
 

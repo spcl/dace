@@ -93,8 +93,7 @@ def _f2py(src_text: str, out_dir: Path, mod: str):
 def test_array_base_float_power_matches_gfortran(tmp_path: Path):
     """``a(jl)**2.0`` (array-ref base, skipped by the source
     preprocessor) goes through the bridge; the SDFG pass retypes the
-    exponent so codegen emits ``ipow``, and the result is bit-identical
-    to gfortran."""
+    exponent so codegen emits ``ipow``, and the result matches gfortran to ``rtol=1e-12``."""
     ref = _f2py(_ARR_POW, tmp_path / "ref", "ipow_ref")
     sdfg_dir = tmp_path / "sdfg"
     sdfg_dir.mkdir(parents=True, exist_ok=True)

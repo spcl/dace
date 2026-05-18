@@ -58,7 +58,7 @@ def _f2py_bottom_half(tmp_path_factory):
     )
 
 
-# Physical (NaN-free) inputs: the bridge is bit-identical to gfortran here.
+# Physical (NaN-free) inputs: the bridge matches gfortran to tight tolerance here.
 def test_cloudsc_bottom_half_numerical(tmp_path, _f2py_bottom_half, _strict_fp_cpu_args):
     src = (_HERE / "cloudsc_bottom_half.F90").read_text()
     outputs_sdfg, outputs_ref = run_cloudsc(src, "cloudsc_bottom_half", _f2py_bottom_half, tmp_path / "sdfg")

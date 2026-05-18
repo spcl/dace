@@ -135,7 +135,7 @@ end subroutine run_daxpy_ref
 
 def test_e2e_real8_arith_inout(tmp_path: Path):
     """``real(8)`` arithmetic chain with an ``intent(inout)`` result.
-    Binding AND direct SDFG vs gfortran, bit-exact."""
+    Binding AND direct SDFG vs gfortran (``rtol=1e-12``)."""
     iface = OriginalInterface(
         entry="daxpy_lite",
         args=(

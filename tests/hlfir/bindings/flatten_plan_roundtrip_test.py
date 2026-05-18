@@ -5,17 +5,13 @@ usable ``FlattenPlan`` dataclass.
 """
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _util import have_flang  # noqa: E402
-
-from dace.frontend.hlfir.build_bridge import hb  # noqa: E402
-
-from dace.frontend.hlfir.bindings import FlattenPlan  # noqa: E402
+from _util import have_flang
+from dace.frontend.hlfir.build_bridge import hb
+from dace.frontend.hlfir.bindings import FlattenPlan
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 

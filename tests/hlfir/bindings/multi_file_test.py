@@ -4,15 +4,12 @@ to tmp_path so the flang toolchain is exercised exactly once per test.
 """
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _util import have_flang  # noqa: E402
-
-from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder  # noqa: E402
+from _util import have_flang
+from dace.frontend.hlfir.hlfir_to_sdfg import SDFGBuilder
 
 pytestmark = pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH")
 

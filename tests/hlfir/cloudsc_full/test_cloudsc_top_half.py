@@ -56,7 +56,7 @@ def _f2py_top_half(tmp_path_factory):
     )
 
 
-# Physical (NaN-free) inputs: the bridge is bit-identical to gfortran here.
+# Physical (NaN-free) inputs: the bridge matches gfortran to tight tolerance here.
 def test_cloudsc_top_half_zsolqa_zsolqb(tmp_path, _f2py_top_half, _strict_fp_cpu_args):
     """SDFG-vs-f2py equivalence on ZSOLQA / ZSOLQB after the source/sink
     accumulation block (top half of CLOUDSC's JK loop body)."""

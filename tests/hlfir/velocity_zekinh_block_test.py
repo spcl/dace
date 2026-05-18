@@ -48,7 +48,7 @@ def _numpy_reference(edge_idx, edge_blk, e_bln_c_s, z_kin_hor_e, z_ekinh, nproma
 
 def test_velocity_zekinh_block_builds_and_calls(tmp_path: Path):
     """Build + e2e call.  Verifies the isolated block doesn't segfault
-    and matches the numpy reference bit-exactly.
+    and matches the numpy reference to ``rtol=1e-13``.
     """
     src = _SRC_PATH.read_text()
     sdfg_dir = tmp_path / "sdfg"

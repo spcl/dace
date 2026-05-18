@@ -16,7 +16,7 @@ Source experiments (without the NUMA / multi-allocator harness):
                        (the per-atom phase factor)
 
 Each test compares SDFG output against gfortran/f2py reference
-bit-exact (``rtol=1e-12`` real(8); ``rtol=1e-12`` complex(8) too).
+to ``rtol=1e-12`` (real(8); complex(8) too).
 """
 
 from pathlib import Path

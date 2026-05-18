@@ -13,7 +13,7 @@ Pipeline:
     ``hlfir.region_assign`` (with ``hlfir.elemental_addr`` destination)
     with a DO loop of per-element scalar assigns.
 
-These tests are SDFG-vs-numpy bit-exact (saved E2E numerical rule).
+These tests compare SDFG-vs-numpy to ``rtol=1e-12`` (saved E2E numerical rule).
 The corresponding ``ported/noncontig_pardecls_test.py`` cases cover
 the cross-subroutine call shape that exercises the same path through
 ``hlfir-inline-all`` first.
