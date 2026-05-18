@@ -326,6 +326,7 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     # imported lazily to avoid module-load-time cycles.
     from dace.transformation.passes.vectorization.utils.arrays import replace_arrays_with_new_shape
     from dace.transformation.passes.vectorization.utils.subsets import replace_all_access_subsets
+    from dace.transformation.passes.vectorization.utils.reductions import recognize_reduction
 
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
     source_data = scalar_source_nodes[0][1].data
@@ -337,7 +338,23 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
         state, nsdfg, scalar_source_nodes[0][1], node_path[-1])
     sink_data = node_path[-1].data
-    op = tutil._extract_single_op(node_path[1].code.as_string)
+    # Reduction operator: prefer the robust RMW-shape recogniser
+    # (handles a compound right-hand side — ``acc = acc + a*b`` — that
+    # the single-op ``_extract_single_op`` mis-parses). Scan the path
+    # for the first tasklet recognised as a read-modify-write reduction
+    # and take its op; fall back to the legacy single-op extraction on
+    # ``node_path[1]`` for shapes the recogniser does not cover, so the
+    # behaviour is unchanged wherever it already worked.
+    src_state = scalar_source_nodes[0][0]
+    op = None
+    for _n in node_path:
+        if isinstance(_n, dace.nodes.Tasklet):
+            _red = recognize_reduction(src_state, _n)
+            if _red is not None:
+                op = _red.op
+                break
+    if op is None:
+        op = tutil._extract_single_op(node_path[1].code.as_string)
     if num_flops <= 1 and is_inout_accumulator:
         replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)
         replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ), None)
