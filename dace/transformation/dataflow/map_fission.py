@@ -1,5 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map Fission transformation. """
+""" Map Fission transformation.
+
+TODO: fission a map containing a conditional by replicating the branch into
+each fissioned map; needs MapFusion (vertical and horizontal) to fuse
+branches. Tracked as a future MapFission/MapFusion extension.
+"""
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
@@ -125,6 +130,13 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Get NestedSDFG control flow components
             nsdfg_node.sdfg.reset_cfg_list()
+
+            # Fissioning a component across a conditional needs the branch
+            # condition replicated into each fissioned map.
+            if any(isinstance(cfg, ConditionalBlock)
+                   for cfg in nsdfg_node.sdfg.all_control_flow_regions(recursive=True)):
+                return False
+
             if len(nsdfg_node.sdfg.nodes()) == 1:
                 child = nsdfg_node.sdfg.nodes()[0]
                 conditions: List[CodeBlock] = []
