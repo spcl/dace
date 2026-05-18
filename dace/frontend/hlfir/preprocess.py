@@ -318,3 +318,149 @@ def preprocess_fortran(source: str) -> str:
         return m.group(0)
 
     return _BARE_IF_RE.sub(_rewrite, source)
+
+
+# Intrinsic / compiler-provided modules: never resolved or merged --
+# flang supplies them itself, so a ``USE`` of one is left untouched.
+_INTRINSIC_MODULES = frozenset({
+    "iso_c_binding",
+    "iso_fortran_env",
+    "ieee_arithmetic",
+    "ieee_exceptions",
+    "ieee_features",
+    "omp_lib",
+    "omp_lib_kinds",
+    "openacc",
+    "mpi",
+    "mpi_f08",
+})
+
+# ``use [, intrinsic] [::] <name>`` -- captured from the code part of a
+# line only (``_scan_line`` strips comments / character literals first).
+_USE_RE = re.compile(r"^\s*use\b\s*(?:,\s*intrinsic\s*)?(?:::)?\s*([A-Za-z]\w*)", re.IGNORECASE)
+# ``module <name>`` opening a module definition -- excludes
+# ``module procedure`` / ``module subroutine`` / ``module function``
+# and the ``submodule (...)`` form.
+_MODULE_OPEN_RE = re.compile(r"^\s*module\s+(?!procedure\b|subroutine\b|function\b)([A-Za-z]\w*)\s*$", re.IGNORECASE)
+_MODULE_END_RE = re.compile(r"^\s*end\s*module\b", re.IGNORECASE)
+
+
+def _code_of(line: str) -> str:
+    """Return the code portion of one physical line with character
+    literals blanked, so keyword scans never trip on a ``!`` / module
+    name inside a string or comment.
+
+    :param line: one physical Fortran line (no newline).
+    :returns: the pre-comment text with ``'...'`` / ``"..."`` spans
+        replaced by spaces.
+    """
+    cut, strings = _scan_line(line)
+    code = list(line[:cut])
+    for s, e in strings:
+        for i in range(s, min(e, cut)):
+            code[i] = " "
+    return "".join(code)
+
+
+def _module_blocks(text: str):
+    """Yield ``(name_lower, block_text)`` for every top-level ``module``
+    definition in ``text`` (modules do not nest; ``submodule`` and
+    ``module procedure`` are not matched).
+
+    :param text: Fortran source.
+    :returns: generator of ``(lowercase module name, verbatim block)``.
+    """
+    lines = text.splitlines(keepends=True)
+    i, n = 0, len(lines)
+    while i < n:
+        m = _MODULE_OPEN_RE.match(_code_of(lines[i].rstrip("\r\n")))
+        if not m:
+            i += 1
+            continue
+        start, name = i, m.group(1).lower()
+        i += 1
+        while i < n and not _MODULE_END_RE.match(_code_of(lines[i].rstrip("\r\n"))):
+            i += 1
+        end = min(i, n - 1)
+        yield name, "".join(lines[start:end + 1])
+        i = end + 1
+
+
+def _used_modules(text: str) -> list:
+    """Ordered, de-duplicated lowercase names of modules ``USE``-d in
+    ``text`` (intrinsic modules excluded).
+
+    :param text: Fortran source.
+    :returns: list of module names in first-appearance order.
+    """
+    seen, out = set(), []
+    for raw in text.splitlines():
+        m = _USE_RE.match(_code_of(raw))
+        if not m:
+            continue
+        nm = m.group(1).lower()
+        if nm in _INTRINSIC_MODULES or nm in seen:
+            continue
+        seen.add(nm)
+        out.append(nm)
+    return out
+
+
+def merge_used_modules(source: str, *, search_dirs=()) -> str:
+    """Inline every ``USE``-d module's real source into ``source``,
+    producing one self-contained translation unit.
+
+    A minimal, fparser-free port of the f2dace single-TU concept: scan
+    ``search_dirs`` for module definitions, resolve the ``USE`` graph
+    transitively from ``source``, and prepend each needed module's
+    verbatim block in dependency order (deps first), de-duplicated.
+
+    Pass-through (returns ``source`` unchanged) when nothing external is
+    resolvable -- a self-contained single-file input, every ``USE``
+    being intrinsic or defined in ``source`` itself.  This makes the
+    pass safe to run by default: only genuine multi-file projects are
+    transformed.  Idempotent: re-running finds the modules already
+    inlined and adds nothing.
+
+    :param source: the entry Fortran source text.
+    :param search_dirs: directories scanned (recursively, ``*.f90`` /
+        ``*.F90`` / ``*.incf``) for module definitions.
+    :returns: a single-TU source, or ``source`` unchanged.
+    """
+    from pathlib import Path
+
+    in_source = {nm for nm, _ in _module_blocks(source)}
+    index: dict = {}
+    for d in search_dirs:
+        d = Path(d)
+        files = [
+            d
+        ] if d.is_file() else sorted(list(d.rglob("*.f90")) + list(d.rglob("*.F90")) + list(d.rglob("*.incf")))
+        for f in files:
+            try:
+                txt = f.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for nm, blk in _module_blocks(txt):
+                if nm not in in_source:
+                    index.setdefault(nm, blk)
+
+    order: list = []
+    placed = set(in_source)
+    stack = [(nm, False) for nm in reversed(_used_modules(source))]
+    while stack:
+        nm, expanded = stack.pop()
+        if nm in placed or nm not in index:
+            continue
+        if expanded:
+            placed.add(nm)
+            order.append(index[nm])
+            continue
+        stack.append((nm, True))
+        for dep in reversed(_used_modules(index[nm])):
+            if dep not in placed and dep in index:
+                stack.append((dep, False))
+
+    if not order:
+        return source
+    return "".join(order) + "\n" + source

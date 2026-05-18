@@ -128,8 +128,22 @@ def f2py_compile(
     return sys.modules[mod_name]
 
 
-def compile_to_hlfir(source: str, out_dir: Path, name: str = "src", *, preprocess: bool = False) -> Path:
+def compile_to_hlfir(source: str,
+                     out_dir: Path,
+                     name: str = "src",
+                     *,
+                     preprocess: bool = False,
+                     merge: bool = True) -> Path:
     """Write `source` as <out_dir>/<name>.f90, compile it to HLFIR, return the path.
+
+    ``merge_used_modules`` runs first (``merge`` defaults on): it
+    inlines every externally-``USE``-d module's real source so flang
+    sees one self-contained translation unit, the same single-TU model
+    f2dace-windmill used.  It is pass-through for self-contained input
+    (the entire inline-source test suite), so default-on is a no-op
+    there; only a genuine multi-file project under ``out_dir`` activates
+    it.  ``search_dirs=[out_dir]`` keeps the search scoped to the
+    caller's scratch tree.
 
     ``rewrite_integer_powers`` runs unconditionally on every input:
     expanding integer-valued REAL powers (``x**2.0``) to explicit
@@ -150,11 +164,16 @@ def compile_to_hlfir(source: str, out_dir: Path, name: str = "src", *, preproces
     :param out_dir: scratch directory for the ``.f90`` / ``.hlfir`` pair.
     :param name: base filename for that pair.
     :param preprocess: also run the opt-in ``IF (intvar)`` rewrite.
+    :param merge: inline externally-``USE``-d modules into one TU
+                  (default on; no-op for self-contained source).
     :returns: path to the emitted ``.hlfir`` file.
     """
     assert _FLANG is not None, "flang-new-21 not available"
+    out_dir.mkdir(parents=True, exist_ok=True)
     src = out_dir / f"{name}.f90"
-    from dace.frontend.hlfir.preprocess import (preprocess_fortran, rewrite_integer_powers)
+    from dace.frontend.hlfir.preprocess import (merge_used_modules, preprocess_fortran, rewrite_integer_powers)
+    if merge:
+        source = merge_used_modules(source, search_dirs=[out_dir])
     source = rewrite_integer_powers(source)
     if preprocess:
         source = preprocess_fortran(source)
