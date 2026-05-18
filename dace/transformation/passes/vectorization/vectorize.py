@@ -560,7 +560,8 @@ class Vectorize(ppl.Pass):
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg, vector_width=int(self.vector_width))
-        cutil.replace_length_one_arrays_with_scalars(inner_sdfg, True, True)
+        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+        ConvertLengthOneArraysToScalars(recursive=True, transient_only=True).apply_pass(inner_sdfg, {})
 
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}

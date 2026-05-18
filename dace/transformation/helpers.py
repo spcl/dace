@@ -2112,3 +2112,58 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
         graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
 
     graph.remove_node(if_block)
+
+
+def get_parent_map_and_loop_scopes(
+        root_sdfg: SDFG, node: Union[nodes.MapEntry, ControlFlowRegion, nodes.Tasklet, ConditionalBlock],
+        parent_state: Union[SDFGState, None]):
+    """Collect parent ``MapEntry`` / ``LoopRegion`` scopes enclosing
+    ``node``, walking scope dicts, control-flow regions and nested-SDFG
+    boundaries up to the root SDFG.  ``SDFG.parent`` (O(1)) finds the
+    state containing a nested-SDFG node instead of a recursive
+    ``all_nodes_recursive`` scan.
+
+    :param root_sdfg: The top-level SDFG.  Retained for call-site
+        stability; no longer needs a recursive search from the root.
+    :param node: Starting node or control-flow region.
+    :param parent_state: The state containing ``node``, or ``None``.
+    :returns: Parent scopes (MapEntry or LoopRegion), innermost first.
+    """
+    scope_dict = parent_state.scope_dict() if parent_state is not None else None
+    cur_node = node
+    parent_scopes = list()
+
+    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet)):
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], nodes.MapEntry):
+                parent_scopes.append(scope_dict[cur_node])
+            cur_node = scope_dict[cur_node]
+
+    parent_graph = parent_state.parent_graph if parent_state is not None else node.parent_graph
+    parent_sdfg = parent_state.sdfg if parent_state is not None else node.parent_graph.sdfg
+    while parent_graph != parent_sdfg:
+        if isinstance(parent_graph, LoopRegion):
+            parent_scopes.append(parent_graph)
+        parent_graph = parent_graph.parent_graph
+
+    parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
+    parent_nsdfg_parent_state = parent_sdfg.parent if parent_nsdfg_node is not None else None
+    while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
+        scope_dict = parent_nsdfg_parent_state.scope_dict()
+        cur_node = parent_nsdfg_node
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], nodes.MapEntry):
+                parent_scopes.append(scope_dict[cur_node])
+            cur_node = scope_dict[cur_node]
+
+        parent_graph = parent_nsdfg_parent_state.parent_graph
+        parent_sdfg = parent_graph.sdfg
+        while parent_graph != parent_sdfg:
+            if isinstance(parent_graph, LoopRegion):
+                parent_scopes.append(parent_graph)
+            parent_graph = parent_graph.parent_graph
+
+        parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
+        parent_nsdfg_parent_state = parent_sdfg.parent if parent_nsdfg_node is not None else None
+
+    return parent_scopes
