@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Passes that move data between length-1 ``Array`` and ``Scalar`` form.
 
-``ScalarizeLengthOneArrays`` rewrites every length-1 ``Array`` (shape
+``ConvertLengthOneArraysToScalars`` rewrites every length-1 ``Array`` (shape
 ``(1,)``) to a true ``Scalar`` and drops the now-redundant ``[0]``
 accessors from interstate-edge assignments, conditional-block guards,
-loop-region conditions and memlet subsets.  ``ArrayizeScalars`` is the
+loop-region conditions and memlet subsets.  ``ConvertScalarsToLengthOneArrays`` is the
 inverse (``Scalar`` -> length-1 ``Array``).
 
-The HLFIR Fortran frontend uses ``ScalarizeLengthOneArrays`` as a
+The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a
 post-generation cleanup: ``Scalar`` data on the SDFG signature binds to
 a plain Python ``int`` / ``float`` whereas a length-1 ``Array`` needs a
 1-element numpy buffer, so this moves bridge outputs/locals from the
@@ -137,7 +137,7 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG,
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class ScalarizeLengthOneArrays(ppl.Pass):
+class ConvertLengthOneArraysToScalars(ppl.Pass):
     """Rewrite every length-1 ``Array`` to a ``Scalar`` (see
     ``replace_length_one_arrays_with_scalars``).
 
@@ -173,8 +173,8 @@ class ScalarizeLengthOneArrays(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class ArrayizeScalars(ppl.Pass):
-    """Inverse of ``ScalarizeLengthOneArrays``: rewrite every
+class ConvertScalarsToLengthOneArrays(ppl.Pass):
+    """Inverse of ``ConvertLengthOneArraysToScalars``: rewrite every
     ``Scalar`` to a length-1 ``Array`` (shape ``(1,)``).  Useful when a
     consumer requires a 1-element buffer rather than a by-value scalar.
 
