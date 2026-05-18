@@ -3,7 +3,6 @@
 
 # Map-related
 from .mapreduce import MapReduceFusion, MapWCRFusion
-from .buffered_reduce_to_inplace import BufferedReduceToInplace
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
 from .map_for_loop import MapToForLoop

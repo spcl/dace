@@ -165,17 +165,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     if validate:
         sdfg.validate()
 
-    # Frozen-signature contract: when the HLFIR frontend snapshotted the
-    # signature at build time, any transformation that drifted the live
-    # arglist (reordered / renamed / dtype-changed / added free symbols)
-    # would silently invalidate the already-generated Fortran binding.
-    # Raise instead of emitting a header that disagrees with the binding.
-    # The sdfg._frozen_signature attribute is set by SDFGBuilder.build();
-    # plain DaCe users never see it.
-    frozen = getattr(sdfg, "_frozen_signature", None)
-    if frozen is not None:
-        frozen.verify_against(sdfg)
-
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
         import difflib
