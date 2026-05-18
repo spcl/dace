@@ -32,6 +32,7 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
@@ -114,9 +115,14 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # no permutation.
     s += [('reorder', MinimizeStridePermutation())]
 
-    # fuse: vertical and horizontal map fusion in one fixpoint -- vertical is
-    # listed first (priority), but horizontal can expose further vertical
-    # opportunities, so both must iterate together (no FindSingleUseData).
+    # fuse: first recombine adjacent identical-condition ConditionalBlocks
+    # (ConditionFusion -- the inverse of branch-replicated fission, so maps
+    # split across replicated guards become co-located), structural-clean so
+    # the recombined branch's maps share a state, then vertical+horizontal
+    # map fusion in one fixpoint (vertical priority; horizontal can expose
+    # further vertical opportunities; no FindSingleUseData).
+    s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
+    s += _structural_cleanup('fuse')
     s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
