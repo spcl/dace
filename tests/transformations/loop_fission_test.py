@@ -122,6 +122,51 @@ def loop_nested_cycle(A: dace.float64[N, N], B: dace.float64[N, N]):
             B[i, j] = A[i, j] * 2.0
 
 
+# --- TSVC loop-carried-dependence patterns: fission must be refused ---
+
+
+@dace.program
+def tsvc_s211(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+    for i in range(1, N - 1):
+        a[i] = b[i - 1] + c[i] * d[i]
+        b[i] = b[i + 1] - e[i] * d[i]
+
+
+@dace.program
+def tsvc_s1213(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N - 1):
+        a[i] = b[i - 1] + c[i]
+        b[i] = a[i + 1] * d[i]
+
+
+@dace.program
+def tsvc_s221(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        a[i] = a[i] + c[i] * d[i]
+        b[i] = b[i - 1] + a[i] + d[i]
+
+
+@dace.program
+def tsvc_s222(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], e: dace.float64[N]):
+    for i in range(1, N):
+        a[i] = a[i] + b[i] * c[i]
+        e[i] = e[i - 1] * e[i - 1]
+        a[i] = a[i] - b[i] * c[i]
+
+
+@dace.program
+def tsvc_s111(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(1, N, 2):
+        a[i] = a[i - 1] + b[i]
+
+
+@dace.program
+def tsvc_recurrence_plus_independent(a: dace.float64[N], b: dace.float64[N], x: dace.float64[N], y: dace.float64[N]):
+    for i in range(1, N):
+        a[i] = a[i - 1] + b[i]
+        x[i] = y[i] * 2.0
+
+
 @dace.program
 def loop_conditional(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], c: dace.int32[1]):
     for i in range(N):
@@ -282,6 +327,81 @@ def test_loop_fission_nested_cycle_not_split():
     A1, B1 = A0.copy(), B0.copy()
     sdfg(A=A1, B=B1, N=n)
     assert np.allclose(A1, refA) and np.allclose(B1, refB)
+
+
+def _assert_noop_numeric(prog, args, n):
+    """LoopFission must be a no-op (illegal to distribute) and value-preserving.
+
+    :param prog: The dace program.
+    :param args: Keyword arrays.
+    :param n: Value bound to ``N``.
+    """
+    base = prog.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is None, "illegal fission was applied"
+    sdfg.validate()
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+@pytest.mark.parametrize("prog,arrs", [
+    (tsvc_s211, "abcde"),
+    (tsvc_s1213, "abcd"),
+    (tsvc_s221, "abcd"),
+    (tsvc_s111, "ab"),
+])
+def test_loop_fission_tsvc_carried_dep_not_split(prog, arrs):
+    """TSVC s21*/s22* kernels with a genuine cross-statement (or single-
+    statement recurrence) dependence: distributing is illegal -- LoopFission
+    must refuse and stay numerically identical to the un-fissioned loop."""
+    n = 32
+    args = {k: np.random.rand(n) for k in arrs}
+    _assert_noop_numeric(prog, args, n)
+
+
+def test_loop_fission_tsvc_s222_legal_split():
+    """TSVC s222: the ``a`` group (a+=bc; a-=bc) and the ``e`` recurrence
+    (e[i]=e[i-1]^2) are data-independent, so distribution is LEGAL -- the
+    pass splits them while keeping the recurrence intact and exact."""
+    n = 32
+    args = {k: np.random.rand(n) for k in "abce"}
+    base = tsvc_s222.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = tsvc_s222.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    assert _loop_count(sdfg) == 2, f"expected 2 loops, got {_loop_count(sdfg)}"
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+
+
+def test_loop_fission_recurrence_plus_independent_splits():
+    """A loop-carried recurrence and a data-independent statement: the legal
+    distribution keeps the recurrence intact in its own loop and splits off
+    the independent one (2 loops), numerically identical."""
+    n = 24
+    args = dict(a=np.random.rand(n), b=np.random.rand(n), x=np.zeros(n), y=np.random.rand(n))
+    base = tsvc_recurrence_plus_independent.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(base)(**ref, N=n)
+
+    sdfg = tsvc_recurrence_plus_independent.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    assert _loop_count(sdfg) == 2, f"expected 2 loops, got {_loop_count(sdfg)}"
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
 
 def test_loop_fission_conditional_body_kept():
