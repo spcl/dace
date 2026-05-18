@@ -39,6 +39,25 @@ def sdfg_name(builder) -> str:
     return "sdfg"
 
 
+def _fortran_strides(dims):
+    """Column-major strides: ``stride[i]`` is the product of
+    ``dims[0..i-1]``.  Fortran's declaration ``real :: a(nproma, nlev,
+    nblks_e)`` has nproma as the fastest-varying index (stride 1),
+    matching what Flang's HLFIR expects  --  so the SDFG descriptor must
+    advertise the same layout or DaCe's C-order default will mis-index
+    when called with numpy F-order inputs.
+
+    :param dims: ordered extents (ints or symbolic).
+    :returns: column-major stride list, same length as ``dims``.
+    """
+    strides = []
+    acc = 1
+    for d in dims:
+        strides.append(acc)
+        acc = acc * d
+    return strides
+
+
 def add_descriptors(builder, sdfg: SDFG):
     """Add symbols, arrays, and scalars to ``sdfg`` from ``builder``'s
     classified variable dicts.
@@ -99,20 +118,6 @@ def add_descriptors(builder, sdfg: SDFG):
             return dace.symbolic.pystr_to_symbolic(s)
         return dace.symbol(s)
 
-    def _fortran_strides(dims):
-        """Column-major strides: stride[i] = product of dims[0..i-1].
-        Fortran's declaration ``real :: a(nproma, nlev, nblks_e)`` has
-        nproma as the fastest-varying index (stride 1), matching what
-        Flang's HLFIR expects  --  so the SDFG descriptor must advertise
-        the same layout or DaCe's C-order default will mis-index when
-        called with numpy F-order inputs."""
-        strides = []
-        acc = 1
-        for d in dims:
-            strides.append(acc)
-            acc = acc * d
-        return strides
-
     # Flang emits internal temporaries with dotted names (e.g.
     # ``.tmp.arrayctor`` for the array constructor backing an
     # ``out = [n, m]``-style RHS, and ``.c.<type>`` /
@@ -146,7 +151,6 @@ def add_descriptors(builder, sdfg: SDFG):
         # free.
         return s if s in sdfg.symbols else None
 
-    view_aliases = []
     for v in builder.arrays.values():
         if _is_flang_internal(v.fortran_name):
             continue
@@ -231,17 +235,6 @@ def add_descriptors(builder, sdfg: SDFG):
                 sdfg.add_symbol(sym_name, dace.int64)
             lb = v.lower_bounds[d] if d < len(v.lower_bounds) else "1"
             builder.offset_values[sym_name] = _offset_value(lb)
-        if v.role == 'view_alias' and v.view_source:
-            view_aliases.append(v)
-
-    # Record view aliases on the builder; ``build()`` stages the
-    # source <-> view-alias copy states (one copy-in at SDFG entry, one
-    # copy-out at SDFG exit) around the AST-emitted body.
-    builder._view_aliases = view_aliases
-    builder._view_shape_strs = {
-        v.fortran_name: [str(_dim(s)) for s in shape_syms[v.fortran_name]]
-        for v in view_aliases
-    }
 
     for v in builder.scalars.values():
         if _is_flang_internal(v.fortran_name):
@@ -295,13 +288,7 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
     # layout from the source operands' strides) write the result in the
     # same layout the bridge-declared dummy arrays use.  Single-rank
     # transients (or scalars) take DaCe's default contiguous stride.
-    strides = None
-    if len(dims) > 1:
-        acc = 1
-        strides = []
-        for d in dims:
-            strides.append(acc)
-            acc = acc * d
+    strides = _fortran_strides(dims) if len(dims) > 1 else None
     # Length-1 synthesised transient -> Scalar (same rule as the
     # outer add_descriptors path).  Better DaCe-pass compatibility.
     if len(dims) == 1 and dims[0] == 1:
@@ -310,7 +297,6 @@ def declare_synth_array(builder, name: str, shape, dtype: str, ctx):
         ctx.sdfg.add_array(name, shape=dims, dtype=dt(dtype), transient=True, strides=strides)
     # Mirror the entry into ``builder.arrays`` so subsequent emit_assign
     # / emit_libcall calls find it via the existing arrays-dict lookups.
-    from types import SimpleNamespace
     builder.arrays[name] = SimpleNamespace(
         fortran_name=name,
         intent='',

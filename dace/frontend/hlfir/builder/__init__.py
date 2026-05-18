@@ -305,12 +305,11 @@ class SDFGBuilder:
         # ``add_descriptors``); the constant table just attaches the
         # initial-value tuple to it.
         self._register_constants(sdfg)
-        # Stage source -> view-alias copy-in states ahead of the body
-        # so reads on the alias see live source data.  After the body
-        # we stage the reverse copy-out so writes propagate back.
-        # The pre state becomes the SDFG's start block; the post state
-        # is linked from the body's last state by edging through
-        # ``ctx.cur``.
+        # View aliases need no copy staging here: ``add_descriptors``
+        # registers each as an ``sdfg.add_view`` (a typed pointer into
+        # the source buffer) and the ``acc`` factory adds the per-state
+        # linking memlets lazily on first access, so reads/writes hit
+        # the source storage directly.
         ctx = _Ctx(sdfg, self)
         self._emit(ctx, self.ast, sdfg)
         ctx.flush(self)

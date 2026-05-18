@@ -13,10 +13,12 @@ from dace import InterstateEdge
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 
 from dace.frontend.hlfir.builder.access import (
+    acc,
     array_read_to_dace_expr,
     collect_indirect,
     find_array_subscripts,
     indirect_to_dace,
+    iter_view_dim_map,
 )
 from dace.frontend.hlfir.builder.context import _Ctx
 from dace.frontend.hlfir.builder.descriptors import auto_declare_synth
@@ -44,7 +46,6 @@ def _anchor_views_referenced_in_expr(builder, expr: str, region, pre, sdfg):
     """
     if not isinstance(expr, str):
         return pre
-    from dace.frontend.hlfir.builder.access import acc
     view_aliases = {nm for nm, v in builder.arrays.items() if getattr(v, 'role', '') == 'view_alias'}
     if not view_aliases:
         return pre
@@ -87,13 +88,9 @@ def _rewrite_section_aliases_in_expr(builder, expr: str) -> str:
             continue
         v = builder.arrays[arr]
         new_parts = []
-        for slot in v.view_dim_map:
-            if slot.startswith('_d'):
-                try:
-                    d_idx = int(slot[2:])
-                except ValueError:
-                    d_idx = len(new_parts)
-                new_parts.append(parts[d_idx] if d_idx < len(parts) else '0')
+        for _src_dim, slot, dummy_dim in iter_view_dim_map(v.view_dim_map):
+            if dummy_dim is not None:
+                new_parts.append(parts[dummy_dim] if dummy_dim < len(parts) else '0')
             else:
                 new_parts.append(f"({slot}) - 1")
         out = out[:start] + f"{v.view_source}[{', '.join(new_parts)}]" + out[end:]
@@ -167,11 +164,13 @@ def emit_assign(builder, ctx: '_Ctx', n, region):
         # on shared AccessNodes) is free to reorder sibling tasklets
         # that share underlying storage  --  yielding the WAR-violation
         # diagnosed at commit a9bf02173 (cloudsc Section 4.5).
-        # ``emit_loop``'s flat ``elif child_assigns`` path already
-        # serialises hazardous siblings via its ``_raw_hazard`` helper;
-        # this guard extends the same discipline to ``has_structured``
-        # and IF-body emission, which process children one at a time
-        # and would otherwise share the current state.
+        # This is the realised-graph form of the same sequential-
+        # semantics invariant ``_sibling_rw_hazard`` enforces on an
+        # AST-list (``emit_loop``'s flat ``child_assigns`` path): a
+        # correctness change to one must be mirrored in the other.
+        # Here ``has_structured`` / IF-body emission processes children
+        # one at a time and would otherwise share the current state, so
+        # the check runs against ``ctx.cur``'s already-built nodes.
         from dace.sdfg.state import SDFGState
         from dace.sdfg.nodes import Tasklet, AccessNode
 
@@ -290,6 +289,52 @@ def _is_trivial_bound(expr: str) -> bool:
     # Bare identifier (single name, no operators, no brackets).
     if all(ch.isalnum() or ch == '_' for ch in s) and not s[0].isdigit():
         return True
+    return False
+
+
+def _sibling_rw_hazard(assigns) -> bool:
+    """Sequential-semantics hazard test over a list of sibling assign
+    ASTNodes (the AST-list form of the invariant ``emit_assign``'s
+    in-state guard enforces on the realised graph).
+
+    An inlined elemental body like ``f = g*g; g = g/(1+g)`` puts both
+    tasklets in one state with no dataflow edge; since both access
+    nodes back the same non-transient storage, DaCe's scheduler (which
+    honours only RAW edges on shared AccessNodes) may reorder the write
+    ahead of the read and clobber the value.  When this returns true
+    the caller must emit one state per assign so state-edge ordering
+    enforces Fortran order.  Both a forward pass (read after an earlier
+    sibling's write) and a reverse pass (read before a later sibling's
+    write) are checked.
+
+    :param assigns: sibling assign ASTNodes in source order.
+    :returns: ``True`` if any name-sharing R/W pair would race in one
+        state.
+    """
+    write_names_so_far = set()
+    for a in assigns:
+        reads = {ac.array_name for ac in a.accesses if ac.is_read}
+        if reads & write_names_so_far:
+            return True
+        for ac in a.accesses:
+            if ac.is_write:
+                write_names_so_far.add(ac.array_name)
+            if ac.is_read and ac.array_name in {ac2.array_name for ac2 in a.accesses if ac2.is_write}:
+                # self-update within one assign  --  fine (handled by
+                # the write-sink logic in emit_tasklet), but any later
+                # sibling that reads the same name must be in a new
+                # state so it sees the updated value.
+                write_names_so_far.add(ac.array_name)
+    # Also catch later-writer / earlier-reader patterns that would
+    # otherwise race within a single state.
+    later_writes = set()
+    for a in reversed(assigns):
+        reads = {ac.array_name for ac in a.accesses if ac.is_read}
+        if reads & later_writes:
+            return True
+        for ac in a.accesses:
+            if ac.is_write:
+                later_writes.add(ac.array_name)
     return False
 
 
@@ -431,40 +476,9 @@ def emit_loop(builder, ctx: '_Ctx', n, region, iter_map=None):
         symbol_assigns = [a for a in child_assigns if a.target in builder.symbols]
         compute_assigns = [a for a in child_assigns if a.target not in builder.symbols]
 
-        # Serialise sibling assigns that share an array as RW  --  an inlined
-        # elemental body like ``f = g*g; g = g/(1+g)`` puts both tasklets
-        # in one state with no dataflow edge between them; because both
-        # access nodes back the same non-transient storage, the scheduler
-        # can reorder the write ahead of the read and clobber the value.
-        # Use one state per assign whenever such a hazard exists.
-        def _raw_hazard(assigns) -> bool:
-            write_names_so_far = set()
-            for a in assigns:
-                reads = {ac.array_name for ac in a.accesses if ac.is_read}
-                if reads & write_names_so_far:
-                    return True
-                for ac in a.accesses:
-                    if ac.is_write:
-                        write_names_so_far.add(ac.array_name)
-                    if ac.is_read and ac.array_name in {ac2.array_name for ac2 in a.accesses if ac2.is_write}:
-                        # self-update within one assign  --  fine (handled by
-                        # the write-sink logic in emit_tasklet), but any
-                        # later sibling that reads the same name must be
-                        # in a new state so it sees the updated value.
-                        write_names_so_far.add(ac.array_name)
-            # Also catch later-writer / earlier-reader patterns that would
-            # otherwise race within a single state.
-            later_writes = set()
-            for a in reversed(assigns):
-                reads = {ac.array_name for ac in a.accesses if ac.is_read}
-                if reads & later_writes:
-                    return True
-                for ac in a.accesses:
-                    if ac.is_write:
-                        later_writes.add(ac.array_name)
-            return False
-
-        serialise = _raw_hazard(compute_assigns)
+        # Serialise sibling assigns that share an array as RW (see
+        # ``_sibling_rw_hazard``): one state per assign when hazardous.
+        serialise = _sibling_rw_hazard(compute_assigns)
 
         # For each indirect symbol, emit an ``InterstateEdge`` carrying
         # its assignment.  Nested indirection (``idx1[idx2[idx3[i]]]``)

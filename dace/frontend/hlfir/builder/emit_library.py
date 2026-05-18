@@ -15,7 +15,7 @@ import math
 
 from dace import InterstateEdge, Memlet
 
-from dace.frontend.hlfir.builder.access import acc
+from dace.frontend.hlfir.builder.access import acc, iter_view_dim_map
 
 # Per-library-node connector conventions.  Kept here rather than on
 # ``LibNodeIntrinsic`` because the names are a property of the DaCe
@@ -31,6 +31,45 @@ _LIBCALL_CONNECTORS = {
     "MergeLibraryNode": (("_t", "_f", "_mask"), "_out"),
     "CountLibraryNode": (("_mask", ), "_out"),
 }
+
+
+def _parse_reduce_identity(s: str):
+    """Resolve a reduce-accumulator-identity string to its Python value.
+
+    Replaces a prior ``eval`` (flagged as a code smell; its globals were
+    hand-patched with ``inf=math.inf``).  Rather than a closed whitelist
+    -- brittle if a new reduction emits a different literal -- this
+    parses the literal forms the two producers can emit and any plain
+    numeric: the bridge ``kRedTable`` (``bridge/ast/dispatch.cpp``:
+    ``0``/``1``/``inf``/``-inf``/``False``/``True``; bare ``inf`` so the
+    section-reduce path's cppunparse maps it to ``INFINITY``) and the
+    Python ``REDUCTIONS`` registry (``math.inf`` / ``-math.inf``), plus
+    any future int/float identity (``0.0``, ``1.0``, ...).  Unknown
+    non-numeric tokens (e.g. a symbolic ``huge(x)``) raise loudly rather
+    than silently mis-reducing.
+
+    :param s: the identity string carried on the reduce ASTNode.
+    :returns: ``bool`` / ``int`` / ``float`` accumulator identity.
+    :raises NotImplementedError: on an unrecognised non-numeric token.
+    """
+    named = {
+        'True': True,
+        'False': False,
+        'inf': math.inf,
+        '-inf': -math.inf,
+        'math.inf': math.inf,
+        '-math.inf': -math.inf,
+    }
+    if s in named:
+        return named[s]
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        raise NotImplementedError(f"unsupported reduction identity {s!r}")
 
 
 def emit_copy(builder, ctx, n, region):
@@ -75,9 +114,9 @@ def emit_memset(builder, ctx, n, region):
         src_name = v_tgt.view_source
         src_desc = ctx.sdfg.arrays[src_name]
         slab_parts = []
-        for d, slot in enumerate(v_tgt.view_dim_map):
-            if slot.startswith('_d'):
-                slab_parts.append(f"0:{src_desc.shape[d]}")
+        for src_dim, slot, dummy_dim in iter_view_dim_map(v_tgt.view_dim_map):
+            if dummy_dim is not None:
+                slab_parts.append(f"0:{src_desc.shape[src_dim]}")
             else:
                 slab_parts.append(f"({slot}) - 1")
         slab_subset = ", ".join(slab_parts)
@@ -211,7 +250,7 @@ def emit_reduce(builder, ctx, n, region):
     tgt_desc = ctx.sdfg.arrays[n.target]
     identity_val = None
     if n.reduce_identity:
-        identity_val = eval(n.reduce_identity, {'math': math, 'inf': math.inf})
+        identity_val = _parse_reduce_identity(n.reduce_identity)
         if identity_val in (math.inf, -math.inf):
             np_dt = tgt_desc.dtype.as_numpy_dtype()
             if np.issubdtype(np_dt, np.integer):

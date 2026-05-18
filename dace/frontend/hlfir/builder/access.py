@@ -37,6 +37,37 @@ def _next_indirection_gid() -> int:
     return gid
 
 
+def iter_view_dim_map(view_dim_map):
+    """Decode a ``section_alias`` ``view_dim_map`` once, for all callers.
+
+    The bridge records one entry per *source-array* dim: ``"_d<N>"`` for
+    a surviving (triplet) dim, where ``N`` is the 0-based *dummy*-dim
+    index to pull the running subscript from; any other string is a
+    dropped scalar dim whose value is that 1-based Fortran expression.
+
+    Yields ``(src_dim, slot, dummy_dim)`` per source dim, where
+    ``dummy_dim`` is the parsed (or positionally-recovered) dummy-dim
+    index for a surviving slot, or ``None`` for a dropped scalar slot.
+    Callers own the 0-vs-1-based output convention: ``resolve_section_
+    alias`` keeps dropped slots 1-based (``build_memlet_index`` offsets
+    uniformly later), while the subscript/memset emitters convert to
+    0-based (``(slot) - 1``) inline.  That divergence is intentional;
+    only this decode is shared.
+
+    :param view_dim_map: the alias's per-source-dim slot list.
+    :returns: iterator of ``(src_dim, slot, dummy_dim | None)``.
+    """
+    for src_dim, slot in enumerate(view_dim_map):
+        if slot.startswith('_d'):
+            try:
+                dummy_dim = int(slot[2:])
+            except ValueError:
+                dummy_dim = src_dim
+            yield src_dim, slot, dummy_dim
+        else:
+            yield src_dim, slot, None
+
+
 def resolve_section_alias(builder, array_name: str, access):
     """If ``array_name`` is a ``section_alias`` dummy (trivial section
     slice  --  full-range triplets + scalar drops only), return
@@ -61,14 +92,10 @@ def resolve_section_alias(builder, array_name: str, access):
     dummy_exprs = list(getattr(access, 'index_exprs', None) or [])
     dummy_vars = list(getattr(access, 'index_vars', None) or [])
     new_exprs, new_vars = [], []
-    for slot in v.view_dim_map:
-        if slot.startswith('_d'):
-            try:
-                d_idx = int(slot[2:])
-            except ValueError:
-                d_idx = len(new_exprs)
-            new_exprs.append(dummy_exprs[d_idx] if d_idx < len(dummy_exprs) else '')
-            new_vars.append(dummy_vars[d_idx] if d_idx < len(dummy_vars) else '')
+    for _src_dim, slot, dummy_dim in iter_view_dim_map(v.view_dim_map):
+        if dummy_dim is not None:
+            new_exprs.append(dummy_exprs[dummy_dim] if dummy_dim < len(dummy_exprs) else '')
+            new_vars.append(dummy_vars[dummy_dim] if dummy_dim < len(dummy_vars) else '')
         else:
             new_exprs.append(slot)
             new_vars.append('')

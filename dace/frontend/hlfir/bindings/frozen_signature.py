@@ -175,15 +175,3 @@ def _dtype_string(desc) -> str:
         return '?'
     # dace.typeclass instances have a ``to_string``  --  fall back to repr.
     return getattr(t, 'to_string', lambda: str(t))()
-
-
-def freeze_signature(sdfg, entry: str, mangled: str, args: Tuple[FrozenArg, ...]) -> FrozenSignature:
-    """Build a ``FrozenSignature`` from a live SDFG + caller-supplied
-    per-arg metadata (which captures the struct-flattening / layout
-    hints the bridge observed during extraction)."""
-    return FrozenSignature(
-        entry=entry,
-        mangled=mangled,
-        args=args,
-        free_symbols=tuple(str(s) for s in sorted(sdfg.free_symbols, key=str)),
-    )
