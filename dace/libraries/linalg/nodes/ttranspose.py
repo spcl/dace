@@ -178,7 +178,7 @@ class ExpandCuTensor(ExpandTransformation):
     cutensorPlanPreference_t planPref;
     dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
         __dace_cutensor_handle, &planPref,
-        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_NONE));
+        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
 
     cutensorPlan_t plan;
     dace::linalg::CheckCuTensorError(cutensorCreatePlan(

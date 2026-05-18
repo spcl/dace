@@ -355,7 +355,7 @@ class ExpandCuTensor(ExpandTransformation):
             cutensorPlanPreference_t planPref;
             dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
                 __dace_cutensor_handle, &planPref,
-                CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_NONE));
+                CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
             uint64_t worksize = 0;
             dace::linalg::CheckCuTensorError(cutensorEstimateWorkspaceSize(
                 __dace_cutensor_handle, opDesc, planPref,
