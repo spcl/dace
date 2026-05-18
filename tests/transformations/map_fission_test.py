@@ -960,6 +960,111 @@ def test_mapfission_refuses_conditional_component_stays_valid():
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
 
 
+@dace.program
+def _if_two_components(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], c: dace.int32[1]):
+    for i in dace.map[0:N]:
+        if c[0] > 0:
+            A[i] = a[i] + 1.0
+            B[i] = a[i] * 2.0
+
+
+@dace.program
+def _if_three_components(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+                         c: dace.int32[1]):
+    for i in dace.map[0:N]:
+        if c[0] > 0:
+            A[i] = a[i] + 1.0
+            B[i] = a[i] * 2.0
+            C[i] = a[i] - 3.0
+
+
+@dace.program
+def _if_single_component(x: dace.float64[N], c: dace.int32[1]):
+    for i in dace.map[0:N]:
+        if c[0] > 0:
+            x[i] = 1.0
+        else:
+            x[i] = -1.0
+
+
+def _toplevel_map_count(sdfg):
+    """Number of outermost map entries across all states.
+
+    :param sdfg: The SDFG to scan.
+    :returns: The count of top-level map entries.
+    """
+    return sum(1 for st in sdfg.all_states() for n in st.nodes()
+               if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
+
+
+def _run_branch_fission(prog, args, n, expect_maps):
+    """Apply ConditionalComponentFission + MapFission and check e2e.
+
+    :param prog: The dace program.
+    :param args: Keyword arrays for the reference/post runs (no ``N``).
+    :param n: The value bound to symbol ``N``.
+    :param expect_maps: Minimum number of top-level maps expected after.
+    :returns: The post-transformation SDFG.
+    """
+    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+    from dace.transformation.passes.simplify import SimplifyPass
+    sdfg = prog.to_sdfg(simplify=True)
+
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(sdfg)(**ref, N=n)
+
+    ConditionalComponentFission().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(MapFission)
+    SimplifyPass().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _toplevel_map_count(sdfg) >= expect_maps, \
+        f"expected >= {expect_maps} maps, got {_toplevel_map_count(sdfg)}"
+
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
+    return sdfg
+
+
+def test_conditional_component_fission_two():
+    """if c: {A;B} -> two maps, each a conditional writing one output."""
+    n = 16
+    a = np.random.rand(n)
+    _run_branch_fission(_if_two_components,
+                        dict(a=a, A=np.zeros(n), B=np.zeros(n), c=np.array([1], np.int32)), n, 2)
+    # condition false: outputs stay zero (replicated condition still guards).
+    s = _if_two_components.to_sdfg(simplify=True)
+    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+    ConditionalComponentFission().apply_pass(s, {})
+    s.apply_transformations_repeated(MapFission)
+    s.validate()
+    A, B = np.full(n, 9.0), np.full(n, 9.0)
+    s(a=a.copy(), A=A, B=B, c=np.array([0], np.int32), N=n)
+    assert np.allclose(A, 9.0) and np.allclose(B, 9.0)
+
+
+def test_conditional_component_fission_three():
+    """if c: {A;B;C} -> three independent condition-replicated maps."""
+    n = 12
+    a = np.random.rand(n)
+    _run_branch_fission(
+        _if_three_components,
+        dict(a=a, A=np.zeros(n), B=np.zeros(n), C=np.zeros(n), c=np.array([1], np.int32)), n, 3)
+
+
+def test_conditional_component_fission_single_is_noop():
+    """A lone single-output conditional has nothing to fission: no-op, valid."""
+    from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+    n = 8
+    sdfg = _if_single_component.to_sdfg(simplify=True)
+    assert ConditionalComponentFission().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+    x = np.zeros(n)
+    sdfg(x=x, c=np.array([1], np.int32), N=n)
+    assert np.allclose(x, 1.0)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -987,3 +1092,6 @@ if __name__ == '__main__':
     test_memset_memcpy_fission_clean_connectors(_three_set_two_cpy, 3, 2)
     test_mapfission_does_not_apply_to_conditional_map()
     test_mapfission_refuses_conditional_component_stays_valid()
+    test_conditional_component_fission_two()
+    test_conditional_component_fission_three()
+    test_conditional_component_fission_single_is_noop()

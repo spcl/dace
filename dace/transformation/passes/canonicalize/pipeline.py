@@ -22,6 +22,7 @@ from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
+from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
 
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_fission import MapFission
@@ -96,9 +97,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('prepare_fission', p) for p in _cleanup(loop_to_reduce=False)]
     s += [('prepare_fission', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prepare_fission', SimplifyPass())]
 
-    # Stage 2 maximal_fission: fission every independent computation into its
-    # own map. First point LoopToReduce is sound (accumulators just isolated).
-    s += [('maximal_fission', PatternMatchAndApplyRepeated([MapExpansion(), MapFission()])),
+    # Stage 2 maximal_fission: replicate conditionals per independent output
+    # so the conditional-bearing maps can fission, then fission every
+    # independent computation into its own map. First point LoopToReduce is
+    # sound (accumulators just isolated).
+    s += [('maximal_fission', ConditionalComponentFission()),
+          ('maximal_fission', PatternMatchAndApplyRepeated([MapExpansion(), MapFission()])),
           ('maximal_fission', SimplifyPass())]
     s += [('maximal_fission', p) for p in _cleanup(loop_to_reduce=True)]
 
