@@ -887,7 +887,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge) ->
 
         if curr_tree.downwards:
             if state.degree(curr_edge.dst) == 0:
-                # If the edge is isolated we can remove it.
+                # If target node is isolated we can remove it.
                 state.remove_node(curr_edge.dst)
             else:
                 # If the node is not isolated we must look at its connectors and clean them.

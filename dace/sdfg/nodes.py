@@ -193,7 +193,7 @@ class Node(object):
             :return: True if the operation was successful.
         """
         if not connector_name:
-            warnings.warn(f'Tried to remove the {connector_name} from the in-connectors of node {str(self)}',
+            warnings.warn(f'Tried to remove `{connector_name}` from the in-connectors of node {str(self)}',
                           stacklevel=1)
             return False
 
@@ -212,7 +212,7 @@ class Node(object):
             :return: True if the operation was successful.
         """
         if not connector_name:
-            warnings.warn(f'Tried to remove the {connector_name} from the out-connectors of node {str(self)}',
+            warnings.warn(f'Tried to remove `{connector_name}` from the out-connectors of node {str(self)}',
                           stacklevel=1)
             return False
 
