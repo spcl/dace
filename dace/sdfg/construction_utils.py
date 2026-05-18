@@ -533,65 +533,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
 
-def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True, transient_only: bool = False):
-    scalarized_arrays = set()
-    for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
-        if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [
-                1,
-        ]):
-            if (not transient_only) or arr.transient:
-                sdfg.remove_data(arr_name, False)
-                sdfg.add_scalar(name=arr_name,
-                                dtype=arr.dtype,
-                                storage=arr.storage,
-                                transient=arr.transient,
-                                lifetime=arr.lifetime,
-                                debuginfo=arr.debuginfo,
-                                find_new_name=False)
-                scalarized_arrays.add(arr_name)
-
-    # Replace [0] accesses of scalars (formerly array ones) on interstate edges
-    for edge in sdfg.all_interstate_edges():
-        new_dict = dict()
-        for k, v in edge.data.assignments.items():
-            nv = v
-            for scalar_name in scalarized_arrays:
-                if f"{scalar_name}[0]" in nv:
-                    nv = nv.replace(f"{scalar_name}[0]", scalar_name)
-            new_dict[k] = nv
-        edge.data.assignments = new_dict
-
-    # Replace [0] accesses of scalars (formerly array ones) on IfBlocks
-    for node in sdfg.all_control_flow_blocks():
-        if isinstance(node, ConditionalBlock):
-            for cond, body in node.branches:
-                if cond is None:
-                    continue
-                nlc = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
-                for scalar_name in scalarized_arrays:
-                    if f"{scalar_name}[0]" in nlc:
-                        nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
-                cond = CodeBlock(nlc, cond.language if isinstance(cond, CodeBlock) else dace.dtypes.Language.Python)
-
-    # Replace [0] accesses of scalars (formerly array ones) on LoopRegions
-    for node in sdfg.all_control_flow_regions():
-        if isinstance(node, LoopRegion):
-            nlc = node.loop_condition.as_string if isinstance(node.loop_condition, CodeBlock) else str(
-                node.loop_condition)
-            for scalar_name in scalarized_arrays:
-                if f"{scalar_name}[0]" in nlc:
-                    nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
-            node.loop_condition = CodeBlock(
-                nlc, node.loop_condition.language
-                if isinstance(node.loop_condition, CodeBlock) else dace.dtypes.Language.Python)
-
-    if recursive:
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    replace_length_one_arrays_with_scalars(node.sdfg, recursive=True, transient_only=True)
-
-
 def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str):
     import sympy
 
@@ -699,62 +640,6 @@ def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, p
 
 def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
     return len(get_parent_map_and_loop_scopes(root_sdfg, node, parent_state))
-
-
-def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.MapEntry, ControlFlowRegion,
-                                                                     dace.nodes.Tasklet, ConditionalBlock],
-                                   parent_state: Union[dace.SDFGState, None]):
-    scope_dict = parent_state.scope_dict() if parent_state is not None else None
-    num_parent_maps_and_loops = 0
-    cur_node = node
-    parent_scopes = list()
-
-    def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
-        for n, g in sdfg.all_nodes_recursive():
-            if n == nsdfg_node:
-                return g
-        return None
-
-    if isinstance(cur_node, (dace.nodes.MapEntry, dace.nodes.Tasklet)):
-        while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
-                num_parent_maps_and_loops += 1
-                parent_scopes.append(scope_dict[cur_node])
-            cur_node = scope_dict[cur_node]
-
-    parent_graph = parent_state.parent_graph if parent_state is not None else node.parent_graph
-    parent_sdfg = parent_state.sdfg if parent_state is not None else node.parent_graph.sdfg
-    while parent_graph != parent_sdfg:
-        if isinstance(parent_graph, LoopRegion):
-            num_parent_maps_and_loops += 1
-            parent_scopes.append(parent_graph)
-        parent_graph = parent_graph.parent_graph
-
-    # Check parent nsdfg
-    parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
-
-    while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
-        scope_dict = parent_nsdfg_parent_state.scope_dict()
-        cur_node = parent_nsdfg_node
-        while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
-                num_parent_maps_and_loops += 1
-                parent_scopes.append(scope_dict[cur_node])
-            cur_node = scope_dict[cur_node]
-
-        parent_graph = parent_nsdfg_parent_state.parent_graph
-        parent_sdfg = parent_graph.sdfg
-        while parent_graph != parent_sdfg:
-            if isinstance(parent_graph, LoopRegion):
-                num_parent_maps_and_loops += 1
-                parent_scopes.append(parent_graph)
-            parent_graph = parent_graph.parent_graph
-
-        parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
-
-    return parent_scopes
 
 
 def get_parent_map_and_loop_scopes_cfg(root_cfg: ControlFlowRegion, node: Union[dace.nodes.MapEntry, ControlFlowRegion,

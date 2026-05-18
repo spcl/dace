@@ -14,6 +14,7 @@ import sympy
 
 import dace
 import dace.sdfg.construction_utils as cutil
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
 import dace.sdfg.utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import DaceSympyPrinter
@@ -47,7 +48,7 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
 
     sdict = state.scope_dict()
     first_parent_map = sdict[nsdfg]
-    parent_maps_and_loops = cutil.get_parent_map_and_loop_scopes(state.sdfg, first_parent_map, state)
+    parent_maps_and_loops = get_parent_map_and_loop_scopes(state.sdfg, first_parent_map, state)
 
     loop_symbols = set()
     for p in first_parent_map.map.params:

@@ -13,6 +13,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
 import dace.sdfg.tasklet_utils as tutil
 from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
@@ -598,7 +599,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         for state in graph.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
-                    parent_maps = cutil.get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg,
+                    parent_maps = get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg,
                                                                        node=node,
                                                                        parent_state=state)
                     if len(parent_maps) == 0:
@@ -1716,7 +1717,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         # Can be applied should ensure this
         root_sdfg = self.conditional.sdfg if self.parent_nsdfg_state is None else self.parent_nsdfg_state.sdfg
 
-        all_parent_maps_and_loops = cutil.get_parent_map_and_loop_scopes(root_sdfg=root_sdfg,
+        all_parent_maps_and_loops = get_parent_map_and_loop_scopes(root_sdfg=root_sdfg,
                                                                          node=self.conditional,
                                                                          parent_state=None)
 
