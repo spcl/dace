@@ -6,20 +6,20 @@ ambient ``__dace_current_stream`` symbol; the GPU stream scheduler binds it
 post-expansion (legacy codegen declares it directly), so libnodes carry no
 stream input connector themselves.
 """
+import operator
 from dataclasses import dataclass
+from functools import reduce
 from typing import List
 
 import dace
-from dace import data, library, nodes, dtypes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from functools import reduce
-import operator
+from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
-
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, collapse_shape_and_strides,
                                             extract_dynamic_inputs)
 from dace.sdfg.construction_utils import get_parent_map_and_loop_scopes
+from dace.sdfg.scope import is_devicelevel_gpu
+from dace.transformation.transformation import ExpandTransformation
+from .. import environments
 
 # Outer connector names this libnode publishes. Republished as
 # ``CopyLibraryNode.INPUT_CONNECTOR_NAME`` / ``OUTPUT_CONNECTOR_NAME`` so
@@ -75,8 +75,6 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     :returns: a concrete implementation name from
               ``CopyLibraryNode.implementations`` -- never ``'Auto'`` itself.
     """
-    from dace.sdfg.scope import is_devicelevel_gpu
-
     inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
                                                                               parent_state,
                                                                               allow_cross_storage=True)
@@ -311,7 +309,6 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     :returns: the wrapper SDFG holding the mapped tasklet.
     :raises ValueError: the copy crosses the CPU/GPU boundary.
     """
-    from dace.sdfg.scope import is_devicelevel_gpu
     ctx = _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
 
@@ -448,8 +445,6 @@ def _build_copynd_call(ctype,
     :param out_arg: destination pointer-variable name.
     :returns: the ``...::Copy(...)`` call string.
     """
-    from dace import symbolic
-
     ndims = len(copy_shape)
     shape_strs = [sym2cpp(s) for s in copy_shape]
     src_stride_strs = [sym2cpp(s) for s in src_strides]
