@@ -44,6 +44,32 @@ def have_flang() -> bool:
     return _FLANG is not None
 
 
+# LLVM-flang-portable strict-FP flag set: keeps an SDFG-linked binding
+# and its gfortran reference on byte-identical arithmetic semantics.
+FLANG_PORTABLE_FFLAGS = ["-O0", "-fno-fast-math", "-ffp-contract=off"]
+
+
+def gfortran_compile_so(out_so: Path, *sources: Path, mod_dir: Path, link_so: Path | None = None):
+    """gfortran-compile ``sources`` into the shared object ``out_so``.
+
+    Shared by the e2e binding tests, whose generated ``.f90`` binding +
+    driver are linked against the compiled SDFG ``.so`` and called via
+    ctypes (rather than f2py) so LOGICAL / struct ABIs are exercised
+    exactly as a real Fortran caller would.
+
+    :param out_so: output ``.so`` path.
+    :param sources: Fortran sources, compiled in order.
+    :param mod_dir: directory for ``.mod`` files and the build cwd.
+    :param link_so: optional SDFG library to link against.
+    """
+    cmd = ["gfortran", "-shared", "-fPIC", *FLANG_PORTABLE_FFLAGS, f"-J{mod_dir}"]
+    cmd.extend(str(s) for s in sources)
+    cmd.extend(["-o", str(out_so)])
+    if link_so is not None:
+        cmd.extend([f"-L{link_so.parent}", f"-Wl,-rpath,{link_so.parent}", f"-l:{link_so.name}"])
+    subprocess.check_call(cmd, cwd=mod_dir)
+
+
 def f2py_compile(
     src,
     out_dir: Path,

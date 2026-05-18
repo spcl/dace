@@ -24,13 +24,12 @@ struct silently stops being unpacked.
 
 import ctypes
 import shutil
-import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from _util import build_sdfg, have_flang
+from _util import build_sdfg, gfortran_compile_so, have_flang
 from dace.frontend.hlfir.bindings import (
     FlattenPlan,
     OriginalArg,
@@ -42,8 +41,6 @@ pytestmark = [
     pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH"),
     pytest.mark.skipif(shutil.which("gfortran") is None, reason="gfortran not on PATH"),
 ]
-
-_FFLAGS = ["-O0", "-fno-fast-math", "-ffp-contract=off"]
 
 _NX, _NY, _NZ = 4, 3, 2
 
@@ -111,17 +108,6 @@ end subroutine run_scale3d_ref
 """
 
 
-def _compile_so(out_so: Path, *sources: Path, mod_dir: Path, link_so: Path | None = None):
-    """gfortran-compile ``sources`` into ``out_so`` with the
-    flang-portable flag trio, optionally linking ``link_so``."""
-    cmd = ["gfortran", "-shared", "-fPIC", *_FFLAGS, f"-J{mod_dir}"]
-    cmd.extend(str(s) for s in sources)
-    cmd.extend(["-o", str(out_so)])
-    if link_so is not None:
-        cmd.extend([f"-L{link_so.parent}", f"-Wl,-rpath,{link_so.parent}", f"-l:{link_so.name}"])
-    subprocess.check_call(cmd, cwd=mod_dir)
-
-
 def test_e2e_mixed_rank_struct(tmp_path: Path):
     """``type(t_w)`` with a rank-3 array member ``vol`` and a rank-0
     scalar member ``coef``.  The kernel does
@@ -157,7 +143,7 @@ def test_e2e_mixed_rank_struct(tmp_path: Path):
     build_dir = tmp_path / "bind_build"
     build_dir.mkdir(parents=True, exist_ok=True)
     drv_so = build_dir / "scale3d_drv.so"
-    _compile_so(drv_so, types_path, bindings_path, drv_path, mod_dir=build_dir, link_so=so_path)
+    gfortran_compile_so(drv_so, types_path, bindings_path, drv_path, mod_dir=build_dir, link_so=so_path)
     lib = ctypes.CDLL(str(drv_so))
 
     ref_dir = tmp_path / "ref_build"
@@ -169,7 +155,7 @@ def test_e2e_mixed_rank_struct(tmp_path: Path):
     rd = ref_dir / "scale3d_d.f90"
     rd.write_text(_REF_DRIVER)
     ref_so = ref_dir / "scale3d_ref.so"
-    _compile_so(ref_so, rt, rk, rd, mod_dir=ref_dir)
+    gfortran_compile_so(ref_so, rt, rk, rd, mod_dir=ref_dir)
     ref = ctypes.CDLL(str(ref_so))
 
     rng = np.random.default_rng(43)

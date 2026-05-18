@@ -32,13 +32,12 @@ mis-maps -- are exercised on the same footing as the default kind.
 
 import ctypes
 import shutil
-import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from _util import build_sdfg, have_flang
+from _util import build_sdfg, gfortran_compile_so, have_flang
 from dace.frontend.hlfir.bindings import (
     FlattenPlan,
     OriginalArg,
@@ -50,26 +49,6 @@ pytestmark = [
     pytest.mark.skipif(not have_flang(), reason="flang-new-21 not on PATH"),
     pytest.mark.skipif(shutil.which("gfortran") is None, reason="gfortran not on PATH"),
 ]
-
-# flang-portable trio: keep the SDFG-linked binding and the gfortran
-# reference on byte-identical arithmetic semantics.
-_FFLAGS = ["-O0", "-fno-fast-math", "-ffp-contract=off"]
-
-
-def _compile_so(out_so: Path, *sources: Path, mod_dir: Path, link_so: Path | None = None):
-    """gfortran-compile ``sources`` into the shared object ``out_so``.
-
-    :param out_so: output ``.so`` path.
-    :param sources: Fortran sources, compiled in order.
-    :param mod_dir: directory for ``.mod`` files and the build cwd.
-    :param link_so: optional SDFG library to link against.
-    """
-    cmd = ["gfortran", "-shared", "-fPIC", *_FFLAGS, f"-J{mod_dir}"]
-    cmd.extend(str(s) for s in sources)
-    cmd.extend(["-o", str(out_so)])
-    if link_so is not None:
-        cmd.extend([f"-L{link_so.parent}", f"-Wl,-rpath,{link_so.parent}", f"-l:{link_so.name}"])
-    subprocess.check_call(cmd, cwd=mod_dir)
 
 
 def _build_binding_lib(tmp_path: Path, *, kernel_src: str, name: str, entry: str, iface: OriginalInterface,
@@ -95,7 +74,7 @@ def _build_binding_lib(tmp_path: Path, *, kernel_src: str, name: str, entry: str
     build_dir = tmp_path / "bind_build"
     build_dir.mkdir(parents=True, exist_ok=True)
     drv_so = build_dir / f"{name}_drv.so"
-    _compile_so(drv_so, bindings_path, driver_path, mod_dir=build_dir, link_so=so_path)
+    gfortran_compile_so(drv_so, bindings_path, driver_path, mod_dir=build_dir, link_so=so_path)
     return ctypes.CDLL(str(drv_so)), sdfg
 
 
@@ -109,7 +88,7 @@ def _build_ref_lib(tmp_path: Path, *, kernel_src: str, ref_driver_src: str, name
     d = ref_dir / f"{name}_d.f90"
     d.write_text(ref_driver_src)
     so = ref_dir / f"{name}_ref.so"
-    _compile_so(so, k, d, mod_dir=ref_dir)
+    gfortran_compile_so(so, k, d, mod_dir=ref_dir)
     return ctypes.CDLL(str(so))
 
 
