@@ -52,7 +52,7 @@ usable from outside.
 | 1b | `split_tasklets` | `SplitTasklets()` | wired |
 | 1c | `prepare_fission` | `PatternMatchAndApplyRepeated([MoveIfIntoMap])` → `SimplifyPass()` (inline SDFGs + structure) — run before fission so conditionals/nested SDFGs don't block it | wired |
 | 2 | `maximal_fission` | `PatternMatchAndApplyRepeated([MapExpansion, MapFission])` → `SimplifyPass()` | partial (loop-fission step **TODO**) |
-| 3 | `reorder_offsets` | `OffsetLoopsAndMaps(0, 0, convert_leq_to_lt, normalize_loops)` → `SimplifyPass()` | wired |
+| 3 | `reorder_offsets` | `NormalizeLoopsAndMaps` (every map range → `0:trip:1`) → `SimplifyPass()` | wired |
 | 4 | `perfect_loop_nesting` | `MoveIfIntoMap` → `MapExpansion` (= "map uncollapse", `map[i,j]`→`map[i];map[j]`) → `PerfLoopNesting` → `MapCollapse` (re-collapse maximally) → `MinimizeStridePermutation` (permute to minimize strides) → `SimplifyPass()` | being generalized |
 | 5 | `normalize` | `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` → `SimplifyPass()` | wired |
 | 6 | `loop_to_map` | `PatternMatchAndApplyRepeated([LoopToMap])` | wired |

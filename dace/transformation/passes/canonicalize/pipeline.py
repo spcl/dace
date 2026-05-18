@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
 from dace.transformation.passes.simplify_induction_variables import SimplifyInductionVariables
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
@@ -69,12 +69,9 @@ def _maximal_fission() -> List[ppl.Pass]:
 
 
 def _reorder_offsets() -> List[ppl.Pass]:
-    """Stage 3: normalize nests to a zero-based, unit-stride, half-open form;
-    then simplify structure before the next stage."""
-    return [
-        OffsetLoopsAndMaps(offset_expr="0", begin_expr="0", convert_leq_to_lt=True, normalize_loops=True),
-        SimplifyPass(),
-    ]
+    """Stage 3: normalize every map range to 0-based / unit-step; then
+    simplify structure before the next stage."""
+    return [NormalizeLoopsAndMaps(), SimplifyPass()]
 
 
 def _perfect_loop_nesting() -> List[ppl.Pass]:
