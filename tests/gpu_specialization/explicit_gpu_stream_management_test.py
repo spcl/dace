@@ -514,14 +514,16 @@ def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
     state = sdfg.add_state('s')
     a = state.add_read('A')
     b = state.add_write('B')
-    cp = state.add_tasklet('copy_A_to_B', {'_cpy_in'}, {'_cpy_out'},
-                           'cudaMemcpyAsync(_cpy_out, _cpy_in, 128 * sizeof(dace::uint), '
+    in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    cp = state.add_tasklet('copy_A_to_B', {in_conn}, {out_conn},
+                           f'cudaMemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), '
                            'cudaMemcpyDeviceToDevice, __dace_current_stream);',
                            language=dace.Language.CPP)
-    cp.in_connectors = {'_cpy_in': dace.pointer(dace.uint32)}
-    cp.out_connectors = {'_cpy_out': dace.pointer(dace.uint32)}
-    state.add_edge(a, None, cp, '_cpy_in', dace.Memlet('A[0:128]'))
-    state.add_edge(cp, '_cpy_out', b, None, dace.Memlet('B[0:128]'))
+    cp.in_connectors = {in_conn: dace.pointer(dace.uint32)}
+    cp.out_connectors = {out_conn: dace.pointer(dace.uint32)}
+    state.add_edge(a, None, cp, in_conn, dace.Memlet('A[0:128]'))
+    state.add_edge(cp, out_conn, b, None, dace.Memlet('B[0:128]'))
     sdfg.validate()
 
     gpu_stream_pipeline.apply_pass(sdfg, {})
