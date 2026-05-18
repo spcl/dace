@@ -1456,3 +1456,68 @@ inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
   for (int64_t i = 0; i < length; ++i)
     if (mask[i]) B[i * stride] = A[i];
 }
+
+// ---------------------- horizontal reductions ----------------------
+// NEON one-shot reduce for the sum (the dominant reduction); ``vaddvq``
+// is the only cleanly-documented cross-type horizontal NEON intrinsic
+// we rely on (double: 2-wide, float: 4-wide). Product / max / min /
+// bitwise and every non-floating type delegate to the portable
+// log-depth tree in the common header. SFINAE-selected so the tree is
+// always the correctness safety net. (Numeric behaviour validated on
+// ARM hardware; types/intrinsic names validated via aarch64
+// ``-fsyntax-only``.)
+#if defined(__ARM_NEON)
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, double>::value, T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  if (vector_width < 2) return _dace_horizontal_tree_add<T, vector_width>(a);
+  float64x2_t acc = vld1q_f64(a);
+  int i = 2;
+  for (; i + 2 <= vector_width; i += 2) acc = vaddq_f64(acc, vld1q_f64(a + i));
+  T s = vaddvq_f64(acc);
+  for (; i < vector_width; ++i) s += a[i];
+  return s;
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, float>::value, T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  if (vector_width < 4) return _dace_horizontal_tree_add<T, vector_width>(a);
+  float32x4_t acc = vld1q_f32(a);
+  int i = 4;
+  for (; i + 4 <= vector_width; i += 4) acc = vaddq_f32(acc, vld1q_f32(a + i));
+  T s = vaddvq_f32(acc);
+  for (; i < vector_width; ++i) s += a[i];
+  return s;
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<!std::is_same<T, double>::value &&
+                                   !std::is_same<T, float>::value,
+                               T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  return _dace_horizontal_tree_add<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_mul(const T* __restrict__ a) {
+  return _dace_horizontal_tree_mul<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_max(const T* __restrict__ a) {
+  return _dace_horizontal_tree_max<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_min(const T* __restrict__ a) {
+  return _dace_horizontal_tree_min<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_band(const T* __restrict__ a) {
+  return _dace_horizontal_tree_band<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bor<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bxor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bxor<T, vector_width>(a);
+}
+#endif

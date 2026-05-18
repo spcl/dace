@@ -56,6 +56,65 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
+def _affine_coeffs(expr, itersym):
+    """ Return ``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if
+        ``expr`` is not affine in ``itersym``.
+    """
+    e = sp.expand(symbolic.pystr_to_symbolic(expr))
+    a = e.coeff(itersym, 1)
+    b = e.coeff(itersym, 0)
+    if sp.simplify(e - (a * itersym + b)) != 0:
+        return None
+    return a, b
+
+
+def _dim_provably_disjoint(idx1, idx2, itersym) -> bool:
+    """ True iff ``idx1`` at any iteration can never equal ``idx2`` at any
+        iteration, for any integer iterations and any loop bounds.
+
+        Uses the linear-Diophantine solvability criterion: ``a1*i1 + b1 ==
+        a2*i2 + b2`` has an integer solution iff ``gcd(a1, a2)`` divides
+        ``b2 - b1``. If it does not, the accesses never alias.
+    """
+    f1 = _affine_coeffs(idx1, itersym)
+    f2 = _affine_coeffs(idx2, itersym)
+    if f1 is None or f2 is None:
+        return False
+    a1, b1 = f1
+    a2, b2 = f2
+    diff = sp.simplify(b2 - b1)
+    if not (a1.is_Integer and a2.is_Integer):
+        return False
+    if a1 == 0 and a2 == 0:
+        return diff.is_number and diff != 0
+    g = sp.igcd(int(a1), int(a2))
+    if g == 0:
+        return diff.is_number and diff != 0
+    if not diff.is_number:
+        return False
+    if not diff.is_Integer:
+        return True
+    return sp.Integer(diff) % g != 0
+
+
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
+    """ Conservatively decide whether two write memlets to the same container
+        can address the same element on different loop iterations. Returns
+        ``False`` only if some subset dimension is provably disjoint (the
+        multidimensional element can then never coincide).
+    """
+    nd1 = list(m1.subset.ndrange())
+    nd2 = list(m2.subset.ndrange())
+    if len(nd1) != len(nd2):
+        return True
+    for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
+        if b1 != e1 or b2 != e2:  # non-point range dimension: cannot decide here
+            continue
+        if _dim_provably_disjoint(b1, b2, itersym):
+            return False
+    return True
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -193,6 +252,25 @@ class LoopToMap(xf.MultiStateTransformation):
                         # End of check
 
                         write_memlets[dn.data].append(e.data)
+
+        # Two writes with distinct affine subscripts into the same container can
+        # hit the same element on different iterations even when each is
+        # individually injective in the iteration variable (e.g. ``A[5*i]`` and
+        # ``A[3*i]`` collide at ``A[15]``). Parallelizing then reorders the
+        # colliding writes. Allow the pair only if some dimension is provably
+        # disjoint for all iterations (e.g. ``A[2*i]`` vs ``A[2*i+1]``).
+        for data, mmlts in write_memlets.items():
+            distinct: Dict[str, memlet.Memlet] = {}
+            for m in mmlts:
+                if m.wcr is None:
+                    distinct.setdefault(str(m.subset), m)
+            reps = list(distinct.values())
+            for x in range(len(reps)):
+                for y in range(x + 1, len(reps)):
+                    if _writes_may_overlap(reps[x], reps[y], itersym) and not permissive:
+                        print(f"Cannot apply: writes {reps[x].subset} and {reps[y].subset} "
+                              f"to {data} may overlap across iterations")
+                        return False
 
         # After looping over relevant writes, consider reads that may overlap
         for state in loop_states:

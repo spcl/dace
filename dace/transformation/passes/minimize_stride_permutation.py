@@ -156,17 +156,29 @@ class MinimizeStridePermutation(ppl.Pass):
         params = [me.map.params[0] for me in nest]
         scores = self._score_parameters(state, sdfg, nest, params)
 
+        # Only reorder when every parameter has a concrete (symbol-free, finite)
+        # stride. With symbolic shapes the relative magnitudes are undecidable
+        # (e.g. ``N*M`` versus ``M``), so leaving the nest untouched is the
+        # intended, idempotent behavior rather than guessing an order.
+        for stride_score, _ in scores:
+            term = sympy.sympify(stride_score)
+            if not (term.is_number and term.is_finite and not term.free_symbols):
+                return 0
+
         # Build a totally-ordered numeric key per parameter. Smaller indexed
         # stride => deeper (more inner), so the outer..inner target order
         # sorts by *descending* stride. A parameter without a unit-coefficient
         # "home" gets ``+inf`` and is forced outermost. Ties break on ascending
-        # accumulated absolute offset, then ascending original position. Every
-        # component is a Python ``float``/``int`` so ``sorted`` is total and
-        # the key is a pure function of the access pattern (idempotent).
-        def order_key(i: int) -> Tuple[float, float, int]:
+        # accumulated absolute offset. Parameters with equal (or incomparable,
+        # e.g. symbolic) scores keep their current relative order via the
+        # stable sort below -- no positional tiebreak, otherwise reordering
+        # would change the key and the pass would not be idempotent. When all
+        # strides are symbolic the scores tie and the order is left unchanged,
+        # which is the intended behavior (magnitudes are undecidable).
+        def order_key(i: int) -> Tuple[float, float]:
             stride_score, offset_score = scores[i]
             stride_num = float('inf') if stride_score is _NO_HOME_SCORE else _to_float(stride_score)
-            return (-stride_num, _to_float(offset_score), i)
+            return (-stride_num, _to_float(offset_score))
 
         order = sorted(range(len(params)), key=order_key)
         # ``order[k]`` is the original index that should end up at depth ``k``.

@@ -66,8 +66,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
             return None
         if edge_data.other_subset is not None:
             raise Exception("TODO: Other subset not supported")
-        # Using symbols might create problems due to having different symbol objects with same symbols
-        new_range_list = [(b.subs(repldict), e.subs(repldict), s.subs(repldict)) for b, e, s in edge_data.subset]
+        # Range bounds may be plain Python ints; sympify before substituting so
+        # ``.subs`` is always available (using symbols directly risks distinct
+        # symbol objects for the same name).
+        def _subs(bound):
+            return dace.symbolic.pystr_to_symbolic(bound).subs(repldict)
+
+        new_range_list = [(_subs(b), _subs(e), _subs(s)) for b, e, s in edge_data.subset]
         new_range_str = ", ".join(f"{b}:{e+1}:{s}" for b, e, s in new_range_list)
         return dace.memlet.Memlet(expr=f"{edge_data.data}[{new_range_str}]")
 
@@ -307,13 +312,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     self._repl_recursive(n.sdfg, repldict)
 
         for node in cfg.nodes():
-            if isinstance(node, ControlFlowRegion):
-                self._apply(node)
             if isinstance(node, ConditionalBlock):
                 for _, body in node.branches:
                     self._apply(body)
-            else:
-                assert isinstance(node, dace.SDFGState)
+            elif isinstance(node, ControlFlowRegion):
+                # Covers LoopRegion and any other control flow region.
+                self._apply(node)
+            elif isinstance(node, dace.SDFGState):
                 # Descend into NestedSDFGs so their maps/loops get
                 # offset too -- not just the ones at the enclosing
                 # SDFG's top level (e.g. loop bodies that ``LoopToMap``
@@ -321,6 +326,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 for state_node in node.nodes():
                     if isinstance(state_node, dace.nodes.NestedSDFG):
                         self._apply(state_node.sdfg)
+            # Other control flow blocks (break/continue/return) hold no
+            # states or regions to offset and are skipped.
 
     def _split_expr_str_opt_rhs(self, expr_str: str, op_to_split: str) -> str:
         exprs = expr_str.split(op_to_split)

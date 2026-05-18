@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 #define STRINGIZE(x) STRINGIZE_IMPL(x)
 #define STRINGIZE_IMPL(x) #x
@@ -1774,4 +1775,79 @@ inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
 #endif
   for (int64_t i = 0; i < length; ++i)
     if (mask[i]) B[i * stride] = A[i];
+}
+
+// ---------------------- horizontal reductions ----------------------
+// AVX-512 one-shot reduce for the floating-point accumulator types
+// (double: 8-wide _pd, float: 16-wide _ps); every other type and the
+// bitwise ops fall back to the portable log-depth tree in the common
+// header (SFINAE-selected, so the tree is the correctness safety net
+// even if a SIMD path were imperfect). The accumulator register is
+// seeded from the first full lane-group and the loop starts past it,
+// so no identity constant is needed; a scalar tail folds the
+// remainder when ``vector_width`` is not a multiple of the lane count.
+#define _DACE_AVX512_HRED(NAME, MM_PD, RED_PD, MM_PS, RED_PS, SCALAR)         \
+  template <typename T, int vector_width>                                    \
+  inline typename std::enable_if<std::is_same<T, double>::value, T>::type     \
+  horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
+    if (vector_width < 8) return _dace_horizontal_tree_##NAME<T, vector_width>(a); \
+    __m512d acc = _mm512_loadu_pd(a);                                        \
+    int i = 8;                                                               \
+    for (; i + 8 <= vector_width; i += 8) acc = MM_PD(acc, _mm512_loadu_pd(a + i)); \
+    T s = RED_PD(acc);                                                       \
+    for (; i < vector_width; ++i) s = SCALAR(s, a[i]);                        \
+    return s;                                                                \
+  }                                                                          \
+  template <typename T, int vector_width>                                    \
+  inline typename std::enable_if<std::is_same<T, float>::value, T>::type      \
+  horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
+    if (vector_width < 16) return _dace_horizontal_tree_##NAME<T, vector_width>(a); \
+    __m512 acc = _mm512_loadu_ps(a);                                         \
+    int i = 16;                                                              \
+    for (; i + 16 <= vector_width; i += 16) acc = MM_PS(acc, _mm512_loadu_ps(a + i)); \
+    T s = RED_PS(acc);                                                       \
+    for (; i < vector_width; ++i) s = SCALAR(s, a[i]);                        \
+    return s;                                                                \
+  }                                                                          \
+  template <typename T, int vector_width>                                    \
+  inline typename std::enable_if<!std::is_same<T, double>::value &&           \
+                                     !std::is_same<T, float>::value,          \
+                                 T>::type                                     \
+  horizontal_reduce_##NAME(const T* __restrict__ a) {                        \
+    return _dace_horizontal_tree_##NAME<T, vector_width>(a);                  \
+  }
+
+#define _DACE_HRED_S_ADD(s, x) ((s) + (x))
+#define _DACE_HRED_S_MUL(s, x) ((s) * (x))
+#define _DACE_HRED_S_MAX(s, x) (std::max((s), (x)))
+#define _DACE_HRED_S_MIN(s, x) (std::min((s), (x)))
+
+_DACE_AVX512_HRED(add, _mm512_add_pd, _mm512_reduce_add_pd, _mm512_add_ps,
+                  _mm512_reduce_add_ps, _DACE_HRED_S_ADD)
+_DACE_AVX512_HRED(mul, _mm512_mul_pd, _mm512_reduce_mul_pd, _mm512_mul_ps,
+                  _mm512_reduce_mul_ps, _DACE_HRED_S_MUL)
+_DACE_AVX512_HRED(max, _mm512_max_pd, _mm512_reduce_max_pd, _mm512_max_ps,
+                  _mm512_reduce_max_ps, _DACE_HRED_S_MAX)
+_DACE_AVX512_HRED(min, _mm512_min_pd, _mm512_reduce_min_pd, _mm512_min_ps,
+                  _mm512_reduce_min_ps, _DACE_HRED_S_MIN)
+
+#undef _DACE_AVX512_HRED
+#undef _DACE_HRED_S_ADD
+#undef _DACE_HRED_S_MUL
+#undef _DACE_HRED_S_MAX
+#undef _DACE_HRED_S_MIN
+
+// Bitwise reductions have no clean one-shot AVX-512 intrinsic across
+// the integer widths the emitter uses; delegate to the portable tree.
+template <typename T, int vector_width>
+inline T horizontal_reduce_band(const T* __restrict__ a) {
+  return _dace_horizontal_tree_band<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bor<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bxor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bxor<T, vector_width>(a);
 }

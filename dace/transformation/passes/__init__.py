@@ -18,3 +18,4 @@ from .transient_reuse import TransientReuse
 from .offset_loop_and_maps import OffsetLoopsAndMaps
 from .eliminate_branches import EliminateBranches
 from .util import available_passes
+from .canonicalize import CanonicalizationPipeline, canonicalize

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 #define STRINGIZE(x) STRINGIZE_IMPL(x)
 #define STRINGIZE_IMPL(x) #x
@@ -1717,3 +1718,114 @@ inline void strided_store_masked(const T* __restrict__ A, T* __restrict__ B,
   for (int64_t i = 0; i < length; ++i)
     if (mask[i]) B[i * stride] = A[i];
 }
+
+// ---------------------- horizontal reductions ----------------------
+// SVE one-shot reduce for sum / max / min over the floating-point
+// accumulator types (svaddv / svmaxv / svminv), VL-agnostic: a
+// predicated chunk loop accumulates lane-wise (svwhilelt tail
+// predicate) then a single across-vector reduce. Product, bitwise and
+// every non-floating type delegate to the portable log-depth tree in
+// the common header (SVE has no svmulv; bitwise reductions are
+// integer-only and never emitted on an fp accumulator). SFINAE keeps
+// the tree as the correctness safety net. (Numeric behaviour validated
+// on SVE hardware; types/intrinsic names validated via aarch64+sve
+// ``-fsyntax-only``.)
+#if defined(__ARM_FEATURE_SVE)
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, double>::value, T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  svfloat64_t acc = svdup_n_f64(0.0);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntd()) {
+    svbool_t pg = svwhilelt_b64(i, (int64_t)vector_width);
+    acc = svadd_f64_m(pg, acc, svld1_f64(pg, a + i));
+  }
+  return svaddv_f64(svptrue_b64(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, float>::value, T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  svfloat32_t acc = svdup_n_f32(0.0f);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntw()) {
+    svbool_t pg = svwhilelt_b32(i, (int64_t)vector_width);
+    acc = svadd_f32_m(pg, acc, svld1_f32(pg, a + i));
+  }
+  return svaddv_f32(svptrue_b32(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, double>::value, T>::type
+horizontal_reduce_max(const T* __restrict__ a) {
+  svfloat64_t acc = svdup_n_f64(-INFINITY);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntd()) {
+    svbool_t pg = svwhilelt_b64(i, (int64_t)vector_width);
+    acc = svmax_f64_m(pg, acc, svld1_f64(pg, a + i));
+  }
+  return svmaxv_f64(svptrue_b64(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, float>::value, T>::type
+horizontal_reduce_max(const T* __restrict__ a) {
+  svfloat32_t acc = svdup_n_f32(-INFINITY);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntw()) {
+    svbool_t pg = svwhilelt_b32(i, (int64_t)vector_width);
+    acc = svmax_f32_m(pg, acc, svld1_f32(pg, a + i));
+  }
+  return svmaxv_f32(svptrue_b32(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, double>::value, T>::type
+horizontal_reduce_min(const T* __restrict__ a) {
+  svfloat64_t acc = svdup_n_f64(INFINITY);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntd()) {
+    svbool_t pg = svwhilelt_b64(i, (int64_t)vector_width);
+    acc = svmin_f64_m(pg, acc, svld1_f64(pg, a + i));
+  }
+  return svminv_f64(svptrue_b64(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<std::is_same<T, float>::value, T>::type
+horizontal_reduce_min(const T* __restrict__ a) {
+  svfloat32_t acc = svdup_n_f32(INFINITY);
+  for (int64_t i = 0; i < vector_width; i += (int64_t)svcntw()) {
+    svbool_t pg = svwhilelt_b32(i, (int64_t)vector_width);
+    acc = svmin_f32_m(pg, acc, svld1_f32(pg, a + i));
+  }
+  return svminv_f32(svptrue_b32(), acc);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<!std::is_same<T, double>::value &&
+                                   !std::is_same<T, float>::value,
+                               T>::type
+horizontal_reduce_add(const T* __restrict__ a) {
+  return _dace_horizontal_tree_add<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<!std::is_same<T, double>::value &&
+                                   !std::is_same<T, float>::value,
+                               T>::type
+horizontal_reduce_max(const T* __restrict__ a) {
+  return _dace_horizontal_tree_max<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline typename std::enable_if<!std::is_same<T, double>::value &&
+                                   !std::is_same<T, float>::value,
+                               T>::type
+horizontal_reduce_min(const T* __restrict__ a) {
+  return _dace_horizontal_tree_min<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_mul(const T* __restrict__ a) {
+  return _dace_horizontal_tree_mul<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_band(const T* __restrict__ a) {
+  return _dace_horizontal_tree_band<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bor<T, vector_width>(a);
+}
+template <typename T, int vector_width>
+inline T horizontal_reduce_bxor(const T* __restrict__ a) {
+  return _dace_horizontal_tree_bxor<T, vector_width>(a);
+}
+#endif
