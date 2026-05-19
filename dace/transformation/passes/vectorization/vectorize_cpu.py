@@ -102,7 +102,9 @@ class VectorizeCPU(ppl.Pipeline):
                  loop_to_map_permissive: bool = False,
                  force_autovec_ops: Optional[Set[str]] = None,
                  force_pscalar_ops: Optional[Set[str]] = None,
-                 remainder_strategy: str = "scalar"):
+                 remainder_strategy: str = "scalar",
+                 num_cores: int = 1,
+                 sve_style: Optional[str] = None):
         """Build the pipeline.
 
         :param vector_width: SIMD lane count.
@@ -149,9 +151,114 @@ class VectorizeCPU(ppl.Pipeline):
         :param force_pscalar_ops: ops to emit as ``vector_<op>_pscalar`` (no autovec hint).
         :param remainder_strategy: ``"scalar"`` (scalar postamble), ``"masked"`` (iter-mask
             remainder) or ``"full_loop_mask"`` (R3, not yet wired).
+        :param num_cores: number of contiguous core blocks the innermost
+            data-parallel map is tiled into. Only meaningful with
+            ``sve_style`` set (the SVE-style model tiles the map across
+            ``num_cores`` cores, then turns each per-core chunk into a
+            masked while-loop). ``<= 1`` is the inert default; ``sve_style``
+            requires ``> 1``.
+        :param sve_style: select the **SVE-style always-mask emission
+            model** (``None`` = off, today's pipeline). Every operation is
+            emitted with an ``_iter_mask`` so the trailing partial block
+            needs no remainder loop — the mask gates the inactive lanes.
+            Two lengths:
+
+            - ``"fixed"`` — compile-time ``vector_width`` lanes. Runs on
+              AVX-512 / portable x86: the architecture's mask register IS
+              the iteration mask. This is *SVE-style on a fixed-width ISA*,
+              not the ARM SVE backend.
+            - ``"variable"`` — ARM SVE runtime vector length
+              (``svcntd()`` / ``svwhilelt_b64``); the D2 Map→SVE-while
+              lowering. Queued as the final SVE task — raises
+              ``NotImplementedError`` for now.
+
+            **Knob interaction under ``sve_style`` (the always-mask model
+            makes several tuning knobs forced, irrelevant, or
+            conflicting):**
+
+            - *Forced on* (set internally; their default is fine, you do
+              not pass them): branch lowering forced to the merge path
+              (``use_fp_factor`` is ignored — the always-mask model
+              requires SIMD blends, so ``branch_normalization`` is on),
+              ``lower_to_intrinsics=True`` (locked Option B — masked
+              indirection safety).
+            - *Rejected if non-default* (raise ``ValueError``):
+              ``only_apply_vectorization_pass=True`` (the SVE-style prep
+              chain is mandatory), ``remainder_strategy`` other than the
+              default (SVE-style has no remainder loop — the mask covers
+              the tail), ``gather_intrinsic=False`` / ``scatter_intrinsic
+              =False`` (a per-lane scalar fan faults on inactive lanes),
+              non-empty ``force_autovec_ops`` / ``force_pscalar_ops``
+              (they only affect the non-masked default path, which
+              SVE-style never takes — they would silently no-op).
+            - *Required*: ``num_cores > 1``.
+            - *Orthogonal — silently allowed, no SVE-specific meaning*:
+              ``fuse_overlapping_loads``, ``collapse_laneid_index_loads``,
+              ``apply_on_maps``, ``insert_copies``, ``no_inline``,
+              ``fail_on_unvectorizable``, ``eliminate_trivial_vector_map``,
+              ``user_skip_nsdfg_arrays``, ``loop_to_map_permissive``,
+              ``try_to_demote_symbols_in_nsdfgs``.
+
         :raises ValueError: on a rejected knob combination (see body).
-        :raises NotImplementedError: for ``remainder_strategy="full_loop_mask"``.
+        :raises NotImplementedError: for ``remainder_strategy="full_loop_mask"``,
+            for ``sve_style="variable"`` (queued), and for ``sve_style``
+            set at all until the S-SVE5b pipeline assembly lands (the
+            knob contract / validation / documentation are in place now;
+            ``ForLoopToMaskedWhile`` lands in S-SVE5a first).
         """
+        # SVE-style always-mask emission is validated FIRST so an sve_style
+        # caller gets SVE-specific messages, not a downstream legacy mutex
+        # (e.g. the use_fp_factor/remainder check — use_fp_factor defaults
+        # True and is *ignored* under sve_style, so that check must not
+        # fire here). Policy: orthogonal-harmless knobs are silently
+        # allowed; relevant-but-conflicting or no-effect-under-SVE knobs
+        # set to a non-default value raise. Full taxonomy: the
+        # ``sve_style`` docstring entry.
+        _VALID_SVE_STYLE = {None, "fixed", "variable"}
+        if sve_style not in _VALID_SVE_STYLE:
+            raise ValueError(f"VectorizeCPU: sve_style must be one of "
+                             f"{sorted(s for s in _VALID_SVE_STYLE if s is not None)} or None, "
+                             f"got {sve_style!r}")
+        if sve_style is not None:
+            if sve_style == "variable":
+                raise NotImplementedError(
+                    "VectorizeCPU: sve_style='variable' (ARM SVE runtime vector length, "
+                    "the Map->SVE-while lowering) is queued as the final SVE task; only "
+                    "sve_style='fixed' (SVE-style on a fixed-width ISA) is on the roadmap now.")
+            # Branch lowering is forced to the merge path: ``use_fp_factor``
+            # defaults True (legacy), so rejecting it would force every
+            # sve_style caller to also pass use_fp_factor=False. The
+            # always-mask model requires merge blends, so use_fp_factor is
+            # ignored and branch_normalization is forced on (documented;
+            # the forced assignment lands with the S-SVE5b pipeline).
+            if only_apply_vectorization_pass:
+                raise ValueError("VectorizeCPU: sve_style needs the full tile->mask->for->while "
+                                 "prep chain; only_apply_vectorization_pass must be False")
+            if remainder_strategy != "scalar":
+                raise ValueError("VectorizeCPU: sve_style has no remainder loop (the iteration "
+                                 "mask covers the trailing partial block); remainder_strategy is "
+                                 "N/A under sve_style — leave it at the default")
+            if not gather_intrinsic or not scatter_intrinsic:
+                raise ValueError("VectorizeCPU: sve_style forces gather/scatter intrinsics "
+                                 "(a per-lane scalar fan faults on inactive lanes); "
+                                 "gather_intrinsic and scatter_intrinsic must stay True")
+            if force_autovec_ops or force_pscalar_ops:
+                raise ValueError("VectorizeCPU: sve_style emits the masked intrinsic path only; "
+                                 "force_autovec_ops / force_pscalar_ops affect the non-masked "
+                                 "default path and would silently no-op under sve_style")
+            if num_cores <= 1:
+                raise ValueError("VectorizeCPU: sve_style tiles the innermost map across "
+                                 "num_cores contiguous core blocks; pass num_cores > 1")
+            # The tile -> masked vectorize -> GenerateIterationMask(
+            # all_innermost) -> MapToForLoop -> ForLoopToMaskedWhile +
+            # analyze-clean-then-Min chain is wired in S-SVE5b;
+            # ForLoopToMaskedWhile (the only genuinely-new transform)
+            # lands in S-SVE5a first. The knob contract, validation, and
+            # documentation are in place now.
+            raise NotImplementedError(
+                "VectorizeCPU: sve_style pipeline assembly is wired in S-SVE5b "
+                "(ForLoopToMaskedWhile lands in S-SVE5a first). The sve_style knob "
+                "contract, validation, and documentation are in place now.")
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
