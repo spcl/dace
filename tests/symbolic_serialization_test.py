@@ -92,6 +92,20 @@ def test_complex_symbol_roundtrip_preserves_dtype():
     assert restored_sym.dtype == dace.complex128
 
 
+@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128, dace.bool])
+def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
+    """A constant whose dtype has no literal suffix (complex/bool) serializes
+    via the parseable ``dace.<dtype>(value)`` form and round-trips."""
+    tc = symbolic.deserialize_symbolic(f'dace.{dtype.to_string()}(5)')
+    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dtype
+
+    serialized = symbolic.serialize_symbolic(tc)
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert isinstance(restored, symbolic.TypedConstant)
+    assert restored.dtype == dtype and int(restored.value) == 5
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
 def test_sym2cpp_emits_uint64_literals():
     expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol('N', dtype=dace.uint64)
 

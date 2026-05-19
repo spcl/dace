@@ -254,6 +254,10 @@ class UndefinedSymbol(symbol):
 class TypedConstant(sympy.AtomicExpr):
     """A typed constant value that participates in symbolic expressions.
 
+    The value is always a real ``Integer``/``Float``; the ``dtype`` is a tag.
+    Genuine complex/boolean constant values are not supported (only the dtype
+    tag round-trips, via the ``dace.<dtype>(value)`` form).
+
     Examples
     --------
     >>> from dace import symbolic, int16
@@ -515,7 +519,11 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
         value = _format_float(float(expr.value))
     else:
         value = sympy.printing.str.sstr(expr.value)
-    return f'{value}{_typed_constant_suffix(expr.dtype)}'
+    if expr.dtype in dtypes.TYPECLASS_TO_LITERAL_SUFFIX:
+        return f'{value}{_typed_constant_suffix(expr.dtype)}'
+    # dtypes without a literal suffix (complex, bool) round-trip via the
+    # parseable cast form ``dace.<dtype>(value)``.
+    return f'dace.{expr.dtype.to_string()}({value})'
 
 
 def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
