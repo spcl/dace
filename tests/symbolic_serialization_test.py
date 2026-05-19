@@ -97,9 +97,9 @@ def test_complex_symbol_roundtrip_preserves_dtype():
     assert restored_sym.dtype == dace.complex128
 
 
-@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128, dace.bool])
+@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128])
 def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
-    """A constant whose dtype has no literal suffix (complex/bool) serializes
+    """A constant whose dtype has no literal suffix (complex) serializes
     via the parseable ``dace.<dtype>(value)`` form and round-trips."""
     tc = symbolic.deserialize_symbolic(f'dace.{dtype.to_string()}(5)')
     assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dtype
@@ -109,19 +109,6 @@ def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
     assert isinstance(restored, symbolic.TypedConstant)
     assert restored.dtype == dtype and int(restored.value) == 5
     assert symbolic.serialize_symbolic(restored) == serialized
-
-
-@pytest.mark.parametrize('value', [True, False, np.bool_(True)])
-def test_bool_typed_constant_construction_and_roundtrip(value):
-    """Boolean values are accepted (stored as 0/1) and round-trip with bool dtype."""
-    tc = symbolic.TypedConstant(value)
-    assert isinstance(tc, symbolic.TypedConstant)
-    assert tc.dtype == dace.bool_
-    assert int(tc.value) == int(value)
-
-    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(tc))
-    assert isinstance(restored, symbolic.TypedConstant)
-    assert restored.dtype == dace.bool_ and int(restored.value) == int(value)
 
 
 def test_complex_constant_parse_save_roundtrip():
