@@ -141,9 +141,25 @@ class ForLoopToMaskedWhile(ppl.Pass):
             core = self._enclosing_core_map(cfg)
             if core is None:
                 continue
-            # Auto-derive the global exclusive trip bound from the core
-            # map (it keeps the original inclusive end; symbolic-safe).
-            gub = str(self.global_ub) if self.global_ub is not None else str(core.map.range[-1][1] + 1)
+            # The global exclusive trip bound. Authoritative source is an
+            # explicit ``global_ub`` captured at tile time by the SVE
+            # orchestrator (immune to any intervening pass). The core map
+            # re-derivation is the standalone/unit fallback when unset.
+            derived = core.map.range[-1][1] + 1
+            if self.global_ub is not None:
+                gub = str(self.global_ub)
+                # Consistency assert: the late core-map re-derivation MUST
+                # agree with the value captured at tile time. A mismatch
+                # means some pass between tiling and here perturbed the
+                # ``core`` map range — fail loud rather than emit a wrong
+                # Min clamp (silent OOB / lost iterations).
+                if dace.symbolic.simplify(dace.symbolic.pystr_to_symbolic(gub) - derived) != 0:
+                    raise RuntimeError(f"ForLoopToMaskedWhile: global_ub mismatch for loop {cfg.label!r} — "
+                                       f"captured-at-tile {gub!r} != core-map re-derived {str(derived)!r}. "
+                                       f"A pass between SVE tiling and here mutated the 'core' map range; "
+                                       f"the Min clamp would be wrong (silent OOB or dropped iterations).")
+            else:
+                gub = str(derived)
             loop_var = cfg.loop_variable
             if cfg.loop_condition is None:
                 continue

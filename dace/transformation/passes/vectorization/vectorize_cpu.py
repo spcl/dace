@@ -28,7 +28,6 @@ from dace.transformation.passes.vectorization.generate_iteration_mask import Gen
 from dace.transformation.passes.vectorization.utils.iteration import assert_no_lane_memlet_reads
 
 
-
 class _LoopToMapPass(ppl.Pass):
     """Thin Pass wrapper running :class:`LoopToMap` to a fixed point.
 
@@ -219,12 +218,12 @@ class VectorizeCPU(ppl.Pipeline):
             raise ValueError(f"VectorizeCPU: sve_style must be one of "
                              f"{sorted(s for s in _VALID_SVE_STYLE if s is not None)} or None, "
                              f"got {sve_style!r}")
+        sve_fixed = False
         if sve_style is not None:
             if sve_style == "variable":
-                raise NotImplementedError(
-                    "VectorizeCPU: sve_style='variable' (ARM SVE runtime vector length, "
-                    "the Map->SVE-while lowering) is queued as the final SVE task; only "
-                    "sve_style='fixed' (SVE-style on a fixed-width ISA) is on the roadmap now.")
+                raise NotImplementedError("VectorizeCPU: sve_style='variable' (ARM SVE runtime vector length, "
+                                          "the Map->SVE-while lowering) is queued as the final SVE task; only "
+                                          "sve_style='fixed' (SVE-style on a fixed-width ISA) is on the roadmap now.")
             # Branch lowering is forced to the merge path: ``use_fp_factor``
             # defaults True (legacy), so rejecting it would force every
             # sve_style caller to also pass use_fp_factor=False. The
@@ -249,16 +248,17 @@ class VectorizeCPU(ppl.Pipeline):
             if num_cores <= 1:
                 raise ValueError("VectorizeCPU: sve_style tiles the innermost map across "
                                  "num_cores contiguous core blocks; pass num_cores > 1")
-            # The tile -> masked vectorize -> GenerateIterationMask(
-            # all_innermost) -> MapToForLoop -> ForLoopToMaskedWhile +
-            # analyze-clean-then-Min chain is wired in S-SVE5b;
-            # ForLoopToMaskedWhile (the only genuinely-new transform)
-            # lands in S-SVE5a first. The knob contract, validation, and
-            # documentation are in place now.
-            raise NotImplementedError(
-                "VectorizeCPU: sve_style pipeline assembly is wired in S-SVE5b "
-                "(ForLoopToMaskedWhile lands in S-SVE5a first). The sve_style knob "
-                "contract, validation, and documentation are in place now.")
+            # sve_style='fixed' forces the merge branch front and the
+            # masked intrinsic path. ``use_fp_factor`` defaults True
+            # (legacy) — override silently to the merge front as
+            # documented; force lower_to_intrinsics so masked gather/
+            # scatter is safe (a per-lane scalar fan faults on inactive
+            # lanes). The chain itself is the SveStyleFinalize
+            # orchestrator appended after the shared front below.
+            sve_fixed = True
+            use_fp_factor = False
+            branch_normalization = True
+            lower_to_intrinsics = True
         if use_fp_factor and branch_normalization:
             raise ValueError("VectorizeCPU: use_fp_factor and branch_normalization are mutually exclusive; "
                              "choose one branch-lowering strategy")
@@ -451,6 +451,23 @@ class VectorizeCPU(ppl.Pipeline):
             ]
             if not no_inline:
                 passes.append(InlineSDFGs())
+            if sve_fixed:
+                # SVE-style 'fixed': the whole tile -> mask -> vectorize ->
+                # detect -> MapToForLoop -> ForLoopToMaskedWhile chain is a
+                # single coordinating pass that captures the global trip
+                # bound at tile time (the M3.2 pattern). It owns the
+                # vectorizer + detect + RemoveVectorMaps internally, so the
+                # normal prep / post-vectorizer blocks are bypassed.
+                from dace.transformation.passes.vectorization.vectorize_sve import SveStyleFinalize
+                passes.append(
+                    SveStyleFinalize(vectorizer,
+                                     vector_width=vector_width,
+                                     num_cores=num_cores,
+                                     lower_to_intrinsics=lower_to_intrinsics,
+                                     eliminate_trivial_vector_map=eliminate_trivial_vector_map))
+                self._applied_before = False
+                super().__init__(passes)
+                return
             # P1 (NestInnermostMapBodyIntoNSDFG) + P2
             # (SplitMapForVectorRemainder) ALWAYS run.  P2 does the symbolic
             # divisibility analysis: when ``simplify(ub-lb+1) % W == 0`` is
@@ -486,7 +503,8 @@ class VectorizeCPU(ppl.Pipeline):
                 passes.extend([
                     NestInnermostMapBodyIntoNSDFG(vector_width=vector_width),
                     SplitMapForVectorRemainder(vector_width=vector_width, mode="masked"),
-                    GenerateIterationMask(vector_width=vector_width, mode="masked",
+                    GenerateIterationMask(vector_width=vector_width,
+                                          mode="masked",
                                           lower_to_intrinsics=lower_to_intrinsics),
                 ])
             passes.append(vectorizer)
@@ -531,11 +549,9 @@ class VectorizeCPU(ppl.Pipeline):
         # the masked remainder only and the main loop keeps its per-lane
         # scalar fan (which the C++ compiler may still auto-vectorize).
         passes.append(
-            DetectGather(only_masked=not gather_intrinsic,
-                         collapse_laneid_index_loads=collapse_laneid_index_loads))
+            DetectGather(only_masked=not gather_intrinsic, collapse_laneid_index_loads=collapse_laneid_index_loads))
         passes.append(
-            DetectScatter(only_masked=not scatter_intrinsic,
-                          collapse_laneid_index_loads=collapse_laneid_index_loads))
+            DetectScatter(only_masked=not scatter_intrinsic, collapse_laneid_index_loads=collapse_laneid_index_loads))
         # Strided / multi-dim-strided collapse stays opt-in.
         if lower_to_intrinsics:
             passes.extend([
