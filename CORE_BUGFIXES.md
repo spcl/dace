@@ -151,3 +151,26 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   needs the d2/FaCe env) exercises the exact `a(idx(i))` lowering; a
   main-safe focused unit test is TODO.
 - **Status:** fixed, regression-verified; commit pending.
+
+### 8. (BACKLOG, not a bug) MoveIfIntoMap underpowered for the top-level guard-over-map shape
+- **Observation:** `MoveIfIntoMap.can_be_applied` only matches a guard
+  already inside a NestedSDFG that sits in an outer map; it is a no-op on
+  the raw frontend `if c: for i,k in dace.map: body`. The desirable
+  canonical move `if c: map` -> `map: if c: body` is currently delivered
+  only by the full pipeline / the existing-pass composition.
+- **Delivered (Option A, low-risk, zero core surgery):** the capability is
+  achieved by *reusing existing transformations* --
+  `MapExpansion` + `MapToForLoop` + `InlineMultistateSDFG` +
+  `MoveIfIntoLoop` + `LoopToMap` (LoopToMap re-applies, parallelism
+  recovered). Verified + covered by symmetric loop/map tests
+  (`tests/transformations/move_if_into_loop_and_map_symmetric_test.py`).
+- **Deferred (Option B, deliberate future effort):** extend
+  `MoveIfIntoMap` for the top-level/no-outer-map case + a
+  MoveIfIntoMap/MoveIfIntoLoop fixpoint. Key finding lowering its cost:
+  `_rewrite_inner_sdfg` is **already outer-map-agnostic** (only uses
+  `enclosing_sdfg`+`inner_nsdfg`), so the work is mostly relaxing
+  `can_be_applied` (accept no-outer-map with a soundness check: condition
+  not dependent on map-written data) + validating `apply`'s symbol/array
+  piping for array-valued conditions without an outer nsdfg. Needs the
+  full move_if_into_map + canonicalize regression sweep. Not a bug; an
+  ergonomics/architecture improvement.
