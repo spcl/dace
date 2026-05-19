@@ -24,12 +24,19 @@ subgraph stays guarded, one duplicated guard per sibling -- and is value-
 preserving for a single-branch (no-else) guard whose condition is invariant
 w.r.t. every sibling loop: guard true => every sibling runs (as before),
 guard false => none runs (as before). The single-iteration wrappers are
-removed again by ``TrivialMapElimination`` once ``LoopToMap`` turns them into
-maps. Same conservatism: any inter-block interstate assignment, or a
-condition that a sibling loop/state could vary, is a no-op.
+spliced back out by the canonicalize pipeline's ``untrivialize`` stage
+(``TrivialLoopElimination``) before ``LoopToMap``. Because the guard always
+sits inside a loop (a real sibling loop, or the trivial wrapper of a bare
+sibling), no top-level ``ConditionalBlock`` is ever produced -- so the path
+fires regardless of nesting level (including a top-level guarded body).
+
+Interstate-edge assignments on the branch chain are **not** duplicated into
+the per-sibling guards, so they would execute unconditionally -- incorrect.
+The pass therefore refuses (no-op) on any region carrying an interstate-edge
+assignment and emits a loud warning so the dropped opportunity is visible.
 """
 import copy
-import copy
+import warnings
 from typing import Any, Dict, List, Optional
 
 from dace import SDFG
@@ -37,6 +44,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg import nodes
+from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -136,9 +144,13 @@ def _match_imperfect(sdfg: SDFG):
 
     Distinct from :func:`_match`, which only takes ``[prep..., one loop]``;
     here the guard is duplicated into every sibling (bare states first wrapped
-    in a trivial single-iteration loop). The condition must be invariant
-    w.r.t. every sibling loop and unclobbered by any sibling bare state, and
-    no inter-block interstate assignment may exist (conservative => no-op).
+    in a trivial single-iteration loop, so the duplicated guard sits *inside*
+    that loop -- never a top-level ``ConditionalBlock``; the wrapper is spliced
+    out later by the ``untrivialize`` stage). The condition must be invariant
+    w.r.t. every sibling loop and unclobbered by any sibling bare state. A
+    region carrying an interstate-edge assignment is a no-op (the assignment
+    cannot be moved under the per-sibling guards, so it would run
+    unconditionally) and a loud warning is emitted.
 
     :returns: ``(cond_block, condition, region)`` or ``None``.
     """
@@ -162,6 +174,13 @@ def _match_imperfect(sdfg: SDFG):
         if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
             continue
         if any(e.data.assignments for e in region.edges()):
+            warnings.warn("\n" + "!" * 78 + "\n"
+                          "MoveIfIntoLoop: refusing to distribute guard "
+                          f"{cond.as_string!r} over an imperfect nest in "
+                          f"{cb.label!r}: the branch carries an interstate-edge "
+                          "assignment that cannot be moved under the per-sibling "
+                          "guards and would execute UNCONDITIONALLY. Left unchanged.\n" + "!" * 78,
+                          stacklevel=2)
             continue  # conservative: no inter-block interstate assignments
         cfree = {str(s) for s in cond.get_free_symbols()}
         # The guard's truth must be the same for every sibling: it must not
@@ -249,6 +268,10 @@ class MoveIfIntoLoop(ppl.Pass):
                 count += 1
                 continue
             break
+        if count:
+            # _move / _move_imperfect deepcopy + re-add blocks; any nested
+            # SDFG carried along keeps stale parent references until repaired.
+            set_nested_sdfg_parent_references(sdfg)
         return count or None
 
     @staticmethod

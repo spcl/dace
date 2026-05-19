@@ -235,9 +235,10 @@ def test_move_if_into_nested_dimension_guards():
 
 @dace.program
 def guard_then_loop_then_stmt(a: dace.float64[N], b: dace.float64[N], active: dace.int32[1]):
-    # Branch region is `loop ; trailing-state` (a heterogeneous imperfect
-    # nest): the free-state path wraps the trailing state in a trivial
-    # single-iteration loop and duplicates the guard into every sibling.
+    # Branch region is `loop ; trailing-state` -- a heterogeneous imperfect
+    # nest. The free-state path fires: the trailing state is wrapped in a
+    # trivial single-iteration loop (so its guard is inside that loop, never
+    # a top-level ConditionalBlock) and the guard is duplicated per sibling.
     if active[0] > 0:
         for i in range(N):
             b[i] = a[i] + 1.0
@@ -278,10 +279,11 @@ def test_move_if_into_loop_refuses_and_stays_correct(prog, extra):
 
 
 def test_move_if_into_loop_fires_on_free_state_imperfect_nest():
-    """The free-state path: ``if c: { for i: ...; trailing-state }`` -- the
-    pass fires, wraps the trailing state in a trivial single-iteration loop,
-    duplicates the guard into every sibling, leaves no top-level guard, and
-    stays numerically correct for the guard taken and not-taken."""
+    """The free-state path: ``if c: { for i: ...; trailing-state }`` with an
+    assignment-free inter-block edge -- the pass fires, wraps the trailing
+    state in a trivial single-iteration loop, duplicates the guard into every
+    sibling, leaves no top-level guard, value-preserving for guard taken /
+    not-taken."""
     n = 16
     a = np.random.rand(n)
     base = guard_then_loop_then_stmt.to_sdfg(simplify=True)
@@ -293,7 +295,6 @@ def test_move_if_into_loop_fires_on_free_state_imperfect_nest():
         assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None, "must fire"
         sdfg.validate()
         assert not _top_level_conds(sdfg), "guard survived at SDFG top level"
-        # Guard duplicated, not dropped.
         assert any(isinstance(r, ConditionalBlock) for r in sdfg.all_control_flow_regions(recursive=True))
 
         out = np.full(n, 4.0)

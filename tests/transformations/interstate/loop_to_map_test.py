@@ -940,6 +940,60 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
 
 
+def test_loop_to_map_with_loop_invariant_if():
+    """A loop whose body is guarded by a loop-invariant condition is
+    parallelizable: ``for i: if c: b[i]=a[i]+1`` -> one map, value-preserving
+    for the guard taken and not-taken. (The guard becomes a per-iteration
+    ``NestedSDFG``-wrapped conditional inside the map.)"""
+    N = dace.symbol('N')
+
+    @dace.program
+    def loop_invariant_if(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]):
+        for i in range(N):
+            if c[0] > 0:
+                b[i] = a[i] + 1.0
+
+    for cv in (1, 0):
+        sdfg = loop_invariant_if.to_sdfg(simplify=True)
+        assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+        sdfg.validate()
+        assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
+        n = 12
+        a = np.random.rand(n)
+        b = np.zeros(n)
+        sdfg(a=a.copy(), b=b, c=np.array([cv], np.int32), N=n)
+        assert np.allclose(b, a + 1.0 if cv > 0 else 0.0), f"mismatch c={cv}"
+
+
+@pytest.mark.xfail(strict=True,
+                   reason="LoopToMap->MapToForLoop round-trip widens the NestedSDFG external "
+                   "write memlet from b[i] to b[0:N] (the guard forces a NestedSDFG body, whose "
+                   "boundary loses the per-iteration subset), so the second LoopToMap can no "
+                   "longer prove per-iteration independence and refuses ('Write pattern check "
+                   "failed for b'). The round-trip should recover the map.")
+def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
+    """Regression for the canonicalize idempotence blocker: parallelizing a
+    loop-invariant-guarded loop, de-parallelizing it, then re-parallelizing
+    should recover the map. It currently does not -- the NestedSDFG memlet is
+    widened across the round-trip."""
+    from dace.transformation.dataflow.map_for_loop import MapToForLoop
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    N = dace.symbol('N')
+
+    @dace.program
+    def loop_invariant_if(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]):
+        for i in range(N):
+            if c[0] > 0:
+                b[i] = a[i] + 1.0
+
+    sdfg = loop_invariant_if.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, "first LoopToMap must fire"
+    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, \
+        "re-parallelize must recover the map after the round-trip"
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -981,4 +1035,5 @@ if __name__ == "__main__":
     test_self_loop_to_map()
     test_nested_sdfg_nested_loop()
     test_stride_symbol_propagated_to_nested_sdfg()
+    test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
