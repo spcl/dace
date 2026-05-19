@@ -31,6 +31,15 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     referenced it from interstate-edge assignments, conditional-block
     branch guards, loop-region conditions and memlet subsets.
 
+    Length-1 arrays of an ``opaque`` dtype (an external handle such as
+    ``MPI_Request`` / ``MPI_Comm``) are left untouched: a consumer that
+    takes the handle through a pointer connector (e.g. a ``dace``
+    ``Wait`` / ``Isend`` library node) needs the source to stay an
+    ``Array`` so it lowers to ``DefinedType.Pointer`` and decays to a
+    pointer.  A scalarized opaque source is copied by value instead,
+    which miscompiles (``MPI_Wait`` wants ``MPI_Request*``, not a
+    ``MPI_Request`` copy).
+
     :param recursive: Recurse into nested SDFGs (only their TRANSIENT
         length-1 arrays are rewritten -- a non-transient nested-SDFG
         arg is part of its parent's signature and rewriting it would
@@ -39,9 +48,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         arrays (default ``False`` -- both signature and local rewrites).
     """
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient arrays.")
@@ -60,6 +67,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
         scalarized: Set[str] = set()
         for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
+            if isinstance(arr.dtype, dace.dtypes.opaque):
+                continue
             if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1]):
                 if (not transient_only) or arr.transient:
                     sdfg.remove_data(arr_name, validate=False)
@@ -161,14 +170,19 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     ``Scalar`` to a length-1 ``Array`` (shape ``(1,)``).  Useful when a
     consumer requires a 1-element buffer rather than a by-value scalar.
 
+    ``Scalar`` data of an ``opaque`` dtype (an external handle such as
+    ``MPI_Request`` / ``MPI_Comm``) is left untouched: opaque handles
+    must keep the exact form their producer chose so the
+    array-vs-scalar / pointer-vs-value contract with the consuming
+    library node is preserved (the symmetric counterpart of the
+    ``opaque`` exemption in ``ConvertLengthOneArraysToScalars``).
+
     :param recursive: Recurse into nested SDFGs (transient-only there).
     :param transient_only: Restrict the top-level rewrite to transient
         scalars.
     """
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient scalars.")
@@ -187,6 +201,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
         arrayized: Set[str] = set()
         for name, desc in [(k, v) for k, v in sdfg.arrays.items()]:
+            if isinstance(desc.dtype, dace.dtypes.opaque):
+                continue
             if isinstance(desc, dace.data.Scalar) and ((not transient_only) or desc.transient):
                 sdfg.remove_data(name, validate=False)
                 sdfg.add_array(name=name,

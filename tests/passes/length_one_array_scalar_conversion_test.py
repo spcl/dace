@@ -88,6 +88,35 @@ def test_convert_scalars_to_length_one_arrays_roundtrip():
     assert tuple(sdfg.arrays["a"].shape) == (1, )
 
 
+def test_opaque_length_one_array_is_not_scalarized():
+    """A length-1 array of an ``opaque`` dtype (e.g. ``MPI_Request``)
+    must stay an ``Array`` so a pointer-connector consumer can take its
+    address; only the plain-dtype length-1 array next to it is folded."""
+    sdfg = dace.SDFG("opaque_len1")
+    sdfg.add_state("s")
+    sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    rewritten = ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+    assert rewritten == {"a"}
+    assert isinstance(sdfg.arrays["req"], dd.Array)
+    assert tuple(sdfg.arrays["req"].shape) == (1, )
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
+def test_opaque_scalar_is_not_arrayized():
+    """The symmetric inverse: an ``opaque`` ``Scalar`` keeps its scalar
+    form under ``ConvertScalarsToLengthOneArrays`` while a plain-dtype
+    scalar is rewritten to a length-1 ``Array``."""
+    sdfg = dace.SDFG("opaque_scalar")
+    sdfg.add_state("s")
+    sdfg.add_scalar("comm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    sdfg.add_scalar("k", dace.int64, transient=True)
+    rewritten = ConvertScalarsToLengthOneArrays(transient_only=True).apply_pass(sdfg, {})
+    assert rewritten == {"k"}
+    assert isinstance(sdfg.arrays["comm"], dd.Scalar)
+    assert isinstance(sdfg.arrays["k"], dd.Array)
+
+
 def test_passes_expose_property_options():
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
         assert set(cls.__properties__) == {"recursive", "transient_only"}
