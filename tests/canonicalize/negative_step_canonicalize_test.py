@@ -40,6 +40,40 @@ def _negative_step_ranges(sdfg):
     return bad
 
 
+def _assert_canonical_bounds(sdfg, n: int, expected_iterations=None):
+    """Every map/loop is zero-based and unit-stride; if
+    ``expected_iterations`` is given, every map/loop's concrete trip count
+    (at ``N == n``) equals it.
+
+    Checks the *new bounds* explicitly -- start ``0``, step ``1``, and the
+    exact iteration count after the ``i -> start + step*i'`` remap -- not
+    just the end-to-end numbers.
+    """
+    subs = {dace.symbol('N'): n}
+    seen = 0
+    for st in sdfg.all_states():
+        for me in st.nodes():
+            if isinstance(me, nodes.MapEntry):
+                for (b, e, s) in me.map.range:
+                    assert dace.symbolic.evaluate(b, subs) == 0, f'map begin {b} != 0'
+                    assert dace.symbolic.evaluate(s, subs) == 1, f'map step {s} != 1'
+                    if expected_iterations is not None:
+                        trip = int(dace.symbolic.evaluate(e, subs)) + 1  # inclusive end
+                        assert trip == expected_iterations, f'map trips {trip} != {expected_iterations}'
+                    seen += 1
+    for r in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(r, LoopRegion):
+            start = loop_analysis.get_init_assignment(r)
+            stride = loop_analysis.get_loop_stride(r)
+            assert dace.symbolic.evaluate(start, subs) == 0, f'loop start {start} != 0'
+            assert dace.symbolic.evaluate(stride, subs) == 1, f'loop stride {stride} != 1'
+            if expected_iterations is not None:
+                trip = int(dace.symbolic.evaluate(loop_analysis.get_loop_end(r), subs)) + 1
+                assert trip == expected_iterations, f'loop trips {trip} != {expected_iterations}'
+            seen += 1
+    assert seen > 0, 'no map/loop found to check bounds on'
+
+
 @dace.program
 def recurrence_down(a: dace.float64[N], b: dace.float64[N]):
     # b[i] reads b[i+1]: a vertical dependency, iterated top -> bottom.
@@ -96,6 +130,8 @@ def test_descending_recurrence_canonicalizes_correctly(prog, seed_tail, recur):
     sdfg = prog.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
+    # range(n-1-seed_tail, -1, -1) has (n - seed_tail) iterations.
+    _assert_canonical_bounds(sdfg, n, expected_iterations=n - seed_tail)
 
     out = np.zeros(n)
     out[n - 1] = 1.0
@@ -111,6 +147,8 @@ def test_descending_parallel_loop_canonicalizes_correctly():
     sdfg = descending_parallel.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
+    # range(n-1, -1, -1) has n iterations.
+    _assert_canonical_bounds(sdfg, n, expected_iterations=n)
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, a * 2.0 + 1.0)
@@ -132,6 +170,9 @@ def test_cloudsc_style_tridiagonal_vertical_dependency():
     sdfg = thomas_solve.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert not _negative_step_ranges(sdfg), _negative_step_ranges(sdfg)
+    # Two sweeps (forward + back-substitution): assert zero-based unit-stride
+    # form (trip counts differ per loop, so not pinned to one value here).
+    _assert_canonical_bounds(sdfg, n)
 
     out = np.zeros(n)
     sdfg(lo=lo.copy(), di=di.copy(), up=up.copy(), rhs=rhs.copy(), x=out, N=n)
