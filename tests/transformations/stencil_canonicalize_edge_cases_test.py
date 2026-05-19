@@ -42,6 +42,7 @@ def _top_level_conds(sdfg):
 # MoveIfIntoLoop -- guarded stencils (dimension guard / whole stencil in if)   #
 # --------------------------------------------------------------------------- #
 
+
 @dace.program
 def guarded_stencil_1d(a: dace.float64[N], b: dace.float64[N], active: dace.int32[1]):
     # Whole 1-D stencil wrapped in a guard; the boundary is handled by the
@@ -204,27 +205,24 @@ def test_move_if_into_nested_dimension_guards():
     base = nested_dim_guards.to_sdfg(simplify=True)
     for gi, gj in ((1, 1), (1, 0), (0, 1), (0, 0)):
         ref = np.full((n, m), 8.0)
-        copy.deepcopy(base)(a=a.copy(), b=ref, gi=np.array([gi], np.int32),
-                            gj=np.array([gj], np.int32), N=n, M=m)
+        copy.deepcopy(base)(a=a.copy(), b=ref, gi=np.array([gi], np.int32), gj=np.array([gj], np.int32), N=n, M=m)
 
         sdfg = nested_dim_guards.to_sdfg(simplify=True)
         assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None
         sdfg.validate()
         loops = _loops(sdfg)
         top = next(l for l in loops if l.parent_graph is sdfg)
-        inner_conds = [r for r in top.all_control_flow_regions(recursive=True)
-                       if isinstance(r, ConditionalBlock)]
+        inner_conds = [r for r in top.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock)]
         assert len(inner_conds) >= 2, "both guards must end up inside the loop"
         assert not _top_level_conds(sdfg)
 
         out = np.full((n, m), 8.0)
-        sdfg(a=a.copy(), b=out, gi=np.array([gi], np.int32),
-             gj=np.array([gj], np.int32), N=n, M=m)
+        sdfg(a=a.copy(), b=out, gi=np.array([gi], np.int32), gj=np.array([gj], np.int32), N=n, M=m)
         assert np.allclose(out, ref), f"mismatch gi={gi} gj={gj}"
         if gi > 0 and gj > 0:
             exp = np.full((n, m), 8.0)
-            exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] +
-                                            a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
+            exp[1:n - 1,
+                1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
             assert np.allclose(out, exp)
         else:
             assert np.allclose(out, 8.0)
@@ -234,10 +232,12 @@ def test_move_if_into_nested_dimension_guards():
 # MoveIfIntoLoop -- precondition refusals (no-op, still correct)               #
 # --------------------------------------------------------------------------- #
 
+
 @dace.program
 def guard_then_loop_then_stmt(a: dace.float64[N], b: dace.float64[N], active: dace.int32[1]):
-    # Branch region is `loop ; trailing-state` -- it does NOT end in a single
-    # LoopRegion, so the precondition fails and the pass must no-op.
+    # Branch region is `loop ; trailing-state` (a heterogeneous imperfect
+    # nest): the free-state path wraps the trailing state in a trivial
+    # single-iteration loop and duplicates the guard into every sibling.
     if active[0] > 0:
         for i in range(N):
             b[i] = a[i] + 1.0
@@ -256,7 +256,6 @@ def guarded_stencil_with_else(a: dace.float64[N], b: dace.float64[N], active: da
 
 
 @pytest.mark.parametrize('prog,extra', [
-    (guard_then_loop_then_stmt, {}),
     (guarded_stencil_with_else, {}),
 ])
 def test_move_if_into_loop_refuses_and_stays_correct(prog, extra):
@@ -278,9 +277,34 @@ def test_move_if_into_loop_refuses_and_stays_correct(prog, extra):
         assert np.allclose(out, ref), f"mismatch active={av}"
 
 
+def test_move_if_into_loop_fires_on_free_state_imperfect_nest():
+    """The free-state path: ``if c: { for i: ...; trailing-state }`` -- the
+    pass fires, wraps the trailing state in a trivial single-iteration loop,
+    duplicates the guard into every sibling, leaves no top-level guard, and
+    stays numerically correct for the guard taken and not-taken."""
+    n = 16
+    a = np.random.rand(n)
+    base = guard_then_loop_then_stmt.to_sdfg(simplify=True)
+    for av in (1, 0):
+        ref = np.full(n, 4.0)
+        copy.deepcopy(base)(a=a.copy(), b=ref, active=np.array([av], np.int32), N=n)
+
+        sdfg = guard_then_loop_then_stmt.to_sdfg(simplify=True)
+        assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None, "must fire"
+        sdfg.validate()
+        assert not _top_level_conds(sdfg), "guard survived at SDFG top level"
+        # Guard duplicated, not dropped.
+        assert any(isinstance(r, ConditionalBlock) for r in sdfg.all_control_flow_regions(recursive=True))
+
+        out = np.full(n, 4.0)
+        sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n)
+        assert np.allclose(out, ref), f"mismatch active={av}"
+
+
 # --------------------------------------------------------------------------- #
 # LoopFission -- independent split, recurrence kept whole, indirect inputs     #
 # --------------------------------------------------------------------------- #
+
 
 @dace.program
 def two_independent_stencils(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
@@ -290,8 +314,8 @@ def two_independent_stencils(a: dace.float64[N], b: dace.float64[N], c: dace.flo
 
 
 @dace.program
-def two_independent_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N],
-                            c: dace.float64[N], e: dace.float64[N]):
+def two_independent_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N],
+                            e: dace.float64[N]):
     # ``idx`` is a read-only shared input: it must NOT force a merge.
     for i in range(N):
         b[i] = a[idx[i]]
@@ -301,8 +325,8 @@ def two_independent_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.floa
 @dace.program
 def recurrence_plus_independent(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
     for i in range(1, N):
-        b[i] = b[i - 1] + a[i]   # loop-carried recurrence on b -- must stay whole
-        d[i] = c[i] * 2.0        # independent -- may split off
+        b[i] = b[i - 1] + a[i]  # loop-carried recurrence on b -- must stay whole
+        d[i] = c[i] * 2.0  # independent -- may split off
 
 
 @dace.program

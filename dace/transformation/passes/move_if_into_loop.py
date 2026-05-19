@@ -10,7 +10,25 @@ states and interstate-edge assignments. Conservative: it only fires on a
 linear ``[prep..., loop]`` branch with a provably loop-invariant condition
 and prep (no dependence on the loop variable, no clobber of loop-written
 data); anything else is a no-op.
+
+Free-state (imperfect-nest) case
+--------------------------------
+A frontend imperfect nest -- ``if c: { for j: body1 ; s }`` where ``s`` is a
+bare ``SDFGState`` sibling of the loop, not its prep -- does not match the
+``[prep..., one loop]`` shape. For such a heterogeneous branch body (a linear
+chain of ``LoopRegion`` and bare ``SDFGState`` blocks, with at least one of
+each) the guard is *distributed*: every bare state is wrapped in a trivial
+single-iteration ``LoopRegion`` so the whole body is loops, then a copy of
+the guard is pushed into each loop's body. This drops nothing -- the entire
+subgraph stays guarded, one duplicated guard per sibling -- and is value-
+preserving for a single-branch (no-else) guard whose condition is invariant
+w.r.t. every sibling loop: guard true => every sibling runs (as before),
+guard false => none runs (as before). The single-iteration wrappers are
+removed again by ``TrivialMapElimination`` once ``LoopToMap`` turns them into
+maps. Same conservatism: any inter-block interstate assignment, or a
+condition that a sibling loop/state could vary, is a no-op.
 """
+import copy
 import copy
 from typing import Any, Dict, List, Optional
 
@@ -103,13 +121,104 @@ def _match(sdfg: SDFG):
 
 def region_state_writes(st: SDFGState, data: str) -> bool:
     """Whether ``st`` writes ``data``."""
-    return any(isinstance(n, nodes.AccessNode) and n.data == data and st.in_degree(n) > 0
-               for n in st.nodes())
+    return any(isinstance(n, nodes.AccessNode) and n.data == data and st.in_degree(n) > 0 for n in st.nodes())
+
+
+def _state_writes(st: SDFGState) -> set:
+    """Data containers written in ``st``."""
+    return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0}
+
+
+def _match_imperfect(sdfg: SDFG):
+    """Find a ``ConditionalBlock`` guarding a *heterogeneous* body: a linear
+    chain of ``LoopRegion`` and bare ``SDFGState`` blocks with at least one of
+    each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
+
+    Distinct from :func:`_match`, which only takes ``[prep..., one loop]``;
+    here the guard is duplicated into every sibling (bare states first wrapped
+    in a trivial single-iteration loop). The condition must be invariant
+    w.r.t. every sibling loop and unclobbered by any sibling bare state, and
+    no inter-block interstate assignment may exist (conservative => no-op).
+
+    :returns: ``(cond_block, condition, region)`` or ``None``.
+    """
+    for cb in sdfg.all_control_flow_regions(recursive=True):
+        if not isinstance(cb, ConditionalBlock) or len(cb.branches) != 1:
+            continue
+        cond, region = cb.branches[0]
+        if cond is None or not isinstance(region, ControlFlowRegion):
+            continue
+        order = _linear_order(region)
+        if order is None:
+            continue
+        if any(not isinstance(b, (LoopRegion, SDFGState)) for b in order):
+            continue
+        loops = [b for b in order if isinstance(b, LoopRegion)]
+        states = [b for b in order if isinstance(b, SDFGState)]
+        if not loops or not states:
+            continue  # heterogeneous only; the pure cases are _match's job
+        # Leave the existing ``[prep states..., exactly one trailing loop]``
+        # fast path entirely to _match (it places prep *inside* that loop).
+        if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
+            continue
+        if any(e.data.assignments for e in region.edges()):
+            continue  # conservative: no inter-block interstate assignments
+        cfree = {str(s) for s in cond.get_free_symbols()}
+        # The guard's truth must be the same for every sibling: it must not
+        # depend on any sibling loop's variable / written data, nor on data a
+        # sibling bare state writes.
+        if any(str(lp.loop_variable) in cfree or (cfree & _written(lp)) for lp in loops):
+            continue
+        if any(cfree & _state_writes(st) for st in states):
+            continue
+        return cb, cond, region
+    return None
+
+
+def _guarded_loop(loop: LoopRegion, cond: CodeBlock) -> LoopRegion:
+    """Return a copy of ``loop`` whose body is ``if cond: <original body>``."""
+    lp = copy.deepcopy(loop)
+    body_blocks = list(lp.nodes())
+    body_edges = list(lp.edges())
+    body_start = lp.start_block
+    inner = ControlFlowRegion(label=f"{lp.label}_g")
+    for b in body_blocks:
+        lp.remove_node(b)
+    for b in body_blocks:
+        inner.add_node(b, ensure_unique_name=True)
+    for e in body_edges:
+        inner.add_edge(e.src, e.dst, copy.deepcopy(e.data))
+    inner.start_block = inner.node_id(body_start)
+    icb = ConditionalBlock(label=f"{lp.label}_if")
+    icb.add_branch(CodeBlock(cond.as_string), inner)
+    lp.add_node(icb, is_start_block=True, ensure_unique_name=True)
+    return lp
+
+
+def _trivial_guarded_loop(state: SDFGState, cond: CodeBlock) -> LoopRegion:
+    """Wrap ``state`` in a trivial single-iteration loop whose body is
+    ``if cond: <state>`` (the free-state perfect-nesting wrapper)."""
+    inner = ControlFlowRegion(label=f"{state.label}_g")
+    inner.add_node(copy.deepcopy(state), is_start_block=True)
+    icb = ConditionalBlock(label=f"{state.label}_if")
+    icb.add_branch(CodeBlock(cond.as_string), inner)
+    tv = f"__triv_{state.label}"
+    triv = LoopRegion(f"{state.label}_triv", f"{tv} < 1", tv, f"{tv} = 0", f"{tv} = {tv} + 1")
+    triv.add_node(icb, is_start_block=True)
+    return triv
 
 
 @transformation.explicit_cf_compatible
 class MoveIfIntoLoop(ppl.Pass):
-    """Push a loop-invariant guarding conditional into the loop body (fixpoint)."""
+    """Push a loop-invariant guarding conditional into the loop body (fixpoint).
+
+    Handles both the ``[prep..., one loop]`` shape (the loop is hoisted to the
+    conditional's position; its body becomes ``if c: { prep; body }``) and the
+    heterogeneous imperfect-nest shape (each bare-state sibling is wrapped in a
+    trivial single-iteration loop and a copy of the guard is pushed into every
+    sibling loop). Both are value-preserving for a single-branch no-else guard
+    with a sibling-invariant condition.
+    """
     CATEGORY: str = 'Canonicalization'
 
     def modifies(self) -> ppl.Modifies:
@@ -130,10 +239,16 @@ class MoveIfIntoLoop(ppl.Pass):
         count = 0
         while True:
             m = _match(sdfg)
-            if m is None:
-                break
-            self._move(*m)
-            count += 1
+            if m is not None:
+                self._move(*m)
+                count += 1
+                continue
+            m = _match_imperfect(sdfg)
+            if m is not None:
+                self._move_imperfect(*m)
+                count += 1
+                continue
+            break
         return count or None
 
     @staticmethod
@@ -187,3 +302,32 @@ class MoveIfIntoLoop(ppl.Pass):
         parent.remove_node(cb)
         if is_start:
             parent.start_block = parent.node_id(new_loop)
+
+    @staticmethod
+    def _move_imperfect(cb: ConditionalBlock, cond: CodeBlock, region: ControlFlowRegion):
+        """Replace ``cb`` with the branch body's blocks in order, each carrying
+        its own copy of the guard: a sibling ``LoopRegion`` becomes a loop
+        whose body is ``if cond: <body>``; a bare ``SDFGState`` becomes a
+        trivial single-iteration loop whose body is ``if cond: <state>``."""
+        parent = cb.parent_graph
+        in_edges = list(parent.in_edges(cb))
+        out_edges = list(parent.out_edges(cb))
+        is_start = parent.start_block is cb
+
+        order = _linear_order(copy.deepcopy(region))
+        units = [(_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
+                 for b in order]
+
+        for u in units:
+            parent.add_node(u, ensure_unique_name=True)
+        for a, b in zip(units, units[1:]):
+            parent.add_edge(a, b, InterstateEdge())
+        for e in in_edges:
+            parent.add_edge(e.src, units[0], copy.deepcopy(e.data))
+        for e in out_edges:
+            parent.add_edge(units[-1], e.dst, copy.deepcopy(e.data))
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(cb)
+        if is_start:
+            parent.start_block = parent.node_id(units[0])

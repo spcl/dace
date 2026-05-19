@@ -5,12 +5,11 @@
     lives in the ``i`` loop but not in its own innermost ``j``-style loop
     (an imperfect nest). The intended canonical form wraps every bare
     state/tasklet in a trivial single-iteration loop so the nest is
-    perfectly nested, after which the guard can be pushed into -- and
-    duplicated across -- every loop. Canonicalization is always
-    value-preserving (guard taken and not-taken); the structural ideal
-    (no surviving top-level guard -- it has been moved/duplicated inside)
-    is tracked as a strict xfail until the trivial-loop-wrap + move-if
-    duplication is implemented.
+    perfectly nested, after which the guard is pushed into -- and
+    duplicated across -- every loop. Canonicalization is value-preserving
+    (guard taken and not-taken) and reaches the structural ideal: no
+    surviving top-level guard -- it has been moved/duplicated inside by
+    ``MoveIfIntoLoop``'s free-state (imperfect-nest) path.
 """
 import numpy as np
 import pytest
@@ -62,20 +61,24 @@ def test_guard_over_imperfect_nest_is_value_preserving(av):
     assert np.allclose(ob, eb) and np.allclose(oc, ec), f"mismatch act={av}"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Bare states (the imperfect-nest c[i]=... write) are not wrapped in "
-                   "trivial single-iteration loops, so the loop-invariant guard is not pushed "
-                   "into / duplicated across every loop -- it survives as a top-level "
-                   "ConditionalBlock. Needs the trivial-loop-wrap perfect-nesting + move-if "
-                   "duplication.")
 def test_guard_over_imperfect_nest_guard_moved_inside():
-    """Ideal: after trivial-loop-wrap perfect-nesting the guard is moved
-    into / duplicated across the loops, leaving no top-level guard."""
+    """After trivial-loop-wrap perfect-nesting the guard is moved into /
+    duplicated across the loops, leaving no top-level guard, and the result
+    stays value-preserving for the guard taken and not-taken."""
     n, m = 6, 5
     a = np.random.rand(n, m)
     sdfg = guard_over_imperfect_nest.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert not _top_level_conds(sdfg)
+    assert not _top_level_conds(sdfg), "guard survived at SDFG top level"
+    # The guard is not dropped -- it has been duplicated inside the nest.
+    assert any(isinstance(x, ConditionalBlock)
+               for x in sdfg.all_control_flow_regions(recursive=True)), "guard was dropped, not moved inside"
+
+    for av in (1, 0):
+        eb, ec = _oracle(a, n, m, av)
+        ob, oc = np.full((n, m), 9.0), np.full(n, 9.0)
+        sdfg(a=a.copy(), b=ob, c=oc, act=np.array([av], np.int32), N=n, M=m)
+        assert np.allclose(ob, eb) and np.allclose(oc, ec), f"mismatch act={av}"
 
 
 if __name__ == "__main__":

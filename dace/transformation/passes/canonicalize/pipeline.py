@@ -30,6 +30,7 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
@@ -70,8 +71,8 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     passes (unique loop iterators, split tasklets, trivial-tasklet cleanup),
     and once at the end -- never between transforming stages. Between-stage
     structural cleanup is ``StateFusionExtended`` + ``InlineSDFG`` instead.
-    Passes not yet implemented (``MoveIfIntoLoop``, ``LoopStridePermutation``)
-    are explicit no-ops so the pipeline shape is honest and slottable.
+    ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
+    honest and slottable.
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
@@ -89,8 +90,11 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('lower', PatternMatchAndApplyRepeated([MapToForLoop()]))]
     s += _structural_cleanup('lower')
 
-    # move_if_into_loop: push guarding conditionals into loop bodies
-    # (no-op stub until implemented).
+    # move_if_into_loop: push guarding conditionals into loop bodies. For a
+    # heterogeneous imperfect-nest body (loop + bare-state siblings) it wraps
+    # each bare sibling in a trivial single-iteration loop and duplicates the
+    # guard into every loop; those single-iteration wrappers are stripped by
+    # TrivialMapElimination at the end (after LoopToMap).
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
     # fission: loop distribution + block-level perfect-loop-nesting.
@@ -140,7 +144,10 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
 
-    # end: the final SimplifyPass.
+    # end: drop the single-iteration trivial maps PerfLoopNesting introduced
+    # (their perfect-nesting role is over once the guard has been duplicated
+    # in and the nest fused), then the final SimplifyPass.
+    s += [('end', PatternMatchAndApplyRepeated([TrivialMapElimination()]))]
     s += [('end', SimplifyPass())]
     return s
 
