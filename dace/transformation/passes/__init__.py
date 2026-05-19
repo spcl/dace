@@ -6,6 +6,7 @@ from .dead_dataflow_elimination import DeadDataflowElimination
 from .dead_state_elimination import DeadStateElimination
 from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
+from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
