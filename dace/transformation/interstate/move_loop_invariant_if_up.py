@@ -31,6 +31,7 @@ import copy
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG
+from dace import properties
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -82,10 +83,27 @@ def _is_empty_state(b) -> bool:
     return isinstance(b, SDFGState) and b.number_of_nodes() == 0
 
 
-def _match(sdfg: SDFG):
+def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
+    """Every ``LoopRegion`` strictly enclosing ``loop`` up to the root SDFG."""
+    out: List[LoopRegion] = []
+    g = loop.parent_graph
+    while g is not None and g is not sdfg:
+        if isinstance(g, LoopRegion):
+            out.append(g)
+        g = getattr(g, 'parent_graph', None)
+    return out
+
+
+def _match(sdfg: SDFG, require_full_hoist: bool = False):
     """Find a ``LoopRegion`` whose body is ``[empty*; if c; empty*]`` with a
     loop-invariant condition (plus a hoistable invariant assignment chain).
 
+    :param require_full_hoist: If set, only accept the candidate when the
+        guard can be sifted out past *every* enclosing loop (the whole parent
+        chain) -- if it would get stuck at some ancestor loop (its condition
+        references that loop's variable or data it writes), do nothing at
+        all. Used by the canonicalize pipeline, where a guard left stranded
+        between not-perfectly-collapsed map levels is worse than not moving.
     :returns: ``(loop, cond_block, cond, hoist_assignments)`` or ``None``.
     """
     for loop in sdfg.all_control_flow_regions(recursive=True):
@@ -132,10 +150,35 @@ def _match(sdfg: SDFG):
             continue
         if (cfree & loop_w) - assigned:
             continue
+
+        # All-or-nothing mode: only hoist if the guard can clear *every*
+        # enclosing loop. If some ancestor loop's variable or written data
+        # appears in the condition, the guard would stall there -- skip it.
+        if require_full_hoist:
+            stuck = False
+            for anc in _enclosing_loops(loop, sdfg):
+                avar = str(anc.loop_variable)
+                aw = _written(anc)
+                # The guard clears ``anc`` only if both the condition AND
+                # every chain assignment it carries are invariant w.r.t.
+                # ``anc`` -- a chain assignment whose RHS reads ``anc``'s
+                # variable / written data (e.g. ``g_index = g[i]``) pins the
+                # guard to ``anc`` even though the *condition* alone looks
+                # invariant.
+                if avar in cfree or ((cfree & aw) - assigned):
+                    stuck = True
+                    break
+                if any(avar in _free(rhs) or (_free(rhs) & aw) for _, rhs in chain_assignments):
+                    stuck = True
+                    break
+            if stuck:
+                continue
+
         return loop, cb, cond, chain_assignments
     return None
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopInvariantIfUp(ppl.Pass):
     """Hoist a loop-invariant guarding conditional out of its loop (fixpoint).
@@ -144,8 +187,20 @@ class MoveLoopInvariantIfUp(ppl.Pass):
     invariant guard sifts all the way up through nested loops. The
     interstate-edge symbol-assignment chain the condition depends on is
     hoisted with it; emptied boundary states are dropped.
+
+    :param require_full_hoist: All-or-nothing mode (for canonicalization):
+        only hoist a guard when it can be sifted out past *every* enclosing
+        loop. A guard that would stall between not-perfectly-collapsed
+        scopes is left where it is.
     """
     CATEGORY: str = 'Canonicalization'
+
+    require_full_hoist = properties.Property(
+        dtype=bool, default=False, desc="Only hoist if the guard can clear every enclosing loop; else do nothing.")
+
+    def __init__(self, require_full_hoist: bool = False):
+        super().__init__()
+        self.require_full_hoist = require_full_hoist
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -164,7 +219,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         """
         count = 0
         while True:
-            m = _match(sdfg)
+            m = _match(sdfg, self.require_full_hoist)
             if m is None:
                 break
             self._move(*m)
