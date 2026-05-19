@@ -231,14 +231,11 @@ def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
         if not save_all_fields:
-            try:
-                is_default = (v == x.default)
-                if isinstance(is_default, np.ndarray):
-                    is_default = np.all(is_default)
-                if is_default:  # Skip default fields
-                    continue
-            except (TypeError, ValueError):
-                pass
+            is_default = (v == x.default)
+            if isinstance(is_default, np.ndarray):
+                is_default = np.all(is_default)
+            if is_default:  # Skip default fields
+                continue
         if not x.serialize_if(object_with_properties):
             continue
         retdict[x.attr_name] = x.to_json(v)
