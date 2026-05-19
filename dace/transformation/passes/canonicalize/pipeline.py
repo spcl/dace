@@ -19,6 +19,7 @@ from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantC
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.conditional_component_fission import ConditionalComponentFission
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
@@ -68,13 +69,11 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
     s += [('clean', SSALoopIterators()), ('clean', SplitTasklets()),
-          ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
-          ('clean', SimplifyPass())]
+          ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
-    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])),
-          ('prep', ConditionalComponentFission())]
+    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConditionalComponentFission())]
 
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
@@ -117,11 +116,15 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
 
     # fuse: first recombine adjacent identical-condition ConditionalBlocks
     # (ConditionFusion -- the inverse of branch-replicated fission, so maps
-    # split across replicated guards become co-located), structural-clean so
-    # the recombined branch's maps share a state, then vertical+horizontal
-    # map fusion in one fixpoint (vertical priority; horizontal can expose
-    # further vertical opportunities; no FindSingleUseData).
+    # split across replicated guards become co-located). ConditionFusion
+    # emits the full cartesian product of branch combinations; LiftTrivialIf
+    # drops the provably-unsatisfiable ones (``c and not c``) so the guards'
+    # maps actually co-locate. Then structural-clean so the recombined
+    # branch's maps share a state, then vertical+horizontal map fusion in one
+    # fixpoint (vertical priority; horizontal can expose further vertical
+    # opportunities; no FindSingleUseData).
     s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
+    s += [('fuse', LiftTrivialIf())]
     s += _structural_cleanup('fuse')
     s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
 

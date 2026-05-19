@@ -84,11 +84,54 @@ class LiftTrivialIf(ppl.Pass):
     def _trivially_false(self, code: CodeBlock):
         return self._trivial_cond_check(code, False)
 
+    def _unsatisfiable(self, code: CodeBlock) -> bool:
+        """Whether ``code`` is a contradiction even with free symbols: a
+        conjunction containing an atom and its negation (e.g. the
+        ``c and not c`` branch combinations a conditional-fusion cartesian
+        product emits for identical guards). Such a branch never executes,
+        so dropping it is value-preserving.
+        """
+        if code is None or code.language != dace.dtypes.Language.Python:
+            return False
+        try:
+            expr = symbolic.pystr_to_symbolic(code.as_string)
+        except Exception:
+            return False
+        # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
+        # ``func`` is named ``AND``), not ``sympy.And``; accept either. Its
+        # operands are ordinary sympy relationals, so the negation test holds.
+        func = getattr(expr, 'func', None)
+        is_conjunction = isinstance(expr, sympy.And) or getattr(func, '__name__', '') == 'AND'
+        if not is_conjunction:
+            return False
+        args = list(expr.args)
+        for i, ai in enumerate(args):
+            neg = sympy.Not(ai)
+            if any(j != i and neg == aj for j, aj in enumerate(args)):
+                return True
+        return False
+
     def _detect_and_remove_top_level_trivial_ifs(self, graph: Union[ControlFlowRegion, SDFG]):
         cfb_to_rm_cfg_to_keep = set()
         rmed_count = 0
         for cfb in graph.nodes():
             if isinstance(cfb, ConditionalBlock):
+                # Longer if/elif/.../else chains (beyond the simple if and
+                # if-else the cases below handle): drop branches that can
+                # never hold -- a literal-false condition or a contradiction
+                # such as ``c and not c``. A branch that never executes is
+                # value-preserving to remove, and this collapses the
+                # cartesian product a conditional-fusion emits for identical
+                # guards back to the minimal chain. Gated to >2 branches so
+                # the simple if / if-else handling below is untouched.
+                if len(cfb.branches) > 2:
+                    for cnd, cfg in list(cfb.branches):
+                        if len(cfb.branches) <= 2:
+                            break
+                        if cnd is not None and (self._trivially_false(cnd) or self._unsatisfiable(cnd)):
+                            cfb.remove_branch(cfg)
+                            rmed_count += 1
+
                 # Supported variants:
                 # 1. if (cond) where cond is always true
                 # 2. if (cond) else ()
