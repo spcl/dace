@@ -309,6 +309,11 @@ class TypedConstant(sympy.AtomicExpr):
         return self.value.is_Float
 
     @property
+    def _prec(self):
+        # Read by sympy._should_evalf when is_Float (e.g. Min/Max construction).
+        return self.value._prec
+
+    @property
     def is_integer(self):
         return self.value.is_integer
 
@@ -1428,18 +1433,6 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
-# Default typeclasses for untyped literals (matches dtypes.typeclass(int|float)).
-_DEFAULT_INTEGER_TYPECLASS = dtypes.int64
-_DEFAULT_FLOAT_TYPECLASS = dtypes.float64
-
-# C++ ctype spelling (e.g. ``double(5)``) -> typeclass, to parse cast fallbacks.
-_CPP_CTYPE_TO_TYPECLASS = {
-    t.ctype: t
-    for t in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16, dtypes.uint32,
-              dtypes.uint64, dtypes.float16, dtypes.float32, dtypes.float64)
-}
-
-
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1636,11 +1629,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return symbol('NoneSymbol')
         if isinstance(node.value, int):
             if self._default_constants:
-                return TypedConstant(node.value, _DEFAULT_INTEGER_TYPECLASS)
+                return TypedConstant(node.value, dtypes.typeclass(int))
             return sympy.Integer(node.value)
         if isinstance(node.value, float):
             if self._default_constants:
-                return TypedConstant(node.value, _DEFAULT_FLOAT_TYPECLASS)
+                return TypedConstant(node.value, dtypes.typeclass(float))
             return sympy.Float(node.value)
         raise TypeError(f'Unsupported literal {node.value!r}')
 
@@ -1699,8 +1692,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             args = [self.visit(arg) for arg in node.args]
             return SymExpr(*args)
 
-        if (isinstance(node.func, ast.Name) and node.func.id in _CPP_CTYPE_TO_TYPECLASS and len(node.args) == 1):
-            return _cast_symbolic_value(self.visit(node.args[0]), _CPP_CTYPE_TO_TYPECLASS[node.func.id])
+        if (isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1):
+            return _cast_symbolic_value(self.visit(node.args[0]), dtypes.CTYPE_TO_TYPECLASS[node.func.id])
 
         func = self._resolve_function(node.func)
         args = [self.visit(arg) for arg in node.args]

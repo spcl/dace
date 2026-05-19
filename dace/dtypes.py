@@ -1277,6 +1277,12 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
 
 LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
 
+# Inverse of ``typeclass.ctype`` for fixed-width types, to parse C++ cast fallbacks.
+CTYPE_TO_TYPECLASS = {
+    t.ctype: t
+    for t in (int8, int16, int32, int64, uint8, uint16, uint32, uint64, float16, float32, float64)
+}
+
 TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
     float32: 'f',
     uint32: 'U',
