@@ -32,8 +32,9 @@ class ExpandSendMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0
+        comm = "_comm" if "_comm" in node.in_connectors else "MPI_COMM_WORLD"
         code += f"""
-                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);
+                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, {comm});
                 """
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
