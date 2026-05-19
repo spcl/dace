@@ -114,7 +114,19 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   loop var); on data (no loop var); on data + loop var (must NOT hoist);
   interstate symbol-assignment chain hoisted with the guard; innermost
   guard sifts to top via repeated application; mixed map/loop nest.
-- **Status:** redesign + tests in progress.
+- **Status:** REDESIGNED + tested + committed. Rewritten from scratch as a
+  clean `ppl.Pass` fixpoint (the inverse of `MoveIfIntoLoop`): proper
+  `_match` invariance analysis (no loop var; no loop-written data/symbols
+  except a hoistable invariant interstate-assignment chain), `_move`
+  splices `for k:{prep*; if c: body}` -> `[assign chain]; if c:{for k: body}`,
+  empty boundary states dropped, parent-refs repaired, applied to a
+  fixpoint so an innermost guard sifts all the way up through nested loops.
+  Reproducer suite `tests/transformations/interstate/move_loop_invariant_if_up_test.py`
+  (5 tests, all green): invariant-symbolic-guard hoist, invariant-data-guard
+  hoist, loop-var-dependent guard NOT hoisted (no-op), innermost sifts all
+  the way up (fixpoint, nested loops), interstate-assignment-chain hoisted
+  with the guard -- each value-preserving for guard taken/not-taken. The
+  old broken API had no importers, so the rewrite is non-breaking.
 
 ### 7. `MapFission` unsoundly fissioned a NestedSDFG whose indirection symbol transitively depends on the map iterator
 - **File:** `dace/transformation/dataflow/map_fission.py` (`can_be_applied`, expr_index 1 — map-with-NestedSDFG)
