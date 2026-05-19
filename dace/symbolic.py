@@ -310,7 +310,6 @@ class TypedConstant(sympy.AtomicExpr):
 
     @property
     def _prec(self):
-        # Read by sympy._should_evalf when is_Float (e.g. Min/Max construction).
         return self.value._prec
 
     @property

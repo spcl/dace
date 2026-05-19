@@ -81,6 +81,17 @@ def test_symbol_name_clash_roundtrip():
     assert restored_sym.dtype == dace.uint64
 
 
+def test_complex_symbol_roundtrip_preserves_dtype():
+    expr = symbolic.symbol('c', dtype=dace.complex128)
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    restored_sym = next(iter(restored.free_symbols))
+    assert isinstance(restored_sym, symbolic.symbol)
+    assert restored_sym.name == 'c'
+    assert restored_sym.dtype == dace.complex128
+
+
 def test_sym2cpp_emits_uint64_literals():
     expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol('N', dtype=dace.uint64)
 
