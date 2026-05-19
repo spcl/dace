@@ -289,6 +289,114 @@ def test_mixed_map_loop_guard_hoisted_out_of_loop_and_e2e():
         assert np.allclose(out, a + 1.0 if av > 0 else 8.0), f"mismatch active={av}"
 
 
+# --------------------------------------------------------------------------- #
+# Data-dependent guards on an (i, j) nest: how far the guard can sift, and     #
+# the all-or-nothing ``require_full_hoist`` mode                               #
+# --------------------------------------------------------------------------- #
+
+
+@dace.program
+def outer_index_guard(a: dace.float64[N, M], b: dace.float64[N, M], g: dace.float64[N]):
+    for i in range(N):
+        for j in range(M):
+            if g[i] > 0.5:  # data indexed by the OUTER index -> invariant in j, NOT in i
+                b[i, j] = a[i, j] + 1.0
+
+
+@dace.program
+def inner_index_guard(a: dace.float64[N, M], b: dace.float64[N, M], g: dace.float64[M]):
+    for i in range(N):
+        for j in range(M):
+            if g[j] > 0.5:  # data indexed by the INNER index -> not movable at all
+                b[i, j] = a[i, j] + 1.0
+
+
+@dace.program
+def scalar_guard_nest(a: dace.float64[N, M], b: dace.float64[N, M], c: dace.float64[1]):
+    for i in range(N):
+        for j in range(M):
+            if c[0] > 0.5:  # truly scalar -> fully invariant -> sifts all the way up
+                b[i, j] = a[i, j] + 1.0
+
+
+def _nest_oracle(a, mask2d, n, m, fill=6.0):
+    out = np.full((n, m), fill)
+    out[mask2d] = a[mask2d] + 1.0
+    return out
+
+
+def test_outer_index_data_guard_partial_then_full_hoist_modes():
+    """``g[i] > 0.5`` on a ``for i: for j:`` nest: invariant w.r.t. ``j`` but
+    NOT ``i``. Default mode hoists it out of the j-loop but it must stall
+    inside the i-loop (cannot go all the way up). ``require_full_hoist``
+    mode must then refuse entirely (it cannot clear the i-loop)."""
+    n, m = 6, 5
+    a = np.random.rand(n, m)
+    g = np.random.rand(n)
+    mask = np.broadcast_to((g > 0.5)[:, None], (n, m))
+    exp = _nest_oracle(a, mask, n, m)
+
+    # Default: partial hoist -- guard ends up wrapping the j-loop, still
+    # inside the i-loop; no top-level ConditionalBlock.
+    sdfg = outer_index_guard.to_sdfg(simplify=True)
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, "must hoist out of the j-loop"
+    sdfg.validate()
+    assert _guard_wraps_a_loop(sdfg), "guard must wrap the (inner) j-loop"
+    assert any(isinstance(p, LoopRegion) for cb in _conds(sdfg) for p in _ancestors(sdfg, cb)), \
+        "the guard must remain stalled inside the i-loop (cannot clear g[i])"
+    out = np.full((n, m), 6.0)
+    sdfg(a=a.copy(), b=out, g=g.copy(), N=n, M=m)
+    assert np.allclose(out, exp), "default partial-hoist not value-preserving"
+
+    # require_full_hoist: cannot clear the i-loop -> do nothing at all.
+    sdfg2 = outer_index_guard.to_sdfg(simplify=True)
+    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg2, {}) is None, \
+        "all-or-nothing mode must refuse a guard that cannot clear every enclosing loop"
+    sdfg2.validate()
+    out2 = np.full((n, m), 6.0)
+    sdfg2(a=a.copy(), b=out2, g=g.copy(), N=n, M=m)
+    assert np.allclose(out2, exp), "no-op must remain value-preserving"
+
+
+def test_inner_index_data_guard_not_movable():
+    """``g[j] > 0.5`` depends on the innermost loop variable: it cannot be
+    hoisted out of the j-loop at all (no-op in either mode)."""
+    n, m = 5, 7
+    a = np.random.rand(n, m)
+    g = np.random.rand(m)
+    mask = np.broadcast_to((g > 0.5)[None, :], (n, m))
+    exp = _nest_oracle(a, mask, n, m)
+    for full in (False, True):
+        sdfg = inner_index_guard.to_sdfg(simplify=True)
+        assert MoveLoopInvariantIfUp(require_full_hoist=full).apply_pass(sdfg, {}) is None, \
+            f"inner-index guard must not move (require_full_hoist={full})"
+        sdfg.validate()
+        out = np.full((n, m), 6.0)
+        sdfg(a=a.copy(), b=out, g=g.copy(), N=n, M=m)
+        assert np.allclose(out, exp), f"no-op not value-preserving (full={full})"
+
+
+def test_scalar_guard_sifts_all_the_way_up_both_modes():
+    """A truly scalar guard ``c[0] > 0.5`` is fully invariant: it sifts all
+    the way out above both loops in BOTH the default and the
+    ``require_full_hoist`` modes."""
+    n, m = 6, 4
+    a = np.random.rand(n, m)
+    for full in (False, True):
+        for cv in (0.9, 0.1):
+            sdfg = scalar_guard_nest.to_sdfg(simplify=True)
+            applied = MoveLoopInvariantIfUp(require_full_hoist=full).apply_pass(sdfg, {})
+            assert applied is not None and applied >= 2, \
+                f"scalar guard must clear both loops (full={full}), got {applied}"
+            sdfg.validate()
+            assert not [cb for cb in _conds(sdfg) if any(isinstance(p, LoopRegion) for p in _ancestors(sdfg, cb))], \
+                "scalar guard must end up above every loop"
+            out = np.full((n, m), 6.0)
+            sdfg(a=a.copy(), b=out, c=np.array([cv], np.float64), N=n, M=m)
+            exp = a + 1.0 if cv > 0.5 else np.full((n, m), 6.0)
+            assert np.allclose(out, exp), f"mismatch full={full} c={cv}"
+
+
 if __name__ == '__main__':
     test_invariant_symbolic_guard_hoisted_and_e2e()
     test_invariant_data_guard_hoisted_and_e2e()
@@ -298,3 +406,6 @@ if __name__ == '__main__':
     test_data_and_loopvar_guard_not_hoisted_and_e2e()
     test_empty_boundary_states_cleaned_and_e2e()
     test_mixed_map_loop_guard_hoisted_out_of_loop_and_e2e()
+    test_outer_index_data_guard_partial_then_full_hoist_modes()
+    test_inner_index_data_guard_not_movable()
+    test_scalar_guard_sifts_all_the_way_up_both_modes()
