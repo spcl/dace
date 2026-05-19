@@ -495,8 +495,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     assert new_in_connector == True
                     assert new_in_connector == new_out_connector
 
+                if memlet_data in sdfg.arrays:
+                    data_descriptor = sdfg.arrays[memlet_data]
+                else:
+                    _sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
+                    data_descriptor = _sdfg.arrays[memlet_data]
                 self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
-                                             Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
+                                             Memlet.from_array(memlet_data, data_descriptor))
             else:
                 if isinstance(outer_map_entry, SDFG):
                     # Copy data descriptor from parent SDFG and add input connector
@@ -593,13 +598,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 access_cache[name] = write_access_node
 
             access_node = access_cache[name]
+            if name in sdfg.arrays:
+                data_descriptor = sdfg.arrays[name]
+            else:
+                _sdfg = self._parent_sdfg_with_array(name, sdfg)
+                data_descriptor = _sdfg.arrays[name]
             self._current_state.add_memlet_path(map_exit,
                                                 access_node,
                                                 src_conn=out_connector_name,
-                                                memlet=Memlet.from_array(name, sdfg.arrays[name]))
+                                                memlet=Memlet.from_array(name, data_descriptor))
 
             if isinstance(outer_map_entry, nodes.EntryNode):
-                outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
+                outer_to_connect[name] = (access_node, Memlet.from_array(name, data_descriptor))
             else:
                 assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
 
