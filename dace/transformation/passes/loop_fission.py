@@ -14,6 +14,7 @@ from dace import SDFG
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -235,6 +236,11 @@ class LoopFission(ppl.Pass):
                     continue
                 self._fission_blocks(loop, groups)
                 count += 1
+        if count:
+            # The per-group ``copy.deepcopy(loop)`` clones leave any nested
+            # SDFG inside the body with a stale ``parent_sdfg`` (it still
+            # points away from this root); reattach all nested-SDFG parents.
+            set_nested_sdfg_parent_references(sdfg)
         return count or None
 
     @staticmethod
