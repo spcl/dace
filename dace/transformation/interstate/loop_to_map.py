@@ -52,6 +52,26 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     write to the array and that *all* of them pass (nested ``NestedSDFG`` s
     are checked recursively, composing the symbol maps).
 
+    Example -- ``for i: if c: b[i] = a[i] + 1`` after a
+    ``LoopToMap -> MapToForLoop`` round-trip (the guard forced a
+    ``NestedSDFG`` body)::
+
+        for i in 0:N:                      # the loop being re-parallelized
+          state:
+            a ──► [ NestedSDFG loop_body ] ──► b
+                        symbol_mapping {i: i, N: N}
+                        │  external write connector memlet:  b[0:N]
+                        │  (correct union over the loop -- has no `i`,
+                        │   so _check_range(b[0:N]) FAILS -> refuse)
+                        └─ inner: if (c):
+                                    b[i] = a[i] + 1.0     ◄── real per-
+                                                              iteration write
+
+        _nested_writes_iter_indexed walks inside loop_body, finds the inner
+        write ``b[i]``, maps it through symbol_mapping ({i: i}) to the outer
+        ``b[i]``, and _check_range matches ``1*i + 0`` -> independence
+        proven -> LoopToMap fires (the round-trip recovers the map).
+
     :param nsdfg_node: The ``NestedSDFG`` node feeding the outer write.
     :param conn: The output connector (== inner array name) being written.
     :param itersym: The outer loop iteration symbol.
