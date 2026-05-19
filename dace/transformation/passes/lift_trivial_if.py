@@ -84,10 +84,30 @@ class LiftTrivialIf(ppl.Pass):
     def _trivially_false(self, code: CodeBlock):
         return self._trivial_cond_check(code, False)
 
+    @staticmethod
+    def _is_conjunction(expr) -> bool:
+        # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
+        # ``func`` is named ``AND``), not ``sympy.And``; accept either.
+        return isinstance(expr, sympy.And) or getattr(getattr(expr, 'func', None), '__name__', '') == 'AND'
+
+    def _flatten_conjuncts(self, expr) -> list:
+        """All conjuncts of a (possibly nested) conjunction, flattened.
+
+        Conditional fusion nests the cartesian product as
+        ``((c1 and c2) and c3)``; flattening exposes every atom so an atom
+        and its negation can be found regardless of nesting depth.
+        """
+        if not self._is_conjunction(expr):
+            return [expr]
+        out = []
+        for arg in expr.args:
+            out.extend(self._flatten_conjuncts(arg))
+        return out
+
     def _unsatisfiable(self, code: CodeBlock) -> bool:
         """Whether ``code`` is a contradiction even with free symbols: a
-        conjunction containing an atom and its negation (e.g. the
-        ``c and not c`` branch combinations a conditional-fusion cartesian
+        (possibly nested) conjunction containing an atom and its negation
+        (the ``c and not c`` combinations conditional fusion's cartesian
         product emits for identical guards). Such a branch never executes,
         so dropping it is value-preserving.
         """
@@ -97,17 +117,12 @@ class LiftTrivialIf(ppl.Pass):
             expr = symbolic.pystr_to_symbolic(code.as_string)
         except Exception:
             return False
-        # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
-        # ``func`` is named ``AND``), not ``sympy.And``; accept either. Its
-        # operands are ordinary sympy relationals, so the negation test holds.
-        func = getattr(expr, 'func', None)
-        is_conjunction = isinstance(expr, sympy.And) or getattr(func, '__name__', '') == 'AND'
-        if not is_conjunction:
+        if not self._is_conjunction(expr):
             return False
-        args = list(expr.args)
-        for i, ai in enumerate(args):
-            neg = sympy.Not(ai)
-            if any(j != i and neg == aj for j, aj in enumerate(args)):
+        conjuncts = self._flatten_conjuncts(expr)
+        for i, ci in enumerate(conjuncts):
+            neg = sympy.Not(ci)
+            if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
                 return True
         return False
 
