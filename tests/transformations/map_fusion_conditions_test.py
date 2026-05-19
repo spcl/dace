@@ -87,6 +87,10 @@ def _maps(sdfg):
     return [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
 
 
+def _nonelse_conditions(sdfg):
+    return [cond.as_string for cb in _conds(sdfg) for cond, _ in cb.branches if cond is not None]
+
+
 def _fuse_recipe(sdfg):
     """The fuse-stage recipe for guarded maps: merge guards, drop the
     cartesian product's unsatisfiable branches, structural-clean, fuse."""
@@ -114,6 +118,9 @@ def test_two_identical_guards_fuse_to_one_map():
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1, f"maps not fused: {len(_maps(sdfg))}"
         assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
+        # Identical guards must merge to the minimal predicate, not a
+        # redundant ``(c) and (c)``.
+        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -137,6 +144,7 @@ def test_two_maps_in_one_guard_fuse_to_one_map():
         sdfg = _with_M(if_two_maps_inside.to_sdfg(simplify=True))
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1 and len(_conds(sdfg)) == 1
+        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -168,18 +176,30 @@ def test_distinct_guards_merge_to_one_conditional_three_maps():
         assert np.allclose(out_B, a * 2.0 if mval > 5 else 9.0)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="3+ identical guards: ConditionFusion applies pairwise, so chained "
-                   "merges build nested conjunctions the c-and-not-c LiftTrivialIf prune does "
-                   "not fully collapse (ends at 7 maps, ideal is 1).")
 def test_three_identical_guards_fuse_to_one_map():
-    """Ideal: three `if c: <map>` blocks collapse to 1 map, 1 conditional.
-    Currently blows up to 7 maps -- documented limitation."""
+    """Three `if c: <map>` blocks collapse to 1 map, 1 conditional with a
+    minimal predicate; value-preserving for c taken and not-taken."""
     n = 16
     a = np.random.rand(n)
-    sdfg = _with_M(three_guarded.to_sdfg(simplify=True))
-    _fuse_recipe(sdfg)
-    assert len(_maps(sdfg)) == 1 and len(_conds(sdfg)) == 1
+    base = _with_M(three_guarded.to_sdfg(simplify=True))
+
+    for mval in (1, 0):
+        ref_A, ref_B, ref_C = np.full(n, 9.0), np.full(n, 9.0), np.full(n, 9.0)
+        copy.deepcopy(base)(a=a.copy(), A=ref_A, B=ref_B, C=ref_C, N=n, M=mval)
+
+        sdfg = _with_M(three_guarded.to_sdfg(simplify=True))
+        _fuse_recipe(sdfg)
+        assert len(_maps(sdfg)) == 1, f"maps not fused: {len(_maps(sdfg))}"
+        assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
+        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+
+        out_A, out_B, out_C = np.full(n, 9.0), np.full(n, 9.0), np.full(n, 9.0)
+        sdfg(a=a.copy(), A=out_A, B=out_B, C=out_C, N=n, M=mval)
+        assert np.allclose(out_A, ref_A) and np.allclose(out_B, ref_B) and np.allclose(out_C, ref_C)
+        if mval > 0:
+            assert np.allclose(out_A, a + 1.0) and np.allclose(out_B, a * 2.0) and np.allclose(out_C, a - 1.0)
+        else:
+            assert np.allclose(out_A, 9.0) and np.allclose(out_B, 9.0) and np.allclose(out_C, 9.0)
 
 
 if __name__ == "__main__":

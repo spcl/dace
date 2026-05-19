@@ -1,11 +1,56 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-from dace import sdfg as sd, properties
+import sympy
+from dace import sdfg as sd, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
+
+
+def _flatten_and(expr) -> list:
+    """All conjuncts of a (possibly nested) conjunction, flattened.
+    Accepts dace's own ``AND`` operator as well as ``sympy.And``."""
+    func = getattr(expr, 'func', None)
+    if isinstance(expr, sympy.And) or getattr(func, '__name__', '') == 'AND':
+        res = []
+        for arg in expr.args:
+            res.extend(_flatten_and(arg))
+        return res
+    return [expr]
+
+
+def _simplify_conjunction(cond_str: str) -> str:
+    """Minimal equivalent of a conjunction condition string.
+
+    The branch-combination cartesian product builds ``(c1) and (c2)``
+    chains. Returns ``'False'`` when the conjunction is a contradiction (an
+    atom and its negation are both present -- an unsatisfiable cross-term),
+    the de-duplicated form when a conjunct repeats (identical fused guards
+    yield ``(c) and (c)``), or the original string when nothing simplifies.
+
+    :param cond_str: The branch condition as a Python expression string.
+    :returns: The simplified condition string (or ``'False'``).
+    """
+    try:
+        expr = symbolic.pystr_to_symbolic(cond_str)
+    except Exception:
+        return cond_str
+    conjuncts = _flatten_and(expr)
+    if len(conjuncts) <= 1:
+        return cond_str
+    for i, ci in enumerate(conjuncts):
+        neg = sympy.Not(ci)
+        if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
+            return 'False'
+    uniq = []
+    for c in conjuncts:
+        if not any(c == u for u in uniq):
+            uniq.append(c)
+    if len(uniq) == len(conjuncts):
+        return cond_str
+    return ' and '.join(f'({u})' for u in uniq)
 
 
 @properties.make_properties
@@ -171,6 +216,19 @@ class ConditionFusion(xf.MultiStateTransformation):
         for e in outer_cfg.out_edges(cblck2):
             outer_cfg.add_edge(cblck1, e.dst, copy.deepcopy(e.data))
         outer_cfg.remove_node(cblck2)
+
+        # Simplify the fused branch conditions: drop a branch whose
+        # condition is an unsatisfiable cartesian cross-term, and collapse a
+        # redundant ``(c) and (c)`` from identical fused guards to the
+        # minimal predicate. Keeps at least one branch.
+        for cnd, cfg in list(cblck1.branches):
+            if cnd is None or len(cblck1.branches) <= 1:
+                continue
+            simplified = _simplify_conjunction(cnd.as_string)
+            if simplified == 'False':
+                cblck1.remove_branch(cfg)
+            elif simplified != cnd.as_string:
+                cnd.as_string = simplified
 
         # If a branch is empty (single empty state), remove branch (implicit else)
         implicit_else = False
