@@ -14,6 +14,7 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+from dace.config import Config
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
@@ -1880,13 +1881,7 @@ def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> s
 
 
 @lru_cache(maxsize=16384)
-def deserialize_symbolic(expr, default_constants: bool = False) -> SymbolicType:
-    """
-    Deserialize a string produced by :func:`serialize_symbolic`.
-
-    :param default_constants: If True, untyped literals become default-typed
-                              ``TypedConstant`` s (``5`` -> ``int64``, ``5.0`` -> ``float64``).
-    """
+def _deserialize_symbolic(expr, default_typed_constants: bool) -> SymbolicType:
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
     if isinstance(expr, numpy.generic):
@@ -1907,7 +1902,12 @@ def deserialize_symbolic(expr, default_constants: bool = False) -> SymbolicType:
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
-    return _SerializedSymbolicParser(default_constants=default_constants).visit(ast.parse(expr, mode='eval'))
+    return _SerializedSymbolicParser(default_constants=default_typed_constants).visit(ast.parse(expr, mode='eval'))
+
+
+def deserialize_symbolic(expr) -> SymbolicType:
+    """Deserialize a string produced by :func:`serialize_symbolic`."""
+    return _deserialize_symbolic(expr, Config.get_bool('optimizer', 'default_typed_constants'))
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:

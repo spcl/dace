@@ -94,6 +94,16 @@ required:
                     is treated as strictly positive. This is necessary
                     for certain Range evaluations using Subgraph Fusion.
 
+            default_typed_constants:
+                type: bool
+                default: false
+                title: Default-type untyped serialized constants
+                description: >
+                    When deserializing symbolic expressions, give untyped
+                    literals a default DaCe type (``5`` -> ``int64``,
+                    ``5.0`` -> ``float64``, ``True`` -> ``bool``,
+                    ``4j`` -> ``complex128``) instead of plain SymPy numbers.
+
             match_exception:
                 type: bool
                 default: false
