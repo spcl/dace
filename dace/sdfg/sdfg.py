@@ -671,6 +671,14 @@ class SDFG(ControlFlowRegion):
             source_files = self.compute_debuginfo_files()
 
         tmp = super().to_json()
+        # A transparent SDFG subclass -- one that does not customise
+        # serialisation (e.g. a frontend runtime wrapper) -- must
+        # round-trip as a plain SDFG so a loader that has not imported
+        # the subclass (e.g. distributed_compile on another rank, or
+        # any standalone .sdfg load) can deserialise it.  A subclass
+        # that overrides ``to_json`` keeps its own type.
+        if type(self).to_json is SDFG.to_json:
+            tmp['type'] = 'SDFG'
         if is_root:
             tmp['source_files'] = source_files
 
