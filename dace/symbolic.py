@@ -527,9 +527,8 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     if expr.dtype in (dtypes.complex64, dtypes.complex128):
         re = _format_float(float(sympy.re(expr.value)))
         im = _format_float(float(sympy.im(expr.value)))
-        literal = f'complex({re}, {im})'
-        return literal if expr.dtype == dtypes.complex128 else f'dace.{expr.dtype.to_string()}({literal})'
-    if isinstance(expr.value, sympy.Float):
+        value = f'complex({re}, {im})'
+    elif isinstance(expr.value, sympy.Float):
         value = _format_float(float(expr.value))
     else:
         value = sympy.printing.str.sstr(expr.value)

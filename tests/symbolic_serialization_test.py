@@ -127,7 +127,7 @@ def test_complex_constant_parse_save_roundtrip():
     assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(3.0, 4.2)
 
     serialized = symbolic.serialize_symbolic(tc)
-    assert serialized == 'complex(3.0, 4.2)'
+    assert serialized == 'dace.complex128(complex(3.0, 4.2))'
     restored = symbolic.deserialize_symbolic(serialized)
     assert restored.dtype == dace.complex128
     assert symbolic.serialize_symbolic(restored) == serialized
