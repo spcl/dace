@@ -146,13 +146,13 @@ def test_forloop_to_masked_while_rewrite_shape():
     """Condition gets ``Min(global_ub, block_end)``; update normalized to
     ``i = i + W``; only the loop condition CodeBlock is touched."""
     sdfg, lr = _synthetic_core_loop_sdfg()
-    rc = ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {})
+    rc = ForLoopToMaskedWhile(vector_width=8, global_ub="64").apply_pass(sdfg, {})
     assert rc == 1
     cond = lr.loop_condition.code[0].value
     assert isinstance(cond, ast.Compare) and isinstance(cond.ops[0], ast.Lt)
     rhs = cond.comparators[0]
     assert isinstance(rhs, ast.Call) and rhs.func.id == "Min"
-    assert {ast.unparse(a).replace(" ", "") for a in rhs.args} == {"N", "core_i+16"}
+    assert {ast.unparse(a).replace(" ", "") for a in rhs.args} == {"64", "core_i+16"}
     # CodeBlock re-stringifies "i = i + 8" as "i = (i + 8)"; the contract
     # is the stride, not the parenthesisation.
     upd = lr.update_statement.as_string.replace(" ", "").replace("(", "").replace(")", "")
@@ -161,9 +161,9 @@ def test_forloop_to_masked_while_rewrite_shape():
 
 def test_forloop_to_masked_while_idempotent():
     sdfg, lr = _synthetic_core_loop_sdfg()
-    assert ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {}) == 1
+    assert ForLoopToMaskedWhile(vector_width=8, global_ub="64").apply_pass(sdfg, {}) == 1
     first = lr.loop_condition.as_string
-    assert ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {}) is None
+    assert ForLoopToMaskedWhile(vector_width=8, global_ub="64").apply_pass(sdfg, {}) is None
     assert lr.loop_condition.as_string == first
 
 
@@ -194,7 +194,7 @@ def test_forloop_to_masked_while_skips_unguarded_loop():
     nn = st.add_nested_sdfg(body, {"o_in"}, {"o_out"}, {"core_i": "core_i"})
     st.add_memlet_path(me, nn, dst_conn="o_in", memlet=dace.Memlet("o[0:32]"))
     st.add_memlet_path(nn, mx, src_conn="o_out", memlet=dace.Memlet("o[0:32]"))
-    assert ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {}) is None
+    assert ForLoopToMaskedWhile(vector_width=8, global_ub="64").apply_pass(sdfg, {}) is None
     assert "Min" not in lr.loop_condition.as_string
 
 
