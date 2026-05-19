@@ -119,22 +119,12 @@ def cloudsc_tidy_branch(zqx_l: dace.float64[KLEV, KLON], zqx_i: dace.float64[KLE
 
 
 def test_cloudsc_tidy_branch(remainder_strategy, branch_mode, request):
-    if branch_mode == "merge":
-        # Tracked tripwire (A1 finding): BranchNormalization cannot
-        # normalize this CLOUDSC-characteristic shape — a single-arm
-        # conditional whose body is a ~9-statement multi-array
-        # read-modify-write accumulation. branch_normalization.py:645
-        # raises "N ConditionalBlock(s) remain ... unsupported branch
-        # shape" because _normalize_single_arm only handles an
-        # assignment-prefix + 1 substantive state, not a many-statement
-        # RMW arm. The fp_factor path lowers it correctly (passes).
-        # strict=True: this flips to a hard failure (forcing un-xfail)
-        # the moment BranchNormalization learns this shape in A1.
-        request.applymarker(
-            pytest.mark.xfail(
-                reason="BranchNormalization gap: multi-statement single-arm RMW "
-                "conditional (CLOUDSC tidy-up) not normalized; fp_factor path OK",
-                strict=True))
+    # BUG #1 FIXED: BranchNormalization._normalize_single_arm now lifts
+    # a linear chain of substantive states (the frontend serialises this
+    # ~9-statement multi-array RMW arm into 3 states), applying the
+    # per-state merge rewrite to each — value-preserving for chained
+    # RMW. The former strict-xfail tripwire on branch_mode=="merge" is
+    # removed; both lowering paths must now pass.
     klev, klon = 16, 64
     # Mix of tiny (trigger the guard) and normal magnitudes.
     zqx_l = numpy.where(numpy.random.rand(klev, klon) < 0.5,

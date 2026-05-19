@@ -373,28 +373,98 @@ class BranchNormalization(ppl.Pass):
                     f"binding unconditional (unsafe unless the symbol is provably arm-local). "
                     f"Unsupported branch shape.")
         substantive = [s for s in states if not s.is_empty()]
-        if len(substantive) != 1:
+        if not substantive:
             return False
-        body_state: dace.SDFGState = substantive[0]
-        for n in body_state.nodes():
-            if not isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
-                return False
+        for s in substantive:
+            for n in s.nodes():
+                if not isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
+                    return False
 
-        write_subsets = self._collect_write_subsets(body_state)
-        if write_subsets is None:
+        # The arm may be a *linear chain* of substantive states (the
+        # frontend serialises a multi-statement read-modify-write body —
+        # e.g. the cloudsc "tidy up" arm `ptend_q += a; ...; ptend_q +=
+        # b` — into several sequential compute states; StateFusion-
+        # Extended correctly refuses to fuse them since they carry a
+        # genuine WAR/RAW hazard). Lifting the whole chain and applying
+        # the per-state merge rewrite to *every* substantive state is
+        # value-preserving: when ``cond`` is false each state's merge
+        # picks its running input, so the original propagates unchanged
+        # through the chain; when true each increment is applied. Only a
+        # straight-line chain is supported (no branching inside the arm).
+        ordered = self._linear_state_order(body)
+        if ordered is None:
+            return False
+        ordered_subst = [s for s in ordered if s in substantive]
+        if len(ordered_subst) != len(substantive):
             return False
 
-        # Only writes flagged by the escape analysis get the merge rewrite;
-        # arm-internal scratch stays inline because nothing outside sees it.
         cond_text = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
         local_sdfg: dace.SDFG = cb.sdfg
         escaping = compute_arm_escape_writes(local_sdfg, cb).get(0, set())
-        merge_subsets = {arr: sub for arr, sub in write_subsets.items() if arr in escaping}
-        if merge_subsets:
-            self._rewrite_writes_to_merge(local_sdfg, body_state, merge_subsets, cond_text, skip_cb=cb)
+
+        # Per-state escaping-write subsets, in execution order. Only
+        # escaping writes get the merge gate; arm-internal scratch stays
+        # inline (nothing outside the arm observes it).
+        per_state = []
+        for s in ordered_subst:
+            ws = self._collect_write_subsets(s)
+            if ws is None:
+                return False
+            per_state.append((s, {arr: sub for arr, sub in ws.items() if arr in escaping}))
+
+        # Resolve the cond ONCE, on the first substantive state that has
+        # an escaping write (its producer is sequenced before every
+        # consumer). Non-producer states read the cond array fresh.
+        preresolved = None
+        resolver_state = None
+        for s, ms in per_state:
+            if ms:
+                any_sub = str(next(iter(ms.values())))
+                preresolved = self._resolve_arm_cond(local_sdfg, s, cond_text, any_sub, skip_cb=cb)
+                resolver_state = s
+                break
+
+        for s, ms in per_state:
+            if not ms:
+                continue
+            if preresolved is not None:
+                cname, cprod = preresolved
+                pr = (cname, cprod if s is resolver_state else None)
+            else:
+                pr = None
+            self._rewrite_writes_to_merge(local_sdfg, s, ms, cond_text, skip_cb=cb, preresolved=pr)
 
         move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=body)
         return True
+
+    @staticmethod
+    def _linear_state_order(body: ControlFlowRegion):
+        """Execution-order block list iff ``body`` is a straight-line chain.
+
+        :param body: The arm region.
+        :returns: Blocks in execution order, or ``None`` if ``body``
+            branches, cycles, or has unreachable blocks (only a linear
+            chain is liftable by the per-state merge composition).
+        """
+        start = body.start_block
+        if start is None:
+            return None
+        order, seen, cur = [], set(), start
+        while cur is not None:
+            if cur in seen:
+                return None
+            seen.add(cur)
+            order.append(cur)
+            outs = list(body.out_edges(cur))
+            if len(outs) == 0:
+                cur = None
+            elif len(outs) == 1:
+                cur = outs[0].dst
+            else:
+                return None
+        if len(order) != len(body.nodes()):
+            return None
+        return order
 
     def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
                                 body1: ControlFlowRegion) -> bool:
@@ -463,13 +533,41 @@ class BranchNormalization(ppl.Pass):
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         return collect_element_write_subsets(state)
 
+    def _resolve_arm_cond(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str, any_subset_str: str,
+                          skip_cb=None):
+        """Resolve the arm condition to ``(cond_array_name, cond_producer)``.
+
+        Materialises the boolean arm condition into an array (the
+        ``SameWriteSetIfElseToMergeCFG`` resolver) and returns the array
+        name + the producing access node, or ``(None, None)`` if the
+        cond stays an inline expression. Extracted so a multi-state arm
+        can resolve **once** (the resolver has a one-shot symbol-lift
+        side effect — re-resolving per state would bake stale cond text
+        into later merge tasklets).
+
+        :param sdfg: SDFG for name resolution.
+        :param state: State whose scope the cond is resolved against
+            (for a multi-state chain: the first substantive state, so
+            the producer is sequenced before every consumer).
+        :param cond_text: The arm condition expression.
+        :param any_subset_str: A representative write subset string.
+        :param skip_cb: Conditional block whose conditions to exclude.
+        :returns: ``(cond_array_name, cond_producer)``.
+        """
+        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
+            SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
+        resolved = SameWriteSetIfElseToMergeCFG()._resolve_cond_to_array(
+            sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
+        return (None, None) if resolved is None else resolved
+
     def _rewrite_writes_to_merge(self,
                                  sdfg: dace.SDFG,
                                  state: dace.SDFGState,
                                  write_subsets: dict,
                                  cond_text: str,
                                  *,
-                                 skip_cb=None):
+                                 skip_cb=None,
+                                 preresolved=None):
         """Redirect each write in ``state`` through ``arr = merge(cond, expr, arr)``.
 
         :param sdfg: SDFG used for name resolution.
@@ -484,16 +582,18 @@ class BranchNormalization(ppl.Pass):
         # across all writes that share the same cond; resolving inside the
         # per-write loop would re-trigger the lift, find the assignment
         # gone after the first iteration, and silently bake the cond text
-        # into later merge tasklets.
-        from dace.transformation.passes.vectorization.same_write_set_if_else_to_merge_cfg import (
-            SameWriteSetIfElseToMergeCFG, )  # noqa: avoid import cycle at module load
-        resolver = SameWriteSetIfElseToMergeCFG()
-        any_subset_str = str(next(iter(write_subsets.values())))
-        resolved = resolver._resolve_cond_to_array(sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
-        if resolved is None:
-            cond_array_name, cond_producer = None, None
+        # into later merge tasklets. ``preresolved`` lets a multi-state
+        # caller resolve once (on the first substantive state) and feed
+        # the same ``(cond_array, producer)`` to every state's rewrite —
+        # passing ``producer=None`` for non-producer states forces a
+        # fresh in-state read of the (already-computed, earlier-state)
+        # cond array, which is the only valid cross-state form.
+        if preresolved is not None:
+            cond_array_name, cond_producer = preresolved
         else:
-            cond_array_name, cond_producer = resolved
+            any_subset_str = str(next(iter(write_subsets.values())))
+            cond_array_name, cond_producer = self._resolve_arm_cond(
+                sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb)
 
         for arr_name in list(write_subsets.keys()):
             # Find every write access node for this array in this state.
