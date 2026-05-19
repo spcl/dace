@@ -119,6 +119,39 @@ def test_bool_typed_constant_construction_and_roundtrip(value):
     assert restored.dtype == dace.bool_ and int(restored.value) == int(value)
 
 
+def test_complex_constant_parse_save_roundtrip():
+    """``complex(re, im)`` parses to a complex128 TypedConstant and round-trips;
+    a complex64 constant preserves its dtype via the cast-wrapped form."""
+    tc = symbolic.deserialize_symbolic('complex(3.0, 4.2)')
+    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
+    assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(3.0, 4.2)
+
+    serialized = symbolic.serialize_symbolic(tc)
+    assert serialized == 'complex(3.0, 4.2)'
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert restored.dtype == dace.complex128
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+    c64 = symbolic.TypedConstant(complex(1, 2), dace.complex64)
+    s64 = symbolic.serialize_symbolic(c64)
+    assert s64 == 'dace.complex64(complex(1.0, 2.0))'
+    r64 = symbolic.deserialize_symbolic(s64)
+    assert r64.dtype == dace.complex64 and symbolic.serialize_symbolic(r64) == s64
+
+
+def test_default_constants_map_bool_and_complex():
+    """Under ``default_constants``: True/False -> bool, complex literal ->
+    complex128. Without the flag, booleans stay ``sympy.true``/``false``."""
+    b = symbolic.deserialize_symbolic('True', default_constants=True)
+    assert isinstance(b, symbolic.TypedConstant) and b.dtype == dace.bool_ and int(b.value) == 1
+    assert symbolic.deserialize_symbolic('False', default_constants=True).value == 0
+
+    c = symbolic.deserialize_symbolic('4j', default_constants=True)
+    assert isinstance(c, symbolic.TypedConstant) and c.dtype == dace.complex128
+
+    assert symbolic.deserialize_symbolic('True') is sympy.true
+
+
 def test_sym2cpp_emits_uint64_literals():
     expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol('N', dtype=dace.uint64)
 

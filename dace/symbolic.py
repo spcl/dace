@@ -478,6 +478,10 @@ def _sympy_constant_value(value):
         return sympy.Integer(value)
     if isinstance(value, float):
         return sympy.Float(value)
+    if isinstance(value, (complex, numpy.complexfloating)):
+        return sympy.Float(value.real) + sympy.Float(value.imag) * sympy.I
+    if isinstance(value, sympy.Expr) and value.is_number and value.is_real is False:
+        return value
     raise TypeError(f'Unsupported typed constant value {value!r}')
 
 
@@ -496,6 +500,8 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
         return DEFAULT_SYMBOL_TYPE
     if isinstance(value, float):
         return dtypes.float64
+    if isinstance(value, (complex, numpy.complexfloating)):
+        return dtypes.complex128
     raise TypeError(f'Cannot infer a DaCe dtype for {value!r}')
 
 
@@ -518,6 +524,11 @@ def _format_float(value: float) -> str:
 
 
 def _typed_constant_to_string(expr: TypedConstant) -> str:
+    if expr.dtype in (dtypes.complex64, dtypes.complex128):
+        re = _format_float(float(sympy.re(expr.value)))
+        im = _format_float(float(sympy.im(expr.value)))
+        literal = f'complex({re}, {im})'
+        return literal if expr.dtype == dtypes.complex128 else f'dace.{expr.dtype.to_string()}({literal})'
     if isinstance(expr.value, sympy.Float):
         value = _format_float(float(expr.value))
     else:
@@ -1633,6 +1644,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     def visit_Constant(self, node):
         if isinstance(node.value, bool):
+            if self._default_constants:
+                return TypedConstant(int(node.value), dtypes.bool_)
             return sympy.true if node.value else sympy.false
         if node.value is None:
             return symbol('NoneSymbol')
@@ -1644,6 +1657,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             if self._default_constants:
                 return TypedConstant(node.value, dtypes.typeclass(float))
             return sympy.Float(node.value)
+        if isinstance(node.value, complex):
+            if self._default_constants:
+                return TypedConstant(node.value, dtypes.complex128)
         raise TypeError(f'Unsupported literal {node.value!r}')
 
     def visit_UnaryOp(self, node):
@@ -1703,6 +1719,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
         if (isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1):
             return _cast_symbolic_value(self.visit(node.args[0]), dtypes.CTYPE_TO_TYPECLASS[node.func.id])
+
+        if isinstance(node.func, ast.Name) and node.func.id == 'complex' and len(node.args) == 2:
+            re = self.visit(node.args[0])
+            im = self.visit(node.args[1])
+            return TypedConstant(complex(float(re), float(im)), dtypes.complex128)
 
         func = self._resolve_function(node.func)
         args = [self.visit(arg) for arg in node.args]
