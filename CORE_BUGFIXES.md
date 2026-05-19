@@ -115,3 +115,27 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   interstate symbol-assignment chain hoisted with the guard; innermost
   guard sifts to top via repeated application; mixed map/loop nest.
 - **Status:** redesign + tests in progress.
+
+### 7. `MapFission` unsoundly fissioned a NestedSDFG whose indirection symbol transitively depends on the map iterator
+- **File:** `dace/transformation/dataflow/map_fission.py` (`can_be_applied`, expr_index 1 — map-with-NestedSDFG)
+- **Bug:** the iterator-dependence rejection only checked ONE hop. The Fortran
+  frontend lowers `a(idx(i))` to a NestedSDFG that loads `idx(i)` into an
+  internal transient `__tmp` then carries `__sym = __tmp` on an interstate
+  edge; the assignment RHS is `__tmp` (not the iterator-indexed input), so
+  `assign_free & map_params` / `& inputs_dep_on_map` were empty and
+  MapFission would proceed to fission a NestedSDFG whose indirection symbol
+  transitively depends on the map iterator — an unsound split.
+- **Fix:** seed a `tainted` set from iterator-dependent input connectors,
+  propagate the taint forward through every NestedSDFG state's dataflow
+  (monotone closure), and additionally `return False` if an interstate
+  assignment names any tainted container. Strictly *additive refusal* —
+  only adds `return False` paths, never removes one; cannot make a
+  previously-correct fission wrong nor reduce any asserted fission count.
+- **Verification:** `tests/transformations/map_fission_test.py` +
+  `map_fission_indirect_test.py` + `map_fission_e2e_structure_test.py`
+  = **37 passed, 0 regressions** with the change.
+- **Reproducer test:** the Fortran-frontend
+  `tests/mapfission_indirect_loopnests_test.py` (dace-fortran, UNVERIFIED —
+  needs the d2/FaCe env) exercises the exact `a(idx(i))` lowering; a
+  main-safe focused unit test is TODO.
+- **Status:** fixed, regression-verified; commit pending.
