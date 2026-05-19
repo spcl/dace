@@ -20,6 +20,7 @@ from dace.sdfg.state import LoopRegion
 from dace.symbolic import DaceSympyPrinter
 
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
+from dace.transformation.passes.vectorization.utils.lane_fanout import outside_index_param_coeff
 
 
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
@@ -225,7 +226,41 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                             v_expr = v_expr.subs(free_sym, f"{free_sym}")
                         else:
                             assert inner_sdfg.arrays[free_sym_str].shape != (1, )
-                            v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
+                            # The connector ``free_sym`` is the NSDFG-input
+                            # window of an array accessed ``arr[c*i]`` in
+                            # the parent. The window is the step-1 bbox of
+                            # the W touched elements, so lane ``i`` lives at
+                            # offset ``c*i`` — *not* ``i``. Recover ``c``
+                            # from the boundary memlet (same helper the
+                            # gather/scatter collapse uses, so the per-lane
+                            # element identity agrees on both sides).
+                            # ``c == 1`` or an unprovable boundary ⇒ the
+                            # plain unit-lane offset ``({i})``.
+                            c = outside_index_param_coeff(inner_sdfg, free_sym_str, vector_width)
+                            if c is not None and c > 1:
+                                # Inside bound check (the outside window
+                                # is already verified ≥ c*(W-1)+1 by the
+                                # helper): the inner connector must hold
+                                # the same span, else ``view(c*i)`` reads
+                                # out of bounds. The reshape contract says
+                                # inner == outside-bbox; if a provably-
+                                # constant inner shape contradicts that,
+                                # fail loudly rather than emit an OOB
+                                # access or silently revert to the wrong
+                                # ``view(i)``.
+                                inner_desc = inner_sdfg.arrays[free_sym_str]
+                                need = c * (vector_width - 1) + 1
+                                total = inner_desc.total_size
+                                total_simpl = dace.symbolic.simplify(total - need)
+                                if getattr(total_simpl, "is_Integer", False) and int(total_simpl) < 0:
+                                    raise RuntimeError(
+                                        f"Lane fan-out for '{free_sym_str}': inner connector size "
+                                        f"{total} < required strided span {need} (stride c={c}, "
+                                        f"W={vector_width}); the NSDFG-input window and the inner "
+                                        f"connector disagree (reshape inconsistency).")
+                                v_expr = v_expr.subs(free_sym, f"{free_sym}({c} * {i})")
+                            else:
+                                v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
 
                 # ``DaceSympyPrinter`` prints array reads as ``arr[idx]``
                 # (subscript form for names in the ``arrays`` set) and emits

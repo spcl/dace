@@ -28,6 +28,44 @@ gather_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 }}
 """
 
+# Index-array-direct variants (``collapse_laneid_index_loads``). The W
+# per-lane indices are read straight from the index array slice via the
+# ``_idx`` connector instead of W interstate-edge laneid symbols.
+#
+# When the index array is already ``int64`` (the runtime ``gather`` index
+# type) the ``_idx`` pointer is passed straight through — no buffer, no
+# per-lane fill. The ``*_CONV`` variant is the fallback for a narrower
+# index dtype (e.g. ``int32``): the only reason a local buffer exists is
+# the element-width conversion the runtime signature requires, not
+# regeneration of the indices.
+_GATHER_TEMPLATE_IDXARR = """
+{{
+gather<{dtype}>(_in, _idx, _out, {vector_length});
+}}
+"""
+
+_GATHER_TEMPLATE_IDXARR_MASKED = """
+{{
+gather_masked<{dtype}>(_in, _idx, _out, {vector_length}, _mask);
+}}
+"""
+
+_GATHER_TEMPLATE_IDXARR_CONV = """
+{{
+int64_t __vec_lane_idx[{vector_length}];
+for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+gather<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
+}}
+"""
+
+_GATHER_TEMPLATE_IDXARR_CONV_MASKED = """
+{{
+int64_t __vec_lane_idx[{vector_length}];
+for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+gather_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -42,9 +80,17 @@ class DetectGather(ppl.Pass):
                                       desc="Collapse only masked (vector-remainder) fan-outs; leave the "
                                       "main loop's per-lane scalar gather untouched.")
 
-    def __init__(self, only_masked: bool = False):
+    collapse_laneid_index_loads = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Collapse the per-lane laneid index fan into a direct index-array "
+        "slice read (_idx connector) and drop the now-dead laneid symbols + "
+        "their interstate-edge assignments.")
+
+    def __init__(self, only_masked: bool = False, collapse_laneid_index_loads: bool = False):
         super().__init__()
         self.only_masked = only_masked
+        self.collapse_laneid_index_loads = collapse_laneid_index_loads
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
@@ -67,5 +113,10 @@ class DetectGather(ppl.Pass):
                                  intrinsic_template=_GATHER_TEMPLATE,
                                  intrinsic_template_masked=_GATHER_TEMPLATE_MASKED,
                                  intrinsic_tasklet_name="gather_load",
-                                 skip_unmasked=self.only_masked)
+                                 skip_unmasked=self.only_masked,
+                                 collapse_laneid_index_loads=self.collapse_laneid_index_loads,
+                                 intrinsic_template_idxarr=_GATHER_TEMPLATE_IDXARR,
+                                 intrinsic_template_idxarr_masked=_GATHER_TEMPLATE_IDXARR_MASKED,
+                                 intrinsic_template_idxarr_conv=_GATHER_TEMPLATE_IDXARR_CONV,
+                                 intrinsic_template_idxarr_conv_masked=_GATHER_TEMPLATE_IDXARR_CONV_MASKED)
         sdfg.validate()

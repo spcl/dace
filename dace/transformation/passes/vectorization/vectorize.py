@@ -678,7 +678,6 @@ class Vectorize(ppl.Pass):
             for k in demoted_scalars:
                 assert k in vectorizable_arrays_dict
 
-        #raise Exception(vectorizable_arrays_dict, non_vectorizable_arrays)
         add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
 
         modified_nodes: Set[dace.nodes.Node] = set()
@@ -847,75 +846,118 @@ class Vectorize(ppl.Pass):
                     expanded_symbols = expanded_symbols.union(free_symbols)
                     self._expand_interstate_assignments(sdfg, non_expanded_free_symbols, candidate_arrays)
 
-        # Then do the other stuff
+        # Build packed gather buffers. An array may be gathered MULTIPLE
+        # times in one state with DISTINCT index expressions (e.g. the
+        # ICON cell-from-edges interpolation reads
+        # ``z_kin_hor_e[edge_blk_m, jk, edge_idx_m]`` for m = 0,1,2).
+        # Group the consuming edges by their gather subset: identical
+        # gathers share ONE packed buffer + one set of per-lane loads
+        # (dedup by subset key -> no codegen bloat); each DISTINCT gather
+        # gets its own packed buffer and EVERY consuming edge of it is
+        # rewritten. The previous code renamed the one source AccessNode
+        # in place and rewrote a single edge, so a second distinct
+        # gather of the same array was left with a stale ``<arr>`` memlet
+        # on the renamed source -> ``InvalidSDFGEdgeError: Memlet data
+        # does not match source``.
+        #
+        # Two naming invariants the masked-remainder collapse relies on
+        # (``utils.lane_fanout``): (1) per-lane tasklet label must match
+        # ``^assign_<digits>$`` (``_ASSIGN_LABEL_RE``); (2) the packed
+        # buffer name must END with ``_packed``
+        # (``PackedNameScheme.is_packed`` == ``endswith``). The n>0
+        # buffer therefore uses ``PackedNameScheme.make(f"{arr}_{n}")``
+        # -> ``<arr>_<n>_packed`` (still ends ``_packed``), NOT
+        # ``<arr>_packed_<n>``. ``repl_subset_to_use_laneid_offset``
+        # already lane-expands ALL gathered index components in the
+        # subset, so a multi-component (two index-table) gather is
+        # handled for free.
         for state in sdfg.all_states():
-            for edge in state.edges():
-                if edge.data is not None and edge.data.data in array_accessed_to_be_packed:
-                    # Skip edges sourced from non-AccessNodes (e.g., the
-                    # CPP ``_iter_mask_fill`` tasklet emitted by P3). The
-                    # packing path assumes both endpoints are AccessNodes,
-                    # so the ``edge.src.data`` access below would AttributeError
-                    # on a Tasklet src.
-                    if not isinstance(edge.src, dace.nodes.AccessNode):
-                        continue
-                    # Create a packed copy
-                    # If it is a source node (no in edges, copy in), otherwise replace with the packed data
-                    if state.in_degree(edge.src) == 0 and edge.src.data == edge.data.data:
-                        src_node = edge.src
-                        src_node.data = f"{edge.data.data}_packed"
-                        old_data_name = f"{edge.data.data}"
+            groups = {}
+            orig_src_nodes = {}
+            for edge in list(state.edges()):
+                if edge.data is None or edge.data.data not in array_accessed_to_be_packed:
+                    continue
+                # Skip edges sourced from non-AccessNodes (e.g. the CPP
+                # ``_iter_mask_fill`` tasklet emitted by P3).
+                if not isinstance(edge.src, dace.nodes.AccessNode):
+                    continue
+                if not (state.in_degree(edge.src) == 0 and edge.src.data == edge.data.data):
+                    continue
+                groups.setdefault((edge.data.data, str(edge.data.subset)), []).append(edge)
+                orig_src_nodes.setdefault(edge.data.data, edge.src)
 
-                        # Packed data
-                        modified_data.add(old_data_name)
-                        modified_data.add(src_node.data)
+            per_array_idx = {}
+            for (data_name, _subset_key), edges in groups.items():
+                n = per_array_idx.get(data_name, 0)
+                per_array_idx[data_name] = n + 1
+                # n == 0 reuses the pre-created ``<arr>_packed``; extra
+                # distinct gathers get ``<arr>_<n>_packed`` (ends
+                # ``_packed`` so PackedNameScheme.is_packed holds).
+                packed_name = (PackedNameScheme.make(data_name)
+                               if n == 0 else PackedNameScheme.make(f"{data_name}_{n}"))
+                if packed_name not in sdfg.arrays:
+                    base = sdfg.arrays[data_name]
+                    sdfg.add_array(packed_name, (self.vector_width, ),
+                                   base.dtype,
+                                   storage=self.vector_input_storage,
+                                   transient=True,
+                                   find_new_name=False)
+                modified_data.add(data_name)
+                modified_data.add(packed_name)
 
-                        non_packed_access = state.add_access(old_data_name)
-                        non_packed_access.setzero = True
-                        modified_nodes.add(non_packed_access)
-                        modified_nodes.add(src_node)
+                packed_src = state.add_access(packed_name)
+                non_packed_access = state.add_access(data_name)
+                non_packed_access.setzero = True
+                modified_nodes.add(packed_src)
+                modified_nodes.add(non_packed_access)
 
-                        # Replace all symbols used e.g. i,j with `i`, `j_laneid_0`
-                        # A -[j]> B becomes now
-                        # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
-                        for i in range(self.vector_width):
-                            new_subset = repl_subset_to_use_laneid_offset(sdfg=state.sdfg,
-                                                                          subset=copy.deepcopy(edge.data.subset),
-                                                                          symbol_offset=str(i),
-                                                                          vector_map_param=vector_map_param)
-                            at = state.add_tasklet(
-                                name=f"assign_{i}",
-                                inputs={
-                                    "_in",
-                                },
-                                outputs={
-                                    "_out",
-                                },
-                                code="_out = _in",
-                            )
-                            at.add_in_connector("_in")
-                            at.add_out_connector("_out")
-                            e1 = state.add_edge(non_packed_access, None, at, "_in",
-                                                dace.memlet.Memlet(
-                                                    data=old_data_name,
-                                                    subset=new_subset,
-                                                ))
-                            e2 = state.add_edge(at, "_out", src_node, None, dace.memlet.Memlet(f"{src_node.data}[{i}]"))
-                            modified_nodes.add(at)
-                            if isinstance(e1, dace.nodes.Node):
-                                raise RuntimeError("state.add_edge returned a Node, not an Edge "
-                                                   f"(_in edge for {old_data_name}); SDFG API contract broken")
-                            if isinstance(e2, dace.nodes.Node):
-                                raise RuntimeError("state.add_edge returned a Node, not an Edge "
-                                                   f"(_out edge for {src_node.data}); SDFG API contract broken")
-                            modified_edges.add(e1)
-                            modified_edges.add(e2)
+                # A -[j]-> B becomes
+                # A -[j_laneid_0..j_laneid_{W-1}]-> A_packed -[0:W]-> B.
+                # Tasklet label MUST stay ``assign_{i}`` (lane-fanout
+                # collapse matcher); duplicate labels across distinct
+                # packed fans are fine -- the matcher scopes to one
+                # packed node's neighbour tasklets.
+                rep_subset = edges[0].data.subset
+                for i in range(self.vector_width):
+                    new_subset = repl_subset_to_use_laneid_offset(sdfg=state.sdfg,
+                                                                  subset=copy.deepcopy(rep_subset),
+                                                                  symbol_offset=str(i),
+                                                                  vector_map_param=vector_map_param)
+                    at = state.add_tasklet(name=f"assign_{i}",
+                                           inputs={"_in"},
+                                           outputs={"_out"},
+                                           code="_out = _in")
+                    at.add_in_connector("_in")
+                    at.add_out_connector("_out")
+                    e1 = state.add_edge(non_packed_access, None, at, "_in",
+                                        dace.memlet.Memlet(data=data_name, subset=new_subset))
+                    e2 = state.add_edge(at, "_out", packed_src, None,
+                                        dace.memlet.Memlet(f"{packed_name}[{i}]"))
+                    modified_nodes.add(at)
+                    if isinstance(e1, dace.nodes.Node) or isinstance(e2, dace.nodes.Node):
+                        raise RuntimeError(f"state.add_edge returned a Node for {packed_name}; "
+                                           "SDFG API contract broken")
+                    modified_edges.add(e1)
+                    modified_edges.add(e2)
 
-                        # Now update the subset
-                        edge.data = dace.memlet.Memlet(expr=f"{src_node.data}[0:{self.vector_width}]")
-                        if isinstance(edge, dace.nodes.Node):
-                            raise RuntimeError(f"edge for {src_node.data} is a Node, not an Edge; "
-                                               "SDFG API contract broken")
-                        modified_edges.add(edge)
+                # Rewrite EVERY consuming edge of this distinct gather to
+                # read the packed buffer (not just the first one).
+                for e in edges:
+                    dst, dst_conn = e.dst, e.dst_conn
+                    state.remove_edge(e)
+                    ne = state.add_edge(packed_src, None, dst, dst_conn,
+                                        dace.memlet.Memlet(expr=f"{packed_name}[0:{self.vector_width}]"))
+                    if isinstance(ne, dace.nodes.Node):
+                        raise RuntimeError(f"state.add_edge returned a Node for {packed_name} consumer; "
+                                           "SDFG API contract broken")
+                    modified_edges.add(ne)
+
+            # The original gather source nodes lost all their consumers
+            # (every out-edge was rewritten to a packed buffer); drop the
+            # now-isolated nodes.
+            for src in set(orig_src_nodes.values()):
+                if src in state.nodes() and state.degree(src) == 0:
+                    state.remove_node(src)
         return modified_nodes, modified_edges, modified_data
 
     def _generate_strided_loads_to_packed_storage(

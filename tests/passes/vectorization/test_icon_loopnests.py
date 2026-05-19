@@ -73,14 +73,20 @@ def icon_zekinh_gather(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[
                     e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
 
 
-@pytest.mark.xfail(
-    reason="BUG FINDING #2: 2-level indirect gather "
-    "z_kin_hor_e[edge_blk[jb,jc,m], jk, edge_idx[jb,jc,m]] (ICON cell-from-edges "
-    "bilinear interp) breaks the vectorizer with InvalidSDFGEdgeError 'Memlet data "
-    "does not match source/destination' — the double index-table gather over the "
-    "vectorised jc axis is not handled. Tracked; flips to hard-fail when fixed.",
-    strict=True)
 def test_icon_zekinh_gather(remainder_strategy, branch_mode):
+    # BUG #2 FIXED (InvalidSDFGEdgeError): _generate_loads_to_packed_storage
+    # groups consuming edges by gather subset (dict), one packed buffer
+    # + per-lane loads per DISTINCT gather (dedup), rewrites EVERY
+    # consuming edge, drops orphan sources; assign_{i} label +
+    # <arr>_<n>_packed naming preserved.
+    # BUG #2b FIXED (masked-merge): the ICON gather has TWO lane-variant
+    # gathered index components (edge_blk dim-0 + edge_idx dim-2, both
+    # indexed by jc) — a multi-variable gather with no hardware
+    # intrinsic. GenerateIterationMask._lane_variant_indirect_dim_count
+    # detects >=2 such components and auto-degrades the masked remainder
+    # to a scalar tail (universally safe). A single-index gather
+    # (count<=1, e.g. spmv x[idx[i]]) keeps the R2 masked-gather
+    # intrinsic path — non-regressing.
     nb, nlev, nproma = 2, 16, 64
     e_bln = numpy.random.rand(nb, 3, nproma)
     # Valid 0-based index tables into [NB] (blk) and [NPROMA] (idx).

@@ -40,6 +40,10 @@ class _LoopToMapPass(ppl.Pass):
     left alone by ``LoopToMap``'s own safety analysis.
     """
 
+    def __init__(self, permissive: bool = False):
+        super().__init__()
+        self._permissive = permissive
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes
 
@@ -48,7 +52,7 @@ class _LoopToMapPass(ppl.Pass):
 
     def apply_pass(self, sdfg, _pipeline_results):
         from dace.transformation.interstate import LoopToMap
-        return sdfg.apply_transformations_repeated(LoopToMap)
+        return sdfg.apply_transformations_repeated(LoopToMap, permissive=self._permissive)
 
 
 class _AssertNoLaneMemletReadsPass(ppl.Pass):
@@ -94,6 +98,8 @@ class VectorizeCPU(ppl.Pipeline):
                  lower_to_intrinsics: bool = False,
                  gather_intrinsic: bool = True,
                  scatter_intrinsic: bool = True,
+                 collapse_laneid_index_loads: bool = False,
+                 loop_to_map_permissive: bool = False,
                  force_autovec_ops: Optional[Set[str]] = None,
                  force_pscalar_ops: Optional[Set[str]] = None,
                  remainder_strategy: str = "scalar"):
@@ -125,6 +131,20 @@ class VectorizeCPU(ppl.Pipeline):
             uses the intrinsic regardless (per-lane scalar fan faults on
             inactive lanes).
         :param scatter_intrinsic: as ``gather_intrinsic`` but for scatter.
+        :param collapse_laneid_index_loads: when ``True``, a recognised
+            per-lane laneid index fan (W laneid symbols bound to a
+            contiguous ``<idxarr>[0:W]`` slice) is collapsed so the
+            gather intrinsic reads the index array directly via an
+            ``_idx`` connector; the dead laneid symbols and their
+            interstate-edge assignments are removed. Default ``False``
+            keeps the per-lane laneid-symbol form.
+        :param loop_to_map_permissive: run the internal ``LoopToMap`` in
+            permissive mode. A scatter ``for i in range(...): a[idx[i]]
+            = ...`` loop has a data-dependent write index that the
+            non-permissive safety analysis treats as a possible write
+            conflict and refuses to parallelize; permissive mode accepts
+            it (the caller asserts the indices are conflict-free).
+            Default ``False``.
         :param force_autovec_ops: ops to emit as ``vector_<op>_av`` (autovec hint).
         :param force_pscalar_ops: ops to emit as ``vector_<op>_pscalar`` (no autovec hint).
         :param remainder_strategy: ``"scalar"`` (scalar postamble), ``"masked"`` (iter-mask
@@ -309,7 +329,7 @@ class VectorizeCPU(ppl.Pipeline):
                 # ``for i in range(...)`` body now becomes a Map the
                 # vectorizer can stride. Runs before the Vectorize / prep
                 # passes. No-op for ``dace.map`` kernels.
-                _LoopToMapPass(),
+                _LoopToMapPass(permissive=loop_to_map_permissive),
                 RemoveFPTypeCasts(),
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),
@@ -403,8 +423,12 @@ class VectorizeCPU(ppl.Pipeline):
         # only control the *main* loop — when ``False`` the pass collapses
         # the masked remainder only and the main loop keeps its per-lane
         # scalar fan (which the C++ compiler may still auto-vectorize).
-        passes.append(DetectGather(only_masked=not gather_intrinsic))
-        passes.append(DetectScatter(only_masked=not scatter_intrinsic))
+        passes.append(
+            DetectGather(only_masked=not gather_intrinsic,
+                         collapse_laneid_index_loads=collapse_laneid_index_loads))
+        passes.append(
+            DetectScatter(only_masked=not scatter_intrinsic,
+                          collapse_laneid_index_loads=collapse_laneid_index_loads))
         # Strided / multi-dim-strided collapse stays opt-in.
         if lower_to_intrinsics:
             passes.extend([

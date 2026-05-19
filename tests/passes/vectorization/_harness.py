@@ -61,7 +61,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            branch_mode: str = "merge",
                            remainder_strategy: str = "scalar",
                            param_tag: str = None,
-                           lower_to_intrinsics: bool = False):
+                           lower_to_intrinsics: bool = False,
+                           collapse_laneid_index_loads: bool = False,
+                           loop_to_map_permissive: bool = False):
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -159,6 +161,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fail_on_unvectorizable=True,
                  remainder_strategy=remainder_strategy,
                  lower_to_intrinsics=lower_to_intrinsics,
+                 collapse_laneid_index_loads=collapse_laneid_index_loads,
+                 loop_to_map_permissive=loop_to_map_permissive,
                  **branch_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 

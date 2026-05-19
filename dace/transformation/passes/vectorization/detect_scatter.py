@@ -25,6 +25,43 @@ scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
 }}
 """
 
+# Index-array-direct variants (``collapse_laneid_index_loads``). The W
+# per-lane scatter indices are read straight from the index array slice
+# via the ``_idx`` connector instead of W interstate-edge laneid
+# symbols.
+#
+# When the index array is already ``int64`` the ``_idx`` pointer is
+# passed straight through. The ``*_CONV`` variant is the fallback for a
+# narrower index dtype (e.g. ``int32``): the local buffer exists only
+# for the element-width conversion the runtime signature requires.
+_SCATTER_TEMPLATE_IDXARR = """
+{{
+scatter<{dtype}>(_in, _idx, _out, {vector_length});
+}}
+"""
+
+_SCATTER_TEMPLATE_IDXARR_MASKED = """
+{{
+scatter_masked<{dtype}>(_in, _idx, _out, {vector_length}, _mask);
+}}
+"""
+
+_SCATTER_TEMPLATE_IDXARR_CONV = """
+{{
+int64_t __vec_lane_idx[{vector_length}];
+for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+scatter<{dtype}>(_in, __vec_lane_idx, _out, {vector_length});
+}}
+"""
+
+_SCATTER_TEMPLATE_IDXARR_CONV_MASKED = """
+{{
+int64_t __vec_lane_idx[{vector_length}];
+for (int __l = 0; __l < {vector_length}; ++__l) __vec_lane_idx[__l] = _idx[__l * {stride}];
+scatter_masked<{dtype}>(_in, __vec_lane_idx, _out, {vector_length}, _mask);
+}}
+"""
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -39,9 +76,17 @@ class DetectScatter(ppl.Pass):
                                       desc="Collapse only masked (vector-remainder) fan-outs; leave the "
                                       "main loop's per-lane scalar scatter untouched.")
 
-    def __init__(self, only_masked: bool = False):
+    collapse_laneid_index_loads = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Collapse the per-lane laneid index fan into a direct index-array "
+        "slice read (_idx connector) and drop the now-dead laneid symbols + "
+        "their interstate-edge assignments.")
+
+    def __init__(self, only_masked: bool = False, collapse_laneid_index_loads: bool = False):
         super().__init__()
         self.only_masked = only_masked
+        self.collapse_laneid_index_loads = collapse_laneid_index_loads
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
@@ -64,5 +109,10 @@ class DetectScatter(ppl.Pass):
                                  intrinsic_template=_SCATTER_TEMPLATE,
                                  intrinsic_template_masked=_SCATTER_TEMPLATE_MASKED,
                                  intrinsic_tasklet_name="scatter_store",
-                                 skip_unmasked=self.only_masked)
+                                 skip_unmasked=self.only_masked,
+                                 collapse_laneid_index_loads=self.collapse_laneid_index_loads,
+                                 intrinsic_template_idxarr=_SCATTER_TEMPLATE_IDXARR,
+                                 intrinsic_template_idxarr_masked=_SCATTER_TEMPLATE_IDXARR_MASKED,
+                                 intrinsic_template_idxarr_conv=_SCATTER_TEMPLATE_IDXARR_CONV,
+                                 intrinsic_template_idxarr_conv_masked=_SCATTER_TEMPLATE_IDXARR_CONV_MASKED)
         sdfg.validate()

@@ -299,8 +299,18 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                     return False
 
                 if any(_is_strided_mul(term) for term in access_expr.atoms(sympy.Mul)):
+                    # A stride-1-dim begin with the map param as a direct
+                    # Mul factor (e.g. ``A[2*i]`` through the NSDFG
+                    # boundary) is a constant-stride gather. Marking the
+                    # array non-vectorizable routes it to the packed /
+                    # strided handler (``_setup_strided_nsdfg_edges_inline``
+                    # / the ``(W-1)*S+K`` strided-load lowering), which is
+                    # the correct support for this shape and is verified
+                    # numerically (``test_strided_through_nsdfg``). A
+                    # genuinely-unsupported strided sub-shape still fails
+                    # loudly — but at that handler, with concrete context,
+                    # rather than via a blanket early abort here.
                     array_is_vectorizable[arr_name] = False
-                    raise Exception("TODO - I have not analyzed this case yet")
 
             if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol, sympy.Expr)):
                 if isinstance(b, (dace.symbolic.SymExpr, sympy.Expr)):

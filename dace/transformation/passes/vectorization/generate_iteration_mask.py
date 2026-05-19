@@ -130,6 +130,74 @@ class GenerateIterationMask(ppl.Pass):
             return False
         return classify_lane_access(sub, strides, iter_var).fans_out_per_lane
 
+    @staticmethod
+    def _lane_variant_indirect_dim_count(inner_sdfg, sub, iter_var: str) -> int:
+        """Count subset dims that are LANE-VARIANT indirect gather components.
+
+        A dim counts iff its ``begin`` reaches an array read whose index
+        depends on ``iter_var`` (the vectorised lane), either:
+
+        - directly: ``begin`` contains an array-subscript ``A[... iter_var
+          ...]`` (a SymPy ``Function`` named after an array in
+          ``inner_sdfg.arrays`` whose args mention ``iter_var``); or
+        - via a symbol: ``begin`` references a symbol whose interstate-
+          edge assignment is ``<sym> = A[... iter_var ...]``.
+
+        ``>= 2`` such dims in one array access is a multi-variable
+        gather — no hardware gather intrinsic takes two per-lane index
+        vectors — so a masked remainder containing it must degrade to a
+        scalar tail. A LOOP-INVARIANT array-indexed index (no
+        ``iter_var`` in its source) does NOT count: a single-index
+        gather still collapses to the R2 masked-gather intrinsic.
+        Direct affine ``iter_var`` indices are handled separately by
+        :func:`classify_lane_access`; they are not counted here.
+
+        :param inner_sdfg: The body NestedSDFG's inner SDFG.
+        :param sub: The memlet subset.
+        :param iter_var: The vectorised loop parameter.
+        :returns: Number of lane-variant indirect gather dims.
+        """
+        import sympy
+        from dace.transformation.passes.vectorization.utils.lane_expansion import find_symbol_assignment
+        arrays = set(inner_sdfg.arrays)
+
+        def _reads_array_with_iter(expr) -> bool:
+            if not hasattr(expr, "free_symbols"):
+                return False
+            fnames = {getattr(f.func, "__name__", str(f.func)) for f in expr.atoms(sympy.Function)}
+            fsyms = {str(s) for s in expr.free_symbols}
+            return bool((fnames | fsyms) & arrays) and (iter_var in fsyms)
+
+        count = 0
+        for dim in sub:
+            b = dim[0]
+            if not hasattr(b, "free_symbols"):
+                continue
+            dim_is_lane_indirect = False
+            # Direct nested array subscript in the begin expression.
+            if _reads_array_with_iter(b):
+                dim_is_lane_indirect = True
+            else:
+                for s in {str(x) for x in b.free_symbols}:
+                    if s == iter_var or s in arrays:
+                        continue
+                    try:
+                        assign = find_symbol_assignment(inner_sdfg, s)
+                    except Exception:
+                        assign = None
+                    if not assign:
+                        continue
+                    try:
+                        rhs = dace.symbolic.pystr_to_symbolic(assign)
+                    except Exception:
+                        continue
+                    if _reads_array_with_iter(rhs):
+                        dim_is_lane_indirect = True
+                        break
+            if dim_is_lane_indirect:
+                count += 1
+        return count
+
     @classmethod
     def _body_fans_out_per_lane(cls, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
                                 nsdfg_node: dace.nodes.NestedSDFG, iter_var: str) -> bool:
@@ -165,6 +233,15 @@ class GenerateIterationMask(ppl.Pass):
                     continue
                 arr = inner.arrays[e.data.data]
                 if cls._subset_fans_out(e.data.subset, getattr(arr, "strides", None), iter_var):
+                    return True
+                # Multi-variable indirect gather: >=2 lane-variant
+                # gathered index components in one access -> no gather
+                # intrinsic exists, so a masked remainder must degrade
+                # to a scalar tail (a single-index gather still
+                # collapses to the R2 masked-gather intrinsic and is
+                # left alone).
+                if e.data.subset is not None and cls._lane_variant_indirect_dim_count(
+                        inner, e.data.subset, iter_var) >= 2:
                     return True
         return False
 

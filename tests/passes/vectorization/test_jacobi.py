@@ -96,6 +96,45 @@ def test_jacobi2d_with_fuse_overlapping_loads():
         assert len(src_src_access_nodes
                    ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes})"
 
+    # Fused-window structural contract: in each body NSDFG the stencil
+    # read of A (resp. B) must collapse to ONE widened union-window
+    # buffer ``A_vec`` — not N per-subset copies — whose contiguous dim
+    # exceeds the vector width (the ``+2`` halo of the 5-point stencil),
+    # and that single buffer must be read at multiple distinct offsets
+    # inside the NSDFG (the 5 stencil taps reading the one window).
+    vw = 8
+    found_window = False
+    for nsdfg, _ in vectorized_sdfg.all_nodes_recursive():
+        if not isinstance(nsdfg, dace.nodes.NestedSDFG):
+            continue
+        inner = nsdfg.sdfg
+        for base in ("A", "B"):
+            win = f"{base}_vec"
+            if win not in inner.arrays:
+                continue
+            desc = inner.arrays[win]
+            # The plain W-vector output buffer is also named ``<base>_vec``
+            # (size == vw); the fused *input* window is the wider one.
+            sizes = [int(str(s)) for s in desc.shape if str(s).isdigit()]
+            if not sizes or max(sizes) <= vw:
+                continue
+            found_window = True
+            # 1. collapse: no per-subset ``<base>_vec_<n>`` copies.
+            copies = [a for a in inner.arrays if a.startswith(f"{win}_") and a[len(win) + 1:].isdigit()]
+            assert not copies, f"{win} did not collapse: per-subset copies {copies} survived in {inner.label}"
+            # 2. widened union window: a dim wider than the vector width
+            #    (the stencil ``+2`` halo).
+            assert max(sizes) > vw, (f"{win} in {inner.label} has shape {tuple(str(s) for s in desc.shape)}; "
+                                     f"expected a dim > vector_width={vw} (the union ``+halo`` window)")
+            # 3. read at multiple distinct offsets from the one window.
+            read_subsets = {
+                str(e.data.subset)
+                for ist in inner.all_states() for e in ist.edges() if e.data.data == win
+            }
+            assert len(read_subsets) >= 2, (f"{win} in {inner.label} read at only {read_subsets}; expected the "
+                                            f"fused stencil to read the one window at multiple offsets")
+    assert found_window, "no fused union-window buffer (>vector_width) found in any body NSDFG"
+
 
 @pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
 def test_jacobi2d_with_parameters(param_tuple):
