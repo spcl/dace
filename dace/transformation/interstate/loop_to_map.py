@@ -39,6 +39,49 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
+def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
+    """Whether every write to ``conn``'s array *inside* ``nsdfg_node`` is
+    indexed by the (mapped) iteration variable.
+
+    A loop body that is a ``NestedSDFG`` propagates a whole-array external
+    write memlet (the union over the loop), which hides a per-iteration
+    write. This looks past the connector: the inner write subsets are
+    rewritten through the node's ``symbol_mapping`` into the outer iteration
+    symbol and each must match the same ``a*i+b`` pattern
+    :func:`_check_range` enforces. Conservative: requires at least one inner
+    write to the array and that *all* of them pass (nested ``NestedSDFG`` s
+    are checked recursively, composing the symbol maps).
+
+    :param nsdfg_node: The ``NestedSDFG`` node feeding the outer write.
+    :param conn: The output connector (== inner array name) being written.
+    :param itersym: The outer loop iteration symbol.
+    :returns: ``True`` iff every inner write to ``conn`` is iter-indexed.
+    """
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    found = False
+    for state in nsdfg_node.sdfg.all_states():
+        for dn in state.data_nodes():
+            if dn.data != conn or state.in_degree(dn) == 0:
+                continue
+            for e in state.in_edges(dn):
+                if e.data is None or e.data.wcr is not None:
+                    return False
+                if isinstance(e.src, nodes.NestedSDFG):
+                    if not _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step):
+                        return False
+                    found = True
+                    continue
+                dst_subset = e.data.get_dst_subset(e, state)
+                if dst_subset is None:
+                    return False
+                outer = copy.deepcopy(dst_subset)
+                outer.replace(repl)
+                if not _check_range(outer, a, itersym, b, step):
+                    return False
+                found = True
+    return found
+
+
 def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     """ Finds the indices or ranges of a subset that depend on the iteration
         variable. Returns their index in the subset's indices/ranges list.
@@ -176,7 +219,13 @@ class LoopToMap(xf.MultiStateTransformation):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)) and not permissive:
+                            ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step)
+                            # A NestedSDFG loop body propagates a whole-array
+                            # external write memlet that hides an inner
+                            # per-iteration write; look past the connector.
+                            if not ok and isinstance(e.src, nodes.NestedSDFG):
+                                ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
+                            if not ok and not permissive:
                                 return False
                         # End of check
 
