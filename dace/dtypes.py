@@ -1277,6 +1277,13 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
 
 LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
 
+# Inverse of _CTYPES for numeric types, to parse C++ cast fallbacks.
+CTYPE_TO_TYPECLASS = {
+    ctype: dtype_to_typeclass(nptype)
+    for nptype, ctype in _CTYPES.items()
+    if nptype is not None and (numpy.issubdtype(nptype, numpy.integer) or numpy.issubdtype(nptype, numpy.floating))
+}
+
 TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
     float32: 'f',
     uint32: 'U',
