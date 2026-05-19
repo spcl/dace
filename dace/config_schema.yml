@@ -104,6 +104,10 @@ required:
                     integers and floats follow ``compiler.default_data_types``
                     (e.g. ``5`` -> int32/int64, ``5.0`` -> float32/float64),
                     ``True``/``False`` -> ``bool``, and ``4j`` -> ``complex128``.
+                    Off by default: when enabled, serialize/deserialize is no
+                    longer idempotent for plain literals (rationals are rewritten
+                    as typed-constant arithmetic) and literal ``True``/``False``
+                    become numeric constants rather than boolean conditions.
 
             match_exception:
                 type: bool
