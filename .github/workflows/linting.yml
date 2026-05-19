@@ -27,10 +27,4 @@ jobs:
 
     - name: Run linting tools
       id: lint
-      continue-on-error: true
-      run: pre-commit run --all-files
-
-    - name: Show git diff
-      if: steps.lint.outcome == 'failure'
-      run: |
-        ./.github/workflows/scripts/show-git-diff.sh
+      run: pre-commit run --show-diff-on-failure --color=always --all-files

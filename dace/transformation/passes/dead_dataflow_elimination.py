@@ -3,7 +3,7 @@
 import ast
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple, Type
+from typing import Dict, List, Set, Tuple, Type
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.frontend.python import astutils

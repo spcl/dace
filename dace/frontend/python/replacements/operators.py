@@ -15,7 +15,7 @@ import warnings
 
 import numpy as np
 import sympy as sp
-import dace  # For evaluation of data types
+import dace  # noqa: F401 (used during evaluation of data types, e.g. casting in replaced op)
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
 

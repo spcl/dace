@@ -54,6 +54,12 @@ test_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
     - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install cutensor-cu12
+    - CUTENSOR_DIR="${VIRTUAL_ENV}/lib/python${PY_VERSION}/site-packages/cutensor"
+    - ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+    - export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+    - export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+    - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
