@@ -144,15 +144,15 @@ def test_complex_constant_parse_save_roundtrip():
     assert r64.dtype == dace.complex64 and symbolic.serialize_symbolic(r64) == s64
 
 
-def test_default_constants_map_bool_and_complex():
-    """Under ``default_constants``: True/False -> bool, complex literal ->
-    complex128. Without the flag, booleans stay ``sympy.true``/``false``."""
+def test_default_constants_map_complex_not_bool():
+    """Under ``default_typed_constants`` a complex literal -> complex128, but
+    ``True``/``False`` are always left as SymPy booleans (a literal boolean is
+    a control condition, not a numeric constant)."""
     with _default_typed_constants():
-        b = symbolic.deserialize_symbolic('True')
-        assert isinstance(b, symbolic.TypedConstant) and b.dtype == dace.bool_ and int(b.value) == 1
-        assert symbolic.deserialize_symbolic('False').value == 0
         c = symbolic.deserialize_symbolic('4j')
         assert isinstance(c, symbolic.TypedConstant) and c.dtype == dace.complex128
+        assert symbolic.deserialize_symbolic('True') is sympy.true
+        assert symbolic.deserialize_symbolic('False') is sympy.false
 
     assert symbolic.deserialize_symbolic('True') is sympy.true
 

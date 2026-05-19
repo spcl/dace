@@ -1645,8 +1645,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     def visit_Constant(self, node):
         if isinstance(node.value, bool):
-            if self._default_constants:
-                return TypedConstant(int(node.value), dtypes.bool_)
+            # Never default-type booleans: a literal True/False is usually a
+            # control condition, and a numeric constant is not a SymPy Boolean.
             return sympy.true if node.value else sympy.false
         if node.value is None:
             return symbol('NoneSymbol')
