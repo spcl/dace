@@ -30,6 +30,8 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
@@ -70,8 +72,8 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     passes (unique loop iterators, split tasklets, trivial-tasklet cleanup),
     and once at the end -- never between transforming stages. Between-stage
     structural cleanup is ``StateFusionExtended`` + ``InlineSDFG`` instead.
-    Passes not yet implemented (``MoveIfIntoLoop``, ``LoopStridePermutation``)
-    are explicit no-ops so the pipeline shape is honest and slottable.
+    ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
+    honest and slottable.
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
@@ -88,9 +90,19 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # structural cleanup (no SimplifyPass).
     s += [('lower', PatternMatchAndApplyRepeated([MapToForLoop()]))]
     s += _structural_cleanup('lower')
+    # MapToForLoop leaves empty *_pre_state / *_post_state boundary states;
+    # inside a guard branch they make the body look like a heterogeneous
+    # [empty, empty, loop] chain and send MoveIfIntoLoop down its imperfect
+    # path to wrap *empty* states. Splice them out so the guarded body is the
+    # bare loop -> MoveIfIntoLoop's clean single-loop path applies.
+    s += [('lower', EmptyStateElimination())]
 
-    # move_if_into_loop: push guarding conditionals into loop bodies
-    # (no-op stub until implemented).
+    # move_if_into_loop: push guarding conditionals into loop bodies. The
+    # genuine inner imperfect nest (a bare tasklet beside an inner loop,
+    # inside an enclosing loop) takes the free-state path: the bare sibling
+    # is wrapped in a trivial single-iteration loop and the guard duplicated
+    # into every sibling loop. The wrapper is spliced out again by the
+    # 'untrivialize' stage before LoopToMap can mangle it.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
     # fission: loop distribution + block-level perfect-loop-nesting.
@@ -109,6 +121,14 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # which is dependence-free by the Map contract and reuses the proven,
     # symbolic-safe MinimizeStridePermutation.
     s += [('loop_stride_permutation', LoopStridePermutation())]
+
+    # untrivialize: the perfect-nesting scaffold (the single-iteration trivial
+    # loops MoveIfIntoLoop wrapped bare siblings in) has done its job for
+    # fission/normalize/reduce/ssa. Splice it out *while still a LoopRegion*
+    # (reusing TrivialLoopElimination) -- before LoopToMap, which would
+    # otherwise turn it into a sticky NestedSDFG that breaks idempotence and
+    # re-lowering.
+    s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
 
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
