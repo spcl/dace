@@ -1277,8 +1277,7 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
 
 LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
 
-# Inverse of _CTYPES restricted to numeric types, to parse the C++ printer's
-# cast fallbacks (e.g. ``double(5)``).
+# Inverse of _CTYPES for numeric types, to parse C++ cast fallbacks.
 CTYPE_TO_TYPECLASS = {
     ctype: dtype_to_typeclass(nptype)
     for nptype, ctype in _CTYPES.items()

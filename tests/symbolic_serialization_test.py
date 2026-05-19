@@ -106,6 +106,19 @@ def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
+@pytest.mark.parametrize('value', [True, False, np.bool_(True)])
+def test_bool_typed_constant_construction_and_roundtrip(value):
+    """Boolean values are accepted (stored as 0/1) and round-trip with bool dtype."""
+    tc = symbolic.TypedConstant(value)
+    assert isinstance(tc, symbolic.TypedConstant)
+    assert tc.dtype == dace.bool_
+    assert int(tc.value) == int(value)
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(tc))
+    assert isinstance(restored, symbolic.TypedConstant)
+    assert restored.dtype == dace.bool_ and int(restored.value) == int(value)
+
+
 def test_sym2cpp_emits_uint64_literals():
     expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol('N', dtype=dace.uint64)
 

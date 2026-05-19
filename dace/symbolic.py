@@ -254,9 +254,8 @@ class UndefinedSymbol(symbol):
 class TypedConstant(sympy.AtomicExpr):
     """A typed constant value that participates in symbolic expressions.
 
-    The value is always a real ``Integer``/``Float``; the ``dtype`` is a tag.
-    Genuine complex/boolean constant values are not supported (only the dtype
-    tag round-trips, via the ``dace.<dtype>(value)`` form).
+    The value is always a real ``Integer``/``Float`` (booleans as ``0``/``1``);
+    the ``dtype`` is a tag. Complex constant values are not supported.
 
     Examples
     --------
@@ -473,6 +472,8 @@ def _sympy_constant_value(value):
         return sympy.Integer(int(value))
     if isinstance(value, numpy.floating):
         return sympy.Float(float(value))
+    if isinstance(value, (bool, numpy.bool_)):
+        return sympy.Integer(int(value))
     if isinstance(value, int) and not isinstance(value, bool):
         return sympy.Integer(value)
     if isinstance(value, float):
@@ -489,6 +490,8 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
         return DEFAULT_SYMBOL_TYPE
     if isinstance(value, sympy.Float):
         return dtypes.float64
+    if isinstance(value, (bool, numpy.bool_)):
+        return dtypes.dtype_to_typeclass(numpy.bool_)
     if isinstance(value, int) and not isinstance(value, bool):
         return DEFAULT_SYMBOL_TYPE
     if isinstance(value, float):
@@ -521,8 +524,7 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
         value = sympy.printing.str.sstr(expr.value)
     if expr.dtype in dtypes.TYPECLASS_TO_LITERAL_SUFFIX:
         return f'{value}{_typed_constant_suffix(expr.dtype)}'
-    # dtypes without a literal suffix (complex, bool) round-trip via the
-    # parseable cast form ``dace.<dtype>(value)``.
+    # Suffix-less dtypes (complex, bool) round-trip via the cast form.
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
