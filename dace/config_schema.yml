@@ -100,9 +100,10 @@ required:
                 title: Default-type untyped serialized constants
                 description: >
                     When deserializing symbolic expressions, give untyped
-                    literals a default DaCe type (``5`` -> ``int64``,
-                    ``5.0`` -> ``float64``, ``True`` -> ``bool``,
-                    ``4j`` -> ``complex128``) instead of plain SymPy numbers.
+                    literals a default DaCe type instead of plain SymPy numbers:
+                    integers and floats follow ``compiler.default_data_types``
+                    (e.g. ``5`` -> int32/int64, ``5.0`` -> float32/float64),
+                    ``True``/``False`` -> ``bool``, and ``4j`` -> ``complex128``.
 
             match_exception:
                 type: bool
