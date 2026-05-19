@@ -965,17 +965,13 @@ def test_loop_to_map_with_loop_invariant_if():
         assert np.allclose(b, a + 1.0 if cv > 0 else 0.0), f"mismatch c={cv}"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="LoopToMap->MapToForLoop round-trip widens the NestedSDFG external "
-                   "write memlet from b[i] to b[0:N] (the guard forces a NestedSDFG body, whose "
-                   "boundary loses the per-iteration subset), so the second LoopToMap can no "
-                   "longer prove per-iteration independence and refuses ('Write pattern check "
-                   "failed for b'). The round-trip should recover the map.")
 def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
-    """Regression for the canonicalize idempotence blocker: parallelizing a
-    loop-invariant-guarded loop, de-parallelizing it, then re-parallelizing
-    should recover the map. It currently does not -- the NestedSDFG memlet is
-    widened across the round-trip."""
+    """Parallelizing a loop-invariant-guarded loop, de-parallelizing it, then
+    re-parallelizing recovers the map. The ``LoopToMap->MapToForLoop`` round-
+    trip propagates a whole-array external write memlet (``b[i]`` -> ``b[0:N]``)
+    on the ``NestedSDFG`` the guard forces; the write-pattern check now looks
+    *past* the connector at the inner per-iteration write
+    (:func:`_nested_writes_iter_indexed`), so independence is still proven."""
     from dace.transformation.dataflow.map_for_loop import MapToForLoop
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     N = dace.symbol('N')
