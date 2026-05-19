@@ -34,7 +34,9 @@ def two_guarded_nests(a: dace.float64[N, M], A: dace.float64[N, M], B: dace.floa
 
 
 def _nmaps(sdfg):
-    return len([n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
+    # all_nodes_recursive (NOT all_states) so maps buried inside NestedSDFGs
+    # the lowering creates are counted.
+    return len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)])
 
 
 def _conds(sdfg):
@@ -42,12 +44,7 @@ def _conds(sdfg):
 
 
 def _map_params(sdfg):
-    ps = set()
-    for st in sdfg.all_states():
-        for n in st.nodes():
-            if isinstance(n, nodes.MapEntry):
-                ps.update(str(p) for p in n.map.params)
-    return ps
+    return {str(p) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) for p in n.map.params}
 
 
 def _oracle(a, n, m):
@@ -85,7 +82,7 @@ def test_coexisting_index_guards_survive_and_are_value_preserving():
             if cond is not None:
                 syms = {str(s) for s in cond.get_free_symbols()}
                 assert syms & map_params, f"guard {syms} no longer depends on a map index"
-    assert _nmaps(sdfg) == 3, f"current (non-minimal) map count changed: {_nmaps(sdfg)}"
+    assert _nmaps(sdfg) == 4, f"current (non-minimal) map count changed: {_nmaps(sdfg)}"
 
     oA, oB = np.full((n, m), 7.0), np.full((n, m), 5.0)
     sdfg(a=a.copy(), A=oA, B=oB, N=n, M=m)
@@ -95,7 +92,8 @@ def test_coexisting_index_guards_survive_and_are_value_preserving():
 @pytest.mark.xfail(strict=True,
                    reason="Ideal: the two nests collapse to a single map i / map j carrying "
                    "both `if i: A` and `if j: B` (2 maps). Cross-nest horizontal fusion of "
-                   "differently-guarded map nests is not yet achieved (stays 3 maps).")
+                   "differently-guarded map nests is not yet achieved (stays 4 maps, "
+                   "recursive count).")
 def test_coexisting_index_guards_collapse_to_single_nest():
     """Ideal full cross-nest fusion: one ``map i / map j`` with both guards
     coexisting -> 2 maps."""

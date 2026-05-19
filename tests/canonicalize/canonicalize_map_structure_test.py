@@ -24,7 +24,8 @@ M = dace.symbol('M')
 
 
 def _nmaps(sdfg):
-    return len([n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
+    # all_nodes_recursive so maps inside NestedSDFGs are counted too.
+    return len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)])
 
 
 def _nloops(sdfg):

@@ -35,12 +35,8 @@ def _conds(sdfg):
 
 
 def _map_params(sdfg):
-    ps = set()
-    for st in sdfg.all_states():
-        for n in st.nodes():
-            if isinstance(n, nodes.MapEntry):
-                ps.update(str(p) for p in n.map.params)
-    return ps
+    # all_nodes_recursive so map params inside NestedSDFGs are seen too.
+    return {str(p) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) for p in n.map.params}
 
 
 def test_index_dependent_guard_stays_inside_map_nest():
