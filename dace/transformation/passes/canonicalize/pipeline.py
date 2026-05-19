@@ -35,16 +35,25 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
 def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
-    """Between-pass structural cleanup -- ``StateFusionExtended`` then
-    ``InlineSDFG`` (never ``SimplifyPass`` mid-pipeline).
+    """Between-pass structural cleanup (never ``SimplifyPass`` mid-pipeline):
+    ``StateFusionExtended``, then both inliners to a fixpoint.
+
+    ``InlineSDFG`` only flattens a single-``SDFGState`` NestedSDFG;
+    ``InlineMultistateSDFG`` flattens the control-flow-bearing NestedSDFGs
+    that map->loop lowering produces (a NestedSDFG wrapping a ``LoopRegion``
+    / ``ConditionalBlock``). Without the latter those NestedSDFGs are
+    permanent, burying loops so ``MoveIfIntoLoop`` and cross-nest fusion
+    cannot see them. Both run so single- and multi-state nestings collapse.
 
     :param label: The owning stage label.
     """
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
+            (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
             (label, PatternMatchAndApplyRepeated([InlineSDFG()]))]
 
 
