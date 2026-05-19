@@ -24,6 +24,8 @@ class ExpandIrecvMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         if node.grid:
             comm = f"__state->{node.grid}_comm"
+        if "_comm" in node.in_connectors:
+            comm = "_comm"
 
         code = ""
         if ddt is not None:

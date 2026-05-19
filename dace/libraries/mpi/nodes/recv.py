@@ -32,7 +32,8 @@ class ExpandRecvMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = '1'
         buffer_offset = 0  # this is here because the frontend already changes the ptr
-        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, _src, _tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        comm = "_comm" if "_comm" in node.in_connectors else "MPI_COMM_WORLD"
+        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, _src, _tag, {comm}, MPI_STATUS_IGNORE);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
