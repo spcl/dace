@@ -1,456 +1,226 @@
-from ast import AST
-import ast
-import dace
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Hoist a loop-invariant guarding conditional out of its enclosing loop.
 
+The inverse of ``MoveIfIntoLoop``: ``for k: { prep*; if c: body }`` becomes
+``prep*; if c: { for k: body }`` when ``c`` (and the interstate-edge symbol
+assignments it depends on) is provably invariant w.r.t. the loop. Applied to
+a fixpoint, so an innermost invariant guard sifts all the way up through a
+stack of nested loops (a mix of loops and maps -- maps are lowered to
+``LoopRegion`` s by the canonicalize pipeline before this runs, so operating
+on ``LoopRegion`` covers both).
+
+Conservative -- only fires when:
+
+* the loop body is a linear chain whose only non-empty block is the
+  single-branch (no-else) ``ConditionalBlock``; empty boundary states are
+  allowed and are dropped (they carry no effect, so the loop is a genuine
+  no-op when ``c`` is false -> hoisting is value-preserving: ``c`` true =>
+  the loop runs the body every iteration as before; ``c`` false => the loop
+  did nothing observable before and is simply not entered after);
+* the condition does not reference the loop variable nor any data/symbol
+  written inside the loop, *except* symbols an interstate edge of the chain
+  assigns from a provably-invariant expression -- those assignments are
+  hoisted out *with* the guard so it still sees them;
+* there are no other (non-invariant) interstate-edge assignments in the
+  chain.
+
+Anything else is a no-op. Linear-CFG assumption: the loop body is a plain
+linear chain; blocks may have parents (the pass recurses into all regions).
+"""
 import copy
+from typing import Any, Dict, List, Optional, Tuple
+
+from dace import SDFG
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace import sdfg as sd, symbol
-from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
-import dace.sdfg.construction_utils as cutil
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg import nodes
+from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def fold(memlet_subset_ranges, itervar, lower, upper):
-    return [(r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
-            for r in memlet_subset_ranges]
+def _free(expr: str) -> set:
+    """Free symbol names of a condition / assignment expression string."""
+    try:
+        import dace.symbolic as sym
+        return {str(s) for s in sym.pystr_to_symbolic(expr).free_symbols}
+    except Exception:
+        return set()
 
 
-def offset(memlet_subset_ranges, value):
-    return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
+def _written(region) -> set:
+    """Data containers + interstate-assigned symbols written inside ``region``."""
+    w = set()
+    for e in region.all_interstate_edges():
+        w |= set(e.data.assignments.keys())
+    for st in region.all_states():
+        for n in st.nodes():
+            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
+                w.add(n.data)
+    return w
+
+
+def _linear_order(region: ControlFlowRegion) -> Optional[List]:
+    """Blocks of ``region`` in order iff it is a plain linear chain of
+    unconditional edges (assignments allowed -- they carry condition prep);
+    else ``None``."""
+    blocks = list(region.nodes())
+    edges = list(region.edges())
+    if not blocks or len(edges) != len(blocks) - 1:
+        return None
+    for e in edges:
+        if e.data.condition.as_string not in ('1', 'True', '(1)'):
+            return None
+    succ = {e.src: e.dst for e in edges}
+    order = [region.start_block]
+    while order[-1] in succ:
+        order.append(succ[order[-1]])
+    return order if len(order) == len(blocks) else None
+
+
+def _is_empty_state(b) -> bool:
+    return isinstance(b, SDFGState) and b.number_of_nodes() == 0
+
+
+def _match(sdfg: SDFG):
+    """Find a ``LoopRegion`` whose body is ``[empty*; if c; empty*]`` with a
+    loop-invariant condition (plus a hoistable invariant assignment chain).
+
+    :returns: ``(loop, cond_block, cond, hoist_assignments)`` or ``None``.
+    """
+    for loop in sdfg.all_control_flow_regions(recursive=True):
+        if not isinstance(loop, LoopRegion):
+            continue
+        order = _linear_order(loop)
+        if order is None:
+            continue
+        cbs = [b for b in order if isinstance(b, ConditionalBlock)]
+        non_empty = [b for b in order if not _is_empty_state(b)]
+        if len(cbs) != 1 or non_empty != cbs:
+            continue  # the only non-empty body block must be the guard
+        cb = cbs[0]
+        if len(cb.branches) != 1:
+            continue
+        cond, branch = cb.branches[0]
+        if cond is None or not isinstance(branch, ControlFlowRegion):
+            continue
+
+        lvar = str(loop.loop_variable)
+        loop_w = _written(loop)
+        # Interstate-edge assignments on the loop's own chain. Each must be
+        # provably invariant (no loop var, RHS free of loop-written data) to
+        # be hoistable; the guard may only depend on such hoistable symbols.
+        chain_assignments: List[Tuple[str, str]] = []
+        bad = False
+        for e in loop.edges():
+            for lhs, rhs in e.data.assignments.items():
+                rf = _free(rhs)
+                if lvar in rf or (rf & loop_w) or lhs in loop_w - set(e.data.assignments):
+                    bad = True
+                    break
+                chain_assignments.append((lhs, rhs))
+            if bad:
+                break
+        if bad:
+            continue
+
+        assigned = {lhs for lhs, _ in chain_assignments}
+        cfree = {str(s) for s in cond.get_free_symbols()}
+        # The guard must be invariant: no loop variable, and no dependence on
+        # loop-written data/symbols other than the hoistable chain symbols.
+        if lvar in cfree:
+            continue
+        if (cfree & loop_w) - assigned:
+            continue
+        return loop, cb, cond, chain_assignments
+    return None
 
 
 @transformation.explicit_cf_compatible
-class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
+class MoveLoopInvariantIfUp(ppl.Pass):
+    """Hoist a loop-invariant guarding conditional out of its loop (fixpoint).
+
+    The inverse of ``MoveIfIntoLoop``. Repeatedly applied so an innermost
+    invariant guard sifts all the way up through nested loops. The
+    interstate-edge symbol-assignment chain the condition depends on is
+    hoisted with it; emptied boundary states are dropped.
     """
-    Moves a loop around a map into the map
-    """
-
-    map_state = transformation.PatternNode(dace.SDFGState)
-    map_entry = transformation.PatternNode(dace.nodes.MapEntry)
-    if_block = transformation.PatternNode(ConditionalBlock)
-
-    @classmethod
-    def expressions(cls):
-        return [
-            sdutil.node_path_graph(cls.map_state),
-            sdutil.node_path_graph(cls.map_entry),
-            sdutil.node_path_graph(cls.loop)
-        ]
-
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # If condition needs to be really invariant the map_entry (and all maps between map entry and the if)
-        # All tasklets of the nestedSDFG needs to be inside this if condition
-        # Map body needs to consist only of a nested SDFG (+ nested maps)
-        # If-block is in top level nodes
-        return True
-
-    def _find_assignment(self, graph: ControlFlowRegion, start_node: ControlFlowRegion, sym: str):
-        edges_to_check = set(graph.in_edges(start_node))
-        while edges_to_check:
-            edge = edges_to_check.pop()
-            if sym in edge.data.assignments:
-                return edge.data.assignments[sym]
-            edges_to_check = edges_to_check.union(set(graph.in_edges(edge.src)))
-        return None
-
-    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        # We have
-        # MapEntry -> NestedSDFG
-        # Inside the NestedSDFG we have the IfCondition that is loop invariant
-        # We want to move it upwards
-
-        # To do this:
-        # 1. Create new NestedSDFG Node
-        # 2. Put the if Inside the nestedSDFG
-        # 2.1 Copy all interstate edges - and prune them later
-        # 3. Add state inside the new If (for each body)
-        # 4. Copy map conents inside the new state
-        # 5. Add data for map's input-outputs
-        # 6. Reconnect previous maps input-outputs to the nestedSDFG
-        # 7. Remove the map nodes and edges
-        # 8. Clean degree-1 nodes
-        # - 2.2 Prune unneeded interstate edges in the new SDFG
-
-        #1.
-        new_sdfg = dace.SDFG(name=f"{self.if_block.label}_nsdfg", parent=self.map_state)
-
-        cb = ConditionalBlock(label=f"{self.if_block.label}", sdfg=new_sdfg, parent=new_sdfg)
-
-        new_sdfg.add_node(cb, is_start_block=True)
-
-        new_branches = [(CodeBlock(cond), ControlFlowRegion(label=f"{body.label}", sdfg=new_sdfg, parent=cb))
-                        for cond, body in self.if_block.branches]
-
-        # Get assignment of free symbols in the if condition
-        print(self.if_block.branches)
-        conditional_code = [
-            ast.unparse(cond.code[0]) if isinstance(cond.code[0], AST) else cond.code[0].as_string
-            for cond, _ in self.if_block.branches if cond is not None
-        ][0]
-        conditional_symexpr = dace.symbolic.SymExpr(conditional_code)
-        free_syms = conditional_symexpr.free_symbols
-        # For all free syms find if they are a smbol or array
-        syms_to_resolve = {sym for sym in free_syms if sym not in self.if_block.sdfg.parent_nsdfg_node.symbol_mapping}
-        arrs_to_resolve = {
-            arr
-            for arr in free_syms
-            if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is True
-        }
-        arrs_to_add = {
-            arr
-            for arr in free_syms
-            if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is False
-        }
-        assert len(arrs_to_resolve) == 0
-
-        # find_assignment
-        assignments_to_move_up = dict()
-        print("Syms to resolve:", syms_to_resolve)
-        for sym in syms_to_resolve:
-            assignment = self._find_assignment(self.if_block.parent_graph, self.if_block, str(sym))
-            if assignment is None:
-                continue
-            print(assignment)
-            assignments_to_move_up[str(sym)] = assignment
-            symexpr = dace.symbolic.SymExpr(assignment)
-            free_syms = symexpr.free_symbols
-            new_syms_to_resolve = {
-                sym
-                for sym in free_syms if sym not in self.if_block.sdfg.parent_nsdfg_node.symbol_mapping
-            }
-            new_arrs_to_resolve = {
-                arr
-                for arr in free_syms
-                if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is True
-            }
-            assert len(new_arrs_to_resolve) == 0
-            arrs_to_add = arrs_to_add.union({
-                arr
-                for arr in free_syms
-                if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is False
-            })
-            syms_to_resolve = syms_to_resolve.union(new_syms_to_resolve)
-
-        # Create dictionary to output names
-        arrs_to_add_dict = dict()
-        for arr_name in arrs_to_add:
-            in_edges = set(self.map_state.in_edges_by_connector(self.if_block.sdfg.parent_nsdfg_node, arr_name)).pop()
-            in_data = in_edges.data.data
-            arrs_to_add_dict[arr] = in_data
-        print("Arrs to add due to interstate assignments", arrs_to_add_dict)
-        print("Interstate assignments to move up", assignments_to_move_up)
-
-        # Need to generate else branch if the if-block is not the only node
-        if_block_sdfg = self.if_block.sdfg
-        assert self.if_block in if_block_sdfg.nodes()
-        if len(if_block_sdfg.nodes()) != 1:
-            assert len(self.if_block.branches) == 1
-            body_label = self.if_block.branches[0][1].label
-            new_branches.append((None, ControlFlowRegion(label=f"{body_label}_else", sdfg=new_sdfg, parent=cb)))
-            # Add else body the current if-block
-            cfg = ControlFlowRegion(label=f"{body_label}_else", sdfg=new_sdfg, parent=cb)
-            self.if_block.add_branch(None, cfg)
-            # Add an empty state as placeholder
-            cfg.add_state("empty_s", is_start_block=True)
-
-        branch_and_state_sdfg_map = dict()
-        branch_and_state_sdfg_map_w_labels = dict()
-        for cond, body in new_branches:
-            # 3
-            s1 = body.add_state(f"main_{body.label}", is_start_block=True)
-            cb.add_branch(cond, body)
-            new_map_content_sdfg = dace.SDFG(name=f"{body.label}_nsdfg", parent=self.map_state)
-            branch_and_state_sdfg_map[body] = (s1, new_map_content_sdfg)
-            branch_and_state_sdfg_map_w_labels[body.label] = (s1, new_map_content_sdfg)
-
-        # 2
-        node_maps = dict()
-
-        for i, (body_label, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map_w_labels.items()):
-            # Copy everything
-            if_block_sdfg = self.if_block.sdfg
-            assert self.if_block in if_block_sdfg.nodes()
-            node_map = cutil.copy_graph_contents(if_block_sdfg, new_map_content_sdfg)
-
-            # Map the old if block to the new if block
-            new_if_block = node_map[self.if_block]
-            body_to_take = {body for c, body in new_if_block.branches if body.label == body_label}.pop()
-            branches = {b for _, b in new_if_block.branches}
-            assert body_to_take in branches, f"{body_to_take} not in {branches}"
-
-            cutil.move_branch_cfg_up_discard_conditions(new_if_block, body_to_take)
-            node_maps[body] = node_map
-
-        # Both nested SDFGs can reuse the previous nested SDFGs inputs and outputs
-        old_nsdfg_node = self.if_block.sdfg.parent_nsdfg_node
-
-        input_to_arr_name = {
-            ie.dst_conn: ie.data.data
-            for ie in self.map_state.in_edges(old_nsdfg_node) if ie.data.data is not None
-        }
-        output_to_arr_name = {
-            oe.src_conn: oe.data.data
-            for oe in self.map_state.out_edges(old_nsdfg_node) if oe.data.data is not None
-        }
-
-        # Collect map params
-        parent_maps = list()
-        sdict = self.map_state.scope_dict()
-        cur_parent = sdict[old_nsdfg_node]
-        while cur_parent != self.map_entry:
-            parent_maps.append(cur_parent)
-            cur_parent = sdict[cur_parent]
-        parent_maps.append(self.map_entry)
-
-        map_symbols = set()
-        map_params = set()
-        for map_entry in parent_maps:
-            map_params = map_params.union(map_entry.map.params)
-            # dynamic in conncetors and free symbols in the ranges
-            in_conns = {in_conn for in_conn in map_entry.in_connectors if not in_conn.startswith("IN_")}
-            map_symbols = map_symbols.union(in_conns)
-
-        # Delete map parameters from the new symbol mapping
-        new_symbol_mapping = copy.deepcopy(old_nsdfg_node.symbol_mapping)
-        syms_defined_at = self.map_state.symbols_defined_at(old_nsdfg_node)
-        for k, t in syms_defined_at.items():
-            #new_sdfg.add_symbol(k, syms_defined_at[k])
-            if k not in new_symbol_mapping:
-                new_symbol_mapping[k] = k
-        new_inner_symbol_mapping = copy.deepcopy(new_symbol_mapping)
-
-        for k in map_params:
-            #new_sdfg.add_symbol(k, syms_defined_at[k])
-            del new_symbol_mapping[k]
-        for s in map_symbols:
-            # Parent map gets them as scalars
-            if s not in new_sdfg.arrays:
-                new_sdfg.add_scalar(s, syms_defined_at[s])
-                print(f"Add {s}")
-                del new_symbol_mapping[s]
-
-        new_outer_symbol_mapping = copy.deepcopy(new_symbol_mapping)
-
-        for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
-            for arr_names in [input_to_arr_name, output_to_arr_name]:
-                for conn_name in arr_names:
-                    if conn_name not in new_map_content_sdfg.arrays:
-                        copydesc = copy.deepcopy(self.if_block.sdfg.arrays[conn_name])
-                        copydesc.transient = False
-                        new_map_content_sdfg.add_datadesc(conn_name, copydesc)
-            for arr_name, arr in self.if_block.sdfg.arrays.items():
-                if arr_name not in new_map_content_sdfg.arrays:
-                    copydesc = copy.deepcopy(arr)
-                    new_map_content_sdfg.add_datadesc(arr_name, copydesc)
-            nsdfg = state.add_nested_sdfg(sdfg=new_map_content_sdfg,
-                                          inputs=set(input_to_arr_name.keys()),
-                                          outputs=set(output_to_arr_name.keys()),
-                                          symbol_mapping=new_inner_symbol_mapping)
-            new_map_content_sdfg.parent_nsdfg_node = nsdfg
-
-        # Old arrays used by the map will be registered to the outside map
-        new_inputs = set(input_to_arr_name.values())
-        new_outputs = set(output_to_arr_name.values())
-        for arr_names in [new_inputs, new_outputs]:
-            for arr_name in arr_names:
-                if arr_name not in new_sdfg.arrays:
-                    copydesc = copy.deepcopy(self.map_state.sdfg.arrays[arr_name])
-                    copydesc.transient = False
-                    new_sdfg.add_datadesc(arr_name, copydesc)
-
-        # Copy over map entry
-        # If edge.dst is not in the node map then to the nested SDFG
-        # If edge.src is not in the node map then need to add access node
-
-        # If you find dynamic in connectors add to dynamic inputs of the new sdfg
-        # ======================================================================================
-        for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
-            assert isinstance(state, dace.SDFGState)
-            node_map = dict()
-
-            # Copy and add map entries
-            print(parent_maps)
-            for j, map_entry in enumerate(reversed(parent_maps)):
-                node_map[map_entry] = copy.deepcopy(map_entry)
-                map_exit = self.map_state.exit_node(map_entry)
-                node_map[map_exit] = copy.deepcopy(map_exit)
-                state.add_node(node_map[map_entry])
-                state.add_node(node_map[map_exit])
-
-            # Handle incoming edges to the map entries
-            for j, map_entry in enumerate(reversed(parent_maps)):
-                for ie in self.map_state.in_edges(map_entry):
-                    # If it is a dynamic in connector we should also skip
-                    if j == 0 and (not ie.dst_conn.startswith("IN_")):
-                        new_inputs.add(ie.dst_conn)
-                        #continue
-
-                    if ie.src not in node_map and ie.data.data is not None:
-                        node_map[ie.src] = state.add_access(ie.data.data)
-
-                    if ie.data.data is None:
-                        continue
-
-                    state.add_edge(node_map[ie.src], ie.src_conn, node_map[ie.dst], ie.dst_conn, copy.deepcopy(ie.data))
-
-                    if ie.dst_conn is not None and ie.dst_conn not in node_map[ie.dst].in_connectors:
-                        node_map[ie.dst].add_in_connector(ie.dst_conn)
-                    if ie.src_conn is not None and ie.src_conn not in node_map[ie.src].out_connectors:
-                        node_map[ie.src].add_out_connector(ie.src_conn)
-
-                # Handle outgoing edges — connect to the parent NSDFG node of the nested SDFG
-                for oe in self.map_state.out_edges(map_entry):
-                    if (j == len(parent_maps) - 1) and not oe.src_conn.startswith("OUT_"):
-                        # This should be now a symbol
-                        if oe.src_conn in node_map[oe.src].in_connectors:
-                            node_map[oe.src].remove_out_connector(oe.src_conn)
-                        continue
-
-                    if oe.data.data is None:
-                        continue
-
-                    if oe.dst not in node_map:
-                        node_map[oe.dst] = new_map_content_sdfg.parent_nsdfg_node
-
-                    # Ensure parent NSDFG node connectors exist
-                    if oe.src_conn is not None and oe.src_conn not in node_map[oe.src].out_connectors:
-                        node_map[oe.src].add_out_connector(oe.src_conn)
-                    if oe.dst_conn is not None and oe.dst_conn not in node_map[oe.dst].in_connectors:
-                        node_map[oe.dst].add_in_connector(oe.dst_conn)
-
-                    # Add the edge to connect map entry → nested SDFG parent
-                    state.add_edge(node_map[oe.src], oe.src_conn, node_map[oe.dst], oe.dst_conn, copy.deepcopy(oe.data))
-
-            for j, map_entry in enumerate(reversed(parent_maps)):
-                map_exit = self.map_state.exit_node(map_entry)
-                for oe in self.map_state.out_edges(map_exit):
-                    # Skip dynamic out connectors for the outermost map
-                    if j == len(parent_maps) - 1 and (not oe.src_conn.startswith("OUT_")):
-                        new_outputs.add(oe.src_conn)
-                        continue
-
-                    if oe.data.data is None:
-                        continue
-
-                    # Add missing destination access node if needed
-                    if oe.dst not in node_map and oe.data.data is not None:
-                        node_map[oe.dst] = state.add_access(oe.data.data)
-
-                    # Ensure connectors exist
-                    if oe.src_conn is not None and oe.src_conn not in node_map[oe.src].out_connectors:
-                        node_map[oe.src].add_out_connector(oe.src_conn)
-                    if oe.dst_conn is not None and oe.dst_conn not in node_map[oe.dst].in_connectors:
-                        node_map[oe.dst].add_in_connector(oe.dst_conn)
-
-                    # Add the edge (copy the data descriptor to preserve memlet)
-                    state.add_edge(node_map[oe.src], oe.src_conn, node_map[oe.dst], oe.dst_conn, copy.deepcopy(oe.data))
-
-                # Handle incoming edges — connect nested SDFG parent node → map exit
-                for ie in self.map_state.in_edges(map_exit):
-                    if (j == 0) and not ie.dst_conn.startswith("IN_"):
-                        # This should now be a symbol
-                        if ie.dst_conn in node_map[ie.dst].in_connectors:
-                            node_map[ie.dst].remove_in_connector(ie.dst_conn)
-                        continue
-
-                    if ie.data.data is None:
-                        continue
-
-                    if ie.src not in node_map:
-                        node_map[ie.src] = new_map_content_sdfg.parent_nsdfg_node
-
-                    # Ensure connectors exist
-                    if ie.src_conn is not None and ie.src_conn not in node_map[ie.src].out_connectors:
-                        node_map[ie.src].add_out_connector(ie.src_conn)
-                    if ie.dst_conn is not None and ie.dst_conn not in node_map[ie.dst].in_connectors:
-                        node_map[ie.dst].add_in_connector(ie.dst_conn)
-
-                    state.add_edge(node_map[ie.src], ie.src_conn, node_map[ie.dst], ie.dst_conn, copy.deepcopy(ie.data))
-        # ======================================================================================
-
-        # Dynamic inputs
-        for arr_names in [
-                new_inputs,
-        ]:
-            for arr_name in arr_names:
-                if arr_name not in new_sdfg.arrays:
-                    copydesc = copy.deepcopy(self.map_state.sdfg.arrays[arr_name])
-                    copydesc.transient = False
-                    assert str(copydesc.dtype) != "void"
-                    new_sdfg.add_datadesc(arr_name, copydesc)
-
-        connectors = set(new_inputs).union(set(new_outputs))
-        symbols = set(k for k in new_sdfg.free_symbols if k not in connectors)
-        missing_symbols = [s for s in symbols if s not in new_outer_symbol_mapping]
-        if missing_symbols:
-            for ms in missing_symbols:
-                new_outer_symbol_mapping[ms] = ms
-
-        nsdfg2 = self.map_state.add_nested_sdfg(sdfg=new_sdfg,
-                                                inputs=set(new_inputs),
-                                                outputs=set(new_outputs),
-                                                symbol_mapping=new_outer_symbol_mapping)
-        new_sdfg.parent_nsdfg_node = nsdfg2
-
-        # Now connect the access nodes of parent map to the nsdfg - copy full subsets
-        for ie in self.map_state.in_edges(self.map_entry):
-            self.map_state.add_edge(
-                ie.src, ie.src_conn, nsdfg2, ie.data.data,
-                dace.memlet.Memlet.from_array(ie.data.data, self.map_state.sdfg.arrays[ie.data.data]))
-
-        for oe in self.map_state.out_edges(self.map_state.exit_node(self.map_entry)):
-            self.map_state.add_edge(
-                nsdfg2, oe.data.data, oe.dst, oe.dst_conn,
-                dace.memlet.Memlet.from_array(oe.data.data, self.map_state.sdfg.arrays[oe.data.data]))
-
-        # Remove all map nodes
-        nodes = set(self.map_state.all_nodes_between(self.map_entry, self.map_state.exit_node(self.map_entry))).union(
-            {self.map_entry, self.map_state.exit_node(self.map_entry)})
-
-        src_nodes = {ie.src for ie in self.map_state.in_edges(self.map_entry)}
-        dst_nodes = {oe.dst for oe in self.map_state.out_edges(self.map_state.exit_node(self.map_entry))}
-
-        for arr_name in new_inputs:
-            if new_sdfg.arrays[arr_name].dtype != self.map_state.sdfg.arrays[arr_name].dtype:
-                new_sdfg.arrays[arr_name].dtype = self.map_state.sdfg.arrays[arr_name].dtype
-
-        if "kfdia" in new_inputs:
-            assert str(new_sdfg.arrays["kfdia"].dtype) != "void"
-            assert "kfdia" in new_sdfg.arrays
-
-        for node in nodes:
-            self.map_state.remove_node(node)
-
-        for src_node in src_nodes:
-            assert self.map_state.degree(src_node) != 0
-        for dst_node in dst_nodes:
-            assert self.map_state.degree(dst_node) != 0
-
-        for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
-            nsdfg_node = new_map_content_sdfg.parent_nsdfg_node
-            connectors = nsdfg_node.in_connectors | nsdfg_node.out_connectors
-            symbols = set(k for k in new_map_content_sdfg.free_symbols if k not in connectors)
-            missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
-            if missing_symbols:
-                raise Exception("uwu")
-            assert isinstance(new_map_content_sdfg, dace.SDFG)
-            for e in new_map_content_sdfg.edges():
-                for ass in assignments_to_move_up:
-                    if ass in e.data.assignments:
-                        del e.data.assignments[ass]
-
-        if assignments_to_move_up != dict():
-            self.map_state.parent_graph.add_state_before(self.map_state,
-                                                         "pre_assign",
-                                                         True,
-                                                         assignments=assignments_to_move_up)
-
-        nsdfg_node = new_sdfg.parent_nsdfg_node
-        connectors = nsdfg_node.in_connectors | nsdfg_node.out_connectors
-        symbols = set(k for k in new_sdfg.free_symbols if k not in connectors)
-        missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
-        if missing_symbols:
-            raise Exception("uwu2")
-
-        sdfg.save(f"x_{self.if_block.label}.sdfgz", compress=True)
+    CATEGORY: str = 'Canonicalization'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Hoist invariant guards out of their loops until none remain.
+
+        :param sdfg: The SDFG to transform in place.
+        :returns: Number of guards hoisted, or ``None`` if none.
+        """
+        count = 0
+        while True:
+            m = _match(sdfg)
+            if m is None:
+                break
+            self._move(*m)
+            count += 1
+        if count:
+            set_nested_sdfg_parent_references(sdfg)
+        return count or None
+
+    @staticmethod
+    def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: List[Tuple[str, str]]):
+        """Replace ``loop`` with ``[assign chain]; if cond: { loop' }`` where
+        ``loop'`` is ``loop`` with its body reduced to the guard's branch
+        body (empty boundary states and the now-hoisted guard removed)."""
+        parent = loop.parent_graph
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
+        is_start = parent.start_block is loop
+
+        cond, branch = copy.deepcopy(cb).branches[0]
+
+        # loop' = a copy of the loop whose body is exactly the guard's body.
+        new_loop = copy.deepcopy(loop)
+        for b in list(new_loop.nodes()):
+            new_loop.remove_node(b)
+        bb = list(branch.nodes())
+        be = list(branch.edges())
+        bstart = branch.start_block
+        for b in bb:
+            new_loop.add_node(b, ensure_unique_name=True)
+        for e in be:
+            new_loop.add_edge(e.src, e.dst, copy.deepcopy(e.data))
+        new_loop.start_block = new_loop.node_id(bstart)
+
+        # if cond: { loop' }
+        inner = ControlFlowRegion(label=f"{loop.label}_body")
+        inner.add_node(new_loop, is_start_block=True, ensure_unique_name=True)
+        outer_cb = ConditionalBlock(label=f"{loop.label}_guard")
+        outer_cb.add_branch(CodeBlock(cond.as_string), inner)
+
+        parent.add_node(outer_cb, ensure_unique_name=True)
+        # Hoisted invariant assignments go on the edge entering the guard.
+        hoisted = {lhs: rhs for lhs, rhs in hoist_assignments}
+        for e in in_edges:
+            data = copy.deepcopy(e.data)
+            data.assignments.update(hoisted)
+            parent.add_edge(e.src, outer_cb, data)
+        if not in_edges and hoisted:
+            pre = parent.add_state(f"{loop.label}_hoist")
+            parent.add_edge(pre, outer_cb, InterstateEdge(assignments=hoisted))
+            if is_start:
+                parent.start_block = parent.node_id(pre)
+                is_start = False
+        for e in out_edges:
+            parent.add_edge(outer_cb, e.dst, copy.deepcopy(e.data))
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(loop)
+        if is_start:
+            parent.start_block = parent.node_id(outer_cb)

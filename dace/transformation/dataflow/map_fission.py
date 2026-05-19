@@ -161,6 +161,43 @@ class MapFission(transformation.SingleStateTransformation):
                 if e.dst is self.nested_sdfg and e.dst_conn is not None and e.data.subset is not None:
                     if any(str(s) in map_params for s in e.data.subset.free_symbols):
                         inputs_dep_on_map.add(e.dst_conn)
+
+            # The Fortran frontend lowers ``a(idx(i))`` to a NestedSDFG that
+            # first loads ``idx(i)`` into an internal transient and then
+            # assigns it to an indirection symbol on an interstate edge
+            # (``__sym = __tmp``). The assignment RHS is the transient, not
+            # the iterator-indexed input, so a one-hop check misses the
+            # dependence. Taint the input connectors whose incoming memlet
+            # references a map parameter and propagate the taint forward
+            # through every NestedSDFG state's dataflow: any AccessNode
+            # written (transitively) from a tainted source is itself tainted.
+            # An interstate assignment naming any tainted container cannot be
+            # hoisted out of the fissioned maps either.
+            tainted = set(inputs_dep_on_map)
+            changed = True
+            while changed:
+                changed = False
+                for st in nsdfg_node.sdfg.states():
+                    for e in st.edges():
+                        src_name = e.src.data if isinstance(e.src, nodes.AccessNode) else None
+                        dst_name = e.dst.data if isinstance(e.dst, nodes.AccessNode) else None
+                        # An access node feeding a code node taints that
+                        # code node's other outputs only transitively via the
+                        # access nodes they write; track tainted data names.
+                        carried = e.data.data
+                        feeds_tainted = (src_name in tainted) or (carried in tainted)
+                        if not feeds_tainted and isinstance(e.src, nodes.CodeNode):
+                            # A tasklet/nested node is tainted if any of its
+                            # incoming access nodes are tainted.
+                            feeds_tainted = any(
+                                isinstance(ie.src, nodes.AccessNode) and ie.src.data in tainted
+                                for ie in st.in_edges(e.src))
+                        if feeds_tainted:
+                            for nm in (dst_name, carried):
+                                if nm is not None and nm not in tainted:
+                                    tainted.add(nm)
+                                    changed = True
+
             for ise in nsdfg_node.sdfg.all_interstate_edges():
                 assign_free = set()
                 for expr in ise.data.assignments.values():
@@ -171,6 +208,8 @@ class MapFission(transformation.SingleStateTransformation):
                 if assign_free & map_params:
                     return False
                 if assign_free & inputs_dep_on_map:
+                    return False
+                if assign_free & tainted:
                     return False
 
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
