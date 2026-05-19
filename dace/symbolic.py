@@ -255,8 +255,9 @@ class UndefinedSymbol(symbol):
 class TypedConstant(sympy.AtomicExpr):
     """A typed constant value that participates in symbolic expressions.
 
-    The value is always a real ``Integer``/``Float`` (booleans as ``0``/``1``);
-    the ``dtype`` is a tag. Complex constant values are not supported.
+    The value is a real ``Integer``/``Float`` (booleans stored as ``0``/``1``),
+    or ``re + im*I`` when the ``dtype`` is complex. The ``dtype`` is a type tag;
+    complex constants must be numeric (symbolic real/imag parts are unsupported).
 
     Examples
     --------
@@ -496,7 +497,7 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
     if isinstance(value, sympy.Float):
         return dtypes.float64
     if isinstance(value, (bool, numpy.bool_)):
-        return dtypes.dtype_to_typeclass(numpy.bool_)
+        return dtypes.bool_
     if isinstance(value, int) and not isinstance(value, bool):
         return DEFAULT_SYMBOL_TYPE
     if isinstance(value, float):
