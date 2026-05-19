@@ -26,10 +26,12 @@ range, so no ``Min`` ever reaches ``symbolic.simplify``:
 2. **W-stride normalize** ``update_statement`` to ``i = i + W``.
 
 Legality (semantics-preserving): the pass only fires on a
-``_iter_mask``-gated SVE loop, so ``Min`` merely drops iterations the
-mask had already made entirely inactive — end-to-end output is identical
-to the untiled SDFG. Default-inert when ``global_ub`` is unset or no
-matching loop is found; idempotent.
+``_iter_mask``-gated SVE loop enclosed by a ``core`` map, so ``Min``
+merely drops iterations the mask had already made entirely inactive —
+end-to-end output is identical to the untiled SDFG. ``global_ub`` is
+optional: when unset it is auto-derived from the enclosing ``core``
+map's range (symbolic-safe). Inert when no such guarded loop is found;
+idempotent.
 """
 import ast
 from typing import Optional
@@ -55,8 +57,9 @@ class ForLoopToMaskedWhile(ppl.Pass):
                                     allow_none=True,
                                     desc="The original (pre-tile) *exclusive* upper bound of the "
                                     "innermost trip (e.g. ``\"N\"``). The loop condition is clamped "
-                                    "to ``i < Min(global_ub, <block-end>)``. Required; the pass is "
-                                    "inert when unset.")
+                                    "to ``i < Min(global_ub, <block-end>)``. Optional: when ``None`` "
+                                    "it is auto-derived from the enclosing ``core`` map's range "
+                                    "(``range[-1][1] + 1``), which is symbolic-safe.")
 
     def __init__(self, vector_width: int = 8, global_ub: Optional[str] = None):
         super().__init__()
@@ -92,16 +95,19 @@ class ForLoopToMaskedWhile(ppl.Pass):
         return False
 
     @staticmethod
-    def _enclosed_by_core_map(lr: LoopRegion) -> bool:
-        """Whether ``lr`` sits inside a ``core``-prefixed map scope.
+    def _enclosing_core_map(lr: LoopRegion) -> Optional[dace.nodes.MapEntry]:
+        """The ``core``-prefixed map enclosing ``lr``, or ``None``.
 
         The SVE-style chain tiles the innermost map into a ``core``-
         prefixed outer block-distribution map; the per-core for-loop is
-        nested under it. Walking parents to that map confirms this is the
-        SVE loop and not some unrelated user :class:`LoopRegion`.
+        nested under it. Walking parents to that map both confirms this
+        is the SVE loop (not an unrelated user :class:`LoopRegion`) and
+        yields the map whose ``range[-1][1] + 1`` is the original
+        pre-tile exclusive trip bound — the ``global_ub`` for the
+        Min-swap when not given explicitly.
 
         :param lr: The loop region to inspect.
-        :returns: ``True`` if a ``core``-prefixed enclosing map exists.
+        :returns: The enclosing ``core`` :class:`MapEntry`, or ``None``.
         """
         sdfg = lr.sdfg
         while sdfg is not None:
@@ -113,10 +119,10 @@ class ForLoopToMaskedWhile(ppl.Pass):
                 while node is not None:
                     if (isinstance(node, dace.nodes.MapEntry)
                             and any(p.startswith(_CORE_PREFIX) for p in node.map.params)):
-                        return True
+                        return node
                     node = scope.get(node)
             sdfg = pstate.sdfg if pstate is not None else None
-        return False
+        return None
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         """Min-swap + W-stride every SVE-style per-core for-loop.
@@ -125,18 +131,19 @@ class ForLoopToMaskedWhile(ppl.Pass):
         :param _: Unused pipeline results.
         :returns: Number of loops rewritten, or ``None`` if none.
         """
-        if self.global_ub is None:
-            return None
         W = self.vector_width
-        gub = str(self.global_ub)
         rewritten = 0
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             if not isinstance(cfg, LoopRegion):
                 continue
             if not self._loop_body_has_iter_mask(cfg):
                 continue
-            if not self._enclosed_by_core_map(cfg):
+            core = self._enclosing_core_map(cfg)
+            if core is None:
                 continue
+            # Auto-derive the global exclusive trip bound from the core
+            # map (it keeps the original inclusive end; symbolic-safe).
+            gub = str(self.global_ub) if self.global_ub is not None else str(core.map.range[-1][1] + 1)
             loop_var = cfg.loop_variable
             if cfg.loop_condition is None:
                 continue

@@ -62,14 +62,43 @@ def test_global_mask_formula_keyed_to_iter_var_and_global_ub():
     assert lines[7].replace(" ", "") == "_o[7]=((i)+7<(N));"
 
 
-def test_global_mode_requires_global_ub():
+def test_global_mode_requires_global_ub_or_core_map():
+    """No explicit global_ub AND no enclosing ``core`` map (un-tiled
+    kernel) → loud ValueError, not a silent wrong mask."""
     sd = _axpy.to_sdfg(simplify=True)
     NestInnermostMapBodyIntoNSDFG(vector_width=8).apply_pass(sd, {})
     try:
         GenerateIterationMask(vector_width=8, mode="global").apply_pass(sd, {})
-        assert False, "expected ValueError for mode='global' without global_ub"
+        assert False, "expected ValueError for mode='global' without global_ub/core map"
     except ValueError as e:
         assert "global_ub" in str(e)
+
+
+def test_global_mode_auto_derives_from_core_map():
+    """Tiled by a ``core`` map, ``mode='global'`` with no explicit
+    global_ub derives the bound from the core map (range ``0:N:B`` →
+    exclusive end ``N``) and fills ``mask[l] = (i + l < N)``."""
+    from dace.transformation.dataflow.tiling import MapTiling
+    sd = _axpy.to_sdfg(simplify=True)
+    me = [n for n, _ in sd.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
+    MapTiling.apply_to(sd,
+                       options={
+                           "tile_sizes": (16, ),
+                           "prefix": "core",
+                           "divides_evenly": True,
+                           "tile_trivial": True
+                       },
+                       verify=True,
+                       save=False,
+                       map_entry=me)
+    NestInnermostMapBodyIntoNSDFG(vector_width=8, nest_provably_divisible=True).apply_pass(sd, {})
+    applied = GenerateIterationMask(vector_width=8, mode="global").apply_pass(sd, {})
+    assert applied == 1
+    bodies = _mask_fill_bodies(sd)
+    assert len(bodies) == 1
+    line0 = bodies[0].splitlines()[0].replace(" ", "")
+    # Auto-derived global bound is N (core map keeps original end N-1, +1).
+    assert line0 == "_o[0]=((i)+0<(N));", line0
 
 
 def test_default_mask_form_unchanged():
@@ -130,15 +159,23 @@ def test_forloop_to_masked_while_rewrite_shape():
     assert upd == "i=i+8"
 
 
-def test_forloop_to_masked_while_idempotent_and_inert():
+def test_forloop_to_masked_while_idempotent():
     sdfg, lr = _synthetic_core_loop_sdfg()
     assert ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {}) == 1
     first = lr.loop_condition.as_string
     assert ForLoopToMaskedWhile(vector_width=8, global_ub="N").apply_pass(sdfg, {}) is None
     assert lr.loop_condition.as_string == first
-    # Inert without global_ub.
-    sdfg2, _ = _synthetic_core_loop_sdfg()
-    assert ForLoopToMaskedWhile(vector_width=8).apply_pass(sdfg2, {}) is None
+
+
+def test_forloop_to_masked_while_auto_derives_global_ub_from_core_map():
+    """With ``global_ub`` unset, the bound is auto-derived from the
+    enclosing ``core`` map (range ``0:64:16`` → exclusive end 64)."""
+    sdfg, lr = _synthetic_core_loop_sdfg()
+    rc = ForLoopToMaskedWhile(vector_width=8).apply_pass(sdfg, {})
+    assert rc == 1
+    rhs = lr.loop_condition.code[0].value.comparators[0]
+    assert isinstance(rhs, ast.Call) and rhs.func.id == "Min"
+    assert {ast.unparse(a).replace(" ", "") for a in rhs.args} == {"64", "core_i+16"}
 
 
 def test_forloop_to_masked_while_skips_unguarded_loop():

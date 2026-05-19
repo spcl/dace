@@ -23,18 +23,30 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
 
     After the pass every innermost map contains exactly one NestedSDFG
     (no bare-tasklet bodies). Maps whose innermost trip count is provably
-    a multiple of ``vector_width`` are skipped: they need no remainder
-    split, and wrapping them would perturb downstream strided/gather
-    detection.
+    a multiple of ``vector_width`` are skipped by default: they need no
+    remainder split, and wrapping them would perturb downstream
+    strided/gather detection. Set ``nest_provably_divisible=True`` to
+    nest them anyway — required by the SVE-style chain, where the
+    per-core block is deliberately divisible (analyze-clean-then-Min)
+    yet still needs a NestedSDFG body so the global iteration mask can
+    be attached.
     """
 
     CATEGORY: str = "Vectorization Preparation"
 
     vector_width = properties.Property(dtype=int, default=8, allow_none=False)
+    nest_provably_divisible = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also nest innermost maps whose trip is provably a multiple of "
+        "``vector_width`` (default skips them). The SVE-style chain sets this: "
+        "its per-core block is intentionally divisible but still needs a "
+        "NestedSDFG body for the global iteration mask.")
 
-    def __init__(self, vector_width: int = 8):
+    def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False):
         super().__init__()
         self.vector_width = vector_width
+        self.nest_provably_divisible = nest_provably_divisible
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -81,7 +93,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                 continue
             # Provably-divisible maps need no remainder; leave the body
             # un-nested so the divisible path matches the old behaviour.
-            if self._trip_is_provably_divisible(n):
+            # SVE-style overrides this (its clean block is divisible by
+            # design but still needs a body NSDFG for the global mask).
+            if not self.nest_provably_divisible and self._trip_is_provably_divisible(n):
                 continue
             # Skip if the body already collapses to a single NestedSDFG.
             if get_single_nsdfg_inside_map(g, n) is not None:

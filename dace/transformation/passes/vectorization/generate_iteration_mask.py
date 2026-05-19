@@ -48,7 +48,10 @@ class GenerateIterationMask(ppl.Pass):
                                     allow_none=True,
                                     desc="``mode='global'`` only: the original (pre-tile) *exclusive* "
                                     "upper bound of the innermost trip (e.g. ``\"N\"``). The mask fill "
-                                    "is ``iter_var + l < global_ub``. Required for ``mode='global'``.")
+                                    "is ``iter_var + l < global_ub``. Optional: when ``None`` it is "
+                                    "auto-derived from the enclosing ``core`` map's range "
+                                    "(symbolic-safe); a ``ValueError`` is raised only if neither is "
+                                    "available.")
 
     lower_to_intrinsics = properties.Property(dtype=bool,
                                               default=False,
@@ -88,9 +91,6 @@ class GenerateIterationMask(ppl.Pass):
         if self.mode not in ("step_w_only", "all_innermost", "masked", "global"):
             raise ValueError(f"GenerateIterationMask.mode must be 'step_w_only', 'all_innermost', "
                              f"'masked', or 'global', got {self.mode!r}")
-        if self.mode == "global" and self.global_ub is None:
-            raise ValueError("GenerateIterationMask.mode='global' requires global_ub (the original "
-                             "pre-tile exclusive upper bound of the innermost trip)")
         W = self.vector_width
         applied = 0
         for n, g in [(n, g) for n, g in sdfg.all_nodes_recursive()
@@ -132,10 +132,44 @@ class GenerateIterationMask(ppl.Pass):
                     n.map.label = n.map.label[:-len("__masked_rem")]
                 n.map.schedule = dace.dtypes.ScheduleType.Sequential
                 continue
-            global_ub = self.global_ub if self.mode == "global" else None
+            global_ub = None
+            if self.mode == "global":
+                if self.global_ub is not None:
+                    global_ub = str(self.global_ub)
+                else:
+                    core = self._enclosing_core_map(g, n)
+                    if core is None:
+                        raise ValueError("GenerateIterationMask.mode='global' needs global_ub, or an "
+                                         "enclosing 'core'-prefixed map to auto-derive it from (run the "
+                                         f"SVE tiling first); map {n.label!r} has neither")
+                    # The original pre-tile exclusive trip bound: the core
+                    # map keeps the original inclusive end, so end + 1 is the
+                    # global bound (symbolic-safe — sympy folds (N-1)+1 -> N).
+                    global_ub = str(core.map.range[-1][1] + 1)
             if self._attach_mask(nsdfg_node, n.map.params[-1], lb, ub, W, global_ub):
                 applied += 1
         return applied or None
+
+    @staticmethod
+    def _enclosing_core_map(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> Optional[dace.nodes.MapEntry]:
+        """The ``core``-prefixed map enclosing ``map_entry``, or ``None``.
+
+        The SVE tiling wraps the innermost map in a ``core``-prefixed
+        block-distribution map; that map keeps the *original* inclusive
+        trip end, so its ``range[-1][1] + 1`` is the global exclusive
+        bound the ``mode='global'`` fill needs.
+
+        :param state: The state containing ``map_entry``.
+        :param map_entry: The innermost map entry.
+        :returns: The enclosing ``core`` :class:`MapEntry`, or ``None``.
+        """
+        scope = state.scope_dict()
+        node = scope.get(map_entry)
+        while node is not None:
+            if (isinstance(node, dace.nodes.MapEntry) and any(p.startswith("core") for p in node.map.params)):
+                return node
+            node = scope.get(node)
+        return None
 
     @staticmethod
     def _subset_fans_out(sub, strides, iter_var: str) -> bool:
