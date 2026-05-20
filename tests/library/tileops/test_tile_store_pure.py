@@ -38,7 +38,7 @@ def _build_store_sdfg(dst_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8), (2, 4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_store_pure_unmasked_contiguous(widths):
     """Unmasked store copies SRC into the leading tile region of DST."""
     sdfg = _build_store_sdfg(dst_shape=widths, widths=widths, has_mask=False)

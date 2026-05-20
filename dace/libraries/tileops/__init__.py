@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Multi-dim fixed-length tile-op library nodes.
 
-These library nodes are the IR for the K-dim (``K \\in \\{1, 2, 3\\}``)
+These library nodes are the IR for the K-dim (``K \\in \\{1, 2\\}``)
 masked tile vectorization track. The 4 MVP nodes cover axpy / triad /
 5-point stencil correctness gates; the post-MVP set adds ternary blends,
 indirect accesses and reductions. Each node carries a ``widths`` tuple

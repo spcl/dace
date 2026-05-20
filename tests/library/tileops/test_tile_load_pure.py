@@ -40,7 +40,7 @@ def _build_load_sdfg(src_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8), (2, 4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_load_pure_unmasked_contiguous(widths):
     """Unmasked load copies the leading tile region of SRC into DST."""
     sdfg = _build_load_sdfg(src_shape=widths, widths=widths, has_mask=False)

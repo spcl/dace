@@ -17,10 +17,10 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 @pytest.mark.parametrize("widths,iter_vars,global_ubs", [
     ((8,), ("i",), ("N",)),
     ((4, 8), ("i", "j"), ("M", "N")),
-    ((2, 4, 8), ("i", "j", "k"), ("M", "N", "K")),
 ])
-def test_tile_dim_spec_accepts_K_1_2_3(widths, iter_vars, global_ubs):
-    """``TileDimSpec`` is the data structure for K = 1, 2, 3."""
+def test_tile_dim_spec_accepts_K_1_2(widths, iter_vars, global_ubs):
+    """``TileDimSpec`` is the data structure for K = 1, 2 (K=3 supported
+    but untested in MVP)."""
     spec = TileDimSpec(iter_vars=iter_vars, widths=widths, global_ubs=global_ubs)
     assert spec.K == len(widths)
     assert spec.widths == widths

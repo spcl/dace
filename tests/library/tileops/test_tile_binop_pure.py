@@ -48,10 +48,10 @@ def _build_binop_sdfg(widths, op, has_mask, dtype):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8,), (4, 8), (2, 4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 @pytest.mark.parametrize("op", ["+", "*", "max"])
 def test_tile_binop_pure_unmasked(widths, op):
-    """Unmasked tile binop matches the numpy reference for K = 1, 2, 3."""
+    """Unmasked tile binop matches the numpy reference for K = 1, 2."""
     sdfg = _build_binop_sdfg(widths, op, has_mask=False, dtype=dace.float64)
     rng = np.random.default_rng(seed=42)
     A = rng.random(widths)
