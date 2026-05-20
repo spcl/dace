@@ -41,6 +41,25 @@ def emission_style(request) -> str:
     return request.param
 
 
+@pytest.fixture(params=["scalar_postamble", "tile_nodes"])
+def vectorize_config(request) -> str:
+    """Parametrise tests over the two backend pipelines (user directive
+    2026-05-20):
+
+    - ``"scalar_postamble"`` — today's ``VectorizeCPU`` (1D path, with
+      scalar postamble for the remainder tail).
+    - ``"tile_nodes"`` — the new ``VectorizeCPUMultiDim`` orchestrator
+      (v2 K-dim tile-op path, lowered to ``pure``). The harness auto-
+      picks ``widths=(8,)`` for K=1 kernels and ``widths=(8, 8)`` for
+      K=2 kernels by inspecting the SDFG's innermost map; tests whose
+      kernel can't satisfy the v2 locked-knob shape (custom branch
+      mode, fuse_overlapping_loads, gather / WCR features not yet
+      supported by ``EmitTileOps``) are skipped per-arm.
+
+    Both arms must match the unvectorized scalar reference."""
+    return request.param
+
+
 @pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     """Parametrise tests over the remainder-handling strategies wired into

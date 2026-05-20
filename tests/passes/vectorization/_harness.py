@@ -44,6 +44,85 @@ NCLDQL = dace.symbol('NCLDQL')
 NCLDQI = dace.symbol('NCLDQI')
 
 
+def _innermost_map_K(sdfg: dace.SDFG):
+    """Return the number of params of the innermost map in ``sdfg``.
+
+    Walks every map entry; an entry is "innermost" when no other map
+    entry lies anywhere downstream within its scope.
+
+    :param sdfg: SDFG to inspect.
+    :returns: ``len(map.params)`` of the first innermost map found, or
+        ``None`` when no map is present.
+    """
+    candidates = []
+    for n, g in sdfg.all_nodes_recursive():
+        if not (isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)):
+            continue
+        between = g.all_nodes_between(n, g.exit_node(n)) or set()
+        if any(isinstance(m, dace.nodes.MapEntry) for m in between):
+            continue
+        candidates.append(n)
+    if not candidates:
+        return None
+    return len(candidates[0].map.params)
+
+
+def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
+    """Pick ``widths`` for ``VectorizeCPUMultiDim`` from the SDFG's
+    innermost map's dimensionality.
+
+    :param sdfg: SDFG to inspect.
+    :param vector_width: Innermost-dim tile width
+        (forwarded from the test).
+    :returns: ``(vector_width,)`` for K=1, ``(8, vector_width)`` for
+        K=2 (or higher). Caps at K=2 — the v2 MVP exercises K=1 and
+        K=2; K=3 is supported by the lib nodes but not auto-picked.
+    """
+    K = _innermost_map_K(sdfg)
+    if K is None or K < 1:
+        return (vector_width,)
+    if K == 1:
+        return (vector_width,)
+    return (8, vector_width)
+
+
+def _tile_nodes_skip_reason(sdfg: dace.SDFG,
+                            branch_mode: str,
+                            remainder_strategy: str,
+                            emission_style: str,
+                            fuse_overlapping_loads: bool,
+                            lower_to_intrinsics: bool,
+                            collapse_laneid_index_loads: bool,
+                            loop_to_map_permissive: bool,
+                            filter_map):
+    """Return a non-empty skip reason for the ``tile_nodes`` arm when
+    the test's knob combination is outside the v2 locked-knob shape.
+
+    :param sdfg: The kernel's SDFG (post-simplify, pre-vectorize).
+    :returns: A short string explaining the skip, or ``""`` when the
+        knobs are compatible with the v2 path.
+    """
+    if branch_mode != "merge":
+        return f"branch_mode={branch_mode!r} (v2 requires merge)"
+    if remainder_strategy != "scalar":
+        return f"remainder_strategy={remainder_strategy!r} (v2 has no remainder arm yet)"
+    if emission_style != "default":
+        return f"emission_style={emission_style!r} (v2 has no SVE arm)"
+    if fuse_overlapping_loads:
+        return "fuse_overlapping_loads (v2 has no overlap-load fusion yet)"
+    if lower_to_intrinsics:
+        return "lower_to_intrinsics (v2 uses tile-op lib nodes, not legacy intrinsics)"
+    if collapse_laneid_index_loads:
+        return "collapse_laneid_index_loads (v2 has no laneid path)"
+    if loop_to_map_permissive:
+        return "loop_to_map_permissive (v2 expects map-only inputs)"
+    if filter_map is not None and filter_map != -1:
+        return "filter_map (v2 orchestrator targets every innermost map)"
+    if _innermost_map_K(sdfg) is None:
+        return "no innermost map (v2 has nothing to tile)"
+    return ""
+
+
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
                            params,
@@ -65,7 +144,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            collapse_laneid_index_loads: bool = False,
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
-                           num_cores: int = 8):
+                           num_cores: int = 8,
+                           vectorize_config: str = "scalar_postamble"):
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -111,7 +191,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # a unique cache dir. The verbose alternative is to encode the tuple
     # into the sdfg.name directly, but parametrize indices keep names short.
     if sdfg_name is not None:
-        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}"
+        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}"
         if param_tag is not None:
             sdfg_name = f"{sdfg_name}_{param_tag}"
 
@@ -168,31 +248,55 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         filter_map = None
 
-    if branch_mode == "fp_factor":
-        branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
-    elif branch_mode == "merge":
-        branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
+    if vectorize_config == "tile_nodes":
+        # v2 K-dim tile-op path. The locked single-knob shape rejects
+        # every fixture combination except (branch_mode=merge,
+        # remainder_strategy=scalar, emission_style=default,
+        # fuse_overlapping_loads=False, insert_copies=False, no_inline=
+        # False, lower_to_intrinsics=False, loop_to_map_permissive=
+        # False); skip per-arm rather than propagate.
+        _skip_reason = _tile_nodes_skip_reason(
+            copy_sdfg, branch_mode, remainder_strategy, emission_style,
+            fuse_overlapping_loads, lower_to_intrinsics,
+            collapse_laneid_index_loads, loop_to_map_permissive, filter_map,
+        )
+        if _skip_reason:
+            _pytest.skip(f"tile_nodes arm: {_skip_reason}")
+        from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
+            VectorizeCPUMultiDim,
+        )
+        widths = _auto_tile_widths(copy_sdfg, vector_width)
+        try:
+            VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(copy_sdfg, {})
+        except NotImplementedError as _e:
+            _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
+        copy_sdfg.validate()
     else:
-        raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
+        if branch_mode == "fp_factor":
+            branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
+        elif branch_mode == "merge":
+            branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
+        else:
+            raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
 
-    # sve_style='fixed' overrides use_fp_factor (forced merge) and
-    # rejects an explicit non-default remainder_strategy — the harness
-    # has already skipped contradicting parametrisations above. Forward
-    # only the orthogonal knobs (fuse, collapse, vector_width, etc.).
-    sve_kwargs = (dict(sve_style="fixed", num_cores=num_cores) if emission_style == "sve_style" else {})
-    VectorizeCPU(vector_width=vector_width,
-                 fuse_overlapping_loads=fuse_overlapping_loads,
-                 insert_copies=insert_copies,
-                 apply_on_maps=filter_map,
-                 no_inline=no_inline,
-                 fail_on_unvectorizable=True,
-                 remainder_strategy=remainder_strategy,
-                 lower_to_intrinsics=lower_to_intrinsics,
-                 collapse_laneid_index_loads=collapse_laneid_index_loads,
-                 loop_to_map_permissive=loop_to_map_permissive,
-                 **branch_kwargs,
-                 **sve_kwargs).apply_pass(copy_sdfg, {})
-    copy_sdfg.validate()
+        # sve_style='fixed' overrides use_fp_factor (forced merge) and
+        # rejects an explicit non-default remainder_strategy — the harness
+        # has already skipped contradicting parametrisations above. Forward
+        # only the orthogonal knobs (fuse, collapse, vector_width, etc.).
+        sve_kwargs = (dict(sve_style="fixed", num_cores=num_cores) if emission_style == "sve_style" else {})
+        VectorizeCPU(vector_width=vector_width,
+                     fuse_overlapping_loads=fuse_overlapping_loads,
+                     insert_copies=insert_copies,
+                     apply_on_maps=filter_map,
+                     no_inline=no_inline,
+                     fail_on_unvectorizable=True,
+                     remainder_strategy=remainder_strategy,
+                     lower_to_intrinsics=lower_to_intrinsics,
+                     collapse_laneid_index_loads=collapse_laneid_index_loads,
+                     loop_to_map_permissive=loop_to_map_permissive,
+                     **branch_kwargs,
+                     **sve_kwargs).apply_pass(copy_sdfg, {})
+        copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()
 

@@ -19,7 +19,7 @@ def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64): 
             A[i + 1, j + 1] = 0.2 * (B[i + 1, j + 1] + B[i, j + 1] + B[i + 2, j + 1] + B[i + 1, j] + B[i + 1, j + 2])
 
 
-def test_jacobi2d(emission_style):
+def test_jacobi2d(emission_style, vectorize_config):
     _S = 66
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((_S, _S))
@@ -35,7 +35,8 @@ def test_jacobi2d(emission_style):
                            },
                            vector_width=8,
                            sdfg_name="jacobi2d",
-                           emission_style=emission_style)
+                           emission_style=emission_style,
+                           vectorize_config=vectorize_config)
 
 
 def test_jacobi2d_with_filter_map():

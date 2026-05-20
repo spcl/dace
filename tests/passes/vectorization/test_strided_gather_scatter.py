@@ -71,7 +71,7 @@ def strided_store_stride_3(src: dace.float64[N], dst: dace.float64[3 * N], scale
         dst[i * 3] = src[i] * scale
 
 
-def test_vecscale_unit_stride(emission_style):
+def test_vecscale_unit_stride(emission_style, vectorize_config):
     N = 64
     src = numpy.random.random(N)
     dst = numpy.zeros(N)
@@ -88,6 +88,7 @@ def test_vecscale_unit_stride(emission_style):
         vector_width=8,
         sdfg_name="vecscale_unit_stride",
         emission_style=emission_style,
+        vectorize_config=vectorize_config,
     )
 
 

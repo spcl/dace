@@ -360,7 +360,7 @@ def test_v_const_subs_two_cpu(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-def test_simple_cpu(remainder_strategy):
+def test_simple_cpu(remainder_strategy, vectorize_config):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
@@ -372,7 +372,8 @@ def test_simple_cpu(remainder_strategy):
                            params={'N': 64},
                            vector_width=4,
                            sdfg_name="simple_cpu",
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           vectorize_config=vectorize_config)
 
 
 @dace.program
