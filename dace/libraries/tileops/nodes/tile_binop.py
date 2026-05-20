@@ -5,14 +5,14 @@ The lib node consumes two operands ``_a`` and ``_b`` and writes ``_c``.
 Each operand carries a ``kind`` flag — ``Tile`` (a tile-shape array via
 a connector) or ``Symbol`` (a free-symbol expression embedded inline in
 the tasklet body). At least one operand must be ``Tile``; a Symbol /
-Symbol pair belongs outside the tile path. The ``Symbol`` kind replaces
-a standalone broadcast lib node: outer-scope symbols flow through
-``TileBinop`` directly with no intermediate tile transient.
+Symbol pair belongs outside the tile path.
 
-The pure expansion lowers to a K-fold nested Map with one scalar
-tasklet per lane — correctness-only; cuTile lowering follows in T9.
+The pure expansion returns a CPP tasklet whose body is a single
+``for``-loop over the flattened tile (correctness-only).
 """
 from typing import Optional, Tuple
+from functools import reduce
+from operator import mul
 
 import dace
 from dace import library, properties
@@ -23,85 +23,86 @@ _TILE = "Tile"
 _SYMBOL = "Symbol"
 _VALID_KINDS = (_TILE, _SYMBOL)
 
-_PY_OP_TEMPLATES = {
-    "+": "({lhs}) + ({rhs})",
-    "-": "({lhs}) - ({rhs})",
-    "*": "({lhs}) * ({rhs})",
-    "/": "({lhs}) / ({rhs})",
-    "min": "min(({lhs}), ({rhs}))",
-    "max": "max(({lhs}), ({rhs}))",
-    "<": "({lhs}) < ({rhs})",
-    "<=": "({lhs}) <= ({rhs})",
-    ">": "({lhs}) > ({rhs})",
-    ">=": "({lhs}) >= ({rhs})",
-    "==": "({lhs}) == ({rhs})",
-    "!=": "({lhs}) != ({rhs})",
-    "&&": "({lhs}) and ({rhs})",
-    "||": "({lhs}) or ({rhs})",
+_OP_CPP = {
+    "+": ("(", " + ", ")"),
+    "-": ("(", " - ", ")"),
+    "*": ("(", " * ", ")"),
+    "/": ("(", " / ", ")"),
+    "<": ("(", " < ", ")"),
+    "<=": ("(", " <= ", ")"),
+    ">": ("(", " > ", ")"),
+    ">=": ("(", " >= ", ")"),
+    "==": ("(", " == ", ")"),
+    "!=": ("(", " != ", ")"),
+    "&&": ("(", " && ", ")"),
+    "||": ("(", " || ", ")"),
+    "min": ("std::min(", ", ", ")"),
+    "max": ("std::max(", ", ", ")"),
 }
+
+
+def _binop_rhs(op: str, lhs: str, rhs: str) -> str:
+    """Render the C++ expression for ``op`` on ``lhs`` and ``rhs``.
+
+    :param op: The operator symbol (key of :data:`_OP_CPP`).
+    :param lhs: Left-hand-side C++ expression.
+    :param rhs: Right-hand-side C++ expression.
+    :returns: A C++ expression string.
+    """
+    pre, sep, post = _OP_CPP[op]
+    return f"{pre}{lhs}{sep}{rhs}{post}"
 
 
 @library.expansion
 class ExpandTileBinopPure(ExpandTransformation):
-    """Correctness-only K-fold nested-Map lowering of ``TileBinop``."""
+    """Correctness-only CPP tasklet lowering of ``TileBinop``."""
 
     environments = []
 
     @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        """Build a nested SDFG that loops over every lane and applies
-        ``op`` to the corresponding lanes (per operand kind), gated by
-        ``_mask`` when present.
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a single CPP tasklet that walks the flattened tile.
 
         :param node: The ``TileBinop`` lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: Nested SDFG that replaces the lib node in place.
+        :returns: A CPP tasklet replacing the lib node in place.
         """
-        tile_dtype, mask_arr, a_arr, b_arr = node.validate(parent_sdfg, parent_state)
+        node.validate(parent_sdfg, parent_state)
         widths = list(node.widths)
+        n = reduce(mul, widths, 1)
 
-        sdfg = dace.SDFG(f"{node.label}_pure")
-        sdfg.add_array("_c", widths, tile_dtype, transient=False)
-        if node.kind_a == _TILE:
-            sdfg.add_array("_a", widths, a_arr.dtype, transient=False)
-        if node.kind_b == _TILE:
-            sdfg.add_array("_b", widths, b_arr.dtype, transient=False)
+        lhs = node.expr_a if node.kind_a == _SYMBOL else "_a[__k]"
+        rhs = node.expr_b if node.kind_b == _SYMBOL else "_b[__k]"
+        rhs_expr = _binop_rhs(node.op, lhs, rhs)
+
         if node.has_mask:
-            sdfg.add_array("_mask", widths, dace.bool_, transient=False)
-
-        state = sdfg.add_state(f"{node.label}_state")
-        K = len(widths)
-        map_params = [f"__l{k}" for k in range(K)]
-        map_rng = {p: f"0:{w}" for p, w in zip(map_params, widths)}
-        access = ", ".join(map_params)
-
-        inputs = {}
-        lhs = node.expr_a if node.kind_a == _SYMBOL else "__rhs1"
-        rhs = node.expr_b if node.kind_b == _SYMBOL else "__rhs2"
-        if node.kind_a == _TILE:
-            inputs["__rhs1"] = dace.Memlet(f"_a[{access}]")
-        if node.kind_b == _TILE:
-            inputs["__rhs2"] = dace.Memlet(f"_b[{access}]")
-        if node.has_mask:
-            inputs["__mask"] = dace.Memlet(f"_mask[{access}]")
-
-        rhs_expr = _PY_OP_TEMPLATES[node.op].format(lhs=lhs, rhs=rhs)
-        if node.has_mask:
-            body = f"__output = ({rhs_expr}) if __mask else 0"
+            body_inner = (
+                f"_c[__k] = _mask[__k] ? ({rhs_expr}) : "
+                f"static_cast<std::remove_reference_t<decltype(_c[__k])>>(0);"
+            )
         else:
-            body = f"__output = {rhs_expr}"
-        outputs = {"__output": dace.Memlet(f"_c[{access}]")}
+            body_inner = f"_c[__k] = {rhs_expr};"
 
-        state.add_mapped_tasklet(
-            f"{node.label}_tasklet",
-            map_rng,
-            inputs,
-            body,
-            outputs,
-            external_edges=True,
+        code = (
+            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
+            f"    {body_inner}\n"
+            f"}}"
         )
-        return sdfg
+        inputs = {"_a", "_b", "_mask"}
+        if node.kind_a == _SYMBOL:
+            inputs.discard("_a")
+        if node.kind_b == _SYMBOL:
+            inputs.discard("_b")
+        if not node.has_mask:
+            inputs.discard("_mask")
+        return nodes.Tasklet(
+            label=f"{node.label}_pure",
+            inputs={c: None for c in inputs},
+            outputs={"_c": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 @library.node
@@ -116,8 +117,8 @@ class TileBinop(nodes.LibraryNode):
     per lane.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        K-fold nested-Map correctness fallback. cuTile expansion lands
-        in T9.
+        flattened CPP-loop correctness fallback. ``"cute"`` (T9)
+        emits :mod:`cuda.tile`-Python primitives.
     :cvar default_implementation: ``"pure"``.
     """
 
@@ -180,23 +181,21 @@ class TileBinop(nodes.LibraryNode):
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param op: One of the keys of ``_PY_OP_TEMPLATES``.
+        :param op: One of the keys of :data:`_OP_CPP`.
         :param has_mask: When True, declare the ``_mask`` input
             connector.
         :param kind_a: ``"Tile"`` (default — read via ``_a`` connector)
             or ``"Symbol"`` (embed ``expr_a`` inline).
-        :param kind_b: ``"Tile"`` or ``"Symbol"`` (same semantics as
-            ``kind_a``).
-        :param expr_a: Required when ``kind_a == "Symbol"``; the
-            in-scope expression to evaluate per lane.
+        :param kind_b: ``"Tile"`` or ``"Symbol"``.
+        :param expr_a: Required when ``kind_a == "Symbol"``.
         :param expr_b: Required when ``kind_b == "Symbol"``.
         :param location: Optional DaCe node location override.
         :raises ValueError: On invalid ``op``, ``widths`` length, kind,
-            missing ``expr_a`` / ``expr_b`` for symbol kinds, or
-            symbol/symbol pairs (use a scalar op outside the tile path).
+            missing expression for symbol kinds, or symbol/symbol
+            pairs.
         """
-        if op not in _PY_OP_TEMPLATES:
-            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(_PY_OP_TEMPLATES)}")
+        if op not in _OP_CPP:
+            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(_OP_CPP)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileBinop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b)):
@@ -228,23 +227,16 @@ class TileBinop(nodes.LibraryNode):
         self.expr_a = expr_a
         self.expr_b = expr_b
 
-    def validate(
-        self,
-        sdfg: dace.SDFG,
-        state: dace.SDFGState,
-    ) -> Tuple[dace.dtypes.typeclass, Optional[dace.data.Data], Optional[dace.data.Data], Optional[dace.data.Data]]:
-        """Look up data descriptors, infer the output dtype from the
-        connected Tile operand, and check the homogeneous-dtype
-        invariant across every Tile operand.
+    def validate(self,
+                 sdfg: dace.SDFG,
+                 state: dace.SDFGState) -> None:
+        """Validate connector counts at expansion time.
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :returns: ``(tile_dtype, mask_arr_or_None, a_arr_or_None,
-            b_arr_or_None)``. The two operand entries are ``None`` for
-            ``Symbol``-kind sides (no connector → no edge).
         :raises ValueError: If a required connector is unconnected.
         :raises NotImplementedError: If Tile operand dtypes disagree
-            (E2 lock).
+            with the output dtype (E2 lock).
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -252,22 +244,18 @@ class TileBinop(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_c' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        a_arr = b_arr = None
+        c_arr = sdfg.arrays[out_e["_c"].data.data]
+        dtypes_ = {c_arr.dtype}
         if self.kind_a == _TILE:
             if "_a" not in in_e:
                 raise ValueError(f"{self.label}: kind_a='Tile' but '_a' not connected")
-            a_arr = sdfg.arrays[in_e["_a"].data.data]
+            dtypes_.add(sdfg.arrays[in_e["_a"].data.data].dtype)
         if self.kind_b == _TILE:
             if "_b" not in in_e:
                 raise ValueError(f"{self.label}: kind_b='Tile' but '_b' not connected")
-            b_arr = sdfg.arrays[in_e["_b"].data.data]
-        c_arr = sdfg.arrays[out_e["_c"].data.data]
-        tile_descs = [d for d in (a_arr, b_arr, c_arr) if d is not None]
-        dtypes = {d.dtype for d in tile_descs}
-        if len(dtypes) != 1:
+            dtypes_.add(sdfg.arrays[in_e["_b"].data.data].dtype)
+        if len(dtypes_) > 1:
             raise NotImplementedError(
                 f"{self.label}: TileBinop requires uniform dtype across Tile operands and _c "
-                f"(got {dtypes}); cast via separate tasklet first."
+                f"(got {dtypes_}); cast via separate tasklet first."
             )
-        mask_arr = sdfg.arrays[in_e["_mask"].data.data] if self.has_mask else None
-        return c_arr.dtype, mask_arr, a_arr, b_arr

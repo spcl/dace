@@ -49,8 +49,11 @@ def test_tile_store_pure_unmasked_contiguous(widths):
     np.testing.assert_allclose(DST, SRC, rtol=0, atol=0)
 
 
-def test_tile_store_pure_masked_writes_zero_on_inactive_lanes():
-    """Masked store writes 0 on inactive lanes (pure semantic; AVX-512 / cuTile preserve)."""
+def test_tile_store_pure_masked_preserves_destination_on_inactive_lanes():
+    """Masked store leaves inactive lanes untouched — matches the cuTile
+    ``cuda.tile.store(..., mask=)`` semantic ('no write on inactive
+    lanes'). Active lanes get SRC; inactive lanes keep the destination's
+    original value (99.0 here)."""
     widths = (4, 8)
     sdfg = _build_store_sdfg(dst_shape=widths, widths=widths, has_mask=True)
     rng = np.random.default_rng(seed=24)
@@ -59,7 +62,7 @@ def test_tile_store_pure_masked_writes_zero_on_inactive_lanes():
     M = np.zeros(widths, dtype=bool)
     M[:, :4] = True
     sdfg(SRC=SRC, DST=DST, M=M)
-    ref = np.where(M, SRC, 0.0)
+    ref = np.where(M, SRC, 99.0)
     np.testing.assert_allclose(DST, ref, rtol=0, atol=0)
 
 

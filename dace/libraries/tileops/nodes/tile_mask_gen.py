@@ -1,12 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileMaskGen`` — allocate a K-dim ``bool`` mask whose lanes encode the
-ANY-dim-OOB conjunction ``(i_0 + l_0 < ub_0) && ... && (i_{K-1} + l_{K-1}
-< ub_{K-1})``.
+"""``TileMaskGen`` — allocate a K-dim ``bool`` mask whose lanes encode
+the ANY-dim-OOB conjunction
+``(i_0 + l_0 < ub_0) && ... && (i_{K-1} + l_{K-1} < ub_{K-1})``.
 
-The mask lives in register storage and is consumed by the tile lib
-nodes inside the masked-remainder body. Producer-only node — no inputs.
+The pure expansion emits a CPP tasklet that writes the K-fold mask
+into the linear ``_o`` buffer; the outer iter-vars and upper-bound
+expressions are resolved from the surrounding scope.
 """
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
+from functools import reduce
+from operator import mul
 
 import dace
 from dace import library, properties
@@ -16,46 +19,47 @@ from dace.transformation.transformation import ExpandTransformation
 
 @library.expansion
 class ExpandTileMaskGenPure(ExpandTransformation):
-    """K-fold nested-Map emitter for the ANY-dim-OOB mask."""
+    """CPP tasklet writing the ANY-OOB conjunction into ``_o``."""
 
     environments = []
 
     @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        """Build a nested SDFG whose body writes ``_o[l_*] = AND_k
-        (iter_var_k + l_k < global_ub_k)`` for every lane combination.
+    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a CPP tasklet that fills the mask tile lane by lane.
 
         :param node: The ``TileMaskGen`` lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: Nested SDFG that replaces the lib node in place.
+        :param parent_state: State that owns the lib node (unused).
+        :param parent_sdfg: SDFG that owns ``parent_state`` (unused).
+        :returns: A CPP tasklet replacing the lib node in place.
         """
-        mask_arr, = node.validate(parent_sdfg, parent_state)
         widths = list(node.widths)
         iter_vars = list(node.iter_vars)
         global_ubs = list(node.global_ubs)
-
-        sdfg = dace.SDFG(f"{node.label}_pure")
-        sdfg.add_array("_o", widths, dace.bool_, transient=False)
-
-        state = sdfg.add_state(f"{node.label}_state")
+        n = reduce(mul, widths, 1)
         K = len(widths)
-        map_params = [f"__l{k}" for k in range(K)]
-        map_rng = {p: f"0:{w}" for p, w in zip(map_params, widths)}
-        access = ", ".join(map_params)
-
-        cond_terms = [f"(({iv}) + {lp} < ({ub}))" for iv, lp, ub in zip(iter_vars, map_params, global_ubs)]
-        body = "__output = " + " and ".join(cond_terms)
-
-        state.add_mapped_tasklet(
-            f"{node.label}_tasklet",
-            map_rng,
-            {},
-            body,
-            {"__output": dace.Memlet(f"_o[{access}]")},
-            external_edges=True,
+        rem_var = "__rem"
+        decoders = []
+        for k in reversed(range(K)):
+            decoders.append(f"        const std::size_t __l{k} = {rem_var} % {widths[k]};")
+            decoders.append(f"        {rem_var} /= {widths[k]};")
+        decoders_block = "\n".join(decoders)
+        terms = [f"((({iv}) + __l{k}) < ({ub}))"
+                 for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
+        cond = " && ".join(terms) if terms else "true"
+        code = (
+            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
+            f"        std::size_t {rem_var} = __k;\n"
+            f"{decoders_block}\n"
+            f"        _o[__k] = {cond};\n"
+            f"}}"
         )
-        return sdfg
+        return nodes.Tasklet(
+            label=f"{node.label}_pure",
+            inputs=set(),
+            outputs={"_o": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 @library.node
@@ -65,8 +69,8 @@ class TileMaskGen(nodes.LibraryNode):
     No inputs; one output ``_o``. Each dim has a corresponding
     ``iter_vars[k]`` (the surrounding-map iter-var name) and
     ``global_ubs[k]`` (the original exclusive upper-bound expression).
-    The lane ``(l_0, ..., l_{K-1})`` is active iff every per-dim
-    half-open check ``iter_var_k + l_k < global_ub_k`` holds.
+    The lane ``(l_0, ..., l_{K-1})`` is active iff every per-dim check
+    ``iter_var_k + l_k < global_ub_k`` holds.
     """
 
     implementations = {"pure": ExpandTileMaskGenPure}
@@ -98,13 +102,10 @@ class TileMaskGen(nodes.LibraryNode):
 
         :param name: Node label.
         :param widths: Per-dim mask widths, innermost-last.
-        :param iter_vars: Per-dim outer iter-var name (length matches
-            ``widths``).
-        :param global_ubs: Per-dim exclusive upper-bound expressions
-            (length matches ``widths``).
+        :param iter_vars: Per-dim outer iter-var name.
+        :param global_ubs: Per-dim exclusive upper-bound expressions.
         :param location: Optional DaCe node location override.
-        :raises ValueError: If the three lists have mismatched lengths,
-            or ``widths`` is empty / longer than 3.
+        :raises ValueError: On length mismatch or invalid K.
         """
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileMaskGen: widths length {len(widths)} not in {{1, 2, 3}}")
@@ -118,14 +119,11 @@ class TileMaskGen(nodes.LibraryNode):
         self.iter_vars = list(iter_vars)
         self.global_ubs = list(global_ubs)
 
-    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[dace.data.Data]:
-        """Confirm ``_o`` is connected and its descriptor has the
-        expected ``bool`` dtype.
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
+        """Confirm ``_o`` is connected and the descriptor has ``bool``.
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :returns: ``(mask_arr,)`` (one-element tuple to mirror the
-            other lib nodes' validate signature).
         :raises ValueError: If ``_o`` is not connected or has the
             wrong dtype.
         """
@@ -135,4 +133,3 @@ class TileMaskGen(nodes.LibraryNode):
         mask_arr = sdfg.arrays[out_e["_o"].data.data]
         if mask_arr.dtype != dace.bool_:
             raise ValueError(f"{self.label}: _o must have dtype bool_, got {mask_arr.dtype}")
-        return (mask_arr,)

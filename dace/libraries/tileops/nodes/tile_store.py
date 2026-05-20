@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileStore`` — write a K-dim tile back into a global array.
 
-Symmetric to :class:`TileLoad`. The destination memlet's subset selects
-the tile region in the parent array; the pure expansion does a strided
-element-wise copy with optional per-lane mask gating.
+Symmetric to :class:`TileLoad`; the pure expansion emits a CPP tasklet
+that walks the K-fold nested index space.
 """
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
+from functools import reduce
+from operator import mul
 
 import dace
 from dace import library, properties
@@ -15,69 +16,60 @@ from dace.transformation.transformation import ExpandTransformation
 
 @library.expansion
 class ExpandTileStorePure(ExpandTransformation):
-    """K-fold nested-Map copy with optional per-lane mask gating."""
+    """Correctness-only CPP tasklet copying ``_src`` into the tile region of ``_dst``."""
 
     environments = []
 
     @staticmethod
-    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        """Build a nested SDFG copying ``_src`` into the tile region of
-        ``_dst``, gated by ``_mask`` when present.
+    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a CPP tasklet that copies ``_src`` into the tile
+        region of the destination, optionally gated by ``_mask``.
+
+        Destination offsets use the destination array's per-dim strides
+        (read from the connector descriptor at expansion time) scaled
+        by an optional :attr:`dim_strides` coefficient (defaulting to 1).
 
         :param node: The ``TileStore`` lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: Nested SDFG that replaces the lib node in place.
+        :returns: A CPP tasklet replacing the lib node in place.
         """
-        src_arr, dst_arr, mask_arr, dst_subset = node.validate(parent_sdfg, parent_state)
+        from dace.symbolic import symstr
         widths = list(node.widths)
-        dim_strides = list(node.dim_strides) if node.dim_strides else [1] * len(widths)
-
-        sdfg = dace.SDFG(f"{node.label}_pure")
-        sdfg.add_array("_src", widths, src_arr.dtype, transient=False)
-        sdfg.add_array("_dst", dst_arr.shape, dst_arr.dtype, strides=dst_arr.strides, transient=False)
-        if node.has_mask:
-            sdfg.add_array("_mask", widths, dace.bool_, transient=False)
-
-        state = sdfg.add_state(f"{node.label}_state")
         K = len(widths)
-        map_params = [f"__l{k}" for k in range(K)]
-        map_rng = {p: f"0:{w}" for p, w in zip(map_params, widths)}
-        src_access = ", ".join(map_params)
-
-        if dst_subset is not None and len(dst_subset) == len(dst_arr.shape):
-            base_exprs = []
-            tile_dim = 0
-            for d, (b, e, s) in enumerate(dst_subset.ranges):
-                if b == e:
-                    base_exprs.append(str(b))
-                else:
-                    base_exprs.append(f"({b}) + {dim_strides[tile_dim]} * {map_params[tile_dim]}")
-                    tile_dim += 1
-            dst_access = ", ".join(base_exprs)
-        else:
-            dst_access = ", ".join(f"{dim_strides[k]} * {map_params[k]}" for k in range(K))
-
+        dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
+        dst_arr = parent_sdfg.arrays[dst_edge.data.data]
+        dst_strides = [symstr(s) for s in dst_arr.strides[-K:]]
+        coeff = list(node.dim_strides) if node.dim_strides else [1] * K
+        n = reduce(mul, widths, 1)
+        rem_var = "__rem"
+        decoders = []
+        for k in reversed(range(K)):
+            decoders.append(f"        const std::size_t __l{k} = {rem_var} % {widths[k]};")
+            decoders.append(f"        {rem_var} /= {widths[k]};")
+        decoders_block = "\n".join(decoders)
+        dst_offset = " + ".join(
+            f"({coeff[k]} * ({dst_strides[k]}) * __l{k})" for k in range(K)
+        ) if K else "0"
         if node.has_mask:
-            body = "__output = __src if __mask else 0"
-            inputs = {
-                "__src": dace.Memlet(f"_src[{src_access}]"),
-                "__mask": dace.Memlet(f"_mask[{src_access}]"),
-            }
+            body_inner = f"        if (_mask[__k]) {{ _dst[{dst_offset}] = _src[__k]; }}"
         else:
-            body = "__output = __src"
-            inputs = {"__src": dace.Memlet(f"_src[{src_access}]")}
-        outputs = {"__output": dace.Memlet(f"_dst[{dst_access}]")}
-
-        state.add_mapped_tasklet(
-            f"{node.label}_tasklet",
-            map_rng,
-            inputs,
-            body,
-            outputs,
-            external_edges=True,
+            body_inner = f"        _dst[{dst_offset}] = _src[__k];"
+        code = (
+            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
+            f"        std::size_t {rem_var} = __k;\n"
+            f"{decoders_block}\n"
+            f"{body_inner}\n"
+            f"}}"
         )
-        return sdfg
+        inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
+        return nodes.Tasklet(
+            label=f"{node.label}_pure",
+            inputs={c: None for c in inputs},
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 @library.node
@@ -139,17 +131,11 @@ class TileStore(nodes.LibraryNode):
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         self.has_mask = has_mask
 
-    def validate(
-        self,
-        sdfg: dace.SDFG,
-        state: dace.SDFGState,
-    ) -> Tuple[dace.data.Data, dace.data.Data, Optional[dace.data.Data], Optional[dace.subsets.Range]]:
-        """Look up data descriptors and the destination-edge subset.
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
+        """Check connectors.
 
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
-        :returns: ``(src_arr, dst_arr, mask_arr_or_None,
-            dst_subset_or_None)``.
         :raises ValueError: If a required connector is unconnected.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
@@ -160,8 +146,3 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        src_arr = sdfg.arrays[in_e["_src"].data.data]
-        dst_arr = sdfg.arrays[out_e["_dst"].data.data]
-        mask_arr = sdfg.arrays[in_e["_mask"].data.data] if self.has_mask else None
-        dst_subset = out_e["_dst"].data.subset
-        return src_arr, dst_arr, mask_arr, dst_subset

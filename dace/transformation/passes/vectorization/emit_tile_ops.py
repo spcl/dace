@@ -281,13 +281,45 @@ class EmitTileOps(ppl.Pass):
         promoted_subset = _tile_region_subset(per_iter_subset, spec.iter_vars, spec.widths)
         state.add_edge(in_edge.src, in_edge.src_conn, load, "_src",
                        dace.Memlet(data=src_name, subset=promoted_subset))
-        mask_access = state.add_access(mask_name)
+        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
         state.add_edge(mask_access, None, load, "_mask",
                        dace.Memlet(f"{mask_name}[{subset}]"))
         tile_access = state.add_access(tile_name)
         state.add_edge(load, "_dst", tile_access, None, dace.Memlet(f"{tile_name}[{subset}]"))
-        return tile_name
+        return tile_name, tile_access
+
+    def _find_mask_access(self, state: dace.SDFGState, mask_name: str) -> Optional[dace.nodes.AccessNode]:
+        """Return the AccessNode for ``mask_name`` placed by
+        :class:`GenerateTileIterationMask`, if present.
+
+        :param state: Parent state.
+        :param mask_name: Name of the iteration-mask transient.
+        :returns: The producer-fed access node, or ``None``.
+        """
+        producers = [
+            n for n in state.data_nodes()
+            if n.data == mask_name and state.in_edges(n)
+        ]
+        return producers[0] if producers else None
+
+    def _drop_mask_placeholder_edge(self, state: dace.SDFGState, mask_name: str, map_entry: MapEntry) -> None:
+        """Remove the placeholder empty-memlet edge
+        ``mask_access -> MapExit`` that
+        :class:`GenerateTileIterationMask` added to keep the
+        intermediate SDFG scope-valid.
+
+        :param state: Parent state.
+        :param mask_name: Name of the iteration-mask transient.
+        :param map_entry: Inner map entry whose exit holds the placeholder.
+        """
+        mask_access = self._find_mask_access(state, mask_name)
+        if mask_access is None:
+            return
+        map_exit = state.exit_node(map_entry)
+        for e in list(state.out_edges(mask_access)):
+            if e.dst is map_exit and (e.data is None or e.data.data is None):
+                state.remove_edge(e)
 
     def _rewrite_one_map(self,
                          state: dace.SDFGState,
@@ -331,16 +363,18 @@ class EmitTileOps(ppl.Pass):
 
         mask_name = TileNameScheme.ITER_MASK
 
-        a_tile_name = (
+        a_tile = (
             self._emit_tile_load(state, tasklet, a_conn, info_a[0], info_a[1], info_a[2], info_a[3],
                                  spec, mask_name)
-            if kind_a == "Tile" else None
+            if kind_a == "Tile" else (None, None)
         )
-        b_tile_name = (
+        b_tile = (
             self._emit_tile_load(state, tasklet, b_conn, info_b[0], info_b[1], info_b[2], info_b[3],
                                  spec, mask_name)
-            if kind_b == "Tile" else None
+            if kind_b == "Tile" else (None, None)
         )
+        a_tile_name, a_tile_access = a_tile
+        b_tile_name, b_tile_access = b_tile
 
         out_tile_name = self._add_tile_transient(
             state.sdfg, "_tile_out", out_dst_arr.dtype, spec.widths,
@@ -362,13 +396,11 @@ class EmitTileOps(ppl.Pass):
 
         subset = ", ".join(f"0:{w}" for w in spec.widths)
         if kind_a == "Tile":
-            a_access = state.add_access(a_tile_name)
-            state.add_edge(a_access, None, binop, "_a", dace.Memlet(f"{a_tile_name}[{subset}]"))
+            state.add_edge(a_tile_access, None, binop, "_a", dace.Memlet(f"{a_tile_name}[{subset}]"))
         if kind_b == "Tile":
-            b_access = state.add_access(b_tile_name)
-            state.add_edge(b_access, None, binop, "_b", dace.Memlet(f"{b_tile_name}[{subset}]"))
-        mask_access_for_binop = state.add_access(mask_name)
-        state.add_edge(mask_access_for_binop, None, binop, "_mask",
+            state.add_edge(b_tile_access, None, binop, "_b", dace.Memlet(f"{b_tile_name}[{subset}]"))
+        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
+        state.add_edge(mask_access, None, binop, "_mask",
                        dace.Memlet(f"{mask_name}[{subset}]"))
 
         out_access = state.add_access(out_tile_name)
@@ -377,8 +409,7 @@ class EmitTileOps(ppl.Pass):
         store = TileStore(name=f"{tasklet.label}_store", widths=spec.widths, has_mask=True)
         state.add_node(store)
         state.add_edge(out_access, None, store, "_src", dace.Memlet(f"{out_tile_name}[{subset}]"))
-        mask_access_for_store = state.add_access(mask_name)
-        state.add_edge(mask_access_for_store, None, store, "_mask",
+        state.add_edge(mask_access, None, store, "_mask",
                        dace.Memlet(f"{mask_name}[{subset}]"))
         state.add_edge(store, "_dst", out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=out_dst_name, subset=out_promoted_subset))
@@ -386,6 +417,7 @@ class EmitTileOps(ppl.Pass):
         for e in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
             state.remove_edge(e)
         state.remove_node(tasklet)
+        self._drop_mask_placeholder_edge(state, mask_name, map_entry)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
         """Walk every K-dim eligible inner map and emit the tile-op chain.
