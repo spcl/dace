@@ -2390,7 +2390,11 @@ def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 
 
 def test_s441():
-    LEN_1D_val = LEN_1D
+    # ``LEN_1D`` is reused as a ``dace.symbol`` below for the other tests,
+    # which shadows the int 64 defined just above. ``dace_s441`` was decorated
+    # while ``LEN_1D`` was still 64, so its arrays are sized 64; pin the
+    # numpy allocations to that same value directly to survive the rebinding.
+    LEN_1D_val = 64
 
     # Allocate random inputs
     a = np.random.rand(LEN_1D_val).astype(np.float64)

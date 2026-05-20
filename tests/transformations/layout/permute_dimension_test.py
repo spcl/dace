@@ -1,7 +1,7 @@
 import copy
 import numpy as np
 import dace
-from dace.transformation.layout.permute_dimensions import PermuteArrayDimensions
+from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 
 def test_standalone_execution():
@@ -48,7 +48,7 @@ def test_standalone_execution():
     transformed_sdfg.name = original_sdfg.name + "_transposed"
 
     # Apply transformations
-    PermuteArrayDimensions(
+    PermuteDimensions(
         permute_map={
             "vals_A": [0, 2, 1],
             "vals_B": [0, 2, 1]
