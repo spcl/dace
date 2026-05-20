@@ -219,11 +219,10 @@ class VectorizeCPU(ppl.Pipeline):
                              f"{sorted(s for s in _VALID_SVE_STYLE if s is not None)} or None, "
                              f"got {sve_style!r}")
         sve_fixed = False
+        sve_variable = False
         if sve_style is not None:
             if sve_style == "variable":
-                raise NotImplementedError("VectorizeCPU: sve_style='variable' (ARM SVE runtime vector length, "
-                                          "the Map->SVE-while lowering) is queued as the final SVE task; only "
-                                          "sve_style='fixed' (SVE-style on a fixed-width ISA) is on the roadmap now.")
+                sve_variable = True
             # Branch lowering is forced to the merge path: ``use_fp_factor``
             # defaults True (legacy), so rejecting it would force every
             # sve_style caller to also pass use_fp_factor=False. The
@@ -255,7 +254,7 @@ class VectorizeCPU(ppl.Pipeline):
             # scatter is safe (a per-lane scalar fan faults on inactive
             # lanes). The chain itself is the SveStyleFinalize
             # orchestrator appended after the shared front below.
-            sve_fixed = True
+            sve_fixed = (sve_style == "fixed")
             use_fp_factor = False
             branch_normalization = True
             lower_to_intrinsics = True
@@ -465,6 +464,19 @@ class VectorizeCPU(ppl.Pipeline):
                                      num_cores=num_cores,
                                      lower_to_intrinsics=lower_to_intrinsics,
                                      eliminate_trivial_vector_map=eliminate_trivial_vector_map))
+                self._applied_before = False
+                super().__init__(passes)
+                return
+            if sve_variable:
+                # SVE-style 'variable': true runtime VL (svwhilelt_b64 +
+                # svcntd outer loop with svld1/svadd/svst1 body). Replaces
+                # each recognised innermost map body with a CPP tasklet
+                # whose body is the SVE while-loop pattern, guarded with
+                # ``#if defined(__ARM_FEATURE_SVE)`` + scalar fallback so
+                # the SDFG compiles on x86 (fallback executes; the SVE
+                # branch is taken on SVE hosts).
+                from dace.transformation.passes.vectorization.vectorize_sve import SveStyleVariableFinalize
+                passes.append(SveStyleVariableFinalize())
                 self._applied_before = False
                 super().__init__(passes)
                 return
