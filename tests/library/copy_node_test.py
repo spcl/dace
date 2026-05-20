@@ -256,6 +256,80 @@ def test_copy_rank_mismatch_strided_subset_raises():
         sdfg.expand_library_nodes()
 
 
+def test_copy_4d_to_1d_flatten_c_packed():
+    """4D -> 1D flatten via MappedTasklet rank-mismatch (extends beyond the 3D->1D coverage)."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (2, 3, 4, 5), (120, ), name="copy_4d_to_1d_c")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src = np.arange(120, dtype=np.float64).reshape(2, 3, 4, 5).copy(order='C')
+    dst = np.zeros(120, dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.ravel(order='C'))
+
+
+def test_copy_1d_to_4d_inflate_c_packed():
+    """1D -> 4D inflate (higher-rank destination); inverse direction of the flatten path."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (24, ), (2, 3, 4), name="copy_1d_to_3d_c")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src = np.arange(24, dtype=np.float64)
+    dst = np.zeros((2, 3, 4), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.reshape(2, 3, 4))
+
+
+def test_copy_3d_to_2d_collapse_first_two_dims():
+    """3D -> 2D collapse the first two dims: (2,3,4) -> (6,4). C-order means
+    rows of dst correspond to (i, j) pairs of src in lexicographic order."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (2, 3, 4), (6, 4), name="copy_3d_to_2d_collapse")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src = np.arange(24, dtype=np.float64).reshape(2, 3, 4).copy(order='C')
+    dst = np.zeros((6, 4), dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.reshape(6, 4))
+
+
+def test_copy_4d_to_2d_collapse_pair_dims_fortran():
+    """4D -> 2D Fortran-packed reshape: walk both sides in column-major order."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (2, 3, 4, 5), (6, 20),
+                                                in_strides=(1, 2, 6, 24),
+                                                out_strides=(1, 6),
+                                                name="copy_4d_to_2d_f")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src = np.arange(120, dtype=np.float64).reshape(2, 3, 4, 5, order='F').copy(order='F')
+    dst = np.zeros((6, 20), dtype=np.float64, order='F')
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src.reshape(6, 20, order='F'))
+
+
+def test_copy_strided_step_2_cpu_same_rank():
+    """Same-rank 1D copy with subset step=2 (visits every other element).
+    The wrapper SDFG carries the step in its array's strides; MappedTasklet's
+    per-element loop hits the right physical addresses."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (10, ), (5, ),
+                                                in_subset="0:10:2",
+                                                out_subset="0:5",
+                                                name="copy_step2_cpu")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src = np.arange(10, dtype=np.float64)
+    dst = np.zeros(5, dtype=np.float64)
+    sdfg(src=src, dst=dst)
+    assert np.array_equal(dst, src[0:10:2])
+
+
 @pytest.mark.gpu
 def test_copy_pure_gpu():
     """Pure (mapped tasklet) expansion on GPU_Global -> GPU_Global."""
@@ -1108,6 +1182,13 @@ if __name__ == "__main__":
     test_copy_rank_mismatch_mixed_layouts_raises()
     test_copy_rank_mismatch_padded_src_raises()
     test_copy_rank_mismatch_strided_subset_raises()
+
+    # Edge cases (Auto-routed; numpy correctness check)
+    test_copy_4d_to_1d_flatten_c_packed()
+    test_copy_1d_to_4d_inflate_c_packed()
+    test_copy_3d_to_2d_collapse_first_two_dims()
+    test_copy_4d_to_2d_collapse_pair_dims_fortran()
+    test_copy_strided_step_2_cpu_same_rank()
 
     # GPU tests
     test_copy_pure_gpu()
