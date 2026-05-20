@@ -84,10 +84,9 @@ def _fortran_strides(shape):
 
 def test_copy_pure_cpu():
     """Pure (mapped tasklet) expansion on CPU_Heap -> CPU_Heap."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=cpu, subset="150:200", name="A"),
-        _ArraySpec(shape=[200], storage=cpu, subset="50:100", name="B"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="150:200", name="A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="50:100", name="B"),
         implementation="MappedTasklet",
         name="copy_pure_cpu",
     )
@@ -107,10 +106,9 @@ def test_copy_pure_cpu():
 
 def test_copy_cpu_memcpy():
     """CPU expansion (std::memcpy) on CPU_Heap -> CPU_Heap."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=cpu, subset="150:200", name="A"),
-        _ArraySpec(shape=[200], storage=cpu, subset="50:100", name="B"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="150:200", name="A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="50:100", name="B"),
         implementation="MemcpyCPU",
         name="copy_cpu_memcpy",
     )
@@ -128,10 +126,9 @@ def test_copy_cpu_memcpy():
 
 def test_copy_fortran_packed_same_rank():
     """Same-rank Fortran-packed (column-major) copy lowers via the Auto-routed MappedTasklet."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(4, 5, 6), storage=cpu, strides=(1, 4, 20)),
-        _ArraySpec(shape=(4, 5, 6), storage=cpu, strides=(1, 4, 20)),
+        _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
+        _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
         name="copy_fortran_packed_same_rank",
     )
     sdfg.validate()
@@ -146,10 +143,15 @@ def test_copy_fortran_packed_same_rank():
 
 def test_copy_fortran_packed_strided_slice():
     """Same-rank Fortran-packed strided-slice copy via the Auto-routed MappedTasklet."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(8, 10, 12), storage=cpu, strides=(1, 8, 80), subset="2:6, 3:7, 4:8"),
-        _ArraySpec(shape=(8, 10, 12), storage=cpu, strides=(1, 8, 80), subset="2:6, 3:7, 4:8"),
+        _ArraySpec(shape=(8, 10, 12),
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 8, 80),
+                   subset="2:6, 3:7, 4:8"),
+        _ArraySpec(shape=(8, 10, 12),
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 8, 80),
+                   subset="2:6, 3:7, 4:8"),
         name="copy_fortran_packed_strided_slice",
     )
     sdfg.validate()
@@ -167,10 +169,9 @@ def test_copy_fortran_packed_strided_slice():
 
 def test_copy_mixed_c_fortran_via_mapped_tasklet():
     """Mixed C-packed -> Fortran-packed same-rank copy lowers via MappedTasklet."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(6, 7), storage=cpu, strides=(7, 1)),
-        _ArraySpec(shape=(6, 7), storage=cpu, strides=(1, 6)),
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.CPU_Heap, strides=(7, 1)),
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 6)),
         name="copy_mixed_c_fortran",
     )
     sdfg.validate()
@@ -185,12 +186,11 @@ def test_copy_mixed_c_fortran_via_mapped_tasklet():
 
 def test_copy_rank_mismatch_mixed_layouts_raises():
     """Rank-mismatch with mixed C/F packed layouts is rejected (1-D walker has no shared layout)."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     # src is C-packed (3, 8) -- strides (8, 1); dst is Fortran-packed (2, 3, 4)
     # -- strides (1, 2, 6). Same volume = 24.
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(3, 8), storage=cpu),
-        _ArraySpec(shape=(2, 3, 4), storage=cpu, strides=(1, 2, 6)),
+        _ArraySpec(shape=(3, 8), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(2, 3, 4), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 2, 6)),
         name="copy_rank_mismatch_mixed_raises",
     )
     sdfg.validate()
@@ -200,11 +200,13 @@ def test_copy_rank_mismatch_mixed_layouts_raises():
 
 def test_copy_rank_mismatch_padded_src_raises():
     """Rank-mismatch with padded (neither C- nor F-packed) strides is rejected."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     # src padded (row stride 8 instead of 6), dst flat (120,).
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(4, 5, 6), storage=cpu, strides=(5 * 8, 8, 1), total_size=4 * 5 * 8),
-        _ArraySpec(shape=(120, ), storage=cpu),
+        _ArraySpec(shape=(4, 5, 6),
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(5 * 8, 8, 1),
+                   total_size=4 * 5 * 8),
+        _ArraySpec(shape=(120, ), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_rank_mismatch_padded_raises",
     )
     sdfg.validate()
@@ -214,10 +216,9 @@ def test_copy_rank_mismatch_padded_src_raises():
 
 def test_copy_rank_mismatch_strided_subset_raises():
     """Rank-mismatch with a non-contiguous src subset is rejected (1-D walker requires contiguous data)."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(8, 10), storage=cpu, subset="0:8, 2:6"),
-        _ArraySpec(shape=(32, ), storage=cpu),
+        _ArraySpec(shape=(8, 10), storage=dace.dtypes.StorageType.CPU_Heap, subset="0:8, 2:6"),
+        _ArraySpec(shape=(32, ), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_rank_mismatch_strided_subset",
     )
     sdfg.validate()
@@ -227,10 +228,9 @@ def test_copy_rank_mismatch_strided_subset_raises():
 
 def test_copy_rank_mismatch_strided_dst_subset_raises():
     """Symmetric to the src-side variant: non-contiguous subset on the dst side is rejected."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(32, ), storage=cpu),
-        _ArraySpec(shape=(8, 10), storage=cpu, subset="0:8, 2:6"),
+        _ArraySpec(shape=(32, ), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(8, 10), storage=dace.dtypes.StorageType.CPU_Heap, subset="0:8, 2:6"),
         name="copy_rank_mismatch_strided_dst_subset",
     )
     sdfg.validate()
@@ -240,11 +240,10 @@ def test_copy_rank_mismatch_strided_dst_subset_raises():
 
 def test_copy_same_subset_different_array_shapes():
     """A ``0:N`` slice copies between arrays of different total shape as long as the per-dim subset sizes match."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     N = 10
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(200, ), storage=cpu, subset=f"0:{N}", name="A"),
-        _ArraySpec(shape=(500, ), storage=cpu, subset=f"0:{N}", name="B"),
+        _ArraySpec(shape=(200, ), storage=dace.dtypes.StorageType.CPU_Heap, subset=f"0:{N}", name="A"),
+        _ArraySpec(shape=(500, ), storage=dace.dtypes.StorageType.CPU_Heap, subset=f"0:{N}", name="B"),
         name="copy_same_subset_diff_shape",
     )
     sdfg.expand_library_nodes()
@@ -258,10 +257,9 @@ def test_copy_same_subset_different_array_shapes():
 
 def test_copy_1d_slice_from_2d_source():
     """A row-slice ``[i, 0:N]`` of a 2D array copies into a 1D array (singleton dims collapse to same rank)."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(5, 10), storage=cpu, subset="2, 0:10", name="A"),
-        _ArraySpec(shape=(10, ), storage=cpu, subset="0:10", name="B"),
+        _ArraySpec(shape=(5, 10), storage=dace.dtypes.StorageType.CPU_Heap, subset="2, 0:10", name="A"),
+        _ArraySpec(shape=(10, ), storage=dace.dtypes.StorageType.CPU_Heap, subset="0:10", name="B"),
         name="copy_1d_slice_from_2d",
     )
     sdfg.expand_library_nodes()
@@ -275,10 +273,9 @@ def test_copy_1d_slice_from_2d_source():
 
 def test_copy_transpose_pattern_rejected():
     """Same-rank copy with per-dim shapes swapped (transpose) is rejected upfront."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=(3, 4), storage=cpu),
-        _ArraySpec(shape=(4, 3), storage=cpu),
+        _ArraySpec(shape=(3, 4), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(4, 3), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_transpose_pattern",
     )
     sdfg.validate()
@@ -288,10 +285,9 @@ def test_copy_transpose_pattern_rejected():
 
 def test_copy_4d_to_1d_flatten_c_packed():
     """4D -> 1D flatten via MappedTasklet rank-mismatch (extends beyond the 3D->1D coverage)."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(2, 3, 4, 5), storage=cpu),
-        _ArraySpec(shape=(120, ), storage=cpu),
+        _ArraySpec(shape=(2, 3, 4, 5), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(120, ), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_4d_to_1d_c",
     )
     sdfg.validate()
@@ -306,10 +302,9 @@ def test_copy_4d_to_1d_flatten_c_packed():
 
 def test_copy_1d_to_4d_inflate_c_packed():
     """1D -> 4D inflate (higher-rank destination); inverse direction of the flatten path."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(24, ), storage=cpu),
-        _ArraySpec(shape=(2, 3, 4), storage=cpu),
+        _ArraySpec(shape=(24, ), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(2, 3, 4), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_1d_to_3d_c",
     )
     sdfg.validate()
@@ -324,10 +319,9 @@ def test_copy_1d_to_4d_inflate_c_packed():
 
 def test_copy_3d_to_2d_collapse_first_two_dims():
     """3D -> 2D collapse of the first two dims (C-order) via MappedTasklet rank-mismatch."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(2, 3, 4), storage=cpu),
-        _ArraySpec(shape=(6, 4), storage=cpu),
+        _ArraySpec(shape=(2, 3, 4), storage=dace.dtypes.StorageType.CPU_Heap),
+        _ArraySpec(shape=(6, 4), storage=dace.dtypes.StorageType.CPU_Heap),
         name="copy_3d_to_2d_collapse",
     )
     sdfg.validate()
@@ -342,10 +336,9 @@ def test_copy_3d_to_2d_collapse_first_two_dims():
 
 def test_copy_4d_to_2d_collapse_pair_dims_fortran():
     """4D -> 2D Fortran-packed reshape: walk both sides in column-major order."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(2, 3, 4, 5), storage=cpu, strides=(1, 2, 6, 24)),
-        _ArraySpec(shape=(6, 20), storage=cpu, strides=(1, 6)),
+        _ArraySpec(shape=(2, 3, 4, 5), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 2, 6, 24)),
+        _ArraySpec(shape=(6, 20), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 6)),
         name="copy_4d_to_2d_f",
     )
     sdfg.validate()
@@ -360,10 +353,9 @@ def test_copy_4d_to_2d_collapse_pair_dims_fortran():
 
 def test_copy_strided_step_2_cpu_same_rank():
     """Same-rank 1D copy with subset step=2 (every other element)."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
-        _ArraySpec(shape=(10, ), storage=cpu, subset="0:10:2"),
-        _ArraySpec(shape=(5, ), storage=cpu, subset="0:5"),
+        _ArraySpec(shape=(10, ), storage=dace.dtypes.StorageType.CPU_Heap, subset="0:10:2"),
+        _ArraySpec(shape=(5, ), storage=dace.dtypes.StorageType.CPU_Heap, subset="0:5"),
         name="copy_step2_cpu",
     )
     sdfg.validate()
@@ -381,10 +373,9 @@ def test_copy_pure_gpu():
     """Pure (mapped tasklet) expansion on GPU_Global -> GPU_Global."""
     import cupy as cp
 
-    gpu = dace.dtypes.StorageType.GPU_Global
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=gpu, subset="150:200", name="gpu_A"),
-        _ArraySpec(shape=[200], storage=gpu, subset="50:100", name="gpu_B"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="150:200", name="gpu_A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="50:100", name="gpu_B"),
         implementation="MappedTasklet",
         name="copy_pure_gpu",
     )
@@ -407,10 +398,9 @@ def test_copy_cuda_d2d():
     """CUDA expansion (cudaMemcpyDeviceToDevice) on GPU_Global -> GPU_Global."""
     import cupy as cp
 
-    gpu = dace.dtypes.StorageType.GPU_Global
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=gpu, subset="150:200", name="gpu_A"),
-        _ArraySpec(shape=[200], storage=gpu, subset="50:100", name="gpu_B"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="150:200", name="gpu_A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="50:100", name="gpu_B"),
         implementation="MemcpyCUDA1D",
         name="copy_cuda_d2d",
     )
@@ -536,11 +526,10 @@ def test_copy_fortran_packed_cpu_default_pure():
     shape = (4, 5, 6)
     f_strides = _fortran_strides(shape)
     total = int(np.prod(shape))
-    cpu = dace.dtypes.StorageType.CPU_Heap
 
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=shape, storage=cpu, strides=f_strides, total_size=total),
-        _ArraySpec(shape=shape, storage=cpu, strides=f_strides, total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.CPU_Heap, strides=f_strides, total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.CPU_Heap, strides=f_strides, total_size=total),
         name="copy_fortran_cpu",
         libnode_name="cp_fortran_cpu",
     )
@@ -563,11 +552,10 @@ def test_copy_fortran_packed_gpu_falls_back_to_pure():
     shape = (4, 5, 6)
     f_strides = _fortran_strides(shape)
     total = int(np.prod(shape))
-    gpu = dace.dtypes.StorageType.GPU_Global
 
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=shape, storage=gpu, strides=f_strides, total_size=total),
-        _ArraySpec(shape=shape, storage=gpu, strides=f_strides, total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.GPU_Global, strides=f_strides, total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.GPU_Global, strides=f_strides, total_size=total),
         implementation="MemcpyCUDA1D",
         name="copy_fortran_gpu",
         libnode_name="cp_fortran_gpu",
@@ -594,14 +582,8 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     total = int(np.prod(shape))
 
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=shape,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=f_strides,
-                   total_size=total),
-        _ArraySpec(shape=shape,
-                   storage=dace.dtypes.StorageType.GPU_Global,
-                   strides=f_strides,
-                   total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.CPU_Heap, strides=f_strides, total_size=total),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.GPU_Global, strides=f_strides, total_size=total),
         implementation="MemcpyCUDA1D",
         name="copy_fortran_h2d",
         libnode_name="cp_fortran_h2d",
@@ -618,7 +600,7 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
 
 
 def test_copy_no_common_stride1_axis_raises():
-    """Cross-CPU/GPU copy with no shared stride-1 axis is rejected (uses a partial subset to skip the contiguous early-exit)."""
+    """Cross-CPU/GPU copy with no shared stride-1 axis is rejected."""
     # src C-packed (stride-1 innermost), dst Fortran-packed (stride-1
     # outermost): after the partial slice the two have no shared stride-1 axis.
     shape = (4, 5, 6)
@@ -681,10 +663,9 @@ def test_copy_cross_storage_validation_rejects_without_flag():
 
 def test_copy_dtype_mismatch_rejected():
     """CopyLibraryNode must reject mismatched dtypes."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[10], storage=cpu, dtype=dace.float32, name="A"),
-        _ArraySpec(shape=[10], storage=cpu, dtype=dace.float64, name="B"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
         name="dtype_mismatch",
         libnode_name="cp_bad",
     )
@@ -694,11 +675,10 @@ def test_copy_dtype_mismatch_rejected():
 
 def test_cpu_memcpy_rejects_non_contiguous_subset():
     """CPU (memcpy) expansion must reject a non-contiguous 2D slice."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     # Partial dim 0 over a smaller dim 1 makes the source slice non-contiguous.
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[10, 20], storage=cpu, subset="2:6, 0:10", name="A"),
-        _ArraySpec(shape=[4, 20], storage=cpu, subset="0:4, 0:10", name="B"),
+        _ArraySpec(shape=[10, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="2:6, 0:10", name="A"),
+        _ArraySpec(shape=[4, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="0:4, 0:10", name="B"),
         implementation="MemcpyCPU",
         name="cpu_noncontig",
         libnode_name="cp_nc",
@@ -709,10 +689,9 @@ def test_cpu_memcpy_rejects_non_contiguous_subset():
 
 def test_strided_expansions_accept_non_contiguous():
     """The ``MappedTasklet`` expansion accepts a non-contiguous subset."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[10, 20], storage=cpu, subset="2:6, 0:10", name="A"),
-        _ArraySpec(shape=[4, 20], storage=cpu, subset="0:4, 0:10", name="B"),
+        _ArraySpec(shape=[10, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="2:6, 0:10", name="A"),
+        _ArraySpec(shape=[4, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="0:4, 0:10", name="B"),
         implementation="MappedTasklet",
         name="noncontig_MappedTasklet",
     )
@@ -742,10 +721,9 @@ def test_register_copy_expands_with_register_storage():
 
 def test_direct_assignment_cpu_same_storage():
     """``Tasklet`` impl on CPU_Heap -> CPU_Heap (single element) compiles and runs."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[4], storage=cpu, subset="2:3", name="A"),
-        _ArraySpec(shape=[4], storage=cpu, subset="1:2", name="B"),
+        _ArraySpec(shape=[4], storage=dace.dtypes.StorageType.CPU_Heap, subset="2:3", name="A"),
+        _ArraySpec(shape=[4], storage=dace.dtypes.StorageType.CPU_Heap, subset="1:2", name="B"),
         implementation="Tasklet",
         name="direct_assign_cpu",
     )
@@ -922,10 +900,9 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
 
 def test_copy_pure_cpu_2d():
     """Pure expansion on a 2D slice copy, CPU_Heap."""
-    cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[10, 20], storage=cpu, subset="2:8, 5:15", name="A"),
-        _ArraySpec(shape=[10, 20], storage=cpu, subset="0:6, 0:10", name="B"),
+        _ArraySpec(shape=[10, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="2:8, 5:15", name="A"),
+        _ArraySpec(shape=[10, 20], storage=dace.dtypes.StorageType.CPU_Heap, subset="0:6, 0:10", name="B"),
         implementation="MappedTasklet",
         name="copy_2d_cpu",
         libnode_name="cp2d",
@@ -999,7 +976,7 @@ def test_copy_single_element_d2h():
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
-    """Single-element in-kernel Register -> GPU_Global routes to a direct Tasklet (MappedTasklet would collapse to a 0-D map)."""
+    """Single-element in-kernel Register -> GPU_Global routes to a direct Tasklet, not MappedTasklet."""
     sdfg = dace.SDFG('reg_to_gpuglobal_in_kernel')
     sdfg.add_array('R', [1, 1, 1], dace.float64, dace.StorageType.Register, transient=True)
     sdfg.add_array('G', [4, 4, 4], dace.float64, dace.StorageType.GPU_Global, transient=True)
