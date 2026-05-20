@@ -538,7 +538,7 @@ def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
         B[i] = pow(A[i], 3.3)
 
 
-def test_log(remainder_strategy):
+def test_log(remainder_strategy, emission_style):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -557,10 +557,11 @@ def test_log(remainder_strategy):
                            vector_width=8,
                            sdfg_name=f"test_log",
                            from_sdfg=True,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style)
 
 
-def test_exp(remainder_strategy):
+def test_exp(remainder_strategy, emission_style):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -579,10 +580,11 @@ def test_exp(remainder_strategy):
                            vector_width=8,
                            sdfg_name=f"test_exp",
                            from_sdfg=True,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style)
 
 
-def test_pow(remainder_strategy):
+def test_pow(remainder_strategy, emission_style):
     # Create test arrays
     _S = 64
     A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
@@ -601,7 +603,8 @@ def test_pow(remainder_strategy):
                            vector_width=8,
                            sdfg_name=f"test_pow",
                            from_sdfg=True,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style)
 
 
 @dace.program
