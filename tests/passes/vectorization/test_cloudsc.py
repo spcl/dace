@@ -58,7 +58,7 @@ def cloudsc_snippet_two(
                 E[i, j] = 0.0
 
 
-def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy):
+def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style):
     _S = 64
     A = numpy.random.random((2, _S, _S))
     B = numpy.random.random((_S, _S))
@@ -80,7 +80,8 @@ def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy):
                            vector_width=8,
                            sdfg_name="cloudsc_snippet_two",
                            branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style)
 
 
 def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
@@ -140,7 +141,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                           "the vector width was produced")
 
 
-def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy):
+def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_style):
     klev = 64
     kfdia = 32
 
@@ -172,7 +173,8 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy):
                            sdfg_name="cloudsc_snippet_one",
                            cleanup=True,
                            branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy)
+                           remainder_strategy=remainder_strategy,
+                           emission_style=emission_style)
 
 
 def test_snippet_from_cloudsc_four(branch_mode, remainder_strategy):
