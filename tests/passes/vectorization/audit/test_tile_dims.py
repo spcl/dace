@@ -1,0 +1,190 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Unit tests for :class:`TileDimSpec`, :func:`classify_tile_access`
+and the :class:`MarkTileDims` validation pass.
+"""
+import pytest
+
+import dace
+from dace import subsets
+from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+from dace.transformation.passes.vectorization.utils.tile_dims import (
+    TileAccessKind,
+    TileDimSpec,
+    classify_tile_access,
+)
+
+
+@pytest.mark.parametrize("widths,iter_vars,global_ubs", [
+    ((8,), ("i",), ("N",)),
+    ((4, 8), ("i", "j"), ("M", "N")),
+    ((2, 4, 8), ("i", "j", "k"), ("M", "N", "K")),
+])
+def test_tile_dim_spec_accepts_K_1_2_3(widths, iter_vars, global_ubs):
+    """``TileDimSpec`` is the data structure for K = 1, 2, 3."""
+    spec = TileDimSpec(iter_vars=iter_vars, widths=widths, global_ubs=global_ubs)
+    assert spec.K == len(widths)
+    assert spec.widths == widths
+    assert spec.iter_vars == iter_vars
+    assert spec.global_ubs == global_ubs
+
+
+def test_tile_dim_spec_rejects_K_outside_1_3():
+    """K must be in ``{1, 2, 3}``."""
+    with pytest.raises(ValueError, match="K must be in"):
+        TileDimSpec(iter_vars=("i", "j", "k", "l"), widths=(2, 2, 2, 2),
+                    global_ubs=("A", "B", "C", "D"))
+    with pytest.raises(ValueError, match="K must be in"):
+        TileDimSpec(iter_vars=(), widths=(), global_ubs=())
+
+
+def test_tile_dim_spec_rejects_length_mismatch():
+    """The three tuples must agree on length."""
+    with pytest.raises(ValueError, match="lengths must agree"):
+        TileDimSpec(iter_vars=("i", "j"), widths=(8,), global_ubs=("N",))
+
+
+def test_classify_contiguous_1d():
+    """``A[i_0:i_0+W]`` with stride-1 array is :attr:`CONTIGUOUS`."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
+                          dace.symbolic.pystr_to_symbolic("i+7"),
+                          1)])
+    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.CONTIGUOUS
+    assert cls.dim_strides == (1,)
+
+
+def test_classify_strided_1d_with_array_stride():
+    """``A[i]`` on a non-unit-array-stride dim is :attr:`STRIDED`."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
+                          dace.symbolic.pystr_to_symbolic("i+7"),
+                          1)])
+    cls = classify_tile_access(sub, array_strides=(2,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.STRIDED
+    assert cls.dim_strides == (2,)
+
+
+def test_classify_strided_1d_with_linear_coeff():
+    """``A[2*i]`` on a unit-array-stride dim is :attr:`STRIDED` with coeff 2."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("2*i"),
+                          dace.symbolic.pystr_to_symbolic("2*i+14"),
+                          1)])
+    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.STRIDED
+    assert cls.dim_strides == (2,)
+
+
+def test_classify_broadcast_symbol_1d():
+    """``A[k]`` (where ``k`` is NOT in tile iter-vars) is :attr:`BROADCAST_SYMBOL`."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("k"),
+                          dace.symbolic.pystr_to_symbolic("k"),
+                          1)])
+    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.BROADCAST_SYMBOL
+    assert cls.dim_strides == (0,)
+
+
+def test_classify_contiguous_2d():
+    """``A[i, j]`` 2D contiguous (C-layout) under K=2 tiling."""
+    sub = subsets.Range([
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+3"), 1),
+        (dace.symbolic.pystr_to_symbolic("j"), dace.symbolic.pystr_to_symbolic("j+7"), 1),
+    ])
+    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("i", "j"))
+    assert cls.kind == TileAccessKind.STRIDED
+    assert cls.dim_strides == (8, 1)
+
+
+def test_classify_unrecognized_when_tile_var_missing():
+    """If a tile iter-var is referenced in NO subset dim, classifier
+    can't bind it — :attr:`UNRECOGNIZED`."""
+    sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
+                          dace.symbolic.pystr_to_symbolic("i+7"),
+                          1)])
+    cls = classify_tile_access(sub, array_strides=(1,), tile_iter_vars=("i", "j"))
+    assert cls.kind == TileAccessKind.UNRECOGNIZED
+
+
+def _build_k2_sdfg():
+    """Build a minimal 2D map SDFG for MarkTileDims tests."""
+    sdfg = dace.SDFG("k2_outer")
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    sdfg.add_array("A", (M, N), dace.float64)
+    sdfg.add_array("C", (M, N), dace.float64)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "body",
+        {"i": "0:M", "j": "0:N"},
+        {"_a": dace.Memlet("A[i, j]")},
+        "_c = _a",
+        {"_c": dace.Memlet("C[i, j]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_mark_tile_dims_picks_K_innermost():
+    """K=2 inner map yields a spec covering its 2 innermost params."""
+    sdfg = _build_k2_sdfg()
+    result = MarkTileDims(widths=(4, 8)).apply_pass(sdfg, {})
+    assert result is not None
+    assert len(result) == 1
+    spec = next(iter(result.values()))
+    assert spec.iter_vars == ("i", "j")
+    assert spec.widths == (4, 8)
+    assert spec.global_ubs == ("M", "N")
+
+
+def test_mark_tile_dims_K1_collapse():
+    """K=1 spec only takes the last param of the inner map."""
+    sdfg = _build_k2_sdfg()
+    result = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
+    assert result is not None
+    spec = next(iter(result.values()))
+    assert spec.iter_vars == ("j",)
+    assert spec.widths == (8,)
+    assert spec.global_ubs == ("N",)
+
+
+def test_mark_tile_dims_raises_on_too_few_params():
+    """A 1D map under K=2 raises ``NotImplementedError`` by default."""
+    sdfg = dace.SDFG("k1_outer")
+    N = dace.symbol("N")
+    sdfg.add_array("A", (N,), dace.float64)
+    sdfg.add_array("C", (N,), dace.float64)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "body",
+        {"i": "0:N"},
+        {"_a": dace.Memlet("A[i]")},
+        "_c = _a",
+        {"_c": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
+    with pytest.raises(NotImplementedError, match="< K=2"):
+        MarkTileDims(widths=(4, 8)).apply_pass(sdfg, {})
+
+
+def test_mark_tile_dims_soft_skip_ineligible():
+    """``skip_ineligible=True`` silently drops the ineligible map."""
+    sdfg = dace.SDFG("k1_outer_skip")
+    N = dace.symbol("N")
+    sdfg.add_array("A", (N,), dace.float64)
+    sdfg.add_array("C", (N,), dace.float64)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "body",
+        {"i": "0:N"},
+        {"_a": dace.Memlet("A[i]")},
+        "_c = _a",
+        {"_c": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
+    result = MarkTileDims(widths=(4, 8), skip_ineligible=True).apply_pass(sdfg, {})
+    assert result is None
+
+
+def test_mark_tile_dims_rejects_invalid_K_at_construction():
+    """Constructor refuses ``widths`` length outside ``{1, 2, 3}``."""
+    with pytest.raises(ValueError, match="length"):
+        MarkTileDims(widths=(2, 2, 2, 2))
