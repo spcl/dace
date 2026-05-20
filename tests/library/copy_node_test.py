@@ -236,6 +236,113 @@ def test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet():
     assert np.array_equal(dst_data, src_data)
 
 
+def test_copy_rank_mismatch_3d_to_1d_c_packed():
+    """Rank-mismatch reshape (3D->1D) with C-packed endpoints lowers via
+    ``MappedTasklet`` and a 1-D walker with ``int_floor``/``%`` delinearization."""
+    sdfg = dace.SDFG("copy_rank3_to_rank1_c")
+    sdfg.add_array("src", (4, 5, 6), dace.float64, dace.dtypes.StorageType.CPU_Heap, transient=False)
+    sdfg.add_array("dst", (120, ), dace.float64, dace.dtypes.StorageType.CPU_Heap, transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_3to1_c")
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:120]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet', (
+        f"Rank-mismatch must auto-route to MappedTasklet, got {libnode.implementation!r}.")
+
+    src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6).copy(order='C')
+    dst_data = np.zeros(120, dtype=np.float64)
+    sdfg(src=src_data, dst=dst_data)
+    assert np.array_equal(dst_data, src_data.ravel(order='C'))
+
+
+def test_copy_rank_mismatch_3d_to_1d_fortran_packed():
+    """Rank-mismatch reshape (3D->1D) with Fortran-packed endpoints: the
+    delinearization must use F-order strides (stride-1 is the *first* dim)."""
+    sdfg = dace.SDFG("copy_rank3_to_rank1_f")
+    sdfg.add_array("src", (4, 5, 6),
+                   dace.float64,
+                   dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 4, 20),
+                   total_size=120,
+                   transient=False)
+    sdfg.add_array("dst", (120, ),
+                   dace.float64,
+                   dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, ),
+                   total_size=120,
+                   transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_3to1_f")
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:120]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6, order='F').copy(order='F')
+    dst_data = np.zeros(120, dtype=np.float64)
+    sdfg(src=src_data, dst=dst_data)
+    assert np.array_equal(dst_data, src_data.ravel(order='F'))
+
+
+def test_copy_rank_mismatch_1d_to_2d_c_packed():
+    """Rank-mismatch reshape with the *output* being the higher-rank side."""
+    sdfg = dace.SDFG("copy_rank1_to_rank2_c")
+    sdfg.add_array("src", (12, ), dace.float64, dace.dtypes.StorageType.CPU_Heap, transient=False)
+    sdfg.add_array("dst", (3, 4), dace.float64, dace.dtypes.StorageType.CPU_Heap, transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_1to2_c")
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:12]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:3, 0:4]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
+
+    src_data = np.arange(12, dtype=np.float64)
+    dst_data = np.zeros((3, 4), dtype=np.float64)
+    sdfg(src=src_data, dst=dst_data)
+    assert np.array_equal(dst_data, src_data.reshape(3, 4))
+
+
+def test_copy_rank_mismatch_padded_src_raises():
+    """Rank-mismatch with a padded (non-packed) higher-rank side raises a clear
+    ``ValueError`` -- non-packed strides have no unambiguous 1-D linearization."""
+    # Shape (4, 5, 6) but row stride padded to 8 instead of 6.
+    sdfg = dace.SDFG("copy_rank3_to_rank1_padded_raises")
+    sdfg.add_array("src", (4, 5, 6),
+                   dace.float64,
+                   dace.dtypes.StorageType.CPU_Heap,
+                   strides=(5 * 8, 8, 1),
+                   total_size=4 * 5 * 8,
+                   transient=False)
+    sdfg.add_array("dst", (120, ), dace.float64, dace.dtypes.StorageType.CPU_Heap, transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp_3to1_padded_raises")
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:120]"))
+
+    sdfg.validate()
+    with pytest.raises(ValueError, match="packed"):
+        sdfg.expand_library_nodes()
+
+
 def test_copy_copynd_rejects_padded_strides():
     """``CopyND`` on padded (non-C-packed, non-Fortran-packed) strides raises ``ValueError`` matching ``C-packed``."""
     sdfg = dace.SDFG("copy_copynd_rejects_padded")
@@ -1241,6 +1348,10 @@ if __name__ == "__main__":
     test_copy_copynd_accepts_fortran_packed()
     test_copy_copynd_fortran_packed_strided_slice()
     test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet()
+    test_copy_rank_mismatch_3d_to_1d_c_packed()
+    test_copy_rank_mismatch_3d_to_1d_fortran_packed()
+    test_copy_rank_mismatch_1d_to_2d_c_packed()
+    test_copy_rank_mismatch_padded_src_raises()
     test_copy_copynd_rejects_padded_strides()
 
     # GPU tests

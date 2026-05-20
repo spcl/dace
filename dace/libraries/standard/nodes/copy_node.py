@@ -31,6 +31,25 @@ def _both_packed_same_layout(inp, out):
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
 
 
+def _delinearized_index(b_i, shape, layout):
+    """Multi-dim index expressions for a 1-D walker into a packed-layout array.
+
+    :param b_i: the 1-D map symbol.
+    :param shape: per-dim extents in descriptor order.
+    :param layout: ``'C'`` (stride-1 is the last dim) or ``'F'`` (stride-1 is the first dim).
+    :returns: list of per-dim symbolic index expressions, in descriptor order.
+    """
+    cum_strides = []
+    cum = 1
+    iter_shape = reversed(shape) if layout == 'C' else iter(shape)
+    for s in iter_shape:
+        cum_strides.append(cum)
+        cum *= s
+    if layout == 'C':
+        cum_strides.reverse()
+    return [symbolic.int_floor(b_i, cum_strides[d]) % shape[d] for d in range(len(shape))]
+
+
 def _coarse_pick_for_storage_pair(src_storage, dst_storage):
     """Return ``'MemcpyCUDA1D'`` for any copy involving GPU_Global on at
     least one side, else ``None``. Direction (H2D / D2H / D2D) is inferred
@@ -65,6 +84,8 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     # 1. GPU_Shared involvement -> block-cooperative ``SharedMemoryCollective``
     # (``dace::CopyND<>`` + ``__syncthreads()``). Shared memory is per-block
     # and only meaningful inside a kernel scope.
+    # FUTURE WORK: write a fast ND<->ND shared-memory collective load (128-bit
+    # transactions, vectorized) and route here instead of going through CopyND.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         return 'SharedMemoryCollective'
 
@@ -100,25 +121,16 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     impl = _coarse_pick_for_storage_pair(inp.storage, out.storage)
 
     # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
-    # same-side mapped tasklet or CopyNDTemplate).
+    # MappedTasklet for same-side strided).
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg)
         if refined is not None:
             impl = refined
 
-    # 6. Rank-mismatched volume-equal copies (e.g. reshape between arrays of
-    # different rank). MappedTasklet emits a single access expression for both
-    # endpoints and would write a rank-N memlet against a rank-M descriptor;
-    # route to CopyNDTemplate which flattens to a 1D pointer walk when both
-    # sides are C-packed contiguous.
-    if impl is None or impl == 'MappedTasklet':
-        in_shape_c, _ = collapse_shape_and_strides(in_subset, inp.strides)
-        out_shape_c, _ = collapse_shape_and_strides(out_subset, out.strides)
-        if len(in_shape_c) != len(out_shape_c):
-            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and _both_packed_same_layout(inp, out)
-                    and in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-                return 'CopyNDTemplate'
-
+    # Rank-mismatched same-side copies fall through to MappedTasklet too --
+    # the expansion handles rank mismatch by delinearizing the higher-rank
+    # side via ``int_floor``/``%`` on a 1-D map walker. Cross CPU/GPU rank
+    # mismatch is already caught by earlier guards (Step 4 / refine).
     return impl or 'MappedTasklet'
 
 
@@ -140,8 +152,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
     Picks ``MemcpyCUDA2D`` (1-or-2D strided patterns), ``MappedTasklet``
-    (same-side GPU strided inside a kernel), ``CopyNDTemplate``
-    (same-side CPU C-packed), or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
+    (same-side strided, GPU or CPU) or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
@@ -171,19 +182,10 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
             and in_shape_collapsed[0] == out_shape_collapsed[0]):
         return 'MemcpyCUDA2D'
 
-    # Same-side strided ND. CopyNDTemplate is the efficient route on the CPU
-    # side (host-issued unrolled loop) but would dereference device pointers
-    # from the host on a GPU<->GPU copy. For GPU same-side, MappedTasklet
-    # lands the loop inside a GPU_Device kernel -- the only safe place for
-    # device-side pointer arithmetic. Same fallback for Fortran-packed /
-    # padded arrays on either side.
+    # Same-side strided ND -- MappedTasklet. The codegen emits the same nested
+    # loops as ``dace::CopyND<>`` would, so routing through the C++ template
+    # adds no benefit and gives less analyzable IR.
     if not _is_cross_cpu_gpu(inp.storage, out.storage):
-        gpu_side = (inp.storage == dtypes.StorageType.GPU_Global or out.storage == dtypes.StorageType.GPU_Global
-                    or inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared)
-        if gpu_side:
-            return 'MappedTasklet'
-        if _both_packed_same_layout(inp, out):
-            return 'CopyNDTemplate'
         return 'MappedTasklet'
 
     # Cross-boundary ND-strided: Sequential map of cudaMemcpyAsync along any
@@ -312,16 +314,48 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
 
     ctx.sdfg.schedule = dtypes.ScheduleType.Default
 
-    map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
-    map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
-    access_expr = ','.join(map_params)
     # Inner Tasklet connectors; local to this wrapper SDFG. Plain ``_in`` /
     # ``_out`` are safe inside the wrapper's namespace and must differ from
     # the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.) since
     # those are reserved by the wrapper for the parameter arrays.
     inner_in, inner_out = "_in", "_out"
-    inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
-    outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    in_shape, out_shape = ctx.in_shape_collapsed, ctx.out_shape_collapsed
+
+    if len(in_shape) == len(out_shape):
+        # Same-rank: per-dim map params, shared access expression on both sides.
+        map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
+        map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
+        access_expr = ','.join(map_params)
+        inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
+        outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    else:
+        # MappedTasklet's per-dim map fails when src/dst have different ranks
+        # (same access expression cannot match two different descriptor ranks).
+        # Rank-mismatch: 1-D map of total volume, delinearize each side's index
+        # from the walker (``_delinearized_index``). Both sides must share the
+        # same packed layout; mixed C/F or non-packed have no unambiguous
+        # linearization and raise.
+        if not _both_packed_same_layout(inp, out):
+            raise ValueError(f"Rank-mismatched copy requires both endpoints to be packed in the same major "
+                             f"order (both C-contiguous or both Fortran-contiguous); got src strides "
+                             f"{tuple(inp.strides)}, dst strides {tuple(out.strides)}.")
+        layout = 'C' if inp.is_packed_c_strides() else 'F'
+
+        total = 1
+        for s in in_shape:
+            total *= s
+        b_i_name = "__b_i"
+        b_i = symbolic.symbol(b_i_name)
+        map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
+
+        def _side_access(arr_name, shape):
+            if len(shape) == 1:
+                return f"{arr_name}[{b_i_name}]"
+            idx = _delinearized_index(b_i, shape, layout)
+            return f"{arr_name}[{','.join(sym2cpp(e) for e in idx)}]"
+
+        inputs = {inner_in: dace.memlet.Memlet(_side_access(ctx.inp_name, in_shape))}
+        outputs = {inner_out: dace.memlet.Memlet(_side_access(ctx.out_name, out_shape))}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
