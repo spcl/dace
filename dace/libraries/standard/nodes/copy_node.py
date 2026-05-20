@@ -309,17 +309,18 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
     map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
     access_expr = ','.join(map_params)
-    # Inner Tasklet connectors must differ from the wrapper SDFG's
-    # parameter array names (``_cpy_in`` / ``_cpy_out``, matching the
-    # libnode's outer connectors); fall back to plain ``_in`` / ``_out``
-    # which are safe inside this wrapper namespace.
-    inputs = {"_in": dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
-    outputs = {"_out": dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    # Inner Tasklet connectors; local to this wrapper SDFG. Plain ``_in`` /
+    # ``_out`` are safe inside the wrapper's namespace and must differ from
+    # the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.) since
+    # those are reserved by the wrapper for the parameter arrays.
+    inner_in, inner_out = "_in", "_out"
+    inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
+    outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
                                                    inputs,
-                                                   "_out = _in",
+                                                   f"{inner_out} = {inner_in}",
                                                    outputs,
                                                    schedule=schedule,
                                                    external_edges=True)
@@ -747,24 +748,26 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
         in_memlet = dace.memlet.Memlet(data=ctx.inp_name, subset=_row_subset(ctx.in_shape_collapsed))
         out_memlet = dace.memlet.Memlet(data=ctx.out_name, subset=_row_subset(ctx.out_shape_collapsed))
-        # Inner tasklet connectors must differ from the wrapper SDFG's
-        # parameter array names (``_cpy_in``/``_cpy_out``).
-        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync(_out, _in, "
+        # Inner-tasklet connectors; local to this wrapper SDFG. Must differ
+        # from the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.)
+        # which the wrapper reserves for its parameter arrays.
+        inner_in, inner_out = "_in", "_out"
+        code = (f"DACE_GPU_CHECK(cudaMemcpyAsync({inner_out}, {inner_in}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
 
         inner_tasklet, map_entry, _map_exit = ctx.state.add_mapped_tasklet(name=f"{node.label}_tasklet",
                                                                            map_ranges=map_ranges,
-                                                                           inputs={"_in": in_memlet},
+                                                                           inputs={inner_in: in_memlet},
                                                                            code=code,
-                                                                           outputs={"_out": out_memlet},
+                                                                           outputs={inner_out: out_memlet},
                                                                            schedule=dace.dtypes.ScheduleType.Sequential,
                                                                            language=dace.Language.CPP,
                                                                            external_edges=True)
-        # Force pointer connectors on the inner tasklet so the codegen
-        # types ``_in``/``_out`` as ``T*`` (matching cudaMemcpyAsync's
-        # signature) instead of dereferencing them as values.
-        inner_tasklet.in_connectors["_in"] = dace.dtypes.pointer(inp.dtype)
-        inner_tasklet.out_connectors["_out"] = dace.dtypes.pointer(out.dtype)
+        # Force pointer connectors on the inner tasklet so the codegen types
+        # them as ``T*`` (matching cudaMemcpyAsync's signature) instead of
+        # dereferencing them as values.
+        inner_tasklet.in_connectors[inner_in] = dace.dtypes.pointer(inp.dtype)
+        inner_tasklet.out_connectors[inner_out] = dace.dtypes.pointer(out.dtype)
 
         return ctx.sdfg
 
@@ -894,9 +897,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     }
     default_implementation = 'Auto'
 
-    # Connector names this libnode publishes. External consumers (tests,
-    # other passes) must reference these constants instead of the string
-    # literals so a future rename is a single-line change.
+    # Connector names exposed for library node builders.
     INPUT_CONNECTOR_NAME = "_cpy_in"
     OUTPUT_CONNECTOR_NAME = "_cpy_out"
 

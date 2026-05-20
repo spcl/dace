@@ -16,11 +16,6 @@ from .. import environments
 
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, add_dynamic_inputs, extract_dynamic_inputs
 
-# Outer connector name this libnode publishes. Republished as
-# ``MemsetLibraryNode.OUTPUT_CONNECTOR_NAME`` so external consumers
-# reference a class constant instead of a string.
-_OUTPUT_CONNECTOR_NAME = "_mset_out"
-
 
 def _make_memset_skeleton(
     node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
@@ -82,13 +77,13 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 
     nbytes = f"{sym2cpp(out_subset.num_elements())} * sizeof({out.dtype.ctype})"
     if cuda:
-        code = f"cudaMemsetAsync({_OUTPUT_CONNECTOR_NAME}, 0, {nbytes}, {CURRENT_STREAM_NAME});"
+        code = f"cudaMemsetAsync({MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, 0, {nbytes}, {CURRENT_STREAM_NAME});"
     else:
-        code = f"memset({_OUTPUT_CONNECTOR_NAME}, 0, {nbytes});"
+        code = f"memset({MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, 0, {nbytes});"
 
     return nodes.Tasklet(node.name,
                          inputs={},
-                         outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+                         outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -140,15 +135,18 @@ class ExpandPure(ExpandTransformation):
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, _out_subset, map_lengths, _ = _make_memset_skeleton(node, parent_state, parent_sdfg)
 
+        # Inner-tasklet connector name; local to this wrapper SDFG (not the
+        # libnode's outer connector, which is ``OUTPUT_CONNECTOR_NAME``).
+        inner_out = "_memset_out"
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
-        outputs = {"_memset_out": dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
+        outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
         schedule = (dace.dtypes.ScheduleType.GPU_Device
                     if out.storage == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default)
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
                                  dict(),
-                                 "_memset_out = 0",
+                                 f"{inner_out} = 0",
                                  outputs,
                                  schedule=schedule,
                                  external_edges=True)
@@ -179,10 +177,8 @@ class MemsetLibraryNode(nodes.LibraryNode):
     implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'Auto'
 
-    # Connector name this libnode publishes. External consumers (tests,
-    # other passes) must reference this constant instead of the string
-    # literal so a future rename is a single-line change.
-    OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
+    # Connector name exposed for library node builders.
+    OUTPUT_CONNECTOR_NAME = "_mset_out"
 
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
@@ -195,10 +191,10 @@ class MemsetLibraryNode(nodes.LibraryNode):
         :returns: ``(out_name, out, out_subset, dynamic_inputs)``.
         :raises ValueError: If the node does not have exactly one output edge.
         """
-        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
+        data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == MemsetLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
-                             f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
+                             f"``{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` output edge.")
 
         oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]
