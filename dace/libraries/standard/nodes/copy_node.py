@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ ``CopyLibraryNode`` to represent copies explicitly. """
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import dace
 from dace import data, library, nodes, dtypes, symbolic
@@ -273,7 +273,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
     Schedule comes from the storages: ``Sequential`` for Register/Register
     or Register<->GPU_Shared (thread-level) and for any in-kernel copy (a
     new ``GPU_Device`` map inside an existing kernel would create an invalid
-    kernel-in-kernel nesting), ``GPU_Device`` if any side is GPU storage and
+    nesting), ``GPU_Device`` if any side is GPU storage and
     we're at host level, else ``Default`` (CPU<->CPU -- inferred
     post-expansion).
 
@@ -378,31 +378,6 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     return f"cudaMemcpy{src_loc}To{dst_loc}"
 
 
-def _memcpy_connector_typing(inp: data.Data, out: data.Data, one_elem: bool, in_is_cpu: bool, out_is_cpu: bool,
-                             in_conn: str, out_conn: str) -> Tuple[dtypes.typeclass, dtypes.typeclass, str, str]:
-    """Pick connector types and tasklet-arg forms for a memcpy expansion.
-
-    A single-element CPU side stays value-typed and is addressed via ``&``;
-    every other side is pointer-typed and passed by name.
-
-    :param inp: source descriptor.
-    :param out: destination descriptor.
-    :param one_elem: whether the copy is a single element.
-    :param in_is_cpu: whether the source is host-accessible.
-    :param out_is_cpu: whether the destination is host-accessible.
-    :param in_conn: source connector name.
-    :param out_conn: destination connector name.
-    :returns: ``(in_conn_type, out_conn_type, in_arg, out_arg)``.
-    """
-    in_value_typed = one_elem and in_is_cpu
-    out_value_typed = one_elem and out_is_cpu
-    in_conn_type = inp.dtype if in_value_typed else dace.dtypes.pointer(inp.dtype)
-    out_conn_type = out.dtype if out_value_typed else dace.dtypes.pointer(out.dtype)
-    in_arg = f'&{in_conn}' if in_value_typed else in_conn
-    out_arg = f'&{out_conn}' if out_value_typed else out_conn
-    return in_conn_type, out_conn_type, in_arg, out_arg
-
-
 def _make_cuda_memcpy_expansion(node: "CopyLibraryNode", parent_state: dace.SDFGState,
                                 parent_sdfg: dace.SDFG) -> nodes.Tasklet:
     """Build a Tasklet emitting one ``cudaMemcpyAsync``.
@@ -424,24 +399,15 @@ def _make_cuda_memcpy_expansion(node: "CopyLibraryNode", parent_state: dace.SDFG
                          f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
     cp_size = in_subset.num_elements()
-    in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
-        inp,
-        out,
-        one_elem=(cp_size == 1),
-        in_is_cpu=(inp.storage != dtypes.StorageType.GPU_Global),
-        out_is_cpu=(out.storage != dtypes.StorageType.GPU_Global),
-        in_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-        out_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
-
     kind = _memcpy_kind(inp, out)
-
-    code = (f"cudaMemcpyAsync({out_arg}, {in_arg}, "
+    in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    code = (f"cudaMemcpyAsync({out_conn}, {in_conn}, "
             f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), {kind}, {CURRENT_STREAM_NAME});")
 
-    in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: in_conn_type}
     return nodes.Tasklet(node.name,
-                         inputs=in_conns,
-                         outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: out_conn_type},
+                         inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
+                         outputs={out_conn: dace.dtypes.pointer(out.dtype)},
                          code=code,
                          language=dace.Language.CPP)
 
@@ -554,19 +520,12 @@ class ExpandMemcpyCPU(ExpandTransformation):
                              f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
         cp_size = in_subset.num_elements()
-        in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
-            inp,
-            out,
-            one_elem=(cp_size == 1),
-            in_is_cpu=True,
-            out_is_cpu=True,
-            in_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-            out_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
-
+        in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
+        out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
         return nodes.Tasklet(node.name,
-                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: in_conn_type},
-                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: out_conn_type},
-                             code=f"memcpy({out_arg}, {in_arg}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
+                             inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
+                             outputs={out_conn: dace.dtypes.pointer(out.dtype)},
+                             code=f"memcpy({out_conn}, {in_conn}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
                              language=dace.Language.CPP)
 
 
