@@ -48,6 +48,7 @@ from dace import symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.passes.vectorization.generate_iteration_mask import GenerateIterationMask
 from dace.transformation.passes.vectorization.for_loop_to_masked_while import ForLoopToMaskedWhile
@@ -88,6 +89,113 @@ class SveStyleFinalize(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    @staticmethod
+    def _lane_winner_param(map_entry: dace.nodes.MapEntry, state: dace.SDFGState) -> str:
+        """Pick the map param that most often drives the unit-stride dim
+        of an array access in this map's scope. That param is the best
+        lane dim (W-stride across it touches contiguous memory); it
+        should end up innermost so the vectorizer's W-strip-mining
+        operates on the contiguous axis. Falls back to the last param
+        when no analysis info is available (default-correct for
+        C-layout where the last dim is already the contiguous one).
+
+        :param map_entry: The multi-param map to analyze.
+        :param state: The state containing ``map_entry``.
+        :returns: The param name with the highest unit-stride-dim
+            access count, or the last param as a safe fallback.
+        """
+        from collections import Counter
+        counts: Counter = Counter()
+        scope = state.scope_subgraph(map_entry)
+        for node in scope.nodes():
+            for e in list(scope.in_edges(node)) + list(scope.out_edges(node)):
+                if e.data is None or e.data.data is None:
+                    continue
+                if e.data.data not in state.sdfg.arrays:
+                    continue
+                arr = state.sdfg.arrays[e.data.data]
+                strides = getattr(arr, "strides", None)
+                if not strides:
+                    continue
+                try:
+                    unit_dim = [str(s) for s in strides].index("1")
+                except ValueError:
+                    continue
+                if e.data.subset is None or unit_dim >= len(e.data.subset):
+                    continue
+                dim_expr = e.data.subset[unit_dim]
+                begin = dim_expr[0] if isinstance(dim_expr, tuple) else dim_expr
+                try:
+                    free = {str(s) for s in begin.free_symbols}
+                except Exception:
+                    continue
+                for p in map_entry.map.params:
+                    if p in free:
+                        counts[p] += 1
+        if not counts:
+            return map_entry.map.params[-1]
+        return counts.most_common(1)[0][0]
+
+    @staticmethod
+    def _permute_winner_last(map_entry: dace.nodes.MapEntry, winner: str) -> bool:
+        """Rearrange ``map_entry.params`` and ``range.ranges`` so
+        ``winner`` is the last param (innermost after MapExpansion).
+        In-place; semantically equivalent (the cartesian product is
+        unchanged). Returns True iff a swap occurred.
+
+        :param map_entry: Map whose params to permute.
+        :param winner: Param to move to the last position.
+        :returns: True if the order changed; False if winner was
+            already last or absent.
+        """
+        params = list(map_entry.map.params)
+        if winner not in params or params[-1] == winner:
+            return False
+        ranges = list(map_entry.map.range.ranges)
+        idx = params.index(winner)
+        params.append(params.pop(idx))
+        ranges.append(ranges.pop(idx))
+        map_entry.map.params = params
+        map_entry.map.range = dace.subsets.Range(ranges)
+        return True
+
+    def _expand_multi_to_1d(self, sdfg: dace.SDFG) -> int:
+        """Analyze-permute-expand every multi-param innermost map so the
+        SVE chain sees only 1D maps. For each multi-param map: pick the
+        lane winner (most unit-stride accesses), permute it to last,
+        ``MapExpansion`` splits into nested 1D maps (the deepest is the
+        winner). Mark every post-expansion deepest 1D map nested under
+        another MapEntry ``Sequential`` — these come from multi-dim
+        expansion and don't need ``num_cores`` core-tiling (the outer
+        expanded maps already provide parallelism).
+
+        :param sdfg: SDFG to transform in place.
+        :returns: Number of multi-param maps expanded.
+        """
+        multi_targets = [
+            (n, g) for n, g in list(sdfg.all_nodes_recursive())
+            if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)
+            and len(n.map.params) > 1 and not any(p.startswith(_CORE_PREFIX) for p in n.map.params)
+        ]
+        expanded = 0
+        for n, g in multi_targets:
+            winner = self._lane_winner_param(n, g)
+            self._permute_winner_last(n, winner)
+            MapExpansion.apply_to(g.sdfg, verify=True, save=False, map_entry=n)
+            expanded += 1
+        if expanded:
+            # Mark deepest post-expansion 1D maps Sequential (those
+            # nested under another MapEntry — i.e. came from an expanded
+            # multi-param). True top-level 1D maps are unchanged.
+            for n, g in list(sdfg.all_nodes_recursive()):
+                if not (isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState)):
+                    continue
+                if not is_innermost_map(g, n) or len(n.map.params) != 1:
+                    continue
+                if isinstance(g.scope_dict().get(n), dace.nodes.MapEntry):
+                    n.map.schedule = dace.dtypes.ScheduleType.Sequential
+        return expanded
+
     def _eligible_innermost_maps(self,
                                  sdfg: dace.SDFG) -> List[Tuple[dace.nodes.MapEntry, dace.SDFGState, str, object]]:
         """Collect ``(map_entry, state, global_ub, block)`` for every
@@ -125,6 +233,10 @@ class SveStyleFinalize(ppl.Pass):
             distinct global trips (first-cut supports one global bound).
         """
         W = self._W
+        # 0. Multi-dim handling: permute lane winner to last + MapExpansion
+        #    + mark expanded inner maps Sequential (skip core-tile for them).
+        self._expand_multi_to_1d(sdfg)
+
         targets = self._eligible_innermost_maps(sdfg)
         if not targets:
             return None
@@ -135,8 +247,14 @@ class SveStyleFinalize(ppl.Pass):
                                       f"or restrict via apply_on_maps.")
         global_ub = gubs.pop()
 
-        # 1. Tile each eligible map into a clean divisible per-core block.
+        # 1. Tile only TRUE 1D maps (no MapEntry scope-parent) into
+        #    a clean divisible per-core block. Multi-dim maps from
+        #    expansion are skipped: their outer expanded maps already
+        #    provide parallelism, the inner is Sequential — no need
+        #    for num_cores partitioning on the inner.
         for n, g, _gub, block in targets:
+            if isinstance(g.scope_dict().get(n), dace.nodes.MapEntry):
+                continue  # multi-dim inner — skip core-tile
             MapTiling.apply_to(g.sdfg,
                                options={
                                    "tile_sizes": (block, ),

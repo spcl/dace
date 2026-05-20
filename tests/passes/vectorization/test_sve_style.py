@@ -163,6 +163,58 @@ def test_sve_triad(NV, NC):
                     rtol=1e-12)
 
 
+S = dace.symbol("S")
+
+
+@dace.program
+def jacobi2d_sve(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):
+    """3-point 2D stencil — multi-dim kernel exercising the SVE chain's
+    analysis-permute-MapExpansion path (the inner contiguous dim is the
+    j axis; outer i map stays parallel, inner j becomes Sequential +
+    W-vectorized + global-masked)."""
+    for t in range(tsteps):
+        for i, j in dace.map[0:S - 2, 0:S - 2]:
+            B[i + 1, j + 1] = 0.2 * (A[i + 1, j + 1] + A[i, j + 1] + A[i + 2, j + 1] + A[i + 1, j] + A[i + 1, j + 2])
+        for i, j in dace.map[0:S - 2, 0:S - 2]:
+            A[i + 1, j + 1] = 0.2 * (B[i + 1, j + 1] + B[i, j + 1] + B[i + 2, j + 1] + B[i + 1, j] + B[i + 1, j + 2])
+
+
+# Multi-dim non-divisible matrix (S-2 is the contiguous dim trip; pick
+# S such that S-2 hits the non-divisible cells that exercise the global
+# mask on the inner j axis).
+_NON_DIVISIBLE_2D = [(S_val, NC) for S_val in (19, 24, 25, 33) for NC in (3, 4)]
+_EXTRA_2D = [(66, 8), (34, 3)]
+
+
+@pytest.mark.parametrize("SV,NC", _NON_DIVISIBLE_2D + _EXTRA_2D)
+def test_sve_jacobi2d(SV, NC):
+    """jacobi2d under sve_style='fixed': multi-dim handling
+    (permute lane winner -> MapExpansion -> inner Sequential + skip
+    core-tile). 2D + non-divisible S-2 stresses both the multi-dim
+    expansion and the global mask on the contiguous dim. Stencil is
+    multi-add so atol=1e-12 accepts vectorizer FP reordering."""
+    A = np.random.random((SV, SV))
+    B = np.random.random((SV, SV))
+
+    ref = jacobi2d_sve.to_sdfg(simplify=True)
+    ref.replace_dict({"S": SV})
+    ref.name = f"jacobi2d_sve_ref_{SV}_{NC}"
+    A_ref, B_ref = A.copy(), B.copy()
+    ref.compile()(A=A_ref, B=B_ref, S=SV, tsteps=3)
+
+    sve = jacobi2d_sve.to_sdfg(simplify=True)
+    sve.replace_dict({"S": SV})
+    sve.name = f"jacobi2d_sve_sve_{SV}_{NC}"
+    VectorizeCPU(vector_width=8, num_cores=NC, sve_style="fixed", fail_on_unvectorizable=True).apply_pass(sve, {})
+    sve.validate()
+    A_sve, B_sve = A.copy(), B.copy()
+    sve.compile()(A=A_sve, B=B_sve, S=SV, tsteps=3)
+
+    for name, ref_arr, sve_arr in (("A", A_ref, A_sve), ("B", B_ref, B_sve)):
+        assert np.allclose(ref_arr, sve_arr, rtol=1e-12, atol=1e-12), \
+            f"jacobi2d_sve S={SV} nc={NC} arr {name}: max|d|={float(np.max(np.abs(ref_arr - sve_arr)))}"
+
+
 @pytest.mark.parametrize("NV,NC", _NON_DIVISIBLE + _EXTRA)
 def test_sve_scatter_store(NV, NC):
     # Scatter index must be a permutation so distinct lanes never write
