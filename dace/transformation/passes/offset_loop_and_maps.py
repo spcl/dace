@@ -345,6 +345,16 @@ class OffsetLoopsAndMaps(ppl.Pass):
         return expr_str
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+        # Cross-array unit copies (memlets with ``other_subset``) carry a
+        # second subset that ``_create_new_memlet`` cannot offset alongside
+        # the primary one. Rewrite each such single-element copy as an
+        # ``_out = _in`` assign tasklet first; this is the documented
+        # contract of ``InsertAssignTaskletsForUnitCopies`` and matches the
+        # canonicalize pipeline's ordering.
+        from dace.transformation.passes.insert_unit_copy_assign_tasklets import (
+            InsertAssignTaskletsForUnitCopies, )
+        InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, pipeline_results or {})
+
         # Do it for LoopRegions and Maps
         self._apply(sdfg)
         sdfg.validate()
