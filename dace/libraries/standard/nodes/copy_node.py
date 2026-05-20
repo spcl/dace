@@ -14,6 +14,24 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
 
+@dataclass
+class CopyExpansion:
+    """Inputs + collapsed-shape state shared across :class:`CopyLibraryNode`
+    expansions that build a wrapper SDFG. Returned by
+    :func:`_make_expansion_sdfg`."""
+    sdfg: dace.SDFG
+    state: dace.SDFGState
+    inp_name: str
+    inp: data.Data
+    in_subset: dace.subsets.Range
+    out_name: str
+    out: data.Data
+    out_subset: dace.subsets.Range
+    map_lengths: List
+    in_shape_collapsed: List
+    out_shape_collapsed: List
+
+
 def _is_cross_cpu_gpu(src_storage, dst_storage):
     """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
     adopts its enclosing scope's side and is never cross-boundary."""
@@ -26,6 +44,14 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     or both Fortran). Mixed layouts (C<->F) are transposes, not copies."""
     return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
+
+
+def _require_contiguous_subset(name: str, subset, desc, side: str):
+    """Raise if ``subset`` is not contiguous in the array described by ``desc``."""
+    if not subset.is_contiguous_subset(desc):
+        raise ValueError(f"This expansion requires a contiguous {side} subset, but '{name}' subset "
+                         f"{subset} is not contiguous in shape {desc.shape} with strides {desc.strides}; "
+                         f"use the ``MappedTasklet`` expansion (handles strided subsets) instead.")
 
 
 def _delinearized_index(b_i, shape: List, layout: str) -> List:
@@ -51,13 +77,9 @@ def _coarse_pick_for_storage_pair(src_storage, dst_storage):
     """Return ``'MemcpyCUDA1D'`` for any copy involving GPU_Global on at
     least one side, else ``None``. Direction (H2D / D2H / D2D) is inferred
     inside the expansion from the same storages."""
-    host_side = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
-    src_gpu = src_storage == dtypes.StorageType.GPU_Global
-    dst_gpu = dst_storage == dtypes.StorageType.GPU_Global
-    src_cpu = src_storage in host_side
-    dst_cpu = dst_storage in host_side
-
-    if (src_cpu and dst_gpu) or (src_gpu and dst_cpu) or (src_gpu and dst_gpu):
+    gpu = dtypes.StorageType.GPU_Global
+    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
+    if (src_storage == gpu or dst_storage == gpu) and src_storage in allowed and dst_storage in allowed:
         return 'MemcpyCUDA1D'
     return None
 
@@ -86,8 +108,7 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         return 'SharedMemoryCollective'
 
-    # 2. Single-element copies. Route around MappedTasklet (a 0-D map crashes propagation)
-    # into the impl that can actually execute the copy:
+    # 2. Single-element copies. Route around MappedTasklet (a 0-D map crashes)
     #
     #   endpoints              in kernel  impl          why
     #   ---------------------  ---------  ------------  ------------------------
@@ -108,7 +129,9 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
-    # 3. Otherwise in-device-scope: ``cudaMemcpyAsync`` cannot be issued from device code.
+    # 3. Multi-element in-device-scope (single-element was handled in Step 2):
+    # ``cudaMemcpyAsync`` cannot be issued from device code, so emit a map
+    # inside the existing kernel scope.
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'MappedTasklet'
 
@@ -118,7 +141,7 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     impl = _coarse_pick_for_storage_pair(inp.storage, out.storage)
 
     # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
-    # MappedTasklet for same-side strided).
+    # MappedTasklet for unsupported stride mixs).
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg)
         if refined is not None:
@@ -136,10 +159,10 @@ def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
     """Return True if the (collapsed) 2D strides match an ``ExpandCUDA2D`` pattern."""
     if len(copy_shape) != 2 or len(src_strides) != 2 or len(dst_strides) != 2:
         return False
-    if src_strides[1] == 1 and dst_strides[1] == 1:
+    # Either dim is stride-1 on both sides => directly maps to cudaMemcpy2D.
+    if (src_strides[0] == 1 and dst_strides[0] == 1) or (src_strides[1] == 1 and dst_strides[1] == 1):
         return True
-    if src_strides[0] == 1 and dst_strides[0] == 1:
-        return True
+    # General 2D pitched pattern: outer_stride / inner_stride must equal the width on both sides.
     try:
         return (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1])
     except (TypeError, ZeroDivisionError):
@@ -149,7 +172,7 @@ def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
 def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
-    Picks ``MemcpyCUDA2D`` (1-or-2D strided patterns), ``MappedTasklet``
+    Picks ``MemcpyCUDA2D`` (2D strided patterns), ``MappedTasklet``
     (same-side strided, GPU or CPU) or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
 
     :param node: the :class:`CopyLibraryNode` being expanded.
@@ -160,9 +183,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     :raises ValueError: a strided cross-CPU/GPU pattern with no common
         stride-1 axis that no single memcpy can lower.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                              parent_state,
-                                                                              allow_cross_storage=True)
+    _, inp, in_subset, _, out, out_subset, _ = node.validate(parent_sdfg, parent_state, allow_cross_storage=True)
 
     if in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out):
         return None
@@ -170,19 +191,18 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
-    if (len(in_shape_collapsed) == 2 and len(out_shape_collapsed) == 2
-            and _cuda2d_strides_are_supported(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed)):
-        return 'MemcpyCUDA2D'
-
-    # 1D strided ([N] with stride != 1 on both sides) maps onto cudaMemcpy2D as a
-    # degenerate (1, N) copy: width = 1 element, height = N, pitch = stride.
-    if (len(in_shape_collapsed) == 1 and len(out_shape_collapsed) == 1
-            and in_shape_collapsed[0] == out_shape_collapsed[0]):
+    # ``cudaMemcpy2D`` covers two patterns: a true 2D strided copy (when
+    # ``_cuda2d_strides_are_supported``), and a 1D strided copy lowered as a
+    # degenerate ``(1, N)`` 2D copy (width=1, height=N, pitch=stride).
+    src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
+    cuda2d_2d = (src_rank == 2 and dst_rank == 2
+                 and _cuda2d_strides_are_supported(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed))
+    cuda2d_1d = (src_rank == 1 and dst_rank == 1 and in_shape_collapsed[0] == out_shape_collapsed[0])
+    if cuda2d_2d or cuda2d_1d:
         return 'MemcpyCUDA2D'
 
     # Same-side strided ND -- MappedTasklet. The codegen emits the same nested
-    # loops as ``dace::CopyND<>`` would, so routing through the C++ template
-    # adds no benefit and gives less analyzable IR.
+    # loops as ``dace::CopyND<>`` would.
     if not _is_cross_cpu_gpu(inp.storage, out.storage):
         return 'MappedTasklet'
 
@@ -199,32 +219,6 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
                      f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
                      f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "
                      f"pick an explicit implementation manually.")
-
-
-def _require_contiguous_subset(name: str, subset, desc, side: str):
-    """Raise if ``subset`` is not contiguous in the array described by ``desc``."""
-    if not subset.is_contiguous_subset(desc):
-        raise ValueError(f"This expansion requires a contiguous {side} subset, but '{name}' subset "
-                         f"{subset} is not contiguous in shape {desc.shape} with strides {desc.strides}; "
-                         f"use the ``MappedTasklet`` expansion (handles strided subsets) instead.")
-
-
-@dataclass
-class CopyExpansion:
-    """Inputs + collapsed-shape state shared across :class:`CopyLibraryNode`
-    expansions that build a wrapper SDFG. Returned by
-    :func:`_make_expansion_sdfg`."""
-    sdfg: dace.SDFG
-    state: dace.SDFGState
-    inp_name: str
-    inp: data.Data
-    in_subset: dace.subsets.Range
-    out_name: str
-    out: data.Data
-    out_subset: dace.subsets.Range
-    map_lengths: List
-    in_shape_collapsed: List
-    out_shape_collapsed: List
 
 
 def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
