@@ -17,6 +17,20 @@ class FuseOverlappingLoads(ppl.Pass):
     # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'
 
+    fusion_threshold = properties.Property(
+        dtype=int,
+        default=1,
+        desc="Minimum overlap count *above* which a per-array load fan is fused into a shared union "
+        "window. A source array with ``> fusion_threshold`` overlapping incoming access nodes on a "
+        "map entry is fused; ``<= fusion_threshold`` is left as the per-subset shape. Default ``1`` "
+        "preserves the original behaviour (fuse iff ``>= 2`` overlapping reads). Raise to suppress "
+        "fusion on small overlaps (e.g. a 2-point pair); lower to ``0`` to attempt fusion on every "
+        "non-empty group (rarely useful — a single read has no overlap to fuse).")
+
+    def __init__(self, fusion_threshold: int = 1):
+        super().__init__()
+        self.fusion_threshold = fusion_threshold
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
@@ -117,8 +131,11 @@ class FuseOverlappingLoads(ppl.Pass):
                     # 2. Add an intermediate access node
                     # 3. Add new edges (need to offset the union subset from individual)
                     for k, v in in_data_and_srcs.items():
-                        # If length is one continue
-                        if len(v) <= 1:
+                        # Skip groups at or below the fusion threshold:
+                        # the default (1) preserves "fuse iff >= 2 reads";
+                        # raise the threshold to suppress fusion on small
+                        # overlaps without disabling the pass entirely.
+                        if len(v) <= self.fusion_threshold:
                             continue
 
                         # Collect out connectors to remove
