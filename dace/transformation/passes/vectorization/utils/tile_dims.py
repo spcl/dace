@@ -67,14 +67,20 @@ class TileAccessKind(Enum):
     :cvar BROADCAST_SYMBOL: The subset has no dependency on any tile
         iter-var — the operand is broadcast inline as
         :class:`TileBinop` ``kind=Symbol``.
-    :cvar UNRECOGNIZED: Anything the simple T3 classifier cannot put
-        into the above buckets (e.g. gather, halve-index multiplex,
-        mixed-kind multi-dim subsets). T5+ refines.
+    :cvar GATHER: At least one source-array dim's index is read from a
+        SEPARATE index array (e.g. ``b[idx[i]]``). Emit ``TileGather``.
+        After ``simplify=True`` the indirection lives INSIDE a body
+        NestedSDFG as a sliced access node ``arr[__sym_X] -> [0]``;
+        the classifier here only emits the enum value, the actual
+        emission requires NestedSDFG-body pattern-matching (post-MVP).
+    :cvar UNRECOGNIZED: Anything the classifier cannot put into the
+        above buckets (halve-index multiplex, irregular indices, etc.).
     """
 
     CONTIGUOUS = "Contiguous"
     STRIDED = "Strided"
     BROADCAST_SYMBOL = "BroadcastSymbol"
+    GATHER = "Gather"
     UNRECOGNIZED = "Unrecognized"
 
 
@@ -87,7 +93,7 @@ class TileAccessClassification:
         corresponding iter-var in the subset's begin expression. ``1``
         means contiguous along that tile dim. Defined for
         ``CONTIGUOUS`` and ``STRIDED``; ``(0,) * K`` for
-        ``BROADCAST_SYMBOL``; ``()`` for ``UNRECOGNIZED``.
+        ``BROADCAST_SYMBOL``; ``()`` for ``GATHER`` / ``UNRECOGNIZED``.
     """
 
     kind: TileAccessKind
