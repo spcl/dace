@@ -362,5 +362,21 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     assert restored.dtype.ctype == ctype
 
 
+@pytest.mark.parametrize('op', ['Min', 'Max'])
+@pytest.mark.parametrize('literal', ['5.0', '5.0f64', '5f32', '7f64'])
+def test_minmax_with_float_literal_roundtrip(op, literal):
+    serialized = f'{op}({literal}, $N)'
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
+def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
+    """``double(7)`` normalizes to ``7f64`` on first serialize, then stable."""
+    first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic('Max(double(7), 5.0)'))
+    assert first == 'Max(7f64, 5.0)'
+    second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
+    assert first == second
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

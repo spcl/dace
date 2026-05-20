@@ -1688,7 +1688,10 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 dtype = dtypes.literal_suffix_to_typeclass(suffix)
             except KeyError as ex:
                 raise TypeError(f'Invalid type suffix "{suffix}" in typed constant') from ex
-            if dtype in (dtypes.float16, dtypes.float32, dtypes.float64):
+            # Keep ``7f64`` integer-valued and ``7.0f64`` float-valued so each
+            # form round-trips back to itself.
+            looks_like_float = any(c in value for c in '.eE')
+            if dtype in (dtypes.float16, dtypes.float32, dtypes.float64) and looks_like_float:
                 value = float(value)
             else:
                 value = int(value)
