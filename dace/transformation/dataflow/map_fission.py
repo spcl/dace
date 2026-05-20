@@ -127,9 +127,10 @@ class MapFission(transformation.SingleStateTransformation):
             nsdfg_node.sdfg.reset_cfg_list()
 
             # Fissioning a component across a conditional needs the branch
-            # condition replicated into each fissioned map.
-            if any(isinstance(cfg, ConditionalBlock)
-                   for cfg in nsdfg_node.sdfg.all_control_flow_regions(recursive=True)):
+            # condition replicated into each fissioned map, currently not supported.
+            if any(
+                    isinstance(cfg, ConditionalBlock)
+                    for cfg in nsdfg_node.sdfg.all_control_flow_regions(recursive=True)):
                 return False
 
             if len(nsdfg_node.sdfg.nodes()) == 1:
@@ -338,16 +339,17 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Enclosing scope of the fissioned map (``None`` if top-level).
             # The new per-component fission maps live in this scope, so
-            # boundary edges with no outer feeder/consumer are rewired
-            # through it instead of through the about-to-be-removed map.
+            # boundary edges are rewired through it instead of through the about-to-be-removed map.
             parent_entry = state.entry_node(map_entry) if self.expr_index == 0 else None
             parent_exit = state.exit_node(parent_entry) if parent_entry is not None else None
 
-            # Map external edges to outer memlets. ``None`` marks a boundary
-            # edge with no outer feeder/consumer (e.g. an empty dependency
-            # edge straight off ``map_entry``, whose memlet path is just the
-            # edge itself): ``path[eindex - 1]`` would wrap to the edge and
-            # alias the new maps onto the deleted original map.
+            # For each boundary edge, record the edge just outside the
+            # original map so the new per-component maps can reconnect there.
+            # For a data edge that is its memlet-path neighbour
+            # (``path[eindex - 1]`` at entry, ``path[eindex + 1]`` at exit).
+            # An empty dependency edge has a one-element path and thus no
+            # outside edge: store ``None``.
+            edge_to_outer = {}
             edge_to_outer = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
@@ -434,7 +436,7 @@ class MapFission(transformation.SingleStateTransformation):
                     if self.expr_index == 0 and e in external_edges_entry:
                         outer = edge_to_outer[e]
                         if outer is None:
-                            # No outer feeder (empty dependency edge): keep the
+                            # Empty dependency edge: keep the
                             # new map inside the enclosing scope via an empty
                             # edge instead of aliasing the removed map_entry.
                             if parent_entry is not None:
@@ -464,10 +466,9 @@ class MapFission(transformation.SingleStateTransformation):
                     if self.expr_index == 0 and e in external_edges_exit:
                         outer = edge_to_outer[e]
                         if outer is None:
-                            # No outer consumer (empty dependency edge): keep
+                            # Empty dependency edge: keep
                             # the new map inside the enclosing scope via an
-                            # empty edge instead of aliasing the removed
-                            # map_exit.
+                            # empty edge instead of aliasing the removed map_exit.
                             if parent_exit is not None:
                                 state.add_edge(mx, None, parent_exit, None, mm.Memlet())
                         else:
