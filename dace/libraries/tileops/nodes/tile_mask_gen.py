@@ -62,6 +62,50 @@ class ExpandTileMaskGenPure(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandTileMaskGenCute(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileMaskGen`.
+
+    Emits a Python tasklet whose body builds the K-fold ANY-OOB
+    conjunction by broadcasting each per-dim ``cuda.tile.arange``
+    comparison to the full mask shape and combining with ``&``.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a Python tasklet building the K-dim cuTile mask.
+
+        :param node: The lib node being expanded.
+        :param parent_state: State that owns the lib node.
+        :param parent_sdfg: SDFG that owns ``parent_state``.
+        :returns: A Python-language tasklet whose body produces a
+            ``cuda.tile``-broadcasted boolean tile.
+        """
+        widths = list(node.widths)
+        iter_vars = list(node.iter_vars)
+        global_ubs = list(node.global_ubs)
+        K = len(widths)
+        shape_tuple = ", ".join(str(w) for w in widths)
+        per_dim = []
+        for k, (iv, ub, w) in enumerate(zip(iter_vars, global_ubs, widths)):
+            slc = ["None"] * K
+            slc[k] = "slice(None)"
+            slc_str = "[" + ", ".join(slc) + "]"
+            per_dim.append(
+                f"cuda.tile.broadcast_to(((cuda.tile.arange({w}) + ({iv})) < ({ub})){slc_str}, ({shape_tuple},))"
+            )
+        body = f"__output = " + " & ".join(per_dim) if per_dim else f"__output = cuda.tile.full(({shape_tuple},), True)"
+        return nodes.Tasklet(
+            label=f"{node.label}_cute",
+            inputs=set(),
+            outputs={"__output": None},
+            code=body,
+            language=dace.dtypes.Language.Python,
+        )
+
+
 @library.node
 class TileMaskGen(nodes.LibraryNode):
     """Produce the K-dim iteration mask ``bool[widths]``.
@@ -73,7 +117,7 @@ class TileMaskGen(nodes.LibraryNode):
     ``iter_var_k + l_k < global_ub_k`` holds.
     """
 
-    implementations = {"pure": ExpandTileMaskGenPure}
+    implementations = {"pure": ExpandTileMaskGenPure, "cute": ExpandTileMaskGenCute}
     default_implementation = "pure"
 
     widths = properties.ListProperty(

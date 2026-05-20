@@ -75,6 +75,42 @@ class ExpandTileLoadPure(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandTileLoadCute(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileLoad`.
+
+    Emits a Python tasklet whose body calls ``cuda.tile.load`` with the
+    surrounding-scope tile indices and ``mask=`` (when masked). The
+    tile shape is the lib node's ``widths``.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileLoad", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a Python tasklet emitting ``cuda.tile.load``.
+
+        :param node: The lib node being expanded.
+        :param parent_state: State that owns the lib node.
+        :param parent_sdfg: SDFG that owns ``parent_state``.
+        :returns: A Python-language tasklet with a ``cuda.tile.load``
+            body.
+        """
+        shape_tuple = ", ".join(str(w) for w in node.widths)
+        if node.has_mask:
+            body = f"__output = cuda.tile.load(__src, shape=({shape_tuple},), mask=__mask, padding_value=0)"
+        else:
+            body = f"__output = cuda.tile.load(__src, shape=({shape_tuple},))"
+        inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
+        return nodes.Tasklet(
+            label=f"{node.label}_cute",
+            inputs={c: None for c in inputs},
+            outputs={"__output": None},
+            code=body,
+            language=dace.dtypes.Language.Python,
+        )
+
+
 @library.node
 class TileLoad(nodes.LibraryNode):
     """Load a K-dim tile out of a global array.
@@ -86,7 +122,7 @@ class TileLoad(nodes.LibraryNode):
     (contiguous).
     """
 
-    implementations = {"pure": ExpandTileLoadPure}
+    implementations = {"pure": ExpandTileLoadPure, "cute": ExpandTileLoadCute}
     default_implementation = "pure"
 
     widths = properties.ListProperty(

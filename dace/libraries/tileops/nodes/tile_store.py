@@ -72,6 +72,40 @@ class ExpandTileStorePure(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandTileStoreCute(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileStore`.
+
+    Emits a Python tasklet whose body calls ``cuda.tile.store`` with the
+    surrounding-scope tile indices and ``mask=`` (when masked).
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a Python tasklet emitting ``cuda.tile.store``.
+
+        :param node: The lib node being expanded.
+        :param parent_state: State that owns the lib node.
+        :param parent_sdfg: SDFG that owns ``parent_state``.
+        :returns: A Python-language tasklet with a ``cuda.tile.store``
+            body.
+        """
+        if node.has_mask:
+            body = "cuda.tile.store(__output, tile=__src, mask=__mask)"
+        else:
+            body = "cuda.tile.store(__output, tile=__src)"
+        inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
+        return nodes.Tasklet(
+            label=f"{node.label}_cute",
+            inputs={c: None for c in inputs},
+            outputs={"__output": None},
+            code=body,
+            language=dace.dtypes.Language.Python,
+        )
+
+
 @library.node
 class TileStore(nodes.LibraryNode):
     """Store a K-dim tile back into a global array.
@@ -82,7 +116,7 @@ class TileStore(nodes.LibraryNode):
     strides into the destination view.
     """
 
-    implementations = {"pure": ExpandTileStorePure}
+    implementations = {"pure": ExpandTileStorePure, "cute": ExpandTileStoreCute}
     default_implementation = "pure"
 
     widths = properties.ListProperty(

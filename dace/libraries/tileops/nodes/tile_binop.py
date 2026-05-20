@@ -105,6 +105,68 @@ class ExpandTileBinopPure(ExpandTransformation):
         )
 
 
+_CUTE_OP_EXPR = {
+    "+": "{lhs} + {rhs}",
+    "-": "{lhs} - {rhs}",
+    "*": "{lhs} * {rhs}",
+    "/": "{lhs} / {rhs}",
+    "<": "{lhs} < {rhs}",
+    "<=": "{lhs} <= {rhs}",
+    ">": "{lhs} > {rhs}",
+    ">=": "{lhs} >= {rhs}",
+    "==": "{lhs} == {rhs}",
+    "!=": "{lhs} != {rhs}",
+    "&&": "{lhs} & {rhs}",
+    "||": "{lhs} | {rhs}",
+    "min": "cuda.tile.minimum({lhs}, {rhs})",
+    "max": "cuda.tile.maximum({lhs}, {rhs})",
+}
+
+
+@library.expansion
+class ExpandTileBinopCute(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileBinop`.
+
+    Emits a Python tasklet whose body is the equivalent ``cuda.tile``
+    element-wise expression. Tiles arriving on the input connectors
+    are assumed to be already-correct cuTile tile objects (the
+    upstream :class:`TileLoad` ``cute`` expansion produces them).
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a Python tasklet emitting the cuTile binop.
+
+        :param node: The lib node being expanded.
+        :param parent_state: State that owns the lib node.
+        :param parent_sdfg: SDFG that owns ``parent_state``.
+        :returns: A Python-language tasklet with a ``cuda.tile`` body.
+        """
+        lhs = node.expr_a if node.kind_a == _SYMBOL else "__rhs1"
+        rhs = node.expr_b if node.kind_b == _SYMBOL else "__rhs2"
+        rhs_expr = _CUTE_OP_EXPR[node.op].format(lhs=lhs, rhs=rhs)
+        if node.has_mask:
+            body = f"__output = cuda.tile.where(__mask, {rhs_expr}, __output)"
+        else:
+            body = f"__output = {rhs_expr}"
+        inputs = set()
+        if node.kind_a == _TILE:
+            inputs.add("__rhs1")
+        if node.kind_b == _TILE:
+            inputs.add("__rhs2")
+        if node.has_mask:
+            inputs.add("__mask")
+        return nodes.Tasklet(
+            label=f"{node.label}_cute",
+            inputs={c: None for c in inputs},
+            outputs={"__output": None},
+            code=body,
+            language=dace.dtypes.Language.Python,
+        )
+
+
 @library.node
 class TileBinop(nodes.LibraryNode):
     """Element-wise binary op on K-dim register tiles.
@@ -117,12 +179,13 @@ class TileBinop(nodes.LibraryNode):
     per lane.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        flattened CPP-loop correctness fallback. ``"cute"`` (T9)
-        emits :mod:`cuda.tile`-Python primitives.
+        flattened CPP-loop correctness fallback. ``"cute"`` emits the
+        :mod:`cuda.tile`-Python equivalent (opt-in; the orchestrator
+        stays on ``"pure"`` for CPU).
     :cvar default_implementation: ``"pure"``.
     """
 
-    implementations = {"pure": ExpandTileBinopPure}
+    implementations = {"pure": ExpandTileBinopPure, "cute": ExpandTileBinopCute}
     default_implementation = "pure"
 
     op = properties.Property(
