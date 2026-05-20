@@ -5,7 +5,7 @@ The CUDA expansion emits the ambient ``__dace_current_stream`` symbol; the
 GPU stream scheduler binds it post-expansion (legacy codegen declares it
 directly), so the libnode carries no stream input connector itself.
 """
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
 import dace
 from dace import library, nodes
@@ -14,22 +14,21 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, auto_dispatch,
-                                            collapse_shape_and_strides, extract_dynamic_inputs)
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
+                                            collapsed_map_lengths)
 
 
 def _make_memset_skeleton(
-    node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
-) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List[Any], List[Any]]:
+        node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
+) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List, List]:
     """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
-    :returns: ``(sdfg, state, out_name, out, out_subset, map_lengths,
-        out_shape_collapsed)``.
+    :returns: ``(sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed)``.
     """
-    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
@@ -37,25 +36,9 @@ def _make_memset_skeleton(
     sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
     state = sdfg.add_state(f"{node.label}_state")
-    map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
+    map_lengths = collapsed_map_lengths(out_subset)
 
     return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed
-
-
-def _validate_no_dynamic_inputs(node: "MemsetLibraryNode", dynamic_inputs):
-    """Reject dynamic scalar inputs on direct-tasklet memset paths.
-
-    Direct-tasklet expansions have no surrounding map to bind dynamic scalar
-    inputs; the ``'pure'`` implementation handles that case instead.
-
-    :param node: The memset library node being expanded.
-    :param dynamic_inputs: Dynamic scalar inputs found on ``node``.
-    :raises NotImplementedError: If any dynamic input is present.
-    """
-    if dynamic_inputs:
-        raise NotImplementedError(
-            f"{type(node).__name__} direct-tasklet expansion does not support dynamic input scalars; "
-            f"use the 'pure' implementation for this case.")
 
 
 def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG, *,
@@ -71,8 +54,7 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
     :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
     :returns: The memset tasklet.
     """
-    _out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
-    _validate_no_dynamic_inputs(node, dynamic_inputs)
+    _out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
 
     nbytes = f"{sym2cpp(out_subset.num_elements())} * sizeof({out.dtype.ctype})"
     if cuda:
@@ -90,20 +72,19 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
-    Returns ``'pure'`` (Sequential element-zero map) in device scope or when
-    dynamic scalar inputs are present, since ``cudaMemsetAsync`` cannot be
-    issued from a kernel and only the mapped expansion supports dynamic inputs;
-    ``'CUDA'`` (``cudaMemsetAsync``) for host-issued GPU-destination memsets;
-    otherwise ``'CPU'`` (``std::memset``).
+    Returns ``'pure'`` (Sequential element-zero map) in device scope since
+    ``cudaMemsetAsync`` cannot be issued from a kernel; ``'CUDA'``
+    (``cudaMemsetAsync``) for host-issued GPU-destination memsets; otherwise
+    ``'CPU'`` (``std::memset``).
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
     """
-    out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+    _out_name, out, _out_subset = node.validate(parent_sdfg, parent_state)
 
-    if is_devicelevel_gpu(parent_sdfg, parent_state, node) or dynamic_inputs:
+    if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'pure'
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:
@@ -114,8 +95,8 @@ def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
 @library.expansion
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
-    :func:`select_memset_implementation` based on the destination storage,
-    dynamic inputs, and the surrounding scope."""
+    :func:`select_memset_implementation` based on the destination storage
+    and the surrounding scope."""
     environments = []
 
     @staticmethod
@@ -170,6 +151,18 @@ class ExpandCPU(ExpandTransformation):
 
 @library.node
 class MemsetLibraryNode(nodes.LibraryNode):
+    """Library node representing a 0-memset over a contiguous output subset.
+
+    Design rationale: the libnode does NOT accept dynamic (Scalar) input
+    connectors -- the subset expression must use symbols already in scope at
+    construction time. This keeps the contract simple and lets the auto
+    selector reason purely from the static memlet subset.
+    TODO: ``AssignmentAndCopyKernelToMemsetAndMemcpy`` (in a separate branch)
+    must avoid lifting maps whose ranges depend on dynamic map-entry
+    connectors, or first promote those connectors to symbols before
+    constructing the libnode.
+    """
+
     implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'Auto'
 
@@ -179,24 +172,31 @@ class MemsetLibraryNode(nodes.LibraryNode):
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(name, *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
 
-    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range, dict]:
-        """Validate the node's wiring and resolve its output and inputs.
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range]:
+        """Validate wiring and resolve the output edge.
 
         :param sdfg: The SDFG owning the data descriptors.
         :param state: The state containing this node.
-        :returns: ``(out_name, out, out_subset, dynamic_inputs)``.
-        :raises ValueError: If the node does not have exactly one output edge.
+        :returns: ``(out_name, out, out_subset)``.
+        :raises ValueError: If the node lacks exactly one output edge or has
+            any non-empty non-reserved input connector wired.
         """
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == MemsetLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "
                              f"``{MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` output edge.")
 
+        # Reject any non-empty input connector: the libnode does not accept
+        # dynamic inputs (see class docstring's design rationale).
+        reserved = {CURRENT_STREAM_NAME}
+        extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
+        if extra:
+            raise ValueError(f"{type(self).__name__} does not accept dynamic input connectors; got {extra}. "
+                             f"Subset expressions must use symbols already in scope.")
+
         oe = data_oes[0]
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        dynamic_inputs = extract_dynamic_inputs(self, sdfg, state, reserved_conns=())
-
-        return out_name, out, out_subset, dynamic_inputs
+        return out_name, out, out_subset

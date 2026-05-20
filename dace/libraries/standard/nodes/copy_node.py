@@ -6,8 +6,8 @@ from typing import List
 import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, auto_dispatch,
-                                            collapse_shape_and_strides, extract_dynamic_inputs)
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
+                                            collapsed_map_lengths)
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
@@ -96,9 +96,9 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     :returns: a concrete implementation name from
               ``CopyLibraryNode.implementations`` -- never ``'Auto'`` itself.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                              parent_state,
-                                                                              allow_cross_storage=True)
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                        parent_state,
+                                                                        allow_cross_storage=True)
 
     # 1. GPU_Shared involvement -> block-cooperative ``SharedMemoryCollective``
     # (``dace::CopyND<>`` + ``__syncthreads()``). Shared memory is per-block
@@ -183,7 +183,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     :raises ValueError: a strided cross-CPU/GPU pattern with no common
         stride-1 axis that no single memcpy can lower.
     """
-    _, inp, in_subset, _, out, out_subset, _ = node.validate(parent_sdfg, parent_state, allow_cross_storage=True)
+    _, inp, in_subset, _, out, out_subset = node.validate(parent_sdfg, parent_state, allow_cross_storage=True)
 
     if in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out):
         return None
@@ -233,8 +233,9 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
     :returns: a :class:`CopyExpansion` with the skeleton SDFG and collapsed
               shape/stride state.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(
-        parent_sdfg, parent_state, allow_cross_storage=allow_cross_storage)
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                        parent_state,
+                                                                        allow_cross_storage=allow_cross_storage)
 
     if require_contiguous:
         _require_contiguous_subset(inp_name, in_subset, inp, "input")
@@ -248,7 +249,7 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
     state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
-    map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
+    map_lengths = collapsed_map_lengths(in_subset)
 
     return CopyExpansion(sdfg=sdfg,
                          state=state,
@@ -409,9 +410,9 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
     :param parent_sdfg: SDFG containing ``parent_state``.
     :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the memcpy.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                              parent_state,
-                                                                              allow_cross_storage=True)
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                        parent_state,
+                                                                        allow_cross_storage=True)
     _require_contiguous_subset(inp_name, in_subset, inp, "input")
     _require_contiguous_subset(out_name, out_subset, out, "output")
 
@@ -536,13 +537,11 @@ class ExpandMemcpyCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg,
-                                                                                            parent_state,
-                                                                                            allow_cross_storage=False)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=False)
         _require_contiguous_subset(inp_name, in_subset, inp, "input")
         _require_contiguous_subset(out_name, out_subset, out, "output")
-        if dynamic_inputs:
-            raise NotImplementedError("MemcpyCPU doesn't yet support dynamic input scalars.")
 
         cp_size = in_subset.num_elements()
         in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
@@ -572,9 +571,9 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                                  parent_state,
-                                                                                  allow_cross_storage=True)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=True)
 
         in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
         out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
@@ -650,9 +649,9 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                                  parent_state,
-                                                                                  allow_cross_storage=True)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=True)
         in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
         out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
@@ -753,9 +752,9 @@ class ExpandTasklet(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset, _dyn = node.validate(parent_sdfg,
-                                                                                  parent_state,
-                                                                                  allow_cross_storage=True)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=True)
         if (inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared):
             raise ValueError(f"Tasklet expansion: storage types must match (Shared memory needs the "
                              f"SharedMemoryCollective expansion); got {inp.storage} -> {out.storage}.")
@@ -793,9 +792,9 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg,
-                                                                                            parent_state,
-                                                                                            allow_cross_storage=True)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
+                                                                            parent_state,
+                                                                            allow_cross_storage=True)
 
         valid_storages = {dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global}
         if inp.storage not in valid_storages or out.storage not in valid_storages:
@@ -804,9 +803,6 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
                              "Shared <-> Register thread-level copies.")
         if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
             raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
-        if dynamic_inputs:
-            raise NotImplementedError("SharedMemoryCollective doesn't yet support dynamic input scalars; "
-                                      "use MappedTasklet if dynamic copy sizes are needed.")
 
         # The collective copy IS the thread-block-level operation; it must
         # not sit inside an enclosing GPU_ThreadBlock map.
@@ -838,6 +834,15 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of
     ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
     ``__syncthreads()``; the only remaining ``dace::CopyND`` user).
+
+    Design rationale: the libnode does NOT accept dynamic (Scalar) input
+    connectors -- subset expressions must use symbols already in scope at
+    construction time. This keeps the contract simple and lets the auto
+    selector reason purely from the static memlet subsets.
+    TODO: ``AssignmentAndCopyKernelToMemsetAndMemcpy`` (in a separate branch)
+    must avoid lifting maps whose ranges depend on dynamic map-entry
+    connectors, or first promote those connectors to symbols before
+    constructing the libnode.
     """
 
     implementations = {
@@ -882,15 +887,15 @@ class CopyLibraryNode(nodes.LibraryNode):
         return sdfg.arrays[outer.data].storage
 
     def validate(self, sdfg, state, allow_cross_storage=True):
-        """Resolve in/out edges, names, subsets, and dynamic inputs.
+        """Resolve in/out edges, names, and subsets.
 
         :param sdfg: SDFG containing ``state``.
         :param state: state containing this libnode.
         :param allow_cross_storage: when False, require matching src/dst storages.
-        :returns: ``(inp_name, inp, in_subset, out_name, out, out_subset,
-                  dynamic_inputs)``.
+        :returns: ``(inp_name, inp, in_subset, out_name, out, out_subset)``.
         :raises ValueError: the libnode is not wired with exactly one input
-            and one output data edge, dtypes mismatch, or (when
+            and one output data edge, dtypes mismatch, an extraneous
+            non-reserved input connector is wired, or (when
             ``allow_cross_storage`` is False) the two storages differ.
         """
         out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
@@ -902,10 +907,13 @@ class CopyLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        dynamic_inputs = extract_dynamic_inputs(self,
-                                                sdfg,
-                                                state,
-                                                reserved_conns=(CopyLibraryNode.INPUT_CONNECTOR_NAME, ))
+        # Reject any non-reserved input connector: the libnode does not accept
+        # dynamic inputs (see class docstring's design rationale).
+        reserved = {CopyLibraryNode.INPUT_CONNECTOR_NAME, CURRENT_STREAM_NAME}
+        extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
+        if extra:
+            raise ValueError(f"{type(self).__name__} does not accept dynamic input connectors; got {extra}. "
+                             f"Subset expressions must use symbols already in scope.")
 
         in_edges = [ie for ie in state.in_edges(self) if ie.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
         if len(in_edges) != 1:
@@ -924,4 +932,4 @@ class CopyLibraryNode(nodes.LibraryNode):
                              f"(got {inp.storage} vs {out.storage}). Use a cross-storage "
                              f"expansion or the pure fallback.")
 
-        return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs
+        return inp_name, inp, in_subset, out_name, out, out_subset
