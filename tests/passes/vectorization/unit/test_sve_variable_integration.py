@@ -160,9 +160,45 @@ def test_sve_variable_triad_chain():
         f"triad max|d|={float(np.max(np.abs(d_out - expected)))}"
 
 
+@dace.program
+def _spmv_dot(a: dace.float64[N], b: dace.float64[N], idx: dace.int64[N], y: dace.float64[1]):
+    y[0] = 0.0
+    for i in dace.map[0:N]:
+        y[0] += a[i] * b[idx[i]]
+
+
+def test_sve_variable_spmv_reduction_recognised_and_runs():
+    """SpMV ``y = sum a[i] * b[idx[i]]``: WCRToAugAssign (run at the
+    start of the variable-VL chain per user directive) converts ``+=``
+    into an explicit augassign tasklet inside the dace-frontend's
+    reduction NSDFG. ``_classify_spmv_reduction_body`` then recognises
+    the multiply + augassign-over-gather shape and emits the full SVE
+    reduction stack: svwhilelt_b64 + svld1_f64 + native gather
+    svld1_gather_s64index_f64 + svmla_f64_m FMA accumulator +
+    svaddv_f64 horizontal reduce + svcntd VL stride. Scalar fallback
+    runs on x86 (the SVE branch is syntax-checked via .cpp text)."""
+    NV = 64
+    a = np.random.rand(NV)
+    b = np.random.rand(NV)
+    idx = np.random.permutation(NV).astype(np.int64)
+    y = np.zeros(1)
+    sdfg = _spmv_dot.to_sdfg(simplify=True)
+    sdfg.replace_dict({"N": NV})
+    sdfg.name = f"_spmv_dot_var_{NV}"
+    VectorizeCPU(vector_width=8, num_cores=8, sve_style="variable", fail_on_unvectorizable=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    cpp = sdfg.generate_code()[0].clean_code
+    for intrinsic in ("svwhilelt_b64", "svld1_gather_s64index_f64", "svmla_f64_m", "svaddv_f64", "svcntd()"):
+        assert intrinsic in cpp, f"emitted .cpp missing SVE intrinsic {intrinsic!r}"
+    sdfg.compile()(a=a.copy(), b=b.copy(), idx=idx.copy(), y=y, N=NV)
+    expected = float(np.sum(a * b[idx]))
+    assert np.isclose(y[0], expected, rtol=1e-12, atol=1e-12), \
+        f"SpMV mismatch: got {y[0]}, expected {expected}, diff {y[0] - expected:.2e}"
+
+
 def test_sve_variable_unsupported_shape_raises_loudly():
-    """A non-chain-of-binops body (multi-output or branching) must
-    raise rather than silently miscompile."""
+    """A non-chain / non-SpMV body (multi-output) must raise rather
+    than silently miscompile."""
     N_sym = dace.symbol("N_bad")
 
     @dace.program

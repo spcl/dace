@@ -836,26 +836,212 @@ class SveStyleVariableFinalize(ppl.Pass):
         state.remove_node(map_exit)
         sdfg.validate()
 
+    @staticmethod
+    def _classify_spmv_reduction_body(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+        """Recognise the SpMV-shape body: a single NSDFG (the dace
+        frontend's reduction wrapping) containing a multiply tasklet on
+        a gather (``b[idx[i]]``) + an augassign accumulator into a
+        scalar output. Returns ``(a_arr, b_arr, idx_arr, out_scalar,
+        global_ub_str)`` or ``None`` if not the SpMV shape.
+
+        Pre-condition (must run before): WCRToAugAssign — converts the
+        ``+=``-style WCR edge into an explicit augassign tasklet inside
+        the NSDFG body.
+        """
+        if len(map_entry.map.params) != 1:
+            return None
+        lb, ub, step = map_entry.map.range[-1]
+        if (step != 1) and (str(step) != "1"):
+            return None
+        sdfg = state.sdfg
+        map_exit = state.exit_node(map_entry)
+        body_nodes = [
+            n for n in state.all_nodes_between(map_entry, map_exit)
+            if not isinstance(n, (dace.nodes.MapEntry, dace.nodes.MapExit))
+        ]
+        # Body must be exactly one NSDFG (no other nodes).
+        nsdfgs = [n for n in body_nodes if isinstance(n, dace.nodes.NestedSDFG)]
+        if len(nsdfgs) != 1 or len(body_nodes) != 1:
+            return None
+        nsdfg_node = nsdfgs[0]
+        inner = nsdfg_node.sdfg
+        # Inner must have exactly one state with the multiply + augassign
+        # + assign tasklets. (The dace frontend's reduction wrapping
+        # produces a single state with 3 tasklets after WCRToAugAssign:
+        # _Mult_, assign_, augassign.)
+        inner_states = list(inner.all_states())
+        compute_states = [st for st in inner_states if any(isinstance(n, dace.nodes.Tasklet) for n in st.nodes())]
+        if len(compute_states) != 1:
+            return None
+        cst = compute_states[0]
+        tasklets = [n for n in cst.nodes() if isinstance(n, dace.nodes.Tasklet)]
+        mult = next((t for t in tasklets if t.code.as_string.strip().rstrip(";").strip() == "__out = (__in1 * __in2)"),
+                    None)
+        augassign = next(
+            (t for t in tasklets if "augassign" in t.label and "+" in t.code.as_string), None)
+        if mult is None or augassign is None:
+            return None
+        # Identify which outer arrays the NSDFG's input connectors map
+        # to (traverse the outer in_edges).
+        conn_to_outer = {}
+        for ie in state.in_edges(nsdfg_node):
+            if ie.dst_conn and ie.data is not None and ie.data.data is not None:
+                conn_to_outer[ie.dst_conn] = ie.data.data
+        # Inner inputs by NSDFG connector name: each maps to either ``a``
+        # (loaded scalar at index i), ``b`` (gathered via ``idx``), or
+        # ``idx`` (the integer index source).
+        # Find the gather: inside cst, an access node whose data is an
+        # NSDFG inner-array whose subset references a *symbol* (not the
+        # literal map param). That symbol is the gather index = loaded
+        # from idx.
+        import re
+        sym_re = re.compile(r"__sym_(\w+)")
+        gather_arr_conn = None
+        gather_index_conn = None
+        for e in cst.edges():
+            if e.data is None or e.data.data is None or e.data.subset is None:
+                continue
+            sub_str = str(e.data.subset)
+            m = sym_re.search(sub_str)
+            if m:
+                # The accessed inner-array is the gather source; the
+                # symbol whose name is __sym_<connector> maps to idx.
+                # Map back to NSDFG outer connector via the inner array name.
+                arr_name = e.data.data
+                # Find which NSDFG input connector this inner array came from.
+                # The inner array name typically matches the connector name.
+                gather_arr_conn = arr_name
+                gather_index_conn = m.group(1)
+                break
+        if gather_arr_conn is None or gather_index_conn is None:
+            return None
+        # b = arr behind the gather; idx = arr behind the index symbol's connector.
+        b_outer = conn_to_outer.get(gather_arr_conn)
+        idx_outer = conn_to_outer.get(gather_index_conn)
+        # a = the third input (the scalar load at position i, NOT b and NOT idx).
+        a_outer = None
+        for c, outer_arr in conn_to_outer.items():
+            if c != gather_arr_conn and c != gather_index_conn:
+                a_outer = outer_arr
+                break
+        if a_outer is None or b_outer is None or idx_outer is None:
+            return None
+        # Output: the NSDFG's single outgoing edge to the outer scalar.
+        out_scalar = None
+        for oe in state.out_edges(map_exit):
+            if isinstance(oe.dst, dace.nodes.AccessNode):
+                out_scalar = oe.dst.data
+                break
+        if out_scalar is None:
+            return None
+        # Dtype + shape sanity.
+        for nm in (a_outer, b_outer):
+            arr = sdfg.arrays.get(nm)
+            if arr is None or arr.dtype != dace.float64 or len(arr.shape) != 1:
+                return None
+        idx_arr = sdfg.arrays.get(idx_outer)
+        if idx_arr is None or idx_arr.dtype != dace.int64 or len(idx_arr.shape) != 1:
+            return None
+        out_arr = sdfg.arrays.get(out_scalar)
+        if out_arr is None or out_arr.dtype != dace.float64:
+            return None
+        return (a_outer, b_outer, idx_outer, out_scalar, str(ub + 1))
+
+    @staticmethod
+    def _emit_sve_spmv_reduction(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, info):
+        """Replace ``map_entry`` with a CPP tasklet doing the SpMV
+        reduction via SVE intrinsics: svmla_f64_m accumulator over
+        svwhilelt-predicated svld1_gather_s64index_f64 + svld1_f64,
+        finalised by svaddv_f64. Scalar fallback for non-SVE hosts.
+        """
+        a_arr, b_arr, idx_arr, out_scalar, global_ub = info
+        sdfg = state.sdfg
+        map_exit = state.exit_node(map_entry)
+        body = ("\n#if defined(__ARM_FEATURE_SVE)\n"
+                "{\n"
+                "    svfloat64_t acc = svdup_n_f64(0.0);\n"
+                "    int i = 0;\n"
+                f"    while (i < (int)({global_ub})) {{\n"
+                f"        svbool_t pg = svwhilelt_b64(i, (int64_t)({global_ub}));\n"
+                "        svint64_t vidx = svld1_s64(pg, _idx + i);\n"
+                "        svfloat64_t va = svld1_f64(pg, _a + i);\n"
+                "        svfloat64_t vbg = svld1_gather_s64index_f64(pg, _b, vidx);\n"
+                "        acc = svmla_f64_m(pg, acc, va, vbg);\n"
+                "        i += svcntd();\n"
+                "    }\n"
+                "    _out = svaddv_f64(svptrue_b64(), acc);\n"
+                "}\n"
+                "#else\n"
+                "    {\n"
+                "        double s = 0.0;\n"
+                f"        for (int i = 0; i < (int)({global_ub}); ++i) s += _a[i] * _b[_idx[i]];\n"
+                "        _out = s;\n"
+                "    }\n"
+                "#endif\n")
+        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
+        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
+            sdfg.append_global_code(guard, "frame")
+        tk = state.add_tasklet("sve_spmv", {"_a", "_b", "_idx"}, {"_out"}, body, language=dace.dtypes.Language.CPP)
+        # Wire to existing outer access nodes.
+        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
+        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
+        out_access = {n.data: n for n in state.data_nodes() if n.data in outer_inputs | outer_outputs}
+        for arr_name, conn in ((a_arr, "_a"), (b_arr, "_b"), (idx_arr, "_idx")):
+            src = out_access.get(arr_name) or state.add_access(arr_name)
+            out_access[arr_name] = src
+            shape0 = sdfg.arrays[arr_name].shape[0]
+            state.add_edge(src, None, tk, conn, dace.Memlet(f"{arr_name}[0:{shape0}]"))
+        dst = out_access.get(out_scalar) or state.add_access(out_scalar)
+        out_subset = "0" if len(sdfg.arrays[out_scalar].shape) == 0 else f"{out_scalar}[0:1]"
+        state.add_edge(tk, "_out", dst, None, dace.Memlet(out_subset))
+        for n in list(state.all_nodes_between(map_entry, map_exit)):
+            if n not in (map_entry, map_exit) and n is not tk:
+                state.remove_node(n)
+        state.remove_node(map_entry)
+        state.remove_node(map_exit)
+        sdfg.validate()
+
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         """Replace every recognised innermost element-wise float64 map
         with the SVE runtime-VL while-loop tasklet.
 
+        Dispatches per-map on body shape: SpMV-reduction (NSDFG with
+        multiply + augassign over a gather) vs linear tasklet chain
+        (axpy / triad / copy). The two shapes are recognised
+        independently — no chaining across patterns.
+
         :param sdfg: SDFG to transform in place.
         :raises NotImplementedError: if any innermost map cannot be
-            recognised as a simple element-wise pattern (no silent
-            fallback — the user opted into ``sve_style='variable'``
-            knowing the recogniser is first-cut narrow).
+            recognised as either pattern (no silent fallback).
         """
+        # Convert any WCR (``+=`` produces it) into explicit sequential
+        # augassign tasklets BEFORE the recogniser runs — so reductions
+        # appear as ordinary augassign tasklets the SpMV recogniser
+        # walks. Per user directive: "we should run WCRToAugAssign
+        # beginning vectorization".
+        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+        sdfg.apply_transformations_repeated(WCRToAugAssign)
         targets = [(n, g) for n, g in list(sdfg.all_nodes_recursive())
                    if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)]
         applied = 0
         for n, g in targets:
-            info = self._classify_chain_body(g, n)
-            if info is None:
-                raise NotImplementedError(
-                    f"sve_style='variable' recogniser supports linear chains of single-binop "
-                    f"float64 1D element-wise tasklets (axpy, triad, longer associative chains, "
-                    f"or a single copy). Map {n.label!r} in state {g.label!r} did not match.")
-            self._emit_sve_while_chain(g, n, info)
-            applied += 1
+            # Try the SpMV-reduction shape first (NSDFG body); fall
+            # through to the flat tasklet chain shape (axpy/triad/copy)
+            # — each pattern is recognised standalone, not chained.
+            spmv_info = self._classify_spmv_reduction_body(g, n)
+            if spmv_info is not None:
+                self._emit_sve_spmv_reduction(g, n, spmv_info)
+                applied += 1
+                continue
+            chain_info = self._classify_chain_body(g, n)
+            if chain_info is not None:
+                self._emit_sve_while_chain(g, n, chain_info)
+                applied += 1
+                continue
+            raise NotImplementedError(
+                f"sve_style='variable' recogniser supports: (1) SpMV-shape reduction "
+                f"(NSDFG body with augassign over gather, after WCRToAugAssign), or "
+                f"(2) linear chain of single-binop float64 1D element-wise tasklets "
+                f"(axpy, triad, longer chains, or copy). Map {n.label!r} in state "
+                f"{g.label!r} did not match either.")
         return applied or None
