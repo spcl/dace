@@ -125,9 +125,7 @@ def _is_consecutive_reshape(src_size, dst_shape):
             i += 1
             j += 1
             continue
-        # ``src_acc < dst_acc`` may be indeterminate for symbolic expressions;
-        # treat it as False so both pointers move in lockstep -- safe under the
-        # equal-product guard at the bottom of the function.
+        # Symbolic ``<`` may be indeterminate -- fall back to advancing dst (safe under the equal-product check below).
         try:
             advance_src = bool((src_acc - dst_acc) < 0)
         except Exception:
