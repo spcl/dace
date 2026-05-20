@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ ``CopyLibraryNode`` to represent copies explicitly. """
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Tuple
 
 import dace
 from dace import data, library, nodes, dtypes, symbolic
@@ -27,12 +27,12 @@ class CopyExpansion:
     out_name: str
     out: data.Data
     out_subset: dace.subsets.Range
-    map_lengths: List
-    in_shape_collapsed: List
-    out_shape_collapsed: List
+    map_lengths: List[symbolic.SymExpr]
+    in_shape_collapsed: List[symbolic.SymExpr]
+    out_shape_collapsed: List[symbolic.SymExpr]
 
 
-def _is_cross_cpu_gpu(src_storage, dst_storage):
+def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
     """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
     adopts its enclosing scope's side and assumed it is never cross-boundary."""
     return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
@@ -46,7 +46,7 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
 
 
-def _delinearized_index(b_i, shape: List, layout: str) -> List:
+def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
     """Multi-dim index expressions for a 1-D walker into a packed-layout array.
 
     :param b_i: the 1-D map symbol.
@@ -65,7 +65,7 @@ def _delinearized_index(b_i, shape: List, layout: str) -> List:
     return [symbolic.int_floor(b_i, cum_strides[d]) % shape[d] for d in range(len(shape))]
 
 
-def _coarse_pick_for_storage_pair(src_storage, dst_storage):
+def _coarse_pick_for_storage_pair(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> Optional[str]:
     """Return ``'MemcpyCUDA1D'`` for any copy involving GPU_Global on at
     least one side, else ``None``. Direction (H2D / D2H / D2D) is inferred
     inside the expansion from the same storages."""
@@ -76,7 +76,7 @@ def _coarse_pick_for_storage_pair(src_storage, dst_storage):
     return None
 
 
-def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
+def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> str:
     """Resolve ``CopyLibraryNode.implementation`` when set to ``'Auto'`` (the default).
 
     Picks a concrete implementation from endpoint storages, subset shapes,
@@ -147,7 +147,8 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     return impl or 'MappedTasklet'
 
 
-def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
+def _cuda2d_strides_are_supported(copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr],
+                                  dst_strides: List[symbolic.SymExpr]) -> bool:
     """Return True if the (collapsed) 2D strides match an ``ExpandCUDA2D`` pattern."""
     if len(copy_shape) != 2 or len(src_strides) != 2 or len(dst_strides) != 2:
         return False
@@ -161,7 +162,8 @@ def _cuda2d_strides_are_supported(copy_shape, src_strides, dst_strides):
         return False
 
 
-def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
+def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState,
+                                  parent_sdfg: dace.SDFG) -> Optional[str]:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
     Picks ``MemcpyCUDA2D`` (2D strided patterns), ``MappedTasklet``
@@ -213,7 +215,10 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
                      f"pick an explicit implementation manually.")
 
 
-def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False):
+def _make_expansion_sdfg(node: "CopyLibraryNode",
+                         parent_state: dace.SDFGState,
+                         parent_sdfg: dace.SDFG,
+                         allow_cross_storage: bool = False) -> CopyExpansion:
     """Shared validation + wrapper-SDFG skeleton for expansions.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
@@ -250,7 +255,10 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
                          out_shape_collapsed=out_shape_collapsed)
 
 
-def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=False):
+def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
+                                   parent_state: dace.SDFGState,
+                                   parent_sdfg: dace.SDFG,
+                                   allow_cross_storage: bool = False) -> dace.SDFG:
     """Element-wise mapped tasklet expansion.
 
     Schedule comes from the storages: ``Sequential`` for Register/Register
@@ -354,14 +362,15 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     return ctx.sdfg
 
 
-def _memcpy_kind(inp, out) -> str:
+def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     return f"cudaMemcpy{src_loc}To{dst_loc}"
 
 
-def _memcpy_connector_typing(inp, out, one_elem: bool, in_is_cpu: bool, out_is_cpu: bool, in_conn: str, out_conn: str):
+def _memcpy_connector_typing(inp: data.Data, out: data.Data, one_elem: bool, in_is_cpu: bool, out_is_cpu: bool,
+                             in_conn: str, out_conn: str) -> Tuple[dtypes.typeclass, dtypes.typeclass, str, str]:
     """Pick connector types and tasklet-arg forms for a memcpy expansion.
 
     A single-element CPU side stays value-typed and is addressed via ``&``;
@@ -385,7 +394,8 @@ def _memcpy_connector_typing(inp, out, one_elem: bool, in_is_cpu: bool, out_is_c
     return in_conn_type, out_conn_type, in_arg, out_arg
 
 
-def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
+def _make_cuda_memcpy_expansion(node: "CopyLibraryNode", parent_state: dace.SDFGState,
+                                parent_sdfg: dace.SDFG) -> nodes.Tasklet:
     """Build a Tasklet emitting one ``cudaMemcpyAsync``.
 
     The transfer direction (HostToDevice / DeviceToHost / DeviceToDevice /
@@ -427,7 +437,8 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
                          language=dace.Language.CPP)
 
 
-def _build_shmem_collective_copy_code(inp: data.Data, in_subset, out: data.Data, out_subset) -> str:
+def _build_shmem_collective_copy_code(inp: data.Data, in_subset: dace.subsets.Range, out: data.Data,
+                                      out_subset: dace.subsets.Range) -> str:
     """Build the C++ code for ``ExpandSharedMemoryCollective``: a
     ``dace::CopyND<...>::Copy(...)`` call followed by ``__syncthreads()``.
 

@@ -68,7 +68,8 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
                          language=dace.Language.CPP)
 
 
-def select_memset_implementation(node, parent_state, parent_sdfg) -> str:
+def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                                 parent_sdfg: dace.SDFG) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
     Returns ``'pure'`` (Sequential element-zero map) in device scope since
