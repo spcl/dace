@@ -814,6 +814,53 @@ class pyobject(opaque):
         return ctypes.cast(obj_id, ctypes.py_object).value
 
 
+class Float32sr(typeclass):
+    """
+    32-bit floating-point type with stochastic rounding.
+
+    Stochastic rounding randomly rounds to the nearest representable value
+    with probability proportional to the distance, reducing systematic bias
+    in repeated computations.
+
+    Limitations of current implementation: library functions like blas fallback
+    to rount-to-nearest float32 for compatibility reasons; targets CPU only.
+    """
+
+    def __init__(self):
+        self.type = numpy.float32
+        self.bytes = 4
+        self.dtype = self
+        self.typename = "float"
+        self.stochastically_rounded = True
+
+    def to_json(self):
+        return 'float32sr'
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic  # must be included!
+        return float32sr()
+
+    @property
+    def ctype(self):
+        return "dace::float32sr"
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type]
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
+    @property
+    def base_type(self):
+        return self
+
+
 class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
@@ -1178,6 +1225,7 @@ if TYPE_CHECKING:
     class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
     class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
     class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
+    class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
     class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
     class complex128(_DaCeArray, npt.NDArray[numpy.complex128]): ...
@@ -1199,6 +1247,7 @@ else:
     uint64 = typeclass(numpy.uint64)
     float16 = typeclass(numpy.float16)
     float32 = typeclass(numpy.float32)
+    float32sr = Float32sr()
     float64 = typeclass(numpy.float64)
     complex64 = typeclass(numpy.complex64)
     complex128 = typeclass(numpy.complex128)
@@ -1256,6 +1305,7 @@ TYPECLASS_TO_STRING = {
     int64: "dace::int64",
     float16: "dace::float16",
     float32: "dace::float32",
+    float32sr: "dace::float32sr",
     float64: "dace::float64",
     complex64: "dace::complex64",
     complex128: "dace::complex128"
