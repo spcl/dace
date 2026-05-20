@@ -15,7 +15,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, auto_dispatch,
-                                            extract_dynamic_inputs)
+                                            collapse_shape_and_strides, extract_dynamic_inputs)
 
 
 def _make_memset_skeleton(
@@ -30,9 +30,7 @@ def _make_memset_skeleton(
         out_shape_collapsed)``.
     """
     out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
-    keep = [(e + 1 - b) // s != 1 for (b, e, s) in out_subset]
-    out_shape_collapsed = [(e + 1 - b) // s for (b, e, s), k in zip(out_subset, keep) if k]
-    out_strides_collapsed = [stride for stride, k in zip(out.strides, keep) if k]
+    out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)

@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ ``CopyLibraryNode`` to represent copies explicitly. """
-import operator
 from dataclasses import dataclass
-from functools import reduce
 from typing import List
 
 import dace
@@ -210,15 +208,11 @@ class CopyExpansion:
     state: dace.SDFGState
     inp_name: str
     inp: data.Data
-    in_subset: dace.subsets.Range
     out_name: str
     out: data.Data
-    out_subset: dace.subsets.Range
     map_lengths: List
     in_shape_collapsed: List
-    in_strides_collapsed: List
     out_shape_collapsed: List
-    out_strides_collapsed: List
 
 
 def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
@@ -254,15 +248,11 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
                          state=state,
                          inp_name=inp_name,
                          inp=inp,
-                         in_subset=in_subset,
                          out_name=out_name,
                          out=out,
-                         out_subset=out_subset,
                          map_lengths=map_lengths,
                          in_shape_collapsed=in_shape_collapsed,
-                         in_strides_collapsed=in_strides_collapsed,
-                         out_shape_collapsed=out_shape_collapsed,
-                         out_strides_collapsed=out_strides_collapsed)
+                         out_shape_collapsed=out_shape_collapsed)
 
 
 def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=False):
@@ -536,8 +526,7 @@ class ExpandCopyNDTemplate(ExpandTransformation):
                 raise ValueError(f"CopyNDTemplate rank-mismatched copy requires contiguous subsets on both endpoints; "
                                  f"got src subset {in_subset} on shape {tuple(inp.shape)} and dst subset {out_subset} "
                                  f"on shape {tuple(out.shape)}.")
-            total = reduce(operator.mul, in_shape_collapsed, 1)
-            copy_shape = [total]
+            copy_shape = [in_subset.num_elements()]
             in_strides_collapsed = [1]
             out_strides_collapsed = [1]
         else:
