@@ -2,7 +2,7 @@
 """
 Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
 """
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import dace
 import copy
@@ -117,3 +117,23 @@ def add_dynamic_inputs(dynamic_inputs: Dict[str, dace.data.Data], sdfg: dace.SDF
 
     collapsed_map_lengths = [ml for ml in map_lengths if ml != 1]
     return collapsed_map_lengths
+
+
+def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG,
+                  select_fn: Callable[[nodes.LibraryNode, dace.SDFGState, dace.SDFG], str], library_cls: type):
+    """Dispatch a library node's ``'Auto'`` implementation to the one picked by ``select_fn``.
+
+    Sets ``node.implementation`` to the resolved name so introspection
+    (debug output, downstream passes) reflects what was actually picked.
+
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node``.
+    :param parent_sdfg: SDFG containing ``parent_state``.
+    :param select_fn: callable returning a concrete implementation name (not ``'Auto'``).
+    :param library_cls: the library node class with the ``implementations`` dict.
+    :returns: whatever the resolved expansion returns.
+    """
+    impl_name = select_fn(node, parent_state, parent_sdfg)
+    assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
+    node.implementation = impl_name
+    return library_cls.implementations[impl_name].expansion(node, parent_state, parent_sdfg)

@@ -14,7 +14,8 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, add_dynamic_inputs, extract_dynamic_inputs
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, auto_dispatch,
+                                            extract_dynamic_inputs)
 
 
 def _make_memset_skeleton(
@@ -121,10 +122,7 @@ class ExpandAuto(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        impl_name = select_memset_implementation(node, parent_state, parent_sdfg)
-        assert impl_name != 'Auto', "select_memset_implementation must not return 'Auto'."
-        node.implementation = impl_name
-        return MemsetLibraryNode.implementations[impl_name].expansion(node, parent_state, parent_sdfg)
+        return auto_dispatch(node, parent_state, parent_sdfg, select_memset_implementation, MemsetLibraryNode)
 
 
 @library.expansion

@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``CopyLibraryNode`` and its pure, CPU, CUDA, cross-storage, register, and shared-memory expansions."""
+from typing import Optional, Sequence, Tuple
+
 import dace
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -39,19 +41,19 @@ def _make_same_storage_sdfg(implementation,
     return sdfg, a_name, b_name
 
 
-def _make_multidim_libnode_sdfg(implementation,
-                                in_shape,
-                                out_shape,
+def _make_multidim_libnode_sdfg(implementation: Optional[str],
+                                in_shape: Sequence[int],
+                                out_shape: Sequence[int],
                                 *,
-                                in_strides=None,
-                                out_strides=None,
-                                in_total_size=None,
-                                out_total_size=None,
-                                in_storage=dace.dtypes.StorageType.CPU_Heap,
-                                out_storage=dace.dtypes.StorageType.CPU_Heap,
-                                in_subset=None,
-                                out_subset=None,
-                                name="copy_multidim"):
+                                in_strides: Optional[Sequence[int]] = None,
+                                out_strides: Optional[Sequence[int]] = None,
+                                in_total_size: Optional[int] = None,
+                                out_total_size: Optional[int] = None,
+                                in_storage: dace.dtypes.StorageType = dace.dtypes.StorageType.CPU_Heap,
+                                out_storage: dace.dtypes.StorageType = dace.dtypes.StorageType.CPU_Heap,
+                                in_subset: Optional[str] = None,
+                                out_subset: Optional[str] = None,
+                                name: str = "copy_multidim") -> Tuple[dace.SDFG, CopyLibraryNode]:
     """Build an SDFG with a ``CopyLibraryNode`` between two ND arrays.
 
     Supports rank-mismatch via different ``in_shape`` / ``out_shape``, custom

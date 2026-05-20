@@ -8,8 +8,8 @@ from typing import List
 import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, collapse_shape_and_strides,
-                                            extract_dynamic_inputs)
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, add_dynamic_inputs, auto_dispatch,
+                                            collapse_shape_and_strides, extract_dynamic_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
@@ -23,7 +23,7 @@ def _is_cross_cpu_gpu(src_storage, dst_storage):
             or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
 
 
-def _both_packed_same_layout(inp, out):
+def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     """True if both descriptors are packed in the *same* major order (both C
     or both Fortran). Mixed layouts (C<->F) are transposes, not copies, so
     they must not route to ``CopyNDTemplate``."""
@@ -473,18 +473,13 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg, out_
 @library.expansion
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
-    :func:`select_copy_implementation` from endpoint storages, subset
-    shapes, and the surrounding scope. Sets ``node.implementation`` to the
-    resolved name before delegating so introspection/debug output shows
-    what was actually picked."""
+    :func:`select_copy_implementation` from endpoint storages, subset shapes,
+    and the surrounding scope."""
     environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        impl_name = select_copy_implementation(node, parent_state, parent_sdfg)
-        assert impl_name != 'Auto', "select_copy_implementation must not return 'Auto'."
-        node.implementation = impl_name
-        return CopyLibraryNode.implementations[impl_name].expansion(node, parent_state, parent_sdfg)
+        return auto_dispatch(node, parent_state, parent_sdfg, select_copy_implementation, CopyLibraryNode)
 
 
 @library.expansion
