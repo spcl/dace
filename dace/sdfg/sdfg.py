@@ -119,13 +119,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :param include_scalars: If true, include Memlets for scalar accesses. Defaults to false to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
@@ -136,6 +137,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif include_scalars and isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays and isinstance(arrays[data], dace.data.Scalar):
+                result.append(mm.Memlet.from_array(data, arrays[data]))
 
     return result
 
@@ -388,10 +393,10 @@ class InterstateEdge(object):
         :return: A list of Memlet objects for each read.
         """
         result: List[mm.Memlet] = []
-        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=True))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
-            result.extend(memlets_in_ast(vast, arrays))
+            result.extend(memlets_in_ast(vast, arrays, include_scalars=True))
 
         return result
 
