@@ -118,8 +118,8 @@ _CUTE_OP_EXPR = {
     "!=": "{lhs} != {rhs}",
     "&&": "{lhs} & {rhs}",
     "||": "{lhs} | {rhs}",
-    "min": "cuda.tile.minimum({lhs}, {rhs})",
-    "max": "cuda.tile.maximum({lhs}, {rhs})",
+    "min": "ct.minimum({lhs}, {rhs})",
+    "max": "ct.maximum({lhs}, {rhs})",
 }
 
 
@@ -127,10 +127,11 @@ _CUTE_OP_EXPR = {
 class ExpandTileBinopCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileBinop`.
 
-    Emits a Python tasklet whose body is the equivalent ``cuda.tile``
-    element-wise expression. Tiles arriving on the input connectors
-    are assumed to be already-correct cuTile tile objects (the
-    upstream :class:`TileLoad` ``cute`` expansion produces them).
+    Emits the bare element-wise expression (e.g. ``a_tile + b_tile``)
+    — matches the reference cuTile kernels, where the mask is applied
+    at the ``ct.scatter`` store, not at the binop. Symbol-kind operands
+    are embedded inline. ``min`` / ``max`` route to ``ct.minimum`` /
+    ``ct.maximum``.
     """
 
     environments = []
@@ -142,22 +143,17 @@ class ExpandTileBinopCute(ExpandTransformation):
         :param node: The lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with a ``cuda.tile`` body.
+        :returns: A Python-language tasklet with the element-wise body.
         """
         lhs = node.expr_a if node.kind_a == _SYMBOL else "__rhs1"
         rhs = node.expr_b if node.kind_b == _SYMBOL else "__rhs2"
         rhs_expr = _CUTE_OP_EXPR[node.op].format(lhs=lhs, rhs=rhs)
-        if node.has_mask:
-            body = f"__output = cuda.tile.where(__mask, {rhs_expr}, __output)"
-        else:
-            body = f"__output = {rhs_expr}"
+        body = f"__output = {rhs_expr}"
         inputs = set()
         if node.kind_a == _TILE:
             inputs.add("__rhs1")
         if node.kind_b == _TILE:
             inputs.add("__rhs2")
-        if node.has_mask:
-            inputs.add("__mask")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None for c in inputs},

@@ -79,34 +79,42 @@ class ExpandTileLoadPure(ExpandTransformation):
 class ExpandTileLoadCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileLoad`.
 
-    Emits a Python tasklet whose body calls ``cuda.tile.load`` with the
-    surrounding-scope tile indices and ``mask=`` (when masked). The
-    tile shape is the lib node's ``widths``.
+    Emits ``ct.load(__src, index=(__pid0, ...), shape=(W_0, ...),
+    padding_mode=ct.PaddingMode.ZERO)`` — the contiguous block-tile
+    read used by the reference cuTile kernels. Mask gating is applied
+    at the store side (:class:`TileStore` cute via ``ct.scatter``), so
+    ``has_mask`` does not change the load body; ``padding_mode=ZERO``
+    is always used so the OOB tail of the last tile reads as 0 and
+    downstream masking is correct.
     """
 
     environments = []
 
     @staticmethod
     def expansion(node: "TileLoad", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting ``cuda.tile.load``.
+        """Return a Python tasklet emitting ``ct.load``.
 
         :param node: The lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with a ``cuda.tile.load``
-            body.
+        :returns: A Python-language tasklet whose body calls
+            ``ct.load`` with ``padding_mode=ZERO``.
         """
-        shape_tuple = ", ".join(str(w) for w in node.widths)
-        if node.has_mask:
-            body = f"__output = cuda.tile.load(__src, shape=({shape_tuple},), mask=__mask, padding_value=0)"
-        else:
-            body = f"__output = cuda.tile.load(__src, shape=({shape_tuple},))"
+        widths = list(node.widths)
+        K = len(widths)
+        shape_tuple = ", ".join(str(w) for w in widths)
+        index_tuple = ", ".join(f"__pid{k}" for k in range(K))
+        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
+        lines.append(
+            f"__output = ct.load(__src, index=({index_tuple},), shape=({shape_tuple},),"
+            f" padding_mode=ct.PaddingMode.ZERO)"
+        )
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None for c in inputs},
             outputs={"__output": None},
-            code=body,
+            code="\n".join(lines),
             language=dace.dtypes.Language.Python,
         )
 

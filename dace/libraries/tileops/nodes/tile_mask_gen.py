@@ -66,9 +66,10 @@ class ExpandTileMaskGenPure(ExpandTransformation):
 class ExpandTileMaskGenCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileMaskGen`.
 
-    Emits a Python tasklet whose body builds the K-fold ANY-OOB
-    conjunction by broadcasting each per-dim ``cuda.tile.arange``
-    comparison to the full mask shape and combining with ``&``.
+    Emits the per-dim ``ct.arange + __pid * W < ub`` shape used by the
+    reference cuTile kernels (see ``manual_cutile_masked.py``). For
+    K=1 the body is a single 1D mask; for K>=2 each per-dim mask is
+    broadcast to the full tile shape and combined with ``&``.
     """
 
     environments = []
@@ -84,24 +85,28 @@ class ExpandTileMaskGenCute(ExpandTransformation):
             ``cuda.tile``-broadcasted boolean tile.
         """
         widths = list(node.widths)
-        iter_vars = list(node.iter_vars)
         global_ubs = list(node.global_ubs)
         K = len(widths)
         shape_tuple = ", ".join(str(w) for w in widths)
-        per_dim = []
-        for k, (iv, ub, w) in enumerate(zip(iter_vars, global_ubs, widths)):
-            slc = ["None"] * K
-            slc[k] = "slice(None)"
-            slc_str = "[" + ", ".join(slc) + "]"
-            per_dim.append(
-                f"cuda.tile.broadcast_to(((cuda.tile.arange({w}) + ({iv})) < ({ub})){slc_str}, ({shape_tuple},))"
-            )
-        body = f"__output = " + " & ".join(per_dim) if per_dim else f"__output = cuda.tile.full(({shape_tuple},), True)"
+        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
+        for k, (ub, w) in enumerate(zip(global_ubs, widths)):
+            lines.append(f"__offsets{k} = ct.arange({w}, dtype=ct.int32)")
+            lines.append(f"__mask{k} = __offsets{k} + __pid{k} * {w} < ({ub})")
+        if K == 1:
+            lines.append("__output = __mask0")
+        else:
+            terms = []
+            for k in range(K):
+                slc = ["None"] * K
+                slc[k] = ":"
+                slc_str = "[" + ", ".join(slc) + "]"
+                terms.append(f"ct.broadcast_to(__mask{k}{slc_str}, ({shape_tuple}))")
+            lines.append("__output = " + " & ".join(terms))
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs=set(),
             outputs={"__output": None},
-            code=body,
+            code="\n".join(lines),
             language=dace.dtypes.Language.Python,
         )
 

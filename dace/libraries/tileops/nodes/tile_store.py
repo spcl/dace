@@ -76,32 +76,51 @@ class ExpandTileStorePure(ExpandTransformation):
 class ExpandTileStoreCute(ExpandTransformation):
     """``cuda.tile``-Python expansion of :class:`TileStore`.
 
-    Emits a Python tasklet whose body calls ``cuda.tile.store`` with the
-    surrounding-scope tile indices and ``mask=`` (when masked).
+    Two emission shapes, matching the reference cuTile kernels:
+
+    * Unmasked: ``ct.store(__output, index=(__pid0, ...), tile=__src)``
+      — contiguous block-tile store.
+    * Masked: ``ct.scatter(__output, (idx_0, ...), __src, mask=__mask)``
+      with per-lane indices ``idx_k = ct.arange(W_k) + __pid_k * W_k``,
+      so OOB lanes at the tile tail are skipped per the iteration mask.
     """
 
     environments = []
 
     @staticmethod
     def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a Python tasklet emitting ``cuda.tile.store``.
+        """Return a Python tasklet emitting ``ct.store`` or ``ct.scatter``.
 
         :param node: The lib node being expanded.
         :param parent_state: State that owns the lib node.
         :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A Python-language tasklet with a ``cuda.tile.store``
-            body.
+        :returns: A Python-language tasklet whose body either calls
+            ``ct.store`` (unmasked) or ``ct.scatter`` (masked).
         """
+        widths = list(node.widths)
+        K = len(widths)
+        lines = [f"__pid{k} = ct.bid({k})" for k in range(K)]
         if node.has_mask:
-            body = "cuda.tile.store(__output, tile=__src, mask=__mask)"
+            for k, w in enumerate(widths):
+                lines.append(
+                    f"__idx{k} = ct.arange({w}, dtype=ct.int32) + __pid{k} * {w}"
+                )
+            idx_tuple = ", ".join(f"__idx{k}" for k in range(K))
+            lines.append(
+                f"ct.scatter(__output, ({idx_tuple},), __src, mask=__mask)"
+            )
         else:
-            body = "cuda.tile.store(__output, tile=__src)"
+            index_tuple = ", ".join(f"__pid{k}" for k in range(K))
+            shape_tuple = ", ".join(str(w) for w in widths)
+            lines.append(
+                f"ct.store(__output, index=({index_tuple},), tile=__src)"
+            )
         inputs = {"__src"} | ({"__mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None for c in inputs},
             outputs={"__output": None},
-            code=body,
+            code="\n".join(lines),
             language=dace.dtypes.Language.Python,
         )
 
