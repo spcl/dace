@@ -16,7 +16,6 @@ import packaging.version as packaging_version
 from dace import dtypes
 from dace.config import Config
 
-DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 _SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
@@ -60,7 +59,9 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+    # ``dtype`` default is frozen at import (Python default-arg semantics);
+    # runtime ``set_temporary('compiler', 'default_data_types', ...)`` won't affect it.
+    def __new__(cls, name=None, dtype=dtypes.typeclass(int), **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -183,7 +184,7 @@ class UndefinedSymbol(symbol):
     >>> expr = N * undefined + 5
     """
 
-    def __new__(cls, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+    def __new__(cls, dtype=dtypes.typeclass(int), **assumptions):
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
         self.dtype = dtype
@@ -491,11 +492,11 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
     if isinstance(value, numpy.generic):
         return dtypes.dtype_to_typeclass(type(value))
     if isinstance(value, sympy.Integer):
-        return DEFAULT_SYMBOL_TYPE
+        return dtypes.typeclass(int)
     if isinstance(value, sympy.Float):
         return dtypes.float64
     if isinstance(value, int) and not isinstance(value, bool):
-        return DEFAULT_SYMBOL_TYPE
+        return dtypes.typeclass(int)
     if isinstance(value, float):
         return dtypes.float64
     if isinstance(value, (complex, numpy.complexfloating)):
@@ -542,7 +543,7 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     kwargs = {}
-    if expr.dtype != DEFAULT_SYMBOL_TYPE:
+    if expr.dtype != dtypes.typeclass(int):
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
 
     default_assumptions = _symbol_default_assumptions(expr)
@@ -567,7 +568,7 @@ def symtype(expr):
     """ Returns the inferred symbol type from a symbolic expression. """
     stypes = [s.dtype for s in symlist(expr).values()]
     if len(stypes) == 0:
-        return DEFAULT_SYMBOL_TYPE
+        return dtypes.typeclass(int)
     elif _checkEqualIvo(stypes):
         return stypes[0]
     else:
@@ -1707,7 +1708,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
             symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
-            dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
+            dtype = kwargs.pop('dtype', dtypes.typeclass(int))
             return symbol(symname, dtype=dtype, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':

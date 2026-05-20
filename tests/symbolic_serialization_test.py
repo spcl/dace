@@ -171,7 +171,7 @@ def test_undefined_symbol_serialization_uses_dollar_prefix():
 
 
 def test_symbol_assumption_roundtrip_preserves_bool_metadata():
-    serialized = 'symbol($i, dtype=dace.int64, nonnegative=True)'
+    serialized = 'symbol($i, nonnegative=True)'
 
     restored = symbolic.deserialize_symbolic(serialized)
 
@@ -179,15 +179,15 @@ def test_symbol_assumption_roundtrip_preserves_bool_metadata():
 
 
 def test_same_name_symbols_with_different_dtypes_serialize_independently():
-    typed = symbolic.symbol('i', dtype=dace.int64)
+    typed = symbolic.symbol('i', dtype=dace.int16)
     default = symbolic.symbol('i')
 
-    assert symbolic.serialize_symbolic(typed) == 'symbol($i, dtype=dace.int64)'
+    assert symbolic.serialize_symbolic(typed) == 'symbol($i, dtype=dace.int16)'
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
 def test_typed_symbol_deserialization_does_not_strip_dtype():
-    serialized = '2*(1 + symbol($M, dtype=dace.int64))*symbol($M, dtype=dace.int64)'
+    serialized = '2*(1 + symbol($M, dtype=dace.int16))*symbol($M, dtype=dace.int16)'
 
     restored = symbolic.deserialize_symbolic(serialized)
 
@@ -206,23 +206,23 @@ def test_pystr_to_symbolic_preserves_typed_symbols():
     # Prime the parser cache with an equal untyped SymPy expression.
     cache_seed_expr = symbolic.deserialize_symbolic('-1 + $N')
     cache_seed_restored = symbolic.pystr_to_symbolic(cache_seed_expr)
-    typed_expr = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int64)')
+    typed_expr = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int16)')
 
     typed_restored = symbolic.pystr_to_symbolic(typed_expr)
 
     assert cache_seed_restored is cache_seed_expr
     assert symbolic.serialize_symbolic(cache_seed_restored) == '-1 + $N'
     assert typed_restored is typed_expr
-    assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int64)'
+    assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int16)'
 
 
 def test_power_deserialization_preserves_typed_symbols_after_plain_power():
     plain_power = symbolic.deserialize_symbolic('$N**2')
 
-    typed_power = symbolic.deserialize_symbolic('symbol($N, dtype=dace.int64)**2')
+    typed_power = symbolic.deserialize_symbolic('symbol($N, dtype=dace.int16)**2')
 
     assert symbolic.serialize_symbolic(plain_power) == '$N**2'
-    assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int64)**2'
+    assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int16)**2'
 
 
 @pytest.mark.parametrize('simplify', [None, False])
@@ -249,7 +249,7 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
         'type': 'Range',
         'ranges': [{
             'start': '0',
-            'end': '-1 + symbol($N, dtype=dace.int64)',
+            'end': '-1 + symbol($N, dtype=dace.int16)',
             'step': '1',
             'tile': '1',
         }],
@@ -258,7 +258,7 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     rng = subsets.Range.from_json(json_range)
 
     assert symbolic.serialize_symbolic(rng.ranges[0][0]) == '0'
-    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int64)'
+    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int16)'
     assert symbolic.serialize_symbolic(rng.ranges[0][2]) == '1'
     assert symbolic.serialize_symbolic(rng.tile_sizes[0]) == '1'
 
