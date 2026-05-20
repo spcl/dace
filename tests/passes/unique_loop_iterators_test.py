@@ -469,9 +469,7 @@ def test_postamble_preserves_symbol_declaration():
     assert any('i' in n.sdfg.symbols for n in body_nsdfgs_before)
 
     UniqueLoopIterators._loop_var_counter = 0
-    p = UniqueLoopIterators()
-    p.assign_loop_iterator_post_value = True
-    p.apply_pass(sdfg, {})
+    UniqueLoopIterators().apply_pass(sdfg, {})  # default: post-value ON
 
     # ``i`` declaration stays because the postamble assignments read/write it.
     body_nsdfgs_after = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
