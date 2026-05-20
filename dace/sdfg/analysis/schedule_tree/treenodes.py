@@ -540,7 +540,7 @@ class IfScope(ControlFlowScope):
                       **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
-        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
         result.update(super().input_memlets(root, **kwargs))
         return result
 
@@ -623,7 +623,7 @@ class ElifScope(ControlFlowScope):
                       **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
-        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
         result.update(super().input_memlets(root, **kwargs))
         return result
 
