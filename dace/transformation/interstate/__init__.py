@@ -18,3 +18,4 @@ from .move_loop_into_map import MoveLoopIntoMap
 from .trivial_loop_elimination import TrivialLoopElimination
 from .multistate_inline import InlineMultistateSDFG
 from .move_assignment_outside_if import MoveAssignmentOutsideIf
+from .move_reduce_init import MoveReduceInitOutOfNestedSDFG
