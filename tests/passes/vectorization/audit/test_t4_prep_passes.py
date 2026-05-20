@@ -1,6 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the T4 prep passes:
 :class:`StrideMapByTileWidths` and :class:`GenerateTileIterationMask`.
+
+Both passes operate directly in the parent state (no body-NSDFG
+nesting): the mask transient + the :class:`TileMaskGen` producer sit in
+the outer map scope alongside the original tasklets so downstream
+:class:`EmitTileOps` can wire the lib node chain without crossing a
+NestedSDFG boundary.
 """
 import pytest
 
@@ -10,9 +16,6 @@ from dace.transformation.passes.vectorization.generate_tile_iteration_mask impor
     GenerateTileIterationMask,
 )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-from dace.transformation.passes.vectorization.nest_innermost_map_body import (
-    NestInnermostMapBodyIntoNSDFG,
-)
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths,
 )
@@ -60,14 +63,13 @@ def test_stride_map_by_tile_widths_sets_k2_steps():
 def test_stride_map_by_tile_widths_is_idempotent():
     """Running the pass twice yields no second rewrite."""
     sdfg = _build_k2_axpy_sdfg()
-    pipeline_input = {}
-    StrideMapByTileWidths(widths=(4, 8)).apply_pass(sdfg, pipeline_input)
-    second = StrideMapByTileWidths(widths=(4, 8)).apply_pass(sdfg, pipeline_input)
+    StrideMapByTileWidths(widths=(4, 8)).apply_pass(sdfg, {})
+    second = StrideMapByTileWidths(widths=(4, 8)).apply_pass(sdfg, {})
     assert second is None
 
 
 def test_stride_map_respects_mark_tile_dims_selection():
-    """When a MarkTileDims result is supplied, only those maps are rewritten."""
+    """When MarkTileDims results are supplied, only those maps are rewritten."""
     sdfg = _build_k2_axpy_sdfg()
     me, _ = _find_innermost_map(sdfg)
     rewritten = StrideMapByTileWidths(widths=(4, 8)).apply_pass(sdfg, {"MarkTileDims": {}})
@@ -76,56 +78,26 @@ def test_stride_map_respects_mark_tile_dims_selection():
     assert rewritten == 1
 
 
-def test_generate_tile_iteration_mask_allocates_mask_and_lib_node():
-    """``GenerateTileIterationMask`` adds the transient + a TileMaskGen producer."""
+def test_generate_tile_iteration_mask_allocates_in_outer_scope():
+    """``GenerateTileIterationMask`` adds the transient + producer in the outer SDFG."""
     sdfg = _build_k2_axpy_sdfg()
-    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     attached = GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
     assert attached == 1
-
-    found_mask_in_inner = False
-    found_lib_node = False
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.nodes.NestedSDFG):
-            if TileNameScheme.ITER_MASK in n.sdfg.arrays:
-                found_mask_in_inner = True
-                arr = n.sdfg.arrays[TileNameScheme.ITER_MASK]
-                assert tuple(int(s) for s in arr.shape) == (4, 8)
-                assert arr.dtype == dace.bool_
-            for inner_n, _ in n.sdfg.all_nodes_recursive():
-                if isinstance(inner_n, TileMaskGen):
-                    found_lib_node = True
-                    assert tuple(inner_n.widths) == (4, 8)
-    assert found_mask_in_inner
-    assert found_lib_node
+    assert TileNameScheme.ITER_MASK in sdfg.arrays
+    arr = sdfg.arrays[TileNameScheme.ITER_MASK]
+    assert tuple(int(s) for s in arr.shape) == (4, 8)
+    assert arr.dtype == dace.bool_
+    masks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileMaskGen)]
+    assert len(masks) == 1
+    assert tuple(masks[0].widths) == (4, 8)
 
 
 def test_generate_tile_iteration_mask_is_idempotent():
     """A second run does not add a duplicate mask."""
     sdfg = _build_k2_axpy_sdfg()
-    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
     second = GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
     assert second is None
-
-
-def test_generate_tile_iteration_mask_threads_symbols():
-    """Outer iter-vars and free symbols inside ``global_ubs`` are threaded
-    into the body NSDFG's symbol table + symbol_mapping."""
-    sdfg = _build_k2_axpy_sdfg()
-    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
-    GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.nodes.NestedSDFG):
-            assert "M" in n.symbol_mapping or "M" in n.sdfg.symbols
-            assert "N" in n.symbol_mapping or "N" in n.sdfg.symbols
-
-
-def test_generate_tile_iteration_mask_refuses_bare_tasklet_body():
-    """Bodies that are NOT nested in a single NSDFG raise NotImplementedError."""
-    sdfg = _build_k2_axpy_sdfg()
-    with pytest.raises(NotImplementedError, match="single NestedSDFG"):
-        GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
 
 
 def test_stride_map_rejects_invalid_K():

@@ -1,47 +1,47 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``GenerateTileIterationMask`` — allocate the K-dim ``_tile_iter_mask``
 transient and the producing :class:`TileMaskGen` lib node inside every
-K-dim eligible inner-map body NSDFG.
+K-dim eligible inner-map outer scope.
 
-The pass assumes :class:`NestInnermostMapBodyIntoNSDFG` has already
-nested each inner map's body in a NestedSDFG; it then prepends a
-single ``_tile_iter_mask_init`` state to the body that runs the
-``TileMaskGen`` lib node, exposing ``_tile_iter_mask`` as a body-local
-register tile that downstream tile-op lib nodes consume.
+The mask lives directly in the parent state (between ``MapEntry`` and
+the body) as a register transient, so downstream :class:`EmitTileOps`
+can wire it into every lib node without crossing a NestedSDFG boundary.
 """
 from typing import Dict, List, Optional, Tuple
 
 import dace
 from dace import properties, symbolic
-from dace.sdfg.nodes import MapEntry, NestedSDFG
+from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-from dace.transformation.passes.vectorization.utils.map_predicates import (
-    get_single_nsdfg_inside_map,
-    is_innermost_map,
-)
+from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
+
+
+def _mask_array_name_for(map_entry: MapEntry) -> str:
+    """Build a per-map mask array name to keep names distinct when
+    several inner maps coexist in the same SDFG.
+
+    :param map_entry: Inner map entry the mask is being attached to.
+    :returns: ``"_tile_iter_mask"`` for the first map, ``"<base>_<n>"``
+        for subsequent ones.
+    """
+    return TileNameScheme.ITER_MASK
 
 
 @properties.make_properties
 class GenerateTileIterationMask(ppl.Pass):
     """Attach a K-dim iteration mask to every K-dim eligible inner map.
 
-    For each inner map whose body is a single NestedSDFG (precondition
-    enforced by :class:`NestInnermostMapBodyIntoNSDFG`), the pass:
+    For each inner map: adds ``_tile_iter_mask : bool[widths]`` (a
+    Register transient) and prepends a :class:`TileMaskGen` lib node
+    inside the map scope that writes the mask. The mask is consumed by
+    every downstream :class:`TileLoad` / :class:`TileBinop` /
+    :class:`TileStore` placed inside the same scope.
 
-    1. Adds a ``_tile_iter_mask`` transient (shape ``widths``, dtype
-       ``bool_``, storage ``Register``) to the inner SDFG.
-    2. Prepends a state running a :class:`TileMaskGen` lib node that
-       writes the mask via the per-dim ANY-OOB conjunction
-       ``(iter_var_k + l_k < global_ub_k)``.
-    3. Threads the outer ``iter_vars`` and any free symbols inside the
-       ``global_ubs`` expressions into the inner SDFG's symbol table
-       and the parent ``NestedSDFG``'s ``symbol_mapping``.
-
-    Idempotent — re-running on an already-masked body is a no-op.
+    Idempotent — re-running on an already-masked map is a no-op.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -66,7 +66,7 @@ class GenerateTileIterationMask(ppl.Pass):
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:
-        """Pass adds states and arrays inside body NSDFGs.
+        """Pass adds arrays and lib nodes.
 
         :returns: ``ppl.Modifies.Everything``.
         """
@@ -94,86 +94,57 @@ class GenerateTileIterationMask(ppl.Pass):
         global_ubs = tuple(str(r[1] + 1) for r in ranges[-K:])
         return TileDimSpec(iter_vars=iter_vars, widths=tuple(self.widths), global_ubs=global_ubs)
 
-    def _ensure_symbols_in_nsdfg(self,
-                                 nsdfg_node: NestedSDFG,
-                                 names: List[str]) -> None:
-        """Make every name in ``names`` visible inside ``nsdfg_node.sdfg``.
-
-        Adds missing symbols to the inner SDFG's symbol table and to
-        ``nsdfg_node.symbol_mapping`` so the parent-scope value flows
-        in. Uses the parent SDFG's declared dtype when present;
-        defaults to ``int64`` otherwise (matches the existing 1D
-        ``GenerateIterationMask`` convention).
-
-        :param nsdfg_node: NestedSDFG node receiving the symbols.
-        :param names: Symbol names to ensure.
-        """
-        inner = nsdfg_node.sdfg
-        parent = nsdfg_node.sdfg.parent_sdfg
-        for name in names:
-            if not name or not name.isidentifier():
-                continue
-            if name not in inner.symbols:
-                dtype = parent.symbols.get(name, dace.int64) if parent is not None else dace.int64
-                inner.add_symbol(name, dtype)
-            if name not in nsdfg_node.symbol_mapping:
-                nsdfg_node.symbol_mapping[name] = name
-
     def _attach_mask(self,
-                     nsdfg_node: NestedSDFG,
+                     parent_sdfg: dace.SDFG,
+                     parent_state: dace.SDFGState,
+                     map_entry: MapEntry,
                      spec: TileDimSpec) -> bool:
-        """Allocate the mask + the producer ``TileMaskGen`` inside the
-        body NSDFG.
+        """Add the mask transient + the producer :class:`TileMaskGen`
+        inside the map scope.
 
-        :param nsdfg_node: Body NestedSDFG node.
+        :param parent_sdfg: SDFG owning ``parent_state``.
+        :param parent_state: State holding the inner map.
+        :param map_entry: Inner map entry.
         :param spec: Per-dim tile specification.
         :returns: ``True`` when a mask was added; ``False`` if a
-            ``_tile_iter_mask`` was already present (idempotent).
+            ``_tile_iter_mask`` array already exists (idempotent).
         """
-        inner = nsdfg_node.sdfg
-        if TileNameScheme.ITER_MASK in inner.arrays:
+        mask_name = _mask_array_name_for(map_entry)
+        if mask_name in parent_sdfg.arrays:
             return False
-        inner.add_array(
-            TileNameScheme.ITER_MASK,
+        parent_sdfg.add_array(
+            mask_name,
             list(spec.widths),
             dace.bool_,
             storage=dace.dtypes.StorageType.Register,
             transient=True,
         )
-        names_to_thread: List[str] = list(spec.iter_vars)
-        for ub in spec.global_ubs:
-            for sym in symbolic.symlist(symbolic.pystr_to_symbolic(ub)).values():
-                names_to_thread.append(str(sym))
-        self._ensure_symbols_in_nsdfg(nsdfg_node, names_to_thread)
-        prep = inner.add_state("_tile_iter_mask_init", is_start_block=True)
         mask_node = TileMaskGen(
             name="_tile_iter_mask_gen",
             widths=spec.widths,
             iter_vars=spec.iter_vars,
             global_ubs=spec.global_ubs,
         )
-        prep.add_node(mask_node)
-        out_access = prep.add_access(TileNameScheme.ITER_MASK)
+        parent_state.add_node(mask_node)
+        mask_access = parent_state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-        prep.add_edge(
+        parent_state.add_edge(
             mask_node,
             "_o",
-            out_access,
+            mask_access,
             None,
-            dace.Memlet(f"{TileNameScheme.ITER_MASK}[{subset}]"),
+            dace.Memlet(f"{mask_name}[{subset}]"),
         )
+        parent_state.add_nedge(map_entry, mask_node, dace.Memlet())
+        parent_state.add_nedge(mask_access, parent_state.exit_node(map_entry), dace.Memlet())
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
-        """Walk every innermost map and attach the mask to its body.
+        """Walk every innermost map and attach the mask to its scope.
 
         :param sdfg: SDFG to transform in place.
-        :param pipeline_results: When the orchestrator ran
-            :class:`MarkTileDims` earlier, the spec dict is fetched
-            from here under the key ``"MarkTileDims"``; otherwise the
-            spec is rebuilt from the map's last K params.
-        :returns: Number of bodies that received a fresh mask, or
-            ``None`` if none.
+        :param pipeline_results: Reads ``"MarkTileDims"`` when present.
+        :returns: Number of maps with a fresh mask, or ``None`` if none.
         """
         specs: Optional[Dict[MapEntry, TileDimSpec]] = None
         if pipeline_results and "MarkTileDims" in pipeline_results:
@@ -189,13 +160,7 @@ class GenerateTileIterationMask(ppl.Pass):
                 continue
             if len(n.map.params) < K:
                 continue
-            nsdfg_node = get_single_nsdfg_inside_map(g, n)
-            if nsdfg_node is None:
-                raise NotImplementedError(
-                    f"GenerateTileIterationMask: map {n.label!r} body is not a single "
-                    f"NestedSDFG; run NestInnermostMapBodyIntoNSDFG first."
-                )
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
-            if self._attach_mask(nsdfg_node, spec):
+            if self._attach_mask(g.sdfg, g, n, spec):
                 attached += 1
         return attached or None
