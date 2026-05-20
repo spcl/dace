@@ -482,7 +482,10 @@ class TargetDispatcher(object):
         if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
             callsite_stream = self.frame._initcode
-        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+        elif datadesc.lifetime in (dtypes.AllocationLifetime.External, dtypes.AllocationLifetime.Explicit):
+            # External: managed outside generated code.
+            # Explicit: managed by alloc/free on interstate edges; discard streams so no
+            # auto new[]/delete[] is emitted but defined_vars tracking still runs.
             declaration_stream = CodeIOStream()
             callsite_stream = CodeIOStream()
         else:
@@ -504,7 +507,7 @@ class TargetDispatcher(object):
 
         if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
-        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+        elif datadesc.lifetime in (dtypes.AllocationLifetime.External, dtypes.AllocationLifetime.Explicit):
             return
 
         self._array_dispatchers[datadesc.storage].deallocate_array(sdfg, cfg, dfg, state_id, node, datadesc,

@@ -13,6 +13,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
+from dace.codegen.targets.cpp import sym2cpp
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -32,6 +33,52 @@ def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGSta
             return True
         curnode = ptree[curnode]
     return False
+
+
+def _generate_explicit_alloc_free(edge: Edge[InterstateEdge], sdfg: SDFG) -> str:
+    """
+    Emit ``new[]`` / ``delete[]`` statements for any arrays listed in the
+    ``alloc`` / ``free`` properties of *edge*.
+
+    These arrays must have ``AllocationLifetime.Explicit``; their pointers live
+    in the SDFG state struct (``__state->__<cfg_id>_<name>``).  Size
+    expressions are converted from symbolic form via :func:`sym2cpp`.
+
+    :param edge: The interstate edge being processed.
+    :param sdfg: The enclosing SDFG (provides ``cfg_id`` and ``arrays``).
+    :returns:    C++ source fragment (may be empty string).
+    """
+    code = ''
+
+    for arr_name in edge.data.alloc:
+        arr = sdfg.arrays[arr_name]
+        size_expr = ' * '.join(sym2cpp(s) for s in arr.shape)
+        code += (
+            f'__state->__{sdfg.cfg_id}_{arr_name} = '
+            f'new {arr.dtype.ctype}[{size_expr}];\n'
+        )
+
+    for entry in edge.data.reuse:
+        if len(entry) == 2:
+            new_arr, donor_arr = entry
+            code += (
+                f'__state->__{sdfg.cfg_id}_{new_arr} = '
+                f'__state->__{sdfg.cfg_id}_{donor_arr};\n'
+                f'__state->__{sdfg.cfg_id}_{donor_arr} = nullptr;\n'
+            )
+        else:
+            new_arr, donor_arr, offset_bytes = entry
+            dtype = sdfg.arrays[new_arr].dtype.ctype
+            code += (
+                f'__state->__{sdfg.cfg_id}_{new_arr} = '
+                f'({dtype}*)((char*)__state->__{sdfg.cfg_id}_{donor_arr} '
+                f'+ {offset_bytes});\n'
+            )
+
+    for arr_name in edge.data.free:
+        code += f'delete[] __state->__{sdfg.cfg_id}_{arr_name};\n'
+
+    return code
 
 
 def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
@@ -61,6 +108,8 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
             "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
             for variable, value in edge.data.assignments.items()
         ] + [''])
+
+    expr += _generate_explicit_alloc_free(edge, sdfg)
 
     if not assignments_only:
         dst: ControlFlowBlock = edge.dst

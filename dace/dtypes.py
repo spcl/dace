@@ -120,6 +120,7 @@ class AllocationLifetime(Enum):
     Global = auto()  #: Allocated throughout the entire program (outer SDFG)
     Persistent = auto()  #: Allocated throughout multiple invocations (init/exit)
     External = auto()  #: Allocated and managed outside the generated code
+    Explicit = auto()  #: Allocated/Deallocated via explicit alloc/free on interstate edges
 
 
 @undefined_safe_enum

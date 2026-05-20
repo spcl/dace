@@ -179,10 +179,18 @@ class InterstateEdge(object):
     assignments = Property(dtype=dict, desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
+    alloc = ListProperty(element_type=str, desc="Arrays to allocate upon this transition (AllocationLifetime.Explicit)")
+    free = ListProperty(element_type=str, desc="Arrays to free upon this transition (AllocationLifetime.Explicit)")
+    reuse = ListProperty(element_type=list,
+                         desc="Buffer reuse pairs [[new_array, donor_array]] — new_array receives "
+                              "donor_array's pointer instead of a fresh allocation")
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
-                 assignments: Optional[Dict] = None):
+                 assignments: Optional[Dict] = None,
+                 alloc: Optional[List] = None,
+                 free: Optional[List] = None,
+                 reuse: Optional[List] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -198,6 +206,9 @@ class InterstateEdge(object):
         else:
             self.condition = condition
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
+        self.alloc = list(alloc) if alloc is not None else []
+        self.free = list(free) if free is not None else []
+        self.reuse = list(reuse) if reuse is not None else []
         self._cond_sympy = None
         self._uncond = None
 
@@ -217,6 +228,7 @@ class InterstateEdge(object):
             if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
+        result.guid = generate_element_id(result)
         return result
 
     @staticmethod
