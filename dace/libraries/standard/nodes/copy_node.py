@@ -194,8 +194,7 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
-    # ``cudaMemcpy2D`` covers two patterns: a true 2D strided copy (when
-    # ``_cuda2d_strides_are_supported``), and a 1D strided copy lowered as a
+    # ``cudaMemcpy2D`` covers two patterns: a true 2D strided copy, and a 1D strided copy lowered as a
     # degenerate ``(1, N)`` 2D copy (width=1, height=N, pitch=stride).
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
     cuda2d_2d = (src_rank == 2 and dst_rank == 2
@@ -306,10 +305,8 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
 
     ctx.sdfg.schedule = dtypes.ScheduleType.Default
 
-    # Inner Tasklet connectors; local to this wrapper SDFG. Plain ``_in`` /
-    # ``_out`` are safe inside the wrapper's namespace and must differ from
-    # the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.) since
-    # those are reserved by the wrapper for the parameter arrays.
+    # Inner-tasklet connectors. Must not collide with the wrapper SDFG's
+    # parameter arrays, which are named after the libnode's outer connectors.
     inner_in, inner_out = "_in", "_out"
     in_shape, out_shape = ctx.in_shape_collapsed, ctx.out_shape_collapsed
 
@@ -682,9 +679,8 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
         in_memlet = dace.memlet.Memlet(data=ctx.inp_name, subset=_row_subset(ctx.in_shape_collapsed))
         out_memlet = dace.memlet.Memlet(data=ctx.out_name, subset=_row_subset(ctx.out_shape_collapsed))
-        # Inner-tasklet connectors; local to this wrapper SDFG. Must differ
-        # from the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.)
-        # which the wrapper reserves for its parameter arrays.
+        # Inner-tasklet connectors. Must not collide with the wrapper SDFG's
+        # parameter arrays, which are named after the libnode's outer connectors.
         inner_in, inner_out = "_in", "_out"
         code = (f"DACE_GPU_CHECK(cudaMemcpyAsync({inner_out}, {inner_in}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")

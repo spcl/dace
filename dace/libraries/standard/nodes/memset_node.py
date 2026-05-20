@@ -112,9 +112,9 @@ class ExpandPure(ExpandTransformation):
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, map_lengths = _make_memset_skeleton(node, parent_state, parent_sdfg)
 
-        # Inner-tasklet connector name; local to this wrapper SDFG (not the
-        # libnode's outer connector, which is ``OUTPUT_CONNECTOR_NAME``).
-        inner_out = "_memset_out"
+        # Inner-tasklet connector. Must not collide with the wrapper SDFG's
+        # parameter array, which is named after the libnode's outer connector.
+        inner_out = "_out"
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}

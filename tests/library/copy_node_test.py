@@ -256,6 +256,32 @@ def test_copy_rank_mismatch_strided_subset_raises():
         sdfg.expand_library_nodes()
 
 
+def test_copy_rank_mismatch_strided_dst_subset_raises():
+    """Symmetric to ``..._strided_subset_raises``: rank-mismatch with the
+    non-contiguous subset on the *dst* side. Same rejection path."""
+    sdfg, _ = _make_multidim_libnode_sdfg(None, (32, ), (8, 10),
+                                          out_subset="0:8, 2:6",
+                                          name="copy_rank_mismatch_strided_dst_subset")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous subsets"):
+        sdfg.expand_library_nodes()
+
+
+def test_copy_transpose_pattern_rejected():
+    """Same-rank but per-dim shapes swapped -- a transpose, not a copy.
+    The CopyLibraryNode is not the right tool for transposes (use a
+    Transpose libnode instead). The MappedTasklet same-rank branch's
+    shared ``__i0, __i1`` access indexes dst[__i0, __i1] with __i0 up to
+    3 (in-range for dst's dim-0 size 4) and __i1 up to 4 (OOB for dst's
+    dim-1 size 3). DaCe's post-expansion validate catches the out-of-
+    bounds memlet rather than miscopying silently."""
+    sdfg, _ = _make_multidim_libnode_sdfg(None, (3, 4), (4, 3), name="copy_transpose_pattern")
+    sdfg.validate()  # pre-expansion validate doesn't check per-dim shapes; passes here.
+    sdfg.expand_library_nodes()
+    with pytest.raises(Exception, match="out-of-bounds"):
+        sdfg.validate()
+
+
 def test_copy_4d_to_1d_flatten_c_packed():
     """4D -> 1D flatten via MappedTasklet rank-mismatch (extends beyond the 3D->1D coverage)."""
     sdfg, libnode = _make_multidim_libnode_sdfg(None, (2, 3, 4, 5), (120, ), name="copy_4d_to_1d_c")
