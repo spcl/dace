@@ -166,16 +166,25 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
                                   parent_sdfg: dace.SDFG) -> Optional[str]:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
-    Picks ``MemcpyCUDA2D`` (2D strided patterns), ``MappedTasklet``
-    (same-side strided, GPU or CPU) or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
+    Routing table (after collapsing length-1 dims):
+
+      condition                                            impl
+      ---------------------------------------------------  --------------------
+      both subsets are contiguous                          ``None`` (keep CUDA1D)
+      collapsed rank == 2 and 2D pitched layout matches    ``MemcpyCUDA2D``
+      collapsed rank == 1 (both sides equal length)        ``MemcpyCUDA2D``    (degenerate ``(1, N)`` form)
+      same-side (no CPU/GPU boundary)                      ``MappedTasklet``   (per-element loop nest handles arbitrary strides)
+      cross CPU/GPU, same rank, common stride-1 axis       ``MemcpyCUDANDStrided`` (Sequential map of ``cudaMemcpyAsync`` over outer dims, one stride-1 chunk per iteration)
+      cross CPU/GPU, no common stride-1 axis               raise -- no ``cudaMemcpy*`` lowering exists for this pattern
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
     :param parent_sdfg: SDFG containing ``parent_state``.
-    :returns: the refined implementation name, or ``None`` when the subsets
-              are simple contiguous (keep ``MemcpyCUDA1D``).
-    :raises ValueError: a strided cross-CPU/GPU pattern with no common
-        stride-1 axis that no single memcpy can lower.
+    :returns: the refined implementation name, or ``None`` when both subsets
+              are contiguous (caller keeps ``MemcpyCUDA1D``).
+    :raises ValueError: a cross-CPU/GPU strided pattern with no common stride-1
+        axis -- the host cannot issue ``cudaMemcpyAsync`` for non-contiguous
+        regions and device code cannot issue ``cudaMemcpyAsync`` at all.
     """
     _, inp, in_subset, _, out, out_subset = node.validate(parent_sdfg, parent_state, allow_cross_storage=True)
 
