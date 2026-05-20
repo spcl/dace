@@ -238,6 +238,41 @@ def test_copy_rank_mismatch_strided_dst_subset_raises():
         sdfg.expand_library_nodes()
 
 
+def test_copy_same_subset_different_array_shapes():
+    """A ``0:N`` slice copies between arrays of different total shape as long as the per-dim subset sizes match."""
+    cpu = dace.dtypes.StorageType.CPU_Heap
+    N = 10
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=(200, ), storage=cpu, subset=f"0:{N}", name="A"),
+        _ArraySpec(shape=(500, ), storage=cpu, subset=f"0:{N}", name="B"),
+        name="copy_same_subset_diff_shape",
+    )
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+    A = np.arange(200, dtype=np.float64)
+    B = np.zeros(500, dtype=np.float64)
+    exe(A=A, B=B)
+    np.testing.assert_array_equal(B[:N], A[:N])
+
+
+def test_copy_1d_slice_from_2d_source():
+    """A row-slice ``[i, 0:N]`` of a 2D array copies into a 1D array (singleton dims collapse to same rank)."""
+    cpu = dace.dtypes.StorageType.CPU_Heap
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=(5, 10), storage=cpu, subset="2, 0:10", name="A"),
+        _ArraySpec(shape=(10, ), storage=cpu, subset="0:10", name="B"),
+        name="copy_1d_slice_from_2d",
+    )
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+    A = np.arange(50, dtype=np.float64).reshape(5, 10).copy()
+    B = np.zeros(10, dtype=np.float64)
+    exe(A=A, B=B)
+    np.testing.assert_array_equal(B, A[2])
+
+
 def test_copy_transpose_pattern_rejected():
     """Same-rank copy with per-dim shapes swapped (transpose) is rejected upfront."""
     cpu = dace.dtypes.StorageType.CPU_Heap
@@ -1029,6 +1064,11 @@ if __name__ == "__main__":
     test_copy_fortran_packed_same_rank()
     test_copy_fortran_packed_strided_slice()
     test_copy_mixed_c_fortran_via_mapped_tasklet()
+
+    # Same-rank subset-shape contract
+    test_copy_same_subset_different_array_shapes()
+    test_copy_1d_slice_from_2d_source()
+    test_copy_transpose_pattern_rejected()
 
     # Rank-mismatch reshape feature-regression rejection tests
     test_copy_rank_mismatch_mixed_layouts_raises()
