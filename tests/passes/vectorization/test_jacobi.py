@@ -138,7 +138,7 @@ def test_jacobi2d_with_fuse_overlapping_loads():
 
 
 @pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_jacobi2d_with_parameters(param_tuple):
+def test_jacobi2d_with_parameters(param_tuple, emission_style):
     fuse_overlapping_loads, insert_copies = param_tuple
     _S = 66
     A = numpy.random.random((_S, _S))
@@ -157,8 +157,9 @@ def test_jacobi2d_with_parameters(param_tuple):
         vector_width=8,
         sdfg_name=f"jacobi2d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
         fuse_overlapping_loads=fuse_overlapping_loads,
-        insert_copies=insert_copies)
-    if fuse_overlapping_loads and insert_copies:
+        insert_copies=insert_copies,
+        emission_style=emission_style)
+    if fuse_overlapping_loads and insert_copies and emission_style == "default":
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
 
 
@@ -173,7 +174,7 @@ def jacobi1d(A: dace.float64[S], B: dace.float64[S], tsteps: dace.int64):
 
 
 @pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_jacobi1d_with_parameters(param_tuple):
+def test_jacobi1d_with_parameters(param_tuple, emission_style):
     fuse_overlapping_loads, insert_copies = param_tuple
     _S = 130
     A = numpy.random.random((_S, ))
@@ -192,8 +193,9 @@ def test_jacobi1d_with_parameters(param_tuple):
         vector_width=8,
         sdfg_name=f"jacobi1d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
         fuse_overlapping_loads=fuse_overlapping_loads,
-        insert_copies=insert_copies)
-    if fuse_overlapping_loads and insert_copies:
+        insert_copies=insert_copies,
+        emission_style=emission_style)
+    if fuse_overlapping_loads and insert_copies and emission_style == "default":
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
 
 
@@ -216,7 +218,7 @@ def heat3d(A: dace.float64[S, S, S], B: dace.float64[S, S, S], tsteps: dace.int6
 
 
 @pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
-def test_heat3d_with_parameters(param_tuple):
+def test_heat3d_with_parameters(param_tuple, emission_style):
     fuse_overlapping_loads, insert_copies = param_tuple
     _S = 18
     A = numpy.random.random((_S, _S, _S))
@@ -235,6 +237,7 @@ def test_heat3d_with_parameters(param_tuple):
         vector_width=8,
         sdfg_name=f"heat3d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
         fuse_overlapping_loads=fuse_overlapping_loads,
-        insert_copies=insert_copies)
-    if fuse_overlapping_loads and insert_copies:
+        insert_copies=insert_copies,
+        emission_style=emission_style)
+    if fuse_overlapping_loads and insert_copies and emission_style == "default":
         assert_fused_nsdfg_structure(vectorized_sdfg, ("A", ))
