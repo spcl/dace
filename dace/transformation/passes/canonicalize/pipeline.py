@@ -77,9 +77,22 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
+    # Canonicalization runs UniqueLoopIterators with the post-value epilogue
+    # OFF: it is a Fortran-frontend convenience (materialise ``<i> = post``
+    # so downstream reads of the un-renamed name still see the counted-DO
+    # exit value), but canonicalize already rewrites every use site to the
+    # unique ``_loop_it_<N>`` name, so the epilogue would be a dead-state
+    # assignment that keeps the original symbol declaration live across
+    # NestedSDFG boundaries and re-introduces the alias hazard the pass
+    # exists to remove.
+    _uniq = UniqueLoopIterators()
+    _uniq.assign_loop_iterator_post_value = False
+    _uniq2 = UniqueLoopIterators()
+    _uniq2.assign_loop_iterator_post_value = False
+
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
-    s += [('clean', UniqueLoopIterators()), ('clean', SplitTasklets()),
+    s += [('clean', _uniq), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
@@ -112,7 +125,7 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('normalize', NormalizeLoopsAndMaps())]
 
     # reduce / ssa: lift accumulator loops, unique loop iterators.
-    s += [('reduce', LoopToReduce()), ('ssa', UniqueLoopIterators())]
+    s += [('reduce', LoopToReduce()), ('ssa', _uniq2)]
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
