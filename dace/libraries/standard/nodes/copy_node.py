@@ -6,8 +6,7 @@ from typing import List, Optional
 import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
-                                            collapsed_map_lengths)
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
@@ -248,7 +247,7 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
     state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
-    map_lengths = collapsed_map_lengths(in_subset)
+    map_lengths = [s for s in in_subset.size() if s != 1]
 
     return CopyExpansion(sdfg=sdfg,
                          state=state,

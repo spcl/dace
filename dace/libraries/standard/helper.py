@@ -7,12 +7,8 @@ from typing import Callable, List, Tuple
 import dace
 from dace.sdfg import nodes
 
-# The ambient GPU stream symbol libnode CUDA expansions reference. There is
-# no pre-existing global constant for it -- the legacy codegen hardcodes the
-# bare literal -- so this is the canonical declaration. The name keeps the
-# same expanded IR valid under both the legacy codegen (which declares
-# ``__dace_current_stream``) and the experimental codegen (whose type-based
-# prelude binds it once the stream scheduler wires the connector).
+# Ambient GPU stream symbol the libnode CUDA expansions reference; both the
+# legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
 
@@ -37,15 +33,6 @@ def collapse_shape_and_strides(
             collapsed_shape.append(length)
             collapsed_strides.append(stride * s)
     return collapsed_shape, collapsed_strides
-
-
-def collapsed_map_lengths(subset: dace.subsets.Range) -> List[dace.symbolic.SymExpr]:
-    """Per-dim element counts of ``subset`` with length-1 dims removed.
-
-    Mirrors :func:`collapse_shape_and_strides` on the shape side -- expansions
-    use this to size the mapped loop without carrying strides through.
-    """
-    return [ml for ml in ((e + 1 - b) // s for (b, e, s) in subset) if ml != 1]
 
 
 def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG,

@@ -3,14 +3,13 @@
 without an intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
 """
 import copy as _copy
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
 import dace
 from dace import dtypes, nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.sdfg import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -167,9 +166,13 @@ class InsertExplicitCopies(ppl.Pass):
     """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
 
     Detected patterns:
-    - ``AccessNode -> AccessNode`` (direct copy edge)
-    - ``AccessNode -> MapEntries -> AccessNode`` (stage-in)
-    - ``AccessNode -> MapExits -> AccessNode`` (stage-out)
+    - ``AccessNode -> AccessNode`` (direct copy edge) -- lifted to a libnode.
+    - ``AccessNode -> View -> AccessNode`` (round-trip through a View) --
+      first collapsed into a direct ``AN -> AN`` edge composing the two
+      memlets, then lifted by the direct-copy path.
+
+    Map-staging patterns (``AN -> MapEntry -> AN``, ``AN -> MapExit -> AN``)
+    are out of scope on this branch; they stay as direct memlet paths.
     """
 
     # Storages whose copies CopyLibraryNode can lower. Other storages
@@ -185,35 +188,6 @@ class InsertExplicitCopies(ppl.Pass):
         dtypes.StorageType.GPU_Shared,
     })
 
-    src_locations = properties.SetProperty(
-        element_type=dtypes.StorageType,
-        default=set(),
-        desc="Only lift copies whose source storage is in this set. "
-        "Empty set means any source storage is accepted.",
-    )
-    dst_locations = properties.SetProperty(
-        element_type=dtypes.StorageType,
-        default=set(),
-        desc="Only lift copies whose destination storage is in this set. "
-        "Empty set means any destination storage is accepted.",
-    )
-    skip_inside_device_scope = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="When True, copies whose endpoints sit inside a GPU device-level scope are left "
-        "alone (cudaMemcpyAsync cannot be issued from device code, and the codegen handles "
-        "intra-kernel copies through other paths).",
-    )
-
-    def __init__(self,
-                 src_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 dst_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 skip_inside_device_scope: bool = False):
-        super().__init__()
-        self.src_locations = set(src_locations) if src_locations else set()
-        self.dst_locations = set(dst_locations) if dst_locations else set()
-        self.skip_inside_device_scope = skip_inside_device_scope
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -222,14 +196,6 @@ class InsertExplicitCopies(ppl.Pass):
 
     def depends_on(self):
         return set()
-
-    def _storage_allowed(self, src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
-        """Return True when the (src, dst) storage pair passes the configured filter."""
-        if self.src_locations and src_storage not in self.src_locations:
-            return False
-        if self.dst_locations and dst_storage not in self.dst_locations:
-            return False
-        return True
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Lift every implicit copy in ``sdfg`` to a ``CopyLibraryNode``.
@@ -351,13 +317,6 @@ class InsertExplicitCopies(ppl.Pass):
             # Lifting them into a CopyLibraryNode emits scalar tasklet
             # assignments that don't compile against opaque fragment types.
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
-                continue
-
-            if not self._storage_allowed(src_desc.storage, dst_desc.storage):
-                continue
-
-            in_device = (is_devicelevel_gpu(sdfg, state, src_node) or is_devicelevel_gpu(sdfg, state, dst_node))
-            if in_device and self.skip_inside_device_scope:
                 continue
 
             src_name = src_node.data

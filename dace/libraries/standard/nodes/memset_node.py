@@ -14,8 +14,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides,
-                                            collapsed_map_lengths)
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
 
 
 def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
@@ -35,7 +34,7 @@ def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGStat
     sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
     state = sdfg.add_state(f"{node.label}_state")
-    map_lengths = collapsed_map_lengths(out_subset)
+    map_lengths = [s for s in out_subset.size() if s != 1]
 
     return sdfg, state, out_name, out, map_lengths
 
