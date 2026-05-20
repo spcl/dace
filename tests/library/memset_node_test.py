@@ -48,7 +48,7 @@ def _get_multi_dim_sdfg(implementation: Optional[str], gpu: bool = True) -> dace
     return _make_memset_sdfg(implementation, (50, 2, 2), "40:50, 0:2, 0:2", gpu=gpu, name="memset_sdfg2")
 
 
-def test_memset_pure_cpu():
+def test_memset_pure_1d_cpu():
     """The ``pure`` expansion zeros the CPU slice and leaves the rest unchanged."""
     sdfg = _get_sdfg("pure", gpu=False)
     sdfg.name += "_pure_cpu"
@@ -65,7 +65,7 @@ def test_memset_pure_cpu():
     assert np.all(B[50:100] == 0)
 
 
-def test_memset_pure_cpu_multi_dim():
+def test_memset_pure_3d_cpu():
     """The ``pure`` expansion zeros a 3D CPU sub-block and leaves the rest unchanged."""
     sdfg = _get_multi_dim_sdfg("pure", gpu=False)
     sdfg.name += "_pure_cpu_multi_dim"
@@ -82,7 +82,7 @@ def test_memset_pure_cpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_pure_gpu():
+def test_memset_pure_1d_gpu():
     """The ``pure`` expansion zeros the GPU slice and leaves the rest unchanged."""
     import cupy as cp
 
@@ -102,7 +102,7 @@ def test_memset_pure_gpu():
 
 
 @pytest.mark.gpu
-def test_memset_pure_gpu_multi_dim():
+def test_memset_pure_3d_gpu():
     """The ``pure`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
     import cupy as cp
 
@@ -121,7 +121,7 @@ def test_memset_pure_gpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_gpu():
+def test_memset_cuda_1d_gpu():
     """The ``CUDA`` expansion zeros the GPU slice and leaves the rest unchanged."""
     import cupy as cp
 
@@ -141,7 +141,7 @@ def test_memset_cuda_gpu():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_gpu_multi_dim():
+def test_memset_cuda_3d_gpu():
     """The ``CUDA`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
     import cupy as cp
 
@@ -160,7 +160,7 @@ def test_memset_cuda_gpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_cpu():
+def test_memset_cuda_rejects_cpu_storage():
     """The ``CUDA`` expansion targeting a CPU array is rejected."""
     sdfg = _get_sdfg("CUDA", gpu=False)
     sdfg.name += "_cuda_cpu"
@@ -172,10 +172,10 @@ def test_memset_cuda_cpu():
 
 
 if __name__ == "__main__":
-    test_memset_pure_cpu()
-    test_memset_pure_gpu()
-    test_memset_cuda_gpu()
-    test_memset_cuda_cpu()
-    test_memset_pure_cpu_multi_dim()
-    test_memset_pure_gpu_multi_dim()
-    test_memset_cuda_gpu_multi_dim()
+    test_memset_pure_1d_cpu()
+    test_memset_pure_3d_cpu()
+    test_memset_pure_1d_gpu()
+    test_memset_pure_3d_gpu()
+    test_memset_cuda_1d_gpu()
+    test_memset_cuda_3d_gpu()
+    test_memset_cuda_rejects_cpu_storage()
