@@ -14,5 +14,6 @@ from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
+from .resolve_condition import ResolveCondition
 
 from .util import available_passes
