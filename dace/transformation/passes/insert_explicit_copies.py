@@ -34,7 +34,7 @@ def _resolve_subset_for(memlet, an_node):
     return _ss.Range([(0, s - 1, 1) for s in sizes])
 
 
-def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
+def _derive_matching_dst_subset(src_subset, dst_desc):
     """Pick a destination subset for a memlet that omits ``other_subset``/``dst_subset``.
 
     Convention used by implicit copy edges: if the destination array's shape
@@ -45,8 +45,6 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
 
     :param src_subset: The known side of the implicit copy.
     :param dst_desc: Data descriptor of the side whose subset is being derived.
-    :param src_desc: Data descriptor of the known side (unused; kept for the
-        symmetric call signature with the absent-source case).
     :returns: A :class:`~dace.subsets.Range` for the destination side.
     """
     from dace import subsets as _subsets
@@ -347,9 +345,9 @@ class InsertExplicitCopies(ppl.Pass):
             # the volumes line up (common for implicit copies between
             # different-shaped but same-volume arrays).
             if src_subset is None:
-                src_subset = _derive_matching_dst_subset(dst_subset, src_desc, dst_desc)
+                src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
             if dst_subset is None:
-                dst_subset = _derive_matching_dst_subset(src_subset, dst_desc, src_desc)
+                dst_subset = _derive_matching_dst_subset(src_subset, dst_desc)
 
             in_memlet = Memlet(data=src_name, subset=_copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
@@ -384,74 +382,56 @@ class InsertExplicitCopies(ppl.Pass):
         :returns: Number of libnodes inserted.
         """
         count = 0
-        for me in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
-            for edge in list(state.out_edges(me)):
-                if self._is_stage_in_candidate(sdfg, state, edge):
-                    self._insert_stage_in_libnode(sdfg, state, edge)
-                    count += 1
-        for mx in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
-            for edge in list(state.in_edges(mx)):
-                if self._is_stage_out_candidate(sdfg, state, edge):
-                    self._insert_stage_out_libnode(sdfg, state, edge)
-                    count += 1
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                for edge in list(state.out_edges(node)):
+                    if self._lift_staging_edge(sdfg, state, edge, stage_in=True):
+                        count += 1
+            elif isinstance(node, nodes.MapExit):
+                for edge in list(state.in_edges(node)):
+                    if self._lift_staging_edge(sdfg, state, edge, stage_in=False):
+                        count += 1
         return count
 
-    def _is_stage_in_candidate(self, sdfg: SDFG, state: SDFGState, edge) -> bool:
-        if not isinstance(edge.dst, nodes.AccessNode) or edge.data.is_empty():
+    def _lift_staging_edge(self, sdfg: SDFG, state: SDFGState, edge, stage_in: bool) -> bool:
+        """Lift one stage-in (``stage_in=True``) or stage-out copy edge to a libnode.
+
+        :returns: True iff the edge was lifted.
+        """
+        # For stage-in the inner side is edge.dst (AccessNode), for stage-out edge.src.
+        inner_node = edge.dst if stage_in else edge.src
+        if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
-        inner_desc = sdfg.arrays[edge.dst.data]
+        inner_desc = sdfg.arrays[inner_node.data]
         if isinstance(inner_desc, dace.data.View):
             return False
+        find_outer = sdutils.find_input_arraynode if stage_in else sdutils.find_output_arraynode
         try:
-            outer = sdutils.find_input_arraynode(state, edge)
+            outer = find_outer(state, edge)
         except RuntimeError:
             return False
         outer_desc = sdfg.arrays[outer.data]
-        return (outer_desc.storage in self._STANDARD_STORAGES
-                and inner_desc.storage in self._STANDARD_STORAGES
-                and outer_desc.dtype == inner_desc.dtype)
+        if (outer_desc.storage not in self._STANDARD_STORAGES
+                or inner_desc.storage not in self._STANDARD_STORAGES
+                or outer_desc.dtype != inner_desc.dtype):
+            return False
 
-    def _is_stage_out_candidate(self, sdfg: SDFG, state: SDFGState, edge) -> bool:
-        if not isinstance(edge.src, nodes.AccessNode) or edge.data.is_empty():
-            return False
-        inner_desc = sdfg.arrays[edge.src.data]
-        if isinstance(inner_desc, dace.data.View):
-            return False
-        try:
-            outer = sdutils.find_output_arraynode(state, edge)
-        except RuntimeError:
-            return False
-        outer_desc = sdfg.arrays[outer.data]
-        return (outer_desc.storage in self._STANDARD_STORAGES
-                and inner_desc.storage in self._STANDARD_STORAGES
-                and outer_desc.dtype == inner_desc.dtype)
-
-    def _insert_stage_in_libnode(self, sdfg: SDFG, state: SDFGState, edge) -> None:
-        me = edge.src
-        inner_an = edge.dst
         outer_memlet = edge.data
-        inner_desc = sdfg.arrays[inner_an.data]
-        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc, outer_memlet.subset.size())
-
-        libnode = CopyLibraryNode(name=f"copy_{outer_memlet.data}_to_{inner_an.data}")
+        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc)
+        inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
+        label = (f"copy_{outer_memlet.data}_to_{inner_node.data}" if stage_in
+                 else f"copy_{inner_node.data}_to_{outer_memlet.data}")
+        libnode = CopyLibraryNode(name=label)
         state.add_node(libnode)
-        state.add_edge(me, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                       _copy.deepcopy(outer_memlet))
-        state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_an, None,
-                       Memlet(data=inner_an.data, subset=inner_subset))
+        if stage_in:
+            map_node = edge.src
+            state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                           _copy.deepcopy(outer_memlet))
+            state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
+        else:
+            map_node = edge.dst
+            state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
+            state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn,
+                           _copy.deepcopy(outer_memlet))
         state.remove_edge(edge)
-
-    def _insert_stage_out_libnode(self, sdfg: SDFG, state: SDFGState, edge) -> None:
-        inner_an = edge.src
-        mx = edge.dst
-        outer_memlet = edge.data
-        inner_desc = sdfg.arrays[inner_an.data]
-        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc, outer_memlet.subset.size())
-
-        libnode = CopyLibraryNode(name=f"copy_{inner_an.data}_to_{outer_memlet.data}")
-        state.add_node(libnode)
-        state.add_edge(inner_an, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                       Memlet(data=inner_an.data, subset=inner_subset))
-        state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, mx, edge.dst_conn,
-                       _copy.deepcopy(outer_memlet))
-        state.remove_edge(edge)
+        return True
