@@ -221,25 +221,19 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
                      f"pick an explicit implementation manually.")
 
 
-def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False, require_contiguous=False):
+def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=False):
     """Shared validation + wrapper-SDFG skeleton for expansions.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
     :param parent_sdfg: SDFG containing ``parent_state``.
     :param allow_cross_storage: permit differing src/dst storages.
-    :param require_contiguous: enforce contiguous subsets on both sides
-        (needed by flat-memcpy expansions).
     :returns: a :class:`CopyExpansion` with the skeleton SDFG and collapsed
               shape/stride state.
     """
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=allow_cross_storage)
-
-    if require_contiguous:
-        _require_contiguous_subset(inp_name, in_subset, inp, "input")
-        _require_contiguous_subset(out_name, out_subset, out, "output")
 
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
@@ -839,10 +833,6 @@ class CopyLibraryNode(nodes.LibraryNode):
     connectors -- subset expressions must use symbols already in scope at
     construction time. This keeps the contract simple and lets the auto
     selector reason purely from the static memlet subsets.
-    TODO: ``AssignmentAndCopyKernelToMemsetAndMemcpy`` (in a separate branch)
-    must avoid lifting maps whose ranges depend on dynamic map-entry
-    connectors, or first promote those connectors to symbols before
-    constructing the libnode.
     """
 
     implementations = {

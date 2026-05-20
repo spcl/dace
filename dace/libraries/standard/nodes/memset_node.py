@@ -18,15 +18,14 @@ from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, auto_dispatch, 
                                             collapsed_map_lengths)
 
 
-def _make_memset_skeleton(
-        node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
-) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, dace.subsets.Range, List, List]:
+def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
+                          parent_sdfg: dace.SDFG) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
     """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
-    :returns: ``(sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed)``.
+    :returns: ``(sdfg, state, out_name, out, map_lengths)``.
     """
     out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
@@ -38,7 +37,7 @@ def _make_memset_skeleton(
     state = sdfg.add_state(f"{node.label}_state")
     map_lengths = collapsed_map_lengths(out_subset)
 
-    return sdfg, state, out_name, out, out_subset, map_lengths, out_shape_collapsed
+    return sdfg, state, out_name, out, map_lengths
 
 
 def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG, *,
@@ -110,7 +109,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        sdfg, state, out_name, out, _out_subset, map_lengths, _ = _make_memset_skeleton(node, parent_state, parent_sdfg)
+        sdfg, state, out_name, out, map_lengths = _make_memset_skeleton(node, parent_state, parent_sdfg)
 
         # Inner-tasklet connector name; local to this wrapper SDFG (not the
         # libnode's outer connector, which is ``OUTPUT_CONNECTOR_NAME``).
@@ -157,10 +156,6 @@ class MemsetLibraryNode(nodes.LibraryNode):
     connectors -- the subset expression must use symbols already in scope at
     construction time. This keeps the contract simple and lets the auto
     selector reason purely from the static memlet subset.
-    TODO: ``AssignmentAndCopyKernelToMemsetAndMemcpy`` (in a separate branch)
-    must avoid lifting maps whose ranges depend on dynamic map-entry
-    connectors, or first promote those connectors to symbols before
-    constructing the libnode.
     """
 
     implementations = {"Auto": ExpandAuto, "pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
