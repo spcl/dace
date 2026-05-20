@@ -112,3 +112,67 @@ def test_tile_binop_rejects_invalid_K():
         TileBinop(name="bad_K", widths=(2, 2, 2, 2), op="+")
     with pytest.raises(ValueError, match="length in"):
         TileBinop(name="bad_K0", widths=(), op="+")
+
+
+def _build_binop_symbol_rhs_sdfg(widths, expr_b, dtype=dace.float64, free_symbols=()):
+    """Build a minimal SDFG: tile input -> TileBinop(kind_b=Symbol) -> tile output."""
+    sdfg = dace.SDFG(f"tile_binop_sym_rhs_{'x'.join(str(w) for w in widths)}")
+    for sym in free_symbols:
+        sdfg.add_symbol(sym, dtype)
+    sdfg.add_array("A", widths, dtype, transient=False)
+    sdfg.add_array("C", widths, dtype, transient=False)
+
+    state = sdfg.add_state("main")
+    a = state.add_access("A")
+    c = state.add_access("C")
+    node = TileBinop(name="tb_sym", widths=widths, op="+",
+                     kind_a="Tile", kind_b="Symbol", expr_b=expr_b)
+    state.add_node(node)
+    full = ",".join(f"0:{w}" for w in widths)
+    state.add_edge(a, None, node, "_a", dace.Memlet(f"A[{full}]"))
+    state.add_edge(node, "_c", c, None, dace.Memlet(f"C[{full}]"))
+
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
+def test_tile_binop_kind_b_symbol_with_literal(widths):
+    """Symbol-kind RHS with a numeric literal — every lane is shifted by the constant."""
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="2.5")
+    rng = np.random.default_rng(seed=51)
+    A = rng.random(widths)
+    C = np.zeros(widths)
+    sdfg(A=A, C=C)
+    np.testing.assert_allclose(C, A + 2.5, rtol=0, atol=0)
+
+
+def test_tile_binop_kind_b_symbol_with_free_symbol():
+    """Symbol-kind RHS resolves a free symbol at runtime."""
+    widths = (4, 8)
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="alpha", free_symbols=("alpha",))
+    rng = np.random.default_rng(seed=52)
+    A = rng.random(widths)
+    C = np.zeros(widths)
+    sdfg(A=A, C=C, alpha=0.75)
+    np.testing.assert_allclose(C, A + 0.75, rtol=0, atol=0)
+
+
+def test_tile_binop_rejects_symbol_symbol_pair():
+    """Both-sides Symbol is rejected — outside the tile path."""
+    with pytest.raises(ValueError, match="at least one operand must be 'Tile'"):
+        TileBinop(name="ss", widths=(8,), op="+",
+                  kind_a="Symbol", kind_b="Symbol", expr_a="a", expr_b="b")
+
+
+def test_tile_binop_rejects_symbol_without_expr():
+    """Symbol-kind operand requires the corresponding ``expr_*``."""
+    with pytest.raises(ValueError, match="kind_b='Symbol' requires expr_b"):
+        TileBinop(name="bad", widths=(8,), op="+", kind_b="Symbol")
+
+
+def test_tile_binop_rejects_unknown_kind():
+    """Constructor refuses kinds outside the allowed set."""
+    with pytest.raises(ValueError, match="kind_a must be one of"):
+        TileBinop(name="bad", widths=(8,), op="+", kind_a="NotAKind")
