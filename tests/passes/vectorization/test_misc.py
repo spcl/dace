@@ -6,7 +6,7 @@ from tests.passes.vectorization._harness import (
 )
 
 
-def test_dependency_edge_to_unary_symbol():
+def test_dependency_edge_to_unary_symbol(emission_style):
     sdfg = _get_dependency_edge_to_unary_symbol_sdfg()
     N = 64
     A = numpy.random.random((N, )).astype(numpy.float64)
@@ -25,4 +25,5 @@ def test_dependency_edge_to_unary_symbol():
         sdfg_name="dependency_edge_to_unary_symbol",
         from_sdfg=True,
         no_inline=True,
+        emission_style=emission_style,
     )

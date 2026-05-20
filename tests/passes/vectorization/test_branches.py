@@ -63,7 +63,7 @@ def tasklets_in_if_two(
                 e[i, j] = (c[i, j] * f * a[i, j] * 2.0) - a[i, j]
 
 
-def test_division_by_zero_cpu(branch_mode):
+def test_division_by_zero_cpu(branch_mode, emission_style):
     N = 256
     A = numpy.random.random((N, ))
     B = numpy.random.random((N, ))
@@ -81,6 +81,7 @@ def test_division_by_zero_cpu(branch_mode):
         vector_width=8,
         sdfg_name="division_by_zero",
         branch_mode=branch_mode,
+        emission_style=emission_style,
     )
 
 
