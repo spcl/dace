@@ -438,23 +438,23 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
                          language=dace.Language.CPP)
 
 
-def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg, out_arg):
-    """Build a ``dace::CopyND`` / ``dace::CopyNDDynamic`` call string.
+def _build_shmem_collective_copy_code(inp: data.Data, in_subset, out: data.Data, out_subset) -> str:
+    """Build the C++ code for ``ExpandSharedMemoryCollective``: a
+    ``dace::CopyND<...>::Copy(...)`` call followed by ``__syncthreads()``.
 
     Picks the most-specific static template form: ``CopyND<T, 1, false,
-    dims...>`` for static shapes (else ``CopyNDDynamic<T, 1, false,
-    ndims>``), refined by ``ConstDst`` / ``ConstSrc`` / ``Dynamic`` based on
-    which stride set is constexpr; runtime args are whatever's not in the
-    template.
+    dims...>`` for static shapes (else ``CopyNDDynamic<T, 1, false, ndims>``),
+    refined by ``ConstDst`` / ``ConstSrc`` / ``Dynamic`` based on which stride
+    set is constexpr; runtime args are whatever's not in the template.
 
-    :param ctype: C++ element type.
-    :param copy_shape: collapsed copy extents per dimension.
-    :param src_strides: collapsed source strides.
-    :param dst_strides: collapsed destination strides.
-    :param in_arg: source pointer-variable name.
-    :param out_arg: destination pointer-variable name.
-    :returns: the ``...::Copy(...)`` call string.
+    :param inp: source descriptor (provides ``ctype`` and ``strides``).
+    :param in_subset: source memlet subset.
+    :param out: destination descriptor (provides ``strides``).
+    :param out_subset: destination memlet subset.
+    :returns: full code: ``...::Copy(...);\\n__syncthreads();``.
     """
+    copy_shape, src_strides = collapse_shape_and_strides(in_subset, inp.strides)
+    _, dst_strides = collapse_shape_and_strides(out_subset, out.strides)
     ndims = len(copy_shape)
     shape_strs = [sym2cpp(s) for s in copy_shape]
     src_stride_strs = [sym2cpp(s) for s in src_strides]
@@ -464,11 +464,15 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg, out_
     src_static = not any(symbolic.issymbolic(s) for s in src_strides)
     dst_static = not any(symbolic.issymbolic(s) for s in dst_strides)
 
+    ctype = inp.dtype.ctype
     if dims_static:
         copy_tmpl = f"dace::CopyND<{ctype}, 1, false, {', '.join(shape_strs)}>"
     else:
         copy_tmpl = f"dace::CopyNDDynamic<{ctype}, 1, false, {ndims}>"
 
+    # Prefer ConstDst when dst is static; else ConstSrc; else fully dynamic.
+    # The chosen template fixes one stride set; the rest plus the (possibly
+    # symbolic) shape are passed as runtime args, in per-dim order.
     if dst_static:
         shape_tmpl = f"template ConstDst<{', '.join(dst_stride_strs)}>"
     elif src_static:
@@ -476,33 +480,17 @@ def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg, out_
     else:
         shape_tmpl = "Dynamic"
 
-    # Per dimension, pass only the values NOT in the template.
-    # CopyND runtime API order per dim:
-    #   CopyND:        [src_stride | dst_stride | src_stride, dst_stride]
-    #   CopyNDDynamic: [copydim,] + same as above
-    dynshape = not dims_static
-
-    # ConstSrc: src strides are template args, dst strides are runtime
-    # ConstDst: dst strides are template args, src strides are runtime
-    # Dynamic:  both are runtime
-    if dst_static:  # ConstDst chosen
-        dynsrc, dyndst = True, False
-    elif src_static:  # ConstSrc chosen
-        dynsrc, dyndst = False, True
-    else:  # Dynamic
-        dynsrc, dyndst = True, True
-
     stride_args = []
     for d in range(ndims):
-        if dynshape:
+        if not dims_static:
             stride_args.append(shape_strs[d])
-        if dynsrc:
+        if not src_static or dst_static:
             stride_args.append(src_stride_strs[d])
-        if dyndst:
+        if not dst_static:
             stride_args.append(dst_stride_strs[d])
 
-    all_args = [in_arg, out_arg] + stride_args
-    return f"{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});"
+    all_args = [CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME] + stride_args
+    return f"{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n__syncthreads();"
 
 
 @library.expansion
@@ -831,20 +819,10 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
                 raise ValueError("SharedMemoryCollective IS the thread-block-level operation "
                                  "and must not be nested inside a GPU_ThreadBlock map.")
 
-        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-        _, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
-
-        code = _build_copynd_call(inp.dtype.ctype,
-                                  in_shape_collapsed,
-                                  in_strides_collapsed,
-                                  out_strides_collapsed,
-                                  in_arg=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                                  out_arg=CopyLibraryNode.OUTPUT_CONNECTOR_NAME) + "\n__syncthreads();"
-
         return nodes.Tasklet(node.name,
                              inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
                              outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
-                             code=code,
+                             code=_build_shmem_collective_copy_code(inp, in_subset, out, out_subset),
                              language=dace.Language.CPP)
 
 
