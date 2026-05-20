@@ -1,11 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``CopyLibraryNode`` to represent copies explicitly on the SDFG IR.
-
-The implementation is selected per-instance. GPU memcpy expansions emit the
-ambient ``__dace_current_stream`` symbol; the GPU stream scheduler binds it
-post-expansion (legacy codegen declares it directly), so libnodes carry no
-stream input connector themselves.
-"""
+""" ``CopyLibraryNode`` to represent copies explicitly. """
 import operator
 from dataclasses import dataclass
 from functools import reduce
@@ -21,38 +15,19 @@ from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-# Outer connector names this libnode publishes. Republished as
-# ``CopyLibraryNode.INPUT_CONNECTOR_NAME`` / ``OUTPUT_CONNECTOR_NAME`` so
-# external consumers reference a class constant instead of a string.
-_INPUT_CONNECTOR_NAME = "_cpy_in"
-_OUTPUT_CONNECTOR_NAME = "_cpy_out"
-
-# A mapped tasklet cannot read CPU and write GPU (or vice versa) in one
-# scope. ``Register`` adopts the side of its enclosing scope and is handled
-# explicitly by the predicates below -- never a member of either set.
-_CPU_STORAGES = {
-    dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_Pinned,
-    dtypes.StorageType.CPU_ThreadLocal,
-}
-_GPU_STORAGES = {
-    dtypes.StorageType.GPU_Global,
-    dtypes.StorageType.GPU_Shared,
-}
-
 
 def _is_cross_cpu_gpu(src_storage, dst_storage):
     """Return True if src and dst straddle the CPU/GPU boundary. ``Register``
     adopts its enclosing scope's side and is never cross-boundary."""
-    return ((src_storage in _CPU_STORAGES and dst_storage in _GPU_STORAGES)
-            or (src_storage in _GPU_STORAGES and dst_storage in _CPU_STORAGES))
+    return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
+            or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
 
 
 def _coarse_pick_for_storage_pair(src_storage, dst_storage):
     """Return ``'MemcpyCUDA1D'`` for any copy involving GPU_Global on at
     least one side, else ``None``. Direction (H2D / D2H / D2D) is inferred
     inside the expansion from the same storages."""
-    host_side = _CPU_STORAGES | {dtypes.StorageType.Default}
+    host_side = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     src_gpu = src_storage == dtypes.StorageType.GPU_Global
     dst_gpu = dst_storage == dtypes.StorageType.GPU_Global
     src_cpu = src_storage in host_side
@@ -85,16 +60,16 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         return 'SharedMemoryCollective'
 
-    # 2. Single-element copies short-circuit the MappedTasklet path (which
-    # would otherwise build a 0-D map and crash propagation). Routing:
-    #   - cross CPU/GPU -> ``MemcpyCUDA1D`` (``cudaMemcpyAsync``).
-    #   - same-side, inside a kernel -> ``Tasklet`` (both sides accessible
-    #     from device code; a direct ``_out = _in`` is correct).
-    #   - same-side, outside a kernel, both GPU_Global -> ``MemcpyCUDA1D``
-    #     (``DeviceToDevice``; a host Python tasklet can't dereference
-    #     device pointers).
-    #   - same-side, outside a kernel, at least one host-accessible ->
-    #     ``Tasklet`` (host runs the assignment).
+    # 2. Single-element copies. Route around MappedTasklet (a 0-D map would
+    # crash propagation) into the impl that can actually execute the copy:
+    #
+    #   endpoints              in kernel  impl          why
+    #   ---------------------  ---------  ------------  ------------------------
+    #   cross CPU/GPU          any        MemcpyCUDA1D  cudaMemcpyAsync
+    #   same side, GPU<->GPU   yes        Tasklet       device-side _out = _in
+    #   same side, GPU<->GPU   no         MemcpyCUDA1D  D2D; host cannot deref
+    #                                                   device pointers
+    #   same side, has host    any        Tasklet       host runs the assignment
     in_volume = in_subset.num_elements()
     out_volume = out_subset.num_elements()
     if in_volume == 1 and out_volume == 1:
@@ -324,7 +299,7 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     in_kernel = is_devicelevel_gpu(parent_sdfg, parent_state, node)
     if is_thread_local or in_kernel:
         schedule = dtypes.ScheduleType.Sequential
-    elif inp.storage in _GPU_STORAGES or out.storage in _GPU_STORAGES:
+    elif inp.storage in dtypes.GPU_RESIDENT_STORAGES or out.storage in dtypes.GPU_RESIDENT_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
     else:
         schedule = dtypes.ScheduleType.Default
@@ -407,28 +382,23 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
         one_elem=(cp_size == 1),
         in_is_cpu=(inp.storage != dtypes.StorageType.GPU_Global),
         out_is_cpu=(out.storage != dtypes.StorageType.GPU_Global),
-        in_conn=_INPUT_CONNECTOR_NAME,
-        out_conn=_OUTPUT_CONNECTOR_NAME)
+        in_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        out_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
 
     kind = _memcpy_kind(inp, out)
 
     code = (f"cudaMemcpyAsync({out_arg}, {in_arg}, "
             f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), {kind}, {CURRENT_STREAM_NAME});")
 
-    in_conns = {_INPUT_CONNECTOR_NAME: in_conn_type}
+    in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: in_conn_type}
     return nodes.Tasklet(node.name,
                          inputs=in_conns,
-                         outputs={_OUTPUT_CONNECTOR_NAME: out_conn_type},
+                         outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: out_conn_type},
                          code=code,
                          language=dace.Language.CPP)
 
 
-def _build_copynd_call(ctype,
-                       copy_shape,
-                       src_strides,
-                       dst_strides,
-                       in_arg=_INPUT_CONNECTOR_NAME,
-                       out_arg=_OUTPUT_CONNECTOR_NAME):
+def _build_copynd_call(ctype, copy_shape, src_strides, dst_strides, in_arg, out_arg):
     """Build a ``dace::CopyND`` / ``dace::CopyNDDynamic`` call string.
 
     Picks the most-specific static template form: ``CopyND<T, 1, false,
@@ -571,12 +541,12 @@ class ExpandCopyNDTemplate(ExpandTransformation):
                                   copy_shape,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
-                                  in_arg=_INPUT_CONNECTOR_NAME,
-                                  out_arg=_OUTPUT_CONNECTOR_NAME)
+                                  in_arg=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                                  out_arg=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
 
         return nodes.Tasklet(node.name,
-                             inputs={_INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
-                             outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
+                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                              code=code,
                              language=dace.Language.CPP)
 
@@ -608,17 +578,18 @@ class ExpandMemcpyCPU(ExpandTransformation):
             raise NotImplementedError("MemcpyCPU doesn't yet support dynamic input scalars.")
 
         cp_size = in_subset.num_elements()
-        in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(inp,
-                                                                                out,
-                                                                                one_elem=(cp_size == 1),
-                                                                                in_is_cpu=True,
-                                                                                out_is_cpu=True,
-                                                                                in_conn=_INPUT_CONNECTOR_NAME,
-                                                                                out_conn=_OUTPUT_CONNECTOR_NAME)
+        in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
+            inp,
+            out,
+            one_elem=(cp_size == 1),
+            in_is_cpu=True,
+            out_is_cpu=True,
+            in_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+            out_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
 
         return nodes.Tasklet(node.name,
-                             inputs={_INPUT_CONNECTOR_NAME: in_conn_type},
-                             outputs={_OUTPUT_CONNECTOR_NAME: out_conn_type},
+                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: in_conn_type},
+                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: out_conn_type},
                              code=f"memcpy({out_arg}, {in_arg}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
                              language=dace.Language.CPP)
 
@@ -683,13 +654,14 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
             raise NotImplementedError(f"Unsupported 2D memory copy: shape={copy_shape}, "
                                       f"src_strides={src_strides}, dst_strides={dst_strides}.")
 
-        code = (f"cudaMemcpy2DAsync({_OUTPUT_CONNECTOR_NAME}, {dpitch}, {_INPUT_CONNECTOR_NAME}, {spitch}, "
-                f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});")
+        code = (
+            f"cudaMemcpy2DAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {dpitch}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, {spitch}, "
+            f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});")
 
-        in_conns = {_INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
+        in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
         tasklet = nodes.Tasklet(node.name,
                                 inputs=in_conns,
-                                outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+                                outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                                 code=code,
                                 language=dace.Language.CPP)
         return tasklet
@@ -742,12 +714,13 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         if ndims == 1:
             # Degenerate case: a single contiguous run. Emit a flat Tasklet
             # with the libnode's connector naming directly -- no wrapper SDFG.
-            code = (f"DACE_GPU_CHECK(cudaMemcpyAsync({_OUTPUT_CONNECTOR_NAME}, {_INPUT_CONNECTOR_NAME}, "
-                    f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
-            in_conns = {_INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
+            code = (
+                f"DACE_GPU_CHECK(cudaMemcpyAsync({CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, {CopyLibraryNode.INPUT_CONNECTOR_NAME}, "
+                f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
+            in_conns = {CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
             return nodes.Tasklet(node.name,
                                  inputs=in_conns,
-                                 outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+                                 outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                                  code=code,
                                  language=dace.Language.CPP)
 
@@ -830,9 +803,9 @@ class ExpandTasklet(ExpandTransformation):
                              f"or CopyNDTemplate for strided ones.")
 
         return nodes.Tasklet(node.name,
-                             inputs={_INPUT_CONNECTOR_NAME: inp.dtype},
-                             outputs={_OUTPUT_CONNECTOR_NAME: out.dtype},
-                             code=f"{_OUTPUT_CONNECTOR_NAME} = {_INPUT_CONNECTOR_NAME}",
+                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: inp.dtype},
+                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: out.dtype},
+                             code=f"{CopyLibraryNode.OUTPUT_CONNECTOR_NAME} = {CopyLibraryNode.INPUT_CONNECTOR_NAME}",
                              language=dace.Language.Python)
 
 
@@ -885,12 +858,12 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
                                   in_shape_collapsed,
                                   in_strides_collapsed,
                                   out_strides_collapsed,
-                                  in_arg=_INPUT_CONNECTOR_NAME,
-                                  out_arg=_OUTPUT_CONNECTOR_NAME) + "\n__syncthreads();"
+                                  in_arg=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                                  out_arg=CopyLibraryNode.OUTPUT_CONNECTOR_NAME) + "\n__syncthreads();"
 
         return nodes.Tasklet(node.name,
-                             inputs={_INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
-                             outputs={_OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
+                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
                              code=code,
                              language=dace.Language.CPP)
 
@@ -924,8 +897,8 @@ class CopyLibraryNode(nodes.LibraryNode):
     # Connector names this libnode publishes. External consumers (tests,
     # other passes) must reference these constants instead of the string
     # literals so a future rename is a single-line change.
-    INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
-    OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
+    INPUT_CONNECTOR_NAME = "_cpy_in"
+    OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
