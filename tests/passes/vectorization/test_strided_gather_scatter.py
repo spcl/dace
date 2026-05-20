@@ -176,7 +176,7 @@ def test_strided_load_stride_ssym():
     )
 
 
-def test_strided_load_stride_3():
+def test_strided_load_stride_3(emission_style):
     N = 64
     src = numpy.random.random(3 * N)
     dst = numpy.zeros(N)
@@ -192,6 +192,7 @@ def test_strided_load_stride_3():
         },
         vector_width=8,
         sdfg_name="strided_load_stride_3",
+        emission_style=emission_style,
     )
 
 
@@ -260,7 +261,7 @@ def test_strided_store_stride_ssym():
     )
 
 
-def test_strided_store_stride_3():
+def test_strided_store_stride_3(emission_style):
     N = 64
     src = numpy.random.random(N)
     dst = numpy.zeros(3 * N)
@@ -276,6 +277,7 @@ def test_strided_store_stride_3():
         },
         vector_width=8,
         insert_copies=True,
+        emission_style=emission_style,
         fuse_overlapping_loads=True,
         sdfg_name="strided_store_stride_3",
     )
@@ -539,7 +541,7 @@ def halve_index_s4117(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]
         a[i] = b[i] + c[i // 2] * d[i]
 
 
-def test_halve_index_gather():
+def test_halve_index_gather(emission_style):
     N_val = 64
     src = numpy.random.rand(N_val)
     dst = numpy.zeros(N_val)
@@ -552,6 +554,7 @@ def test_halve_index_gather():
         params={"N": N_val},
         vector_width=8,
         sdfg_name="halve_index_gather",
+        emission_style=emission_style,
     )
 
 
@@ -591,7 +594,7 @@ def strided_load_stride_2_fp32(src: dace.float32[2 * N], dst: dace.float32[N], s
         dst[i] = src[i * 2] * scale
 
 
-def test_gather_load_fp32():
+def test_gather_load_fp32(emission_style):
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
@@ -609,10 +612,11 @@ def test_gather_load_fp32():
         },
         vector_width=8,
         sdfg_name="gather_load_fp32",
+        emission_style=emission_style,
     )
 
 
-def test_strided_load_stride_2_fp32():
+def test_strided_load_stride_2_fp32(emission_style):
     N_val = 64
     src = numpy.random.rand(2 * N_val).astype(numpy.float32)
     dst = numpy.zeros(N_val, dtype=numpy.float32)
@@ -628,6 +632,7 @@ def test_strided_load_stride_2_fp32():
         },
         vector_width=8,
         sdfg_name="strided_load_stride_2_fp32",
+        emission_style=emission_style,
     )
 
 
