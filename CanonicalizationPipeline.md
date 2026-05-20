@@ -51,7 +51,7 @@ Verified by inspecting the branch directly.
 |---|---|---|---|
 | Loop-invariant code motion | `passes/loop_invariant_code_motion.py` (825 ln) | `LoopInvariantCodeMotion` | `tests/passes/loop_invariant_code_motion_test.py` |
 | Induction-variable canon | `passes/simplify_induction_variables.py` (290 ln) | `SimplifyInductionVariables` | `tests/passes/simplify_induction_variables_test.py` |
-| Unique loop iterators | `passes/ssa_loop_iterators.py` (87 ln) | `SSALoopIterators` | `tests/passes/ssa_loop_iterators_test.py` |
+| Unique loop iterators | `passes/unique_loop_iterators.py` (87 ln) | `UniqueLoopIterators` | `tests/passes/unique_loop_iterators_test.py` |
 | Min-offset reorder | `passes/offset_loop_and_maps.py` (371 ln) | `OffsetLoopsAndMaps` | `tests/passes/offset_loop_and_maps_test.py` |
 | Perfect loop nesting | `dataflow/perf_loop_nesting.py` (238 ln) | `PerfLoopNesting` | `tests/transformations/perf_loop_nesting_test.py` |
 | Hoist invariant `IF` up | `interstate/move_loop_invariant_if_up.py` (456 ln) | `MoveLoopInvariantIfUp` | — |
@@ -138,7 +138,7 @@ prevent oscillation. Pattern transformations are wrapped as passes via
 | 2 | Maximal fission | FP: `MapExpansion` → `MapFission` → loop-fission CFG step → interleaved `SimplifyPass(skip LoopToReduce, InlineSDFGs)` | yes |
 | 3 | Reorder (min offsets) | `OffsetLoopsAndMaps()` | yes |
 | 4 | Perfect loop nesting | `PatternMatchAndApplyRepeated([PerfLoopNesting()])` + `SimplifyPass` | yes |
-| 5 | Normalize | FP, in order: `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` | yes |
+| 5 | Normalize | FP, in order: `UniqueLoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` | yes |
 | 6 | Loop→map | `PatternMatchAndApplyRepeated([LoopToMap()])` | yes |
 | 7 | Maximal fusion | `SimplifyPass` → `FullMapFusion(vertical, horizontal)` (+ optional `SubgraphFusion`) → `TaskletFusion` + `TrivialTaskletElimination` | yes |
 | 8 | Hoist `IF` above maps | `PatternMatchAndApplyRepeated([MoveLoopInvariantIfUp()])` (terminal) | yes (idempotent, hoist-only) |
@@ -162,7 +162,7 @@ These are correctness requirements, not preferences.
 - **Simplify between fission and fusion is mandatory.** `MapFission` leaves split
   transients; `FullMapFusion`'s `FindSingleUseData` needs clean descriptors or
   fusion under-fires.
-- **`SSALoopIterators` before fusion and loop→map.** Independently fissioned
+- **`UniqueLoopIterators` before fusion and loop→map.** Independently fissioned
   nests reusing `i` block fusion or cause aliasing on fuse.
 - **`SimplifyInductionVariables` before LICM, `LoopToReduce`, loop→map.** It
   folds affine-derived IVs into closed form over the primary IV. Before LICM (a
@@ -279,7 +279,7 @@ Keep one DaCe test per scenario, named after the LLVM file for traceability
    scenarios; fix gaps. Standalone, no pipeline needed.
 2. Audit/extend `SimplifyInductionVariables` against Muchnick §14.1–14.2 and the
    ported `IndVarSimplify` scenarios.
-3. Sanity-audit `SSALoopIterators`, `OffsetLoopsAndMaps`, `PerfLoopNesting`,
+3. Sanity-audit `UniqueLoopIterators`, `OffsetLoopsAndMaps`, `PerfLoopNesting`,
    `MoveLoopInvariantIfUp` (run existing tests; confirm `annotates_memlets`,
    idempotence, `explicit_cf_compatible`).
 4. `Untile` + `tests/transformations/untile_test.py` (inverse of `MapTiling`).

@@ -54,7 +54,7 @@ usable from outside.
 | 2 | `maximal_fission` | `PatternMatchAndApplyRepeated([MapExpansion, MapFission])` → `SimplifyPass()` → `_cleanup(loop_to_reduce=True)` | partial (loop-fission step **TODO**) |
 | 3 | `reorder_offsets` | `NormalizeLoopsAndMaps` (every map range → `0:trip:1`) → `SimplifyPass()` | wired |
 | 4 | `perfect_loop_nesting` | `MoveIfIntoMap` → `MapExpansion` (= "map uncollapse", `map[i,j]`→`map[i];map[j]`) → `PerfLoopNesting` → `MapCollapse` (re-collapse maximally) → `MinimizeStridePermutation` (permute to minimize strides) → `SimplifyPass()` → `_cleanup(loop_to_reduce=True)` | being generalized |
-| 5 | `normalize` | `SSALoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` → `SimplifyPass()` | wired |
+| 5 | `normalize` | `UniqueLoopIterators` → `SimplifyInductionVariables` → `LoopInvariantCodeMotion` → `LoopToReduce` → `SimplifyPass()` | wired |
 | 6 | `loop_to_map` | `PatternMatchAndApplyRepeated([LoopToMap])` | wired |
 | 7 | `maximal_fusion` | `SimplifyPass()` → `Pipeline([FullMapFusion])` → `PatternMatchAndApplyRepeated([TaskletFusion, TrivialTaskletElimination])` | wired |
 | 8 | `hoist_if` | hoist invariant conditionals above maps | **no-op for now** |
@@ -112,7 +112,7 @@ to hoist).
 
 ### `pre_simplify` (Stage 0)
 
-Preparation: first `SSALoopIterators` makes every loop iterator name unique so
+Preparation: first `UniqueLoopIterators` makes every loop iterator name unique so
 no later pattern match / fusion is blocked by incidental name reuse, then the
 full `SimplifyPass`: inline nested SDFGs, raise control flow,
 fuse *states*, scalar→symbol, constant propagation, dead-code/state
@@ -187,7 +187,7 @@ a pass; capture as a planned canonicalize/codegen optimization.
   recomposed by `TaskletFusion` in Stage 7.
 - Untile before reorder (`MapInterchange` rejects inner ranges depending on
   outer params).
-- `SSALoopIterators` before fusion / loop→map (avoid `i`-reuse aliasing).
+- `UniqueLoopIterators` before fusion / loop→map (avoid `i`-reuse aliasing).
 - `SimplifyInductionVariables` before LICM / `LoopToReduce` / loop→map.
 - LICM after fission, before loop→map; never hoists a WCR/accumulator update.
 - PLN after fission, before fusion.

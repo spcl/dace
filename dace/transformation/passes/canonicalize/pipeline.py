@@ -14,7 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
-from dace.transformation.passes.ssa_loop_iterators import SSALoopIterators
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -79,7 +79,7 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
 
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
-    s += [('clean', SSALoopIterators()), ('clean', SplitTasklets()),
+    s += [('clean', UniqueLoopIterators()), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
@@ -112,7 +112,7 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('normalize', NormalizeLoopsAndMaps())]
 
     # reduce / ssa: lift accumulator loops, unique loop iterators.
-    s += [('reduce', LoopToReduce()), ('ssa', SSALoopIterators())]
+    s += [('reduce', LoopToReduce()), ('ssa', UniqueLoopIterators())]
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
