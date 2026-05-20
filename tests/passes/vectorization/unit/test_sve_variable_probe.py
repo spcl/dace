@@ -97,6 +97,90 @@ def test_sve_variable_emission_pattern_has_svwhilelt_and_svcntd():
     assert "for (int i = 0; i < (int)N; ++i) _c[i] = _a[i] + 2.0 * _b[i];" in cpp
 
 
+_SVE_SPMV_REDUCE_BODY = """
+#if defined(__ARM_FEATURE_SVE)
+{
+    svfloat64_t acc = svdup_n_f64(0.0);
+    int i = 0;
+    while (i < N) {
+        svbool_t pg = svwhilelt_b64(i, (int64_t)N);
+        svint64_t vidx = svld1_s64(pg, _idx + i);
+        svfloat64_t va = svld1_f64(pg, _a + i);
+        svfloat64_t vbg = svld1_gather_s64index_f64(pg, _b, vidx);
+        acc = svmla_f64_m(pg, acc, va, vbg);
+        i += svcntd();
+    }
+    _y = svaddv_f64(svptrue_b64(), acc);
+}
+#else
+    {
+        double s = 0.0;
+        for (int i = 0; i < (int)N; ++i) s += _a[i] * _b[_idx[i]];
+        _y = s;
+    }
+#endif
+"""
+
+
+def _build_sve_variable_spmv_sdfg(NV: int) -> dace.SDFG:
+    """SpMV-like inner-product with gather: ``y = sum_i a[i] * b[idx[i]]``.
+    Exercises the full SVE intrinsic stack: svwhilelt + svld1 + native
+    gather (svld1_gather_s64index_f64) + FMA (svmla_f64_m) + horizontal
+    reduce (svaddv_f64). All inside one CPP tasklet body with a scalar
+    fallback for non-SVE hosts."""
+    sdfg = dace.SDFG(f"sve_var_spmv_{NV}")
+    sdfg.add_array("a", [NV], dace.float64)
+    sdfg.add_array("b", [NV], dace.float64)
+    sdfg.add_array("idx", [NV], dace.int64)
+    sdfg.add_array("y", [1], dace.float64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.append_global_code("#include <stdint.h>\n#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n")
+    st = sdfg.add_state(is_start_block=True)
+    an_a = st.add_access("a")
+    an_b = st.add_access("b")
+    an_idx = st.add_access("idx")
+    an_y = st.add_access("y")
+    t = st.add_tasklet("sve_spmv",
+                       {"_a", "_b", "_idx"}, {"_y"},
+                       _SVE_SPMV_REDUCE_BODY,
+                       language=dace.dtypes.Language.CPP)
+    st.add_edge(an_a, None, t, "_a", dace.Memlet(f"a[0:{NV}]"))
+    st.add_edge(an_b, None, t, "_b", dace.Memlet(f"b[0:{NV}]"))
+    st.add_edge(an_idx, None, t, "_idx", dace.Memlet(f"idx[0:{NV}]"))
+    st.add_edge(t, "_y", an_y, None, dace.Memlet("y[0:1]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_sve_variable_spmv_emission_has_gather_fma_reduce():
+    """The SpMV-with-reduction emission contains the full SVE stack the
+    variable-VL chain must produce for sparse + reduction patterns:
+    svld1_gather_s64index_f64 (native gather), svmla_f64_m (FMA
+    accumulator), svaddv_f64 (horizontal reduce). These three are the
+    SVE-arch-specific implementations of the gather/scatter/reduction
+    lowerings the user asked for."""
+    sdfg = _build_sve_variable_spmv_sdfg(64)
+    cpp = sdfg.generate_code()[0].clean_code
+    for intrinsic in ("svwhilelt_b64", "svld1_gather_s64index_f64", "svmla_f64_m", "svaddv_f64", "svcntd()"):
+        assert intrinsic in cpp, f"emitted .cpp missing SVE intrinsic {intrinsic!r}"
+
+
+def test_sve_variable_spmv_runs_correctly_via_scalar_fallback():
+    """End-to-end SpMV scalar fallback on x86: sum of ``a[i]*b[idx[i]]``
+    matches the numpy reference. Validates the surrounding plumbing
+    for the gather + reduce combination."""
+    NV = 64
+    sdfg = _build_sve_variable_spmv_sdfg(NV)
+    a = np.random.rand(NV)
+    b = np.random.rand(NV)
+    idx = np.random.permutation(NV).astype(np.int64)
+    y = np.zeros(1)
+    sdfg.compile()(a=a.copy(), b=b.copy(), idx=idx.copy(), y=y, N=NV)
+    expected = float(np.sum(a * b[idx]))
+    assert np.isclose(y[0], expected, rtol=1e-12, atol=1e-12), \
+        f"SpMV reduce mismatch: got {y[0]}, expected {expected}, diff {y[0] - expected}"
+
+
 def test_sve_variable_axpy_runs_correctly_via_scalar_fallback():
     """End-to-end on x86: the SDFG compiles (SVE branch ``#if``-guarded
     out), the scalar fallback runs and produces ``a + 2*b`` exactly
