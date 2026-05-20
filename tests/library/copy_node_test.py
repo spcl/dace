@@ -39,6 +39,68 @@ def _make_same_storage_sdfg(implementation,
     return sdfg, a_name, b_name
 
 
+def _make_multidim_libnode_sdfg(implementation,
+                                in_shape,
+                                out_shape,
+                                *,
+                                in_strides=None,
+                                out_strides=None,
+                                in_total_size=None,
+                                out_total_size=None,
+                                in_storage=dace.dtypes.StorageType.CPU_Heap,
+                                out_storage=dace.dtypes.StorageType.CPU_Heap,
+                                in_subset=None,
+                                out_subset=None,
+                                name="copy_multidim"):
+    """Build an SDFG with a ``CopyLibraryNode`` between two ND arrays.
+
+    Supports rank-mismatch via different ``in_shape`` / ``out_shape``, custom
+    strides (for Fortran-packed or padded layouts), and explicit subsets
+    (for strided slices). Used by Fortran-packed, rank-mismatch, and
+    rejection tests.
+
+    :param implementation: ``CopyLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
+    :param in_shape: source array shape.
+    :param out_shape: destination array shape (may differ in rank).
+    :param in_strides: source strides (default = packed C from shape).
+    :param out_strides: destination strides (default = packed C from shape).
+    :param in_total_size: source buffer total size (default = product of shape).
+    :param out_total_size: destination buffer total size (default = product of shape).
+    :param in_storage: source storage type.
+    :param out_storage: destination storage type.
+    :param in_subset: source memlet subset string (default = full slice).
+    :param out_subset: destination memlet subset string (default = full slice).
+    :param name: SDFG name.
+    :returns: the constructed SDFG and the libnode.
+    """
+    sdfg = dace.SDFG(name)
+    add_kwargs = {}
+    if in_strides is not None:
+        add_kwargs['strides'] = in_strides
+        add_kwargs['total_size'] = in_total_size if in_total_size is not None else int(np.prod(in_shape))
+    sdfg.add_array("src", in_shape, dace.float64, storage=in_storage, transient=False, **add_kwargs)
+    add_kwargs = {}
+    if out_strides is not None:
+        add_kwargs['strides'] = out_strides
+        add_kwargs['total_size'] = out_total_size if out_total_size is not None else int(np.prod(out_shape))
+    sdfg.add_array("dst", out_shape, dace.float64, storage=out_storage, transient=False, **add_kwargs)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    libnode = CopyLibraryNode(name="cp")
+    if implementation is not None:
+        libnode.implementation = implementation
+
+    src_subset_str = in_subset if in_subset is not None else ", ".join(f"0:{s}" for s in in_shape)
+    dst_subset_str = out_subset if out_subset is not None else ", ".join(f"0:{s}" for s in out_shape)
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet(f"src[{src_subset_str}]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None,
+                   dace.memlet.Memlet(f"dst[{dst_subset_str}]"))
+    return sdfg, libnode
+
+
 def _make_cross_storage_sdfg(implementation, src_storage, dst_storage, size=128):
     """Build an SDFG whose ``CopyLibraryNode`` copies between two arrays of different storage types."""
     src_name = "src_arr"
@@ -112,38 +174,13 @@ def test_copy_cpu_copynd():
 
 def test_copy_copynd_accepts_fortran_packed():
     """``CopyNDTemplate`` accepts Fortran-packed (column-major) endpoints when both sides agree."""
-    sdfg = dace.SDFG("copy_copynd_fortran_packed")
-
-    # Fortran-packed strides on BOTH sides: layout-matched, must lower cleanly.
-    sdfg.add_array(name="src",
-                   shape=(4, 5, 6),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 4, 20),
-                   total_size=120,
-                   transient=False)
-    sdfg.add_array(name="dst",
-                   shape=(4, 5, 6),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 4, 20),
-                   total_size=120,
-                   transient=False)
-
-    state = sdfg.add_state("main")
-    src = state.add_access("src")
-    dst = state.add_access("dst")
-
-    libnode = CopyLibraryNode(name="cp_fortran")
-    libnode.implementation = "CopyNDTemplate"
-
-    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:4, 0:5, 0:6]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
-
+    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (4, 5, 6), (4, 5, 6),
+                                          in_strides=(1, 4, 20),
+                                          out_strides=(1, 4, 20),
+                                          name="copy_copynd_fortran_packed")
     sdfg.validate()
     sdfg.expand_library_nodes()
 
-    # Numerical equivalence: dst == src after the copy.
     src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6, order='F').copy(order='F')
     dst_data = np.zeros((4, 5, 6), dtype=np.float64, order='F')
     sdfg(src=src_data, dst=dst_data)
@@ -152,39 +189,18 @@ def test_copy_copynd_accepts_fortran_packed():
 
 def test_copy_copynd_fortran_packed_strided_slice():
     """``CopyNDTemplate`` on a sub-slice of Fortran-packed arrays (both sides agree)."""
-    sdfg = dace.SDFG("copy_copynd_fortran_strided_slice")
-
-    sdfg.add_array(name="src",
-                   shape=(8, 10, 12),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 8, 80),
-                   total_size=960,
-                   transient=False)
-    sdfg.add_array(name="dst",
-                   shape=(8, 10, 12),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 8, 80),
-                   total_size=960,
-                   transient=False)
-
-    state = sdfg.add_state("main")
-    src = state.add_access("src")
-    dst = state.add_access("dst")
-
-    libnode = CopyLibraryNode(name="cp_fortran_strided")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[2:6, 3:7, 4:8]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[2:6, 3:7, 4:8]"))
-
+    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (8, 10, 12), (8, 10, 12),
+                                          in_strides=(1, 8, 80),
+                                          out_strides=(1, 8, 80),
+                                          in_subset="2:6, 3:7, 4:8",
+                                          out_subset="2:6, 3:7, 4:8",
+                                          name="copy_copynd_fortran_strided_slice")
     sdfg.validate()
     sdfg.expand_library_nodes()
 
     src_data = np.arange(960, dtype=np.float64).reshape(8, 10, 12, order='F').copy(order='F')
     dst_data = np.zeros((8, 10, 12), dtype=np.float64, order='F')
     sdfg(src=src_data, dst=dst_data)
-    # Only the sliced region must match src; the rest of dst stays zero.
     assert np.array_equal(dst_data[2:6, 3:7, 4:8], src_data[2:6, 3:7, 4:8])
     untouched = dst_data.copy()
     untouched[2:6, 3:7, 4:8] = 0
@@ -193,83 +209,76 @@ def test_copy_copynd_fortran_packed_strided_slice():
 
 def test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet():
     """A mixed C-packed -> Fortran-packed copy (a transpose in memory layout)
-    must NOT route to ``CopyNDTemplate``; the ``Auto`` selector picks
-    ``MappedTasklet`` and the element-wise copy is numerically correct."""
-    sdfg = dace.SDFG("copy_mixed_c_fortran")
-
-    # src is C-packed (row-major), dst is Fortran-packed (column-major).
-    sdfg.add_array(name="src",
-                   shape=(6, 7),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(7, 1),
-                   total_size=42,
-                   transient=False)
-    sdfg.add_array(name="dst",
-                   shape=(6, 7),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 6),
-                   total_size=42,
-                   transient=False)
-
-    state = sdfg.add_state("main")
-    src = state.add_access("src")
-    dst = state.add_access("dst")
-
-    libnode = CopyLibraryNode(name="cp_mixed")
-    # Leave implementation at the default 'Auto' so the selector decides.
-    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:6, 0:7]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:6, 0:7]"))
-
+    must NOT route to ``CopyNDTemplate``; the ``Auto`` selector picks ``MappedTasklet``."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (6, 7), (6, 7),
+                                                in_strides=(7, 1),
+                                                out_strides=(1, 6),
+                                                name="copy_mixed_c_fortran")
     sdfg.validate()
     sdfg.expand_library_nodes()
-
-    # Selector must have picked ``MappedTasklet`` (mixed layouts are not safe for CopyNDTemplate).
     assert libnode.implementation == 'MappedTasklet', (
         f"Mixed C/Fortran-packed copy must route to MappedTasklet, got {libnode.implementation!r}.")
 
     src_data = np.arange(42, dtype=np.float64).reshape(6, 7).copy(order='C')
     dst_data = np.zeros((6, 7), dtype=np.float64, order='F')
     sdfg(src=src_data, dst=dst_data)
-    # Element-wise equivalence regardless of internal stride order.
     assert np.array_equal(dst_data, src_data)
 
 
 def test_copy_copynd_rejects_padded_strides():
-    """``CopyND`` on padded (non-C-packed, non-Fortran-packed) strides raises ``ValueError`` matching ``C-packed``."""
-    sdfg = dace.SDFG("copy_copynd_rejects_padded")
-
-    # Strides padded to 32 are neither C-packed nor Fortran-packed, so the
-    # C-packed check must reject the copy.
-    sdfg.add_array(name="src",
-                   shape=(20, 21, 22),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 32, 32 * 21),
-                   total_size=14784,
-                   transient=False)
-    sdfg.add_array(name="dst",
-                   shape=(20, 21, 22),
-                   dtype=dace.float64,
-                   storage=dace.dtypes.StorageType.CPU_Heap,
-                   strides=(1, 32, 32 * 21),
-                   total_size=14784,
-                   transient=False)
-
-    state = sdfg.add_state("main")
-    src = state.add_access("src")
-    dst = state.add_access("dst")
-
-    libnode = CopyLibraryNode(name="cp_padded")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                   dace.memlet.Memlet("src[0:20, 0:21, 0:22]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None,
-                   dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
-
+    """``CopyNDTemplate`` on padded (non-packed) strides raises -- the layout check rejects them."""
+    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (20, 21, 22), (20, 21, 22),
+                                          in_strides=(1, 32, 32 * 21),
+                                          out_strides=(1, 32, 32 * 21),
+                                          in_total_size=14784,
+                                          out_total_size=14784,
+                                          name="copy_copynd_rejects_padded")
     sdfg.validate()
     with pytest.raises(ValueError, match="same packed layout"):
+        sdfg.expand_library_nodes()
+
+
+def test_copy_rank_mismatch_mixed_layouts_raises():
+    """Feature regression: rank-mismatch with mixed C/F packed layouts raises.
+    Selector cannot route to CopyNDTemplate (layouts differ), falls through to
+    MappedTasklet, which rejects rank mismatch. The shapes are >=2D on both
+    sides so the C/F distinction is meaningful (1-D arrays are trivially
+    both C- and Fortran-packed)."""
+    # src is C-packed (3, 8) -- strides (8, 1); dst is Fortran-packed (2, 3, 4)
+    # -- strides (1, 2, 6). Same volume = 24.
+    sdfg, _ = _make_multidim_libnode_sdfg(None, (3, 8), (2, 3, 4),
+                                          out_strides=(1, 2, 6),
+                                          name="copy_rank_mismatch_mixed_raises")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="same rank"):
+        sdfg.expand_library_nodes()
+
+
+def test_copy_rank_mismatch_padded_src_raises():
+    """Feature regression: rank-mismatch where the higher-rank side has padded
+    strides raises. Padded is neither C- nor Fortran-packed, so the selector
+    cannot route to CopyNDTemplate; MappedTasklet then rejects rank mismatch."""
+    # src padded (row stride 8 instead of 6), dst flat (120,).
+    sdfg, _ = _make_multidim_libnode_sdfg(None, (4, 5, 6), (120, ),
+                                          in_strides=(5 * 8, 8, 1),
+                                          in_total_size=4 * 5 * 8,
+                                          name="copy_rank_mismatch_padded_raises")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="same rank"):
+        sdfg.expand_library_nodes()
+
+
+def test_copy_copynd_rank_mismatch_strided_subset_raises():
+    """Feature regression: when ``CopyNDTemplate`` is forced on a rank-mismatch
+    reshape with a strided (non-contiguous) subset on either side, the
+    expansion raises with a 'contiguous subsets' message instead of silently
+    miscopying. A column-slice of a C-packed array is non-contiguous (rows
+    of length 10, picking columns 2..5 walks with stride 10 between picks)."""
+    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (8, 10), (32, ),
+                                          in_subset="0:8, 2:6",
+                                          name="copy_copynd_rank_mismatch_strided")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous subsets"):
         sdfg.expand_library_nodes()
 
 
@@ -1242,6 +1251,9 @@ if __name__ == "__main__":
     test_copy_copynd_fortran_packed_strided_slice()
     test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet()
     test_copy_copynd_rejects_padded_strides()
+    test_copy_rank_mismatch_mixed_layouts_raises()
+    test_copy_rank_mismatch_padded_src_raises()
+    test_copy_copynd_rank_mismatch_strided_subset_raises()
 
     # GPU tests
     test_copy_pure_gpu()
