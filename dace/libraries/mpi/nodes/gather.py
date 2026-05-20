@@ -1,12 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import dtypes, library, properties
+from dace import dtypes, library
 from dace.utils import prod as _prod
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
 
 
 @library.expansion
@@ -94,23 +94,35 @@ class ExpandBlockGatherMPI(ExpandTransformation):
         if out_buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        if node.reduce_grid:
+        subarray_type = input_descriptor_name(node, parent_state, '_subarray')
+        gather_grid = input_descriptor_name(node, parent_state, '_gather_grid')
+        reduce_grid = input_descriptor_name(node, parent_state, '_reduce_grid')
+        if subarray_type is None:
+            raise ValueError('BlockGather requires an incoming _subarray connector')
+        if gather_grid is None:
+            raise ValueError('BlockGather requires an incoming _gather_grid connector')
+
+        if reduce_grid:
             code = f"""
-                if (__state->{node.gather_grid}_valid) {{
-                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{node.reduce_grid}_rank, __state->{node.reduce_grid}_comm);
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{node.subarray_type}_counts, __state->{node.subarray_type}_displs, __state->{node.subarray_type}, 0, __state->{node.gather_grid}_comm);
-                }} else if (__state->{node.reduce_grid}_valid) {{
-                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, __state->{node.reduce_grid}_comm);
+                if (__state->{gather_grid}_valid) {{
+                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
+                }} else if (__state->{reduce_grid}_valid) {{
+                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
                 }}
             """
         else:
             code = f"""
-                if (__state->{node.gather_grid}_valid) {{
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{node.subarray_type}_counts, __state->{node.subarray_type}_displs, __state->{node.subarray_type}, 0, __state->{node.gather_grid}_comm);
+                if (__state->{gather_grid}_valid) {{
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name,
+                                expanded_input_connectors(node, parent_state),
+                                node.out_connectors,
+                                code,
+                                language=dtypes.Language.CPP)
         return tasklet
 
 
@@ -123,15 +135,8 @@ class BlockGather(MPINode):
     }
     default_implementation = "MPI"
 
-    subarray_type = properties.Property(dtype=str, default='tmp')
-    gather_grid = properties.Property(dtype=str, default='tmp')
-    reduce_grid = properties.Property(dtype=str, allow_none=True, default=None)
-
-    def __init__(self, name, subarray_type='tmp', gather_grid='tmp', reduce_grid=None, *args, **kwargs):
+    def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
-        self.subarray_type = subarray_type
-        self.gather_grid = gather_grid
-        self.reduce_grid = reduce_grid
 
     def validate(self, sdfg, state):
         """
