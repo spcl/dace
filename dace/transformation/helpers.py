@@ -2070,8 +2070,7 @@ def _is_structure_view(obj) -> bool:
 
 def get_parent_map_and_loop_scopes(
         root_sdfg: 'dace.SDFG', node: Union['dace.sdfg.nodes.MapEntry', AbstractControlFlowRegion,
-                                            'dace.sdfg.nodes.Tasklet', ConditionalBlock,
-                                            'dace.sdfg.nodes.LibraryNode'],
+                                            'dace.sdfg.nodes.Tasklet', ConditionalBlock, 'dace.sdfg.nodes.LibraryNode'],
         parent_state: Union['dace.SDFGState', None]) -> List[Union['dace.sdfg.nodes.MapEntry', LoopRegion]]:
     """
     Collect all parent map entries and loop regions enclosing ``node``,
@@ -2088,13 +2087,13 @@ def get_parent_map_and_loop_scopes(
     :returns: Parent scopes (MapEntry or LoopRegion), innermost first.
     """
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
-    parent_scopes: List[Union['dace.sdfg.nodes.MapEntry', LoopRegion]] = []
+    parent_scopes: List[Union[nodes.MapEntry, LoopRegion]] = []
     cur_node = node
 
     # Walk up the scope dict inside the current state.
-    if isinstance(cur_node, (dace.sdfg.nodes.MapEntry, dace.sdfg.nodes.Tasklet, dace.sdfg.nodes.LibraryNode)):
+    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet, nodes.LibraryNode)):
         while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.sdfg.nodes.MapEntry):
+            if isinstance(scope_dict[cur_node], nodes.MapEntry):
                 parent_scopes.append(scope_dict[cur_node])
             cur_node = scope_dict[cur_node]
 
