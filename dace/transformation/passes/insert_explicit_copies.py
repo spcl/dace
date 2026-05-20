@@ -124,7 +124,15 @@ def _is_consecutive_reshape(src_size, dst_shape):
             dst_acc *= dst_shape[j]
             i += 1
             j += 1
-        elif _expr_lt(src_acc, dst_acc):
+            continue
+        # ``src_acc < dst_acc`` may be indeterminate for symbolic expressions;
+        # treat it as False so both pointers move in lockstep -- safe under the
+        # equal-product guard at the bottom of the function.
+        try:
+            advance_src = bool((src_acc - dst_acc) < 0)
+        except Exception:
+            advance_src = False
+        if advance_src:
             src_acc *= src_size[i]
             i += 1
         else:
@@ -140,23 +148,6 @@ def _is_consecutive_reshape(src_size, dst_shape):
         return bool((src_acc - dst_acc) == 0)
     except Exception:
         return str(src_acc) == str(dst_acc)
-
-
-def _expr_lt(a, b):
-    """Compare ``a < b`` for sympy/numeric mixes.
-
-    Falls back to ``False`` on indeterminate symbolic comparisons, which sends
-    both reshape pointers forward in lockstep -- safe under the equal-product
-    guard in :func:`_is_consecutive_reshape`.
-
-    :param a: Left operand (numeric or sympy expression).
-    :param b: Right operand (numeric or sympy expression).
-    :returns: ``True`` iff ``a`` is strictly less than ``b``.
-    """
-    try:
-        return bool((a - b) < 0)
-    except Exception:
-        return False
 
 
 @properties.make_properties
@@ -251,8 +242,6 @@ class InsertExplicitCopies(ppl.Pass):
 
             src_subset = _resolve_subset_for(in_e.data, src_node)
             dst_subset = _resolve_subset_for(out_e.data, dst_node)
-            if src_subset is None or dst_subset is None:
-                continue
 
             new_memlet = Memlet(data=src_node.data,
                                 subset=_copy.deepcopy(src_subset),

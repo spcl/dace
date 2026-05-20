@@ -790,6 +790,30 @@ def _find_libnode_and_scope(state):
     return cn, state.entry_node(cn)
 
 
+def _assert_lifted_libnode(state, side: str, expected_scope=None):
+    """Assert exactly one libnode in ``state`` is inside a map scope and wired directly to it.
+
+    :param side: ``'in'`` for stage-in (libnode input edge from MapEntry) or
+        ``'out'`` for stage-out (libnode output edge to MapExit).
+    :param expected_scope: optional MapEntry node identity to require for the
+        libnode's enclosing scope; when ``None``, any MapEntry passes.
+    :returns: ``(libnode, enclosing_map_entry)``.
+    """
+    cn, parent = _find_libnode_and_scope(state)
+    assert isinstance(parent, nodes.MapEntry), f"libnode parent scope is {type(parent).__name__}, expected MapEntry"
+    if expected_scope is not None:
+        assert parent is expected_scope, "libnode must sit in the expected (innermost) map scope"
+    if side == "in":
+        in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
+        assert len(in_edges) == 1 and in_edges[0].src is parent, \
+            "libnode's input must wire directly to the MapEntry connector"
+    else:
+        out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
+        assert len(out_edges) == 1 and isinstance(out_edges[0].dst, nodes.MapExit), \
+            "libnode's output must wire directly to the MapExit connector"
+    return cn, parent
+
+
 def _run_and_check(sdfg: dace.SDFG, expected_b):
     A = np.arange(_N_STAGE, dtype=np.float64)
     B = np.zeros(_N_STAGE, dtype=np.float64)
@@ -802,13 +826,7 @@ def test_lift_stage_in_copy():
     sdfg = _build_stage_in_sdfg("stage_in")
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    state = sdfg.start_state
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert isinstance(parent_me, nodes.MapEntry) and parent_me.label == "tile"
-    in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
-    assert len(in_edges) == 1 and in_edges[0].src is parent_me, \
-        "libnode's input must wire directly to the MapEntry connector"
-
+    _assert_lifted_libnode(sdfg.start_state, side="in")
     _assert_no_copynd(sdfg)
     _run_and_check(sdfg, lambda A: A + 1.0)
 
@@ -818,15 +836,14 @@ def test_lift_stage_out_copy():
     sdfg = _build_stage_out_sdfg("stage_out")
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    state = sdfg.start_state
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert isinstance(parent_me, nodes.MapEntry) and parent_me.label == "tile"
-    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
-    assert len(out_edges) == 1 and isinstance(out_edges[0].dst, nodes.MapExit), \
-        "libnode's output must wire directly to the MapExit connector"
-
+    _assert_lifted_libnode(sdfg.start_state, side="out")
     _assert_no_copynd(sdfg)
     _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def _view_an_names(sdfg, state):
+    return [n.data for n in state.nodes()
+            if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
 
 
 def test_lift_stage_in_copy_through_view():
@@ -834,14 +851,8 @@ def test_lift_stage_in_copy_through_view():
     sdfg = _build_stage_in_sdfg("stage_in_view", with_view=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    state = sdfg.start_state
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert isinstance(parent_me, nodes.MapEntry)
-    # View still present in the state.
-    view_nodes = [n for n in state.nodes()
-                  if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
-    assert len(view_nodes) == 1 and view_nodes[0].data == "Av"
-
+    _assert_lifted_libnode(sdfg.start_state, side="in")
+    assert _view_an_names(sdfg, sdfg.start_state) == ["Av"]
     _assert_no_copynd(sdfg)
     _run_and_check(sdfg, lambda A: A + 1.0)
 
@@ -851,13 +862,8 @@ def test_lift_stage_out_copy_through_view():
     sdfg = _build_stage_out_sdfg("stage_out_view", with_view=True)
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    state = sdfg.start_state
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert isinstance(parent_me, nodes.MapEntry)
-    view_nodes = [n for n in state.nodes()
-                  if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
-    assert len(view_nodes) == 1 and view_nodes[0].data == "Bv"
-
+    _assert_lifted_libnode(sdfg.start_state, side="out")
+    assert _view_an_names(sdfg, sdfg.start_state) == ["Bv"]
     _assert_no_copynd(sdfg)
     _run_and_check(sdfg, lambda A: A + 1.0)
 
@@ -883,11 +889,7 @@ def test_lift_stage_in_copy_chained_map_entries():
     state.add_memlet_path(t, imx, mx2, mx1, b, src_conn="_out", memlet=Memlet("B[bi+si+ti]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert parent_me is me2, "libnode must sit at the INNERMOST map scope"
-    in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
-    assert in_edges[0].src is me2
-
+    _assert_lifted_libnode(state, side="in", expected_scope=me2)
     _assert_no_copynd(sdfg)
     A = np.arange(N, dtype=np.float64)
     B = np.zeros(N, dtype=np.float64)
@@ -915,11 +917,7 @@ def test_lift_stage_out_copy_chained_map_exits():
     state.add_memlet_path(local, mx2, mx1, b, memlet=Memlet(f"B[bi+si:bi+si+{INNER}]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
-    cn, parent_me = _find_libnode_and_scope(state)
-    assert parent_me is me2, "libnode must sit at the INNERMOST map scope"
-    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
-    assert out_edges[0].dst is mx2
-
+    _assert_lifted_libnode(state, side="out", expected_scope=me2)
     _assert_no_copynd(sdfg)
     A = np.arange(N, dtype=np.float64)
     B = np.zeros(N, dtype=np.float64)
@@ -1223,25 +1221,4 @@ def test_polybench_covariance():
 
 
 if __name__ == "__main__":
-    test_insert_cpu_to_cpu_1d()
-    test_insert_cpu_to_cpu_2d_slice()
-    test_insert_other_subset_data_convention("insert_other_dst", Memlet(data="B", subset="0:8", other_subset="2:10"))
-    test_insert_other_subset_data_convention("insert_other_src", Memlet(data="A", subset="2:10", other_subset="0:8"))
-    test_insert_cpu_to_cpu_full_array()
-    test_insert_multiple_copies_same_state()
-    test_insert_empty_memlet_skipped()
-    test_insert_no_copies_returns_none()
-    test_insert_nested_sdfg()
-    test_insert_validates_after_pass()
-
-    # Polybench correctness
-    test_polybench_fdtd2d()
-    test_polybench_correlation()
-    test_polybench_covariance()
-
-    for params in [
-        ("insert_cpu_gpu", "H", dace.StorageType.CPU_Heap, "G", dace.StorageType.GPU_Global, 64),
-        ("insert_gpu_cpu", "G", dace.StorageType.GPU_Global, "H", dace.StorageType.CPU_Heap, 64),
-        ("insert_gpu_gpu", "A", dace.StorageType.GPU_Global, "B", dace.StorageType.GPU_Global, 128),
-    ]:
-        test_insert_cross_storage_transfer(*params)
+    pytest.main([__file__])

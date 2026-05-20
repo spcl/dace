@@ -207,13 +207,4 @@ def test_memset_cuda_rejects_non_contiguous_subset():
 
 
 if __name__ == "__main__":
-    test_memset_pure_1d_cpu()
-    test_memset_pure_3d_cpu()
-    test_memset_pure_1d_gpu()
-    test_memset_pure_3d_gpu()
-    test_memset_cuda_1d_gpu()
-    test_memset_cuda_3d_gpu()
-    test_memset_cuda_rejects_cpu_storage()
-    test_memset_auto_routes_non_contiguous_to_pure_cpu()
-    test_memset_cpu_rejects_non_contiguous_subset()
-    test_memset_cuda_rejects_non_contiguous_subset()
+    pytest.main([__file__])

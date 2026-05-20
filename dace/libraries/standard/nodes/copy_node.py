@@ -64,17 +64,6 @@ def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], lay
     return [symbolic.int_floor(b_i, cum_strides[d]) % shape[d] for d in range(len(shape))]
 
 
-def _coarse_pick_for_storage_pair(src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> Optional[str]:
-    """Return ``'MemcpyCUDA1D'`` for any copy involving GPU_Global on at
-    least one side, else ``None``. Direction (H2D / D2H / D2D) is inferred
-    inside the expansion from the same storages."""
-    gpu = dtypes.StorageType.GPU_Global
-    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
-    if (src_storage == gpu or dst_storage == gpu) and src_storage in allowed and dst_storage in allowed:
-        return 'MemcpyCUDA1D'
-    return None
-
-
 def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> str:
     """Resolve ``CopyLibraryNode.implementation`` when set to ``'Auto'`` (the default).
 
@@ -129,7 +118,10 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # 4. Coarse pick by storage pair: any copy touching GPU memory goes
     # through the cudaMemcpy family; everything else falls through to
     # MappedTasklet at the end.
-    impl = _coarse_pick_for_storage_pair(inp.storage, out.storage)
+    gpu = dtypes.StorageType.GPU_Global
+    allowed = dtypes.CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
+    impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu)
+                               and inp.storage in allowed and out.storage in allowed) else None)
 
     # 5. Refine for subset patterns (CUDA2D / CUDANDStrided / fall back to
     # MappedTasklet for unsupported stride mixs).
@@ -144,21 +136,6 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # both endpoints are packed-same-layout with contiguous subsets; rejected
     # otherwise with a specific error message.
     return impl or 'MappedTasklet'
-
-
-def _cuda2d_strides_are_supported(copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr],
-                                  dst_strides: List[symbolic.SymExpr]) -> bool:
-    """Return True if the (collapsed) 2D strides match an ``ExpandCUDA2D`` pattern."""
-    if len(copy_shape) != 2 or len(src_strides) != 2 or len(dst_strides) != 2:
-        return False
-    # Either dim is stride-1 on both sides => directly maps to cudaMemcpy2D.
-    if (src_strides[0] == 1 and dst_strides[0] == 1) or (src_strides[1] == 1 and dst_strides[1] == 1):
-        return True
-    # General 2D pitched pattern: outer_stride / inner_stride must equal the width on both sides.
-    try:
-        return (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1])
-    except (TypeError, ZeroDivisionError):
-        return False
 
 
 def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState,
@@ -194,10 +171,21 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
     # ``cudaMemcpy2D`` covers two patterns: a true 2D strided copy, and a 1D strided copy lowered as a
-    # degenerate ``(1, N)`` 2D copy (width=1, height=N, pitch=stride).
+    # degenerate ``(1, N)`` 2D copy (width=1, height=N, pitch=stride). A 2D pattern is supported when
+    # either dim has stride 1 on both sides, or the outer/inner stride ratio equals the inner width.
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
-    cuda2d_2d = (src_rank == 2 and dst_rank == 2
-                 and _cuda2d_strides_are_supported(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed))
+    cuda2d_2d = False
+    if src_rank == 2 and dst_rank == 2:
+        s0, s1 = in_strides_collapsed
+        d0, d1 = out_strides_collapsed
+        w = in_shape_collapsed[1]
+        if (s0 == 1 and d0 == 1) or (s1 == 1 and d1 == 1):
+            cuda2d_2d = True
+        else:
+            try:
+                cuda2d_2d = (s0 / s1 == w and d0 / d1 == w)
+            except (TypeError, ZeroDivisionError):
+                pass
     cuda2d_1d = (src_rank == 1 and dst_rank == 1 and in_shape_collapsed[0] == out_shape_collapsed[0])
     if cuda2d_2d or cuda2d_1d:
         return 'MemcpyCUDA2D'
