@@ -206,7 +206,7 @@ class EmitTileOps(ppl.Pass):
         path = state.memlet_path(edge)
         source_edge = path[0]
         if cls.kind in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
-            return "Tile", (source_edge, edge.data.subset, cls.dim_strides)
+            return "Tile", (source_edge, edge, edge.data.subset, cls.dim_strides)
         if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
             return "Symbol", (src_data_name,)
         raise NotImplementedError(
@@ -246,6 +246,7 @@ class EmitTileOps(ppl.Pass):
                         tasklet: dace.nodes.Tasklet,
                         conn: str,
                         source_edge,
+                        in_edge,
                         per_iter_subset: subsets.Range,
                         dim_strides: Tuple[int, ...],
                         spec: TileDimSpec,
@@ -278,10 +279,7 @@ class EmitTileOps(ppl.Pass):
         )
         state.add_node(load)
         promoted_subset = _tile_region_subset(per_iter_subset, spec.iter_vars, spec.widths)
-        src_access = source_edge.src
-        if not (isinstance(src_access, dace.nodes.AccessNode) and src_access.data == src_name):
-            src_access = state.add_access(src_name)
-        state.add_edge(src_access, None, load, "_src",
+        state.add_edge(in_edge.src, in_edge.src_conn, load, "_src",
                        dace.Memlet(data=src_name, subset=promoted_subset))
         mask_access = state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
@@ -334,12 +332,12 @@ class EmitTileOps(ppl.Pass):
         mask_name = TileNameScheme.ITER_MASK
 
         a_tile_name = (
-            self._emit_tile_load(state, tasklet, a_conn, info_a[0], info_a[1], info_a[2],
+            self._emit_tile_load(state, tasklet, a_conn, info_a[0], info_a[1], info_a[2], info_a[3],
                                  spec, mask_name)
             if kind_a == "Tile" else None
         )
         b_tile_name = (
-            self._emit_tile_load(state, tasklet, b_conn, info_b[0], info_b[1], info_b[2],
+            self._emit_tile_load(state, tasklet, b_conn, info_b[0], info_b[1], info_b[2], info_b[3],
                                  spec, mask_name)
             if kind_b == "Tile" else None
         )
@@ -382,10 +380,7 @@ class EmitTileOps(ppl.Pass):
         mask_access_for_store = state.add_access(mask_name)
         state.add_edge(mask_access_for_store, None, store, "_mask",
                        dace.Memlet(f"{mask_name}[{subset}]"))
-        out_sink_access = out_sink_edge.dst
-        if not (isinstance(out_sink_access, dace.nodes.AccessNode) and out_sink_access.data == out_dst_name):
-            out_sink_access = state.add_access(out_dst_name)
-        state.add_edge(store, "_dst", out_sink_access, None,
+        state.add_edge(store, "_dst", out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=out_dst_name, subset=out_promoted_subset))
 
         for e in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
