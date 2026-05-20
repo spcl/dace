@@ -42,9 +42,30 @@ def scatter_store(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N]
         dst[idx[i]] = src[i] * scale
 
 
-def _run_sve_vs_ref(prog, NV, num_cores, mk_inputs, output_names):
+@dace.program
+def strided_load(src: dace.float64[2 * N], dst: dace.float64[N], scale: dace.float64):
+    for i in dace.map[0:N]:
+        dst[i] = src[i * 2] * scale
+
+
+@dace.program
+def triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], alpha: dace.float64,
+          beta: dace.float64):
+    for i in dace.map[0:N]:
+        d[i] = a[i] + alpha * b[i] + beta * c[i]
+
+
+def _run_sve_vs_ref(prog, NV, num_cores, mk_inputs, output_names, atol: float = 0.0, rtol: float = 0.0):
     """Build SVE-style and reference SDFGs from ``prog``, run identical
-    inputs, assert bit-exact equality on every output array.
+    inputs, assert equality on every output array.
+
+    Defaults ``atol=0, rtol=0`` enforce bit-exact (the contract the
+    Min-swap + global mask preserve for simple kernels with at most one
+    mul + one add per output). Kernels with 3+ operands (e.g. triad)
+    allow legit vectorizer associativity reordering, so pass
+    ``atol=1e-12, rtol=1e-12`` to accept FP-reordering noise while still
+    gating real errors (a misaligned mask / dropped iteration would
+    produce O(1) deltas, not ulp-scale).
     """
     inputs = mk_inputs()
 
@@ -64,7 +85,7 @@ def _run_sve_vs_ref(prog, NV, num_cores, mk_inputs, output_names):
     sve.compile()(**sve_inputs, N=NV)
 
     for name in output_names:
-        assert np.allclose(ref_inputs[name], sve_inputs[name], rtol=0, atol=0), \
+        assert np.allclose(ref_inputs[name], sve_inputs[name], rtol=rtol, atol=atol), \
             f"{prog.name} N={NV} nc={num_cores} arr {name}: max|d|=" \
             f"{float(np.max(np.abs(ref_inputs[name] - sve_inputs[name])))}"
 
@@ -105,6 +126,41 @@ def test_sve_gather_load(NV, NC):
                         "scale": 2.5,
                     },
                     output_names=("dst", ))
+
+
+@pytest.mark.parametrize("NV,NC", _NON_DIVISIBLE + _EXTRA)
+def test_sve_strided_load(NV, NC):
+    _run_sve_vs_ref(strided_load,
+                    NV,
+                    NC,
+                    mk_inputs=lambda: {
+                        "src": np.random.rand(2 * NV),
+                        "dst": np.zeros(NV),
+                        "scale": 1.25,
+                    },
+                    output_names=("dst", ))
+
+
+@pytest.mark.parametrize("NV,NC", _NON_DIVISIBLE + _EXTRA)
+def test_sve_triad(NV, NC):
+    # 3-operand fused expr ``a + alpha*b + beta*c``: legit vectorizer
+    # associativity reordering yields ~1e-15 differences vs scalar.
+    # atol=1e-12 accepts that FP noise while still catching real errors
+    # (a misaligned mask / dropped iteration would produce O(1) deltas).
+    _run_sve_vs_ref(triad,
+                    NV,
+                    NC,
+                    mk_inputs=lambda: {
+                        "a": np.random.rand(NV),
+                        "b": np.random.rand(NV),
+                        "c": np.random.rand(NV),
+                        "d": np.zeros(NV),
+                        "alpha": 2.5,
+                        "beta": -1.25,
+                    },
+                    output_names=("d", ),
+                    atol=1e-12,
+                    rtol=1e-12)
 
 
 @pytest.mark.parametrize("NV,NC", _NON_DIVISIBLE + _EXTRA)
