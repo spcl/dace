@@ -14,7 +14,6 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
-from dace.config import Config
 
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
@@ -1467,9 +1466,6 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     simplification and constructor caches.
     """
 
-    def __init__(self, default_constants: bool = False):
-        self._default_constants = default_constants
-
     @staticmethod
     def _python_bool(value):
         if value is sympy.true:
@@ -1647,22 +1643,15 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     def visit_Constant(self, node):
         if isinstance(node.value, bool):
-            # Never default-type booleans: a literal True/False is usually a
-            # control condition, and a numeric constant is not a SymPy Boolean.
             return sympy.true if node.value else sympy.false
         if node.value is None:
             return symbol('NoneSymbol')
         if isinstance(node.value, int):
-            if self._default_constants:
-                return TypedConstant(node.value, dtypes.typeclass(int))
             return sympy.Integer(node.value)
         if isinstance(node.value, float):
-            if self._default_constants:
-                return TypedConstant(node.value, dtypes.typeclass(float))
             return sympy.Float(node.value)
         if isinstance(node.value, complex):
-            if self._default_constants:
-                return TypedConstant(node.value, dtypes.complex128)
+            return TypedConstant(node.value, dtypes.complex128)
         raise TypeError(f'Unsupported literal {node.value!r}')
 
     def visit_UnaryOp(self, node):
@@ -1884,7 +1873,8 @@ def serialize_symbolic(expr: Union[SymbolicType, int, float, numpy.number]) -> s
 
 
 @lru_cache(maxsize=16384)
-def _deserialize_symbolic(expr, default_typed_constants: bool) -> SymbolicType:
+def deserialize_symbolic(expr) -> SymbolicType:
+    """Deserialize a string produced by :func:`serialize_symbolic`."""
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
     if isinstance(expr, numpy.generic):
@@ -1905,12 +1895,7 @@ def _deserialize_symbolic(expr, default_typed_constants: bool) -> SymbolicType:
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
-    return _SerializedSymbolicParser(default_constants=default_typed_constants).visit(ast.parse(expr, mode='eval'))
-
-
-def deserialize_symbolic(expr) -> SymbolicType:
-    """Deserialize a string produced by :func:`serialize_symbolic`."""
-    return _deserialize_symbolic(expr, Config.get_bool('optimizer', 'default_typed_constants'))
+    return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:

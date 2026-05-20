@@ -6,14 +6,9 @@ import pytest
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
-from dace.config import set_temporary
 from dace.properties import DictProperty, ListProperty
 from dace.sdfg.infer_types import infer_connector_types
 import sympy
-
-
-def _default_typed_constants(value=True):
-    return set_temporary('optimizer', 'default_typed_constants', value=value)
 
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():
@@ -111,6 +106,14 @@ def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
+def test_complex_literal_parses_as_complex128():
+    """A bare ``4j`` literal has no atomic plain-SymPy form and parses directly
+    to a ``complex128`` TypedConstant."""
+    tc = symbolic.deserialize_symbolic('4j')
+    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
+    assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(0, 4)
+
+
 def test_complex_constant_parse_save_roundtrip():
     """``complex(re, im)`` parses to a complex128 TypedConstant and round-trips;
     a complex64 constant preserves its dtype via the cast-wrapped form."""
@@ -129,19 +132,6 @@ def test_complex_constant_parse_save_roundtrip():
     assert s64 == 'dace.complex64(complex(1.0, 2.0))'
     r64 = symbolic.deserialize_symbolic(s64)
     assert r64.dtype == dace.complex64 and symbolic.serialize_symbolic(r64) == s64
-
-
-def test_default_constants_map_complex_not_bool():
-    """Under ``default_typed_constants`` a complex literal -> complex128, but
-    ``True``/``False`` are always left as SymPy booleans (a literal boolean is
-    a control condition, not a numeric constant)."""
-    with _default_typed_constants():
-        c = symbolic.deserialize_symbolic('4j')
-        assert isinstance(c, symbolic.TypedConstant) and c.dtype == dace.complex128
-        assert symbolic.deserialize_symbolic('True') is sympy.true
-        assert symbolic.deserialize_symbolic('False') is sympy.false
-
-    assert symbolic.deserialize_symbolic('True') is sympy.true
 
 
 def test_sym2cpp_emits_uint64_literals():
@@ -348,25 +338,12 @@ def test_plain_python_integer_deserialization_uses_sympy_integer(value):
     assert isinstance(restored, sympy.Integer)
 
 
-def test_default_constants_off_by_default_keeps_plain_literals():
-    """Existing behavior must be unchanged when ``default_constants`` is unset."""
+def test_untyped_literals_keep_plain_sympy_form():
+    """Untyped literals deserialize to plain SymPy numbers (no implicit
+    DaCe-typing)."""
     assert symbolic.deserialize_symbolic('5') == sympy.Integer(5)
     assert isinstance(symbolic.deserialize_symbolic('5'), sympy.Integer)
     assert isinstance(symbolic.deserialize_symbolic('5.0'), sympy.Float)
-
-
-@pytest.mark.parametrize(
-    'text,value,ctype',
-    [
-        ('5', 5, 'int64_t'),  # bare int -> int64 (matches dtypes.typeclass(int))
-        ('5.0', 5.0, 'double'),  # bare float -> float64
-    ])
-def test_default_constants_type_untyped_literals(text, value, ctype):
-    with _default_typed_constants():
-        restored = symbolic.deserialize_symbolic(text)
-    assert isinstance(restored, symbolic.TypedConstant)
-    assert restored.dtype.ctype == ctype
-    assert float(restored.value) == value
 
 
 @pytest.mark.parametrize(
@@ -379,38 +356,10 @@ def test_default_constants_type_untyped_literals(text, value, ctype):
     ])
 def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     """``double(5)``/``int(5)`` (the C++ printer's cast fallback) must round-trip
-    into a TypedConstant, both with and without default-constant typing."""
-    for flag in (False, True):
-        with _default_typed_constants(flag):
-            restored = symbolic.deserialize_symbolic(text)
-        assert isinstance(restored, symbolic.TypedConstant), (text, flag)
-        assert restored.dtype.ctype == ctype
-
-
-def test_typed_suffix_still_wins_over_default():
-    """An explicit ``5i32``/``5.0f64`` suffix is unaffected by default typing."""
-    with _default_typed_constants():
-        assert symbolic.deserialize_symbolic('5i16').dtype == dace.int16
-        assert symbolic.deserialize_symbolic('5.0f32').dtype == dace.float32
-
-
-def test_default_constants_in_expression():
-    """In a non-evaluating context the parser types the constant as float64
-    and leaves the symbol untouched."""
-    with _default_typed_constants():
-        restored = symbolic.deserialize_symbolic('$N + 5.0')
-    consts = list(restored.atoms(symbolic.TypedConstant))
-    assert len(consts) == 1 and consts[0].dtype == dace.float64
-    assert any(isinstance(a, symbolic.symbol) for a in restored.atoms(symbolic.symbol))
-
-
-def test_default_typed_float_constant_in_min_is_robust():
-    """The interstate-edge shape ``Min(5.0, N)``: a float64 default constant
-    must survive sympy.Min construction. Currently raises AttributeError."""
-    with _default_typed_constants():
-        restored = symbolic.deserialize_symbolic('Min(5.0, $N)')
-    consts = list(restored.atoms(symbolic.TypedConstant))
-    assert len(consts) == 1 and consts[0].dtype == dace.float64
+    into a TypedConstant."""
+    restored = symbolic.deserialize_symbolic(text)
+    assert isinstance(restored, symbolic.TypedConstant), text
+    assert restored.dtype.ctype == ctype
 
 
 if __name__ == '__main__':
