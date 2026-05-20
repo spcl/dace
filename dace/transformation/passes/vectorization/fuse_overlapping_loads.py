@@ -30,6 +30,16 @@ class FuseOverlappingLoads(ppl.Pass):
     def __init__(self, fusion_threshold: int = 1):
         super().__init__()
         self.fusion_threshold = fusion_threshold
+        # Instrumentation counters set during ``apply_pass``: how many
+        # per-array load fans the pass GATED (skipped because
+        # ``len(v) <= fusion_threshold``) vs FUSED (collapsed into a
+        # shared union window). These expose what the pass actually did,
+        # which is the non-fragile way to integration-test the threshold
+        # (counting fusion-product nodes post-hoc is implementation-
+        # fragile because the pass refactors topology). Reset on each
+        # ``apply_pass``.
+        self._last_groups_gated = 0
+        self._last_groups_fused = 0
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -136,7 +146,9 @@ class FuseOverlappingLoads(ppl.Pass):
                         # raise the threshold to suppress fusion on small
                         # overlaps without disabling the pass entirely.
                         if len(v) <= self.fusion_threshold:
+                            self._last_groups_gated += 1
                             continue
+                        self._last_groups_fused += 1
 
                         # Collect out connectors to remove
                         out_connectors = dict()
@@ -221,4 +233,9 @@ class FuseOverlappingLoads(ppl.Pass):
 
         :param sdfg: SDFG to transform in place.
         """
+        # Reset instrumentation counters at the entry — they accumulate
+        # only what THIS apply did, not what prior runs did. Inspected
+        # by integration tests that gate ``fusion_threshold`` behavior.
+        self._last_groups_gated = 0
+        self._last_groups_fused = 0
         self._apply(sdfg)
