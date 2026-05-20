@@ -119,23 +119,65 @@ def test_sve_variable_copy_runs_correctly():
     assert np.allclose(c, a, rtol=0, atol=0), f"copy max|d|={float(np.max(np.abs(c - a)))}"
 
 
+@dace.program
+def _triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in dace.map[0:N]:
+        d[i] = a[i] + b[i] + c[i]
+
+
+def test_sve_variable_triad_chain():
+    """Triad ``d[i] = a[i] + b[i] + c[i]`` is a linear chain of two
+    single-binop tasklets. The chain recogniser walks it and emits a
+    nested SVE intrinsic sequence (svadd then svadd-with-acc); FP
+    associativity-reordering allowed (atol=rtol=1e-12)."""
+    NV = 64
+    sdfg, d = _compile_and_run(_triad,
+                               NV,
+                               lambda: {
+                                   "a": np.random.rand(NV),
+                                   "b": np.random.rand(NV),
+                                   "c": np.random.rand(NV),
+                                   "d": np.zeros(NV),
+                               },
+                               output_name="d")
+    cpp = sdfg.generate_code()[0].clean_code
+    # The chain emits svadd_f64_z called twice: once with two outer
+    # operands, then once with the running ``acc``.
+    assert cpp.count("svadd_f64_z") >= 2, f"expected >=2 svadd_f64_z calls; got {cpp.count('svadd_f64_z')}"
+    # Numeric re-check with fresh inputs (closed-form ref) — atol/rtol
+    # 1e-12 accepts the legit FP associativity reorder a chain produces.
+    a = np.random.rand(NV)
+    b = np.random.rand(NV)
+    c = np.random.rand(NV)
+    sd2 = _triad.to_sdfg(simplify=True)
+    sd2.replace_dict({"N": NV})
+    sd2.name = f"_triad_ref_{NV}"
+    VectorizeCPU(vector_width=8, num_cores=8, sve_style="variable", fail_on_unvectorizable=True).apply_pass(sd2, {})
+    d_out = np.zeros(NV)
+    sd2.compile()(a=a.copy(), b=b.copy(), c=c.copy(), d=d_out, N=NV)
+    expected = a + b + c
+    assert np.allclose(d_out, expected, rtol=1e-12, atol=1e-12), \
+        f"triad max|d|={float(np.max(np.abs(d_out - expected)))}"
+
+
 def test_sve_variable_unsupported_shape_raises_loudly():
-    """Unrecognised kernel shape (3-operand triad) must raise
-    NotImplementedError rather than silently produce wrong output."""
-    N_sym = dace.symbol("N_three")
+    """A non-chain-of-binops body (multi-output or branching) must
+    raise rather than silently miscompile."""
+    N_sym = dace.symbol("N_bad")
 
     @dace.program
-    def _triad_unsupported(a: dace.float64[N_sym], b: dace.float64[N_sym], c: dace.float64[N_sym],
-                           d: dace.float64[N_sym]):
+    def _multi_output(a: dace.float64[N_sym], b: dace.float64[N_sym], c: dace.float64[N_sym], d: dace.float64[N_sym]):
         for i in dace.map[0:N_sym]:
-            d[i] = a[i] + b[i] + c[i]
+            # Two independent outputs — not a linear chain.
+            c[i] = a[i] + b[i]
+            d[i] = a[i] * b[i]
 
-    sdfg = _triad_unsupported.to_sdfg(simplify=True)
-    sdfg.replace_dict({"N_three": 64})
-    sdfg.name = "triad_unsupported"
+    sdfg = _multi_output.to_sdfg(simplify=True)
+    sdfg.replace_dict({"N_bad": 64})
+    sdfg.name = "multi_output_unsupported"
     try:
         VectorizeCPU(vector_width=8, num_cores=8, sve_style="variable",
                      fail_on_unvectorizable=True).apply_pass(sdfg, {})
         assert False, "expected NotImplementedError on unrecognised body shape"
     except NotImplementedError as e:
-        assert "first-cut recogniser" in str(e)
+        assert "recogniser supports" in str(e)

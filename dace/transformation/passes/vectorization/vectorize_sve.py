@@ -336,6 +336,201 @@ class SveStyleVariableFinalize(ppl.Pass):
         return False
 
     @staticmethod
+    def _classify_chain_body(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+        """Recognise a linear chain of single-binop tasklets (each
+        ``__out = (__in1 OP __in2)``) ending in an assign tasklet that
+        writes to the outer destination. Each binop consumes either
+        outer arrays or the previous binop's transient output (via an
+        intermediate access node). Handles axpy, triad
+        (``d = a + b + c``), and longer associative chains uniformly.
+
+        :returns: ``(steps, out_array, global_ub_str)`` where ``steps``
+            is a list ``[(op, outer_inputs_or_None, n_outer)]`` describing
+            the chain — the emitter walks it building nested SVE
+            intrinsics. Returns ``None`` if not a recognised chain.
+        """
+        if len(map_entry.map.params) != 1:
+            return None
+        lb, ub, step = map_entry.map.range[-1]
+        if (step != 1) and (str(step) != "1"):
+            return None
+        sdfg = state.sdfg
+        map_exit = state.exit_node(map_entry)
+        body_nodes = [
+            n for n in state.all_nodes_between(map_entry, map_exit)
+            if not isinstance(n, (dace.nodes.MapEntry, dace.nodes.MapExit))
+        ]
+        tasklets = [n for n in body_nodes if isinstance(n, dace.nodes.Tasklet)]
+        if not tasklets:
+            return None
+        import re
+        binop_re = re.compile(r"^(\w+)\s*=\s*\(?\s*(\w+)\s*([+\-*/])\s*(\w+)\s*\)?\s*$")
+        copy_re = re.compile(r"^(\w+)\s*=\s*(\w+)\s*$")
+
+        # Classify each tasklet as binop, copy, or unknown.
+        info = {}
+        for tk in tasklets:
+            code = tk.code.as_string.strip().rstrip(";").strip()
+            mb = binop_re.match(code)
+            mc = copy_re.match(code)
+            if mb:
+                info[tk] = ("binop", mb.groups())
+            elif mc:
+                info[tk] = ("copy", mc.groups())
+            else:
+                return None  # tasklet doesn't fit the single-op contract
+        # Topological order — each binop's outputs flow forward.
+        from collections import deque
+        order = []
+        in_deg = {tk: sum(1 for ie in state.in_edges(tk) if isinstance(ie.src, dace.nodes.AccessNode)
+                          and ie.src in body_nodes) for tk in tasklets}
+        q = deque(tk for tk in tasklets if in_deg[tk] == 0)
+        while q:
+            tk = q.popleft()
+            order.append(tk)
+            for oe in state.out_edges(tk):
+                # Out-edge -> AccessNode -> next Tasklet
+                if isinstance(oe.dst, dace.nodes.AccessNode):
+                    for ne in state.out_edges(oe.dst):
+                        if isinstance(ne.dst, dace.nodes.Tasklet) and ne.dst in in_deg:
+                            in_deg[ne.dst] -= 1
+                            if in_deg[ne.dst] == 0:
+                                q.append(ne.dst)
+        if len(order) != len(tasklets):
+            return None  # not a DAG / has cycles or unexpected structure
+
+        # Split into compute chain (binops or single copy) + optional
+        # trailing assign (copy) that writes to the outer destination.
+        compute = [tk for tk in order if info[tk][0] == "binop"]
+        # The final tasklet feeding the map exit should be either:
+        # - the last binop (if its output goes directly to the outer dst), or
+        # - a trailing assign/copy tasklet right after the last binop.
+        # Trace the chain: walk from each binop's output through intermediate
+        # access nodes; identify the outer source for each binop's "fresh" input.
+        if not compute:
+            # Pure copy kernel.
+            if len(tasklets) != 1 or info[tasklets[0]][0] != "copy":
+                return None
+            tk = tasklets[0]
+            out_conn, a_conn = info[tk][1]
+
+            def _outer_in(conn):
+                for ie in state.in_edges(tk):
+                    if ie.dst_conn != conn or ie.data is None:
+                        continue
+                    for hop in reversed(state.memlet_path(ie)):
+                        if isinstance(hop.src, dace.nodes.AccessNode):
+                            return hop.src.data
+                return None
+
+            def _outer_out(conn):
+                for oe in state.out_edges(tk):
+                    if oe.src_conn != conn or oe.data is None:
+                        continue
+                    for hop in state.memlet_path(oe):
+                        if isinstance(hop.dst, dace.nodes.AccessNode):
+                            return hop.dst.data
+                return None
+
+            a_arr = _outer_in(a_conn)
+            d_arr = _outer_out(out_conn)
+            if a_arr is None or d_arr is None:
+                return None
+            if sdfg.arrays[a_arr].dtype != dace.float64 or sdfg.arrays[d_arr].dtype != dace.float64:
+                return None
+            if len(sdfg.arrays[a_arr].shape) != 1 or len(sdfg.arrays[d_arr].shape) != 1:
+                return None
+            return ([("copy", [a_arr])], d_arr, str(ub + 1))
+
+        # Build the binop chain. For each binop in order, identify
+        # which of its 2 inputs is the prev-binop's output (transient,
+        # not directly an outer source) vs an outer-source array.
+        steps = []
+        prev_out_access_data = None  # data name of the intermediate access node from prev binop
+
+        def _input_array_via_path(tk, conn):
+            for ie in state.in_edges(tk):
+                if ie.dst_conn != conn or ie.data is None:
+                    continue
+                for hop in reversed(state.memlet_path(ie)):
+                    if isinstance(hop.src, dace.nodes.AccessNode):
+                        return hop.src.data
+            return None
+
+        for tk in compute:
+            out_conn, l_conn, op, r_conn = info[tk][1]
+            if op not in _SVE_OP_INTRINSIC:
+                return None
+            l_data = _input_array_via_path(tk, l_conn)
+            r_data = _input_array_via_path(tk, r_conn)
+            if l_data is None or r_data is None:
+                return None
+            # Identify which input is the previous-result (transient).
+            outer_inputs = []
+            uses_prev = False
+            for d in (l_data, r_data):
+                if prev_out_access_data is not None and d == prev_out_access_data:
+                    uses_prev = True
+                else:
+                    outer_inputs.append(d)
+            if prev_out_access_data is not None and not uses_prev:
+                return None  # broken chain (not linear)
+            steps.append((op, outer_inputs))
+            # Record this binop's output (transient access node it writes to).
+            for oe in state.out_edges(tk):
+                if oe.src_conn == out_conn and isinstance(oe.dst, dace.nodes.AccessNode):
+                    prev_out_access_data = oe.dst.data
+                    break
+
+        # Find the outer destination: trace from the last binop's output
+        # forward through any assign tasklet to the outer destination AccessNode.
+        out_array = None
+        last_tk = compute[-1]
+        for oe in state.out_edges(last_tk):
+            if oe.data is None:
+                continue
+            cur = oe
+            for _ in range(10):  # bounded walk
+                hop_dst = None
+                for hop in state.memlet_path(cur):
+                    if isinstance(hop.dst, dace.nodes.AccessNode):
+                        hop_dst = hop.dst
+                        break
+                if hop_dst is None:
+                    break
+                # Outer destination AccessNodes are those NOT in the
+                # body_nodes (they live outside the map scope).
+                if hop_dst not in body_nodes:
+                    out_array = hop_dst.data
+                    break
+                # Otherwise it's a transient; advance through next tasklet.
+                next_t = None
+                for ne in state.out_edges(hop_dst):
+                    if isinstance(ne.dst, dace.nodes.Tasklet):
+                        next_t = ne.dst
+                        break
+                if next_t is None:
+                    out_array = hop_dst.data
+                    break
+                # Follow the assign tasklet's first output edge.
+                next_outs = state.out_edges(next_t)
+                if not next_outs:
+                    out_array = hop_dst.data
+                    break
+                cur = next_outs[0]
+            if out_array is not None:
+                break
+        if out_array is None:
+            return None
+        # All arrays float64 1D.
+        all_arrs = [arr for (_, outer_ins) in steps for arr in outer_ins] + [out_array]
+        for nm in all_arrs:
+            arr = sdfg.arrays.get(nm)
+            if arr is None or arr.dtype != dace.float64 or len(arr.shape) != 1:
+                return None
+        return (steps, out_array, str(ub + 1))
+
+    @staticmethod
     def _classify_simple_axpy_body(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
         """Recognise ``out[i] = a[i] (op) b[i]`` or ``out[i] = a[i]``
         as the body of a single-param step-1 1D map.
@@ -470,6 +665,102 @@ class SveStyleVariableFinalize(ppl.Pass):
         return (op, in_arrays, out_array, dace.float64, str(ub + 1))
 
     @staticmethod
+    def _emit_sve_while_chain(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, info):
+        """Replace ``map_entry``'s scope with a single CPP tasklet
+        emitting the SVE runtime-VL while-loop body that evaluates the
+        recognised chain (each step is one SVE intrinsic). Handles
+        single binop (axpy), longer linear chains (triad, etc.), and
+        the copy degenerate case.
+
+        :param info: ``(steps, out_array, global_ub_str)`` from
+            :meth:`_classify_chain_body`.
+        """
+        steps, out_array, global_ub = info
+        sdfg = state.sdfg
+        map_exit = state.exit_node(map_entry)
+        # Distinct outer input arrays in chain order — each gets a
+        # connector on the new tasklet.
+        seen = set()
+        in_arrays = []
+        for _op, outer_ins in steps:
+            for arr in outer_ins:
+                if arr not in seen:
+                    seen.add(arr)
+                    in_arrays.append(arr)
+        in_conns = [f"_in{k}" for k in range(len(in_arrays))]
+        arr_to_conn = {arr: c for arr, c in zip(in_arrays, in_conns)}
+        out_conn = "_out"
+        # Emit SVE body. ``acc`` holds the running result; after the
+        # first step it's reused across the chain.
+        sve_lines = ["int i = 0;", f"while (i < (int)({global_ub})) {{",
+                     f"    svbool_t pg = svwhilelt_b64(i, (int64_t)({global_ub}));"]
+        # Pre-load every outer input lane once. For long chains this is
+        # the simplest correct emission (the compiler can hoist loads
+        # if it likes); a more aggressive version would only load as
+        # needed but micro-optimisation is out of scope here.
+        for k, arr in enumerate(in_arrays):
+            sve_lines.append(f"    svfloat64_t v{k} = svld1_f64(pg, {in_conns[k]} + i);")
+        # Walk the steps.
+        scalar_compute_parts = []
+        prev = None
+        for op, outer_ins in steps:
+            if op == "copy":
+                # Pure copy: only step in the chain.
+                k = in_arrays.index(outer_ins[0])
+                sve_lines.append(f"    svfloat64_t acc = v{k};")
+                prev = "acc"
+                scalar_compute_parts.append(f"{in_conns[k]}[i]")
+                continue
+            intrinsic = _SVE_OP_INTRINSIC[op]
+            if prev is None:
+                # First binop: two outer inputs.
+                k0 = in_arrays.index(outer_ins[0])
+                k1 = in_arrays.index(outer_ins[1])
+                sve_lines.append(f"    svfloat64_t acc = {intrinsic}(pg, v{k0}, v{k1});")
+                scalar_compute_parts.append(f"({in_conns[k0]}[i] {op} {in_conns[k1]}[i])")
+                prev = "acc"
+            else:
+                # Subsequent: one new outer + the running acc.
+                k = in_arrays.index(outer_ins[0])
+                sve_lines.append(f"    acc = {intrinsic}(pg, acc, v{k});")
+                scalar_compute_parts[-1] = f"({scalar_compute_parts[-1]} {op} {in_conns[k]}[i])"
+        sve_lines.append(f"    svst1_f64(pg, {out_conn} + i, acc);")
+        sve_lines.append("    i += svcntd();")
+        sve_lines.append("}")
+        sve_body = "\n".join("    " + ln for ln in sve_lines)
+        scalar_rhs = scalar_compute_parts[0] if scalar_compute_parts else "0.0"
+        body = ("\n#if defined(__ARM_FEATURE_SVE)\n"
+                "{\n"
+                f"{sve_body}\n"
+                "}\n"
+                "#else\n"
+                f"    for (int i = 0; i < (int)({global_ub}); ++i) {out_conn}[i] = {scalar_rhs};\n"
+                "#endif\n")
+        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
+        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
+            sdfg.append_global_code(guard, "frame")
+        # Add the replacement tasklet and wire it to the outer access nodes.
+        tk = state.add_tasklet("sve_vl", set(in_conns), {out_conn}, body, language=dace.dtypes.Language.CPP)
+        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
+        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
+        out_access = {n.data: n for n in state.data_nodes() if n.data in outer_inputs | outer_outputs}
+        for arr_name in in_arrays:
+            src = out_access.get(arr_name) or state.add_access(arr_name)
+            out_access[arr_name] = src
+            shape0 = sdfg.arrays[arr_name].shape[0]
+            state.add_edge(src, None, tk, arr_to_conn[arr_name], dace.Memlet(f"{arr_name}[0:{shape0}]"))
+        dst = out_access.get(out_array) or state.add_access(out_array)
+        shape0 = sdfg.arrays[out_array].shape[0]
+        state.add_edge(tk, out_conn, dst, None, dace.Memlet(f"{out_array}[0:{shape0}]"))
+        # Drop everything that used to be inside the map scope.
+        for n in list(state.all_nodes_between(map_entry, map_exit)):
+            if n not in (map_entry, map_exit) and n is not tk:
+                state.remove_node(n)
+        state.remove_node(map_entry)
+        state.remove_node(map_exit)
+        sdfg.validate()
+
+    @staticmethod
     def _emit_sve_while_tasklet(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, info):
         """Replace ``map_entry``'s scope with a single CPP tasklet whose
         body is the SVE runtime-VL while-loop (with scalar fallback)
@@ -559,12 +850,12 @@ class SveStyleVariableFinalize(ppl.Pass):
                    if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)]
         applied = 0
         for n, g in targets:
-            info = self._classify_simple_axpy_body(g, n)
+            info = self._classify_chain_body(g, n)
             if info is None:
                 raise NotImplementedError(
-                    f"sve_style='variable' first-cut recogniser supports only simple float64 element-wise "
-                    f"``out[i] = a[i] (op) b[i]`` or ``out[i] = a[i]`` 1D innermost maps. "
-                    f"Map {n.label!r} in state {g.label!r} did not match.")
-            self._emit_sve_while_tasklet(g, n, info)
+                    f"sve_style='variable' recogniser supports linear chains of single-binop "
+                    f"float64 1D element-wise tasklets (axpy, triad, longer associative chains, "
+                    f"or a single copy). Map {n.label!r} in state {g.label!r} did not match.")
+            self._emit_sve_while_chain(g, n, info)
             applied += 1
         return applied or None
