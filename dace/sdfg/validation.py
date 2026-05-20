@@ -880,20 +880,27 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
 
         # Verify that source and destination subsets contain the same
-        # number of elements
+        # number of elements. Only AccessNode endpoints expose a ``.data``
+        # descriptor whose ``veclen`` participates in this check; scope
+        # nodes (NestedSDFG, MapEntry/Exit, ConsumeEntry/Exit) route data
+        # through connectors and contribute ``veclen = 1`` to the count.
         if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
-            dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
+            src_veclen = sdfg.arrays[src_node.data].veclen if isinstance(src_node, nd.AccessNode) else 1
+            dst_veclen = sdfg.arrays[dst_node.data].veclen if isinstance(dst_node, nd.AccessNode) else 1
+            src_expr = e.data.src_subset.num_elements() * src_veclen
+            dst_expr = e.data.dst_subset.num_elements() * dst_veclen
             if symbolic.inequal_symbols(src_expr, dst_expr):
                 error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
                 # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
+                if (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.View)
+                        and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.View)
+                        and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 if e.dst_conn == 'set':
