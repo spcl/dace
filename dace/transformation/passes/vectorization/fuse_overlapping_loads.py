@@ -12,7 +12,31 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class FuseOverlappingLoads(ppl.Pass):
-    """Fuse overlapping per-lane loads of the same array into one shared union access."""
+    """Fuse overlapping per-lane loads of the same array into one shared union access.
+
+    For each inner map entry, the incoming access fan of every source array
+    is partitioned into a group; a group whose size strictly exceeds
+    :attr:`fusion_threshold` is collapsed into a single union access whose
+    subset is the bounding window over the lane subsets, with each lane's
+    original access node demoted to a forwarder reading from that window.
+    Groups at or below the threshold are left alone.
+
+    **Test-visible instrumentation.** :meth:`apply_pass` resets and populates
+    two private counters before returning:
+
+    - ``_last_groups_gated`` — per-array load groups that were *not* fused
+      because their size was ``<= fusion_threshold``.
+    - ``_last_groups_fused`` — per-array load groups that were collapsed
+      into a shared union window.
+
+    The counters carry an underscore prefix because :func:`make_properties`
+    reserves the bare-attribute namespace for declared :class:`Property`
+    fields; the underscore opts them out of property tracking while keeping
+    them readable from tests. They are the supported contract for asserting
+    what the pass did — counting fusion-product nodes post-hoc is fragile
+    because the pass rewrites topology, but these counters are written once
+    per run and reflect the exact gating decision.
+    """
 
     # This pass is tested as part of the vectorization pipeline.
     CATEGORY: str = 'Vectorization'

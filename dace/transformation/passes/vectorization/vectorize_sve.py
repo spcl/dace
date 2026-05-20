@@ -60,8 +60,7 @@ from dace.transformation.passes.vectorization.detect_multi_dim_strided_load impo
 from dace.transformation.passes.vectorization.detect_multi_dim_strided_store import DetectMultiDimStridedStore
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
-
-_CORE_PREFIX = "core"
+from dace.transformation.passes.vectorization.utils.name_schemes import CORE_MAP_PARAM_PREFIX as _CORE_PREFIX
 
 
 @properties.make_properties
@@ -98,6 +97,18 @@ class SveStyleFinalize(ppl.Pass):
         operates on the contiguous axis. Falls back to the last param
         when no analysis info is available (default-correct for
         C-layout where the last dim is already the contiguous one).
+
+        Worked example. Consider an SDFG map with params ``(i, j)`` whose
+        body reads ``A[i, j]`` (a C-layout 2D array with strides
+        ``(N, 1)``) and ``B[j, i]`` (Fortran-layout, strides ``(1, N)``).
+        On the ``A`` edge, the unit-stride dim is index ``1`` and the
+        begin expression involves ``j`` — ``counts[j] += 1``. On the
+        ``B`` edge, the unit-stride dim is index ``0`` and the begin
+        expression also involves ``j`` — ``counts[j] += 1``. ``j`` wins
+        ``2`` to ``0``; permuting it to the innermost position means
+        W-strip-mining strides along the contiguous axis of *both*
+        arrays. If both arrays were C-layout, ``j`` would still win
+        (it appears in the unit-stride dim on both reads).
 
         :param map_entry: The multi-param map to analyze.
         :param state: The state containing ``map_entry``.
@@ -302,7 +313,23 @@ class SveStyleFinalize(ppl.Pass):
 
 
 # -------------------------------------------------------------------------
-# sve_style='variable' (true runtime VL via svwhilelt_b64 + svcntd)
+# sve_style='variable' — DEFERRED PROTOTYPE (open task as of 2026-05-20).
+#
+# This is the "whole map -> one CPP tasklet emitting a svwhilelt-driven
+# while-loop body" approach (axpy/triad/copy chain + SpMV reduction
+# recognisers, each pattern recognised standalone). It is *not*
+# user-reachable via ``sve_style='variable'`` — that knob value now
+# raises NotImplementedError pointing callers to ``sve_style='fixed'``
+# with ``vector_width`` matched to the target SVE register width
+# (W=8 for SVE-512, W=4 for SVE-256, etc.), which produces svwhilelt +
+# svcntd code via ``cpu_vectorizable_math_arm_sve.h`` per W-chunk.
+#
+# Retained as a prototype: the code below validated that the SpMV
+# pattern (gather + svmla + svaddv) AND the axpy/triad chain can be
+# recognised and emitted as a single CPP tasklet body, with scalar
+# fallback for non-SVE hosts. If a future SVE direction wants true
+# runtime VL (svcntd as the outer stride, not W=hw_vl_bits/64), this
+# is the starting point.
 # -------------------------------------------------------------------------
 # Replaces each recognised innermost map body with a CPP tasklet whose
 # body is the SVE while-loop pattern, guarded behind ``#if defined(
@@ -334,6 +361,57 @@ class SveStyleVariableFinalize(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
+
+    @staticmethod
+    def _ensure_sve_header(sdfg: dace.SDFG):
+        """Idempotently ensure ``<arm_sve.h>`` is included under an
+        ``__ARM_FEATURE_SVE`` guard in the SDFG frame's global code.
+
+        :param sdfg: SDFG whose frame ``global_code`` is amended.
+        """
+        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
+        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
+            sdfg.append_global_code(guard, "frame")
+
+    @staticmethod
+    def _replace_map_scope_with_tasklet(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                                        tasklet: dace.nodes.Tasklet):
+        """Drop every node strictly inside ``map_entry``'s scope plus the
+        entry / exit themselves, leaving ``tasklet`` in place so it
+        survives the cleanup.
+
+        :param state: State holding the map scope.
+        :param map_entry: Entry node of the scope to discard.
+        :param tasklet: Replacement tasklet that must NOT be removed.
+        """
+        map_exit = state.exit_node(map_entry)
+        for n in list(state.all_nodes_between(map_entry, map_exit)):
+            if n not in (map_entry, map_exit) and n is not tasklet:
+                state.remove_node(n)
+        state.remove_node(map_entry)
+        state.remove_node(map_exit)
+
+    @staticmethod
+    def _outer_access_node(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                           arr_name: str) -> dace.nodes.AccessNode:
+        """Return an outer access node for ``arr_name`` reusing one
+        already present in ``state`` (so we do not duplicate the
+        source/sink node when wiring the replacement tasklet).
+
+        :param state: State the new edges are added to.
+        :param map_entry: Entry node whose outer in/out access nodes are
+            preferred sources/sinks.
+        :param arr_name: Name of the global array to wire.
+        :returns: Existing access node for ``arr_name`` if found, else a
+            freshly added one.
+        """
+        map_exit = state.exit_node(map_entry)
+        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
+        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
+        for n in state.data_nodes():
+            if n.data == arr_name and n.data in outer_inputs | outer_outputs:
+                return n
+        return state.add_access(arr_name)
 
     @staticmethod
     def _classify_chain_body(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
@@ -531,140 +609,6 @@ class SveStyleVariableFinalize(ppl.Pass):
         return (steps, out_array, str(ub + 1))
 
     @staticmethod
-    def _classify_simple_axpy_body(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
-        """Recognise ``out[i] = a[i] (op) b[i]`` or ``out[i] = a[i]``
-        as the body of a single-param step-1 1D map.
-
-        :returns: ``(op, in_names, out_name, dtype)`` or ``None`` if the
-            body is not a recognised simple axpy.
-        """
-        if len(map_entry.map.params) != 1:
-            return None
-        lb, ub, step = map_entry.map.range[-1]
-        if (step != 1) and (str(step) != "1"):
-            return None
-        body_nodes = [
-            n for n in state.all_nodes_between(map_entry, state.exit_node(map_entry))
-            if not isinstance(n, (dace.nodes.MapEntry, dace.nodes.MapExit))
-        ]
-        tasklets = [n for n in body_nodes if isinstance(n, dace.nodes.Tasklet)]
-        if not tasklets:
-            return None
-        sdfg = state.sdfg
-        import re
-        # Find the compute tasklet: ``OUT = (IN1 OP IN2)`` (parens
-        # optional). The dace frontend's canonical shape for ``c[i] =
-        # a[i] + b[i]`` is a compute tasklet + an assign tasklet + an
-        # intermediate access node; we pick the compute one.
-        binop_re = re.compile(r"^(\w+)\s*=\s*\(?\s*(\w+)\s*([+\-*/])\s*(\w+)\s*\)?\s*$")
-        copy_re = re.compile(r"^(\w+)\s*=\s*(\w+)\s*$")
-        compute = None
-        for tk in tasklets:
-            code = tk.code.as_string.strip().rstrip(";").strip()
-            m = binop_re.match(code)
-            if m:
-                compute = (tk, "binop", m.groups())
-                break
-        if compute is None and len(tasklets) == 1:
-            m = copy_re.match(tasklets[0].code.as_string.strip().rstrip(";").strip())
-            if m:
-                compute = (tasklets[0], "copy", m.groups())
-        if compute is None:
-            return None
-        tk, kind, groups = compute
-        if kind == "binop":
-            out_conn, a_conn, op, b_conn = groups
-            in_conns = (a_conn, b_conn)
-            if op not in _SVE_OP_INTRINSIC:
-                return None
-        else:
-            out_conn, a_conn = groups
-            in_conns = (a_conn, )
-            op = None
-
-        def _trace_in_array(conn):
-            """Walk in-edges of the tasklet on ``conn`` back to the
-            outer source AccessNode via memlet_path."""
-            for ie in state.in_edges(tk):
-                if ie.dst_conn != conn or ie.data is None or ie.data.data is None:
-                    continue
-                for hop in reversed(state.memlet_path(ie)):
-                    if isinstance(hop.src, dace.nodes.AccessNode):
-                        return hop.src.data
-            return None
-
-        def _trace_out_array(conn):
-            """Walk out-edges through intermediate access nodes /
-            scope exits to the outer destination AccessNode."""
-            for oe in state.out_edges(tk):
-                if oe.src_conn != conn or oe.data is None or oe.data.data is None:
-                    continue
-                # The compute may write to an intermediate AccessNode
-                # which is then read by an assign tasklet that writes to
-                # the outer destination. Walk until the OUTER access
-                # node (one outside the map scope).
-                seen = set()
-                cur_edge = oe
-                while True:
-                    nxt = None
-                    for hop in state.memlet_path(cur_edge):
-                        if isinstance(hop.dst, dace.nodes.AccessNode):
-                            nxt = hop.dst
-                            break
-                    if nxt is None or nxt in seen:
-                        break
-                    seen.add(nxt)
-                    # If this access node feeds another tasklet that's
-                    # an assign, follow through.
-                    next_edges = state.out_edges(nxt)
-                    if not next_edges:
-                        return nxt.data
-                    forward_to_assign = None
-                    for ne in next_edges:
-                        if isinstance(ne.dst, dace.nodes.Tasklet):
-                            forward_to_assign = ne.dst
-                            break
-                        if isinstance(ne.dst, dace.nodes.MapExit):
-                            # Outer access node is downstream of the exit.
-                            for path_hop in state.memlet_path(ne):
-                                if isinstance(path_hop.dst, dace.nodes.AccessNode):
-                                    return path_hop.dst.data
-                    if forward_to_assign is not None:
-                        # Continue from this assign tasklet's out edge.
-                        out_edges_assign = state.out_edges(forward_to_assign)
-                        if not out_edges_assign:
-                            return nxt.data
-                        cur_edge = out_edges_assign[0]
-                        continue
-                    return nxt.data
-            return None
-
-        in_arrays = [_trace_in_array(c) for c in in_conns]
-        out_array = _trace_out_array(out_conn)
-        if out_array is None or any(a is None for a in in_arrays):
-            return None
-        # Reject kernels where the map reads/writes arrays beyond what
-        # the recognised single-binop accounts for (e.g. a 3-operand
-        # triad ``d = a + b + c``: my single-binop recogniser would
-        # match the first add and silently drop ``c``). Strict equality
-        # of the input-array set with the recognised inputs.
-        outer_input_arrays = {
-            ie.src.data
-            for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)
-        }
-        outer_output_arrays = {
-            oe.dst.data
-            for oe in state.out_edges(state.exit_node(map_entry)) if isinstance(oe.dst, dace.nodes.AccessNode)
-        }
-        if set(in_arrays) != outer_input_arrays or {out_array} != outer_output_arrays:
-            return None
-        for nm in (*in_arrays, out_array):
-            arr = sdfg.arrays.get(nm)
-            if arr is None or arr.dtype != dace.float64 or len(arr.shape) != 1:
-                return None
-        return (op, in_arrays, out_array, dace.float64, str(ub + 1))
-
-    @staticmethod
     def _emit_sve_while_chain(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, info):
         """Replace ``map_entry``'s scope with a single CPP tasklet
         emitting the SVE runtime-VL while-loop body that evaluates the
@@ -677,7 +621,6 @@ class SveStyleVariableFinalize(ppl.Pass):
         """
         steps, out_array, global_ub = info
         sdfg = state.sdfg
-        map_exit = state.exit_node(map_entry)
         # Distinct outer input arrays in chain order — each gets a
         # connector on the new tasklet.
         seen = set()
@@ -736,104 +679,17 @@ class SveStyleVariableFinalize(ppl.Pass):
                 "#else\n"
                 f"    for (int i = 0; i < (int)({global_ub}); ++i) {out_conn}[i] = {scalar_rhs};\n"
                 "#endif\n")
-        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
-        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
-            sdfg.append_global_code(guard, "frame")
+        SveStyleVariableFinalize._ensure_sve_header(sdfg)
         # Add the replacement tasklet and wire it to the outer access nodes.
         tk = state.add_tasklet("sve_vl", set(in_conns), {out_conn}, body, language=dace.dtypes.Language.CPP)
-        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
-        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
-        out_access = {n.data: n for n in state.data_nodes() if n.data in outer_inputs | outer_outputs}
         for arr_name in in_arrays:
-            src = out_access.get(arr_name) or state.add_access(arr_name)
-            out_access[arr_name] = src
+            src = SveStyleVariableFinalize._outer_access_node(state, map_entry, arr_name)
             shape0 = sdfg.arrays[arr_name].shape[0]
             state.add_edge(src, None, tk, arr_to_conn[arr_name], dace.Memlet(f"{arr_name}[0:{shape0}]"))
-        dst = out_access.get(out_array) or state.add_access(out_array)
+        dst = SveStyleVariableFinalize._outer_access_node(state, map_entry, out_array)
         shape0 = sdfg.arrays[out_array].shape[0]
         state.add_edge(tk, out_conn, dst, None, dace.Memlet(f"{out_array}[0:{shape0}]"))
-        # Drop everything that used to be inside the map scope.
-        for n in list(state.all_nodes_between(map_entry, map_exit)):
-            if n not in (map_entry, map_exit) and n is not tk:
-                state.remove_node(n)
-        state.remove_node(map_entry)
-        state.remove_node(map_exit)
-        sdfg.validate()
-
-    @staticmethod
-    def _emit_sve_while_tasklet(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, info):
-        """Replace ``map_entry``'s scope with a single CPP tasklet whose
-        body is the SVE runtime-VL while-loop (with scalar fallback)
-        for the recognised op."""
-        op, in_arrays, out_array, _dtype, global_ub = info
-        sdfg = state.sdfg
-        map_exit = state.exit_node(map_entry)
-        # Collect outer access nodes (source/sink) that fed/consumed the
-        # map. The replacement tasklet takes the SAME outer access nodes
-        # via its in/out memlets (full-array slices).
-        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
-        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
-        # Build the SVE while-loop body. For each input we emit a
-        # svld1_f64 of the input array, for the op we emit the matching
-        # _SVE_OP_INTRINSIC, and we svst1_f64 the result. Scalar
-        # fallback for non-SVE hosts so x86 runs.
-        n_in = len(in_arrays)
-        in_conns = [f"_in{k}" for k in range(n_in)]
-        out_conn = "_out"
-        ld_lines = [f"svfloat64_t v{k} = svld1_f64(pg, {in_conns[k]} + i);" for k in range(n_in)]
-        if op is None:
-            # Copy.
-            compute_line = "svfloat64_t vc = v0;"
-            scalar_compute = f"{out_conn}[i] = {in_conns[0]}[i];"
-        else:
-            intrinsic = _SVE_OP_INTRINSIC[op]
-            compute_line = f"svfloat64_t vc = {intrinsic}(pg, v0, v1);"
-            scalar_compute = f"{out_conn}[i] = {in_conns[0]}[i] {op} {in_conns[1]}[i];"
-        body = ("\n#if defined(__ARM_FEATURE_SVE)\n"
-                "{\n"
-                "    int i = 0;\n"
-                f"    while (i < (int)({global_ub})) {{\n"
-                f"        svbool_t pg = svwhilelt_b64(i, (int64_t)({global_ub}));\n"
-                f"        " + "\n        ".join(ld_lines) + "\n"
-                f"        {compute_line}\n"
-                f"        svst1_f64(pg, {out_conn} + i, vc);\n"
-                "        i += svcntd();\n"
-                "    }\n"
-                "}\n"
-                "#else\n"
-                f"    for (int i = 0; i < (int)({global_ub}); ++i) {scalar_compute}\n"
-                "#endif\n")
-        # Ensure the global SVE header inclusion happens exactly once
-        # per SDFG (idempotent — set on the SDFG global_code dict).
-        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
-        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
-            sdfg.append_global_code(guard, "frame")
-        # Build the replacement tasklet.
-        tk = state.add_tasklet("sve_vl",
-                               set(in_conns),
-                               {out_conn},
-                               body,
-                               language=dace.dtypes.Language.CPP)
-        # Outer access nodes: reuse the ones already in the state if
-        # present, else add new ones bound to the map's source/dst.
-        out_access = {n.data: n for n in state.data_nodes() if n.data in outer_inputs | outer_outputs}
-        # Wire inputs: outer source access -> tasklet (full slice).
-        for k, arr_name in enumerate(in_arrays):
-            src = out_access.get(arr_name) or state.add_access(arr_name)
-            out_access[arr_name] = src
-            shape0 = sdfg.arrays[arr_name].shape[0]
-            state.add_edge(src, None, tk, in_conns[k], dace.Memlet(f"{arr_name}[0:{shape0}]"))
-        # Wire output.
-        dst = out_access.get(out_array) or state.add_access(out_array)
-        shape0 = sdfg.arrays[out_array].shape[0]
-        state.add_edge(tk, out_conn, dst, None, dace.Memlet(f"{out_array}[0:{shape0}]"))
-        # Remove the old map scope (entry, body, exit).
-        for n in list(state.all_nodes_between(map_entry, map_exit)):
-            if n not in (map_entry, map_exit) and n is not tk:
-                # Body access nodes & tasklets internal to the old map.
-                state.remove_node(n)
-        state.remove_node(map_entry)
-        state.remove_node(map_exit)
+        SveStyleVariableFinalize._replace_map_scope_with_tasklet(state, map_entry, tk)
         sdfg.validate()
 
     @staticmethod
@@ -956,7 +812,6 @@ class SveStyleVariableFinalize(ppl.Pass):
         """
         a_arr, b_arr, idx_arr, out_scalar, global_ub = info
         sdfg = state.sdfg
-        map_exit = state.exit_node(map_entry)
         body = ("\n#if defined(__ARM_FEATURE_SVE)\n"
                 "{\n"
                 "    svfloat64_t acc = svdup_n_f64(0.0);\n"
@@ -978,27 +833,16 @@ class SveStyleVariableFinalize(ppl.Pass):
                 "        _out = s;\n"
                 "    }\n"
                 "#endif\n")
-        guard = "#if defined(__ARM_FEATURE_SVE)\n#include <arm_sve.h>\n#endif\n"
-        if guard not in sdfg.global_code.get("frame", dace.properties.CodeBlock("")).as_string:
-            sdfg.append_global_code(guard, "frame")
+        SveStyleVariableFinalize._ensure_sve_header(sdfg)
         tk = state.add_tasklet("sve_spmv", {"_a", "_b", "_idx"}, {"_out"}, body, language=dace.dtypes.Language.CPP)
-        # Wire to existing outer access nodes.
-        outer_inputs = {ie.src.data for ie in state.in_edges(map_entry) if isinstance(ie.src, dace.nodes.AccessNode)}
-        outer_outputs = {oe.dst.data for oe in state.out_edges(map_exit) if isinstance(oe.dst, dace.nodes.AccessNode)}
-        out_access = {n.data: n for n in state.data_nodes() if n.data in outer_inputs | outer_outputs}
         for arr_name, conn in ((a_arr, "_a"), (b_arr, "_b"), (idx_arr, "_idx")):
-            src = out_access.get(arr_name) or state.add_access(arr_name)
-            out_access[arr_name] = src
+            src = SveStyleVariableFinalize._outer_access_node(state, map_entry, arr_name)
             shape0 = sdfg.arrays[arr_name].shape[0]
             state.add_edge(src, None, tk, conn, dace.Memlet(f"{arr_name}[0:{shape0}]"))
-        dst = out_access.get(out_scalar) or state.add_access(out_scalar)
+        dst = SveStyleVariableFinalize._outer_access_node(state, map_entry, out_scalar)
         out_subset = "0" if len(sdfg.arrays[out_scalar].shape) == 0 else f"{out_scalar}[0:1]"
         state.add_edge(tk, "_out", dst, None, dace.Memlet(out_subset))
-        for n in list(state.all_nodes_between(map_entry, map_exit)):
-            if n not in (map_entry, map_exit) and n is not tk:
-                state.remove_node(n)
-        state.remove_node(map_entry)
-        state.remove_node(map_exit)
+        SveStyleVariableFinalize._replace_map_scope_with_tasklet(state, map_entry, tk)
         sdfg.validate()
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:

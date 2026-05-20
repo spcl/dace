@@ -41,8 +41,7 @@ from dace import properties
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
-
-_CORE_PREFIX = "core"
+from dace.transformation.passes.vectorization.utils.name_schemes import CORE_MAP_PARAM_PREFIX as _CORE_PREFIX
 
 
 @properties.make_properties
