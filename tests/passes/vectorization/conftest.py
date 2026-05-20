@@ -23,6 +23,24 @@ def branch_mode(request) -> str:
     return request.param
 
 
+@pytest.fixture(params=["default", "sve_style"])
+def emission_style(request) -> str:
+    """Parametrise tests over the vectorizer emission model.
+
+    - ``"default"`` — today's pipeline (``sve_style=None``); the
+      ``branch_mode`` / ``remainder_strategy`` fixtures still apply.
+    - ``"sve_style"`` — SVE-style always-mask emission (``sve_style=
+      "fixed"``): the per-core block runs as a masked while-loop, the
+      tail is handled by the global ``_iter_mask`` (no remainder split).
+      ``branch_mode`` is forced to ``merge`` and ``remainder_strategy``
+      is N/A under this style (the harness skips incompatible param
+      combos rather than passing them through).
+
+    Both must produce numerically identical results against the
+    unvectorized scalar reference."""
+    return request.param
+
+
 @pytest.fixture(params=["scalar", "masked"])
 def remainder_strategy(request) -> str:
     """Parametrise tests over the remainder-handling strategies wired into

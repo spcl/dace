@@ -63,7 +63,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            param_tag: str = None,
                            lower_to_intrinsics: bool = False,
                            collapse_laneid_index_loads: bool = False,
-                           loop_to_map_permissive: bool = False):
+                           loop_to_map_permissive: bool = False,
+                           emission_style: str = "default",
+                           num_cores: int = 8):
 
     # K1=fp_factor + K2=masked is rejected by VectorizeCPU per the locked
     # plan decision (the masked path emits merge tasklets / iter_mask blends
@@ -72,6 +74,15 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     import pytest as _pytest
     if branch_mode == "fp_factor" and remainder_strategy == "masked":
         _pytest.skip("fp_factor is incompatible with masked remainder (locked plan rule)")
+    # sve_style='fixed' forces the merge branch front and has no remainder
+    # loop (the global _iter_mask covers the tail). Skip parametrizations
+    # that contradict these forced knobs rather than propagating the
+    # ValueError VectorizeCPU would raise.
+    if emission_style == "sve_style":
+        if branch_mode != "merge":
+            _pytest.skip("sve_style forces merge branch lowering; skipping fp_factor parametrisation")
+        if remainder_strategy != "scalar":
+            _pytest.skip("sve_style has no remainder loop; skipping non-default remainder_strategy")
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -89,7 +100,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # a unique cache dir. The verbose alternative is to encode the tuple
     # into the sdfg.name directly, but parametrize indices keep names short.
     if sdfg_name is not None:
-        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}"
+        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}"
         if param_tag is not None:
             sdfg_name = f"{sdfg_name}_{param_tag}"
 
@@ -153,6 +164,11 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         raise ValueError(f"branch_mode must be 'fp_factor' or 'merge', got {branch_mode!r}")
 
+    # sve_style='fixed' overrides use_fp_factor (forced merge) and
+    # rejects an explicit non-default remainder_strategy — the harness
+    # has already skipped contradicting parametrisations above. Forward
+    # only the orthogonal knobs (fuse, collapse, vector_width, etc.).
+    sve_kwargs = (dict(sve_style="fixed", num_cores=num_cores) if emission_style == "sve_style" else {})
     VectorizeCPU(vector_width=vector_width,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
@@ -163,7 +179,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  lower_to_intrinsics=lower_to_intrinsics,
                  collapse_laneid_index_loads=collapse_laneid_index_loads,
                  loop_to_map_permissive=loop_to_map_permissive,
-                 **branch_kwargs).apply_pass(copy_sdfg, {})
+                 **branch_kwargs,
+                 **sve_kwargs).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
     c_copy_sdfg = copy_sdfg.compile()
@@ -222,10 +239,10 @@ def assert_fused_nsdfg_structure(sdfg: dace.SDFG, bases):
             shared = f"{base}_vec"
             if shared not in inner.arrays:
                 continue
-            produced = any(st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
-                           if an.data == shared)
-            consumed = any(st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes()
-                           if an.data == shared)
+            produced = any(
+                st.in_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
+            consumed = any(
+                st.out_degree(an) >= 1 for st in inner.all_states() for an in st.data_nodes() if an.data == shared)
             if produced and consumed:
                 fully_wired = True
         assert fully_wired, (f"no NSDFG holds a fully-wired shared fused buffer {base}_vec (produced by the union "
