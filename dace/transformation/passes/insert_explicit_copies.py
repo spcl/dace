@@ -9,6 +9,7 @@ import dace
 from dace import dtypes, nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
+from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
@@ -170,9 +171,13 @@ class InsertExplicitCopies(ppl.Pass):
     - ``AccessNode -> View -> AccessNode`` (round-trip through a View) --
       first collapsed into a direct ``AN -> AN`` edge composing the two
       memlets, then lifted by the direct-copy path.
-
-    Map-staging patterns (``AN -> MapEntry -> AN``, ``AN -> MapExit -> AN``)
-    are out of scope on this branch; they stay as direct memlet paths.
+    - ``AccessNode -> MapEntry -> AccessNode`` (stage-in) -- libnode placed
+      inside the map scope, wired directly to the MapEntry's output
+      connector. Chained MapEntries are followed via ``memlet_path``.
+      Views on the outer side stay in place.
+    - ``AccessNode -> MapExit -> AccessNode`` (stage-out) -- symmetric;
+      libnode inside the map scope, output connector wired directly to
+      MapExit.
     """
 
     # Storages whose copies CopyLibraryNode can lower. Other storages
@@ -209,6 +214,7 @@ class InsertExplicitCopies(ppl.Pass):
             for state in nsdfg.states():
                 self._collapse_round_trip_views(nsdfg, state)
                 count += self._replace_direct_copies(nsdfg, state)
+                count += self._replace_map_staging_copies(nsdfg, state)
         return count if count > 0 else None
 
     def _collapse_round_trip_views(self, sdfg: SDFG, state: SDFGState):
@@ -360,3 +366,92 @@ class InsertExplicitCopies(ppl.Pass):
             count += 1
 
         return count
+
+    def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
+        """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
+
+        Stage-in is a ``MapEntry -> AccessNode`` edge whose ``memlet_path`` traces
+        back to an outer AccessNode; the libnode is inserted between MapEntry
+        and the inner AN, wired to MapEntry's existing output connector with
+        the original (per-iteration) memlet preserved, and to the inner AN
+        with a memlet derived for the inner array's descriptor. Stage-out is
+        symmetric. Chained MapEntries / MapExits are followed by
+        ``memlet_path``; downstream content (tasklets, NestedSDFGs, nested
+        maps) is irrelevant to the lift.
+
+        :param sdfg: The (possibly nested) SDFG owning ``state``.
+        :param state: The state to scan.
+        :returns: Number of libnodes inserted.
+        """
+        count = 0
+        for me in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+            for edge in list(state.out_edges(me)):
+                if self._is_stage_in_candidate(sdfg, state, edge):
+                    self._insert_stage_in_libnode(sdfg, state, edge)
+                    count += 1
+        for mx in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
+            for edge in list(state.in_edges(mx)):
+                if self._is_stage_out_candidate(sdfg, state, edge):
+                    self._insert_stage_out_libnode(sdfg, state, edge)
+                    count += 1
+        return count
+
+    def _is_stage_in_candidate(self, sdfg: SDFG, state: SDFGState, edge) -> bool:
+        if not isinstance(edge.dst, nodes.AccessNode) or edge.data.is_empty():
+            return False
+        inner_desc = sdfg.arrays[edge.dst.data]
+        if isinstance(inner_desc, dace.data.View):
+            return False
+        try:
+            outer = sdutils.find_input_arraynode(state, edge)
+        except RuntimeError:
+            return False
+        outer_desc = sdfg.arrays[outer.data]
+        return (outer_desc.storage in self._STANDARD_STORAGES
+                and inner_desc.storage in self._STANDARD_STORAGES
+                and outer_desc.dtype == inner_desc.dtype)
+
+    def _is_stage_out_candidate(self, sdfg: SDFG, state: SDFGState, edge) -> bool:
+        if not isinstance(edge.src, nodes.AccessNode) or edge.data.is_empty():
+            return False
+        inner_desc = sdfg.arrays[edge.src.data]
+        if isinstance(inner_desc, dace.data.View):
+            return False
+        try:
+            outer = sdutils.find_output_arraynode(state, edge)
+        except RuntimeError:
+            return False
+        outer_desc = sdfg.arrays[outer.data]
+        return (outer_desc.storage in self._STANDARD_STORAGES
+                and inner_desc.storage in self._STANDARD_STORAGES
+                and outer_desc.dtype == inner_desc.dtype)
+
+    def _insert_stage_in_libnode(self, sdfg: SDFG, state: SDFGState, edge) -> None:
+        me = edge.src
+        inner_an = edge.dst
+        outer_memlet = edge.data
+        inner_desc = sdfg.arrays[inner_an.data]
+        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc, outer_memlet.subset.size())
+
+        libnode = CopyLibraryNode(name=f"copy_{outer_memlet.data}_to_{inner_an.data}")
+        state.add_node(libnode)
+        state.add_edge(me, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                       _copy.deepcopy(outer_memlet))
+        state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_an, None,
+                       Memlet(data=inner_an.data, subset=inner_subset))
+        state.remove_edge(edge)
+
+    def _insert_stage_out_libnode(self, sdfg: SDFG, state: SDFGState, edge) -> None:
+        inner_an = edge.src
+        mx = edge.dst
+        outer_memlet = edge.data
+        inner_desc = sdfg.arrays[inner_an.data]
+        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc, outer_memlet.subset.size())
+
+        libnode = CopyLibraryNode(name=f"copy_{inner_an.data}_to_{outer_memlet.data}")
+        state.add_node(libnode)
+        state.add_edge(inner_an, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                       Memlet(data=inner_an.data, subset=inner_subset))
+        state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, mx, edge.dst_conn,
+                       _copy.deepcopy(outer_memlet))
+        state.remove_edge(edge)

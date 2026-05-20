@@ -42,6 +42,19 @@ def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
                     f"has other_subset={memlet.other_subset}; expected None after copy insertion.")
 
 
+def _assert_no_copynd(sdfg: dace.SDFG) -> None:
+    """Assert ``generate_code`` emits no ``dace::CopyND`` template instantiations.
+
+    The libnodes are designed to displace the runtime CopyND fallback entirely.
+    Generated code for any SDFG run through ``InsertExplicitCopies`` + the
+    libnode expansions should reach zero ``CopyND<`` references.
+    """
+    sdfg.expand_library_nodes()
+    for obj in sdfg.generate_code():
+        code = obj.code if isinstance(obj.code, str) else getattr(obj.code, 'code', str(obj.code))
+        assert 'CopyND<' not in code, f"unexpected CopyND in code object {obj.title}"
+
+
 def _build_copy_sdfg(name, arrays, edge_memlet):
     """Build an SDFG with two AccessNodes wired by a single edge."""
     sdfg = dace.SDFG(name)
@@ -698,6 +711,269 @@ def test_iec_reinterpret_does_not_lift_view():
     expected.view(np.int16)[:] += 1
     sdfg(A=A, _N=10)
     assert np.array_equal(A, expected)
+
+
+# Map-staging lift: AN -> MapEntry -> AN and AN -> MapExit -> AN copies are
+# rewritten to put a CopyLibraryNode INSIDE the map scope, wired directly to
+# the map node's connector. Views on the outer side stay in place. Chained
+# MapEntries / MapExits are followed via memlet_path. Generated code emits
+# no CopyND template instantiations.
+
+
+_CPU = dace.dtypes.StorageType.CPU_Heap
+_N_STAGE = 128
+_TILE = 32
+
+
+def _build_stage_in_sdfg(name: str, with_view: bool = False) -> dace.SDFG:
+    """Build ``A -> MapEntry -> local -> inner work -> B``, optionally with a View aliasing ``A``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("local", [_TILE], dace.float64, storage=_CPU, transient=True)
+    if with_view:
+        sdfg.add_view("Av", [_N_STAGE], dace.float64, storage=_CPU)
+
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    local = state.add_access("local")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+
+    if with_view:
+        av = state.add_access("Av")
+        state.add_edge(a, None, av, None, Memlet(f"A[0:{_N_STAGE}]"))
+        state.add_memlet_path(av, me, local, memlet=Memlet(f"Av[bi:bi+{_TILE}]"))
+    else:
+        state.add_memlet_path(a, me, local, memlet=Memlet(f"A[bi:bi+{_TILE}]"))
+
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_memlet_path(local, ime, t, dst_conn="_in", memlet=Memlet("local[ti]"))
+    state.add_memlet_path(t, imx, mx, b, src_conn="_out", memlet=Memlet("B[bi+ti]"))
+    return sdfg
+
+
+def _build_stage_out_sdfg(name: str, with_view: bool = False) -> dace.SDFG:
+    """Build ``A -> inner work -> local -> MapExit -> B``, optionally with a View aliasing ``B``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("local", [_TILE], dace.float64, storage=_CPU, transient=True)
+    if with_view:
+        sdfg.add_view("Bv", [_N_STAGE], dace.float64, storage=_CPU)
+
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    local = state.add_access("local")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_memlet_path(a, me, ime, t, dst_conn="_in", memlet=Memlet("A[bi+ti]"))
+    state.add_memlet_path(t, imx, local, src_conn="_out", memlet=Memlet("local[ti]"))
+
+    if with_view:
+        bv = state.add_access("Bv")
+        state.add_memlet_path(local, mx, bv, memlet=Memlet(f"Bv[bi:bi+{_TILE}]"))
+        state.add_edge(bv, None, b, None, Memlet(f"B[0:{_N_STAGE}]"))
+    else:
+        state.add_memlet_path(local, mx, b, memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+    return sdfg
+
+
+def _find_libnode_and_scope(state):
+    libnodes = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(libnodes) == 1, f"expected exactly one CopyLibraryNode, got {len(libnodes)}"
+    cn = libnodes[0]
+    return cn, state.entry_node(cn)
+
+
+def _run_and_check(sdfg: dace.SDFG, expected_b):
+    A = np.arange(_N_STAGE, dtype=np.float64)
+    B = np.zeros(_N_STAGE, dtype=np.float64)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, expected_b(A))
+
+
+def test_lift_stage_in_copy():
+    """``A -> MapEntry -> local`` lifts to a libnode INSIDE the map scope, wired directly to MapEntry."""
+    sdfg = _build_stage_in_sdfg("stage_in")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    state = sdfg.start_state
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert isinstance(parent_me, nodes.MapEntry) and parent_me.label == "tile"
+    in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
+    assert len(in_edges) == 1 and in_edges[0].src is parent_me, \
+        "libnode's input must wire directly to the MapEntry connector"
+
+    _assert_no_copynd(sdfg)
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def test_lift_stage_out_copy():
+    """``local -> MapExit -> B`` lifts to a libnode INSIDE the map scope, wired directly to MapExit."""
+    sdfg = _build_stage_out_sdfg("stage_out")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    state = sdfg.start_state
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert isinstance(parent_me, nodes.MapEntry) and parent_me.label == "tile"
+    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
+    assert len(out_edges) == 1 and isinstance(out_edges[0].dst, nodes.MapExit), \
+        "libnode's output must wire directly to the MapExit connector"
+
+    _assert_no_copynd(sdfg)
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def test_lift_stage_in_copy_through_view():
+    """``A -> A_view -> MapEntry -> local``: View stays in place; libnode placed between MapEntry and inner AN."""
+    sdfg = _build_stage_in_sdfg("stage_in_view", with_view=True)
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    state = sdfg.start_state
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert isinstance(parent_me, nodes.MapEntry)
+    # View still present in the state.
+    view_nodes = [n for n in state.nodes()
+                  if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
+    assert len(view_nodes) == 1 and view_nodes[0].data == "Av"
+
+    _assert_no_copynd(sdfg)
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def test_lift_stage_out_copy_through_view():
+    """``local -> MapExit -> B_view -> B``: View stays in place; libnode placed between local and MapExit."""
+    sdfg = _build_stage_out_sdfg("stage_out_view", with_view=True)
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    state = sdfg.start_state
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert isinstance(parent_me, nodes.MapEntry)
+    view_nodes = [n for n in state.nodes()
+                  if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
+    assert len(view_nodes) == 1 and view_nodes[0].data == "Bv"
+
+    _assert_no_copynd(sdfg)
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def test_lift_stage_in_copy_chained_map_entries():
+    """``A -> ME1 -> ME2 -> local``: lift through nested MapEntries; libnode at innermost scope."""
+    N, TILE, INNER = 64, 16, 4
+    sdfg = dace.SDFG("stage_in_nested")
+    sdfg.add_array("A", [N], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [N], dace.float64, storage=_CPU)
+    sdfg.add_array("local", [INNER], dace.float64, storage=_CPU, transient=True)
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    local = state.add_access("local")
+    me1, mx1 = state.add_map("outer", {"bi": f"0:{N}:{TILE}"})
+    me2, mx2 = state.add_map("inner_block", {"si": f"0:{TILE}:{INNER}"})
+    # Stage-in flows through both MapEntries down to `local`.
+    state.add_memlet_path(a, me1, me2, local, memlet=Memlet(f"A[bi+si:bi+si+{INNER}]"))
+    ime, imx = state.add_map("inner", {"ti": f"0:{INNER}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_memlet_path(local, ime, t, dst_conn="_in", memlet=Memlet("local[ti]"))
+    state.add_memlet_path(t, imx, mx2, mx1, b, src_conn="_out", memlet=Memlet("B[bi+si+ti]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert parent_me is me2, "libnode must sit at the INNERMOST map scope"
+    in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
+    assert in_edges[0].src is me2
+
+    _assert_no_copynd(sdfg)
+    A = np.arange(N, dtype=np.float64)
+    B = np.zeros(N, dtype=np.float64)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, A + 1.0)
+
+
+def test_lift_stage_out_copy_chained_map_exits():
+    """Symmetric: ``local -> MX2 -> MX1 -> B`` -- libnode at innermost scope, wired directly to MX2."""
+    N, TILE, INNER = 64, 16, 4
+    sdfg = dace.SDFG("stage_out_nested")
+    sdfg.add_array("A", [N], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [N], dace.float64, storage=_CPU)
+    sdfg.add_array("local", [INNER], dace.float64, storage=_CPU, transient=True)
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    local = state.add_access("local")
+    me1, mx1 = state.add_map("outer", {"bi": f"0:{N}:{TILE}"})
+    me2, mx2 = state.add_map("inner_block", {"si": f"0:{TILE}:{INNER}"})
+    ime, imx = state.add_map("inner", {"ti": f"0:{INNER}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_memlet_path(a, me1, me2, ime, t, dst_conn="_in", memlet=Memlet("A[bi+si+ti]"))
+    state.add_memlet_path(t, imx, local, src_conn="_out", memlet=Memlet("local[ti]"))
+    state.add_memlet_path(local, mx2, mx1, b, memlet=Memlet(f"B[bi+si:bi+si+{INNER}]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    cn, parent_me = _find_libnode_and_scope(state)
+    assert parent_me is me2, "libnode must sit at the INNERMOST map scope"
+    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
+    assert out_edges[0].dst is mx2
+
+    _assert_no_copynd(sdfg)
+    A = np.arange(N, dtype=np.float64)
+    B = np.zeros(N, dtype=np.float64)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, A + 1.0)
+
+
+def _make_inner_nested_sdfg(body_name: str, inout_name: str, size: int, op: str) -> dace.SDFG:
+    """Tiny NestedSDFG: ``inout[i] = op(inout[i])`` over ``i = 0:size``."""
+    nsdfg = dace.SDFG(body_name)
+    nsdfg.add_array(inout_name, [size], dace.float64)
+    st = nsdfg.add_state("body")
+    a = st.add_access(inout_name)
+    b = st.add_access(inout_name)
+    me, mx = st.add_map("inner", {"ti": f"0:{size}"})
+    t = st.add_tasklet("op", {"_in"}, {"_out"}, f"_out = {op}")
+    st.add_memlet_path(a, me, t, dst_conn="_in", memlet=Memlet(f"{inout_name}[ti]"))
+    st.add_memlet_path(t, mx, b, src_conn="_out", memlet=Memlet(f"{inout_name}[ti]"))
+    return nsdfg
+
+
+def test_lift_stage_in_copy_with_nested_sdfg_consumer():
+    """``A -> MapEntry -> local`` where ``local`` feeds a NestedSDFG inside the map: lift unaffected."""
+    sdfg = dace.SDFG("stage_in_nsdfg")
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("local", [_TILE], dace.float64, storage=_CPU, transient=True)
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    local = state.add_access("local")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    state.add_memlet_path(a, me, local, memlet=Memlet(f"A[bi:bi+{_TILE}]"))
+
+    nsdfg = _make_inner_nested_sdfg("inner_body", "buf", _TILE, "_in + 1.0")
+    nnode = state.add_nested_sdfg(nsdfg, {"buf"}, {"buf"})
+    state.add_edge(local, None, nnode, "buf", Memlet(f"local[0:{_TILE}]"))
+    out_local = state.add_access("local")
+    state.add_edge(nnode, "buf", out_local, None, Memlet(f"local[0:{_TILE}]"))
+    state.add_memlet_path(out_local, mx, b, memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    state = sdfg.start_state
+    # Both the stage-in and stage-out edges lift.
+    libnodes = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(libnodes) == 2
+    for cn in libnodes:
+        assert isinstance(state.entry_node(cn), nodes.MapEntry)
+
+    _assert_no_copynd(sdfg)
+    A = np.arange(_N_STAGE, dtype=np.float64)
+    B = np.zeros(_N_STAGE, dtype=np.float64)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, A + 1.0)
 
 
 # Polybench-derived tests: the pass must preserve numerical output on real programs.
