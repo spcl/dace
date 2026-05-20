@@ -59,9 +59,12 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    # ``dtype`` default is frozen at import (Python default-arg semantics);
-    # runtime ``set_temporary('compiler', 'default_data_types', ...)`` won't affect it.
-    def __new__(cls, name=None, dtype=dtypes.typeclass(int), **assumptions):
+    def __new__(cls, name=None, dtype=None, **assumptions):
+        # Resolve ``dtype`` lazily so runtime changes to
+        # ``compiler.default_data_types`` are honored (a hard-coded default
+        # kwarg would be frozen at import).
+        if dtype is None:
+            dtype = dtypes.typeclass(int)
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -184,7 +187,9 @@ class UndefinedSymbol(symbol):
     >>> expr = N * undefined + 5
     """
 
-    def __new__(cls, dtype=dtypes.typeclass(int), **assumptions):
+    def __new__(cls, dtype=None, **assumptions):
+        if dtype is None:
+            dtype = dtypes.typeclass(int)
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
         self.dtype = dtype
