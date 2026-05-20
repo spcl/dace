@@ -110,6 +110,19 @@ def _fortran_strides(shape):
     return dace.data.Array(dace.float64, shape=shape)._get_packed_fortran_strides()
 
 
+def _compile_no_copynd(sdfg: dace.SDFG):
+    """Assert the SDFG's generated C++ contains no ``dace::CopyND`` template, then compile.
+
+    The libnodes are designed to displace the runtime CopyND fallback entirely. The only
+    intentional ``CopyND`` user is ``ExpandSharedMemoryCollective`` (block-collective shared
+    memory load); tests exercising that expansion inspect tasklet bodies directly and don't
+    run codegen, so a universal post-codegen assertion is safe here.
+    """
+    for obj in sdfg.generate_code():
+        assert 'CopyND<' not in obj.code, f"unexpected dace::CopyND in generated code object {obj.name}"
+    return sdfg.compile()
+
+
 def test_copy_pure_cpu():
     """Pure (mapped tasklet) expansion on CPU_Heap -> CPU_Heap."""
     sdfg, _ = _make_copy_sdfg(
@@ -121,7 +134,7 @@ def test_copy_pure_cpu():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = np.ones(200, dtype=np.float64)
     B = np.zeros(200, dtype=np.float64)
@@ -143,7 +156,7 @@ def test_copy_cpu_memcpy():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = np.arange(200, dtype=np.float64)
     B = np.zeros(200, dtype=np.float64)
@@ -276,7 +289,7 @@ def test_copy_same_subset_different_array_shapes():
     )
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
     A = np.arange(200, dtype=np.float64)
     B = np.zeros(500, dtype=np.float64)
     exe(A=A, B=B)
@@ -292,7 +305,7 @@ def test_copy_1d_slice_from_2d_source():
     )
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
     A = np.arange(50, dtype=np.float64).reshape(5, 10).copy()
     B = np.zeros(10, dtype=np.float64)
     exe(A=A, B=B)
@@ -410,7 +423,7 @@ def test_copy_pure_gpu():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = cp.ones(200, dtype=cp.float64)
     B = cp.zeros(200, dtype=cp.float64)
@@ -435,7 +448,7 @@ def test_copy_cuda_d2d():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = cp.arange(200, dtype=cp.float64)
     B = cp.zeros(200, dtype=cp.float64)
@@ -484,7 +497,7 @@ def test_copy_cuda_host_to_device():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     src = np.arange(128, dtype=np.float64)
     dst = cp.zeros(128, dtype=cp.float64)
@@ -507,7 +520,7 @@ def test_copy_cuda_device_to_host():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     src = cp.arange(128, dtype=cp.float64)
     dst = np.zeros(128, dtype=np.float64)
@@ -536,7 +549,7 @@ def test_copy_cuda_4d_strided_host_to_device():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     # ``reshape`` returns a numpy view; DaCe rejects views by default
     # (``compiler.allow_view_arguments``). Build directly as a fresh array.
@@ -564,7 +577,7 @@ def test_copy_fortran_packed_cpu_default_pure():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
     B = np.zeros(shape, dtype=np.float64, order='F')
@@ -591,7 +604,7 @@ def test_copy_fortran_packed_gpu_falls_back_to_pure():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     host = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
     A = cp.asfortranarray(cp.asarray(host))
@@ -619,7 +632,7 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     host = np.arange(total, dtype=np.float64).reshape(shape, order='F').copy(order='F')
     dev = cp.asfortranarray(cp.zeros(shape, dtype=cp.float64))
@@ -758,7 +771,7 @@ def test_direct_assignment_cpu_same_storage():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = np.arange(4, dtype=np.float64)
     B = np.zeros(4, dtype=np.float64)
@@ -938,7 +951,7 @@ def test_copy_pure_cpu_2d():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    exe = sdfg.compile()
+    exe = _compile_no_copynd(sdfg)
 
     A = np.arange(200, dtype=np.float64).reshape(10, 20).copy()
     B = np.zeros((10, 20), dtype=np.float64)
@@ -962,7 +975,7 @@ def test_copy_single_element_h2d():
     host = np.array([3.14159], dtype=np.float64)
     dev = cp.zeros(1, dtype=cp.float64)
 
-    sdfg.compile()(host=host, dev=dev)
+    _compile_no_copynd(sdfg)(host=host, dev=dev)
     np.testing.assert_allclose(cp.asnumpy(dev), host)
 
 
@@ -980,7 +993,7 @@ def test_copy_two_element_h2d():
 
     host = np.array([1.0, 2.0], dtype=np.float64)
     dev = cp.zeros(2, dtype=cp.float64)
-    sdfg.compile()(host=host, dev=dev)
+    _compile_no_copynd(sdfg)(host=host, dev=dev)
     np.testing.assert_allclose(cp.asnumpy(dev), host)
 
 
@@ -999,7 +1012,7 @@ def test_copy_single_element_d2h():
     dev = cp.array([2.71828], dtype=cp.float64)
     host = np.zeros(1, dtype=np.float64)
 
-    sdfg.compile()(host=host, dev=dev)
+    _compile_no_copynd(sdfg)(host=host, dev=dev)
     np.testing.assert_allclose(host, cp.asnumpy(dev))
 
 
@@ -1067,7 +1080,7 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
 
     B_lib = np.zeros((6, 20), dtype=np.float64, order='F')
     sdfg_lib.expand_library_nodes()
-    sdfg_lib.compile()(src=A, dst=B_lib)
+    _compile_no_copynd(sdfg_lib)(src=A, dst=B_lib)
     np.testing.assert_array_equal(B_lib, expected)
 
     def run(exe):
