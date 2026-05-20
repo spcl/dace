@@ -51,6 +51,24 @@ def _make_copy_sdfg(src: _ArraySpec,
     :param dtype: fallback dtype when a spec leaves ``dtype=None``.
     :returns: ``(sdfg, libnode)``.
     """
+    sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
+    libnode = CopyLibraryNode(name=libnode_name)
+    if implementation is not None:
+        libnode.implementation = implementation
+    state = sdfg.start_state
+    state.add_edge(src_acc, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.memlet.Memlet(f"{src_name}[{src_subset}]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_acc, None,
+                   dace.memlet.Memlet(f"{dst_name}[{dst_subset}]"))
+    return sdfg, libnode
+
+
+def _make_copy_skeleton(src: _ArraySpec, dst: _ArraySpec, name: str, dtype: dace.dtypes.typeclass):
+    """Build a one-state SDFG with ``src`` / ``dst`` arrays + AccessNodes, returning subsets too.
+
+    Shared scaffolding for :func:`_make_copy_sdfg` (libnode form) and
+    :func:`_make_legacy_copy_sdfg` (canonical direct-edge form).
+    """
     sdfg = dace.SDFG(name)
     src_name = src.name or "src"
     dst_name = dst.name or "dst"
@@ -60,21 +78,31 @@ def _make_copy_sdfg(src: _ArraySpec,
             kwargs["strides"] = spec.strides
             kwargs["total_size"] = spec.total_size if spec.total_size is not None else int(np.prod(spec.shape))
         sdfg.add_array(arr_name, spec.shape, spec.dtype or dtype, storage=spec.storage, **kwargs)
-
     state = sdfg.add_state("main")
     src_acc = state.add_access(src_name)
     dst_acc = state.add_access(dst_name)
-    libnode = CopyLibraryNode(name=libnode_name)
-    if implementation is not None:
-        libnode.implementation = implementation
-
     src_subset = src.subset if src.subset is not None else ", ".join(f"0:{s}" for s in src.shape)
     dst_subset = dst.subset if dst.subset is not None else ", ".join(f"0:{s}" for s in dst.shape)
-    state.add_edge(src_acc, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                   dace.memlet.Memlet(f"{src_name}[{src_subset}]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_acc, None,
-                   dace.memlet.Memlet(f"{dst_name}[{dst_subset}]"))
-    return sdfg, libnode
+    return sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset
+
+
+def _make_legacy_copy_sdfg(src: _ArraySpec,
+                           dst: _ArraySpec,
+                           *,
+                           name: str = "copy_legacy",
+                           dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
+    """Build a one-state SDFG that copies ``src`` -> ``dst`` via a canonical direct AN -> AN edge.
+
+    Uses the legacy DaCe memlet convention: ``data=dst``, ``subset`` is the dst
+    write region, ``other_subset`` is the src read region. This is what the
+    standard DaCe copy lowering produces and the basis for comparing against
+    the :class:`CopyLibraryNode` path.
+    """
+    sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
+    sdfg.start_state.add_edge(
+        src_acc, None, dst_acc, None,
+        dace.memlet.Memlet(data=dst_name, subset=dst_subset, other_subset=src_subset))
+    return sdfg
 
 
 def _fortran_strides(shape):
@@ -973,6 +1001,83 @@ def test_copy_single_element_d2h():
 
     sdfg.compile()(host=host, dev=dev)
     np.testing.assert_allclose(host, cp.asnumpy(dev))
+
+
+# --- Legacy direct-edge miscompile regression pins ----------------------------
+#
+# Each test below builds the same SDFG twice: once with a CopyLibraryNode
+# (which we expand), and once with the canonical DaCe direct AN -> AN edge
+# (``Memlet(data=dst, subset=dst_subset, other_subset=src_subset)``). Ground
+# truth is computed via an explicit Python for-loop on NumPy arrays; both
+# DaCe paths must agree with it. The libnode does; the legacy path either
+# silently miscompiles or fails to compile.
+#
+# Most simple AN -> AN copies (same-rank slices, strided subsets with step,
+# mixed C/F layouts at the same rank) the legacy codegen actually handles
+# correctly when given the canonical memlet form. The libnode's clear
+# advantage is rank-mismatch reshapes with explicit per-side layout strides:
+# the legacy memcpy strategy doesn't bridge a layout-aware flat walk between
+# differently-shaped endpoints.
+#
+# The legacy-fails assertion is informational: if the legacy codegen ever
+# starts producing the correct output for the pattern below, this test will
+# fail and should be deleted (the advantage is gone).
+
+
+def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
+    """``True`` if compiling/running the legacy SDFG raises OR produces output diverging from ``expected``.
+
+    :param sdfg_leg: SDFG with libnodes already replaced by direct edges.
+    :param expected: NumPy ground truth.
+    :param run: a callable ``run(exe) -> np.ndarray`` that runs the compiled SDFG and returns the dst array.
+    """
+    try:
+        exe = sdfg_leg.compile()
+        return not np.array_equal(run(exe), expected)
+    except Exception:
+        return True
+
+
+def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
+    """Pin: legacy direct-edge miscompiles a 4D->2D Fortran-packed reshape."""
+    src = _ArraySpec(shape=(2, 3, 4, 5),
+                     storage=dace.dtypes.StorageType.CPU_Heap,
+                     strides=(1, 2, 6, 24),
+                     total_size=120)
+    dst = _ArraySpec(shape=(6, 20),
+                     storage=dace.dtypes.StorageType.CPU_Heap,
+                     strides=(1, 6),
+                     total_size=120)
+    sdfg_lib, _ = _make_copy_sdfg(src, dst, name="legacy_fortran_collapse_lib")
+    sdfg_leg = _make_legacy_copy_sdfg(src, dst, name="legacy_fortran_collapse_leg")
+
+    A = np.arange(120, dtype=np.float64).reshape(2, 3, 4, 5, order='F').copy(order='F')
+    expected = np.zeros((6, 20), dtype=np.float64, order='F')
+    # Fortran-order flat walk: src index (i,j,k,l) -> flat n = i + j*2 + k*6 + l*24
+    # dst index (p, q) -> flat n = p + q*6
+    flat = np.empty(120, dtype=np.float64)
+    for l in range(5):
+        for k in range(4):
+            for j in range(3):
+                for i in range(2):
+                    flat[i + j * 2 + k * 6 + l * 24] = A[i, j, k, l]
+    for q in range(20):
+        for p in range(6):
+            expected[p, q] = flat[p + q * 6]
+
+    B_lib = np.zeros((6, 20), dtype=np.float64, order='F')
+    sdfg_lib.expand_library_nodes()
+    sdfg_lib.compile()(src=A, dst=B_lib)
+    np.testing.assert_array_equal(B_lib, expected)
+
+    def run(exe):
+        out = np.zeros((6, 20), dtype=np.float64, order='F')
+        exe(src=A, dst=out)
+        return out
+
+    assert _legacy_fails(sdfg_leg, expected, run), (
+        "Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
+        "remove this test, the libnode advantage is gone.")
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():

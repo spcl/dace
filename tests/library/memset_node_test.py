@@ -171,6 +171,41 @@ def test_memset_cuda_rejects_cpu_storage():
         sdfg.compile()
 
 
+def test_memset_auto_routes_non_contiguous_to_pure_cpu():
+    """Auto routes a non-contiguous CPU subset to ``pure`` (the single-call ``memset`` would zero outside the region)."""
+    sdfg = _make_memset_sdfg(None, (10, 20), "2:8, 5:15", gpu=False, name="memset_noncontig_cpu_auto")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+
+    B = np.ones((10, 20), dtype=np.float64)
+    exe(B=B)
+    # The 6x10 sub-block is zeroed; everything else stays 1.
+    expected = np.ones((10, 20), dtype=np.float64)
+    for i in range(2, 8):
+        for j in range(5, 15):
+            expected[i, j] = 0
+    np.testing.assert_array_equal(B, expected)
+
+
+def test_memset_cpu_rejects_non_contiguous_subset():
+    """Explicit ``CPU`` expansion rejects a non-contiguous subset (one ``memset`` would overrun the region)."""
+    sdfg = _make_memset_sdfg("CPU", (10, 20), "2:8, 5:15", gpu=False, name="memset_noncontig_cpu_explicit")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+def test_memset_cuda_rejects_non_contiguous_subset():
+    """Explicit ``CUDA`` expansion rejects a non-contiguous subset (one ``cudaMemsetAsync`` would overrun)."""
+    sdfg = _make_memset_sdfg("CUDA", (10, 20), "2:8, 5:15", gpu=True, name="memset_noncontig_cuda_explicit")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous"):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == "__main__":
     test_memset_pure_1d_cpu()
     test_memset_pure_3d_cpu()
@@ -179,3 +214,6 @@ if __name__ == "__main__":
     test_memset_cuda_1d_gpu()
     test_memset_cuda_3d_gpu()
     test_memset_cuda_rejects_cpu_storage()
+    test_memset_auto_routes_non_contiguous_to_pure_cpu()
+    test_memset_cpu_rejects_non_contiguous_subset()
+    test_memset_cuda_rejects_non_contiguous_subset()

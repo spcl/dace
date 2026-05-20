@@ -52,8 +52,16 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
     :returns: The memset tasklet.
+    :raises ValueError: if the output subset is non-contiguous; the single-call
+        ``cudaMemsetAsync`` / ``memset`` form would silently zero memory outside
+        the subset. Use the ``pure`` expansion (mapped tasklet) for those.
     """
-    _out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+    if not out_subset.is_contiguous_subset(out):
+        raise ValueError(
+            f"MemsetLibraryNode {'CUDA' if cuda else 'CPU'} expansion requires a contiguous subset; "
+            f"got '{out_name}' subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
+            f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
 
     nbytes = f"{sym2cpp(out_subset.num_elements())} * sizeof({out.dtype.ctype})"
     if cuda:
@@ -73,18 +81,22 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
     Returns ``'pure'`` (Sequential element-zero map) in device scope since
-    ``cudaMemsetAsync`` cannot be issued from a kernel; ``'CUDA'``
-    (``cudaMemsetAsync``) for host-issued GPU-destination memsets; otherwise
-    ``'CPU'`` (``std::memset``).
+    ``cudaMemsetAsync`` cannot be issued from a kernel, and for non-contiguous
+    subsets where the single-call memset forms would zero outside the region;
+    ``'CUDA'`` (``cudaMemsetAsync``) for host-issued GPU-destination contiguous
+    memsets; otherwise ``'CPU'`` (``std::memset``).
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node``.
     :param parent_sdfg: The SDFG containing ``parent_state``.
     :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
     """
-    _out_name, out, _out_subset = node.validate(parent_sdfg, parent_state)
+    _out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
 
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+        return 'pure'
+
+    if not out_subset.is_contiguous_subset(out):
         return 'pure'
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:
