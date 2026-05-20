@@ -110,11 +110,11 @@ def test_copy_cpu_copynd():
     np.testing.assert_array_equal(B[50:100], A[150:200])
 
 
-def test_copy_copynd_rejects_non_c_packed():
-    """``CopyND`` on Fortran-packed (column-major) strides raises ``ValueError`` matching ``C-packed`` at expansion."""
-    sdfg = dace.SDFG("copy_copynd_rejects_non_c")
+def test_copy_copynd_accepts_fortran_packed():
+    """``CopyNDTemplate`` accepts Fortran-packed (column-major) endpoints when both sides agree."""
+    sdfg = dace.SDFG("copy_copynd_fortran_packed")
 
-    # Fortran-packed strides so the C-packed check rejects the copy.
+    # Fortran-packed strides on BOTH sides: layout-matched, must lower cleanly.
     sdfg.add_array(name="src",
                    shape=(4, 5, 6),
                    dtype=dace.float64,
@@ -141,8 +141,99 @@ def test_copy_copynd_rejects_non_c_packed():
     state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:4, 0:5, 0:6]"))
 
     sdfg.validate()
-    with pytest.raises(ValueError, match="C-packed"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
+
+    # Numerical equivalence: dst == src after the copy.
+    src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6, order='F').copy(order='F')
+    dst_data = np.zeros((4, 5, 6), dtype=np.float64, order='F')
+    sdfg(src=src_data, dst=dst_data)
+    assert np.array_equal(dst_data, src_data)
+
+
+def test_copy_copynd_fortran_packed_strided_slice():
+    """``CopyNDTemplate`` on a sub-slice of Fortran-packed arrays (both sides agree)."""
+    sdfg = dace.SDFG("copy_copynd_fortran_strided_slice")
+
+    sdfg.add_array(name="src",
+                   shape=(8, 10, 12),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 8, 80),
+                   total_size=960,
+                   transient=False)
+    sdfg.add_array(name="dst",
+                   shape=(8, 10, 12),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 8, 80),
+                   total_size=960,
+                   transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+
+    libnode = CopyLibraryNode(name="cp_fortran_strided")
+    libnode.implementation = "CopyNDTemplate"
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[2:6, 3:7, 4:8]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[2:6, 3:7, 4:8]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+
+    src_data = np.arange(960, dtype=np.float64).reshape(8, 10, 12, order='F').copy(order='F')
+    dst_data = np.zeros((8, 10, 12), dtype=np.float64, order='F')
+    sdfg(src=src_data, dst=dst_data)
+    # Only the sliced region must match src; the rest of dst stays zero.
+    assert np.array_equal(dst_data[2:6, 3:7, 4:8], src_data[2:6, 3:7, 4:8])
+    untouched = dst_data.copy()
+    untouched[2:6, 3:7, 4:8] = 0
+    assert np.all(untouched == 0)
+
+
+def test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet():
+    """A mixed C-packed -> Fortran-packed copy (a transpose in memory layout)
+    must NOT route to ``CopyNDTemplate``; the ``Auto`` selector picks
+    ``MappedTasklet`` and the element-wise copy is numerically correct."""
+    sdfg = dace.SDFG("copy_mixed_c_fortran")
+
+    # src is C-packed (row-major), dst is Fortran-packed (column-major).
+    sdfg.add_array(name="src",
+                   shape=(6, 7),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(7, 1),
+                   total_size=42,
+                   transient=False)
+    sdfg.add_array(name="dst",
+                   shape=(6, 7),
+                   dtype=dace.float64,
+                   storage=dace.dtypes.StorageType.CPU_Heap,
+                   strides=(1, 6),
+                   total_size=42,
+                   transient=False)
+
+    state = sdfg.add_state("main")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+
+    libnode = CopyLibraryNode(name="cp_mixed")
+    # Leave implementation at the default 'Auto' so the selector decides.
+    state.add_edge(src, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("src[0:6, 0:7]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, None, dace.memlet.Memlet("dst[0:6, 0:7]"))
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+
+    # Selector must have picked ``MappedTasklet`` (mixed layouts are not safe for CopyNDTemplate).
+    assert libnode.implementation == 'MappedTasklet', (
+        f"Mixed C/Fortran-packed copy must route to MappedTasklet, got {libnode.implementation!r}.")
+
+    src_data = np.arange(42, dtype=np.float64).reshape(6, 7).copy(order='C')
+    dst_data = np.zeros((6, 7), dtype=np.float64, order='F')
+    sdfg(src=src_data, dst=dst_data)
+    # Element-wise equivalence regardless of internal stride order.
+    assert np.array_equal(dst_data, src_data)
 
 
 def test_copy_copynd_rejects_padded_strides():
@@ -178,7 +269,7 @@ def test_copy_copynd_rejects_padded_strides():
                    dace.memlet.Memlet("dst[0:20, 0:21, 0:22]"))
 
     sdfg.validate()
-    with pytest.raises(ValueError, match="C-packed"):
+    with pytest.raises(ValueError, match="same packed layout"):
         sdfg.expand_library_nodes()
 
 
@@ -1147,6 +1238,10 @@ if __name__ == "__main__":
     test_copynd_expansion_rejects_cross_boundary()
     test_copynd_uses_static_template_for_concrete_dims()
     test_copynd_falls_back_to_dynamic_for_symbolic_dims()
+    test_copy_copynd_accepts_fortran_packed()
+    test_copy_copynd_fortran_packed_strided_slice()
+    test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet()
+    test_copy_copynd_rejects_padded_strides()
 
     # GPU tests
     test_copy_pure_gpu()

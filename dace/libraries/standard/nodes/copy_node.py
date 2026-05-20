@@ -17,10 +17,18 @@ from .. import environments
 
 
 def _is_cross_cpu_gpu(src_storage, dst_storage):
-    """Return True if src and dst straddle the CPU/GPU boundary. ``Register``
+    """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
     adopts its enclosing scope's side and is never cross-boundary."""
     return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
             or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
+
+
+def _both_packed_same_layout(inp, out):
+    """True if both descriptors are packed in the *same* major order (both C
+    or both Fortran). Mixed layouts (C<->F) are transposes, not copies, so
+    they must not route to ``CopyNDTemplate``."""
+    return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
+            or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
 
 
 def _coarse_pick_for_storage_pair(src_storage, dst_storage):
@@ -60,8 +68,8 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         return 'SharedMemoryCollective'
 
-    # 2. Single-element copies. Route around MappedTasklet (a 0-D map would
-    # crash propagation) into the impl that can actually execute the copy:
+    # 2. Single-element copies. Route around MappedTasklet (a 0-D map crashes propagation)
+    # into the impl that can actually execute the copy:
     #
     #   endpoints              in kernel  impl          why
     #   ---------------------  ---------  ------------  ------------------------
@@ -82,8 +90,7 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
-    # 3. Otherwise in-device-scope: ``cudaMemcpyAsync`` cannot be issued from
-    # device code. Inline the copy as device-side element-wise loops.
+    # 3. Otherwise in-device-scope: ``cudaMemcpyAsync`` cannot be issued from device code.
     if is_devicelevel_gpu(parent_sdfg, parent_state, node):
         return 'MappedTasklet'
 
@@ -108,9 +115,8 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
         in_shape_c, _ = collapse_shape_and_strides(in_subset, inp.strides)
         out_shape_c, _ = collapse_shape_and_strides(out_subset, out.strides)
         if len(in_shape_c) != len(out_shape_c):
-            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and inp.is_packed_c_strides()
-                    and out.is_packed_c_strides() and in_subset.is_contiguous_subset(inp)
-                    and out_subset.is_contiguous_subset(out)):
+            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and _both_packed_same_layout(inp, out)
+                    and in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
                 return 'CopyNDTemplate'
 
     return impl or 'MappedTasklet'
@@ -134,7 +140,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
     Picks ``MemcpyCUDA2D`` (1-or-2D strided patterns), ``MappedTasklet``
-    (same-side GPU strided -- runs inside a kernel), ``CopyNDTemplate``
+    (same-side GPU strided inside a kernel), ``CopyNDTemplate``
     (same-side CPU C-packed), or ``MemcpyCUDANDStrided`` (cross-boundary >=3D).
 
     :param node: the :class:`CopyLibraryNode` being expanded.
@@ -176,7 +182,7 @@ def _refine_cuda_impl_for_subsets(node, parent_state, parent_sdfg):
                     or inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared)
         if gpu_side:
             return 'MappedTasklet'
-        if inp.is_packed_c_strides() and out.is_packed_c_strides():
+        if _both_packed_same_layout(inp, out):
             return 'CopyNDTemplate'
         return 'MappedTasklet'
 
@@ -512,13 +518,15 @@ class ExpandCopyNDTemplate(ExpandTransformation):
         if _is_cross_cpu_gpu(inp.storage, out.storage):
             raise ValueError("CopyNDTemplate expansion cannot cross the CPU/GPU "
                              f"boundary (got {inp.storage} -> {out.storage}).")
-        # CopyND template stride args assume C-packed (row-major contiguous);
-        # anything else would silent-miscopy at runtime.
-        if not inp.is_packed_c_strides() or not out.is_packed_c_strides():
-            raise ValueError(f"CopyNDTemplate expansion requires C-packed strides on both endpoints; "
-                             f"got src strides {tuple(inp.strides)} for shape {tuple(inp.shape)} and "
-                             f"dst strides {tuple(out.strides)} for shape {tuple(out.shape)}. "
-                             f"Use MappedTasklet (same-storage) or convert to a Map via CopyToMap.")
+        # Both endpoints must share the same packed layout: the runtime call
+        # walks dims with the supplied strides, so C<->C and F<->F are both
+        # safe, but C<->F is a transpose and must use MappedTasklet instead.
+        if not _both_packed_same_layout(inp, out):
+            raise ValueError(f"CopyNDTemplate expansion requires both endpoints to share the same packed "
+                             f"layout (both C-contiguous or both Fortran-contiguous); got src strides "
+                             f"{tuple(inp.strides)} for shape {tuple(inp.shape)} and dst strides "
+                             f"{tuple(out.strides)} for shape {tuple(out.shape)}. "
+                             f"Use MappedTasklet (mixed layouts / non-packed) or convert via CopyToMap.")
         if dynamic_inputs:
             raise NotImplementedError("CopyNDTemplate doesn't yet support dynamic input scalars; "
                                       "use MappedTasklet if dynamic copy sizes are needed.")
