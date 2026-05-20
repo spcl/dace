@@ -405,6 +405,80 @@ def test_large_nested_map_for_for_map_program():
     assert np.allclose(out_ref, out_pass), "UniqueLoopIterators changed program semantics"
 
 
+def test_no_postamble_drops_dead_symbol_declaration():
+    """With ``assign_loop_iterator_post_value=False`` the renamed iterator
+    has no surviving reader, so the stale ``sdfg.symbols[old_name]``
+    declaration left by the frontend must be removed -- otherwise it leaks
+    as a phantom free symbol on the enclosing NestedSDFG boundary
+    (validation: ``Missing symbols on nested SDFG: ['i']``)."""
+
+    @dace.program
+    def sibling_for_loops(x: dace.float64[10, 10]):
+        for j in dace.map[0:10]:
+            for i in range(10):
+                x[i, j] = 1.0
+            for i in range(10):
+                x[i, j] += 2.0
+
+    sdfg = sibling_for_loops.to_sdfg(simplify=False)
+
+    # Pre-condition: the body NestedSDFG declares ``i`` in its symbol table
+    # and the parent does not provide it via ``symbol_mapping``; the
+    # frontend keeps the declaration around because the original LoopRegions
+    # use ``i`` as their ``loop_variable``.
+    body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert any('i' in n.sdfg.symbols for n in body_nsdfgs)
+
+    UniqueLoopIterators._loop_var_counter = 0
+    p = UniqueLoopIterators()
+    p.assign_loop_iterator_post_value = False
+    p.apply_pass(sdfg, {})
+
+    # Every LoopRegion now has a unique ``_loop_it_<N>`` variable.
+    loopvars = [n.loop_variable for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    assert loopvars == sorted(set(loopvars))
+    assert all(v.startswith('_loop_it_') for v in loopvars)
+
+    # The previously-leaking ``i`` declaration must be gone from every
+    # SDFG-level symbol table that lost its last user.
+    for n in body_nsdfgs:
+        assert 'i' not in n.sdfg.symbols, f"stale 'i' still declared in {n.sdfg.name}.symbols"
+
+    # And the resulting SDFG validates cleanly (no missing-symbol error on
+    # the NestedSDFG boundary).
+    sdfg.validate()
+
+
+def test_postamble_preserves_symbol_declaration():
+    """The dead-symbol cleanup must trigger only when the post-value
+    epilogue is disabled. With the default ``assign_loop_iterator_post_value
+    = True`` the epilogue's ``<old_name> = <post_value>`` assignment IS a
+    surviving reader of the original symbol; removing the declaration would
+    invalidate it."""
+
+    @dace.program
+    def sibling_for_loops(x: dace.float64[10, 10]):
+        for j in dace.map[0:10]:
+            for i in range(10):
+                x[i, j] = 1.0
+            for i in range(10):
+                x[i, j] += 2.0
+
+    sdfg = sibling_for_loops.to_sdfg(simplify=False)
+    body_nsdfgs_before = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert any('i' in n.sdfg.symbols for n in body_nsdfgs_before)
+
+    UniqueLoopIterators._loop_var_counter = 0
+    p = UniqueLoopIterators()
+    p.assign_loop_iterator_post_value = True
+    p.apply_pass(sdfg, {})
+
+    # ``i`` declaration stays because the postamble assignments read/write it.
+    body_nsdfgs_after = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert any('i' in n.sdfg.symbols for n in body_nsdfgs_after)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -414,3 +488,5 @@ if __name__ == '__main__':
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
     test_large_nested_map_for_for_map_program()
+    test_no_postamble_drops_dead_symbol_declaration()
+    test_postamble_preserves_symbol_declaration()

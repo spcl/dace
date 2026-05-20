@@ -127,6 +127,16 @@ class UniqueLoopIterators(ppl.Pass):
                             cfg,
                             f"{_POST_VALUE_STATE_PREFIX}_{UniqueLoopIterators._loop_var_counter}",
                             assignments={old_name: f"({post_value_str})"})
+            elif old_name in sdfg.symbols and old_name not in sdfg.free_symbols:
+                # The rename was scoped to ``cfg`` so the LoopRegion's
+                # body, init/condition/update no longer reference
+                # ``old_name``. Without the post-value epilogue there is
+                # also no surviving inter-state assignment using it, so the
+                # SDFG-level declaration left behind by the frontend leaks
+                # as a phantom free symbol on the enclosing NSDFG boundary
+                # ("Missing symbols on nested SDFG: ['i']"). Drop the dead
+                # declaration so the symbol table reflects actual usage.
+                sdfg.remove_symbol(old_name)
 
             UniqueLoopIterators._loop_var_counter += 1
 
