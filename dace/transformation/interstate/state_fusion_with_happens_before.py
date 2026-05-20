@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
 from typing import Dict, List, Set
@@ -381,6 +381,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                                              nodes_second, True, False):
                                     return False
 
+                                # Same-cc write-after-read: first reads ``d``,
+                                # second writes it, ``d`` not a first output.
+                                # Safe fusion would need a dependency edge to
+                                # every first-state sink reading ``d``; refuse
+                                # instead and keep the two states separate.
+                                if d in fused_cc.first_inputs:
+                                    nodes_first_read = [n for n in first_input if n.data == d]
+                                    if StateFusionExtended.memlets_intersect(first_state, nodes_first_read, True,
+                                                                             second_state, nodes_second, False):
+                                        return False
+
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -390,13 +401,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         if d in other_cc.second_outputs:
                             # Check for intersection (if None, fusion is ok)
                             nodes_second = [n for n in second_output if n.data == d]
-                            # Read-Write race
+                            # Read-Write race (write-after-read / anti-
+                            # dependency): the first state reads ``d`` and the
+                            # second writes it. Safely fusing would require a
+                            # dependency edge to every first-state sink reading
+                            # ``d`` (arbitrarily fanned out); refuse instead and
+                            # keep the two states separate.
                             if d in fused_cc.first_inputs:
                                 nodes_first = [n for n in first_input if n.data == d]
                                 if StateFusionExtended.memlets_intersect(first_state, nodes_first, True, second_state,
                                                                          nodes_second, False):
-                                    self.connections_to_make.append([nodes_first, nodes_second])
-                                    #return False
+                                    return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]

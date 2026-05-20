@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 import copy
@@ -6,7 +6,7 @@ from typing import Tuple
 
 import dace
 from dace import nodes, data as dace_data
-from dace.libraries.standard import Transpose
+from dace.libraries.linalg import Transpose
 from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
                                           RedundantArrayCopyingIn)
 
