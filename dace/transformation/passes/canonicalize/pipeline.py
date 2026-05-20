@@ -14,6 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp)
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -118,6 +119,15 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # 'untrivialize' stage before LoopToMap can mangle it.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
+    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may have buried an
+    # invariant interstate-edge assignment (e.g. ``kfdia_plus_1 = kfdia + 1``,
+    # the Python-frontend bound promotion) inside the loop it pushed the
+    # guard into. Lift it back out *past every enclosing loop* (all-or-
+    # nothing upward, see ``CASCADE_UP_DESIGN.md``) so LoopToMap's
+    # body-assigns-loop-range-symbol refuse-check does not later block
+    # parallelization. Standalone and idempotent -- can be invoked again.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
     # fission: loop distribution + block-level perfect-loop-nesting.
     s += [('fission', LoopFission())]
 
@@ -142,6 +152,14 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # otherwise turn it into a sticky NestedSDFG that breaks idempotence and
     # re-lowering.
     s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
+
+    # cascade_iedges_up (pre-parallelize): re-run after fission / normalize /
+    # ssa, since each of those rewrites the CFG and may expose new hoisting
+    # opportunities (e.g. an iedge that was previously inside a body block
+    # is now the only block on a clean linear chain). Critically: this MUST
+    # run before LoopToMap so the refuse-check on body-assigned range
+    # symbols sees the cleaned-up shape.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
