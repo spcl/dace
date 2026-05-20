@@ -97,6 +97,38 @@ def test_complex_symbol_roundtrip_preserves_dtype():
     assert restored_sym.dtype == dace.complex128
 
 
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_explicit_dtype_symbol_roundtrip_preserves_dtype(dtype):
+    """An explicit-dtype symbol round-trips with its ``dtype`` preserved on the
+    deserialized symbol and is serialized in the full ``symbol(..., dtype=...)``
+    form, even when ``dtype`` equals the default integer typeclass."""
+    expr = symbolic.symbol('x', dtype=dtype)
+
+    serialized = symbolic.serialize_symbolic(expr)
+    assert serialized == f'symbol($x, dtype=dace.{dtype.to_string()})'
+
+    restored = symbolic.deserialize_symbolic(serialized)
+    restored_sym = next(iter(restored.free_symbols))
+    assert isinstance(restored_sym, symbolic.symbol)
+    assert restored_sym.name == 'x'
+    assert restored_sym.dtype == dtype
+
+
+def test_default_symbol_roundtrip():
+    """A default-constructed symbol (no explicit ``dtype``) serializes as bare
+    ``$x`` and the deserialized symbol has the default integer typeclass."""
+    expr = symbolic.symbol('x')
+
+    serialized = symbolic.serialize_symbolic(expr)
+    assert serialized == '$x'
+
+    restored = symbolic.deserialize_symbolic(serialized)
+    restored_sym = next(iter(restored.free_symbols))
+    assert isinstance(restored_sym, symbolic.symbol)
+    assert restored_sym.name == 'x'
+    assert restored_sym.dtype == dace.dtypes.typeclass(int)
+
+
 @pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128])
 def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
     """A constant whose dtype has no literal suffix (complex) serializes
@@ -170,24 +202,28 @@ def test_undefined_symbol_serialization_uses_dollar_prefix():
     assert isinstance(restored, symbolic.UndefinedSymbol)
 
 
-def test_symbol_assumption_roundtrip_preserves_bool_metadata():
-    serialized = 'symbol($i, nonnegative=True)'
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_symbol_assumption_roundtrip_preserves_bool_metadata(dtype):
+    serialized = f'symbol($i, dtype=dace.{dtype.to_string()}, nonnegative=True)'
 
     restored = symbolic.deserialize_symbolic(serialized)
 
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_same_name_symbols_with_different_dtypes_serialize_independently():
-    typed = symbolic.symbol('i', dtype=dace.int16)
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_same_name_symbols_with_different_dtypes_serialize_independently(dtype):
+    typed = symbolic.symbol('i', dtype=dtype)
     default = symbolic.symbol('i')
 
-    assert symbolic.serialize_symbolic(typed) == 'symbol($i, dtype=dace.int16)'
+    assert symbolic.serialize_symbolic(typed) == f'symbol($i, dtype=dace.{dtype.to_string()})'
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
-def test_typed_symbol_deserialization_does_not_strip_dtype():
-    serialized = '2*(1 + symbol($M, dtype=dace.int16))*symbol($M, dtype=dace.int16)'
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_typed_symbol_deserialization_does_not_strip_dtype(dtype):
+    name = f'dace.{dtype.to_string()}'
+    serialized = f'2*(1 + symbol($M, dtype={name}))*symbol($M, dtype={name})'
 
     restored = symbolic.deserialize_symbolic(serialized)
 
@@ -202,27 +238,32 @@ def test_rational_addition_roundtrip_preserves_serialization():
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_pystr_to_symbolic_preserves_typed_symbols():
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_pystr_to_symbolic_preserves_typed_symbols(dtype):
+    typed_form = f'-1 + symbol($N, dtype=dace.{dtype.to_string()})'
+
     # Prime the parser cache with an equal untyped SymPy expression.
     cache_seed_expr = symbolic.deserialize_symbolic('-1 + $N')
     cache_seed_restored = symbolic.pystr_to_symbolic(cache_seed_expr)
-    typed_expr = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int16)')
+    typed_expr = symbolic.deserialize_symbolic(typed_form)
 
     typed_restored = symbolic.pystr_to_symbolic(typed_expr)
 
     assert cache_seed_restored is cache_seed_expr
     assert symbolic.serialize_symbolic(cache_seed_restored) == '-1 + $N'
     assert typed_restored is typed_expr
-    assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int16)'
+    assert symbolic.serialize_symbolic(typed_restored) == typed_form
 
 
-def test_power_deserialization_preserves_typed_symbols_after_plain_power():
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_power_deserialization_preserves_typed_symbols_after_plain_power(dtype):
+    typed_form = f'symbol($N, dtype=dace.{dtype.to_string()})**2'
+
     plain_power = symbolic.deserialize_symbolic('$N**2')
-
-    typed_power = symbolic.deserialize_symbolic('symbol($N, dtype=dace.int16)**2')
+    typed_power = symbolic.deserialize_symbolic(typed_form)
 
     assert symbolic.serialize_symbolic(plain_power) == '$N**2'
-    assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int16)**2'
+    assert symbolic.serialize_symbolic(typed_power) == typed_form
 
 
 @pytest.mark.parametrize('simplify', [None, False])
@@ -244,12 +285,14 @@ def test_pystr_to_symbolic_simplifies_basic_when_requested():
     assert len(restored.args) == 2
 
 
-def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
+@pytest.mark.parametrize('dtype', [dace.int16, dace.int64])
+def test_range_json_roundtrip_preserves_typed_symbol_minus_one(dtype):
+    end_form = f'-1 + symbol($N, dtype=dace.{dtype.to_string()})'
     json_range = {
         'type': 'Range',
         'ranges': [{
             'start': '0',
-            'end': '-1 + symbol($N, dtype=dace.int16)',
+            'end': end_form,
             'step': '1',
             'tile': '1',
         }],
@@ -258,7 +301,7 @@ def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     rng = subsets.Range.from_json(json_range)
 
     assert symbolic.serialize_symbolic(rng.ranges[0][0]) == '0'
-    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int16)'
+    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == end_form
     assert symbolic.serialize_symbolic(rng.ranges[0][2]) == '1'
     assert symbolic.serialize_symbolic(rng.tile_sizes[0]) == '1'
 

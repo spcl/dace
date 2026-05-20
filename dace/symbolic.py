@@ -52,6 +52,8 @@ if packaging_version.Version(sympy.__version__) < packaging_version.Version("1.1
 else:
     equal_valued = sympy.core.numbers.equal_valued
 
+_DTYPE_UNSET = object()
+
 
 class symbol(sympy.Symbol):
     """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
@@ -59,9 +61,10 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    # ``dtype`` default is frozen at import (Python default-arg semantics);
-    # runtime ``set_temporary('compiler', 'default_data_types', ...)`` won't affect it.
-    def __new__(cls, name=None, dtype=dtypes.typeclass(int), **assumptions):
+    def __new__(cls, name=None, dtype=_DTYPE_UNSET, **assumptions):
+        explicit_dtype = dtype is not _DTYPE_UNSET
+        if not explicit_dtype:
+            dtype = dtypes.typeclass(int)
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -84,11 +87,22 @@ class symbol(sympy.Symbol):
             self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
 
         self.dtype = dtype
+        # Tracks whether ``dtype`` came from the caller (vs. the default). The
+        # serializer emits ``dtype=...`` on the wire iff this is True, so that
+        # ``symbol(name, dtype=default)`` round-trips back to the same explicit
+        # form rather than collapsing into the bare-``$name`` shorthand reserved
+        # for default-constructed symbols.
+        self._explicit_dtype = explicit_dtype
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
+        return dict(
+            self.assumptions0, **{
+                'dtype': self.dtype,
+                '_constraints': self._constraints,
+                '_explicit_dtype': getattr(self, '_explicit_dtype', False),
+            })
 
     def _eval_subs(self, old, new):
         """
@@ -543,7 +557,13 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     kwargs = {}
-    if expr.dtype != dtypes.typeclass(int):
+    # Explicit dtype is preserved on the wire even when it equals the default,
+    # so that explicit-default and implicit-default symbols stay distinguishable
+    # across round-trips. Symbols without the flag (older pickles, ad-hoc
+    # constructions that bypassed ``__new__``) fall back to the previous
+    # "omit when default" behavior.
+    explicit_dtype = getattr(expr, '_explicit_dtype', False)
+    if explicit_dtype or expr.dtype != dtypes.typeclass(int):
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
 
     default_assumptions = _symbol_default_assumptions(expr)
@@ -1708,8 +1728,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
             symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
-            dtype = kwargs.pop('dtype', dtypes.typeclass(int))
-            return symbol(symname, dtype=dtype, **kwargs)
+            # Pass ``dtype`` only when it was present on the wire so the
+            # resulting symbol's explicit-dtype flag mirrors the serialized form.
+            return symbol(symname, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
             args = [self.visit(arg) for arg in node.args]
