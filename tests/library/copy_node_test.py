@@ -166,9 +166,7 @@ def test_copy_fortran_packed_strided_slice():
 
 
 def test_copy_mixed_c_fortran_via_mapped_tasklet():
-    """A mixed C-packed -> Fortran-packed copy at same rank is fine (per-dim
-    strided access handles both layouts); only rank-mismatch + mixed layouts
-    is rejected."""
+    """Mixed C-packed -> Fortran-packed same-rank copy lowers via MappedTasklet."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(6, 7), storage=cpu, strides=(7, 1)),
@@ -186,10 +184,7 @@ def test_copy_mixed_c_fortran_via_mapped_tasklet():
 
 
 def test_copy_rank_mismatch_mixed_layouts_raises():
-    """Feature regression: rank-mismatch with mixed C/F packed layouts raises.
-    The MappedTasklet rank-mismatch branch supports only same-packed-layout
-    endpoints. Shapes are >=2D on both sides so the C/F distinction is
-    meaningful (1-D arrays are trivially both C- and Fortran-packed)."""
+    """Rank-mismatch with mixed C/F packed layouts is rejected (1-D walker has no shared layout)."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     # src is C-packed (3, 8) -- strides (8, 1); dst is Fortran-packed (2, 3, 4)
     # -- strides (1, 2, 6). Same volume = 24.
@@ -204,9 +199,7 @@ def test_copy_rank_mismatch_mixed_layouts_raises():
 
 
 def test_copy_rank_mismatch_padded_src_raises():
-    """Feature regression: rank-mismatch where the higher-rank side has padded
-    strides raises. Padded is neither C- nor Fortran-packed, so MappedTasklet's
-    rank-mismatch branch rejects."""
+    """Rank-mismatch with padded (neither C- nor F-packed) strides is rejected."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     # src padded (row stride 8 instead of 6), dst flat (120,).
     sdfg, _ = _make_copy_sdfg(
@@ -220,10 +213,7 @@ def test_copy_rank_mismatch_padded_src_raises():
 
 
 def test_copy_rank_mismatch_strided_subset_raises():
-    """Feature regression: rank-mismatch with a strided (non-contiguous) subset
-    on either side raises. A column-slice of a C-packed array is non-contiguous
-    in memory (rows of length 10, picking columns 2..5 walks with stride 10
-    between picks); the 1-D walker cannot lower it without silently miscopying."""
+    """Rank-mismatch with a non-contiguous src subset is rejected (1-D walker requires contiguous data)."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=(8, 10), storage=cpu, subset="0:8, 2:6"),
@@ -236,8 +226,7 @@ def test_copy_rank_mismatch_strided_subset_raises():
 
 
 def test_copy_rank_mismatch_strided_dst_subset_raises():
-    """Symmetric to ``..._strided_subset_raises``: rank-mismatch with the
-    non-contiguous subset on the *dst* side. Same rejection path."""
+    """Symmetric to the src-side variant: non-contiguous subset on the dst side is rejected."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=(32, ), storage=cpu),
@@ -250,23 +239,16 @@ def test_copy_rank_mismatch_strided_dst_subset_raises():
 
 
 def test_copy_transpose_pattern_rejected():
-    """Same-rank but per-dim shapes swapped -- a transpose, not a copy.
-    The CopyLibraryNode is not the right tool for transposes (use a
-    Transpose libnode instead). The MappedTasklet same-rank branch's
-    shared ``__i0, __i1`` access indexes dst[__i0, __i1] with __i0 up to
-    3 (in-range for dst's dim-0 size 4) and __i1 up to 4 (OOB for dst's
-    dim-1 size 3). DaCe's post-expansion validate catches the out-of-
-    bounds memlet rather than miscopying silently."""
+    """Same-rank copy with per-dim shapes swapped (transpose) is rejected upfront."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=(3, 4), storage=cpu),
         _ArraySpec(shape=(4, 3), storage=cpu),
         name="copy_transpose_pattern",
     )
-    sdfg.validate()  # pre-expansion validate doesn't check per-dim shapes; passes here.
-    sdfg.expand_library_nodes()
-    with pytest.raises(Exception, match="out-of-bounds"):
-        sdfg.validate()
+    sdfg.validate()
+    with pytest.raises(ValueError, match="matching per-dim shapes"):
+        sdfg.expand_library_nodes()
 
 
 def test_copy_4d_to_1d_flatten_c_packed():
@@ -306,8 +288,7 @@ def test_copy_1d_to_4d_inflate_c_packed():
 
 
 def test_copy_3d_to_2d_collapse_first_two_dims():
-    """3D -> 2D collapse the first two dims: (2,3,4) -> (6,4). C-order means
-    rows of dst correspond to (i, j) pairs of src in lexicographic order."""
+    """3D -> 2D collapse of the first two dims (C-order) via MappedTasklet rank-mismatch."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(2, 3, 4), storage=cpu),
@@ -343,9 +324,7 @@ def test_copy_4d_to_2d_collapse_pair_dims_fortran():
 
 
 def test_copy_strided_step_2_cpu_same_rank():
-    """Same-rank 1D copy with subset step=2 (visits every other element).
-    The wrapper SDFG carries the step in its array's strides; MappedTasklet's
-    per-element loop hits the right physical addresses."""
+    """Same-rank 1D copy with subset step=2 (every other element)."""
     cpu = dace.dtypes.StorageType.CPU_Heap
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(10, ), storage=cpu, subset="0:10:2"),
@@ -604,11 +583,7 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
 
 
 def test_copy_no_common_stride1_axis_raises():
-    """A cross-CPU/GPU copy with no shared stride-1 axis raises ``ValueError`` matching ``cross-CPU/GPU``.
-
-    Uses a non-contiguous partial subset so the contiguous-subset early exit
-    does not mask the strided-pattern check.
-    """
+    """Cross-CPU/GPU copy with no shared stride-1 axis is rejected (uses a partial subset to skip the contiguous early-exit)."""
     # src C-packed (stride-1 innermost), dst Fortran-packed (stride-1
     # outermost): after the partial slice the two have no shared stride-1 axis.
     shape = (4, 5, 6)
@@ -802,8 +777,7 @@ def test_direct_assignment_rejects_cross_boundary():
 
 
 def test_shared_memory_copy_global_to_shared_is_collective():
-    """A Global -> Shared ``SharedMemoryCollective`` copy emits a CPP tasklet with __syncthreads() and no
-    GPU_ThreadBlock map."""
+    """Global -> Shared collective copy emits a CPP tasklet with __syncthreads() and no GPU_ThreadBlock map."""
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, name="G_in"),
         _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, name="S_out"),
@@ -990,11 +964,7 @@ def test_copy_single_element_d2h():
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
-    """A single-element in-kernel Register -> GPU_Global copy expands to a direct ``Tasklet``, not a NestedSDFG.
-
-    The ``MappedTasklet`` path would collapse every length-1 dim into a 0-D
-    map and crash propagation, so the routing must pick the ``Tasklet`` impl.
-    """
+    """Single-element in-kernel Register -> GPU_Global routes to a direct Tasklet (MappedTasklet would collapse to a 0-D map)."""
     sdfg = dace.SDFG('reg_to_gpuglobal_in_kernel')
     sdfg.add_array('R', [1, 1, 1], dace.float64, dace.StorageType.Register, transient=True)
     sdfg.add_array('G', [4, 4, 4], dace.float64, dace.StorageType.GPU_Global, transient=True)

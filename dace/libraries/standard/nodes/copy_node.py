@@ -312,6 +312,14 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
 
     if len(in_shape) == len(out_shape):
         # Same-rank: per-dim map params, shared access expression on both sides.
+        # Per-dim shapes must match; otherwise the shared index expression
+        # walks past the smaller side (transposes / permutations belong to a
+        # Transpose libnode, reshapes go through the rank-mismatch branch).
+        if list(in_shape) != list(out_shape):
+            raise ValueError(
+                f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
+                f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
+                f"supported -- use a Transpose libnode. Reshapes must change rank.")
         map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
         access_expr = ','.join(map_params)
