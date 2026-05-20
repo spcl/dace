@@ -161,6 +161,25 @@ class LoopToMap(xf.MultiStateTransformation):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
+        # Refuse when the loop's range (start/end/step) references a symbol
+        # that the loop body itself defines via an interstate-edge
+        # assignment. After conversion the body moves into a new
+        # ``loop_body`` NestedSDFG and the assignment goes with it, but the
+        # Map's range stays at the outer scope; the range then references a
+        # symbol only defined inside the new NSDFG, producing a
+        # ``Missing symbols on nested SDFG`` validation failure downstream.
+        range_syms: Set[str] = set()
+        for expr in (start, end, step):
+            try:
+                range_syms |= {str(s) for s in expr.free_symbols}
+            except AttributeError:
+                pass
+        body_assigned_syms: Set[str] = set()
+        for e in self.loop.all_interstate_edges():
+            body_assigned_syms.update(e.data.assignments.keys())
+        if range_syms & body_assigned_syms:
+            return False
+
         _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
