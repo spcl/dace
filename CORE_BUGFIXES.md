@@ -59,23 +59,37 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   `loop_to_map.py`). `preserve_minima=True` is used **only** by
   `propagate_memlets_nested_sdfg` (in/out NSDFG connector propagation), so
   the blast radius is nested-SDFG memlet propagation.
-- **Fix attempts (BOTH REVERTED — regress core consumers):**
-  (a) restore the translated lower bound `external_min + internal_min`
-  preserving extent; (b) skip point dims (`if (rb - re) == 0: continue`).
-  Both fix the prefix-growth but **regress `map_fission`**
-  (`test_single_data_multiple_connectors`, `test_dependent_symbol` →
-  *Memlet subset out-of-bounds*, `test_mapfission_splits_semi_indirect`):
+- **Fix attempts — ALL FOUR REVERTED (all regress `map_fission`):**
+  (a) [utility] restore translated lower bound `external_min + internal_min`
+  preserving extent; (b) [utility] skip point dims (`if (rb - re) == 0:
+  continue`); (c) [caller] in `propagate_memlets_nested_sdfg` pass
+  `preserve_minima=False` when the internal subset references an outer
+  symbol the external edge doesn't (broad `outer_symbols` discriminator);
+  (d) [caller] the principled refinement -- only iteration variables of
+  enclosing scopes (MapEntry params + LoopRegion vars), not arbitrary
+  outer symbols. **All four regress `map_fission`** (consistently
+  `test_symbolic_strided_fission`, `test_mapfission_splits_semi_indirect`,
+  `test_single_data_multiple_connectors`, `test_dependent_symbol`):
   `preserve_minima`'s "force begin to external origin" is *context-correct*
-  for `map_fission`'s inner-local (0-based) NSDFG accesses, where the
-  internal point genuinely must be re-anchored to the external offset.
-- **Conclusion:** the bug is real but **not safely fixable inside
-  `unsqueeze_memlet`** — `preserve_minima` is context-dependent
-  (inner-local vs already-outer-coordinate accesses) and other core
-  consumers rely on the current behaviour. The fix belongs at the *caller*
-  (`propagate_memlets_nested_sdfg` deciding when the internal subset is
-  already in outer coords) or structurally (don't form the
-  NSDFG-bodied-guard shape on re-canonicalize). Core utility left
-  UNTOUCHED (never-regress rule).
+  for `map_fission`'s inner-local NSDFG re-anchoring even when that
+  internal subset references an enclosing iteration variable. The same
+  syntactic pattern carries opposite semantics in the two contexts, so no
+  caller-side discriminator at this point in the codebase can separate
+  them without deeper context.
+- **Conclusion (after 4 attempts):** the bug is real but **not safely
+  fixable at this point in the codebase**. Both the utility (`unsqueeze_memlet`)
+  and its caller (`propagate_memlets_nested_sdfg`) share a syntactic-pattern
+  ambiguity: the same internal subset that for `map_fission` is an inner-local
+  per-iteration shape needing re-anchoring is, for the canonicalize NSDFG,
+  the per-iteration shape that must NOT be re-anchored. No discriminator
+  built from the local information (free symbols, outer_symbols, enclosing
+  iteration variables) separates these without deeper context. The fix has
+  to be **structural** -- either prevent the canonicalize pipeline from
+  forming the NSDFG-bodied-guard shape on a 2nd `canonicalize()` call, or
+  refactor `preserve_minima`'s contract across all call sites with
+  explicit context (e.g. an explicit `internal_in_outer_coords` argument
+  the *caller* sets based on how it built the border memlet, not inferred).
+  Core utility + propagation left UNTOUCHED (never-regress rule).
 - **Reproducer (canonicalize-free):** drafted but **not landed** (it would
   assert the reverted behaviour). Re-add only with a non-regressing fix.
 - **Status:** REVERTED. Real bug, wrong locus; reclassify under Open #4 /
