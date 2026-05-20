@@ -43,7 +43,7 @@ def icon_one_loop(vn: dace.float64[NB, NLEV, NPROMA], wgtfac_e: dace.float64[NB,
                 zkh[jb, jk, je] = vt[jb, jk, je] - wgtfac_e[jb, jk, je]
 
 
-def test_icon_one_loop(remainder_strategy, branch_mode):
+def test_icon_one_loop(remainder_strategy, branch_mode, emission_style):
     nb, nlev, nproma = 2, 16, 64
     vn = numpy.random.rand(nb, nlev, nproma)
     wgtfac_e = numpy.random.rand(nb, nlev, nproma)
@@ -57,6 +57,7 @@ def test_icon_one_loop(remainder_strategy, branch_mode):
         sdfg_name="icon_one_loop",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
+        emission_style=emission_style,
     )
 
 
@@ -73,7 +74,7 @@ def icon_zekinh_gather(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[
                     e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
 
 
-def test_icon_zekinh_gather(remainder_strategy, branch_mode):
+def test_icon_zekinh_gather(remainder_strategy, branch_mode, emission_style):
     # BUG #2 FIXED (InvalidSDFGEdgeError): _generate_loads_to_packed_storage
     # groups consuming edges by gather subset (dict), one packed buffer
     # + per-lane loads per DISTINCT gather (dedup), rewrites EVERY
@@ -102,6 +103,7 @@ def test_icon_zekinh_gather(remainder_strategy, branch_mode):
         sdfg_name="icon_zekinh_gather",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
+        emission_style=emission_style,
     )
 
 
