@@ -1372,7 +1372,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
 
     location = DictProperty(key_type=str,
-                            value_type=symbolic.pystr_to_symbolic,
+                            value_type=sympy.Basic,
                             desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __repr__(self) -> str:

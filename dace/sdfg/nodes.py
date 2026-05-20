@@ -8,6 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
+import sympy as sp
 from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
@@ -596,7 +597,7 @@ class NestedSDFG(CodeNode):
                              allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     symbol_mapping = DictProperty(key_type=str,
-                                  value_type=dace.symbolic.pystr_to_symbolic,
+                                  value_type=sp.Basic,
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
     debuginfo = DebugInfoProperty(allow_none=True)
