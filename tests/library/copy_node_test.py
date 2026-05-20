@@ -159,29 +159,15 @@ def test_copy_cpu_memcpy():
     np.testing.assert_array_equal(B[50:100], A[150:200])
 
 
-def test_copy_cpu_copynd():
-    """CopyND expansion on CPU_Heap -> CPU_Heap compiles and runs."""
-    sdfg, a_name, b_name = _make_same_storage_sdfg("CopyNDTemplate", gpu=False)
+def test_copy_fortran_packed_same_rank():
+    """Same-rank Fortran-packed (column-major) copy lowers via the Auto-routed MappedTasklet."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (4, 5, 6), (4, 5, 6),
+                                                in_strides=(1, 4, 20),
+                                                out_strides=(1, 4, 20),
+                                                name="copy_fortran_packed_same_rank")
     sdfg.validate()
     sdfg.expand_library_nodes()
-    sdfg.validate()
-    exe = sdfg.compile()
-
-    A = np.arange(200, dtype=np.float64)
-    B = np.zeros(200, dtype=np.float64)
-    exe(**{a_name: A, b_name: B})
-
-    np.testing.assert_array_equal(B[50:100], A[150:200])
-
-
-def test_copy_copynd_accepts_fortran_packed():
-    """``CopyNDTemplate`` accepts Fortran-packed (column-major) endpoints when both sides agree."""
-    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (4, 5, 6), (4, 5, 6),
-                                          in_strides=(1, 4, 20),
-                                          out_strides=(1, 4, 20),
-                                          name="copy_copynd_fortran_packed")
-    sdfg.validate()
-    sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
 
     src_data = np.arange(120, dtype=np.float64).reshape(4, 5, 6, order='F').copy(order='F')
     dst_data = np.zeros((4, 5, 6), dtype=np.float64, order='F')
@@ -189,16 +175,17 @@ def test_copy_copynd_accepts_fortran_packed():
     assert np.array_equal(dst_data, src_data)
 
 
-def test_copy_copynd_fortran_packed_strided_slice():
-    """``CopyNDTemplate`` on a sub-slice of Fortran-packed arrays (both sides agree)."""
-    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (8, 10, 12), (8, 10, 12),
-                                          in_strides=(1, 8, 80),
-                                          out_strides=(1, 8, 80),
-                                          in_subset="2:6, 3:7, 4:8",
-                                          out_subset="2:6, 3:7, 4:8",
-                                          name="copy_copynd_fortran_strided_slice")
+def test_copy_fortran_packed_strided_slice():
+    """Same-rank Fortran-packed strided-slice copy via the Auto-routed MappedTasklet."""
+    sdfg, libnode = _make_multidim_libnode_sdfg(None, (8, 10, 12), (8, 10, 12),
+                                                in_strides=(1, 8, 80),
+                                                out_strides=(1, 8, 80),
+                                                in_subset="2:6, 3:7, 4:8",
+                                                out_subset="2:6, 3:7, 4:8",
+                                                name="copy_fortran_packed_strided_slice")
     sdfg.validate()
     sdfg.expand_library_nodes()
+    assert libnode.implementation == 'MappedTasklet'
 
     src_data = np.arange(960, dtype=np.float64).reshape(8, 10, 12, order='F').copy(order='F')
     dst_data = np.zeros((8, 10, 12), dtype=np.float64, order='F')
@@ -209,17 +196,17 @@ def test_copy_copynd_fortran_packed_strided_slice():
     assert np.all(untouched == 0)
 
 
-def test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet():
-    """A mixed C-packed -> Fortran-packed copy (a transpose in memory layout)
-    must NOT route to ``CopyNDTemplate``; the ``Auto`` selector picks ``MappedTasklet``."""
+def test_copy_mixed_c_fortran_via_mapped_tasklet():
+    """A mixed C-packed -> Fortran-packed copy at same rank is fine (per-dim
+    strided access handles both layouts); only rank-mismatch + mixed layouts
+    is rejected."""
     sdfg, libnode = _make_multidim_libnode_sdfg(None, (6, 7), (6, 7),
                                                 in_strides=(7, 1),
                                                 out_strides=(1, 6),
                                                 name="copy_mixed_c_fortran")
     sdfg.validate()
     sdfg.expand_library_nodes()
-    assert libnode.implementation == 'MappedTasklet', (
-        f"Mixed C/Fortran-packed copy must route to MappedTasklet, got {libnode.implementation!r}.")
+    assert libnode.implementation == 'MappedTasklet'
 
     src_data = np.arange(42, dtype=np.float64).reshape(6, 7).copy(order='C')
     dst_data = np.zeros((6, 7), dtype=np.float64, order='F')
@@ -227,58 +214,43 @@ def test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet():
     assert np.array_equal(dst_data, src_data)
 
 
-def test_copy_copynd_rejects_padded_strides():
-    """``CopyNDTemplate`` on padded (non-packed) strides raises -- the layout check rejects them."""
-    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (20, 21, 22), (20, 21, 22),
-                                          in_strides=(1, 32, 32 * 21),
-                                          out_strides=(1, 32, 32 * 21),
-                                          in_total_size=14784,
-                                          out_total_size=14784,
-                                          name="copy_copynd_rejects_padded")
-    sdfg.validate()
-    with pytest.raises(ValueError, match="same packed layout"):
-        sdfg.expand_library_nodes()
-
-
 def test_copy_rank_mismatch_mixed_layouts_raises():
     """Feature regression: rank-mismatch with mixed C/F packed layouts raises.
-    Selector cannot route to CopyNDTemplate (layouts differ), falls through to
-    MappedTasklet, which rejects rank mismatch. The shapes are >=2D on both
-    sides so the C/F distinction is meaningful (1-D arrays are trivially
-    both C- and Fortran-packed)."""
+    The MappedTasklet rank-mismatch branch supports only same-packed-layout
+    endpoints. Shapes are >=2D on both sides so the C/F distinction is
+    meaningful (1-D arrays are trivially both C- and Fortran-packed)."""
     # src is C-packed (3, 8) -- strides (8, 1); dst is Fortran-packed (2, 3, 4)
     # -- strides (1, 2, 6). Same volume = 24.
     sdfg, _ = _make_multidim_libnode_sdfg(None, (3, 8), (2, 3, 4),
                                           out_strides=(1, 2, 6),
                                           name="copy_rank_mismatch_mixed_raises")
     sdfg.validate()
-    with pytest.raises(ValueError, match="same rank"):
+    with pytest.raises(ValueError, match="same major order"):
         sdfg.expand_library_nodes()
 
 
 def test_copy_rank_mismatch_padded_src_raises():
     """Feature regression: rank-mismatch where the higher-rank side has padded
-    strides raises. Padded is neither C- nor Fortran-packed, so the selector
-    cannot route to CopyNDTemplate; MappedTasklet then rejects rank mismatch."""
+    strides raises. Padded is neither C- nor Fortran-packed, so MappedTasklet's
+    rank-mismatch branch rejects."""
     # src padded (row stride 8 instead of 6), dst flat (120,).
     sdfg, _ = _make_multidim_libnode_sdfg(None, (4, 5, 6), (120, ),
                                           in_strides=(5 * 8, 8, 1),
                                           in_total_size=4 * 5 * 8,
                                           name="copy_rank_mismatch_padded_raises")
     sdfg.validate()
-    with pytest.raises(ValueError, match="same rank"):
+    with pytest.raises(ValueError, match="same major order"):
         sdfg.expand_library_nodes()
 
 
-def test_copy_copynd_rank_mismatch_strided_subset_raises():
-    """Feature regression: when ``CopyNDTemplate`` is forced on a rank-mismatch
-    reshape with a strided (non-contiguous) subset on either side, the
-    expansion raises with a 'contiguous subsets' message instead of silently
-    miscopying. A column-slice of a C-packed array is non-contiguous (rows
-    of length 10, picking columns 2..5 walks with stride 10 between picks)."""
-    sdfg, _ = _make_multidim_libnode_sdfg("CopyNDTemplate", (8, 10), (32, ),
+def test_copy_rank_mismatch_strided_subset_raises():
+    """Feature regression: rank-mismatch with a strided (non-contiguous) subset
+    on either side raises. A column-slice of a C-packed array is non-contiguous
+    in memory (rows of length 10, picking columns 2..5 walks with stride 10
+    between picks); the 1-D walker cannot lower it without silently miscopying."""
+    sdfg, _ = _make_multidim_libnode_sdfg(None, (8, 10), (32, ),
                                           in_subset="0:8, 2:6",
-                                          name="copy_copynd_rank_mismatch_strided")
+                                          name="copy_rank_mismatch_strided_subset")
     sdfg.validate()
     with pytest.raises(ValueError, match="contiguous subsets"):
         sdfg.expand_library_nodes()
@@ -683,21 +655,19 @@ def test_cpu_memcpy_rejects_non_contiguous_subset():
 
 
 def test_strided_expansions_accept_non_contiguous():
-    """The ``MappedTasklet`` and ``CopyNDTemplate`` expansions accept a non-contiguous subset."""
-    for impl in ("MappedTasklet", "CopyNDTemplate"):
-        sdfg = dace.SDFG(f"noncontig_{impl}")
-        sdfg.add_array("A", [10, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-        sdfg.add_array("B", [4, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-        state = sdfg.add_state("main")
-        a = state.add_access("A")
-        b = state.add_access("B")
-        libnode = CopyLibraryNode(name="cp")
-        libnode.implementation = impl
-        state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[2:6, 0:10]"))
-        state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
+    """The ``MappedTasklet`` expansion accepts a non-contiguous subset."""
+    sdfg = dace.SDFG("noncontig_MappedTasklet")
+    sdfg.add_array("A", [10, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("B", [4, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
+    state = sdfg.add_state("main")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    libnode = CopyLibraryNode(name="cp")
+    libnode.implementation = "MappedTasklet"
+    state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[2:6, 0:10]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:4, 0:10]"))
 
-        # Must not raise: both expansions handle strided subsets.
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
 
 
 def test_register_copy_expands_with_register_storage():
@@ -930,119 +900,6 @@ def test_shared_memory_copy_rejects_inside_tblock_map():
         sdfg.expand_library_nodes()
 
 
-def test_copynd_expansion_generates_copynd_call():
-    """A concrete-dim 2D ``CopyNDTemplate`` slice copy emits a static ``dace::CopyND`` call and correct output."""
-    sdfg = dace.SDFG("copynd_test")
-    sdfg.add_array("A", [10, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    sdfg.add_array("B", [10, 20], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    state = sdfg.add_state("main")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[2:8, 5:15]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:6, 0:10]"))
-
-    sdfg.expand_library_nodes()
-
-    # Concrete dims and strides must select the static template, not Dynamic.
-    found_copynd = False
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.Tasklet):
-            if n.language == dace.Language.CPP and "dace::CopyND<" in n.code.as_string:
-                found_copynd = True
-                assert "CopyNDDynamic" not in n.code.as_string, (
-                    f"Expected static CopyND, got Dynamic: {n.code.as_string}")
-                break
-    assert found_copynd, "CopyND expansion should produce a dace::CopyND call."
-
-    exe = sdfg.compile()
-    A = np.arange(200, dtype=np.float64).reshape(10, 20).copy()
-    B = np.zeros((10, 20), dtype=np.float64)
-    exe(A=A, B=B)
-    np.testing.assert_array_equal(B[0:6, 0:10], A[2:8, 5:15])
-
-
-def test_copynd_expansion_rejects_cross_boundary():
-    """CopyND expansion rejects copies across CPU/GPU boundary."""
-    sdfg = dace.SDFG("copynd_cross")
-    sdfg.add_array("A", [10], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    sdfg.add_array("B", [10], dace.float64, dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state("main")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd_bad")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[0:10]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:10]"))
-
-    with pytest.raises(Exception, match="CPU/GPU boundary"):
-        sdfg.expand_library_nodes()
-
-
-def test_copynd_uses_static_template_for_concrete_dims():
-    """Concrete dims and strides select static ``dace::CopyND`` with ``Const`` and produce correct output."""
-    sdfg = dace.SDFG("copynd_static")
-    sdfg.add_array("A", [100], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    sdfg.add_array("B", [100], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    state = sdfg.add_state("main")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[10:30]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:20]"))
-
-    sdfg.expand_library_nodes()
-
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP:
-            code = n.code.as_string
-            assert "dace::CopyND<" in code, f"Expected static CopyND, got: {code}"
-            assert "CopyNDDynamic" not in code, f"Should not use Dynamic: {code}"
-            assert "Const" in code, f"Expected ConstDst or ConstSrc: {code}"
-            break
-    else:
-        raise AssertionError("No CPP tasklet found")
-
-    exe = sdfg.compile()
-    A = np.arange(100, dtype=np.float64)
-    B = np.zeros(100, dtype=np.float64)
-    exe(A=A, B=B)
-    np.testing.assert_array_equal(B[0:20], A[10:30])
-
-
-def test_copynd_falls_back_to_dynamic_for_symbolic_dims():
-    """Symbolic dims fall back to ``CopyNDDynamic`` and produce correct output."""
-    N = dace.symbol("N")
-    sdfg = dace.SDFG("copynd_dyn")
-    sdfg.add_array("A", [N], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    sdfg.add_array("B", [N], dace.float64, dace.dtypes.StorageType.CPU_Heap)
-    state = sdfg.add_state("main")
-    a = state.add_access("A")
-    b = state.add_access("B")
-    libnode = CopyLibraryNode(name="cpnd")
-    libnode.implementation = "CopyNDTemplate"
-    state.add_edge(a, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.memlet.Memlet("A[0:N]"))
-    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.memlet.Memlet("B[0:N]"))
-
-    sdfg.expand_library_nodes()
-
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP:
-            code = n.code.as_string
-            assert "CopyNDDynamic" in code, (f"Expected CopyNDDynamic for symbolic dims, got: {code}")
-            break
-    else:
-        raise AssertionError("No CPP tasklet found")
-
-    exe = sdfg.compile()
-    A = np.arange(64, dtype=np.float64)
-    B = np.zeros(64, dtype=np.float64)
-    exe(A=A, B=B, N=64)
-    np.testing.assert_array_equal(B, A)
-
-
 def test_copy_pure_cpu_2d():
     """Pure expansion on a 2D slice copy, CPU_Heap."""
     sdfg = dace.SDFG("copy_2d_cpu")
@@ -1213,9 +1070,7 @@ def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
 if __name__ == "__main__":
     test_copy_pure_cpu()
     test_copy_cpu_memcpy()
-    test_copy_cpu_copynd()
     test_copy_pure_cpu_2d()
-    test_copy_cpu_copynd()
 
     # Properties
     test_copy_node_storage_from_edges()
@@ -1244,18 +1099,15 @@ if __name__ == "__main__":
     test_shared_memory_copy_rejects_cpu()
     test_shared_memory_copy_rejects_inside_tblock_map()
 
-    # CopyND expansion
-    test_copynd_expansion_generates_copynd_call()
-    test_copynd_expansion_rejects_cross_boundary()
-    test_copynd_uses_static_template_for_concrete_dims()
-    test_copynd_falls_back_to_dynamic_for_symbolic_dims()
-    test_copy_copynd_accepts_fortran_packed()
-    test_copy_copynd_fortran_packed_strided_slice()
-    test_copy_mixed_c_fortran_falls_back_to_mapped_tasklet()
-    test_copy_copynd_rejects_padded_strides()
+    # Fortran-packed + mixed-layout via MappedTasklet
+    test_copy_fortran_packed_same_rank()
+    test_copy_fortran_packed_strided_slice()
+    test_copy_mixed_c_fortran_via_mapped_tasklet()
+
+    # Rank-mismatch reshape feature-regression rejection tests
     test_copy_rank_mismatch_mixed_layouts_raises()
     test_copy_rank_mismatch_padded_src_raises()
-    test_copy_copynd_rank_mismatch_strided_subset_raises()
+    test_copy_rank_mismatch_strided_subset_raises()
 
     # GPU tests
     test_copy_pure_gpu()

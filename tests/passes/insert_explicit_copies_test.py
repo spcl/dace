@@ -629,8 +629,8 @@ def test_iec_array_to_array_constant_middle_dim():
     assert np.array_equal(dst, src[:, 2, :])
 
 
-def test_iec_array_to_array_rank_change_uses_copynd():
-    """A volume-equal rank-changing copy with no constant dim takes the ``CopyNDTemplate`` flatten path and
+def test_iec_array_to_array_rank_change_uses_mapped_tasklet():
+    """A volume-equal rank-changing copy with no constant dim takes the ``MappedTasklet`` rank-mismatch path and
     copies correctly."""
     sdfg = dace.SDFG('rank_change_copynd')
     sdfg.add_array('src', [2, 3, 4], dace.float64)
@@ -647,8 +647,8 @@ def test_iec_array_to_array_rank_change_uses_copynd():
     assert np.array_equal(dst, src.reshape(8, 3))
 
 
-def test_iec_array_to_array_flatten_uses_copynd():
-    """A 2D -> 1D flatten copy takes the ``CopyNDTemplate`` path and copies correctly."""
+def test_iec_array_to_array_flatten_uses_mapped_tasklet():
+    """A 2D -> 1D flatten copy takes the ``MappedTasklet`` rank-mismatch path and copies correctly."""
     sdfg = dace.SDFG('flatten_copynd')
     sdfg.add_array('src', [4, 3], dace.float64)
     sdfg.add_array('dst', [12], dace.float64)

@@ -23,10 +23,28 @@ def _is_cross_cpu_gpu(src_storage, dst_storage):
 
 def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     """True if both descriptors are packed in the *same* major order (both C
-    or both Fortran). Mixed layouts (C<->F) are transposes, not copies, so
-    they must not route to ``CopyNDTemplate``."""
+    or both Fortran). Mixed layouts (C<->F) are transposes, not copies."""
     return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
+
+
+def _delinearized_index(b_i, shape: List, layout: str) -> List:
+    """Multi-dim index expressions for a 1-D walker into a packed-layout array.
+
+    :param b_i: the 1-D map symbol.
+    :param shape: per-dim extents in descriptor order.
+    :param layout: ``'C'`` (stride-1 is the last dim) or ``'F'`` (stride-1 is the first dim).
+    :returns: list of per-dim symbolic index expressions, in descriptor order.
+    """
+    cum_strides = []
+    cum = 1
+    iter_shape = reversed(shape) if layout == 'C' else iter(shape)
+    for s in iter_shape:
+        cum_strides.append(cum)
+        cum *= s
+    if layout == 'C':
+        cum_strides.reverse()
+    return [symbolic.int_floor(b_i, cum_strides[d]) % shape[d] for d in range(len(shape))]
 
 
 def _coarse_pick_for_storage_pair(src_storage, dst_storage):
@@ -106,19 +124,11 @@ def select_copy_implementation(node, parent_state, parent_sdfg) -> str:
         if refined is not None:
             impl = refined
 
-    # 6. Rank-mismatched volume-equal copies (contiguous dim collapse, e.g.
-    # (2,3,4) -> (8,3)). MappedTasklet cannot lower these. The only supported
-    # case is both endpoints same packed layout (C or F) with contiguous
-    # subsets -- ``CopyNDTemplate`` collapses to a flat 1-D walk. Anything
-    # else (mixed layouts, padded strides, strided sub-regions) raises.
-    if impl is None or impl == 'MappedTasklet':
-        in_shape_c, _ = collapse_shape_and_strides(in_subset, inp.strides)
-        out_shape_c, _ = collapse_shape_and_strides(out_subset, out.strides)
-        if len(in_shape_c) != len(out_shape_c):
-            if (not _is_cross_cpu_gpu(inp.storage, out.storage) and _both_packed_same_layout(inp, out)
-                    and in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-                return 'CopyNDTemplate'
-
+    # Rank-mismatched copies (e.g. ``(2,3,4) -> (8,3)``) fall through to
+    # MappedTasklet, whose expansion handles the collapse with a 1-D walker
+    # and per-side ``int_floor``/``%`` delinearization -- supported only when
+    # both endpoints are packed-same-layout with contiguous subsets; rejected
+    # otherwise with a specific error message.
     return impl or 'MappedTasklet'
 
 
@@ -196,7 +206,7 @@ def _require_contiguous_subset(name: str, subset, desc, side: str):
     if not subset.is_contiguous_subset(desc):
         raise ValueError(f"This expansion requires a contiguous {side} subset, but '{name}' subset "
                          f"{subset} is not contiguous in shape {desc.shape} with strides {desc.strides}; "
-                         f"use a strided expansion (pure, CopyND, Assignment) instead.")
+                         f"use the ``MappedTasklet`` expansion (handles strided subsets) instead.")
 
 
 @dataclass
@@ -208,8 +218,10 @@ class CopyExpansion:
     state: dace.SDFGState
     inp_name: str
     inp: data.Data
+    in_subset: dace.subsets.Range
     out_name: str
     out: data.Data
+    out_subset: dace.subsets.Range
     map_lengths: List
     in_shape_collapsed: List
     out_shape_collapsed: List
@@ -248,8 +260,10 @@ def _make_expansion_sdfg(node, parent_state, parent_sdfg, allow_cross_storage=Fa
                          state=state,
                          inp_name=inp_name,
                          inp=inp,
+                         in_subset=in_subset,
                          out_name=out_name,
                          out=out,
+                         out_subset=out_subset,
                          map_lengths=map_lengths,
                          in_shape_collapsed=in_shape_collapsed,
                          out_shape_collapsed=out_shape_collapsed)
@@ -299,17 +313,54 @@ def _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_
     # the libnode's outer connectors (``INPUT_CONNECTOR_NAME`` etc.) since
     # those are reserved by the wrapper for the parameter arrays.
     inner_in, inner_out = "_in", "_out"
-    if len(ctx.in_shape_collapsed) != len(ctx.out_shape_collapsed):
-        # MappedTasklet uses one access expression per side; rank-mismatch
-        # reshape (e.g. (2,3,4) -> (8,3)) routes through CopyNDTemplate instead.
-        raise ValueError(f"MappedTasklet requires src and dst to have the same rank; got "
-                         f"src shape {tuple(ctx.in_shape_collapsed)}, dst shape {tuple(ctx.out_shape_collapsed)}. "
-                         f"Use CopyNDTemplate for contiguous packed-same-layout reshapes.")
-    map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
-    map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
-    access_expr = ','.join(map_params)
-    inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
-    outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    in_shape, out_shape = ctx.in_shape_collapsed, ctx.out_shape_collapsed
+
+    if len(in_shape) == len(out_shape):
+        # Same-rank: per-dim map params, shared access expression on both sides.
+        map_params = [f"__i{i}" for i in range(len(ctx.map_lengths))]
+        map_rng = {i: f"0:{s}" for i, s in zip(map_params, ctx.map_lengths)}
+        access_expr = ','.join(map_params)
+        inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
+        outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
+    else:
+        # Rank-mismatch reshape: 1-D walker + per-side delinearization. Supported
+        # only when both endpoints satisfy the collapsing rules:
+        #   1. Same packed major order (both C-contiguous or both Fortran).
+        #   2. Both subsets contiguous in their parent arrays.
+        # The walker iterates the total element count; the per-side delinearization
+        # (``_delinearized_index``) maps the walker into the multi-dim index using
+        # the shared layout. Mixed C/F is a transpose-reshape; non-packed or
+        # non-contiguous endpoints have no unambiguous flat order.
+        if not _both_packed_same_layout(inp, out):
+            raise ValueError(
+                f"MappedTasklet rank-mismatched copy ({tuple(in_shape)} -> {tuple(out_shape)}) requires "
+                f"both endpoints to be packed in the same major order (both C-contiguous or both "
+                f"Fortran-contiguous). Got src '{ctx.inp_name}' strides {tuple(inp.strides)} on shape "
+                f"{tuple(inp.shape)} and dst '{ctx.out_name}' strides {tuple(out.strides)} on shape "
+                f"{tuple(out.shape)}. Mixed layouts are transposes -- use a same-rank Tasklet copy instead.")
+        in_contig = ctx.in_subset.is_contiguous_subset(inp)
+        out_contig = ctx.out_subset.is_contiguous_subset(out)
+        if not (in_contig and out_contig):
+            raise ValueError(
+                f"MappedTasklet rank-mismatched copy ({tuple(in_shape)} -> {tuple(out_shape)}) requires "
+                f"contiguous subsets on both endpoints (the 1-D walker treats the data as a flat sequence). "
+                f"Got src subset {ctx.in_subset} (contiguous: {in_contig}) on shape {tuple(inp.shape)} and "
+                f"dst subset {ctx.out_subset} (contiguous: {out_contig}) on shape {tuple(out.shape)}.")
+        layout = 'C' if inp.is_packed_c_strides() else 'F'
+
+        total = ctx.in_subset.num_elements()
+        b_i_name = "__b_i"
+        b_i = symbolic.symbol(b_i_name)
+        map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
+
+        def _side_access(arr_name, shape):
+            if len(shape) == 1:
+                return f"{arr_name}[{b_i_name}]"
+            idx = _delinearized_index(b_i, shape, layout)
+            return f"{arr_name}[{','.join(sym2cpp(e) for e in idx)}]"
+
+        inputs = {inner_in: dace.memlet.Memlet(_side_access(ctx.inp_name, in_shape))}
+        outputs = {inner_out: dace.memlet.Memlet(_side_access(ctx.out_name, out_shape))}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
@@ -483,67 +534,6 @@ class ExpandMappedTasklet(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         return _make_mapped_tasklet_expansion(node, parent_state, parent_sdfg, allow_cross_storage=True)
-
-
-@library.expansion
-class ExpandCopyNDTemplate(ExpandTransformation):
-    """``dace::CopyND<...>`` template tasklet for strided ND copies. Same-side
-    only; both endpoints must be C-packed (the template's stride args assume
-    row-major contiguous layout)."""
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg,
-                                                                                            parent_state,
-                                                                                            allow_cross_storage=True)
-
-        if _is_cross_cpu_gpu(inp.storage, out.storage):
-            raise ValueError("CopyNDTemplate expansion cannot cross the CPU/GPU "
-                             f"boundary (got {inp.storage} -> {out.storage}).")
-        # Both endpoints must share the same packed layout: the runtime call
-        # walks dims with the supplied strides, so C<->C and F<->F are both
-        # safe, but C<->F is a transpose and must use MappedTasklet instead.
-        if not _both_packed_same_layout(inp, out):
-            raise ValueError(f"CopyNDTemplate expansion requires both endpoints to share the same packed "
-                             f"layout (both C-contiguous or both Fortran-contiguous); got src strides "
-                             f"{tuple(inp.strides)} for shape {tuple(inp.shape)} and dst strides "
-                             f"{tuple(out.strides)} for shape {tuple(out.shape)}. "
-                             f"Use MappedTasklet (mixed layouts / non-packed) or convert via CopyToMap.")
-        if dynamic_inputs:
-            raise NotImplementedError("CopyNDTemplate doesn't yet support dynamic input scalars; "
-                                      "use MappedTasklet if dynamic copy sizes are needed.")
-
-        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
-
-        if len(in_shape_collapsed) != len(out_shape_collapsed):
-            # Rank-mismatched but volume-equal (e.g. (2,3,4) -> (8,3)). The
-            # only safe lowering is a flat 1-D walk over the total element
-            # count, which requires both subsets to be contiguous in their
-            # arrays (no strided sub-regions or weird collapses).
-            if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-                raise ValueError(f"CopyNDTemplate rank-mismatched copy requires contiguous subsets on both endpoints; "
-                                 f"got src subset {in_subset} on shape {tuple(inp.shape)} and dst subset {out_subset} "
-                                 f"on shape {tuple(out.shape)}.")
-            copy_shape = [in_subset.num_elements()]
-            in_strides_collapsed = [1]
-            out_strides_collapsed = [1]
-        else:
-            copy_shape = in_shape_collapsed
-
-        code = _build_copynd_call(inp.dtype.ctype,
-                                  copy_shape,
-                                  in_strides_collapsed,
-                                  out_strides_collapsed,
-                                  in_arg=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                                  out_arg=CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
-
-        return nodes.Tasklet(node.name,
-                             inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
-                             outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
-                             code=code,
-                             language=dace.Language.CPP)
 
 
 @library.expansion
@@ -796,8 +786,7 @@ class ExpandTasklet(ExpandTransformation):
         if in_volume != 1 or out_volume != 1:
             raise ValueError(f"Tasklet expansion requires single-element subsets "
                              f"(got input volume {in_volume}, output volume {out_volume}). "
-                             f"Use MappedTasklet for element-wise multi-element copies, "
-                             f"or CopyNDTemplate for strided ones.")
+                             f"Use MappedTasklet for multi-element copies.")
 
         return nodes.Tasklet(node.name,
                              inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: inp.dtype},
@@ -870,19 +859,19 @@ class CopyLibraryNode(nodes.LibraryNode):
     """Library node representing a data copy between two access nodes.
 
     Each implementation name describes the C++ it emits: ``MappedTasklet``
-    (element-wise tasklet, schedule from storages), ``Tasklet`` (bare
-    assignment, no map), ``CopyNDTemplate`` (``dace::CopyND``), ``MemcpyCPU``
+    (element-wise tasklet, schedule from storages; also handles rank-mismatch
+    reshapes via a 1-D walker when both endpoints are packed-same-layout with
+    contiguous subsets), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU``
     (``std::memcpy``), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
     ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of
     ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
-    ``__syncthreads()``).
+    ``__syncthreads()``; the only remaining ``dace::CopyND`` user).
     """
 
     implementations = {
         "Auto": ExpandAuto,
         "MappedTasklet": ExpandMappedTasklet,
         "Tasklet": ExpandTasklet,
-        "CopyNDTemplate": ExpandCopyNDTemplate,
         "MemcpyCPU": ExpandMemcpyCPU,
         "MemcpyCUDA1D": ExpandMemcpyCUDA1D,
         "MemcpyCUDA2D": ExpandMemcpyCUDA2D,
