@@ -34,7 +34,7 @@ class CopyExpansion:
 
 def _is_cross_cpu_gpu(src_storage, dst_storage):
     """Return True if src and dst crosses the CPU/GPU boundary. ``Register``
-    adopts its enclosing scope's side and is never cross-boundary."""
+    adopts its enclosing scope's side and assumed it is never cross-boundary."""
     return ((src_storage in dtypes.CPU_RESIDENT_STORAGES and dst_storage in dtypes.GPU_RESIDENT_STORAGES)
             or (src_storage in dtypes.GPU_RESIDENT_STORAGES and dst_storage in dtypes.CPU_RESIDENT_STORAGES))
 
