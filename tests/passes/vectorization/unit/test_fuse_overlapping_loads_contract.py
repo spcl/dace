@@ -105,16 +105,70 @@ def test_fuse_threshold_property_round_trip():
     """``FuseOverlappingLoads`` exposes a ``fusion_threshold`` Property
     that gates ``len(v) <= threshold`` in ``_apply`` — default ``1``
     preserves the prior "fuse iff >= 2 overlapping reads" behaviour.
-    A full integration test that observes the discriminating effect on
-    a hand-built SDFG is implementation-fragile (the pass refactors
-    topology in ways that don't map to a simple count metric) and is
-    deferred. This sanity-checks the API surface — the Property
-    accepts an int, default is 1, and the constructor wires it."""
+    Sanity-checks the API surface: Property accepts an int, default
+    is 1, constructor wires it, instrumentation counters initialize."""
     from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
     p_default = FuseOverlappingLoads()
     assert p_default.fusion_threshold == 1
+    assert p_default._last_groups_gated == 0
+    assert p_default._last_groups_fused == 0
     p_high = FuseOverlappingLoads(fusion_threshold=5)
     assert p_high.fusion_threshold == 5
+
+
+def _build_fuse_input_sdfg(num_inner: int):
+    """Hand-build the exact shape ``FuseOverlappingLoads._apply``
+    scans for: an inner MapEntry whose scope parent is also a MapEntry,
+    with ``num_inner`` distinct AccessNodes of the same array fanning
+    into it (each a single source-to-inner load)."""
+    sdfg = dace.SDFG(f"fuse_input_{num_inner}")
+    sdfg.add_array("A", [64], dace.float64)
+    sdfg.add_array("OUT", [32], dace.float64)
+    st = sdfg.add_state(is_start_block=True)
+    outer_src = st.add_access("A")
+    outer_dst = st.add_access("OUT")
+    ome, omx = st.add_map("outer", {"o": "0:1"})
+    ime, imx = st.add_map("body", {"i": "0:32"})
+    t = st.add_tasklet("nop", {f"_in{k}" for k in range(num_inner)}, {"_out"},
+                       "_out = " + " + ".join(f"_in{k}" for k in range(num_inner)))
+    inner_a_root = st.add_access("A")
+    st.add_memlet_path(outer_src, ome, inner_a_root, memlet=dace.Memlet("A[0:64]"))
+    for k in range(num_inner):
+        an = st.add_access("A")
+        st.add_edge(inner_a_root, None, an, None, dace.Memlet("A[0:64]"))
+        st.add_memlet_path(an, ime, t, dst_conn=f"_in{k}", memlet=dace.Memlet(f"A[i + {k}]"))
+    st.add_memlet_path(t, imx, omx, outer_dst, src_conn="_out", memlet=dace.Memlet("OUT[i]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("num_inner,threshold,expect_fused,expect_gated", [
+    # Strictly-above-threshold groups are fused.
+    (3, 1, 1, 0),
+    (3, 2, 1, 0),
+    (5, 4, 1, 0),
+    # At-or-below the per-group count: gated, not fused.
+    (3, 3, 0, 1),
+    (3, 5, 0, 1),
+    (5, 5, 0, 1),
+])
+def test_fuse_threshold_gates_via_instrumentation(num_inner, threshold, expect_fused, expect_gated):
+    """``FuseOverlappingLoads`` records in ``_last_groups_fused`` /
+    ``_last_groups_gated`` how its ``len(v) <= threshold`` gate
+    decided. Hand-built input matches the pass's exact predicate
+    (nested MapEntry + ``num_inner`` distinct fan-in AccessNodes of A)
+    so the gate sees exactly one group of size ``num_inner``. The
+    counters expose the decision directly — non-fragile, no post-hoc
+    topology probe."""
+    from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
+    sdfg = _build_fuse_input_sdfg(num_inner)
+    p = FuseOverlappingLoads(fusion_threshold=threshold)
+    p.apply_pass(sdfg, {})
+    assert p._last_groups_fused == expect_fused, \
+        (f"num_inner={num_inner} threshold={threshold}: fused={p._last_groups_fused} "
+         f"expected {expect_fused}")
+    assert p._last_groups_gated == expect_gated, \
+        (f"num_inner={num_inner} threshold={threshold}: gated={p._last_groups_gated} "
+         f"expected {expect_gated}")
 
 
 def test_fuse_idempotent_on_jacobi1d():
