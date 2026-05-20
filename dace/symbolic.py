@@ -15,6 +15,8 @@ import packaging.version as packaging_version
 
 from dace import dtypes
 
+DEFAULT_SYMBOL_TYPE = dtypes.int32
+
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 _SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
@@ -27,9 +29,8 @@ _SERIALIZED_TYPED_CONSTANT = re.compile(
     rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
 _SERIALIZED_COMPLEX_FLOAT = r'-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
-_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(
-    rf'\(\s*(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)'
-    rf'(?P<csuffix>c64|c128)\b')
+_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*)?'
+                                                rf'(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)(?P<csuffix>c64|c128)\b')
 
 
 def _is_sympy_number(expr) -> bool:
@@ -63,11 +64,8 @@ class symbol(sympy.Symbol):
     s_currentsymbol = 0
 
     def __new__(cls, name=None, dtype=None, **assumptions):
-        # Resolve ``dtype`` lazily so runtime changes to
-        # ``compiler.default_data_types`` are honored (a hard-coded default
-        # kwarg would be frozen at import).
         if dtype is None:
-            dtype = dtypes.typeclass(int)
+            dtype = DEFAULT_SYMBOL_TYPE
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -192,7 +190,7 @@ class UndefinedSymbol(symbol):
 
     def __new__(cls, dtype=None, **assumptions):
         if dtype is None:
-            dtype = dtypes.typeclass(int)
+            dtype = DEFAULT_SYMBOL_TYPE
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
         self.dtype = dtype
@@ -500,11 +498,11 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
     if isinstance(value, numpy.generic):
         return dtypes.dtype_to_typeclass(type(value))
     if isinstance(value, sympy.Integer):
-        return dtypes.typeclass(int)
+        return DEFAULT_SYMBOL_TYPE
     if isinstance(value, sympy.Float):
         return dtypes.float64
     if isinstance(value, int) and not isinstance(value, bool):
-        return dtypes.typeclass(int)
+        return DEFAULT_SYMBOL_TYPE
     if isinstance(value, float):
         return dtypes.float64
     if isinstance(value, (complex, numpy.complexfloating)):
@@ -534,8 +532,11 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     if expr.dtype in (dtypes.complex64, dtypes.complex128):
         re = float(sympy.re(expr.value))
         im = float(sympy.im(expr.value))
-        op = '+' if im >= 0 else '-'
         suffix = 'c64' if expr.dtype == dtypes.complex64 else 'c128'
+        if re == 0.0 and im != 0.0:
+            sign = '-' if im < 0 else ''
+            return f'({sign}{_format_float(abs(im))}j){suffix}'
+        op = '+' if im >= 0 else '-'
         return f'({_format_float(re)} {op} {_format_float(abs(im))}j){suffix}'
     if isinstance(expr.value, sympy.Float):
         value = _format_float(float(expr.value))
@@ -552,7 +553,7 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
 
 def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
     kwargs = {}
-    if expr.dtype != dtypes.typeclass(int):
+    if expr.dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
 
     default_assumptions = _symbol_default_assumptions(expr)
@@ -577,7 +578,7 @@ def symtype(expr):
     """ Returns the inferred symbol type from a symbolic expression. """
     stypes = [s.dtype for s in symlist(expr).values()]
     if len(stypes) == 0:
-        return dtypes.typeclass(int)
+        return DEFAULT_SYMBOL_TYPE
     elif _checkEqualIvo(stypes):
         return stypes[0]
     else:
@@ -1710,7 +1711,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
             symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
-            dtype = kwargs.pop('dtype', dtypes.typeclass(int))
+            dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
             return symbol(symname, dtype=dtype, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
@@ -1909,8 +1910,9 @@ def deserialize_symbolic(expr) -> SymbolicType:
 
 def _rewrite_typed_complex(m: re.Match) -> str:
     dtype = 'complex64' if m.group('csuffix') == 'c64' else 'complex128'
-    sign = '' if m.group('op') == '+' else '-'
-    return f'dace.{dtype}(complex({m.group("re")}, {sign}{m.group("im")}))'
+    re_val = m.group('re') or '0'
+    sign = '-' if m.group('op') == '-' else ''
+    return f'dace.{dtype}(complex({re_val}, {sign}{m.group("im")}))'
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:

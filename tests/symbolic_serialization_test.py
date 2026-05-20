@@ -389,8 +389,11 @@ def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
     '(3.0 + 4.0j)c128',
     '(3.0 - 4.0j)c128',
     '(-3.0 + 4.0j)c128',
-    '(0.0 + 4.0j)c128',
     '(3.0 + 4.0j)c64',
+    '(4.0j)c128',
+    '(-4.0j)c128',
+    '(4.0j)c64',
+    '(-4.0j)c64',
 ])
 def test_typed_constant_canonical_form_roundtrips(serialized):
     restored = symbolic.deserialize_symbolic(serialized)
@@ -399,7 +402,9 @@ def test_typed_constant_canonical_form_roundtrips(serialized):
 
 
 @pytest.mark.parametrize('input_form,canonical', [
-    ('4j', '(0.0 + 4.0j)c128'),
+    ('4j', '(4.0j)c128'),
+    ('-4j', '(-4.0j)c128'),
+    ('(0.0 + 4.0j)c128', '(4.0j)c128'),
     ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
     ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
     ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
