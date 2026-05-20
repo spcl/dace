@@ -8,13 +8,13 @@ into the linear ``_o`` buffer; the outer iter-vars and upper-bound
 expressions are resolved from the surrounding scope.
 """
 from typing import Optional, Tuple
-from functools import reduce
-from operator import mul
 
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
+
+from .._pure_codegen import nested_loops, tile_offset
 
 
 @library.expansion
@@ -35,24 +35,12 @@ class ExpandTileMaskGenPure(ExpandTransformation):
         widths = list(node.widths)
         iter_vars = list(node.iter_vars)
         global_ubs = list(node.global_ubs)
-        n = reduce(mul, widths, 1)
-        K = len(widths)
-        rem_var = "__rem"
-        decoders = []
-        for k in reversed(range(K)):
-            decoders.append(f"        const std::size_t __l{k} = {rem_var} % {widths[k]};")
-            decoders.append(f"        {rem_var} /= {widths[k]};")
-        decoders_block = "\n".join(decoders)
+        off = tile_offset(widths)
         terms = [f"((({iv}) + __l{k}) < ({ub}))"
                  for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
         cond = " && ".join(terms) if terms else "true"
-        code = (
-            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
-            f"        std::size_t {rem_var} = __k;\n"
-            f"{decoders_block}\n"
-            f"        _o[__k] = {cond};\n"
-            f"}}"
-        )
+        body = f"_o[{off}] = {cond};"
+        code = nested_loops(widths, body)
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs=set(),

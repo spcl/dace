@@ -5,13 +5,13 @@ Symmetric to :class:`TileLoad`; the pure expansion emits a CPP tasklet
 that walks the K-fold nested index space.
 """
 from typing import Optional, Tuple
-from functools import reduce
-from operator import mul
 
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
+
+from .._pure_codegen import nested_loops, offset_via_strides, tile_offset
 
 
 @library.expansion
@@ -41,27 +41,13 @@ class ExpandTileStorePure(ExpandTransformation):
         dst_arr = parent_sdfg.arrays[dst_edge.data.data]
         dst_strides = [symstr(s) for s in dst_arr.strides[-K:]]
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-        n = reduce(mul, widths, 1)
-        rem_var = "__rem"
-        decoders = []
-        for k in reversed(range(K)):
-            decoders.append(f"        const std::size_t __l{k} = {rem_var} % {widths[k]};")
-            decoders.append(f"        {rem_var} /= {widths[k]};")
-        decoders_block = "\n".join(decoders)
-        dst_offset = " + ".join(
-            f"({coeff[k]} * ({dst_strides[k]}) * __l{k})" for k in range(K)
-        ) if K else "0"
+        dst_off = offset_via_strides(coeff, dst_strides)
+        src_off = tile_offset(widths)
         if node.has_mask:
-            body_inner = f"        if (_mask[__k]) {{ _dst[{dst_offset}] = _src[__k]; }}"
+            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = _src[{src_off}]; }}"
         else:
-            body_inner = f"        _dst[{dst_offset}] = _src[__k];"
-        code = (
-            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
-            f"        std::size_t {rem_var} = __k;\n"
-            f"{decoders_block}\n"
-            f"{body_inner}\n"
-            f"}}"
-        )
+            body = f"_dst[{dst_off}] = _src[{src_off}];"
+        code = nested_loops(widths, body)
         inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
         return nodes.Tasklet(
             label=f"{node.label}_pure",

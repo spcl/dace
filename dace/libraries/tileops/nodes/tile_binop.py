@@ -11,13 +11,13 @@ The pure expansion returns a CPP tasklet whose body is a single
 ``for``-loop over the flattened tile (correctness-only).
 """
 from typing import Optional, Tuple
-from functools import reduce
-from operator import mul
 
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
+
+from .._pure_codegen import nested_loops, tile_offset
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
@@ -70,25 +70,18 @@ class ExpandTileBinopPure(ExpandTransformation):
         """
         node.validate(parent_sdfg, parent_state)
         widths = list(node.widths)
-        n = reduce(mul, widths, 1)
-
-        lhs = node.expr_a if node.kind_a == _SYMBOL else "_a[__k]"
-        rhs = node.expr_b if node.kind_b == _SYMBOL else "_b[__k]"
+        off = tile_offset(widths)
+        lhs = node.expr_a if node.kind_a == _SYMBOL else f"_a[{off}]"
+        rhs = node.expr_b if node.kind_b == _SYMBOL else f"_b[{off}]"
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
-
+        out_dtype = parent_sdfg.arrays[
+            next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data
+        ].dtype.ctype
         if node.has_mask:
-            body_inner = (
-                f"_c[__k] = _mask[__k] ? ({rhs_expr}) : "
-                f"static_cast<std::remove_reference_t<decltype(_c[__k])>>(0);"
-            )
+            body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
         else:
-            body_inner = f"_c[__k] = {rhs_expr};"
-
-        code = (
-            f"for (std::size_t __k = 0; __k < {n}; ++__k) {{\n"
-            f"    {body_inner}\n"
-            f"}}"
-        )
+            body = f"_c[{off}] = {rhs_expr};"
+        code = nested_loops(widths, body)
         inputs = {"_a", "_b", "_mask"}
         if node.kind_a == _SYMBOL:
             inputs.discard("_a")
