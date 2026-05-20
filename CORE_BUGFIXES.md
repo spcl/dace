@@ -47,7 +47,7 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
 
 ### 3. `unsqueeze_memlet` `preserve_minima` collapsed a translated access to the external origin
 - **File:** `dace/transformation/helpers.py` (`unsqueeze_memlet`, `preserve_minima` branch)
-- **Bug:** `preserve_minima` set each result dim to
+- **Bug (as originally diagnosed):** `preserve_minima` set each result dim to
   `(external_min, internal_end, step)` — it forced the lower bound to the
   **external array origin** while keeping the internal access' upper bound,
   dropping the internal access' own offset. A per-iteration point
@@ -59,23 +59,33 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   `loop_to_map.py`). `preserve_minima=True` is used **only** by
   `propagate_memlets_nested_sdfg` (in/out NSDFG connector propagation), so
   the blast radius is nested-SDFG memlet propagation.
-- **Fix attempts — ALL FOUR REVERTED (all regress `map_fission`):**
-  (a) [utility] restore translated lower bound `external_min + internal_min`
-  preserving extent; (b) [utility] skip point dims (`if (rb - re) == 0:
-  continue`); (c) [caller] in `propagate_memlets_nested_sdfg` pass
-  `preserve_minima=False` when the internal subset references an outer
-  symbol the external edge doesn't (broad `outer_symbols` discriminator);
-  (d) [caller] the principled refinement -- only iteration variables of
-  enclosing scopes (MapEntry params + LoopRegion vars), not arbitrary
-  outer symbols. **All four regress `map_fission`** (consistently
-  `test_symbolic_strided_fission`, `test_mapfission_splits_semi_indirect`,
-  `test_single_data_multiple_connectors`, `test_dependent_symbol`):
-  `preserve_minima`'s "force begin to external origin" is *context-correct*
-  for `map_fission`'s inner-local NSDFG re-anchoring even when that
-  internal subset references an enclosing iteration variable. The same
-  syntactic pattern carries opposite semantics in the two contexts, so no
-  caller-side discriminator at this point in the codebase can separate
-  them without deeper context.
+- **Fix attempts — ALL FIVE REVERTED (each regresses some core consumer):**
+  (a) [utility, subset-symbols] restore translated lower bound
+  `external_min + internal_min` preserving extent;
+  (b) [utility, subset-pattern] skip point dims (`if (rb - re) == 0:
+  continue`);
+  (c) [caller, broad symbol discriminator] pass `preserve_minima=False`
+  when the internal subset references an outer symbol the external edge
+  doesn't (`outer_symbols.keys() - ext_syms`);
+  (d) [caller, narrowed-symbol discriminator] restrict (c) to enclosing
+  iteration variables only (MapEntry params + LoopRegion vars);
+  (e) [caller, descriptor-shape signal] pass `preserve_minima=False` iff
+  the NSDFG's inner array descriptor has the **same shape** as the outer
+  (the inner access is already in outer coordinates), preserve otherwise.
+  **(a)-(d)** all regress `map_fission`
+  (`test_symbolic_strided_fission`, `test_mapfission_splits_semi_indirect`,
+  `test_single_data_multiple_connectors`, `test_dependent_symbol`) -- the
+  same syntactic pattern in `map_fission`'s inner-local NSDFG carries the
+  opposite semantics. **(e)** passes the full `map_fission` gate (34/34,
+  no regressions there) and the propagation suites (29P/0F), AND fixes
+  the original 2x-`canonicalize()` invalid-SDFG crash (idem now `1x ->
+  (1,2), 2x -> (2,2) valid`); but in the broader sample it regresses
+  `tests/transformations/interstate/loop_to_map_test.py::test_nested_loops`
+  (passes on clean HEAD, fails with the fix). So even the
+  descriptor-shape signal -- which directly captures the semantic
+  difference between the two contexts -- is not sufficient: a third
+  context (loop_to_map's nested-loops NSDFG) shares descriptor-shape
+  geometry with the canonicalize case but needs `preserve_minima=True`.
 - **Conclusion (after 4 attempts):** the bug is real but **not safely
   fixable at this point in the codebase**. Both the utility (`unsqueeze_memlet`)
   and its caller (`propagate_memlets_nested_sdfg`) share a syntactic-pattern
@@ -92,21 +102,39 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   Core utility + propagation left UNTOUCHED (never-regress rule).
 - **Reproducer (canonicalize-free):** drafted but **not landed** (it would
   assert the reverted behaviour). Re-add only with a non-regressing fix.
-- **Status:** REVERTED. Real bug, wrong locus; reclassify under Open #4 /
-  the structural fix. Single-run `canonicalize` is unaffected.
+- **Status (revised):** **NOT A BUG — INTENTIONAL.** Inspection of the
+  surviving sparse-dim propagation test (`test_nsdfg_memlet_propagation_with_one_sparse_dimension`,
+  authored 2022-12-13 by Philipp Schaad in PR #1176 _"Fix memlet propagation
+  out of nested SDFGs"_) shows the `[0:i+1, ...]` running-union form is the
+  **codified expected behaviour** for the inner-out memlet of a per-iter WCR
+  write, encoding "writes contributed up to iteration `i`". `i` *is* in
+  scope on the NSDFG↔MapExit edge (it is inside the enclosing Map's scope —
+  `symbols_defined_at(NSDFG) = {M, N, i, j}`), so the resulting SDFG is
+  well-formed; the form is over-approximating, not invalid. The original
+  validation crash that appeared on 2nd/3rd `canonicalize()` is an
+  **orthogonal validation bug** in `dace/sdfg/validation.py:887`, tracked
+  separately as fix #9 below. With #9 applied, the multi-pass `canonicalize`
+  reaches a stable fixed point on the guarded imperfect nest
+  (1x→(1,2), 2x=3x=4x=(2,2)) WITHOUT touching `preserve_minima`. No code
+  change to `helpers.py` / `propagation.py`.
 
 ## Open (separate issue, root-caused)
 
 ### 4. Canonicalize structural non-idempotence on the guarded imperfect nest
-- **Symptom:** with fix #3 applied, `canonicalize` on the guarded
-  imperfect nest is valid at 1x and 2x but the ConditionalBlock count
-  drifts `1x->(1 CB) 2x->(2 CB)` and 3x crashes (same
-  `'NestedSDFG' has no attribute data`). The guard is **duplicated** on
-  re-canonicalization rather than recognised as already-canonical.
-- **Not** the `unsqueeze_memlet` bug (that is fixed); a pipeline-level
-  guard-duplication / fixpoint issue. Single-run canonicalize is correct.
-- **Status:** root-caused to guard duplication on re-entry; fix pending,
-  tracked in the memory checkpoint. Lower priority (single-run is correct).
+- **Symptom:** without fix #9, `canonicalize` on the guarded imperfect nest
+  is valid at 1x and 2x but the ConditionalBlock count drifts
+  `1x->(1 CB) 2x->(2 CB)` and 3x crashes
+  (`'NestedSDFG' has no attribute data`).
+- **Resolution:** the 3x crash is the validation bug in fix #9 below; with
+  #9 applied the pipeline reaches a stable fixed point
+  (`1x->(1,2), 2x->(2,2), 3x->(2,2), 4x->(2,2)`). The 1→2 CB drift on the
+  *first* re-entry is a fixpoint-recognition issue: the pipeline produces a
+  semantically-equivalent form (guard duplicated then collapsed in further
+  passes) without re-introducing the loose end. Single-run canonicalize is
+  correct and the multi-run output is stable from the 2nd call onward.
+- **Status:** RESOLVED by #9 (validation-side); the 1→2 CB single-step drift
+  on the very first re-canonicalize is documented but no longer blocks
+  multi-pass usage.
 
 ### 6. `MoveLoopInvariantIfUp` is broken (dead code) — redesign in progress
 - **File:** `dace/transformation/interstate/move_loop_invariant_if_up.py`
@@ -164,6 +192,38 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   `tests/mapfission_indirect_loopnests_test.py` (dace-fortran, UNVERIFIED —
   needs the d2/FaCe env) exercises the exact `a(idx(i))` lowering; a
   main-safe focused unit test is TODO.
+- **Status:** fixed, regression-verified; commit pending.
+
+### 9. `validate_state` crashed accessing `.data` on a non-AccessNode endpoint
+- **File:** `dace/sdfg/validation.py` (`validate_state`, dimensionality-mismatch check)
+- **Bug:** the src/dst-element-count check assumed both endpoints are
+  `AccessNode` (it accessed `sdfg.arrays[src_node.data].veclen` and
+  `sdfg.arrays[dst_node.data].veclen` unconditionally). On any edge with
+  `other_subset is not None` whose endpoint is a `NestedSDFG`/`MapEntry`/
+  `MapExit`, the `.data` attribute does not exist, raising
+  `AttributeError: 'NestedSDFG' object has no attribute 'data'` and aborting
+  validation. Triggered any time a multi-pass canonicalize produced a deeper
+  NSDFG nest whose inner NSDFG↔MapExit edge carried both `src_subset` and
+  `dst_subset` (e.g. a single-scalar reduction destination materialised on a
+  per-iteration write). The View-exception branch had the same latent
+  assumption.
+- **Fix:** read each side's `veclen` *only* when its endpoint is an
+  `AccessNode`; default to `1` otherwise (scope nodes route data through
+  connectors and contribute `veclen = 1` at the edge boundary). Guard the
+  two `View` exception clauses with the same `isinstance(..., AccessNode)`
+  check so they no longer dereference `.data` on scope nodes.
+- **Verification:** the `canonicalize` idempotence repro
+  (`for i: for j: b[i,j]=a[i,j]*2.0; c[i]=a[i,0]+1.0` under a top-level
+  guard) now reaches a stable fixed point at the 2nd call and stays there
+  (`1x->(1,2), 2x=3x=4x=(2,2)`, no warnings). Full transformations +
+  canonicalize + propagation + passes sweep: same 14 failures as the
+  unchanged baseline (all pre-existing: 5 `offset_loop_and_maps`
+  TODO-`raise` cases, 1 `perf_loop_nesting` refusal on "Loop symbols used in
+  block", 1 `branch_elimination::test_s441` `np.random.rand(symbol)` test
+  bug, plus 7 environmental cache/import errors). Zero net regressions.
+- **Reproducer test (main-safe):** TODO — construct the minimal
+  NSDFG→MapExit edge with `other_subset` set and assert `sdfg.validate()`
+  succeeds (without the fix the assertion errors with `AttributeError`).
 - **Status:** fixed, regression-verified; commit pending.
 
 ### 8. (BACKLOG, not a bug) MoveIfIntoMap underpowered for the top-level guard-over-map shape
