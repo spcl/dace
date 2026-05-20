@@ -107,29 +107,25 @@ def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
 
 
 def test_complex_literal_parses_as_complex128():
-    """A bare ``4j`` literal has no atomic plain-SymPy form and parses directly
-    to a ``complex128`` TypedConstant."""
     tc = symbolic.deserialize_symbolic('4j')
     assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
     assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(0, 4)
 
 
 def test_complex_constant_parse_save_roundtrip():
-    """``complex(re, im)`` parses to a complex128 TypedConstant and round-trips;
-    a complex64 constant preserves its dtype via the cast-wrapped form."""
     tc = symbolic.deserialize_symbolic('complex(3.0, 4.2)')
     assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
     assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(3.0, 4.2)
 
     serialized = symbolic.serialize_symbolic(tc)
-    assert serialized == 'dace.complex128(complex(3.0, 4.2))'
+    assert serialized == '(3.0 + 4.2j)c128'
     restored = symbolic.deserialize_symbolic(serialized)
     assert restored.dtype == dace.complex128
     assert symbolic.serialize_symbolic(restored) == serialized
 
     c64 = symbolic.TypedConstant(complex(1, 2), dace.complex64)
     s64 = symbolic.serialize_symbolic(c64)
-    assert s64 == 'dace.complex64(complex(1.0, 2.0))'
+    assert s64 == '(1.0 + 2.0j)c64'
     r64 = symbolic.deserialize_symbolic(s64)
     assert r64.dtype == dace.complex64 and symbolic.serialize_symbolic(r64) == s64
 
@@ -363,7 +359,15 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
 
 
 @pytest.mark.parametrize('op', ['Min', 'Max'])
-@pytest.mark.parametrize('literal', ['5.0', '5.0f64', '5f32', '7f64'])
+@pytest.mark.parametrize('literal', [
+    '5.0',
+    '5.0f64',
+    '5f32',
+    '7f64',
+    '(3.0 + 4.0j)c128',
+    '(3.0 - 4.0j)c128',
+    '(3.0 + 4.0j)c64',
+])
 def test_minmax_with_float_literal_roundtrip(op, literal):
     serialized = f'{op}({literal}, $N)'
     restored = symbolic.deserialize_symbolic(serialized)
@@ -371,9 +375,39 @@ def test_minmax_with_float_literal_roundtrip(op, literal):
 
 
 def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
-    """``double(7)`` normalizes to ``7f64`` on first serialize, then stable."""
     first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic('Max(double(7), 5.0)'))
     assert first == 'Max(7f64, 5.0)'
+    second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
+    assert first == second
+
+
+@pytest.mark.parametrize('serialized', [
+    '5i16',
+    '7i64',
+    '5f32',
+    '5.0f64',
+    '(3.0 + 4.0j)c128',
+    '(3.0 - 4.0j)c128',
+    '(-3.0 + 4.0j)c128',
+    '(0.0 + 4.0j)c128',
+    '(3.0 + 4.0j)c64',
+])
+def test_typed_constant_canonical_form_roundtrips(serialized):
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert isinstance(restored, symbolic.TypedConstant)
+    assert symbolic.serialize_symbolic(restored) == serialized
+
+
+@pytest.mark.parametrize('input_form,canonical', [
+    ('4j', '(0.0 + 4.0j)c128'),
+    ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
+    ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
+    ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
+    ('dace.complex128(complex(3.0, -4.0))', '(3.0 - 4.0j)c128'),
+])
+def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonical):
+    first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(input_form))
+    assert first == canonical
     second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
     assert first == second
 

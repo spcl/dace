@@ -26,6 +26,10 @@ _SERIALIZED_TYPED_CONSTANT_SUFFIX = r'|'.join(
 _SERIALIZED_TYPED_CONSTANT = re.compile(
     rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
+_SERIALIZED_COMPLEX_FLOAT = r'-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(
+    rf'\(\s*(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)'
+    rf'(?P<csuffix>c64|c128)\b')
 
 
 def _is_sympy_number(expr) -> bool:
@@ -528,16 +532,17 @@ def _format_float(value: float) -> str:
 
 def _typed_constant_to_string(expr: TypedConstant) -> str:
     if expr.dtype in (dtypes.complex64, dtypes.complex128):
-        re = _format_float(float(sympy.re(expr.value)))
-        im = _format_float(float(sympy.im(expr.value)))
-        value = f'complex({re}, {im})'
-    elif isinstance(expr.value, sympy.Float):
+        re = float(sympy.re(expr.value))
+        im = float(sympy.im(expr.value))
+        op = '+' if im >= 0 else '-'
+        suffix = 'c64' if expr.dtype == dtypes.complex64 else 'c128'
+        return f'({_format_float(re)} {op} {_format_float(abs(im))}j){suffix}'
+    if isinstance(expr.value, sympy.Float):
         value = _format_float(float(expr.value))
     else:
         value = sympy.printing.str.sstr(expr.value)
     if expr.dtype in dtypes.TYPECLASS_TO_LITERAL_SUFFIX:
         return f'{value}{_typed_constant_suffix(expr.dtype)}'
-    # Suffix-less dtypes (complex, bool) round-trip via the cast form.
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
@@ -1896,9 +1901,16 @@ def deserialize_symbolic(expr) -> SymbolicType:
     # generated helper identifiers.
     expr = expr.replace('$?', _SERIALIZED_UNDEFINED_SYMBOL)
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
+    expr = _SERIALIZED_TYPED_COMPLEX_CONSTANT.sub(_rewrite_typed_complex, expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
         lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
     return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
+
+
+def _rewrite_typed_complex(m: re.Match) -> str:
+    dtype = 'complex64' if m.group('csuffix') == 'c64' else 'complex128'
+    sign = '' if m.group('op') == '+' else '-'
+    return f'dace.{dtype}(complex({m.group("re")}, {sign}{m.group("im")}))'
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
