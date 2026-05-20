@@ -71,7 +71,7 @@ def strided_store_stride_3(src: dace.float64[N], dst: dace.float64[3 * N], scale
         dst[i * 3] = src[i] * scale
 
 
-def test_vecscale_unit_stride():
+def test_vecscale_unit_stride(emission_style):
     N = 64
     src = numpy.random.random(N)
     dst = numpy.zeros(N)
@@ -87,10 +87,11 @@ def test_vecscale_unit_stride():
         },
         vector_width=8,
         sdfg_name="vecscale_unit_stride",
+        emission_style=emission_style,
     )
 
 
-def test_gather_load():
+def test_gather_load(emission_style):
     N = 64
     src = numpy.random.random(N)
     idx = numpy.random.permutation(N).astype(numpy.int64)
@@ -108,6 +109,7 @@ def test_gather_load():
         },
         vector_width=8,
         sdfg_name="gather_load",
+        emission_style=emission_style,
     )
 
 
@@ -131,7 +133,7 @@ def test_gather_load_matrix_specialized():
     )
 
 
-def test_strided_load_stride_2():
+def test_strided_load_stride_2(emission_style):
     N = 64
     src = numpy.random.random(2 * N)
     dst = numpy.zeros(N)
@@ -147,6 +149,7 @@ def test_strided_load_stride_2():
         },
         vector_width=8,
         sdfg_name="strided_load_stride_2",
+        emission_style=emission_style,
     )
 
 
@@ -192,7 +195,7 @@ def test_strided_load_stride_3():
     )
 
 
-def test_scatter_store():
+def test_scatter_store(emission_style):
     N = 64
     src = numpy.random.random(N)
     idx = numpy.random.permutation(N).astype(numpy.int64)
@@ -210,10 +213,11 @@ def test_scatter_store():
         },
         vector_width=8,
         sdfg_name="scatter_store",
+        emission_style=emission_style,
     )
 
 
-def test_strided_store_stride_2():
+def test_strided_store_stride_2(emission_style):
     N = 64
     src = numpy.random.random(N)
     dst = numpy.zeros(2 * N)
@@ -229,6 +233,7 @@ def test_strided_store_stride_2():
         },
         vector_width=8,
         sdfg_name="strided_store_stride_2",
+        emission_style=emission_style,
     )
 
 
