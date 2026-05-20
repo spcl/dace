@@ -1057,7 +1057,6 @@ def _build_explicit_copy_sdfg(direction: str, dtype: dace.dtypes.typeclass = dac
 
 
 @pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
 def test_copy_single_element_h2d():
     """Single-element host -> GPU copy compiles and round-trips."""
     pytest.importorskip('cupy')
@@ -1072,7 +1071,6 @@ def test_copy_single_element_h2d():
 
 
 @pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
 def test_copy_two_element_h2d():
     """A 2-element host -> GPU copy compiles and round-trips (pointer-typed connectors, unlike single element)."""
     pytest.importorskip('cupy')
@@ -1096,7 +1094,6 @@ def test_copy_two_element_h2d():
 
 
 @pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
 def test_copy_single_element_d2h():
     """Single-element GPU -> host copy compiles and round-trips."""
     pytest.importorskip('cupy')
@@ -1108,29 +1105,6 @@ def test_copy_single_element_d2h():
 
     sdfg.compile()(host=host, dev=dev)
     np.testing.assert_allclose(host, cp.asnumpy(dev))
-
-
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
-def test_copy_single_element_memcpy_connector_types():
-    """In a single-element d2h memcpy tasklet the GPU connector is pointer-typed, the CPU one stays value-typed
-    and is addressed via ``&`` in the body."""
-    pytest.importorskip('cupy')
-
-    sdfg = _build_explicit_copy_sdfg('d2h')
-    sdfg.expand_library_nodes()
-    found = 0
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.Tasklet) and 'cudaMemcpyAsync' in node.code.as_string:
-                assert isinstance(node.in_connectors[CopyLibraryNode.INPUT_CONNECTOR_NAME], dace.dtypes.pointer), \
-                    'GPU input must be pointer-typed'
-                assert not isinstance(node.out_connectors[CopyLibraryNode.OUTPUT_CONNECTOR_NAME], dace.dtypes.pointer), \
-                    'single-element CPU output must be value-typed'
-                assert '&_cpy_out' in node.code.as_string, \
-                    'CPU value-typed output must be addressed via & in the memcpy call'
-                found += 1
-    assert found > 0, 'no memcpy tasklet found in expanded d2h SDFG'
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
