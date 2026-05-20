@@ -40,18 +40,10 @@ def _is_cross_cpu_gpu(src_storage, dst_storage):
 
 
 def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
-    """True if both descriptors are packed in the *same* major order (both C
-    or both Fortran). Mixed layouts (C<->F) are transposes, not copies."""
+    """True if both descriptors are packed in the same major order (both C
+    or both Fortran)."""
     return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
             or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
-
-
-def _require_contiguous_subset(name: str, subset, desc, side: str):
-    """Raise if ``subset`` is not contiguous in the array described by ``desc``."""
-    if not subset.is_contiguous_subset(desc):
-        raise ValueError(f"This expansion requires a contiguous {side} subset, but '{name}' subset "
-                         f"{subset} is not contiguous in shape {desc.shape} with strides {desc.strides}; "
-                         f"use the ``MappedTasklet`` expansion (handles strided subsets) instead.")
 
 
 def _delinearized_index(b_i, shape: List, layout: str) -> List:
@@ -407,8 +399,10 @@ def _make_cuda_memcpy_expansion(node, parent_state, parent_sdfg):
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=True)
-    _require_contiguous_subset(inp_name, in_subset, inp, "input")
-    _require_contiguous_subset(out_name, out_subset, out, "output")
+    if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+        raise ValueError(f"MemcpyCUDA1D requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
+                         f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
+                         f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
     cp_size = in_subset.num_elements()
     in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
@@ -534,8 +528,10 @@ class ExpandMemcpyCPU(ExpandTransformation):
         inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
                                                                             parent_state,
                                                                             allow_cross_storage=False)
-        _require_contiguous_subset(inp_name, in_subset, inp, "input")
-        _require_contiguous_subset(out_name, out_subset, out, "output")
+        if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
+            raise ValueError(f"MemcpyCPU requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
+                             f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
+                             f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
         cp_size = in_subset.num_elements()
         in_conn_type, out_conn_type, in_arg, out_arg = _memcpy_connector_typing(
