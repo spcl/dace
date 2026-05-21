@@ -10,6 +10,7 @@ divisible-by-W=8, 65 forces a remainder), ``remainder_strategy`` in
 Reference correctness is pinned against the unvectorized SDFG.
 """
 import copy
+from math import sin, cos, log, exp, pow  # noqa: A004 — used inside @dace.program bodies
 
 import dace
 import numpy as np
