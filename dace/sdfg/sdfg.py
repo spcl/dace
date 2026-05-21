@@ -184,11 +184,11 @@ class InterstateEdge(object):
         #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
         #       assignments as symbolic expressions without specialized to/from_json functions.
         to_json=lambda d: {
-            k: symbolic.serialize_symbolic(symbolic.pystr_to_symbolic(v))
+            k: str(symbolic.pystr_to_symbolic(v))
             for k, v in d.items()
         },
         from_json=(lambda d, *args, context=None, **kwargs: {
-            k: str(symbolic.deserialize_symbolic(v))
+            k: str(symbolic.pystr_to_symbolic(v))
             for k, v in d.items()
         }))
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
