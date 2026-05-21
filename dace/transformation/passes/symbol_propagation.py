@@ -118,10 +118,16 @@ class SymbolPropagation(ppl.Pass):
                     changed = True
                     out_syms[cfg_blk] = new_out_syms
 
-        # Update symbols in the cfg_blk
+        # Update symbols in the cfg_blk, accumulating the symbols actually
+        # propagated (eliminated from a block / edge). The pipeline treats a
+        # non-None return as "this pass modified the SDFG" and a None return as
+        # "no change" (see ``Pipeline.apply_pass``); returning an honest set
+        # lets a FixedPointPipeline such as ``SimplifyPass`` converge instead of
+        # re-running this pass forever on a no-op.
+        propagated: Set[str] = set()
         for cfg_blk, parent in all_cfg_blks.items():
-            self._update_syms(cfg_blk, parent, in_syms, out_syms)
-        return set()
+            propagated |= self._update_syms(cfg_blk, parent, in_syms, out_syms)
+        return propagated if propagated else None
 
     # Given a cfg_blk, builds the incoming set of symbols
     def _get_in_syms(
@@ -255,6 +261,17 @@ class SymbolPropagation(ppl.Pass):
                 self._combine_syms(new_out_syms, out_syms[n])
             return new_out_syms
 
+    def _block_free_symbols(self, cfg_blk: ControlFlowBlock, parent: ControlFlowRegion) -> Set[str]:
+        """Names of symbols read by ``cfg_blk`` and by its outgoing edges.
+
+        :param cfg_blk: The block to inspect.
+        :param parent: The block's parent region (for its out-edges).
+        :returns: The set of free-symbol names.
+        """
+        free = {str(s) for s in cfg_blk.free_symbols}
+        free |= {str(s) for edge in parent.out_edges(cfg_blk) for s in edge.data.free_symbols}
+        return free
+
     # Given a cfg_blk, updates the symbols in the cfg_blk
     def _update_syms(
         self,
@@ -262,13 +279,21 @@ class SymbolPropagation(ppl.Pass):
         parent: ControlFlowRegion,
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
-    ) -> None:
+    ) -> Set[str]:
         new_in_syms = copy.deepcopy(in_syms[cfg_blk])
         new_out_syms = copy.deepcopy(out_syms[cfg_blk])
 
         # Remove all symbols that are None
         new_in_syms = {sym: val for sym, val in new_in_syms.items() if val is not None}
         new_out_syms = {sym: val for sym, val in new_out_syms.items() if val is not None}
+
+        # Symbols this block could propagate, and the symbols it reads before
+        # substitution -- their set difference after substitution is what was
+        # actually eliminated (returned so the pipeline knows what changed).
+        candidates = set(new_in_syms) | set(new_out_syms)
+        if not candidates:
+            return set()
+        free_before = self._block_free_symbols(cfg_blk, parent)
 
         # Iteration cap: each pass resolves at least one more substitution
         # level, so a legitimate (acyclic) substitution chain converges within
@@ -318,6 +343,9 @@ class SymbolPropagation(ppl.Pass):
             new_free_edge_sym = set([sym for edge in parent.out_edges(cfg_blk) for sym in edge.data.free_symbols])
             if free_sym != cfg_blk.free_symbols or free_edge_sym != new_free_edge_sym:
                 changed = True
+
+        # The candidate symbols that are no longer read here were propagated.
+        return candidates & (free_before - self._block_free_symbols(cfg_blk, parent))
 
     # Combines two symbol dictionaries, setting the value to None if they don't agree. Directly modifies sym1
     def _combine_syms(self, sym1: Dict[str, Any], sym2: Dict[str, Any]) -> None:
