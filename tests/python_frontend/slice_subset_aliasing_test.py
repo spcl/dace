@@ -1,13 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The Python frontend must not share a Subset object between two memlets.
+"""The Python frontend must give each memlet its own ``Subset`` object.
 
-When the same array slice (e.g. ``arr[i, k]``) is read in two sibling scopes,
-the frontend's per-array access cache returns the *same* ``Range`` object on a
-cache hit, and ``Memlet.simple`` stores a passed-in ``Subset`` by reference. As
-a result two distinct read edges ended up pointing at one shared subset object.
-That violates the SDFG invariant that each memlet owns its subset: any in-place
-subset rewrite -- loop-iterator renaming, symbol replacement, offsetting, etc.,
-all routine pass operations -- on one edge then silently corrupted the other.
+Repeated reads of the same array slice hit the access cache and shared one
+``Range`` object (``Memlet.simple`` stores the subset by reference), so an
+in-place subset rewrite on one edge corrupted the other.
 """
 import numpy as np
 
@@ -18,9 +14,7 @@ N = dace.symbol('N')
 
 @dace.program
 def two_sibling_slice_reads(out: dace.float64[N, N], arr: dace.float64[N, N]):
-    """Outer parallel ``i`` map whose body reads ``arr[i, k]`` in two sibling
-    ``k`` loops. ``arr[i]`` is materialized as a row-slice temp and indexed by
-    ``k`` in both loops -- the second read hits the access cache."""
+    """Reads ``arr[i, k]`` in two sibling ``k`` loops; the second hits the cache."""
     for i in dace.map[0:N]:
         for k in range(N):
             out[i, k] = arr[i, k]
@@ -29,7 +23,7 @@ def two_sibling_slice_reads(out: dace.float64[N, N], arr: dace.float64[N, N]):
 
 
 def test_frontend_memlets_do_not_share_subset_objects():
-    """Every memlet's subset (and other_subset) must be a distinct object."""
+    """No two memlets may share a subset (or other_subset) object."""
     sdfg = two_sibling_slice_reads.to_sdfg(simplify=False)
     seen = {}
     for sd in sdfg.all_sdfgs_recursive():
@@ -47,8 +41,7 @@ def test_frontend_memlets_do_not_share_subset_objects():
 
 
 def test_sibling_slice_reads_value_preserving():
-    """End-to-end: the kernel itself is correct (the shared subset was an
-    object-identity bug, not a value bug, but this guards the shape)."""
+    """End-to-end value check for the shape that triggered the aliasing."""
     n = 8
     rng = np.random.default_rng(0)
     arr = rng.standard_normal((n, n)).astype(np.float64)

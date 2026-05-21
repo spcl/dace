@@ -5634,12 +5634,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.storage,
                                                   find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
-            # ``rng`` may be a cached Range object shared by sibling accesses
-            # of the same array slice (the ``accesses`` cache hands out the
-            # same object on a cache hit). ``Memlet.simple`` stores a passed-in
-            # Subset by reference, so deepcopy here to give this edge its own
-            # subset -- otherwise a later in-place subset rewrite (e.g. a loop
-            # iterator rename) on one slice silently corrupts the other.
+            # Deepcopy: ``Memlet.simple`` stores the subset by reference and
+            # ``rng`` may be a cached Range shared by sibling slice reads.
             self.current_state.add_nedge(
                 rnode, wnode,
                 Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
