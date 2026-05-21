@@ -461,6 +461,58 @@ class Vectorize(ppl.Pass):
                             f"[1, {inner_arr.shape if inner_arr else None}] and vector_width={W}.")
                     continue
 
+                # Single NON-contiguous wide param dim: the vectorized
+                # innermost dim indexes a non-unit-stride array dim (e.g.
+                # C-layout ``bb[i, j]`` with ``i`` innermost,
+                # ``strides=(N, 1)``). Each lane is one element; consecutive
+                # lanes are ``coeff * arr.strides[d]`` apart -> strided
+                # gather. (The contiguous single-dim case is handled above;
+                # this is its non-contiguous sibling, judged by the
+                # descriptor stride, not dim position.)
+                if (len(param_dims_wide) == 1 and self.vector_width > 1
+                        and arr.strides[param_dims_wide[0][0]] != 1
+                        and param_dims_wide[0][1] == self.vector_width):
+                    d0 = param_dims_wide[0][0]
+                    # Guard: a strided access widens ONLY the lane dim; every
+                    # other dim must be a single element (unit). A wide
+                    # non-lane dim (e.g. an inner sequential loop's full
+                    # range, ``bb[j:j+8, 0:N]``) is the mixed strided+gather
+                    # edge case -- refuse (-> clean skip) rather than emit a
+                    # 2D access the downstream strided-store can't express.
+                    for _d, (_b, _ee, _s) in enumerate(e.data.subset):
+                        if _d == d0:
+                            continue
+                        try:
+                            _ln = int(_ee - _b + 1)
+                        except (TypeError, ValueError):
+                            _ln = None
+                        if _ln is None or _ln > 1:
+                            raise NotImplementedError(
+                                f"Vectorize: non-contiguous strided edge on {e.data.data} has a wide "
+                                f"non-lane dim {_d} (mixed strided+gather; lane dim {d0}); not supported.")
+                    b0, _ee0, _s0 = e.data.subset[d0]
+                    try:
+                        coeff0 = b0.coeff(map_sym)
+                    except Exception:
+                        coeff0 = None
+                    if coeff0 is None:
+                        raise NotImplementedError(
+                            f"Vectorize: non-contiguous strided NSDFG edge on {e.data.data} dim {d0} "
+                            f"has non-linear param dependence ({b0}); only linear begins supported.")
+                    inner_conn = e.dst_conn if direction == "in" else e.src_conn
+                    _setup_strided_inside_nsdfg(state,
+                                                nsdfg_node,
+                                                inner_sdfg,
+                                                e,
+                                                inner_conn,
+                                                e.data.data,
+                                                arr,
+                                                self.vector_width,
+                                                coeff0 * arr.strides[d0],
+                                                direction=direction,
+                                                multi_dim_param_dims=(d0, ))
+                    continue
+
                 # Multi-dim strided path: param-bearing dims expand to bbox W
                 # each, and the linearised inter-lane stride is the sum of
                 # ``arr.strides[d] * coeff(d)`` where ``coeff(d)`` is the
@@ -499,6 +551,35 @@ class Vectorize(ppl.Pass):
                                                 linear_stride,
                                                 direction=direction,
                                                 multi_dim_param_dims=tuple(d for d, _ in param_dims_wide))
+
+    def _boundary_lane_dims(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
+                            vector_map_param: str) -> dict:
+        """Map each NSDFG connector to the dim its boundary edge widens for the lane.
+
+        The connector name equals the inner array name. For each boundary
+        edge, the lane dim is the subset dim whose ``begin`` references
+        ``vector_map_param`` (e.g. ``bb[i, j]`` -> dim 0 for innermost
+        ``i``). Used by ``expand_memlet_expression`` when the inner body
+        access has lost the param to a length-1 connector view.
+
+        :param state: State holding the NSDFG node.
+        :param nsdfg: The nested SDFG node.
+        :param vector_map_param: The vectorized map parameter name.
+        :returns: ``{connector_name: lane_dim}`` for connectors whose
+            boundary edge carries the param in exactly one dim.
+        """
+        lane_dims: dict = {}
+        for edge, conn in ([(e, e.dst_conn) for e in state.in_edges(nsdfg)] +
+                           [(e, e.src_conn) for e in state.out_edges(nsdfg)]):
+            if conn is None or edge.data is None or edge.data.subset is None:
+                continue
+            param_dims = []
+            for d, (b, _e, _s) in enumerate(edge.data.subset):
+                if hasattr(b, "free_symbols") and vector_map_param in {str(fs) for fs in b.free_symbols}:
+                    param_dims.append(d)
+            if len(param_dims) == 1:
+                lane_dims[conn] = param_dims[0]
+        return lane_dims
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         """Vectorize the body of a nested SDFG sitting inside a vectorized map.
@@ -725,6 +806,16 @@ class Vectorize(ppl.Pass):
         # and within the nested SDFG we access A[0, 0, for_it_0] (map parameter), then this is vectorizable
         # and should be expanded to A[0:1, 0:1, for_it_0:for_it_0+8] (exclusive range).
         # This should be performed only for arrays.
+        #
+        # When the body access consumed the map param into a length-1
+        # connector view (``bb[0, 0]`` for an outer ``bb[i, j]`` with ``i``
+        # innermost), the inner subset no longer names the lane param, so
+        # ``expand_memlet_expression`` can't tell which dim is the lane dim
+        # and would fall back to the storage-stride-1 dim — wrong for a
+        # non-contiguous vectorised access. Recover the lane dim per
+        # connector from the NSDFG boundary edge (the dim whose ``begin``
+        # carries ``vector_map_param``).
+        connector_lane_dim = self._boundary_lane_dims(state, nsdfg, vector_map_param)
         for inner_state in inner_sdfg.all_states():
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
             readwrite_data = set()
@@ -753,7 +844,7 @@ class Vectorize(ppl.Pass):
                 if edge not in modified_edges and edge.data is not None and edge.data.data in array_data
             }
             expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width,
-                                      vector_map_param)
+                                      vector_map_param, connector_lane_dim)
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
         # There two types of doing this, assume the map parameters are (i, j) and we vectorize over j with vector simd length > 2
@@ -1420,6 +1511,9 @@ class Vectorize(ppl.Pass):
                 # non-stride-1 dim, leave the memlet alone — the gather/strided-load path will
                 # handle it (mirrors the original code, which would no-op-substitute in such
                 # cases by extending the contiguous dim that did not contain the param).
+                non_contig_lane_crosses_nsdfg = (
+                    len(param_dims) == 1 and arr_strides is not None and arr_strides[param_dims[0]] != 1
+                    and (isinstance(edge.dst, dace.nodes.NestedSDFG) or isinstance(edge.src, dace.nodes.NestedSDFG)))
                 if len(param_dims) == 1 and arr_strides is not None and arr_strides[param_dims[0]] == 1:
                     d = param_dims[0]
                     lb, le, ls = new_range_list[d]
@@ -1436,6 +1530,26 @@ class Vectorize(ppl.Pass):
                     # ranged (``lb != le``) accesses like ``a[2*i:2*i+1]``
                     # — in either case the bbox spans the W consecutive
                     # ``i``-iterations the vectorizer is about to compute.
+                    new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
+                    new_range_list[d] = (lb, new_le, ls)
+                elif non_contig_lane_crosses_nsdfg:
+                    # The vectorized param sits in a NON-contiguous dim and
+                    # the edge crosses an NSDFG boundary (e.g. C-layout
+                    # ``bb[i, j]`` with ``i`` innermost, ``strides=(N, 1)``).
+                    # Widen that dim to the W-lane bbox (``i -> i + (W-1)``)
+                    # so the NSDFG receives ``bb[i:i+W, j]``; the strided-load
+                    # path inside the NSDFG then gathers the W lanes at the
+                    # array's per-dim stride. Without this the boundary edge
+                    # stays a single element and the connector cannot hold
+                    # the lane window.
+                    d = param_dims[0]
+                    lb, le, ls = new_range_list[d]
+                    if isinstance(le, int):
+                        le = dace.symbolic.SymExpr(str(le))
+                    if ls != 1:
+                        raise NotImplementedError(
+                            f"Vectorize: non-contiguous param dim {d} has non-1 step {ls} on memlet {memlet} "
+                            f"(edge {edge}, state {state.label})")
                     new_le = le.subs(param_sym, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}"))
                     new_range_list[d] = (lb, new_le, ls)
 

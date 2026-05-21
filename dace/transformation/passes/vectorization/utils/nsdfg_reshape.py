@@ -1299,6 +1299,40 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                             f"_process_edges (direction={direction!r}): outer subset on {orig_data} "
                             f"has bbox volume {bbox_vol}; doesn't match (W-1)*S+K for any K in "
                             f"[1, {inner_arr.shape if inner_arr else None}] for vector_width={vector_width}.")
+            elif len(wide_dims) == 1 and vector_width > 1 and orig_arr.strides[wide_dims[0][0]] != 1:
+                # Single NON-contiguous wide dim: the vectorized (innermost)
+                # map param indexes a non-unit-stride array dim, so the W
+                # lanes sit at memory stride ``orig_arr.strides[d]`` apart --
+                # a strided gather, not a contiguous window. Continuity is
+                # judged by the descriptor stride (not dim position): widen
+                # the lane dim and let the strided-load path squeeze it into
+                # a W-wide transient filled at that stride. (C-layout
+                # ``bb[i, j]`` with ``i`` innermost, ``strides=(N, 1)`` ->
+                # wide dim 0, stride N.)
+                d, bw = wide_dims[0]
+                if bw != vector_width:
+                    raise NotImplementedError(
+                        f"_process_edges (direction={direction!r}): non-contiguous vectorized dim {d} "
+                        f"of {orig_data} has bbox {bw} != W={vector_width}; K-elements-per-iter on a "
+                        f"strided dim is not yet supported.")
+                # Guard: a strided access widens ONLY the lane dim; every
+                # other dim must be a single element. A wide non-lane dim
+                # (an inner loop's full range) is the mixed strided+gather
+                # edge case -- refuse (-> clean skip) instead of a 2D access.
+                for _d, (_b, _ee, _s) in enumerate(e.data.subset):
+                    if _d == d:
+                        continue
+                    try:
+                        _ln = int(_ee - _b + 1)
+                    except (TypeError, ValueError):
+                        _ln = None
+                    if _ln is None or _ln > 1:
+                        raise NotImplementedError(
+                            f"_process_edges (direction={direction!r}): non-contiguous edge on {orig_data} "
+                            f"has a wide non-lane dim {_d} (mixed strided+gather; lane dim {d}); not supported.")
+                is_strided = True
+                stride_value = orig_arr.strides[d]
+                multi_dim_dims = (d, )
             elif len(wide_dims) >= 2 and vector_width > 1:
                 # Multi-dim strided. Each wide dim must be W-bbox; the
                 # inter-lane stride is the sum of per-dim

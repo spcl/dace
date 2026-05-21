@@ -188,7 +188,8 @@ def expand_memlet_expression(state: SDFGState,
                              edges: Iterable[Edge[Memlet]],
                              edges_to_skip: Set[Edge[Memlet]],
                              vector_width: int,
-                             vector_map_param: Optional[str] = None) -> Set[Edge[Memlet]]:
+                             vector_map_param: Optional[str] = None,
+                             connector_lane_dim: Optional[dict] = None) -> Set[Edge[Memlet]]:
     """Widen single-element memlet subsets to ``vector_width`` on the lane dim.
 
     The W lanes step the dimension that carries the vectorized map
@@ -246,6 +247,15 @@ def expand_memlet_expression(state: SDFGState,
             if param_sym is not None:
                 ld = classify_lane_access(subset, state.sdfg.arrays[edge.data.data].strides,
                                           vector_map_param).lane_dim
+            # When the lane param is absent from the inner subset (the NSDFG
+            # connector consumed it into a length-1 view, e.g. ``bb[0, 0]``
+            # for a ``bb[i, j]`` body access with ``i`` innermost), the lane
+            # dim cannot be recovered from the subset. Fall back to the dim
+            # the boundary edge says carries the param (``connector_lane_dim``),
+            # so a non-contiguous vectorised dim widens the right (lane) dim
+            # rather than the storage-stride-1 dim.
+            if ld is None and connector_lane_dim is not None:
+                ld = connector_lane_dim.get(edge.data.data)
 
             new_subset_list = []
             if ld is not None:
