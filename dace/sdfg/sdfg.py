@@ -119,6 +119,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
+def _symbol_dtype_category(dtype: dtypes.typeclass) -> str:
+    """Coarse category of a typeclass for symbol-dtype reconciliation: signed and
+    unsigned integers share the ``integer`` category; floats, complex and bool
+    are their own."""
+    kind = dtype.as_numpy_dtype().kind
+    return 'integer' if kind in ('i', 'u') else kind
+
+
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
@@ -884,13 +892,26 @@ class SDFG(ControlFlowRegion):
             :param stype: Symbol type.
             :param find_new_name: Find a new name.
         """
+        if not isinstance(stype, dtypes.typeclass):
+            stype = dtypes.dtype_to_typeclass(stype)
         if find_new_name:
             name = self._find_new_name(name)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
             if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
+                # One dtype per symbol name: reconcile rather than overwrite. A
+                # same-category redefinition (e.g. int32 vs int64) keeps the
+                # existing dtype with a warning; a cross-category one (e.g. int
+                # vs float) is an error.
+                existing = self.symbols[name]
+                if existing != stype:
+                    if _symbol_dtype_category(existing) != _symbol_dtype_category(stype):
+                        raise TypeError(f'Symbol "{name}" already exists with dtype {existing}, which is '
+                                        f'incompatible with the requested dtype {stype}')
+                    warnings.warn(f'Symbol "{name}" already exists with dtype {existing}; keeping it and '
+                                  f'ignoring the requested dtype {stype}')
+                return name
             if name in self.arrays:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
@@ -899,8 +920,6 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
             if name in self._pgrids:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
         return name
 
