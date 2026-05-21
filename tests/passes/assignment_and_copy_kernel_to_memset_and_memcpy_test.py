@@ -260,7 +260,7 @@ def _prepare_sdfg(sdfg: dace.SDFG, expansion_type: str, name_suffix: str = "") -
     return sdfg
 
 
-def _expand_and_validate(sdfg: dace.SDFG, expansion_type: str) -> None:
+def _expand_and_validate(sdfg: dace.SDFG, expansion_type: str):
     _set_lib_node_type(sdfg, expansion_type)
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
@@ -862,8 +862,6 @@ def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
             assert 'Ub_in' not in n.in_connectors
 
 
-# --- Dynamic map-range bound handling --------------------------------------
-#
 # A dynamic map-range bound (a scalar fed into the map entry) becomes a symbol
 # in the lifted library node's subset. Since the updated libnodes reject dynamic
 # input connectors, the pass promotes that scalar to an in-scope symbol. When the
