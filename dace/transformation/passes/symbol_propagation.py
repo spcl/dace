@@ -29,6 +29,44 @@ def _free_symbols(value) -> Set[str]:
         return set()
 
 
+def _resolve(value, table: Dict[str, Any]):
+    """Substitute known symbol values from ``table`` into an assignment RHS.
+
+    Interstate-edge assignments are simultaneous, so the RHSes of one edge are
+    resolved against the PRE-edge (incoming) symbol table -- a swap
+    ``{tx: y, ty: x}`` resolves ``tx`` to the old value of ``y`` and ``ty`` to
+    the old value of ``x``. Resolving here (rather than leaving raw
+    ``tx: 'y'`` strings to be chained later) collapses symbol-to-symbol chains
+    to constants/expressions up front, so a cyclic dependency (``x: tx,
+    tx: y, y: ty, ty: x``) never forms a substitution cycle.
+
+    :param value: The assignment RHS (a string), or ``None``.
+    :param table: Known ``{symbol: value-string-or-None}`` mapping.
+    :returns: The resolved RHS string (or ``None`` for ``None`` input).
+    """
+    if value is None:
+        return None
+    # Leave array-access values (``tbl[i]``) untouched: parsing them through
+    # sympy would turn ``tbl[i]`` into ``tbl(i)`` and lose the ``[`` that the
+    # downstream filter uses to drop non-propagatable nested-array accesses.
+    if "[" in value or "]" in value:
+        return value
+    try:
+        expr = pystr_to_symbolic(value)
+        repl = {}
+        for s in expr.free_symbols:
+            name = str(s)
+            known = table.get(name)
+            # Skip substituting array-access values for the same reason.
+            if known is not None and "[" not in known and "]" not in known:
+                repl[s] = pystr_to_symbolic(known)
+        if repl:
+            expr = expr.subs(repl)
+        return str(expr)
+    except Exception:
+        return value
+
+
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -98,7 +136,27 @@ class SymbolPropagation(ppl.Pass):
         new_in_syms = {}
         for i, edge in enumerate(parent.in_edges(cfg_blk)):
             sym_table = copy.deepcopy(out_syms[edge.src])
-            sym_table.update(edge.data.assignments)
+            # Resolve this edge's RHSes against the PRE-edge table (simultaneous
+            # assignment semantics), then apply -- collapsing symbol chains and
+            # breaking cyclic dependencies instead of storing raw chained strings.
+            # A resolved value that references ANY symbol assigned on this SAME
+            # edge must stay LIVE (None) rather than be propagated: the edge's
+            # assignments fire simultaneously and rebind those symbols at
+            # runtime, so the resolved value (computed from the OLD values)
+            # differs from what a downstream use -- which sees the NEW values --
+            # would compute. Propagating it would double-count the rebinding
+            # (e.g. on ``{m: t, n: t + 1}`` with ``t = m + 2``: ``m`` resolves to
+            # ``m + 2`` (self-ref) and ``n`` to ``m + 3`` (reads reassigned
+            # ``m``); both must stay live so ``B[m]`` / ``B[n]`` read the edge's
+            # outputs, not a re-applied expression).
+            edge_keys = set(edge.data.assignments.keys())
+            resolved = {}
+            for k, v in edge.data.assignments.items():
+                rv = _resolve(v, sym_table)
+                if rv is not None and (_free_symbols(rv) & edge_keys):
+                    rv = None
+                resolved[k] = rv
+            sym_table.update(resolved)
 
             # Filter out symbols containing arrays accesses as they cannot be safely propagated (nested array accesses are not supported)
             sym_table = {k: v for k, v in sym_table.items() if v is None or ("[" not in v and "]" not in v)}
