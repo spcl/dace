@@ -25,7 +25,7 @@ import sympy
 
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.symbolic import AND, OR, bitwise_and, bitwise_or
+from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -400,7 +400,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         except Exception:
             return None
 
-        # ``pystr_to_symbolic`` renders ``B[i]`` as a sympy ``Function("B")(i)``.
+        # ``pystr_to_symbolic`` renders ``B[i]`` as ``Subscript(B, i)`` (head, indices).
         if cond is None:
             # Top-level op must be a 2-arg commutative reduction.
             if isinstance(expr, sympy.Add) and len(expr.args) == 2:
@@ -418,7 +418,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             arr_call = None
             other = None
             for arg in expr.args:
-                if isinstance(arg, sympy.Function) and str(arg.func) in sdfg.arrays:
+                if isinstance(arg, Subscript) and symbolic.arrays(arg) & sdfg.arrays.keys():
                     if arr_call is not None:
                         return None
                     arr_call = arg
@@ -436,17 +436,18 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
                 return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
-            if not (isinstance(expr, sympy.Function) and str(expr.func) in sdfg.arrays):
+            if not (isinstance(expr, Subscript) and symbolic.arrays(expr) & sdfg.arrays.keys()):
                 return None
             arr_call = expr
-            wcr = _cmp_to_wcr(cond, target, str(arr_call.func))
+            wcr = _cmp_to_wcr(cond, target, str(arr_call.args[0]))
             if wcr is None:
                 return None
 
-        array = str(arr_call.func)
-        if len(sdfg.arrays[array].shape) != 1 or len(arr_call.args) != 1:
+        array = str(arr_call.args[0])
+        # ``Subscript`` carries the head plus indices, so a 1-D access has two args.
+        if len(sdfg.arrays[array].shape) != 1 or len(arr_call.args) != 2:
             return None
-        offset = symbolic.simplify(arr_call.args[0] - loop_var_sym)
+        offset = symbolic.simplify(arr_call.args[1] - loop_var_sym)
         if offset.has(loop_var_sym):
             return None
 

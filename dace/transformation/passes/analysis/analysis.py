@@ -264,7 +264,7 @@ class AccessSets(ppl.Pass):
         if init_stmt:
             exprs.add(init_stmt)
         for expr in exprs:
-            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
         return readset
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
@@ -294,7 +294,8 @@ class AccessSets(ppl.Pass):
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
-                                readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
+                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
+                                            | symbolic.arrays(cond.as_string)) & arrays
 
                 result[block] = (readset, writeset)
 
