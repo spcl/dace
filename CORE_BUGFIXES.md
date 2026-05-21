@@ -408,3 +408,39 @@ explicit.
 Parse-once memoization; IndexedBase-aware ``_resolve`` (replacing the ``"["``
 string guard); cross-CFG if-else grouping refinement. None are correctness
 bugs.
+
+### L-E. TODO — re-roll (untile) a manually-unrolled lane chain
+- **Shape:** a loop with step ``S != 1`` whose body is ``S`` manually-unrolled
+  lanes -- the lane ``k`` statement is the lane-0 statement with every index
+  shifted by ``+k``. TSVC ``s353`` is the direct example (step 4, "unrolled
+  sparse saxpy"):
+
+  .. code-block:: python
+
+      for i in range(0, LEN - 3, 4):
+          a[i]     += alpha * b[ip[i]]
+          a[i + 1] += alpha * b[ip[i + 1]]
+          a[i + 2] += alpha * b[ip[i + 2]]
+          a[i + 3] += alpha * b[ip[i + 3]]
+
+  Both the **indirect** form above (gather ``b[ip[i+k]]``) and the **dense**
+  form (``a[i+k] += alpha * b[i+k]``) must be handled.
+- **Transformation:** detect that the ``S`` lanes are the lane-0 body replicated
+  at offsets ``0..S-1``; keep lane 0, drop the rest, and re-roll the loop to
+  step 1 (``for i in range(0, LEN): a[i] += alpha * b[ip[i]]``). After this
+  flattening, ``LoopToMap`` parallelizes the loop (``a[i]`` independent per
+  ``i``; the indirect read is per-element).
+- **Match conditions:** loop step ``S`` equals the lane count; every non-lane-0
+  statement is structurally lane-0 with ``i -> i + k``; no cross-lane carried
+  dependence (each lane writes its own ``a[i+k]``). Refuse otherwise.
+- **Goal:** add to canonicalize so ``s353`` and the dense variant become
+  parallel maps. (User-requested 2026-05-21.)
+
+### L-F. TODO — best-effort loop peeling to expose a parallel middle
+- **Idea:** a best-effort pass that peels up to ``X`` leading and ``Y`` trailing
+  iterations of a loop and checks whether the remaining middle iterations are
+  then parallelizable / vectorizable (the boundary iterations carrying the
+  dependence or the special-case access that blocks the whole loop).
+- **Use:** several TSVC benchmarks need front/back peeling before the steady-
+  state middle vectorizes. Try small ``X``, ``Y`` and keep the peeling only if
+  the middle becomes a clean parallel map. (User-requested 2026-05-21.)
