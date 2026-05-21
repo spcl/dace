@@ -433,22 +433,22 @@ bugs.
 - **Match conditions:** loop step ``S`` equals the lane count; every non-lane-0
   statement is structurally lane-0 with ``i -> i + k``; no cross-lane carried
   dependence (each lane writes its own ``a[i+k]``). Refuse otherwise.
-- **Status:** DONE for the **single-state** case, generalized.
-  ``RerollUnrolledLoops``
+- **Status:** DONE (dense + indirect). ``RerollUnrolledLoops``
   (``dace/transformation/passes/canonicalize/reroll_unrolled_loops.py``, wired
-  as the ``reroll`` stage after ``clean``) matches a single-state body with
-  ``m`` isomorphic lanes at **equally-spaced** offsets ``{0, g, ..., (m-1)g}``,
-  keeps lane 0, drops the rest, and rewrites the loop to **step ``g``** over
-  ``[init, end + m*g)``; ``LoopToMap`` then parallelizes. Not overfit to
-  ``0..S-1``: handles ``step 2 / offsets {0,1}`` (-> step 1), ``step 2 /
-  offsets {0,2}`` (-> step 2, overlapping pure writes), and ``s351`` (``step 4
-  / offsets {0,1,2,3}``). Safety: refuse if ``step > m*g`` (gaps) or
-  ``step < m*g`` with a read-modify-write array (overlap would change the RMW
-  count). Verified by ``canonicalize_reroll_unrolled_test.py`` (5 pass) and the
-  full canonicalize suite (140P, 0 regressions). The **indirect** ``s353`` case
-  is still open: the ``b[ip[i + k]]`` gather lowers the body to TWO states with
-  the gather indices on the interstate edge, so cross-state lane matching is the
-  remaining work (indirect strict-xfail).
+  as the ``reroll`` stage **after the ``lower`` stage** -- right after
+  MapToForLoop, while the loop is still step-``S`` and before ``normalize``)
+  matches a body of one or more states with ``m`` isomorphic lanes at
+  **equally-spaced** offsets ``{0, g, ..., (m-1)g}``, keeps lane 0, drops the
+  rest, and rewrites the loop to **step ``g``** over ``[init, end + m*g)``;
+  ``LoopToMap`` then parallelizes. Generalized, not overfit to ``0..S-1``:
+  handles ``step 2 / offsets {0,1}`` (-> step 1), ``step 2 / offsets {0,2}``
+  (-> step 2, overlapping pure writes), ``s351`` (``step 4 / {0,1,2,3}``), and
+  the **indirect** ``s353`` gather (``b[ip[i+k]]``), whose two-state body and
+  per-lane interstate gather symbols (``ip_index_k = ip[i+k]``) are matched by
+  symbol-aware, cross-state lane tagging. Safety: refuse if ``step > m*g``
+  (gaps) or ``step < m*g`` with a read-modify-write array (overlap would change
+  the RMW count). Verified by ``canonicalize_reroll_unrolled_test.py`` (6 pass)
+  and the full canonicalize suite (144P/2xf, 0 regressions).
 - **TSVC re-roll candidates** (`VectraArtifacts/tsvc_2/tsvc2_core.py`):
   ``s351`` (dense step-4 saxpy -- the dense case), ``s353`` (indirect step-4
   sparse saxpy -- the gather case), ``s352`` (step-5 unrolled dot reduction),

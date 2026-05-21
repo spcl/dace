@@ -98,12 +98,6 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('clean', _uniq), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
-    # reroll: re-roll a hand-unrolled lane chain (step ``S`` loop whose body is
-    # ``S`` lanes at offsets 0..S-1) back to a step-1 loop, so the lanes do not
-    # survive normalization as a strided ``S*i + k`` access that blocks
-    # LoopToMap. Runs while the loop is still in step-``S`` form.
-    s += [('reroll', RerollUnrolledLoops())]
-
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.
     s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConditionalComponentFission())]
@@ -118,6 +112,14 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # path to wrap *empty* states. Splice them out so the guarded body is the
     # bare loop -> MoveIfIntoLoop's clean single-loop path applies.
     s += [('lower', EmptyStateElimination())]
+
+    # reroll: re-roll a hand-unrolled lane chain (a step-``S`` loop whose body is
+    # ``m`` lanes at equally-spaced offsets ``{0, g, ..., (m-1)g}``) back to a
+    # step-``g`` loop, so the lanes do not survive normalization as a strided
+    # ``S*i + k`` access that blocks LoopToMap. Runs right after the maps are
+    # lowered to loops, while the loop is still in step-``S`` form (before
+    # normalize rescales it).
+    s += [('reroll', RerollUnrolledLoops())]
 
     # move_if_into_loop: push guarding conditionals into loop bodies. The
     # genuine inner imperfect nest (a bare tasklet beside an inner loop,

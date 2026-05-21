@@ -81,12 +81,6 @@ def test_unrolled_dense_becomes_map():
     assert _nmaps(sdfg) >= 1, 'expected the re-rolled loop to parallelize into a map'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('The dense case re-rolls (RerollUnrolledLoops), but the indirect ``b[ip[i + k]]`` '
-                           'gather lowers the loop body to TWO states (a slice state + the gather/compute '
-                           'state), and the re-roll matcher currently handles only a single-state body. '
-                           'Cross-state lane matching is the remaining work (CORE_BUGFIXES.md L-E). '
-                           'Value-correct today.'))
 def test_unrolled_indirect_becomes_map():
     n = 16
     sdfg = unrolled_indirect.to_sdfg(simplify=True)
