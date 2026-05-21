@@ -239,8 +239,22 @@ class EmitTileOps(ppl.Pass):
         )
         path = state.memlet_path(edge)
         source_edge = path[0]
-        if cls.kind in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
+        if cls.kind == TileAccessKind.CONTIGUOUS:
             return "Tile", (source_edge, edge, edge.data.subset, cls.dim_strides)
+        if cls.kind == TileAccessKind.STRIDED:
+            # A strided / transposed tile access (the tile dim maps to a
+            # non-unit-stride or non-last array dim, e.g. ``cc[j, i]`` with
+            # tile dim ``j``) currently lowers to an incorrect ``TileLoad``:
+            # the pure expansion addresses ``src`` through ``strides[-K:]``
+            # (a last-K-dims assumption) while ``classify_tile_access`` has
+            # already folded the array stride into ``dim_strides`` — wrong
+            # base + double-handled stride for transposes. Refuse until the
+            # strided-load lowering is fixed (tracked TODO) so we skip rather
+            # than emit silently-wrong results.
+            raise NotImplementedError(
+                f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} is a strided / "
+                f"transposed tile access (dim_strides={cls.dim_strides}); strided TileLoad "
+                f"lowering is not yet correct — skipping (TODO: fix transposed strided load)")
         if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
             # A no-tile-dependency access reads either a length-1 / Scalar
             # array (route through a connector and broadcast) or a true

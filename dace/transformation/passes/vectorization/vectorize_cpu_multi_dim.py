@@ -26,6 +26,9 @@ from typing import Literal, Optional, Tuple
 import dace
 from dace import properties
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+    CleanAccessNodeToScalarSliceToTaskletPattern,
+)
 from dace.transformation.passes.vectorization.emit_tile_ops import EmitTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask,
@@ -98,6 +101,11 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
 
         widths_t = tuple(widths)
         passes = [
+            # Fold ``A -> A_slice (length-1) -> tasklet`` so binop tasklets read
+            # the original tile-dependent array access directly, not a length-1
+            # scalar slice (which ``EmitTileOps`` would mis-classify as a Scalar
+            # broadcast). Mirrors the run-at-front placement on the 1D path.
+            CleanAccessNodeToScalarSliceToTaskletPattern(),
             MarkTileDims(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             StrideMapByTileWidths(widths=widths_t),

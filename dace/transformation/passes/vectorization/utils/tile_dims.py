@@ -173,6 +173,7 @@ def classify_tile_access(
     # the (only) tile-dependent variable, extract its linear coefficient
     # and multiply by the array stride for that dim.
     per_tile_dim_strides: List[int] = []
+    match_dims: List[int] = []
     used_array_dims: set = set()
     for tvar, tsym in zip(tile_iter_vars, tile_syms):
         match_dim = None
@@ -194,11 +195,24 @@ def classify_tile_access(
         except (TypeError, ValueError):
             arr_stride = 1
         per_tile_dim_strides.append(coeff * arr_stride)
+        match_dims.append(match_dim)
         used_array_dims.add(match_dim)
 
+    # The pure ``TileLoad`` / ``TileStore`` expansion addresses the source /
+    # dest array through its LAST K strides (``strides[-K:]``) in tile order
+    # (innermost tile var -> last array dim). That is correct only when the
+    # tile dims map to the last K array dims in order. A transposed /
+    # non-last mapping — e.g. ``cc[j, i]`` with tile dim ``j`` mapping to a
+    # 2-D array's first dim — would be addressed along the wrong axis (the
+    # column read would be lowered as a contiguous row read), so mark it
+    # STRIDED. The emitter refuses STRIDED until the general strided/
+    # transposed lowering lands, skipping rather than emitting wrong code.
+    ndim = len(array_strides)
+    aligned = all(match_dims[p] == ndim - len(tile_iter_vars) + p for p in range(len(tile_iter_vars)))
+
     dim_strides = tuple(per_tile_dim_strides)
-    if all(s == 1 for s in dim_strides):
-        kind = TileAccessKind.CONTIGUOUS
-    else:
+    if not aligned or any(s != 1 for s in dim_strides):
         kind = TileAccessKind.STRIDED
+    else:
+        kind = TileAccessKind.CONTIGUOUS
     return TileAccessClassification(kind=kind, dim_strides=dim_strides)
