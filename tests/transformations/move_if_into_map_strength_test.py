@@ -5,8 +5,10 @@
     into each inner map, exposing the maps to fusion/collapse. The pass now
     accepts the common Python-frontend shape where inner ``dace.map`` bodies
     are plain ``Tasklet`` subgraphs (normalized into a ``NestedSDFG`` first),
-    and still rejects hoisting a condition that depends on an outer-map
-    parameter (unsound). All kernels use the dace Python frontend only.
+    and pushes a condition that depends on an outer-map parameter down into the
+    inner map (the guard sits above the inner map, so per-iteration evaluation
+    inside it is value-identical to the original whole-inner-map guard). All
+    kernels use the dace Python frontend only.
 """
 import copy
 
@@ -113,9 +115,13 @@ def test_single_guarded_map_pushed_in():
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
 
 
-def test_condition_on_outer_param_is_rejected():
-    """Hoisting a condition that varies with the outer map parameter would
-    change semantics; the pass must refuse and leave the result correct."""
+def test_condition_on_outer_param_pushed_in():
+    """A condition that varies with the outer map parameter (``if j > 0``) is
+    pushed DOWN into the inner map, not hoisted up: the guard is replicated
+    inside the inner body and re-evaluated per inner-map iteration with ``j``
+    (the outer param, constant across the inner iterations) threaded in. This
+    reproduces the original whole-inner-map guard exactly, so the push is
+    sound and value-preserving."""
     n, m = 5, 6
     a = np.random.rand(n, m)
     sdfg = guarded_by_outer_param.to_sdfg(simplify=True)
@@ -123,7 +129,12 @@ def test_condition_on_outer_param_is_rejected():
     ref = np.zeros((n, m))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref, N=n, M=m)
 
-    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) == 0
+    conds_before = _num_conditional_blocks(sdfg)
+    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) >= 1
+    sdfg.validate()
+    # The guard is pushed inside the inner map (never dropped, no outer-level
+    # guard left separating the maps).
+    assert _num_conditional_blocks(sdfg) >= conds_before
 
     out = np.zeros((n, m))
     sdfg(A=a.copy(), B=out, N=n, M=m)
