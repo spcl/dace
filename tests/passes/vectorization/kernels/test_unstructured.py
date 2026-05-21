@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     _get_unstructured_access_cloudsc_sdfg,
 )

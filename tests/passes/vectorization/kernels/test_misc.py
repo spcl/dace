@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     _get_dependency_edge_to_unary_symbol_sdfg,
 )

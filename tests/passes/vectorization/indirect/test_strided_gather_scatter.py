@@ -2,7 +2,7 @@
 import dace
 import numpy
 import pytest
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     N,
     ssym,

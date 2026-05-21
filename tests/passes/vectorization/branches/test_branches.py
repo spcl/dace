@@ -4,7 +4,7 @@ import copy
 import dace
 import numpy
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     N,
     S,

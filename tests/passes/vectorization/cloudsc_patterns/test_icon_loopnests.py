@@ -25,7 +25,7 @@ import numpy
 import pytest
 import dace
 
-from tests.passes.vectorization._harness import run_vectorization_test
+from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")

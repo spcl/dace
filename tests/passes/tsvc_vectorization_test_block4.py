@@ -30,7 +30,7 @@ import pytest
 
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.passes._tsvc_harness_helper import build_tsvc_matrix
+from tests.passes.vectorization.helpers.tsvc_matrix import build_tsvc_matrix
 
 LEN_1D = dace.symbol("LEN_1D")
 LEN_2D = dace.symbol("LEN_2D")

@@ -9,7 +9,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 )
 from math import log, exp, pow  # noqa: A004 — used inside @dace.program bodies
 
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
     N,
     S,

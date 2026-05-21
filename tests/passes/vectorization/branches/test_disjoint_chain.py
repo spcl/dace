@@ -7,7 +7,7 @@ import numpy
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
-from tests.passes.vectorization._harness import (
+from tests.passes.vectorization.helpers.harness import (
     N,
     C,
     _get_disjoint_chain_sdfg,
