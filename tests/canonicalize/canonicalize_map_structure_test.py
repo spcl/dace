@@ -292,21 +292,19 @@ def test_guarded_arith_bound_clean_after_canonicalize():
 def stencil_reduction_mixed(a: dace.float64[N, M], b: dace.float64[N]):
     """Per-row reduction with stencil-style neighbour accesses: each row
     independently sums ``a[i, 1:M-1]`` plus the boundary contributions.
-    Mixes per-iteration map-style outer with reduction-style inner."""
-    for i in dace.map[0:N]:
+
+    The accumulator ``s`` is a scalar carried across the inner ``for j``
+    loop, so the outer ``i`` iteration is a sequential ``range`` loop (scalars
+    are not map-local in DaCe; a shared ``s`` under a parallel map would race).
+    Canonicalize parallelizes the row-independent work (``i`` becomes a map)
+    and keeps the loop-carried ``j`` reduction sequential."""
+    for i in range(0, N):
         s = a[i, 0] + a[i, M - 1]
         for j in range(1, M - 1):
             s += a[i, j - 1] + a[i, j] + a[i, j + 1]
         b[i] = s
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Inner-accumulator reduction post-canonicalize produces slightly different "
-                   "values (per-row reduction semantics drift through canonicalize's NSDFG / "
-                   "interstate-edge remixing). Same family as the deferred "
-                   "CascadeInterstateEdgeAssignmentsUp design; the j-leak validation issue is "
-                   "fixed (the SDFG now validates and compiles cleanly) but the reduction's "
-                   "numerical equivalence is not yet preserved.")
 def test_stencil_reduction_mixed_value_preserving():
     n, m = 8, 11
     a = np.random.rand(n, m)

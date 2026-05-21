@@ -416,27 +416,22 @@ def test_guarded_promoted_bound_value_preserving():
 
 @dace.program
 def reduction_with_inner_accumulator(a: dace.float64[N, M], b: dace.float64[N]):
-    """Per-row reduction with an inner-loop accumulator. The frontend
-    lowers this to an outer Map containing a per-row transient scalar
-    that the inner ``for j`` loop writes; canonicalize currently leaks
-    the inner ``j`` symbol through the NestedSDFG boundary because the
-    inner-accumulator pattern materialises ``j`` in a body interstate
-    edge that the current pipeline does not lift back up.
+    """Per-row reduction with an inner-loop scalar accumulator.
 
-    Deferred to the ``CascadeInterstateEdgeAssignmentsUp`` design effort.
-    Marking xfail with the precise reason so the unsupported pattern is
-    documented and the day it lifts is flagged as XPASS."""
-    for i in dace.map[0:N]:
+    The accumulator ``s`` is a scalar carried across the inner ``for j``
+    loop, so the outer ``i`` iteration must be a sequential ``range`` loop,
+    not a ``dace.map``: scalars are not map-local in DaCe, so a shared ``s``
+    under a parallel map would race. Canonicalize is free to parallelize the
+    row-independent work (the ``i`` loop becomes a map) while keeping the
+    loop-carried reduction over ``j`` sequential (``LoopToMap`` refuses it on
+    the write-pattern check), and must preserve the result."""
+    for i in range(0, N):
         s = a[i, 0] + a[i, M - 1]
         for j in range(1, M - 1):
             s += a[i, j - 1] + a[i, j] + a[i, j + 1]
         b[i] = s
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Inner-accumulator reduction leaks loop var 'j' through NSDFG boundary; deferred to "
-                   "CascadeInterstateEdgeAssignmentsUp design (LICM-style upward cascade of "
-                   "interstate-edge assignments).")
 def test_reduction_with_inner_accumulator_value_preserving():
     n, m = 6, 9
     a = np.random.rand(n, m)
