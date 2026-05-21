@@ -3,7 +3,7 @@
 
 Hosts the single copy of the Lever-1 ``_kernel_has_branch`` predicate
 used by ``tsvc_vectorization_test_block{1,2,3,4}`` and
-``tsvc_vectorization_test_2d`` to skip the duplicate ``fp_factor``
+``tsvc_2d test files`` to skip the duplicate ``fp_factor``
 parametrization for branchless kernels (merge vs fp_factor produce an
 identical SDFG when there is no ``if`` to lower).
 """
