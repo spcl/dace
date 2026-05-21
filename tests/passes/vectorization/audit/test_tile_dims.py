@@ -10,8 +10,38 @@ from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     TileDimSpec,
+    build_dim_index_map,
     classify_tile_access,
 )
+
+
+def _range(*begins):
+    """Build a Range whose per-dim begin (==end, step 1) are ``begins``."""
+    return subsets.Range([(dace.symbolic.pystr_to_symbolic(b),
+                           dace.symbolic.pystr_to_symbolic(b), 1) for b in begins])
+
+
+def test_build_dim_index_map_affine_and_structured():
+    """The per-lane index map records affine coeffs and the structured flag."""
+    # a[2*i, j]: dim0 affine coeff 2 in tile 0; dim1 affine coeff 1 in tile 1.
+    dims = build_dim_index_map(_range("2*i", "j"), ("i", "j"))
+    assert dims[0].dep == (0,) and dims[0].affine_coeffs == {0: 2} and not dims[0].structured
+    assert dims[1].dep == (1,) and dims[1].affine_coeffs == {1: 1}
+    # a[i // 2]: structured (int_floor of affine arg), not affine.
+    sdims = build_dim_index_map(_range("int_floor(i, 2)"), ("i",))
+    assert sdims[0].dep == (0,) and sdims[0].structured and 0 not in sdims[0].affine_coeffs
+
+
+def test_classify_structured_int_floor():
+    """``a[i // 2]`` (int_floor of an affine arg) classifies as STRUCTURED."""
+    cls = classify_tile_access(_range("int_floor(i, 2)"), array_strides=(1,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.STRUCTURED
+
+
+def test_classify_structured_int_ceil():
+    """``int_ceil`` of an affine arg is STRUCTURED."""
+    cls = classify_tile_access(_range("int_ceil(i, 4)"), array_strides=(1,), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.STRUCTURED
 
 
 @pytest.mark.parametrize("widths,iter_vars,global_ubs", [

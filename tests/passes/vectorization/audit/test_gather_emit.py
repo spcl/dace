@@ -31,6 +31,28 @@ def _diag_kernel(aa: dace.float64[N, N], bb: dace.float64[N, N], cc: dace.float6
         aa[i, i] = aa[i, i] + bb[i, i] * cc[i, i]
 
 
+@dace.program
+def _structured_kernel(b: dace.float64[N], c: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = b[i // 2] + c[i]
+
+
+@pytest.mark.parametrize("n", [16, 17])
+def test_structured_int_floor_replication_matches_reference(n):
+    """``b[i // 2]`` (int_floor replication, STRUCTURED) lowers to a gather over
+    a per-lane index map built by substitution and matches the reference."""
+    rng = np.random.default_rng(seed=n)
+    b = rng.random(n); c = rng.random(n)
+    ro, vo = np.zeros(n), np.zeros(n)
+    ref = copy.deepcopy(_structured_kernel.to_sdfg(simplify=False)); ref.name = f"sk_ref{n}"
+    ref.simplify(validate=True); ref.apply_transformations_repeated(LoopToMap()); ref.simplify()
+    vec = copy.deepcopy(ref); vec.name = f"sk_vec{n}"
+    VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(vec, {})
+    ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
+    vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
+    np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
+
+
 def _prepped(tag=""):
     sdfg = copy.deepcopy(_diag_kernel.to_sdfg(simplify=False))
     if tag:

@@ -35,31 +35,35 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 
 
 def _lane_index_expr(begin_str: str, iter_vars: Tuple[str, ...]) -> Optional[str]:
-    """Affine per-lane gather index for one source array dim.
+    """Per-lane gather/scatter index for one source array dim.
 
-    For a per-iteration begin expression ``begin_str`` that is affine in the
-    tile iter-vars, the index at lane ``(l_0, ..., l_{K-1})`` is
-    ``begin + sum_p coeff_p * l_p`` (the begin already carries the tile base;
-    each lane adds its offset scaled by the iter-var's coefficient). The lane
-    loop vars match the nested-loop emitter's ``__l0 .. __l{K-1}``.
+    Substitutes each tile var ``v_p`` with ``v_p + __l_p`` in the begin
+    expression, so the index at lane ``(l_0, …, l_{K-1})`` is
+    ``begin(v_p -> v_p + __l_p)``. This handles every deterministic index
+    uniformly: affine (``cc[j,i]`` -> ``i + __l0``; diagonal ``a[i,i]``),
+    non-unit coefficient (``a[2*i]``), and STRUCTURED (``int_floor(i, 2)`` ->
+    ``int_floor(i + __l0, 2)``). The lane loop vars match the nested-loop
+    emitter's ``__l0 .. __l{K-1}``. A data-dependent (indirect) index never
+    reaches here — it carries a loaded symbol, not a tile var, so the
+    classifier does not route it through the affine gather map.
 
     :param begin_str: The dim's per-iteration begin expression.
     :param iter_vars: Tile iter-var names, innermost-last.
-    :returns: The C++ index expression, or ``None`` if ``begin_str`` is not
-        affine in the tile vars (an indirect / non-affine index — the caller
-        falls back / skips, since the affine gather map cannot be built).
+    :returns: The C++ index expression, or ``None`` if ``begin_str`` cannot
+        be parsed.
     """
-    b = symbolic.pystr_to_symbolic(begin_str)
-    terms = [f"({begin_str})"]
+    try:
+        b = symbolic.pystr_to_symbolic(begin_str)
+    except Exception:  # noqa: BLE001 - unparseable begin -> caller skips
+        return None
+    subs = {}
     for p, v in enumerate(iter_vars):
         vsym = symbolic.pystr_to_symbolic(v)
-        coeff = b.coeff(vsym)
-        # Affine only: the coefficient must not itself depend on the tile var.
-        if vsym in coeff.free_symbols:
-            return None
-        if coeff != 0:
-            terms.append(f"(({symbolic.symstr(coeff)}) * __l{p})")
-    return " + ".join(terms)
+        if vsym in b.free_symbols:
+            subs[vsym] = vsym + symbolic.pystr_to_symbolic(f"__l{p}")
+    if subs:
+        b = b.subs(subs)
+    return symbolic.symstr(b)
 
 _OPERAND = r"(?:[A-Za-z_]\w*|\d+\.?\d*(?:[eE][+-]?\d+)?)"
 _BINOP_RE = re.compile(
@@ -301,10 +305,12 @@ class EmitTileOps(ppl.Pass):
             # both cases, but only a genuine Scalar / 1-element array
             # should be wired; otherwise treat as an inline symbol.
             return "Scalar", (source_edge, edge)
-        if cls.kind == TileAccessKind.GATHER:
-            # Non-perfect-box read (diagonal ``a[i, i]`` etc.): lower to a
-            # TileGather with one affine per-dim index tile (the "gather
-            # map"). ``_emit_gather_load`` builds the index tiles + node.
+        if cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
+            # Non-perfect-box (diagonal ``a[i,i]``) or structured-replication
+            # (``a[i//2]`` -> ``int_floor``) read: lower to a TileGather over a
+            # per-dim index map ("gather map"), built by substituting the lane
+            # offsets into each dim's begin (``_emit_gather_load`` ->
+            # ``_lane_index_expr``). Both index forms are deterministic.
             return "Gather", (source_edge, edge, edge.data.subset)
         raise NotImplementedError(
             f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} access "
@@ -896,9 +902,9 @@ class EmitTileOps(ppl.Pass):
             out_arr = state.sdfg.arrays[out_dst_name]
             out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
             mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
-            if out_cls.kind == TileAccessKind.GATHER:
-                # Non-box write (diagonal ``a[i, i] = ...``): scatter the tile
-                # back through the same affine "gather map".
+            if out_cls.kind in (TileAccessKind.GATHER, TileAccessKind.STRUCTURED):
+                # Non-box / structured write (``a[i,i]=…`` / ``a[i//2]=…``):
+                # scatter the tile back through the same per-dim index map.
                 self._emit_scatter_store(state, map_entry, out_access, out_edge, spec, mask_access)
                 continue
             if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
