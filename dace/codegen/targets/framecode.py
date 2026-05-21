@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -1094,3 +1094,114 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     # raise NotImplementedError
 
     return start_state, end_state
+
+
+def _block_defines_symbol(block: ControlFlowBlock, symbols: Set[str]) -> bool:
+    """Whether any interstate edge nested (transitively) inside ``block`` assigns
+    one of ``symbols``.  Recurses through the branches of a ``ConditionalBlock``
+    and the edges/nodes of a ``ControlFlowRegion``; plain states define nothing.
+    """
+    if isinstance(block, ConditionalBlock):
+        return any(_block_defines_symbol(branch, symbols) for _, branch in block.branches)
+    if isinstance(block, ControlFlowRegion):
+        if any(set(e.data.assignments) & symbols for e in block.edges()):
+            return True
+        return any(_block_defines_symbol(n, symbols) for n in block.nodes())
+    return False
+
+
+def ensure_symbol_dependent_transients_are_allocatable(top_sdfg: SDFG) -> int:
+    """Insert empty guard states so every symbol-dependent transient can be
+    allocated at a point where its shape symbols are already defined.
+
+    ``determine_allocation_lifetime`` allocates a transient whose shape depends on
+    non-free symbols at the closest common dominator of its access blocks (via
+    ``_get_dominator_and_postdominator``).  When a shape symbol is assigned on
+    interstate edges *inside* a control flow region (e.g. the branches of a
+    ``ConditionalBlock``) that sits between that dominator and the accesses, the
+    dominator does not yet have the symbol defined, and the emitted
+    ``new T[sym]`` runs with an undefined ``sym`` -- a wrong-size allocation and
+    out-of-bounds access.  No existing state can host the allocation (the region
+    transitions straight to the accesses), so the outgoing edge of the
+    symbol-defining region is split with an empty guard state, which becomes a
+    valid allocation point with the symbol defined.
+
+    Runs before codegen freezes the SDFG.  No-op unless the misplacement pattern
+    is present.
+
+    :param top_sdfg: The top-level SDFG to repair in-place.
+    :returns: the number of guard states inserted.
+    """
+    inserted = 0
+    changed = True
+    while changed:
+        changed = False
+        defined_at: Dict[SDFGState, Set[str]] = {}
+        for state, _, syms in utils.traverse_sdfg_with_defined_symbols(top_sdfg, recursive=True):
+            defined_at.setdefault(state, set(syms.keys()))
+
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            # Access blocks per transient, in state order -- mirrors the
+            # bookkeeping in determine_allocation_lifetime (data nodes plus
+            # interstate-edge symbol uses).
+            instances: Dict[str, List[SDFGState]] = collections.defaultdict(list)
+            names = set(sdfg.arrays.keys())
+            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
+                for node in state.data_nodes():
+                    if node.data in names:
+                        instances[node.data].append(state)
+                edge_syms: Set[str] = set()
+                for e in state.parent_graph.all_edges(state):
+                    edge_syms |= e.data.free_symbols
+                for name in edge_syms & names:
+                    instances[name].append(state)
+
+            for name, desc in sdfg.arrays.items():
+                if not desc.transient or not isinstance(desc, data.Array):
+                    continue
+                shape_syms = set(str(s) for s in desc.free_symbols)
+                if not shape_syms:
+                    continue
+                states = instances.get(name, [])
+                if len(set(states)) < 2:
+                    continue
+                # determine_allocation_lifetime allocates a multi-block,
+                # symbol-dependent transient at the common dominator of its
+                # accesses.  Allocation is correct iff the shape symbols are
+                # already defined there; only act when they are not.
+                try:
+                    dom, _ = _get_dominator_and_postdominator(sdfg, [(s, nodes.AccessNode(name)) for s in states])
+                except NotImplementedError:
+                    continue
+                missing = shape_syms - defined_at.get(dom, set())
+                if not missing:
+                    continue
+                # Split the outgoing edges of every region that lies between the
+                # dominator and the accesses and defines a missing symbol, so the
+                # symbol is defined on entry to the inserted guard.
+                region = dom.parent_graph
+                reachable: Set[ControlFlowBlock] = set()
+                queue = [dom]
+                while queue:
+                    blk = queue.pop()
+                    for oe in region.out_edges(blk):
+                        if oe.dst not in reachable:
+                            reachable.add(oe.dst)
+                            queue.append(oe.dst)
+                for block in list(region.nodes()):
+                    if block not in reachable or not _block_defines_symbol(block, missing):
+                        continue
+                    for oe in list(region.out_edges(block)):
+                        guard = region.add_state(f'_alloc_guard_{block.label}')
+                        region.add_edge(block, guard, oe.data)
+                        region.add_edge(guard, oe.dst, type(oe.data)())
+                        region.remove_edge(oe)
+                        inserted += 1
+                        changed = True
+                if changed:
+                    break
+            if changed:
+                break
+    if inserted:
+        top_sdfg.reset_cfg_list()
+    return inserted

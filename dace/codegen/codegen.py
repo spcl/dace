@@ -239,6 +239,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     for target in frame.targets:
         target.preprocess(sdfg)
 
+    # Ensure a transient whose shape depends on a symbol assigned inside a
+    # control flow region can be allocated after that symbol is defined (insert
+    # guard states where the allocation dominator would otherwise precede the
+    # definition). No-op unless that pattern is present.
+    framecode.ensure_symbol_dependent_transients_are_allocatable(sdfg)
+
     # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
