@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from dace import SDFG, data as dt, symbolic
+from dace import SDFG, data as dt, dtypes, symbolic
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
 
 #: Default small value assigned to every free (sizing) symbol.
@@ -82,8 +82,14 @@ class StageCheckResult:
         return f'[{self.index:2}] {self.label:24s} {self.pass_name:36s} {v} | {n}'
 
 
-def _resolve_shape(shape, symbol_values: Dict[str, int]) -> Tuple[int, ...]:
-    """Substitute symbol values into a (symbolic) descriptor shape."""
+def _resolve_shape(shape: Tuple[Any, ...], symbol_values: Dict[str, int]) -> Tuple[int, ...]:
+    """Substitute symbol values into a (symbolic) descriptor shape.
+
+    :param shape: Descriptor shape; each dimension is an int or a symbolic
+        expression.
+    :param symbol_values: Concrete value for every free symbol in ``shape``.
+    :returns: The fully concrete shape.
+    """
     out: List[int] = []
     for dim in shape:
         val = symbolic.evaluate(dim, symbol_values) if symbolic.issymbolic(dim) else dim
@@ -91,9 +97,14 @@ def _resolve_shape(shape, symbol_values: Dict[str, int]) -> Tuple[int, ...]:
     return tuple(out)
 
 
-def _random_for_dtype(dtype, shape, rng: np.random.Generator):
-    """Small-magnitude random data of ``dtype`` and ``shape`` (scalar if
-    ``shape`` is empty)."""
+def _random_for_dtype(dtype: dtypes.typeclass, shape: Tuple[int, ...], rng: np.random.Generator) -> Any:
+    """Build small-magnitude random data of ``dtype`` and ``shape``.
+
+    :param dtype: Element type of the data.
+    :param shape: Concrete shape; an empty tuple yields a scalar.
+    :param rng: Random generator drawn from for the data.
+    :returns: A scalar of ``dtype`` if ``shape`` is empty, else an ndarray.
+    """
     np_dtype = dtype.as_numpy_dtype()
     if np.issubdtype(np_dtype, np.integer):
         lo, hi = DEFAULT_INT_RANGE
@@ -116,6 +127,9 @@ def _build_random_inputs(sdfg: SDFG, symbol_value: int,
     Every free symbol is set to ``symbol_value``; every non-transient
     array/scalar is filled with small random data.
 
+    :param sdfg: The SDFG whose argument list drives input construction.
+    :param symbol_value: Value assigned to every free symbol.
+    :param rng: Random generator drawn from for the data.
     :returns: ``(symbols, arrays)`` -- two dicts keyed by argument name.
     """
     free_syms = {str(s) for s in sdfg.free_symbols}
@@ -136,8 +150,18 @@ def _build_random_inputs(sdfg: SDFG, symbol_value: int,
 
 
 def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], tag: str) -> Dict[str, np.ndarray]:
-    """Run a fresh copy of ``sdfg`` on copies of the inputs; return the
-    post-run array values (outputs)."""
+    """Run a fresh copy of ``sdfg`` on copies of the inputs.
+
+    A copy of every input is passed so callers can reuse the same inputs
+    across runs without the in-place array writes of one run leaking into
+    the next.
+
+    :param sdfg: The SDFG to run.
+    :param symbols: Concrete value for every free symbol.
+    :param arrays: Input array/scalar values, keyed by argument name.
+    :param tag: Suffix appended to the run copy's name to keep it unique.
+    :returns: The post-run array values (outputs), keyed by argument name.
+    """
     run_sdfg = copy.deepcopy(sdfg)
     run_sdfg.name = f'{run_sdfg.name}_{tag}'
     call_args = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
@@ -147,7 +171,14 @@ def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], ta
 
 
 def _compare(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], rtol: float, atol: float) -> Tuple[bool, float]:
-    """Compare two output dicts; return ``(all_close, max_abs_diff)``."""
+    """Compare two output dicts arraywise.
+
+    :param ref: Reference outputs from the un-canonicalized SDFG.
+    :param got: Outputs from the post-stage SDFG.
+    :param rtol: Relative tolerance for the comparison.
+    :param atol: Absolute tolerance for the comparison.
+    :returns: ``(all_close, max_abs_diff)`` over the arrays present in both.
+    """
     max_diff = 0.0
     all_close = True
     for name, ref_val in ref.items():

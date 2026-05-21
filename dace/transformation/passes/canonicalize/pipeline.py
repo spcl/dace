@@ -14,7 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
-from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp)
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -56,6 +56,7 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     cannot see them. Both run so single- and multi-state nestings collapse.
 
     :param label: The owning stage label.
+    :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
@@ -171,18 +172,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # symbols sees the cleaned-up shape.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
-    # NOTE: MoveLoopInvariantIfUp is NOT wired here yet. With the
-    # dead-outside-branch relaxation it correctly hoists ICON-style
-    # ``IF istep == 1`` guards past the per-jb loop (verified on the
-    # solve_nonhydro / velocity_advection real-world tests), but it
-    # ping-pongs with the earlier ``MoveIfIntoLoop`` stage: that pass
-    # is the dual (it pushes guards INTO loops to enable fusion of
-    # sibling loops), and MLIU here would simply undo its work. Two
-    # canonicalize tests (coexisting_guards collapse, perf_loop_nesting
-    # guard_moved_inside) regress when MLIU runs at this point. The
-    # pipeline-placement question is deferred to a future iteration --
-    # MLIU's standalone tests + the ICON-shape tests already pin the
-    # contract; the integration needs a fixpoint-or-priority design.
+    # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired at this
+    # pre-parallelize point. It is the dual of the earlier ``MoveIfIntoLoop``
+    # stage (which pushes guards INTO loops to enable sibling-loop fusion), so
+    # hoisting guards back out here would simply undo that work and ping-pong.
+    # The terminal ``hoist_guards`` stage runs MLIU once, AFTER fuse, where the
+    # fusion it would otherwise undo has already happened.
 
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -235,11 +230,15 @@ StageFactory = Callable[[], List[ppl.Pass]]
 
 
 def _stage_factory(label: str) -> StageFactory:
-    """Return a factory yielding fresh passes for the named stage."""
+    """Return a factory yielding fresh passes for the named stage.
+
+    :param label: The stage label to filter the recipe by.
+    :returns: A factory that builds that stage's passes in order.
+    """
     return lambda: [p for lbl, p in _build_stages() if lbl == label]
 
 
-#: Backward-compatible grouped view of :func:`_build_stages`: ``(label,
+#: Grouped view of :func:`_build_stages`: ``(label,
 #: factory)`` per stage, in order, where ``factory()`` builds that stage's
 #: fresh passes. ``_build_stages`` (flat ``(label, pass)``) is the source of
 #: truth used by the pipeline; this view exists for callers that iterate
