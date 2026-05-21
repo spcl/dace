@@ -4,3 +4,4 @@
 See ``DESIGN.md`` in this directory for the living design document.
 """
 from .pipeline import CanonicalizationPipeline, canonicalize, CANONICALIZE_STAGES
+from .debug import canonicalize_with_stage_checks, first_failing_stage, StageCheckResult

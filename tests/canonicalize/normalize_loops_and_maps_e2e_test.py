@@ -45,8 +45,13 @@ def gather_nonunit_stride(w: dace.float64[N, M], cidx: dace.int32[N, 2], b: dace
 
 @dace.program
 def gather_negative_step(w: dace.float64[N, M], cidx: dace.int32[N, 2], b: dace.float64[N, M]):
-    for i, j in dace.map[N - 1:-1:-1, 0:M]:
-        b[i, j] = 3.0 * w[cidx[i, 0], j] - w[cidx[i, 1], j]
+    # Reverse iteration is expressed as a ``range`` (LoopRegion); a Map with a
+    # negative step would be rejected at construction time. The
+    # ``NormalizeLoopsAndMaps`` stage rewrites the loop to a positive-step
+    # ``0:N:1`` Map by inverting the subscript.
+    for i in range(N - 1, -1, -1):
+        for j in range(0, M):
+            b[i, j] = 3.0 * w[cidx[i, 0], j] - w[cidx[i, 1], j]
 
 
 @dace.program
@@ -73,8 +78,11 @@ def gather_negative_offset_step(w: dace.float64[N, M], cidx: dace.int32[N, 2], b
     # all ``>= 1``) and the gather subscript reads ``cidx[i - 1, ...]`` (a
     # genuine negative offset that stays in ``[0, N)`` because ``i >= 1``).
     # Stresses a negative stride and a negative index offset together.
-    for i, j in dace.map[N - 1:0:-2, 0:M]:
-        b[i, j] = 3.0 * w[cidx[i - 1, 0], j] - w[cidx[i - 1, 1], j]
+    # Reverse iteration is a ``range`` (LoopRegion); a Map with a negative
+    # step would be invalid.
+    for i in range(N - 1, 0, -2):
+        for j in range(0, M):
+            b[i, j] = 3.0 * w[cidx[i - 1, 0], j] - w[cidx[i - 1, 1], j]
 
 
 @dace.program

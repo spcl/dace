@@ -127,15 +127,21 @@ class UniqueLoopIterators(ppl.Pass):
                             cfg,
                             f"{_POST_VALUE_STATE_PREFIX}_{UniqueLoopIterators._loop_var_counter}",
                             assignments={old_name: f"({post_value_str})"})
-            elif old_name in sdfg.symbols and old_name not in sdfg.free_symbols:
+            elif old_name in sdfg.symbols and old_name not in sdfg.used_symbols(all_symbols=False):
                 # The rename was scoped to ``cfg`` so the LoopRegion's
                 # body, init/condition/update no longer reference
                 # ``old_name``. Without the post-value epilogue there is
                 # also no surviving inter-state assignment using it, so the
                 # SDFG-level declaration left behind by the frontend leaks
-                # as a phantom free symbol on the enclosing NSDFG boundary
-                # ("Missing symbols on nested SDFG: ['i']"). Drop the dead
-                # declaration so the symbol table reflects actual usage.
+                # as a phantom free symbol on the enclosing NestedSDFG
+                # boundary ("Missing symbols on nested SDFG: ['i']"). Drop
+                # the dead declaration so the symbol table reflects actual
+                # usage. The check uses ``used_symbols(all_symbols=False)``
+                # rather than ``sdfg.free_symbols`` because the latter
+                # unconditionally re-folds ``sdfg.symbols.keys()`` back in
+                # (see ``ControlFlowRegion._used_symbols_internal``), which
+                # would make the declaration appear "used" by virtue of
+                # being declared and prevent its own removal -- circular.
                 sdfg.remove_symbol(old_name)
 
             UniqueLoopIterators._loop_var_counter += 1

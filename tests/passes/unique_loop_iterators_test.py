@@ -449,6 +449,71 @@ def test_no_postamble_drops_dead_symbol_declaration():
     sdfg.validate()
 
 
+def test_no_postamble_clears_loop_var_for_inner_accumulator():
+    """Regression: an inner reduction-style accumulator (``s += a[i, j-1] +
+    a[i, j] + a[i, j+1]``) writes the per-iteration scalar ``s`` inside a
+    ``for j: ...`` loop. With ``assign_loop_iterator_post_value = False``
+    the rename must drop the dead ``j`` from ``sdfg.symbols`` of the
+    enclosing NestedSDFG -- otherwise ``j`` lingers as a declared symbol
+    that no longer corresponds to any loop variable, and the validator
+    reports ``Missing symbols on nested SDFG: ['j']`` on the enclosing
+    Map's body NestedSDFG.
+
+    The previous gate ``old_name not in sdfg.free_symbols`` was circular:
+    ``SDFG.free_symbols`` calls ``used_symbols(all_symbols=True)`` which
+    unconditionally folds ``sdfg.symbols.keys()`` back into the "free"
+    set (``ControlFlowRegion._used_symbols_internal``, the ``if
+    all_symbols: free_syms |= set(self.symbols.keys())`` branch). The
+    declared symbol therefore always appeared "free" by virtue of being
+    declared and was never removed. The fix uses
+    ``used_symbols(all_symbols=False)`` which reflects only actual
+    code-generation usage.
+    """
+
+    @dace.program
+    def redux(a: dace.float64[8, 9], b: dace.float64[8]):
+        for i in dace.map[0:8]:
+            s = a[i, 0] + a[i, 8]
+            for j in range(1, 8):
+                s += a[i, j - 1] + a[i, j] + a[i, j + 1]
+            b[i] = s
+
+    sdfg = redux.to_sdfg(simplify=True)
+    # Pre-condition: at least one body NestedSDFG declares ``j`` -- the
+    # frontend leaves it there for the original loop_var.
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert any('j' in n.sdfg.symbols for n in nsdfgs)
+
+    UniqueLoopIterators._loop_var_counter = 0
+    p = UniqueLoopIterators()
+    p.assign_loop_iterator_post_value = False
+    p.apply_pass(sdfg, {})
+
+    # Post-condition: no body NestedSDFG still declares ``j`` -- the
+    # cleanup removed the stale declaration because nothing in the
+    # body (memlets, tasklet code, interstate-edge assignments) actually
+    # uses ``j`` after the rename to ``_loop_it_<N>``.
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    for n in nsdfgs:
+        assert 'j' not in n.sdfg.symbols, \
+            f"NSDFG {n.sdfg.name} still declares 'j'; symbols={sorted(n.sdfg.symbols)}"
+    # And the SDFG validates as a whole (no Missing-symbols error).
+    sdfg.validate()
+
+    # Numerical equivalence against a pure-numpy oracle: the inner
+    # accumulator semantics are preserved by canonicalize.
+    a = np.random.rand(8, 9)
+    b = np.zeros(8)
+    sdfg.compile()(a=a.copy(), b=b)
+    exp = np.zeros(8)
+    for i in range(8):
+        s = a[i, 0] + a[i, 8]
+        for j in range(1, 8):
+            s += a[i, j - 1] + a[i, j] + a[i, j + 1]
+        exp[i] = s
+    assert np.allclose(b, exp)
+
+
 def test_postamble_preserves_symbol_declaration():
     """The dead-symbol cleanup must trigger only when the post-value
     epilogue is disabled. With the default ``assign_loop_iterator_post_value
@@ -487,4 +552,5 @@ if __name__ == '__main__':
     test_while_loop_no_induction_var()
     test_large_nested_map_for_for_map_program()
     test_no_postamble_drops_dead_symbol_declaration()
+    test_no_postamble_clears_loop_var_for_inner_accumulator()
     test_postamble_preserves_symbol_declaration()

@@ -14,6 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp)
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -35,6 +36,7 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -77,9 +79,22 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
+    # Canonicalization runs UniqueLoopIterators with the post-value epilogue
+    # OFF: it is a Fortran-frontend convenience (materialise ``<i> = post``
+    # so downstream reads of the un-renamed name still see the counted-DO
+    # exit value), but canonicalize already rewrites every use site to the
+    # unique ``_loop_it_<N>`` name, so the epilogue would be a dead-state
+    # assignment that keeps the original symbol declaration live across
+    # NestedSDFG boundaries and re-introduces the alias hazard the pass
+    # exists to remove.
+    _uniq = UniqueLoopIterators()
+    _uniq.assign_loop_iterator_post_value = False
+    _uniq2 = UniqueLoopIterators()
+    _uniq2.assign_loop_iterator_post_value = False
+
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
-    s += [('clean', UniqueLoopIterators()), ('clean', SplitTasklets()),
+    s += [('clean', _uniq), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
@@ -105,6 +120,15 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # 'untrivialize' stage before LoopToMap can mangle it.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
+    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may have buried an
+    # invariant interstate-edge assignment (e.g. ``kfdia_plus_1 = kfdia + 1``,
+    # the Python-frontend bound promotion) inside the loop it pushed the
+    # guard into. Lift it back out *past every enclosing loop* (all-or-
+    # nothing upward, see ``CASCADE_UP_DESIGN.md``) so LoopToMap's
+    # body-assigns-loop-range-symbol refuse-check does not later block
+    # parallelization. Standalone and idempotent -- can be invoked again.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
     # fission: loop distribution + block-level perfect-loop-nesting.
     s += [('fission', LoopFission())]
 
@@ -112,7 +136,7 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('normalize', NormalizeLoopsAndMaps())]
 
     # reduce / ssa: lift accumulator loops, unique loop iterators.
-    s += [('reduce', LoopToReduce()), ('ssa', UniqueLoopIterators())]
+    s += [('reduce', LoopToReduce()), ('ssa', _uniq2)]
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
@@ -129,6 +153,27 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # otherwise turn it into a sticky NestedSDFG that breaks idempotence and
     # re-lowering.
     s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
+
+    # cascade_iedges_up (pre-parallelize): re-run after fission / normalize /
+    # ssa, since each of those rewrites the CFG and may expose new hoisting
+    # opportunities (e.g. an iedge that was previously inside a body block
+    # is now the only block on a clean linear chain). Critically: this MUST
+    # run before LoopToMap so the refuse-check on body-assigned range
+    # symbols sees the cleaned-up shape.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
+    # NOTE: MoveLoopInvariantIfUp is NOT wired here yet. With the
+    # dead-outside-branch relaxation it correctly hoists ICON-style
+    # ``IF istep == 1`` guards past the per-jb loop (verified on the
+    # solve_nonhydro / velocity_advection real-world tests), but it
+    # ping-pongs with the earlier ``MoveIfIntoLoop`` stage: that pass
+    # is the dual (it pushes guards INTO loops to enable fusion of
+    # sibling loops), and MLIU here would simply undo its work. Two
+    # canonicalize tests (coexisting_guards collapse, perf_loop_nesting
+    # guard_moved_inside) regress when MLIU runs at this point. The
+    # pipeline-placement question is deferred to a future iteration --
+    # MLIU's standalone tests + the ICON-shape tests already pin the
+    # contract; the integration needs a fixpoint-or-priority design.
 
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -159,6 +204,17 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
+
+    # hoist_guards (terminal): hoist any still-invariant guard out past every
+    # enclosing loop (all-or-nothing upward, ``require_full_hoist=True``). Run
+    # AFTER fuse -- the dual ``MoveIfIntoLoop`` (prep stage) has already pushed
+    # guards in to enable sibling fusion, so a terminal hoist of a guard that
+    # is STILL invariant w.r.t. the whole remaining loop nest does not undo
+    # that fusion; it lifts the surviving config-flag guards (ICON ``istep ==
+    # 1``, cloudsc ``IWARMRAIN`` etc.) to the cheapest scope. MoveLoopInvariantIfUp's
+    # dead-outside-branch match lifts past per-iteration iedge assignments
+    # (``start = jb // 4``), which stay in the now-guarded loop body.
+    s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=True))]
 
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]
