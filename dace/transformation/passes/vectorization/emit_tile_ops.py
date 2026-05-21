@@ -24,13 +24,42 @@ import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.libraries.tileops import TileBinop, TileLoad, TileStore
+from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileScatter, TileStore
+from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     TileDimSpec,
     classify_tile_access,
 )
+
+
+def _lane_index_expr(begin_str: str, iter_vars: Tuple[str, ...]) -> Optional[str]:
+    """Affine per-lane gather index for one source array dim.
+
+    For a per-iteration begin expression ``begin_str`` that is affine in the
+    tile iter-vars, the index at lane ``(l_0, ..., l_{K-1})`` is
+    ``begin + sum_p coeff_p * l_p`` (the begin already carries the tile base;
+    each lane adds its offset scaled by the iter-var's coefficient). The lane
+    loop vars match the nested-loop emitter's ``__l0 .. __l{K-1}``.
+
+    :param begin_str: The dim's per-iteration begin expression.
+    :param iter_vars: Tile iter-var names, innermost-last.
+    :returns: The C++ index expression, or ``None`` if ``begin_str`` is not
+        affine in the tile vars (an indirect / non-affine index — the caller
+        falls back / skips, since the affine gather map cannot be built).
+    """
+    b = symbolic.pystr_to_symbolic(begin_str)
+    terms = [f"({begin_str})"]
+    for p, v in enumerate(iter_vars):
+        vsym = symbolic.pystr_to_symbolic(v)
+        coeff = b.coeff(vsym)
+        # Affine only: the coefficient must not itself depend on the tile var.
+        if vsym in coeff.free_symbols:
+            return None
+        if coeff != 0:
+            terms.append(f"(({symbolic.symstr(coeff)}) * __l{p})")
+    return " + ".join(terms)
 
 _OPERAND = r"(?:[A-Za-z_]\w*|\d+\.?\d*(?:[eE][+-]?\d+)?)"
 _BINOP_RE = re.compile(
@@ -253,6 +282,11 @@ class EmitTileOps(ppl.Pass):
             # both cases, but only a genuine Scalar / 1-element array
             # should be wired; otherwise treat as an inline symbol.
             return "Scalar", (source_edge, edge)
+        if cls.kind == TileAccessKind.GATHER:
+            # Non-perfect-box read (diagonal ``a[i, i]`` etc.): lower to a
+            # TileGather with one affine per-dim index tile (the "gather
+            # map"). ``_emit_gather_load`` builds the index tiles + node.
+            return "Gather", (source_edge, edge, edge.data.subset)
         raise NotImplementedError(
             f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} access "
             f"{source_edge.data!r} is {cls.kind.value}; T5 MVP only handles Tile / Scalar / Symbol"
@@ -334,6 +368,139 @@ class EmitTileOps(ppl.Pass):
         tile_access = state.add_access(tile_name)
         state.add_edge(load, "_dst", tile_access, None, dace.Memlet(f"{tile_name}[{subset}]"))
         return tile_name, tile_access
+
+    def _emit_gather_index_tiles(self,
+                                 state: dace.SDFGState,
+                                 map_entry: MapEntry,
+                                 per_iter_subset: subsets.Range,
+                                 src_ndim: int,
+                                 spec: TileDimSpec) -> List[dace.nodes.AccessNode]:
+        """Build one affine per-dim index tile (the "gather map") per source
+        array dim. Each ``_gidx_k`` tile is filled by a small CPP tasklet
+        ``_gidx_k[lane] = begin_k + sum_p coeff_p * __l_p`` (begin_k read from
+        ``per_iter_subset``); the tasklet hangs off the map entry so the tile
+        iter-vars are in scope.
+
+        :param state: Parent state.
+        :param map_entry: Inner (strided) map entry — the dependency source.
+        :param per_iter_subset: Per-iteration subset of the gathered access.
+        :param src_ndim: Number of source-array dims (one index tile each).
+        :param spec: Surrounding tile spec.
+        :returns: One produced index-tile AccessNode per source dim.
+        :raises NotImplementedError: If any dim's index is non-affine
+            (indirect) — the affine gather map cannot be built.
+        """
+        sdfg = state.sdfg
+        out_subset = ", ".join(f"0:{w}" for w in spec.widths)
+        idx_accesses: List[dace.nodes.AccessNode] = []
+        for k in range(src_ndim):
+            begin_str = str(per_iter_subset.ranges[k][0])
+            expr = _lane_index_expr(begin_str, spec.iter_vars)
+            if expr is None:
+                raise NotImplementedError(
+                    f"EmitTileOps: gather index dim {k} ({begin_str!r}) is not affine "
+                    f"in the tile vars (indirect gather not yet emitted)")
+            idx_name = self._add_tile_transient(sdfg, "_gidx", dace.int64, spec.widths)
+            # Use a generic ``_out`` connector (not the array name) — a tasklet
+            # connector must not collide with an SDFG data/symbol name.
+            body = f"_out[{tile_offset(spec.widths)}] = {expr};"
+            fill = state.add_tasklet(
+                name=f"gidx_{idx_name}",
+                inputs=set(),
+                outputs={"_out"},
+                code=nested_loops(spec.widths, body),
+                language=dace.dtypes.Language.CPP,
+            )
+            # Keep the fill tasklet inside the map scope so the tile iter-vars
+            # are defined symbols (mirrors the TileMaskGen wiring).
+            state.add_nedge(map_entry, fill, dace.Memlet())
+            idx_acc = state.add_access(idx_name)
+            state.add_edge(fill, "_out", idx_acc, None, dace.Memlet(f"{idx_name}[{out_subset}]"))
+            idx_accesses.append(idx_acc)
+        return idx_accesses
+
+    def _emit_gather_load(self,
+                          state: dace.SDFGState,
+                          tasklet: dace.nodes.Tasklet,
+                          conn: str,
+                          source_edge,
+                          in_edge,
+                          per_iter_subset: subsets.Range,
+                          spec: TileDimSpec,
+                          mask_name: str) -> Tuple[str, dace.nodes.AccessNode]:
+        """Insert a :class:`TileGather` materializing one tile transient from a
+        non-box (diagonal / affine-indirect) read.
+
+        :returns: ``(tile_name, tile_access)`` of the gathered tile.
+        """
+        src_name = source_edge.data.data
+        sdfg = state.sdfg
+        src_arr = sdfg.arrays[src_name]
+        src_ndim = len(src_arr.shape)
+        map_entry = self._map_entry_of(state, tasklet)
+        idx_accesses = self._emit_gather_index_tiles(state, map_entry, per_iter_subset, src_ndim, spec)
+        tile_name = self._add_tile_transient(sdfg, f"_tile_{conn.lstrip('_')}", src_arr.dtype, spec.widths)
+        gather = TileGather(name=f"{tasklet.label}_gather_{conn.lstrip('_')}",
+                            widths=spec.widths, source_ndim=src_ndim, has_mask=True)
+        state.add_node(gather)
+        full = ", ".join(f"0:{s}" for s in src_arr.shape)
+        state.add_edge(in_edge.src, in_edge.src_conn, gather, "_src",
+                       dace.Memlet(data=src_name, subset=subsets.Range.from_string(full)))
+        for k, idx_acc in enumerate(idx_accesses):
+            state.add_edge(idx_acc, None, gather, f"_idx_{k}", dace.Memlet(f"{idx_acc.data}[{', '.join(f'0:{w}' for w in spec.widths)}]"))
+        out_subset = ", ".join(f"0:{w}" for w in spec.widths)
+        mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
+        state.add_edge(mask_access, None, gather, "_mask", dace.Memlet(f"{mask_name}[{out_subset}]"))
+        tile_access = state.add_access(tile_name)
+        state.add_edge(gather, "_dst", tile_access, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
+        return tile_name, tile_access
+
+    def _emit_scatter_store(self,
+                            state: dace.SDFGState,
+                            map_entry: MapEntry,
+                            out_access: dace.nodes.AccessNode,
+                            out_edge,
+                            spec: TileDimSpec,
+                            mask_access: dace.nodes.AccessNode) -> None:
+        """Scatter a result tile back to a non-box (diagonal / affine) output
+        via a :class:`TileScatter` over the same affine index map.
+
+        :param state: Parent state.
+        :param map_entry: Inner map entry (index-tile dependency source).
+        :param out_access: AccessNode holding the result tile.
+        :param out_edge: The original store edge (to the MapExit).
+        :param spec: Surrounding tile spec.
+        :param mask_access: The iteration-mask access node.
+        """
+        sdfg = state.sdfg
+        dst_name = out_edge.data.data
+        dst_arr = sdfg.arrays[dst_name]
+        dst_ndim = len(dst_arr.shape)
+        out_subset = ", ".join(f"0:{w}" for w in spec.widths)
+        idx_accesses = self._emit_gather_index_tiles(state, map_entry, out_edge.data.subset, dst_ndim, spec)
+        scatter = TileScatter(name=f"{out_access.data}_scatter", widths=spec.widths,
+                              dest_ndim=dst_ndim, has_mask=True)
+        state.add_node(scatter)
+        state.add_edge(out_access, None, scatter, "_src", dace.Memlet(f"{out_access.data}[{out_subset}]"))
+        for k, idx_acc in enumerate(idx_accesses):
+            state.add_edge(idx_acc, None, scatter, f"_idx_{k}", dace.Memlet(f"{idx_acc.data}[{out_subset}]"))
+        state.add_edge(mask_access, None, scatter, "_mask", dace.Memlet(f"{mask_access.data}[{out_subset}]"))
+        full = ", ".join(f"0:{s}" for s in dst_arr.shape)
+        state.add_edge(scatter, "_dst", out_edge.dst, out_edge.dst_conn,
+                       dace.Memlet(data=dst_name, subset=subsets.Range.from_string(full)))
+
+    def _map_entry_of(self, state: dace.SDFGState, node: dace.nodes.Node) -> MapEntry:
+        """Return the MapEntry whose scope contains ``node``.
+
+        :param state: Parent state.
+        :param node: A node inside an inner map scope.
+        :returns: The enclosing :class:`MapEntry`.
+        """
+        scope = state.scope_dict()
+        cur = scope[node]
+        while cur is not None and not isinstance(cur, MapEntry):
+            cur = scope[cur]
+        return cur
 
     def _find_mask_access(self, state: dace.SDFGState, mask_name: str) -> Optional[dace.nodes.AccessNode]:
         """Return the AccessNode for ``mask_name`` placed by
@@ -580,8 +747,8 @@ class EmitTileOps(ppl.Pass):
 
         kind_a, info_a = _resolve(a_tok, "_a")
         kind_b, info_b = _resolve(b_tok, "_b")
-        norm_a = "Tile" if kind_a == "Tile-existing" else kind_a
-        norm_b = "Tile" if kind_b == "Tile-existing" else kind_b
+        norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
+        norm_b = "Tile" if kind_b in ("Tile-existing", "Gather") else kind_b
         if norm_a != "Tile" and norm_b != "Tile":
             raise NotImplementedError(
                 f"EmitTileOps: tasklet {tasklet.label!r} has no Tile operand "
@@ -604,6 +771,10 @@ class EmitTileOps(ppl.Pass):
             elif kind == "Tile":
                 tname, tacc = self._emit_tile_load(
                     state, tasklet, conn[-1], info[0], info[1], info[2], info[3], info[4], spec, mask_name)
+                state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
+            elif kind == "Gather":
+                tname, tacc = self._emit_gather_load(
+                    state, tasklet, conn[-1], info[0], info[1], info[2], spec, mask_name)
                 state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
             elif kind == "Scalar":
                 self._wire_scalar_operand(state, binop, conn, info[0], info[1])
@@ -661,19 +832,22 @@ class EmitTileOps(ppl.Pass):
             out_dst_name = out_edge.data.data
             out_arr = state.sdfg.arrays[out_dst_name]
             out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
+            mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
+            if out_cls.kind == TileAccessKind.GATHER:
+                # Non-box write (diagonal ``a[i, i] = ...``): scatter the tile
+                # back through the same affine "gather map".
+                self._emit_scatter_store(state, map_entry, out_access, out_edge, spec, mask_access)
+                continue
             if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
-                # A non-box output (indirect / diagonal scatter) needs a
-                # TileScatter, not a strided store — out of scope here.
                 raise NotImplementedError(
                     f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
-                    f"only perfect-box (strided) stores are supported (scatter is TODO)")
+                    f"only perfect-box (strided) or gather stores are supported")
             promoted = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
             store = TileStore(name=f"{out_access.data}_store", widths=spec.widths,
                               dim_strides=out_cls.dim_strides, dst_dims=out_cls.match_dims, has_mask=True)
             state.add_node(store)
             state.add_edge(out_access, None, store, "_src",
                            dace.Memlet(f"{out_access.data}[{subset}]"))
-            mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
             state.add_edge(mask_access, None, store, "_mask",
                            dace.Memlet(f"{mask_name}[{subset}]"))
             state.add_edge(store, "_dst", out_edge.dst, out_edge.dst_conn,
