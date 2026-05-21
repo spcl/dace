@@ -9,7 +9,7 @@ tasklet. This splits memlets carrying ``other_subset`` into two simple
 subsets so downstream vectorization emitters see uniform shapes. GPU
 storage/device-scope handling is intentionally omitted.
 """
-import copy as _copy
+import copy
 from typing import Any, Dict, Optional
 
 import dace
@@ -92,9 +92,9 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             )
             state.remove_edge(edge)
             state.add_edge(src_an, edge.src_conn, tasklet, "_in",
-                           Memlet(data=src_an.data, subset=_copy.deepcopy(src_subset)))
+                           Memlet(data=src_an.data, subset=copy.deepcopy(src_subset)))
             state.add_edge(tasklet, "_out", dst_an, edge.dst_conn,
-                           Memlet(data=dst_an.data, subset=_copy.deepcopy(dst_subset)))
+                           Memlet(data=dst_an.data, subset=copy.deepcopy(dst_subset)))
             count += 1
         return count
 
@@ -139,7 +139,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 local_an = edge.dst  # AccessNode inside the scope
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
-                outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
+                outer_copy = Memlet(data=outer_memlet.data, subset=copy.deepcopy(outer_memlet.subset))
                 tasklet = state.add_tasklet(name=f"_assign_in_{outer_an.data}_to_{local_an.data}",
                                             inputs={"_in"},
                                             outputs={"_out"},
@@ -153,7 +153,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 scope_node = edge.dst  # innermost MapExit
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
-                outer_copy = Memlet(data=outer_memlet.data, subset=_copy.deepcopy(outer_memlet.subset))
+                outer_copy = Memlet(data=outer_memlet.data, subset=copy.deepcopy(outer_memlet.subset))
                 tasklet = state.add_tasklet(name=f"_assign_out_{local_an.data}_to_{outer_an.data}",
                                             inputs={"_in"},
                                             outputs={"_out"},

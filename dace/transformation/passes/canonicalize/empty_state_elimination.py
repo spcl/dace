@@ -15,17 +15,26 @@ that holds no dataflow nodes when every incident interstate edge is
 unconditional and assignment-free (so splicing it out is exactly path-
 preserving). Anything else is left untouched.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from dace import SDFG
+from dace.sdfg.graph import Edge
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def _trivial_edge(e) -> bool:
-    """An interstate edge is trivial iff unconditional and assignment-free."""
-    return (e.data.is_unconditional() and not e.data.assignments)
+def _trivial_edge(e: Edge[InterstateEdge]) -> bool:
+    """Report whether an interstate edge is safe to splice across.
+
+    An edge is trivial iff it is unconditional and carries no assignments, so
+    bypassing it preserves both the execution path and the symbol state.
+
+    :param e: The interstate edge to inspect.
+    :returns: ``True`` if the edge is unconditional and assignment-free.
+    """
+    return e.data.is_unconditional() and not e.data.assignments
 
 
 def _elide_one(region: ControlFlowRegion) -> bool:
@@ -74,7 +83,7 @@ class EmptyStateElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> Set:
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
