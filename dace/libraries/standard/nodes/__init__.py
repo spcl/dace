@@ -4,5 +4,3 @@ from .copy_node import CopyLibraryNode
 from .memset_node import MemsetLibraryNode
 from .gearbox import Gearbox
 from .reduce import Reduce
-from .transpose import Transpose
-from .ttranspose import TensorTranspose

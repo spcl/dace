@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import ast
 import copy
@@ -2070,8 +2070,7 @@ def _is_structure_view(obj) -> bool:
 
 def get_parent_map_and_loop_scopes(
         root_sdfg: 'dace.SDFG', node: Union['dace.sdfg.nodes.MapEntry', AbstractControlFlowRegion,
-                                            'dace.sdfg.nodes.Tasklet', ConditionalBlock,
-                                            'dace.sdfg.nodes.LibraryNode'],
+                                            'dace.sdfg.nodes.Tasklet', ConditionalBlock, 'dace.sdfg.nodes.LibraryNode'],
         parent_state: Union['dace.SDFGState', None]) -> List[Union['dace.sdfg.nodes.MapEntry', LoopRegion]]:
     """
     Collect all parent map entries and loop regions enclosing ``node``,
@@ -2088,13 +2087,13 @@ def get_parent_map_and_loop_scopes(
     :returns: Parent scopes (MapEntry or LoopRegion), innermost first.
     """
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
-    parent_scopes: List[Union['dace.sdfg.nodes.MapEntry', LoopRegion]] = []
+    parent_scopes: List[Union[nodes.MapEntry, LoopRegion]] = []
     cur_node = node
 
     # Walk up the scope dict inside the current state.
-    if isinstance(cur_node, (dace.sdfg.nodes.MapEntry, dace.sdfg.nodes.Tasklet, dace.sdfg.nodes.LibraryNode)):
+    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet, nodes.LibraryNode)):
         while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.sdfg.nodes.MapEntry):
+            if isinstance(scope_dict[cur_node], nodes.MapEntry):
                 parent_scopes.append(scope_dict[cur_node])
             cur_node = scope_dict[cur_node]
 
@@ -2130,3 +2129,49 @@ def get_parent_map_and_loop_scopes(
         parent_nsdfg_parent_state = parent_sdfg.parent if parent_nsdfg_node is not None else None
 
     return parent_scopes
+
+
+def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
+    """
+    Move a branch of a ``ConditionalBlock`` up into its parent CFG, replacing the
+    conditional with the selected branch body and discarding the condition check
+    and every other branch. Incoming and outgoing edges of the conditional are
+    rewired to the spliced branch's start and end nodes.
+
+    :param if_block: The conditional block to dissolve.
+    :param body_to_take: The branch body whose nodes and edges are spliced into
+        ``if_block.parent_graph`` in place of ``if_block``.
+    """
+    bodies = {b for _, b in if_block.branches}
+    assert body_to_take in bodies
+    assert isinstance(if_block, ConditionalBlock)
+
+    graph = if_block.parent_graph
+
+    node_map = dict()
+    new_start_block = None
+    new_end_block = None
+
+    for node in body_to_take.nodes():
+        copynode = copy.deepcopy(node)
+        node_map[node] = copynode
+        start_block_case = (body_to_take.start_block == node) and (graph.start_block == if_block)
+        if body_to_take.start_block == node:
+            assert new_start_block is None
+            new_start_block = copynode
+        if body_to_take.out_degree(node) == 0:
+            assert new_end_block is None
+            new_end_block = copynode
+        graph.add_node(copynode, is_start_block=start_block_case)
+
+    for edge in body_to_take.edges():
+        src = node_map[edge.src]
+        dst = node_map[edge.dst]
+        graph.add_edge(src, dst, copy.deepcopy(edge.data))
+
+    for ie in graph.in_edges(if_block):
+        graph.add_edge(ie.src, new_start_block, copy.deepcopy(ie.data))
+    for oe in graph.out_edges(if_block):
+        graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
+
+    graph.remove_node(if_block)

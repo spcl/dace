@@ -115,6 +115,7 @@ def test_production_folder_mode():
     libstub_path = sdfg_compiler._get_stub_library_path(lib_path.name)
 
     expected_files = {
+        "program.sdfgz": pathlib.Path.is_file,
         "CACHEDIR.TAG": pathlib.Path.is_file,
         "FOLDER_MODE": pathlib.Path.is_file,
         lib_path.name: pathlib.Path.is_file,
@@ -188,6 +189,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
         expected_files = {
             "CACHEDIR.TAG": pathlib.Path.is_file,
             "FOLDER_MODE": pathlib.Path.is_file,
+            "program.sdfgz": pathlib.Path.is_file,
             lib1_path.name: pathlib.Path.is_file,
             libstub1_path.name: pathlib.Path.is_file,
             lib2_path.name: pathlib.Path.is_file,

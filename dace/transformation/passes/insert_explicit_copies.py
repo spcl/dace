@@ -3,14 +3,14 @@
 without an intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
 """
 import copy as _copy
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
 import dace
 from dace import dtypes, nodes, properties
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
+from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SDFGState
-from dace.sdfg import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -34,7 +34,7 @@ def _resolve_subset_for(memlet, an_node):
     return _ss.Range([(0, s - 1, 1) for s in sizes])
 
 
-def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
+def _derive_matching_dst_subset(src_subset, dst_desc):
     """Pick a destination subset for a memlet that omits ``other_subset``/``dst_subset``.
 
     Convention used by implicit copy edges: if the destination array's shape
@@ -45,8 +45,6 @@ def _derive_matching_dst_subset(src_subset, dst_desc, src_desc):
 
     :param src_subset: The known side of the implicit copy.
     :param dst_desc: Data descriptor of the side whose subset is being derived.
-    :param src_desc: Data descriptor of the known side (unused; kept for the
-        symmetric call signature with the absent-source case).
     :returns: A :class:`~dace.subsets.Range` for the destination side.
     """
     from dace import subsets as _subsets
@@ -126,7 +124,13 @@ def _is_consecutive_reshape(src_size, dst_shape):
             dst_acc *= dst_shape[j]
             i += 1
             j += 1
-        elif _expr_lt(src_acc, dst_acc):
+            continue
+        # Symbolic ``<`` may be indeterminate -- fall back to advancing dst (safe under the equal-product check below).
+        try:
+            advance_src = bool((src_acc - dst_acc) < 0)
+        except Exception:
+            advance_src = False
+        if advance_src:
             src_acc *= src_size[i]
             i += 1
         else:
@@ -144,32 +148,23 @@ def _is_consecutive_reshape(src_size, dst_shape):
         return str(src_acc) == str(dst_acc)
 
 
-def _expr_lt(a, b):
-    """Compare ``a < b`` for sympy/numeric mixes.
-
-    Falls back to ``False`` on indeterminate symbolic comparisons, which sends
-    both reshape pointers forward in lockstep -- safe under the equal-product
-    guard in :func:`_is_consecutive_reshape`.
-
-    :param a: Left operand (numeric or sympy expression).
-    :param b: Right operand (numeric or sympy expression).
-    :returns: ``True`` iff ``a`` is strictly less than ``b``.
-    """
-    try:
-        return bool((a - b) < 0)
-    except Exception:
-        return False
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
     """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
 
     Detected patterns:
-    - ``AccessNode -> AccessNode`` (direct copy edge)
-    - ``AccessNode -> MapEntries -> AccessNode`` (stage-in)
-    - ``AccessNode -> MapExits -> AccessNode`` (stage-out)
+    - ``AccessNode -> AccessNode`` (direct copy edge) -- lifted to a libnode.
+    - ``AccessNode -> View -> AccessNode`` (round-trip through a View) --
+      first collapsed into a direct ``AN -> AN`` edge composing the two
+      memlets, then lifted by the direct-copy path.
+    - ``AccessNode -> MapEntry -> AccessNode`` (stage-in) -- libnode placed
+      inside the map scope, wired directly to the MapEntry's output
+      connector. Chained MapEntries are followed via ``memlet_path``.
+      Views on the outer side stay in place.
+    - ``AccessNode -> MapExit -> AccessNode`` (stage-out) -- symmetric;
+      libnode inside the map scope, output connector wired directly to
+      MapExit.
     """
 
     # Storages whose copies CopyLibraryNode can lower. Other storages
@@ -185,35 +180,6 @@ class InsertExplicitCopies(ppl.Pass):
         dtypes.StorageType.GPU_Shared,
     })
 
-    src_locations = properties.SetProperty(
-        element_type=dtypes.StorageType,
-        default=set(),
-        desc="Only lift copies whose source storage is in this set. "
-        "Empty set means any source storage is accepted.",
-    )
-    dst_locations = properties.SetProperty(
-        element_type=dtypes.StorageType,
-        default=set(),
-        desc="Only lift copies whose destination storage is in this set. "
-        "Empty set means any destination storage is accepted.",
-    )
-    skip_inside_device_scope = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="When True, copies whose endpoints sit inside a GPU device-level scope are left "
-        "alone (cudaMemcpyAsync cannot be issued from device code, and the codegen handles "
-        "intra-kernel copies through other paths).",
-    )
-
-    def __init__(self,
-                 src_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 dst_locations: Optional[Iterable[dtypes.StorageType]] = None,
-                 skip_inside_device_scope: bool = False):
-        super().__init__()
-        self.src_locations = set(src_locations) if src_locations else set()
-        self.dst_locations = set(dst_locations) if dst_locations else set()
-        self.skip_inside_device_scope = skip_inside_device_scope
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -222,14 +188,6 @@ class InsertExplicitCopies(ppl.Pass):
 
     def depends_on(self):
         return set()
-
-    def _storage_allowed(self, src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType) -> bool:
-        """Return True when the (src, dst) storage pair passes the configured filter."""
-        if self.src_locations and src_storage not in self.src_locations:
-            return False
-        if self.dst_locations and dst_storage not in self.dst_locations:
-            return False
-        return True
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Lift every implicit copy in ``sdfg`` to a ``CopyLibraryNode``.
@@ -243,6 +201,7 @@ class InsertExplicitCopies(ppl.Pass):
             for state in nsdfg.states():
                 self._collapse_round_trip_views(nsdfg, state)
                 count += self._replace_direct_copies(nsdfg, state)
+                count += self._replace_map_staging_copies(nsdfg, state)
         return count if count > 0 else None
 
     def _collapse_round_trip_views(self, sdfg: SDFG, state: SDFGState):
@@ -281,8 +240,6 @@ class InsertExplicitCopies(ppl.Pass):
 
             src_subset = _resolve_subset_for(in_e.data, src_node)
             dst_subset = _resolve_subset_for(out_e.data, dst_node)
-            if src_subset is None or dst_subset is None:
-                continue
 
             new_memlet = Memlet(data=src_node.data,
                                 subset=_copy.deepcopy(src_subset),
@@ -353,13 +310,6 @@ class InsertExplicitCopies(ppl.Pass):
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
-            if not self._storage_allowed(src_desc.storage, dst_desc.storage):
-                continue
-
-            in_device = (is_devicelevel_gpu(sdfg, state, src_node) or is_devicelevel_gpu(sdfg, state, dst_node))
-            if in_device and self.skip_inside_device_scope:
-                continue
-
             src_name = src_node.data
             dst_name = dst_node.data
 
@@ -382,9 +332,9 @@ class InsertExplicitCopies(ppl.Pass):
             # the volumes line up (common for implicit copies between
             # different-shaped but same-volume arrays).
             if src_subset is None:
-                src_subset = _derive_matching_dst_subset(dst_subset, src_desc, dst_desc)
+                src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
             if dst_subset is None:
-                dst_subset = _derive_matching_dst_subset(src_subset, dst_desc, src_desc)
+                dst_subset = _derive_matching_dst_subset(src_subset, dst_desc)
 
             in_memlet = Memlet(data=src_name, subset=_copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
@@ -401,3 +351,74 @@ class InsertExplicitCopies(ppl.Pass):
             count += 1
 
         return count
+
+    def _replace_map_staging_copies(self, sdfg: SDFG, state: SDFGState) -> int:
+        """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
+
+        Stage-in is a ``MapEntry -> AccessNode`` edge whose ``memlet_path`` traces
+        back to an outer AccessNode; the libnode is inserted between MapEntry
+        and the inner AN, wired to MapEntry's existing output connector with
+        the original (per-iteration) memlet preserved, and to the inner AN
+        with a memlet derived for the inner array's descriptor. Stage-out is
+        symmetric. Chained MapEntries / MapExits are followed by
+        ``memlet_path``; downstream content (tasklets, NestedSDFGs, nested
+        maps) is irrelevant to the lift.
+
+        :param sdfg: The (possibly nested) SDFG owning ``state``.
+        :param state: The state to scan.
+        :returns: Number of libnodes inserted.
+        """
+        count = 0
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                for edge in list(state.out_edges(node)):
+                    if self._lift_staging_edge(sdfg, state, edge, stage_in=True):
+                        count += 1
+            elif isinstance(node, nodes.MapExit):
+                for edge in list(state.in_edges(node)):
+                    if self._lift_staging_edge(sdfg, state, edge, stage_in=False):
+                        count += 1
+        return count
+
+    def _lift_staging_edge(self, sdfg: SDFG, state: SDFGState, edge, stage_in: bool) -> bool:
+        """Lift one stage-in (``stage_in=True``) or stage-out copy edge to a libnode.
+
+        :returns: True iff the edge was lifted.
+        """
+        # For stage-in the inner side is edge.dst (AccessNode), for stage-out edge.src.
+        inner_node = edge.dst if stage_in else edge.src
+        if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
+            return False
+        inner_desc = sdfg.arrays[inner_node.data]
+        if isinstance(inner_desc, dace.data.View):
+            return False
+        find_outer = sdutils.find_input_arraynode if stage_in else sdutils.find_output_arraynode
+        try:
+            outer = find_outer(state, edge)
+        except RuntimeError:
+            return False
+        outer_desc = sdfg.arrays[outer.data]
+        if (outer_desc.storage not in self._STANDARD_STORAGES
+                or inner_desc.storage not in self._STANDARD_STORAGES
+                or outer_desc.dtype != inner_desc.dtype):
+            return False
+
+        outer_memlet = edge.data
+        inner_subset = _derive_matching_dst_subset(outer_memlet.subset, inner_desc)
+        inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
+        label = (f"copy_{outer_memlet.data}_to_{inner_node.data}" if stage_in
+                 else f"copy_{inner_node.data}_to_{outer_memlet.data}")
+        libnode = CopyLibraryNode(name=label)
+        state.add_node(libnode)
+        if stage_in:
+            map_node = edge.src
+            state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                           _copy.deepcopy(outer_memlet))
+            state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
+        else:
+            map_node = edge.dst
+            state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
+            state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn,
+                           _copy.deepcopy(outer_memlet))
+        state.remove_edge(edge)
+        return True
