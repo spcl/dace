@@ -69,7 +69,6 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from functools import lru_cache
 import inspect
 import sys
 import ast
@@ -1162,6 +1161,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         raise NotImplementedError('Unsupported type for py2cpp')
 
 
-@lru_cache(maxsize=16384)
+# @lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)
