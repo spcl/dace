@@ -5,6 +5,7 @@ import json
 import inspect
 import numpy
 import re
+import warnings
 from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
@@ -460,6 +461,36 @@ def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
     if red not in _VALUE_GENERATORS:
         return None
     return _VALUE_GENERATORS[red](dtype)
+
+
+def _symbol_dtype_category(dtype: 'typeclass') -> str:
+    """Coarse category of a typeclass for symbol-dtype reconciliation: signed and
+    unsigned integers share the ``integer`` category; floats, complex and bool
+    are their own."""
+    kind = dtype.as_numpy_dtype().kind
+    return 'integer' if kind in ('i', 'u') else kind
+
+
+def reconcile_symbol_dtype(name: str, existing: 'typeclass', new: 'typeclass', warn: bool = False) -> 'typeclass':
+    """Reconcile two dtypes claimed for the same symbol name (one dtype per name).
+
+    :param name: The symbol name (for diagnostics).
+    :param existing: The dtype already associated with the name.
+    :param new: The dtype now being claimed for the name.
+    :param warn: If True, emit a warning when a same-category redefinition is
+                 ignored in favor of the existing dtype.
+    :return: The dtype to keep: ``new`` when equal to ``existing``, otherwise the
+             ``existing`` dtype for a same-category redefinition.
+    :raises TypeError: if the two dtypes belong to different categories.
+    """
+    if existing == new:
+        return new
+    if _symbol_dtype_category(existing) != _symbol_dtype_category(new):
+        raise TypeError(f'Symbol "{name}" is used with incompatible dtypes {existing} and {new}')
+    if warn:
+        warnings.warn(f'Symbol "{name}" already exists with dtype {existing}; keeping it and '
+                      f'ignoring the requested dtype {new}')
+    return existing
 
 
 def result_type_of(lhs, *rhs):
