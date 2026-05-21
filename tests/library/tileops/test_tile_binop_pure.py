@@ -114,9 +114,13 @@ def test_tile_binop_rejects_invalid_K():
         TileBinop(name="bad_K0", widths=(), op="+")
 
 
-def _build_binop_symbol_rhs_sdfg(widths, expr_b, dtype=dace.float64, free_symbols=()):
-    """Build a minimal SDFG: tile input -> TileBinop(kind_b=Symbol) -> tile output."""
-    sdfg = dace.SDFG(f"tile_binop_sym_rhs_{'x'.join(str(w) for w in widths)}")
+def _build_binop_symbol_rhs_sdfg(widths, expr_b, tag, dtype=dace.float64, free_symbols=()):
+    """Build a minimal SDFG: tile input -> TileBinop(kind_b=Symbol) -> tile output.
+
+    :param tag: Per-test discriminator so distinct tests building the
+        same widths get unique SDFG names (no ``.dacecache`` collision).
+    """
+    sdfg = dace.SDFG(f"tile_binop_sym_rhs_{'x'.join(str(w) for w in widths)}_{tag}")
     for sym in free_symbols:
         sdfg.add_symbol(sym, dtype)
     sdfg.add_array("A", widths, dtype, transient=False)
@@ -140,7 +144,7 @@ def _build_binop_symbol_rhs_sdfg(widths, expr_b, dtype=dace.float64, free_symbol
 @pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_binop_kind_b_symbol_with_literal(widths):
     """Symbol-kind RHS with a numeric literal — every lane is shifted by the constant."""
-    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="2.5")
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="2.5", tag="literal")
     rng = np.random.default_rng(seed=51)
     A = rng.random(widths)
     C = np.zeros(widths)
@@ -151,7 +155,7 @@ def test_tile_binop_kind_b_symbol_with_literal(widths):
 def test_tile_binop_kind_b_symbol_with_free_symbol():
     """Symbol-kind RHS resolves a free symbol at runtime."""
     widths = (4, 8)
-    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="alpha", free_symbols=("alpha",))
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="alpha", tag="freesym", free_symbols=("alpha",))
     rng = np.random.default_rng(seed=52)
     A = rng.random(widths)
     C = np.zeros(widths)

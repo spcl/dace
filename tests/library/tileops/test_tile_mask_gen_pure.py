@@ -12,9 +12,13 @@ import dace
 from dace.libraries.tileops import TileMaskGen
 
 
-def _build_maskgen_sdfg(widths, iter_vars, global_ubs):
-    """Build a minimal SDFG: TileMaskGen -> mask array."""
-    sdfg = dace.SDFG(f"tile_mask_gen_pure_{'x'.join(str(w) for w in widths)}")
+def _build_maskgen_sdfg(widths, iter_vars, global_ubs, tag):
+    """Build a minimal SDFG: TileMaskGen -> mask array.
+
+    :param tag: Per-test discriminator so distinct tests building the
+        same widths get unique SDFG names (no ``.dacecache`` collision).
+    """
+    sdfg = dace.SDFG(f"tile_mask_gen_pure_{'x'.join(str(w) for w in widths)}_{tag}")
     for iv in iter_vars:
         sdfg.add_symbol(iv, dace.int64)
     for ub in global_ubs:
@@ -37,7 +41,7 @@ def _build_maskgen_sdfg(widths, iter_vars, global_ubs):
 def test_tile_mask_gen_pure_1d_all_active():
     """When the trip aligns, every lane is active."""
     widths = (8,)
-    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",))
+    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",), tag="all_active")
     OUT = np.zeros(widths, dtype=bool)
     sdfg(OUT=OUT, i=0, N=8)
     np.testing.assert_array_equal(OUT, np.ones(widths, dtype=bool))
@@ -46,7 +50,7 @@ def test_tile_mask_gen_pure_1d_all_active():
 def test_tile_mask_gen_pure_1d_partial_mask():
     """When ``i + l >= N``, the corresponding lane is inactive."""
     widths = (8,)
-    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",))
+    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i",), global_ubs=("N",), tag="partial")
     OUT = np.zeros(widths, dtype=bool)
     sdfg(OUT=OUT, i=0, N=5)
     ref = np.arange(8) < 5
@@ -56,7 +60,7 @@ def test_tile_mask_gen_pure_1d_partial_mask():
 def test_tile_mask_gen_pure_2d_any_dim_oob():
     """A lane is active iff (i + l_0 < M) AND (j + l_1 < N)."""
     widths = (4, 8)
-    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i", "j"), global_ubs=("M", "N"))
+    sdfg = _build_maskgen_sdfg(widths, iter_vars=("i", "j"), global_ubs=("M", "N"), tag="any_oob")
     OUT = np.zeros(widths, dtype=bool)
     sdfg(OUT=OUT, i=2, j=3, M=5, N=7)
     li = (np.arange(4) + 2)[:, None] < 5

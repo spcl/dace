@@ -10,6 +10,10 @@ import dace
 
 import copy
 
+import os
+
+import re
+
 import numpy
 
 from dace import InterstateEdge
@@ -190,10 +194,24 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # Pass ``param_tag=f"param{idx}"`` from the test body so each tuple gets
     # a unique cache dir. The verbose alternative is to encode the tuple
     # into the sdfg.name directly, but parametrize indices keep names short.
-    if sdfg_name is not None:
-        sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}"
-        if param_tag is not None:
-            sdfg_name = f"{sdfg_name}_{param_tag}"
+    #
+    # When the caller omits ``sdfg_name`` we seed the base from the unique
+    # pytest node id (test function + parametrization), so two different
+    # test functions that build same-named kernels (e.g. two ``"outer"``
+    # NSDFG fixtures, or two files with a ``jacobi2d`` ``@dace.program``)
+    # can never collide on a ``.dacecache/<name>/`` build dir. Outside
+    # pytest we fall back to the kernel's own name. The suffix below is
+    # appended either way, so every parameter group gets a distinct name.
+    if sdfg_name is None:
+        node_id = os.environ.get("PYTEST_CURRENT_TEST", "")
+        if "::" in node_id:
+            base = node_id.split("::", 1)[1].split(" (")[0]
+        else:
+            base = getattr(dace_func, "name", None) or getattr(dace_func, "__name__", "kernel")
+        sdfg_name = re.sub(r"\W+", "_", base).strip("_")
+    sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}"
+    if param_tag is not None:
+        sdfg_name = f"{sdfg_name}_{param_tag}"
 
     # Original SDFG
     if not from_sdfg:

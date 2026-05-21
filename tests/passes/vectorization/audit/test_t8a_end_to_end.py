@@ -19,10 +19,14 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
 )
 
 
-def _k1_axpy_sdfg():
-    """K=1 axpy: ``C[i] = A[i] + B[i]`` for end-to-end testing."""
+def _k1_axpy_sdfg(name="e2e_k1_axpy"):
+    """K=1 axpy: ``C[i] = A[i] + B[i]`` for end-to-end testing.
+
+    :param name: Unique SDFG name; distinct per test so parallel
+        ``-n`` workers don't race on a shared ``.dacecache`` build folder.
+    """
     N = dace.symbol("N")
-    sdfg = dace.SDFG("e2e_k1_axpy")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", (N,), dace.float64)
     sdfg.add_array("B", (N,), dace.float64)
     sdfg.add_array("C", (N,), dace.float64)
@@ -38,11 +42,15 @@ def _k1_axpy_sdfg():
     return sdfg
 
 
-def _k2_axpy_sdfg():
-    """K=2 axpy: ``C[i, j] = A[i, j] + B[i, j]`` for end-to-end testing."""
+def _k2_axpy_sdfg(name="e2e_k2_axpy"):
+    """K=2 axpy: ``C[i, j] = A[i, j] + B[i, j]`` for end-to-end testing.
+
+    :param name: Unique SDFG name; distinct per test so parallel
+        ``-n`` workers don't race on a shared ``.dacecache`` build folder.
+    """
     M = dace.symbol("M")
     N = dace.symbol("N")
-    sdfg = dace.SDFG("e2e_k2_axpy")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", (M, N), dace.float64)
     sdfg.add_array("B", (M, N), dace.float64)
     sdfg.add_array("C", (M, N), dace.float64)
@@ -61,7 +69,7 @@ def _k2_axpy_sdfg():
 def test_k1_axpy_aligned_trip_matches_numpy():
     """K=1 axpy under ``VectorizeCPUMultiDim(widths=(8,))`` matches numpy
     on a trip aligned to ``W=8``."""
-    sdfg = _k1_axpy_sdfg()
+    sdfg = _k1_axpy_sdfg("e2e_k1_axpy_aligned_trip")
     VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=101)
@@ -76,7 +84,7 @@ def test_k1_axpy_aligned_trip_matches_numpy():
 @pytest.mark.parametrize("n", [8, 16, 64, 128])
 def test_k1_axpy_aligned_sizes(n):
     """K=1 axpy across several aligned sizes."""
-    sdfg = _k1_axpy_sdfg()
+    sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_aligned_{n}")
     VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(sdfg, {})
     rng = np.random.default_rng(seed=n)
     A = rng.random(n)
@@ -89,7 +97,7 @@ def test_k1_axpy_aligned_sizes(n):
 def test_k2_axpy_aligned_trip_matches_numpy():
     """K=2 axpy under ``VectorizeCPUMultiDim(widths=(8, 8))`` matches
     numpy on aligned ``M x N``."""
-    sdfg = _k2_axpy_sdfg()
+    sdfg = _k2_axpy_sdfg("e2e_k2_axpy_aligned_trip")
     VectorizeCPUMultiDim(widths=(8, 8), target_isa="SCALAR").apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=202)
@@ -109,7 +117,7 @@ def test_k1_axpy_unaligned_trip_matches_numpy():
     final tile's tail is masked. End-to-end numerical equivalence
     against numpy validates the mask path.
     """
-    sdfg = _k1_axpy_sdfg()
+    sdfg = _k1_axpy_sdfg("e2e_k1_axpy_unaligned_trip")
     VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(sdfg, {})
     rng = np.random.default_rng(seed=303)
     n = 17  # 17 // 8 = 2 full tiles + 1 tail
