@@ -36,6 +36,7 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -161,6 +162,19 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # symbols sees the cleaned-up shape.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
+    # NOTE: MoveLoopInvariantIfUp is NOT wired here yet. With the
+    # dead-outside-branch relaxation it correctly hoists ICON-style
+    # ``IF istep == 1`` guards past the per-jb loop (verified on the
+    # solve_nonhydro / velocity_advection real-world tests), but it
+    # ping-pongs with the earlier ``MoveIfIntoLoop`` stage: that pass
+    # is the dual (it pushes guards INTO loops to enable fusion of
+    # sibling loops), and MLIU here would simply undo its work. Two
+    # canonicalize tests (coexisting_guards collapse, perf_loop_nesting
+    # guard_moved_inside) regress when MLIU runs at this point. The
+    # pipeline-placement question is deferred to a future iteration --
+    # MLIU's standalone tests + the ICON-shape tests already pin the
+    # contract; the integration needs a fixpoint-or-priority design.
+
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
@@ -190,6 +204,17 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
+
+    # hoist_guards (terminal): hoist any still-invariant guard out past every
+    # enclosing loop (all-or-nothing upward, ``require_full_hoist=True``). Run
+    # AFTER fuse -- the dual ``MoveIfIntoLoop`` (prep stage) has already pushed
+    # guards in to enable sibling fusion, so a terminal hoist of a guard that
+    # is STILL invariant w.r.t. the whole remaining loop nest does not undo
+    # that fusion; it lifts the surviving config-flag guards (ICON ``istep ==
+    # 1``, cloudsc ``IWARMRAIN`` etc.) to the cheapest scope. MoveLoopInvariantIfUp's
+    # dead-outside-branch match lifts past per-iteration iedge assignments
+    # (``start = jb // 4``), which stay in the now-guarded loop body.
+    s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=True))]
 
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]

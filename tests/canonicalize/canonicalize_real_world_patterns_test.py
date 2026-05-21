@@ -146,27 +146,43 @@ def _icon_solve_nonhydro_args(n, m, rng):
                 inv_ddqz_z_full=rng.uniform(0.5, 2.0, (n, m)))
 
 
-def test_icon_solve_nonhydro_shape_value_preserving():
-    n, m = 8, 8
-    rng = np.random.default_rng(101)
-    for istep in (1, 0):
-        args = _icon_solve_nonhydro_args(n, m, rng)
-        exp = _icon_solve_nonhydro_oracle(args, istep)
-        sdfg = icon_solve_nonhydro_shape.to_sdfg(simplify=True)
-        canonicalize(sdfg, validate=True)
-        sdfg.validate()
-        sdfg(**{
-            k: v.copy() if isinstance(v, np.ndarray) else v
-            for k, v in args.items()
-        },
-             istep=np.int32(istep),
-             N=n,
-             M=m)
-        # We can't easily get the SDFG-modified arrays back without inout aliasing; the
-        # value-preservation here is structural-via-validation. For numerical e2e, see
-        # the ``run`` variant below where we drive the SDFG fresh each iteration.
-        del exp  # documented oracle; numerical check below
-        _ = sdfg
+def test_icon_solve_nonhydro_shape_structure():
+    """Locked structural contract for the solve_nonhydro shape:
+
+    * The inner ``jk, jc`` body fully parallelises: 6 inner Maps.
+    * The outer ``jb`` stays a ``LoopRegion`` (1 surviving loop) -- it
+      carries a per-iteration bound (``start = jb // 4``) that pins it
+      sequential; no pass should turn it into a Map.
+    * The ``IF istep == 1`` guard IS hoisted to the SDFG top level
+      (``MoveLoopInvariantIfUp`` with the dead-outside-branch
+      relaxation lifts past the per-``jb`` iedge assignment of
+      ``start = jb // 4`` because ``start`` is only read inside the
+      branch). After the hoist the canonical shape is
+      ``if istep == 1: { for jb: { start = jb // 4; 3 sibling maps } }``.
+    * No iedge assignment leaks to the SDFG top level whose RHS reads
+      ``jb`` (refusal: ``jb`` is undeclared at the SDFG root).
+    """
+    sdfg = icon_solve_nonhydro_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nmaps(sdfg) == 6, f'expected 6 inner maps after canonicalize, got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 1, (f'expected exactly 1 surviving LoopRegion (outer jb with per-iteration bound), '
+                                f'got {_nloops(sdfg)}')
+    # MoveLoopInvariantIfUp (terminal, require_full_hoist) lifts the
+    # invariant ``IF istep == 1`` guard to the SDFG top level, past the
+    # per-jb loop, even though the loop body carries the per-jb iedge
+    # assignment ``start = jb // 4`` (dead outside the guard branch).
+    top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    assert len(top_conds) == 1, (f'IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} '
+                                 f'top-level conditional block(s)')
+    assert any('istep' in b[0].as_string for b in top_conds[0].branches), \
+        'top-level conditional does not test istep'
+    # Refusal contract: no top-level iedge assigns ``jb`` or anything
+    # whose RHS reads ``jb`` (jb is undeclared at SDFG root).
+    for e in sdfg.edges():
+        for lhs, rhs in e.data.assignments.items():
+            rhs_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
+            assert 'jb' not in rhs_syms, f'per-jb expression {lhs} = {rhs} leaked to SDFG root'
 
 
 def test_icon_solve_nonhydro_shape_e2e():
@@ -245,6 +261,37 @@ def _icon_velocity_advection_oracle(args, istep, nflatlev):
     return z_ekinh, z_w_concorr_mc, w_concorr_c
 
 
+def test_icon_velocity_advection_istep_shape_structure():
+    """velocity_advection skeleton: same outer-loop + per-jb bound shape
+    as solve_nonhydro, with the guard around two of three inner
+    siblings.
+
+    * Inner ``jk, jc`` bodies parallelise: 6 Maps.
+    * 2 surviving LoopRegions: the outer per-jb loop and (after the
+      MLIU hoist) the per-jb loop carried inside the guarded branch
+      that handles only the guarded siblings -- the always-on first
+      nest stays in its own per-jb loop. Both validate + value-preserve.
+    * The ``IF istep == 1`` guard IS hoisted to the SDFG top level
+      (MLIU's dead-outside-branch relaxation lifts past the per-jb
+      iedge assignments inside the guarded scope).
+    """
+    sdfg = icon_velocity_advection_istep_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nmaps(sdfg) == 6, f'expected 6 inner maps, got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 2, f'expected 2 surviving LoopRegions, got {_nloops(sdfg)}'
+    # The invariant ``IF istep == 1`` guard is hoisted to the SDFG top level.
+    top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    assert len(top_conds) == 1, (f'IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} '
+                                 f'top-level conditional block(s)')
+    assert any('istep' in b[0].as_string for b in top_conds[0].branches), \
+        'top-level conditional does not test istep'
+    for e in sdfg.edges():
+        for lhs, rhs in e.data.assignments.items():
+            rhs_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
+            assert 'jb' not in rhs_syms, f'per-jb expression {lhs} = {rhs} leaked to SDFG root'
+
+
 def test_icon_velocity_advection_istep_shape_e2e():
     n, m = 6, 6
     rng = np.random.default_rng(103)
@@ -319,6 +366,29 @@ def _cloudsc_iphase_oracle(args):
     return tendency_t, tendency_cld, fluxq
 
 
+def test_cloudsc_iphase_shape_structure():
+    """The outer ``JM`` loop must STAY a ``LoopRegion`` (the per-JM
+    guards ``iphase[jm] == 1`` and ``iphase[jm] == 2`` make it
+    sequential by data-dependence) and the 2 phase guards must SURVIVE
+    (correct refusal: cascade-up cannot lift a guard whose condition
+    reads a per-iteration array). The 4 sibling JL loops fuse to ≤3
+    Maps after MoveIfIntoLoop-style co-location.
+
+    Additionally: per-JM symbol assignments computed via tasklet
+    (``iphase_index = iphase[jm]``) are expected to appear inside the
+    JM loop body -- cascade-up correctly refuses to hoist them out
+    (rhs is a per-iteration array read).
+    """
+    sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nloops(sdfg) == 1, (f'outer JM must stay sequential (data-dependent phase guards); '
+                                f'got {_nloops(sdfg)} loops')
+    assert _ncond_blocks(sdfg) == 2, (f'both IPHASE phase guards must survive (correct refusal); '
+                                      f'got {_ncond_blocks(sdfg)} conditionals')
+    assert _nmaps(sdfg) <= 4, f'too many residual maps for 4 JL siblings: {_nmaps(sdfg)}'
+
+
 def test_cloudsc_iphase_shape_e2e():
     n, m = 8, 5
     rng = np.random.default_rng(104)
@@ -359,6 +429,28 @@ def cloudsc_klev_plus_1_shape(pfplsl: dace.float64[N, M], zpfplsx_qr: dace.float
             pfplsl[jl, jk] = zpfplsx_qr[jl, jk] + zpfplsx_ql[jl, jk]
 
 
+def test_cloudsc_klev_plus_1_shape_structure():
+    """The headline cascade-up success case. After canonicalize:
+
+    * Both loops become Maps (clean parallelism).
+    * The promoted ``klev_plus_1 = klev + 1`` iedge assignment lives at
+      the **SDFG root** (not inside any LoopRegion / NestedSDFG body).
+      This is the cascade-up contract: invariant promoted bounds are
+      lifted past every enclosing loop.
+    * The outer Map's range references the promoted symbol cleanly:
+      ``(0, klev_plus_1 - 1, 1)``.
+    """
+    sdfg = cloudsc_klev_plus_1_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nmaps(sdfg) == 2, f'expected 2 fully parallel maps, got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+    # Promoted symbol must be at SDFG root.
+    root_keys = {lhs for e in sdfg.edges() for lhs in e.data.assignments}
+    assert any('klev_plus_1' in k or 'klev' in k for k in root_keys), \
+        f'klev_plus_1 promoted symbol not at SDFG root; root iedge keys: {root_keys}'
+
+
 def test_cloudsc_klev_plus_1_shape_e2e():
     n, m = 10, 8
     klev = m - 1
@@ -394,6 +486,31 @@ def zqtmst_invariant_scalar_shape(arr: dace.float64[N, M], out: dace.float64[N, 
     for jk in range(0, M):
         for jl in range(0, N):
             out[jl, jk] = arr[jl, jk] * zqtmst
+
+
+def test_zqtmst_invariant_scalar_shape_structure():
+    """The reciprocal ``zqtmst = 1 / ptsphy`` should be computed ONCE
+    at outer scope and reused. Canonical shape: 2 fully parallel Maps,
+    no surviving LoopRegions, no per-iteration division. The
+    reciprocal's tasklet must NOT live inside either map scope (the
+    map scope's tasklet code must reference ``zqtmst`` as an input
+    symbol or AccessNode read, not recompute it)."""
+    sdfg = zqtmst_invariant_scalar_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nmaps(sdfg) == 2, f'expected 2 fully parallel maps, got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+    # No tasklet inside a Map scope should compute ``1.0 / ptsphy`` --
+    # the reciprocal should live in the outer state. Conservative test:
+    # search every tasklet's code for the division literal.
+    for n, parent in sdfg.all_nodes_recursive():
+        if isinstance(n, nodes.Tasklet):
+            code = getattr(n.code, 'as_string', '')
+            # Tasklets inside Map scope are reachable from a MapEntry.
+            # Heuristic: any tasklet whose code computes ``1.0 / ptsphy``
+            # OR ``1 / ptsphy`` is the buggy per-iteration reciprocal.
+            assert '1.0 / ptsphy' not in code and '1 / ptsphy' not in code, \
+                f'per-iteration reciprocal leaked into tasklet: {code}'
 
 
 def test_zqtmst_invariant_scalar_shape_e2e():
@@ -443,6 +560,26 @@ def _zqpretot_oracle(args, zepsec):
         if zqpretot[jl] < zepsec:
             zcovptot[jl] = 0.0
     return zcovptot, zqpretot
+
+
+def test_cloudsc_zqpretot_data_guard_shape_structure():
+    """Refusal contract: the data-dependent guard ``IF (ZQPRETOT(JL) <
+    ZEPSEC)`` must stay where it is. After canonicalize:
+
+    * The outer JL loop CAN become a Map (the body's reads/writes are
+      per-JL; the inner JM reduction is sequential).
+    * The inner JM accumulator stays a LoopRegion (sequential reduction
+      writing to a per-JL scalar).
+    * The data guard ConditionalBlock is preserved (correct refusal --
+      its condition reads ``zqpretot[jl]`` per JL).
+    """
+    sdfg = cloudsc_zqpretot_data_guard_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert _nmaps(sdfg) == 1, f'expected outer JL as a Map, got {_nmaps(sdfg)} maps'
+    assert _nloops(sdfg) >= 1, (f'inner JM reduction must stay as a LoopRegion, got {_nloops(sdfg)} loops')
+    assert _ncond_blocks(sdfg) == 1, (f'data-dependent guard must survive (correct refusal); '
+                                      f'got {_ncond_blocks(sdfg)} conditionals')
 
 
 def test_cloudsc_zqpretot_data_guard_shape_e2e():
@@ -505,6 +642,58 @@ def test_cloudsc_nssopt_config_chain_shape_e2e():
         else:
             exp = arr + 1.0
         assert np.allclose(out, exp), f'nssopt={nssopt}'
+
+
+# ----------------------------------------------------------------------
+# Standalone MoveLoopInvariantIfUp on the ICON shapes -- locks in the
+# istep top-level hoist contract independently of the pipeline.
+# Pipeline integration is deferred (MoveIfIntoLoop ping-pong; see
+# pipeline.py NOTE near move_loop_invariant_if_up).
+# ----------------------------------------------------------------------
+
+
+def _run_canonicalize_pre_parallelize(kernel):
+    """Drive the canonicalize pipeline up to (but not through) the
+    parallelize stage, so the loop body has the shape MLIU expects to
+    see (post fission / normalize / ssa / cascade-up)."""
+    from dace.transformation.passes.canonicalize.pipeline import _build_stages
+    sdfg = kernel.to_sdfg(simplify=True)
+    for label, unit in _build_stages():
+        if label == 'parallelize':
+            break
+        unit.apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_icon_solve_nonhydro_istep_hoist_standalone_mliu():
+    """Standalone: after the pre-parallelize canonicalize stages, the
+    ``IF istep == 1`` guard hoists past the per-jb loop via MLIU's
+    dead-outside-branch extension. Locks the extended-match contract
+    irrespective of where MLIU sits in the pipeline."""
+    from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+    sdfg = _run_canonicalize_pre_parallelize(icon_solve_nonhydro_shape)
+    result = MoveLoopInvariantIfUp().apply_pass(sdfg, {})
+    assert result and result >= 1, 'MLIU must hoist the istep guard'
+    sdfg.validate()
+    top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    assert len(top_conds) == 1, f'istep guard must be at SDFG top level; got {len(top_conds)} top conds'
+    top_branch_conds = [b[0].as_string for b in top_conds[0].branches]
+    assert any('istep' in c for c in top_branch_conds), \
+        f'top-level conditional does not test istep; branches={top_branch_conds}'
+
+
+def test_icon_velocity_advection_istep_hoist_standalone_mliu():
+    """Same standalone contract for velocity_advection's istep guard."""
+    from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+    sdfg = _run_canonicalize_pre_parallelize(icon_velocity_advection_istep_shape)
+    result = MoveLoopInvariantIfUp().apply_pass(sdfg, {})
+    assert result and result >= 1, 'MLIU must hoist the istep guard'
+    sdfg.validate()
+    top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    assert len(top_conds) == 1, f'istep guard must be at SDFG top level; got {len(top_conds)} top conds'
+    top_branch_conds = [b[0].as_string for b in top_conds[0].branches]
+    assert any('istep' in c for c in top_branch_conds), \
+        f'top-level conditional does not test istep; branches={top_branch_conds}'
 
 
 if __name__ == '__main__':
