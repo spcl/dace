@@ -188,7 +188,7 @@ class InterstateEdge(object):
             for k, v in d.items()
         },
         from_json=(lambda d, *args, context=None, **kwargs: {
-            k: str(symbolic.pystr_to_symbolic(v))
+            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
             for k, v in d.items()
         }))
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
