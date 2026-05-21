@@ -39,6 +39,7 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -236,6 +237,15 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # dead-outside-branch match lifts past per-iteration iedge assignments
     # (``start = jb // 4``), which stay in the now-guarded loop body.
     s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=True))]
+
+    # By this point fully-parallel guarded nests are collapsed maps, so the
+    # surviving invariant guard sits inside a map body (not a loop) where
+    # MoveLoopInvariantIfUp cannot reach it. MoveMapInvariantIfUp is its map
+    # analogue / the inverse of MoveIfIntoMap: a guard whose condition does not
+    # depend on the map parameters is lifted out of the map, one map copy per
+    # branch (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else
+    # { map[i, j]: B }``), so each branch is a clean unconditional parallel map.
+    s += [('hoist_guards', MoveMapInvariantIfUp())]
 
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]

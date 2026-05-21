@@ -231,15 +231,14 @@ def test_loop_invariant_guard_over_inner_value_preserving():
         assert np.allclose(got, exp), f'lim={lim}'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('``MoveLoopInvariantIfUp`` does not yet sift a guard whose '
-                           'condition reads only outer-SDFG symbols (``lim``, ``N``) '
-                           'out of an i,j map nest in this Python-frontend shape. The '
-                           'all-or-nothing upward rule (see CASCADE_UP_DESIGN.md) '
-                           'means a partial one-level hoist is forbidden; the guard '
-                           'either ends up at the SDFG top level (so the inner body '
-                           'is unconditional and the nest fuses) or stays where it is.'))
 def test_loop_invariant_guard_over_inner_hoisted_to_top():
+    """The invariant ``if lim < N`` guard (condition reads only outer-SDFG
+    symbols ``lim``, ``N``, never the map parameters) is hoisted out of the
+    fully-parallel ``i, j`` nest to the SDFG top level. The nest collapses to a
+    single ``map[i, j]`` carrying the guard in its body; ``MoveMapInvariantIfUp``
+    then lifts the guard out, one map copy per branch -- leaving exactly one
+    top-level ``ConditionalBlock`` whose branches are clean unconditional
+    parallel maps."""
     sdfg = loop_invariant_guard_over_inner.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()

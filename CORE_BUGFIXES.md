@@ -366,17 +366,28 @@ canonicalize is value-correct but does not yet reach the structural ideal, or
 where an input is invalid by DaCe semantics. Tracked so the design effort is
 explicit.
 
-### L-A. `MoveLoopInvariantIfUp` does not hoist a guard out of a parallel MAP nest
+### L-A. Hoist a map-invariant guard out of a parallel MAP nest (RESOLVED 2026-05-21)
 - **Shape:** `for i in dace.map: for j in dace.map: if lim < N: ... else: ...`
   with the guard reading only outer-scope symbols (``lim``, ``N``).
-- **Ideal:** hoist the guard above the whole ``i, j`` map nest -> one
-  top-level ``ConditionalBlock``, each branch a clean collapsed map.
-- **Gap:** MLIU sifts invariant guards out of LoopRegion nests, but the
-  Python-frontend map-nest shape (guard inside the inner map-body NestedSDFG)
-  is not matched/lifted. All-or-nothing upward (no partial one-level hoist) is
-  a deliberate constraint, so the guard must clear every enclosing scope at
-  once. Pinned by `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
-  (strict xfail). Value-correct today.
+- **Ideal (now achieved):** hoist the guard above the whole ``i, j`` map nest
+  -> one top-level ``ConditionalBlock``, each branch a clean collapsed map.
+- **Fix:** new ``MoveMapInvariantIfUp`` pass
+  (``dace/transformation/interstate/move_map_invariant_if_up.py``), the map
+  analogue of ``MoveLoopInvariantIfUp`` / the inverse of ``MoveIfIntoMap``. The
+  fully-parallel nest collapses to a single ``map[i, j]`` carrying the guard in
+  its body; the pass lifts the guard out, one map copy per branch
+  (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else { map[i,
+  j]: B }``). Wired terminally in the ``hoist_guards`` stage after
+  ``MoveLoopInvariantIfUp``. Guarded against unsoundness/over-eagerness: the
+  condition's symbols must all be threaded in through ``symbol_mapping`` (none
+  assigned per-element inside the body, e.g. a data-dependent ``if a[i] > thr``
+  mask is refused) and resolve to no map parameter; and only a LEAF perfect
+  nest is hoisted (branches with a nested map -- an imperfect nest where the
+  guard was pushed IN for fusion, e.g. ``map i: { if c: { c[i]; map j } }`` --
+  are left alone, so the dual ``MoveIfIntoMap`` direction is not undone).
+  `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
+  un-xfailed and passing; unit tests in
+  `tests/transformations/interstate/move_map_invariant_if_up_test.py`.
 
 ### L-B. Fully-parallel statement fissioned to a standalone collapsed map (RESOLVED 2026-05-21)
 - **Shape:** one ``for i: for j:`` nest with a fully-parallel statement
