@@ -362,6 +362,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 used |= {str(s) for s in dace.subsets.Range(subset).free_symbols}
         return used
 
+    @staticmethod
+    def _needs_nesting_for_dynamic_inputs(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+        """Whether ``map_entry`` has a dynamic-range bound whose source scalar is written in ``state``.
+
+        Such a bound cannot be hoisted to a preceding-state symbol assignment (the read would be
+        stale); the map must first be nested in its own SDFG, where the scalar becomes a read-only
+        input.
+
+        :param state: The state containing the map.
+        :param map_entry: The map entry to inspect.
+        :returns: True if a dynamic input's source scalar is written in ``state``.
+        """
+        dynamic_edges = sdutils.dynamic_map_inputs(state, map_entry)
+        if not dynamic_edges:
+            return False
+        written = state.read_and_write_sets()[1]
+        return any(not isinstance(e.src, dace.nodes.AccessNode) or e.src.data in written for e in dynamic_edges)
+
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         """Lift every pure element-wise-copy path under map ``node`` to a ``CopyLibraryNode``.
 
@@ -674,8 +692,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         rmed_memsets = dict()
 
         for (node, state) in map_entries:
-            assert node in state.nodes(), f"Map entry {node} not in state {state}"
-            assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
+            # A node may have been nested away by an earlier iteration's fallback.
+            if node not in state.nodes():
+                continue
 
             if self.node_label_whitelist != [] and self.node_label_whitelist is not None and node.label not in self.node_label_whitelist:
                 continue
@@ -684,6 +703,19 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             if self._is_nested_in_gpu_scope(state, node):
+                continue
+
+            # A dynamic-range bound written in this state cannot be hoisted to a
+            # symbol directly; nest the map in its own SDFG (whole arrays passed
+            # in, the scalar arriving as a read-only input) and lift inside,
+            # where the safe-hoist applies.
+            if self._needs_nesting_for_dynamic_inputs(state, node) and (
+                    self._detect_contiguous_memcpy_paths(state, node)
+                    or self._detect_contiguous_memset_paths(state, node)):
+                subgraph = state.scope_subgraph(node, include_entry=True, include_exit=True)
+                nsdfg_node = helpers.nest_state_subgraph(state.sdfg, state, subgraph, full_data=True)
+                rmed_memcpies[node] = self.apply_pass(nsdfg_node.sdfg, {})
+                rmed_memsets[node] = 0
                 continue
 
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
