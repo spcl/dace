@@ -15,6 +15,20 @@ from dace import data as dt
 from dace.symbolic import pystr_to_symbolic
 
 
+def _free_symbols(value) -> Set[str]:
+    """Free symbol names of an interstate-edge assignment value (RHS).
+
+    :param value: The assignment RHS (a string), or ``None``.
+    :returns: The set of free symbol names; empty for ``None`` / unparseable.
+    """
+    if value is None:
+        return set()
+    try:
+        return {str(s) for s in pystr_to_symbolic(value).free_symbols}
+    except Exception:
+        return set()
+
+
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -117,8 +131,16 @@ class SymbolPropagation(ppl.Pass):
         # Ignore SDFGs as nested SDFGs have symbol mappings
         if (parent.start_block == cfg_blk and not isinstance(parent, SDFG)) or (isinstance(parent, ConditionalBlock)
                                                                                 and cfg_blk in parent.sub_regions()):
-            assert new_in_syms == {}
-            new_in_syms = in_syms[parent]
+            # A start / branch region normally has no in-edges, so the
+            # edge-accumulated table is empty and it inherits the parent's
+            # incoming symbols. On some cross-CFG shapes the block can already
+            # carry edge-accumulated symbols; combine conservatively
+            # (disagreements -> None) rather than assert emptiness, which
+            # crashed on those shapes.
+            if new_in_syms:
+                self._combine_syms(new_in_syms, in_syms[parent])
+            else:
+                new_in_syms = in_syms[parent]
 
             # For LoopRegions, remove loop carried variables from the incoming symbols
             if isinstance(parent, LoopRegion):
@@ -190,8 +212,18 @@ class SymbolPropagation(ppl.Pass):
         new_in_syms = {sym: val for sym, val in new_in_syms.items() if val is not None}
         new_out_syms = {sym: val for sym, val in new_out_syms.items() if val is not None}
 
+        # Iteration cap: each pass resolves at least one more substitution
+        # level, so a legitimate (acyclic) substitution chain converges within
+        # ``#symbols`` passes. A CYCLIC value dependency (e.g. a swap
+        # ``x: tx, tx: y, y: ty, ty: x``) would otherwise oscillate the free-
+        # symbol set forever; the cap guarantees termination (leaving the
+        # cyclic symbols un-substituted, which is conservative and correct).
+        max_iters = len(new_in_syms) + len(new_out_syms) + 2
+
         changed = True
-        while changed:
+        iters = 0
+        while changed and iters < max_iters:
+            iters += 1
             changed = False
             free_sym = cfg_blk.free_symbols
             free_edge_sym = set([sym for edge in parent.out_edges(cfg_blk) for sym in edge.data.free_symbols])
@@ -207,9 +239,22 @@ class SymbolPropagation(ppl.Pass):
                 # Don't replace, as the nested CFBGs should inherit the symbols from their parent
                 pass
 
-            # Also replace all symbols in the outgoing edges with their values
+            # Also replace all symbols in the outgoing edges with their values.
+            # Interstate-edge assignments are SIMULTANEOUS: a symbol read in an
+            # assignment RHS denotes its INCOMING value, not the value being
+            # assigned on the same edge. Substituting a propagated value that
+            # references a symbol which is itself a KEY on this edge would make
+            # the RHS read the edge's outgoing value -- a same-edge read-write
+            # race that validation rejects (e.g. substituting ``anext -> a + b``
+            # into ``{b: a, a: anext}`` yields ``{b: a, a: a + b}``). Drop such
+            # colliding substitutions for that edge.
             for edge in parent.out_edges(cfg_blk):
-                edge.data.replace_dict(new_out_syms, replace_keys=False)
+                edge_keys = set(edge.data.assignments.keys())
+                if edge_keys:
+                    edge_subs = {s: v for s, v in new_out_syms.items() if not (_free_symbols(v) & edge_keys)}
+                else:
+                    edge_subs = new_out_syms
+                edge.data.replace_dict(edge_subs, replace_keys=False)
 
             # Check if the symbols have changed
             new_free_edge_sym = set([sym for edge in parent.out_edges(cfg_blk) for sym in edge.data.free_symbols])

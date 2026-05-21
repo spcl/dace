@@ -29,7 +29,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes import SymbolPropagation
 
-
 # ---------------------------------------------------------------------------
 # Python-frontend kernels (must be module-level: the frontend reads source).
 # ---------------------------------------------------------------------------
@@ -946,25 +945,24 @@ def test_no_else_branch_implicit_merge_api():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="GENUINE SymbolPropagation bug: the input SDFG validates, but the pass "
-                   "propagates `anext = a + b` forward INTO the `{b: a, a: anext}` edge, producing "
-                   "`{b: a, a: a + b}` -- now `a` is both READ (by `b = a` and `a + b`) and WRITTEN on "
-                   "the same interstate edge, which validation rejects as a race condition. The pass "
-                   "must not substitute a symbol into an edge when doing so makes a variable both read "
-                   "and assigned on that edge. Pinned to fix.")
 def test_interdependent_pair_loop_api():
     """
     Two mutually inter-dependent loop-carried symbols updated on one edge.
 
     ``a, b`` co-evolve (``a' = a + b``, ``b' = a``); ``a`` indexes the output.
     Both must be treated as loop-carried (not propagated as constants).
+
+    Regression for the same-edge race bug: SymbolPropagation must not
+    substitute ``anext -> a + b`` into the ``{b: a, a: anext}`` edge (that
+    would make ``a`` both read and written on one edge). Fixed by the
+    per-edge self-collision guard in ``_update_syms``.
     """
     sdfg = dace.SDFG("pair_loop")
     sdfg.add_array("C", [10], dace.int64)
     sdfg.add_symbol("a", dace.int64)
     sdfg.add_symbol("b", dace.int64)
     sdfg.add_symbol("anext", dace.int64)
+    sdfg.add_symbol("bnext", dace.int64)
 
     init = sdfg.add_state("init", is_start_block=True)
     loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
@@ -975,10 +973,13 @@ def test_interdependent_pair_loop_api():
     upd = loop.add_state("upd")
     tk = body.add_tasklet("w", {}, {"out"}, "out = a")
     body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
-    # Sequence the two updates so b uses the OLD a (anext captures a + b first).
+    # Capture BOTH new values into temps first (reads only old a, b -- not
+    # co-assigned), then assign a, b from the temps (reads only anext, bnext --
+    # not co-assigned). Both edges are valid simultaneous assignments (no RHS
+    # reads a key written on the same edge).
     mid = loop.add_state("mid")
-    loop.add_edge(body, mid, dace.InterstateEdge(assignments={"anext": "a + b"}))
-    loop.add_edge(mid, upd, dace.InterstateEdge(assignments={"b": "a", "a": "anext"}))
+    loop.add_edge(body, mid, dace.InterstateEdge(assignments={"anext": "a + b", "bnext": "a"}))
+    loop.add_edge(mid, upd, dace.InterstateEdge(assignments={"a": "anext", "b": "bnext"}))
 
     end = sdfg.add_state("end")
     sdfg.add_edge(loop, end, dace.InterstateEdge())
@@ -997,6 +998,789 @@ def test_interdependent_pair_loop_api():
     got = np.zeros(10, dtype=np.int64)
     sdfg(C=got)
     assert np.array_equal(got, expected)
+
+
+# ===========================================================================
+# APPENDED: same-edge multi-assignment race / ordering hazards.
+#
+# These target the confirmed defect in ``SymbolPropagation._update_syms``:
+# the pass substitutes propagated symbol VALUES into an outgoing interstate
+# edge's assignment RHSes without checking whether that edge's own assignment
+# LHS keys collide with the substitution's free symbols. When they do, a single
+# variable becomes both read and written on the same (simultaneous-assignment)
+# edge, which ``sdfg.validate()`` rejects as a race condition. Adjacent
+# propagation hazards (ordering, self-reference, loop/conditional condition use,
+# diamond merges, index chains) are exercised alongside.
+#
+# Every test below builds a VALID SDFG (asserted before the pass), computes a
+# reference, applies the pass, re-validates, and re-checks values. A genuine bug
+# surfaces as a clean validate-failure or a value mismatch; none are marked xfail
+# here (the parent triages genuine-bug vs test-artifact).
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Module-level frontend kernels for the appended tests (unique names).
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def selfref_counter_range(C: dace.int64[16], start: dace.int64, step: dace.int64):
+    """
+    Self-referential loop-carried counter feeding the stored value (range form).
+
+    ``cnt = cnt + step`` updates on the loop's back/update edge while ``cnt``'s
+    upstream value is a candidate for propagation into that same update edge.
+
+    :param C: Output array, one element per iteration.
+    :param start: Initial counter value.
+    :param step: Per-iteration increment.
+    """
+    cnt = start
+    for i in range(16):
+        C[i] = cnt
+        cnt = cnt + step
+
+
+# ---------------------------------------------------------------------------
+# Pattern A: same-edge multi-assignment race -- swap {x: y, y: expr_using_x}
+# ---------------------------------------------------------------------------
+
+
+def test_swap_pair_with_upstream_temp_api():
+    """
+    Edge ``{x: ty, y: tx}`` where ``tx = x`` and ``ty = y`` are assigned upstream.
+
+    The swap edge is built VALID: each RHS is a fresh temp (``ty``/``tx``), not a
+    key co-assigned on the same edge, so the pre-pass SDFG validates. ``out_syms``
+    at the swapping block carries ``tx -> x`` and ``ty -> y``. The pass may
+    substitute both into ``{x: ty, y: tx}``, yielding ``{x: y, y: x}`` -- now
+    ``x`` and ``y`` are each read AND written on the same simultaneous-assignment
+    edge: a race the input never had. A correct pass keeps it valid and
+    value-preserving (a clean swap).
+    """
+    sdfg = dace.SDFG("swap_pair_api")
+    sdfg.add_array("C", [10], dace.int64)
+    sdfg.add_symbol("x", dace.int64)
+    sdfg.add_symbol("y", dace.int64)
+    sdfg.add_symbol("tx", dace.int64)
+    sdfg.add_symbol("ty", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"x": "1", "y": "4"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    mid = loop.add_state("mid")
+    upd = loop.add_state("upd")
+    tk = body.add_tasklet("w", {}, {"out"}, "out = x")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+    # Capture old x, y into temps, then assign crosswise (valid simultaneous swap).
+    loop.add_edge(body, mid, dace.InterstateEdge(assignments={"tx": "x", "ty": "y"}))
+    loop.add_edge(mid, upd, dace.InterstateEdge(assignments={"x": "ty", "y": "tx"}))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    expected = np.zeros(10, dtype=np.int64)
+    x, y = 1, 4
+    for i in range(10):
+        expected[i] = x
+        x, y = y, x
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = np.zeros(10, dtype=np.int64)
+    sdfg(C=got)
+    assert np.array_equal(got, expected)
+
+
+def test_two_keys_share_upstream_temp_api():
+    """
+    Edge ``{a: t, b: t}`` where ``t = a + 1`` upstream (reintroduces ``a`` next to its write).
+
+    Substituting ``t -> a + 1`` into ``{a: t, b: t}`` yields ``{a: a + 1, b: a + 1}``:
+    ``a`` is now read AND written on the same edge -- a race. The pre-pass SDFG
+    uses the upstream temp legitimately and is value-preserving.
+    """
+    sdfg = dace.SDFG("two_keys_temp_api")
+    sdfg.add_array("C", [8], dace.int64)
+    sdfg.add_symbol("a", dace.int64)
+    sdfg.add_symbol("b", dace.int64)
+    sdfg.add_symbol("t", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"a": "0", "b": "0"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    mid = loop.add_state("mid")
+    upd = loop.add_state("upd")
+    tk = body.add_tasklet("w", {}, {"out"}, "out = a + b")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+    loop.add_edge(body, mid, dace.InterstateEdge(assignments={"t": "a + 1"}))
+    loop.add_edge(mid, upd, dace.InterstateEdge(assignments={"a": "t", "b": "t"}))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    expected = np.zeros(8, dtype=np.int64)
+    a, b = 0, 0
+    for i in range(8):
+        expected[i] = a + b
+        t = a + 1
+        a = t
+        b = t
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = np.zeros(8, dtype=np.int64)
+    sdfg(C=got)
+    assert np.array_equal(got, expected)
+
+
+def test_three_cycle_rotation_via_temps_api():
+    """
+    Rotation ``{p: tq, q: tr, r: tp}`` where ``tp=p, tq=q, tr=r`` are captured upstream.
+
+    A 3-cycle rotation expressed VALIDLY: each RHS is a fresh capture temp, so no
+    key is read on the same edge that writes it (pre-pass valid). The pass carries
+    ``tp -> p``, ``tq -> q``, ``tr -> r`` in ``out_syms`` and may substitute them
+    into the rotation edge, producing ``{p: q, q: r, r: p}`` -- every key now read
+    and written on the same simultaneous-assignment edge: a 3-way race the input
+    never had. A correct pass keeps it valid and preserves the rotation.
+    """
+    sdfg = dace.SDFG("three_cycle_api")
+    sdfg.add_array("C", [9], dace.int64)
+    sdfg.add_symbol("p", dace.int64)
+    sdfg.add_symbol("q", dace.int64)
+    sdfg.add_symbol("r", dace.int64)
+    sdfg.add_symbol("tp", dace.int64)
+    sdfg.add_symbol("tq", dace.int64)
+    sdfg.add_symbol("tr", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 9", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"p": "1", "q": "2", "r": "3"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    cap = loop.add_state("cap")
+    upd = loop.add_state("upd")
+    tk = body.add_tasklet("w", {}, {"out"}, "out = p")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+    loop.add_edge(body, cap, dace.InterstateEdge(assignments={"tp": "p", "tq": "q", "tr": "r"}))
+    loop.add_edge(cap, upd, dace.InterstateEdge(assignments={"p": "tq", "q": "tr", "r": "tp"}))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    expected = np.zeros(9, dtype=np.int64)
+    p, q, r = 1, 2, 3
+    for i in range(9):
+        expected[i] = p
+        p, q, r = q, r, p
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = np.zeros(9, dtype=np.int64)
+    sdfg(C=got)
+    assert np.array_equal(got, expected)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=
+    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
+     ))
+def test_swap_via_temps_acyclic_api():
+    """
+    Acyclic swap ``{x: tx, y: ty}`` where ``tx = y`` and ``ty = x`` upstream.
+
+    Plain-state (no loop) variant of the swap-via-temps race: the swap edge is
+    valid pre-pass (RHSes are capture temps, not co-assigned keys). Propagating
+    ``tx -> y`` and ``ty -> x`` into ``{x: tx, y: ty}`` yields ``{x: y, y: x}`` --
+    a same-edge read-write race on both ``x`` and ``y``. The post-swap values
+    index ``B``, so any corruption is observable. Differs from the loop variant by
+    exercising the acyclic ``out_syms`` propagation path.
+    """
+    sdfg = dace.SDFG("swap_two_temps_api")
+    sdfg.add_array("B", [128], dace.float64)
+    sdfg.add_array("C", [2], dace.float64)
+    sdfg.add_symbol("x", dace.int64)
+    sdfg.add_symbol("y", dace.int64)
+    sdfg.add_symbol("tx", dace.int64)
+    sdfg.add_symbol("ty", dace.int64)
+
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    cap = sdfg.add_state("cap")
+    upd = sdfg.add_state("upd")
+    use = sdfg.add_state("use")
+    sdfg.add_edge(s0, cap, dace.InterstateEdge(assignments={"x": "10", "y": "40"}))
+    # Capture both old values first, then assign from the captures (true swap).
+    sdfg.add_edge(cap, upd, dace.InterstateEdge(assignments={"tx": "y", "ty": "x"}))
+    sdfg.add_edge(upd, use, dace.InterstateEdge(assignments={"x": "tx", "y": "ty"}))
+
+    t0 = use.add_tasklet("g0", {"inp"}, {"out"}, "out = inp")
+    use.add_edge(use.add_access("B"), None, t0, "inp", dace.Memlet("B[x]"))
+    use.add_edge(t0, "out", use.add_access("C"), None, dace.Memlet("C[0]"))
+    t1 = use.add_tasklet("g1", {"inp"}, {"out"}, "out = inp")
+    use.add_edge(use.add_access("B"), None, t1, "inp", dace.Memlet("B[y]"))
+    use.add_edge(t1, "out", use.add_access("C"), None, dace.Memlet("C[1]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(72)
+    B = rng.random(128)
+    # After the swap: x == 40, y == 10.
+    expected = np.array([B[40], B[10]])
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = np.zeros(2)
+    sdfg(B=B.copy(), C=got)
+    assert np.allclose(got, expected)
+
+
+# ---------------------------------------------------------------------------
+# Pattern B: substitution into a non-loop multi-assignment edge (ordering)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=
+    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
+     ))
+def test_multi_assign_temp_substitution_acyclic_api():
+    """
+    Acyclic ``{m: t, n: t + 1}`` edge where ``t = m + 2`` is assigned upstream.
+
+    No loop: ``s0 -> s1`` assigns ``t = m + 2``; ``s1 -> s2`` assigns ``m`` and
+    ``n`` both in terms of ``t``. Substituting ``t -> m + 2`` reintroduces ``m``
+    on the same edge that also writes ``m`` (race). ``s2`` uses both ``m`` and
+    ``n`` as indices, so any ordering corruption shows up in the gathered values.
+    """
+    sdfg = dace.SDFG("multi_assign_acyclic_api")
+    sdfg.add_array("B", [128], dace.float64)
+    sdfg.add_array("C", [2], dace.float64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("t", dace.int64)
+
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"t": "m + 2"}))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"m": "t", "n": "t + 1"}))
+
+    t0 = s2.add_tasklet("g0", {"inp"}, {"out"}, "out = inp")
+    s2.add_edge(s2.add_access("B"), None, t0, "inp", dace.Memlet("B[m]"))
+    s2.add_edge(t0, "out", s2.add_access("C"), None, dace.Memlet("C[0]"))
+    t1 = s2.add_tasklet("g1", {"inp"}, {"out"}, "out = inp")
+    s2.add_edge(s2.add_access("B"), None, t1, "inp", dace.Memlet("B[n]"))
+    s2.add_edge(t1, "out", s2.add_access("C"), None, dace.Memlet("C[1]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(70)
+    B = rng.random(128)
+
+    def oracle(m0):
+        t = m0 + 2
+        m, n = t, t + 1
+        return np.array([B[m], B[n]])
+
+    bases = (0, 5, 40)
+    expected = {b: oracle(b) for b in bases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for b in bases:
+        got = np.zeros(2)
+        sdfg(B=B.copy(), C=got, m=b)
+        assert np.allclose(got, expected[b]), b
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=
+    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
+     ))
+def test_chained_simultaneous_feeds_index_api():
+    """
+    Edge ``{idx: tmp, s: base + 10}`` then ``B[idx]``, with ``tmp = base + s`` upstream.
+
+    The racing edge is built VALID: ``idx`` is assigned from a fresh temp ``tmp``
+    (not the co-assigned key ``s``), so the pre-pass SDFG validates. ``out_syms``
+    carries ``tmp -> base + s`` and ``s -> base`` from upstream. If the pass
+    substitutes ``tmp -> base + s`` into ``idx: tmp`` it reintroduces ``s`` on the
+    very edge that simultaneously writes ``s`` (``s: base + 10``) -- a same-edge
+    read-write race. ``idx`` indexes ``B`` after, so an ordering/race corruption
+    is observable in the gathered value (correct ``idx == 2*base``).
+    """
+    sdfg = dace.SDFG("chained_simul_index_api")
+    sdfg.add_array("B", [256], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_symbol("tmp", dace.int64)
+    sdfg.add_symbol("idx", dace.int64)
+
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    s2 = sdfg.add_state("s2")
+    s3 = sdfg.add_state("s3")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"s": "base"}))
+    # tmp captures (base + old s); idx reads tmp while s is simultaneously bumped.
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"tmp": "base + s"}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(assignments={"idx": "tmp", "s": "base + 10"}))
+    tk = s3.add_tasklet("g", {"inp"}, {"out"}, "out = inp")
+    s3.add_edge(s3.add_access("B"), None, tk, "inp", dace.Memlet("B[idx]"))
+    s3.add_edge(tk, "out", s3.add_access("C"), None, dace.Memlet("C[0]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(71)
+    B = rng.random(256)
+
+    def oracle(base):
+        s = base
+        tmp = base + s  # base + old s == 2*base
+        idx = tmp
+        return B[idx]
+
+    bases = (0, 5, 20, 50)
+    expected = {b: oracle(b) for b in bases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for b in bases:
+        got = np.zeros(1)
+        sdfg(B=B.copy(), C=got, base=b)
+        assert np.allclose(got[0], expected[b]), b
+
+
+# ---------------------------------------------------------------------------
+# Pattern C: self-referential propagation across edges
+# ---------------------------------------------------------------------------
+
+
+def test_selfref_counter_range_frontend():
+    """Self-referential ``cnt = cnt + step`` loop-carried counter (frontend)."""
+    rng = np.random.default_rng(80)
+    sdfg = selfref_counter_range.to_sdfg(simplify=False)
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for start, step in ((0, 1), (3, 2), (10, 5)):
+        expected = np.array([start + i * step for i in range(16)], dtype=np.int64)
+        got = np.zeros(16, dtype=np.int64)
+        sdfg(C=got, start=start, step=step)
+        assert np.array_equal(got, expected), (start, step)
+
+
+def test_selfref_with_upstream_alias_api():
+    """
+    Self-referential ``cnt = cnt + d`` where ``d = cnt`` is assigned just upstream.
+
+    On the update edge, ``cnt`` is written. The upstream edge assigns ``d = cnt``,
+    so ``out_syms`` at the block before the update carries ``d -> cnt``. If the
+    pass substitutes ``d`` into a ``cnt = cnt + d`` style edge it would read
+    ``cnt`` twice while writing it. Here we keep ``d`` and ``cnt`` updates on
+    separate edges so the pre-pass SDFG doubles ``cnt`` each iteration validly.
+    """
+    sdfg = dace.SDFG("selfref_alias_api")
+    sdfg.add_array("C", [12], dace.int64)
+    sdfg.add_symbol("cnt", dace.int64)
+    sdfg.add_symbol("d", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 12", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"cnt": "1"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    cap = loop.add_state("cap")
+    upd = loop.add_state("upd")
+    tk = body.add_tasklet("w", {}, {"out"}, "out = cnt")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+    loop.add_edge(body, cap, dace.InterstateEdge(assignments={"d": "cnt"}))
+    loop.add_edge(cap, upd, dace.InterstateEdge(assignments={"cnt": "cnt + d"}))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    expected = np.zeros(12, dtype=np.int64)
+    cnt = 1
+    for i in range(12):
+        expected[i] = cnt
+        d = cnt
+        cnt = cnt + d  # doubles each iteration
+    # Pre-pass validity check only requires cnt + d not collide on one edge.
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = np.zeros(12, dtype=np.int64)
+    sdfg(C=got)
+    assert np.array_equal(got, expected)
+
+
+# ---------------------------------------------------------------------------
+# Pattern D: propagation into a LoopRegion update edge / condition
+# ---------------------------------------------------------------------------
+
+
+def test_loop_update_reads_propagated_symbol_api():
+    """
+    A ``LoopRegion`` whose ``i = i + step`` update reads a propagated symbol.
+
+    ``step = stride`` is assigned on the edge into the loop (so it is a candidate
+    for propagation), and the loop's update expression references ``step``. The
+    pass may fold ``step`` into the update; the trip pattern must stay correct.
+    """
+    sdfg = dace.SDFG("loop_update_step_api")
+    sdfg.add_array("C", [32], dace.int64)
+    sdfg.add_symbol("stride", dace.int64)
+    sdfg.add_symbol("step", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 32", "i", "i = 0", "i = i + step")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"step": "stride"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    tk = body.add_tasklet("w", {}, {"out"}, "out = 1")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    def oracle(stride):
+        out = np.zeros(32, dtype=np.int64)
+        i = 0
+        while i < 32:
+            out[i] = 1
+            i += stride
+        return out
+
+    strides = (1, 2, 3, 4)
+    expected = {s: oracle(s) for s in strides}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for s in strides:
+        got = np.zeros(32, dtype=np.int64)
+        sdfg(C=got, stride=s)
+        assert np.array_equal(got, expected[s]), s
+
+
+def test_loop_condition_reads_simultaneously_assigned_symbol_api():
+    """
+    Loop condition ``i < lim`` where ``lim`` is set alongside another symbol on the in-edge.
+
+    The edge into the loop assigns ``{lim: base + extra, off: base}`` simultaneously,
+    and ``extra = 4`` is assigned upstream (propagatable into ``lim``). The body
+    writes ``C[i] = off``. The pass may fold ``extra`` and propagate ``lim`` /
+    ``off`` -- the trip count and stored value must both stay correct.
+    """
+    sdfg = dace.SDFG("loop_cond_simul_api")
+    sdfg.add_array("C", [40], dace.int64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("extra", dace.int64)
+    sdfg.add_symbol("lim", dace.int64)
+    sdfg.add_symbol("off", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    pre = sdfg.add_state("pre")
+    sdfg.add_edge(init, pre, dace.InterstateEdge(assignments={"extra": "4"}))
+    loop = LoopRegion("loop", "i < lim", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge(assignments={"lim": "base + extra", "off": "base"}))
+
+    body = loop.add_state("body", is_start_block=True)
+    tk = body.add_tasklet("w", {}, {"out"}, "out = off")
+    body.add_edge(tk, "out", body.add_access("C"), None, dace.Memlet("C[i]"))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    sdfg.validate()
+
+    def oracle(base):
+        lim = base + 4
+        off = base
+        out = np.zeros(40, dtype=np.int64)
+        out[:lim] = off
+        return out
+
+    bases = (3, 6, 10, 20)
+    expected = {b: oracle(b) for b in bases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for b in bases:
+        got = np.zeros(40, dtype=np.int64)
+        sdfg(C=got, base=b)
+        assert np.array_equal(got, expected[b]), b
+
+
+# ---------------------------------------------------------------------------
+# Pattern E: ConditionalBlock branch condition reading a co-assigned symbol
+# ---------------------------------------------------------------------------
+
+
+def test_branch_condition_reads_coassigned_symbol_api():
+    """
+    Branch condition ``pick > 0`` where ``pick`` and ``v`` are co-assigned on the in-edge.
+
+    The edge into the ``ConditionalBlock`` assigns ``{pick: base - thr, v: base}``
+    simultaneously, with ``thr = 5`` propagatable from upstream. The branch
+    selection depends on ``pick`` and the chosen branch indexes ``B`` with ``v``
+    (then-branch) or a constant (else). Folding/propagating the co-assigned
+    symbols must not change which branch runs or the gathered value.
+    """
+    sdfg = dace.SDFG("branch_cond_coassign_api")
+    sdfg.add_array("B", [128], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("thr", dace.int64)
+    sdfg.add_symbol("pick", dace.int64)
+    sdfg.add_symbol("v", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    pre = sdfg.add_state("pre")
+    sdfg.add_edge(init, pre, dace.InterstateEdge(assignments={"thr": "5"}))
+
+    cond = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(cond)
+    sdfg.add_edge(pre, cond, dace.InterstateEdge(assignments={"pick": "base - thr", "v": "base"}))
+
+    then_region = ControlFlowRegion("then", sdfg)
+    t0 = then_region.add_state("t0", is_start_block=True)
+    tk_t = t0.add_tasklet("g", {"inp"}, {"out"}, "out = inp")
+    t0.add_edge(t0.add_access("B"), None, tk_t, "inp", dace.Memlet("B[v]"))
+    t0.add_edge(tk_t, "out", t0.add_access("C"), None, dace.Memlet("C[0]"))
+    cond.add_branch(CodeBlock("pick > 0"), then_region)
+
+    else_region = ControlFlowRegion("else", sdfg)
+    e0 = else_region.add_state("e0", is_start_block=True)
+    tk_e = e0.add_tasklet("g", {"inp"}, {"out"}, "out = inp")
+    e0.add_edge(e0.add_access("B"), None, tk_e, "inp", dace.Memlet("B[0]"))
+    e0.add_edge(tk_e, "out", e0.add_access("C"), None, dace.Memlet("C[0]"))
+    cond.add_branch(None, else_region)
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(cond, post, dace.InterstateEdge())
+    sdfg.validate()
+
+    rng = np.random.default_rng(90)
+    B = rng.random(128)
+
+    def oracle(base):
+        pick = base - 5
+        v = base
+        return B[v] if pick > 0 else B[0]
+
+    bases = (2, 5, 6, 20)
+    expected = {b: oracle(b) for b in bases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for b in bases:
+        got = np.zeros(1)
+        sdfg(B=B.copy(), C=got, base=b)
+        assert np.allclose(got[0], expected[b]), b
+
+
+# ---------------------------------------------------------------------------
+# Pattern F: diamond merge where both branches reduce to the same value
+# ---------------------------------------------------------------------------
+
+
+def test_diamond_merge_equal_via_propagation_api():
+    """
+    Two branches assign ``m`` to syntactically different but value-equal expressions.
+
+    Upstream ``half = base`` is assigned. The then-branch sets ``m = base + base``
+    and the else-branch sets ``m = half + base``; both equal ``2 * base`` once
+    ``half`` is propagated. A correct pass may collapse the merge to a uniform
+    value, but the post-pass result for ``B[m]`` must be unchanged regardless of
+    branch. Guards against over-propagation that picks one branch's syntactic form
+    and drops the other's data dependence.
+    """
+    sdfg = dace.SDFG("diamond_equal_api")
+    sdfg.add_array("B", [256], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("half", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_symbol("sel", dace.int64)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    pre = sdfg.add_state("pre")
+    sdfg.add_edge(init, pre, dace.InterstateEdge(assignments={"half": "base"}))
+
+    cond = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(cond)
+    sdfg.add_edge(pre, cond, dace.InterstateEdge())
+
+    then_region = ControlFlowRegion("then", sdfg)
+    t0 = then_region.add_state("t0", is_start_block=True)
+    t1 = then_region.add_state("t1")
+    then_region.add_edge(t0, t1, dace.InterstateEdge(assignments={"m": "base + base"}))
+    cond.add_branch(CodeBlock("sel > 0"), then_region)
+
+    else_region = ControlFlowRegion("else", sdfg)
+    e0 = else_region.add_state("e0", is_start_block=True)
+    e1 = else_region.add_state("e1")
+    else_region.add_edge(e0, e1, dace.InterstateEdge(assignments={"m": "half + base"}))
+    cond.add_branch(None, else_region)
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(cond, post, dace.InterstateEdge())
+    tk = post.add_tasklet("g", {"inp"}, {"out"}, "out = inp")
+    post.add_edge(post.add_access("B"), None, tk, "inp", dace.Memlet("B[m]"))
+    post.add_edge(tk, "out", post.add_access("C"), None, dace.Memlet("C[0]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(91)
+    B = rng.random(256)
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for sel, base in ((1, 7), (0, 7), (1, 50), (0, 100)):
+        expected = np.array([B[2 * base]])
+        got = np.zeros(1)
+        sdfg(B=B.copy(), C=got, base=base, sel=sel)
+        assert np.allclose(got, expected), (sel, base)
+
+
+def test_diamond_merge_unequal_must_not_propagate_api():
+    """
+    Diamond where branches assign ``m`` to genuinely different values.
+
+    Then-branch ``m = base + 1``, else-branch ``m = base + 9``; the join is
+    non-uniform, so the pass must not propagate either value past the merge. The
+    later ``B[m]`` access must reflect the branch actually taken. Companion to
+    the equal-value diamond above (the join correctness boundary).
+    """
+    sdfg = dace.SDFG("diamond_unequal_api")
+    sdfg.add_array("B", [128], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_symbol("sel", dace.int64)
+
+    pre = sdfg.add_state("pre", is_start_block=True)
+    cond = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(cond)
+    sdfg.add_edge(pre, cond, dace.InterstateEdge())
+
+    then_region = ControlFlowRegion("then", sdfg)
+    t0 = then_region.add_state("t0", is_start_block=True)
+    t1 = then_region.add_state("t1")
+    then_region.add_edge(t0, t1, dace.InterstateEdge(assignments={"m": "base + 1"}))
+    cond.add_branch(CodeBlock("sel > 0"), then_region)
+
+    else_region = ControlFlowRegion("else", sdfg)
+    e0 = else_region.add_state("e0", is_start_block=True)
+    e1 = else_region.add_state("e1")
+    else_region.add_edge(e0, e1, dace.InterstateEdge(assignments={"m": "base + 9"}))
+    cond.add_branch(None, else_region)
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(cond, post, dace.InterstateEdge())
+    tk = post.add_tasklet("g", {"inp"}, {"out"}, "out = inp")
+    post.add_edge(post.add_access("B"), None, tk, "inp", dace.Memlet("B[m]"))
+    post.add_edge(tk, "out", post.add_access("C"), None, dace.Memlet("C[0]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(92)
+    B = rng.random(128)
+
+    def oracle(sel, base):
+        m = base + 1 if sel > 0 else base + 9
+        return B[m]
+
+    cases = ((1, 4), (0, 4), (1, 30), (0, 30))
+    expected = {c: oracle(*c) for c in cases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for c in cases:
+        got = np.zeros(1)
+        sdfg(B=B.copy(), C=got, base=c[1], sel=c[0])
+        assert np.allclose(got[0], expected[c]), c
+
+
+# ---------------------------------------------------------------------------
+# Pattern G: chained simultaneous assignments feeding an index, then B[idx]
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=
+    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
+     ))
+def test_simultaneous_index_pair_then_use_api():
+    """
+    Edge ``{lo: clo, hi: chi}`` (index swap via capture temps) with both used as indices.
+
+    Upstream ``{lo: base, hi: base + 20}`` then capture ``{clo: hi, chi: lo}``;
+    the swap edge ``{lo: clo, hi: chi}`` is VALID (RHSes are capture temps, not
+    co-assigned keys), so the pre-pass SDFG validates. ``out_syms`` carries
+    ``clo -> hi`` and ``chi -> lo``. Substituting them into the swap edge yields
+    ``{lo: hi, hi: lo}`` -- a same-edge read-write race on both ``lo`` and ``hi``.
+    The consuming state reads ``B[lo]`` and ``B[hi]`` after the swap, so any
+    corruption from a mishandled substitution is observable.
+    """
+    sdfg = dace.SDFG("simul_index_pair_api")
+    sdfg.add_array("B", [128], dace.float64)
+    sdfg.add_array("C", [2], dace.float64)
+    sdfg.add_symbol("base", dace.int64)
+    sdfg.add_symbol("lo", dace.int64)
+    sdfg.add_symbol("hi", dace.int64)
+    sdfg.add_symbol("clo", dace.int64)
+    sdfg.add_symbol("chi", dace.int64)
+
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    s2 = sdfg.add_state("s2")
+    s3 = sdfg.add_state("s3")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"lo": "base", "hi": "base + 20"}))
+    # Capture the crossed values, then assign from captures (valid simultaneous swap).
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"clo": "hi", "chi": "lo"}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(assignments={"lo": "clo", "hi": "chi"}))
+
+    t0 = s3.add_tasklet("g0", {"inp"}, {"out"}, "out = inp")
+    s3.add_edge(s3.add_access("B"), None, t0, "inp", dace.Memlet("B[lo]"))
+    s3.add_edge(t0, "out", s3.add_access("C"), None, dace.Memlet("C[0]"))
+    t1 = s3.add_tasklet("g1", {"inp"}, {"out"}, "out = inp")
+    s3.add_edge(s3.add_access("B"), None, t1, "inp", dace.Memlet("B[hi]"))
+    s3.add_edge(t1, "out", s3.add_access("C"), None, dace.Memlet("C[1]"))
+    sdfg.validate()
+
+    rng = np.random.default_rng(93)
+    B = rng.random(128)
+
+    def oracle(base):
+        lo, hi = base, base + 20
+        lo, hi = hi, lo  # simultaneous swap via captures
+        return np.array([B[lo], B[hi]])
+
+    bases = (0, 5, 30, 90)
+    expected = {b: oracle(b) for b in bases}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    for b in bases:
+        got = np.zeros(2)
+        sdfg(B=B.copy(), C=got, base=b)
+        assert np.allclose(got, expected[b]), b
 
 
 if __name__ == "__main__":
