@@ -304,6 +304,24 @@ static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator, const T& denomin
     return py_mod(numerator, denominator);
 }
 
+// ``logical_left_shift(x, n)`` / ``logical_right_shift(x, n)`` — Fortran
+// ``ISHFT`` building blocks.  flang lowers ``ISHFT`` to ``arith.shli`` for a
+// left shift and ``arith.shrui`` for a right shift, where the right shift is
+// *logical* (zero-fill), unlike C++ ``>>`` on a signed integer, which
+// sign-extends.  Both shift the operand as an unsigned bit pattern so a
+// negative operand zero-fills on the right shift and neither relies on the
+// signed-shift behaviour C++ leaves implementation-defined.  (Fortran's
+// arithmetic right shift maps directly to ``arith.shrsi`` -> ``>>`` and
+// needs no helper.)  Templated so one call covers every integer kind.
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) << n);
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) >> n);
+}
+
 // Computes C/C++ divmod (std::div)
 template<typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {

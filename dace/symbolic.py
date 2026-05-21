@@ -896,6 +896,38 @@ class right_shift(sympy.Function):
         return int_floor(x, (2**y))
 
 
+class logical_left_shift(sympy.Function):
+    """Logical (bit-pattern) left shift -- the symbolic counterpart of
+    the ``logical_left_shift`` runtime helper, emitted for Fortran
+    ``ISHFT`` with a non-negative shift (flang's ``arith.shli``).  Left
+    by definition.  Left unevaluated for non-numeric operands so it
+    round-trips to the C++ helper through cppunparse."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x << y
+        return None
+
+
+class logical_right_shift(sympy.Function):
+    """Logical (zero-fill) right shift -- the symbolic counterpart of
+    the ``logical_right_shift`` runtime helper, emitted for Fortran
+    ``ISHFT`` with a negative shift (flang's ``arith.shrui``).  Distinct
+    from :class:`right_shift`, whose ``int_floor`` fallback is the
+    sign-extending arithmetic shift.  Left unevaluated for symbolic
+    operands (a logical shift has no closed-form ``int_floor``
+    rewrite) so it round-trips to the C++ helper through cppunparse;
+    a non-negative numeric operand coincides with the arithmetic
+    shift and folds."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and x >= 0:
+            return x >> y
+        return None
+
+
 class ROUND(sympy.Function):
 
     @classmethod
@@ -1341,6 +1373,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'left_shift': left_shift,
         'RightShift': right_shift,
         'right_shift': right_shift,
+        'logical_left_shift': logical_left_shift,
+        'logical_right_shift': logical_right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
