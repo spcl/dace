@@ -5640,8 +5640,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.storage,
                                                   find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            # ``rng`` may be a cached Range object shared by sibling accesses
+            # of the same array slice (the ``accesses`` cache hands out the
+            # same object on a cache hit). ``Memlet.simple`` stores a passed-in
+            # Subset by reference, so deepcopy here to give this edge its own
+            # subset -- otherwise a later in-place subset rewrite (e.g. a loop
+            # iterator rename) on one slice silently corrupts the other.
             self.current_state.add_nedge(
-                rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
+                rnode, wnode,
+                Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
+                              other_subset_str=other_subset))
         return tmp, other_subset
 
     def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
