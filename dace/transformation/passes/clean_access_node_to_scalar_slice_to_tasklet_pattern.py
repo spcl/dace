@@ -60,7 +60,12 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         """
         sdfg = state.sdfg
 
-        if not isinstance(access_node, dace.nodes.AccessNode):
+        # The source feeding the scalar may be the array AccessNode (the
+        # frontend's direct ``A -> A_slice``) or a MapEntry (after
+        # ``LoopToMap``, the slice is staged through the map connector:
+        # ``A -> MapEntry -> A_slice``). Both fold the same way — the read
+        # subset + array name come from the edge memlet, not the source.
+        if not isinstance(access_node, (dace.nodes.AccessNode, dace.nodes.MapEntry)):
             return None, None, None
 
         e1 = out_edge
@@ -122,21 +127,24 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                 return True
         return False
 
-    def _slice_read_subset(self, e1: MultiConnectorEdge[dace.Memlet], an1: dace.nodes.AccessNode,
-                           an2: dace.nodes.AccessNode):
-        """Recover the ``A[slice]`` read subset from the copy edge ``e1``,
-        which may carry it as ``subset`` (data == ``A``) or as
-        ``other_subset`` (data == ``A_slice``).
+    def _slice_read(self, ie: MultiConnectorEdge[dace.Memlet], an1, an2: dace.nodes.AccessNode):
+        """Recover ``(array_name, slice_subset)`` for the read into the scalar.
 
-        :param e1: The ``an1 -> an2`` copy edge.
-        :param an1: Source array AccessNode.
+        The edge carries the array slice either as ``subset`` (memlet
+        data == array, the usual ``A[slice]`` / ``A[i, j]`` form, valid
+        for both an AccessNode and a MapEntry source) or as
+        ``other_subset`` (memlet data == scalar; only for an AccessNode
+        source, where the array name is the source node's data).
+
+        :param ie: The ``src -> an2`` copy edge.
+        :param an1: Source node (AccessNode or MapEntry).
         :param an2: Scalar transient AccessNode.
-        :returns: A deep copy of the read subset into ``an1``.
+        :returns: ``(array_name, deep-copied slice subset)``.
         """
-        if e1.data.data == an1.data:
-            return copy.deepcopy(e1.data.subset)
-        assert e1.data.data == an2.data and e1.data.other_subset is not None
-        return copy.deepcopy(e1.data.other_subset)
+        if ie.data.data != an2.data:
+            return ie.data.data, copy.deepcopy(ie.data.subset)
+        assert isinstance(an1, dace.nodes.AccessNode) and ie.data.other_subset is not None
+        return an1.data, copy.deepcopy(ie.data.other_subset)
 
     def _apply_recursive(self, sdfg: dace.SDFG):
         for state in list(sdfg.all_states()):
@@ -155,29 +163,29 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                     ie = state.in_edges(an2)[0]
                     oe = state.out_edges(an2)[0]
                     assert oe.dst == tasklet
-                    read_subset = self._slice_read_subset(ie, an1, an2)
+                    array_name, read_subset = self._slice_read(ie, an1, an2)
 
                     reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, state)
 
                     if reused:
-                        # Keep the scalar; replace the AccessNode->AccessNode
-                        # copy with an assignment tasklet that casts in its
-                        # body. No map is introduced.
+                        # Keep the scalar; replace the copy with an assignment
+                        # tasklet that casts in its body. No map is introduced.
                         state.remove_edge(ie)
-                        cast = state.add_tasklet(name=f"_assign_in_{an1.data}_to_{an2.data}",
+                        cast = state.add_tasklet(name=f"_assign_in_{array_name}_to_{an2.data}",
                                                  inputs={"_in"},
                                                  outputs={"_out"},
                                                  code="_out = _in")
-                        state.add_edge(an1, ie.src_conn, cast, "_in",
-                                       dace.memlet.Memlet(data=an1.data, subset=read_subset))
+                        state.add_edge(ie.src, ie.src_conn, cast, "_in",
+                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
                         state.add_edge(cast, "_out", an2, None,
                                        dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])))
                     else:
                         # Not reused: drop the scalar and wire the source
-                        # array straight into the tasklet.
+                        # (array AccessNode or MapEntry connector) straight
+                        # into the tasklet.
                         state.remove_node(an2)
-                        state.add_edge(an1, ie.src_conn, oe.dst, oe.dst_conn,
-                                       dace.memlet.Memlet(data=an1.data, subset=read_subset))
+                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
+                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         self._apply_recursive(sdfg)
