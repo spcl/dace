@@ -161,15 +161,12 @@ def compound_nest_maps(arr: dace.float64[N, N, N], out: dace.float64[N, N, N], x
 
 
 @pytest.mark.xfail(strict=True,
-                   reason=('Pre-existing UniqueLoopIterators bug exposed by the outer-Map / inner-range '
-                           'compound shape: after LoopToReduce, the second UniqueLoopIterators pass renames '
-                           'inner loop iterators (e.g. ``k``, ``m`` -> ``_loop_it_0``, ``_loop_it_1``) '
-                           'but the surrounding NSDFG\'s ``symbol_mapping`` is not updated, leaving '
-                           '"Missing symbols on nested SDFG: [\'_loop_it_0\', \'_loop_it_1\']" at validation. '
-                           'Bisect confirms cascade-up is NOT the cause (the failure reproduces with '
-                           'cascade-up disabled). Same family as the cleanup-gate bug previously fixed '
-                           'in UniqueLoopIterators, but on the rename-introduces-symbols side instead of '
-                           'the dead-declaration cleanup side.'))
+                   reason=('The UniqueLoopIterators NSDFG symbol-mapping CRASH on this shape is now fixed '
+                           '(the pass no longer re-renames already-unique ``_loop_it_*`` iterators, which '
+                           'was dropping a deeply-nested SDFG\'s ``symbol_mapping`` import); the SDFG now '
+                           'validates -- see the sibling structural test which passes. A separate, deeper '
+                           'value bug remains: the outer-Map / inner-range / guarded-body shape diverges '
+                           'numerically for x=1 after canonicalize. Pinned to fix.'))
 def test_compound_nest_maps_value_preserving():
     n = 8
     rng = np.random.default_rng(12)
@@ -184,11 +181,12 @@ def test_compound_nest_maps_value_preserving():
         assert np.allclose(out, exp), f'x={x} mismatch'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Same UniqueLoopIterators / NSDFG symbol-mapping bug as above; see sibling test.')
 def test_compound_nest_maps_outer_map_survives():
     """Structural: the outer parallel ``i`` map must be present after
-    canonicalize -- the per-i bound dependencies cannot kill it."""
+    canonicalize -- the per-i bound dependencies cannot kill it. Regression
+    for the UniqueLoopIterators NSDFG symbol-mapping crash (the pass no
+    longer re-renames already-unique ``_loop_it_*`` iterators, so the
+    SDFG validates)."""
     sdfg = compound_nest_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) >= 1, 'outer parallel i-map was lost during canonicalize'
