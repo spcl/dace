@@ -80,17 +80,40 @@ BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", 
 UNARY_OPERATORS = {"!", "-"}
 
 
-def _str_to_float_or_str(s: Union[int, float, str, None]):
+def _roundtrip_constant(s: Union[int, float, str, None]):
+    """Return the constant verbatim for emission — no ``float()`` round-trip.
+
+    The constant is only ever string-formatted into a C++ template, so the
+    exact written form must survive: ``float(s)`` would turn ``"Infinity"``
+    into ``"inf"`` (not valid C++), drop sympy ``"oo"``, re-precision a clean
+    ``"0.1"`` to ``"0.10000000149..."``, and rewrite ``"2"`` to ``"2.0"``.
+    Passing it through preserves the source literal exactly.
+
+    :param s: The constant (numeric or string literal), or ``None``.
+    :returns: ``s`` unchanged.
+    """
+    return s
+
+
+def _is_number(s: Union[int, float, str, None]) -> bool:
+    """Whether ``s`` is a numeric literal (so it's a constant, not a symbol).
+
+    Recognises ints/floats, plain numeric strings, the IEEE infinity spellings
+    (``inf`` / ``Infinity`` via ``float``), and sympy's ``oo`` / ``-oo``.
+
+    :param s: Candidate token.
+    :returns: ``True`` iff ``s`` denotes a numeric constant.
+    """
     if s is None:
-        return s
+        return False
+    if isinstance(s, (int, float)):
+        return True
+    txt = str(s).strip()
     try:
-        return float(s)
+        float(txt)
+        return True
     except ValueError:
-        return s
-
-
-def _is_number(s: str) -> bool:
-    return s is not None and _str_to_float_or_str(s) != s
+        return txt.lstrip("+-") == "oo"
 
 
 @dataclass
@@ -197,7 +220,7 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
                     if cop_ in templates:
                         key = _template_key(ctx, cop_)
                         return templates[key].format(rhs1=rhs,
-                                                     constant=_str_to_float_or_str(constant),
+                                                     constant=_roundtrip_constant(constant),
                                                      lhs=lhs_,
                                                      op=op_,
                                                      vector_width=vw,
@@ -279,7 +302,7 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
 
 def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> None:
     ctx.node.code = dace.properties.CodeBlock(
-        code=_generate_code(ctx, rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
+        code=_generate_code(ctx, rhs1_, rhs2_, _roundtrip_constant(const1_), _roundtrip_constant(const2_), lhs_, op_),
         language=dace.Language.CPP,
     )
 
