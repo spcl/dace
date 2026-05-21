@@ -33,9 +33,14 @@ def test_ternary_roundtrip():
     assert _idempotent('b if c else d')
 
 
-def test_floordiv_stays_int_floor():
-    # ``//`` keeps the ``int_floor`` spelling (no operator hook, per design).
-    assert _roundtrip('a // b') == '(int_floor(a, b))'
+def test_floordiv_roundtrip():
+    # ``//`` round-trips to ``//`` in Python and lowers to ``/`` in C++; an explicit
+    # int_floor(a, b) keeps its function spelling in Python.
+    assert _roundtrip('a // b') == '(((a) // (b)))'
+    assert _roundtrip('a // b', cpp_mode=True) == '(((a) / (b)))'
+    assert _idempotent('a // b')
+    assert _roundtrip('int_floor(a, b)') == '(int_floor(a, b))'
+    assert _roundtrip('int_floor(a, b)', cpp_mode=True) == '(((a) / (b)))'
 
 
 def test_cpp_lowering():
@@ -164,7 +169,7 @@ def test_interstate_edge_assignment_roundtrip():
 if __name__ == '__main__':
     test_operator_roundtrip_renders_operator()
     test_ternary_roundtrip()
-    test_floordiv_stays_int_floor()
+    test_floordiv_roundtrip()
     test_cpp_lowering()
     test_operator_uses_internal_variant()
     test_explicit_function_name_preserved()

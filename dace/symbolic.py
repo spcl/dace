@@ -765,6 +765,13 @@ class int_floor(sympy.Function):
         return True
 
 
+class __int_floor(int_floor):
+    """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
+        it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
+        ``int_floor(a, b)`` keeps its function spelling. """
+    pass
+
+
 class int_ceil(sympy.Function):
 
     @classmethod
@@ -1246,7 +1253,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.Invert: '__bitwise_invert',
         ast.LShift: '__left_shift',
         ast.RShift: '__right_shift',
-        ast.FloorDiv: 'int_floor',
+        ast.FloorDiv: '__int_floor',
     }
 
     def visit_UnaryOp(self, node):
@@ -1406,6 +1413,7 @@ _PYSTR2SYM_locals = {
     '__left_shift': __left_shift,
     '__right_shift': __right_shift,
     'int_floor': int_floor,
+    '__int_floor': __int_floor,
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
@@ -1487,8 +1495,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
-        if self.cpp_mode and str(expr.func) == 'int_floor':
-            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
@@ -1521,6 +1527,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         binop = {'bitwise_and': '&', 'bitwise_or': '|', 'bitwise_xor': '^', 'left_shift': '<<', 'right_shift': '>>'}
         if base in binop and as_operator:
             return '((%s) %s (%s))' % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
+        # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
+        # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
+        if base == 'int_floor' and as_operator:
+            op = '/' if self.cpp_mode else '//'
+            return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
         if str(expr.func) == 'IfExpr':
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
