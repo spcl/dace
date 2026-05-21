@@ -94,5 +94,61 @@ def test_unrolled_indirect_becomes_map():
     assert _nmaps(sdfg) >= 1, 'expected the re-rolled gather loop to parallelize into a map'
 
 
+M = dace.symbol('M')
+
+
+@dace.program
+def unrolled_unit_step2(a: dace.float64[M], b: dace.float64[M]):
+    """Step 2, lanes at offsets {0, 1} (spacing 1) -- re-rolls to step 1."""
+    for i in range(0, M, 2):
+        a[i] = b[i] * 2.0
+        a[i + 1] = b[i + 1] * 2.0
+
+
+@dace.program
+def unrolled_strided(a: dace.float64[M], b: dace.float64[M]):
+    """Step 2, lanes at offsets {0, 2} (spacing 2, overlapping pure writes) --
+    re-rolls to step 2 (the offset spacing), not step 1."""
+    for i in range(0, M - 2, 2):
+        a[i] = b[i] * 3.0
+        a[i + 2] = b[i + 2] * 3.0
+
+
+def test_unrolled_unit_step2_value_and_map():
+    n = 12
+    rng = np.random.default_rng(5)
+    b = rng.standard_normal(n)
+    a0 = rng.standard_normal(n)
+    sdfg = unrolled_unit_step2.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = a0.copy()
+    sdfg(a=got, b=b, M=n)
+    exp = a0.copy()
+    for i in range(0, n, 2):
+        exp[i] = b[i] * 2.0
+        exp[i + 1] = b[i + 1] * 2.0
+    assert np.allclose(got, exp)
+    assert _nmaps(sdfg) >= 1, 'step-2 / offset-spacing-1 unroll should re-roll to a step-1 map'
+
+
+def test_unrolled_strided_value_and_map():
+    n = 12
+    rng = np.random.default_rng(6)
+    b = rng.standard_normal(n)
+    a0 = rng.standard_normal(n)
+    sdfg = unrolled_strided.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = a0.copy()
+    sdfg(a=got, b=b, M=n)
+    exp = a0.copy()
+    for i in range(0, n - 2, 2):
+        exp[i] = b[i] * 3.0
+        exp[i + 2] = b[i + 2] * 3.0
+    assert np.allclose(got, exp)
+    assert _nmaps(sdfg) >= 1, 'step-2 / offset-spacing-2 unroll should re-roll to a step-2 map'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

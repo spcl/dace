@@ -170,8 +170,27 @@ class RerollUnrolledLoops(ppl.Pass):
         offsets = self._lane_offsets(state, loop_var)
         if not offsets:
             return False
-        # Every lane offset must be one of 0 .. step - 1, and all must be present.
-        if set(offsets.values()) != set(range(step)):
+
+        # The distinct lane offsets must be equally spaced from 0:
+        # ``{0, g, 2g, ..., (m-1)g}`` -- ``m`` lanes, spacing ``g``. The re-roll
+        # then steps by ``g`` (one position per iteration) instead of ``step``.
+        distinct = sorted(set(offsets.values()))
+        m = len(distinct)
+        if m < 2 or distinct[0] != 0:
+            return False
+        g = distinct[1]
+        if g <= 0 or distinct != [j * g for j in range(m)]:
+            return False
+
+        # Position-coverage safety. A loop iteration advances by ``step`` while
+        # one lane block spans ``m * g``. ``step > m*g`` leaves gaps that the
+        # re-rolled step-``g`` loop would wrongly fill; ``step < m*g`` overlaps,
+        # so a position is touched by more than one lane -- safe only when no
+        # array is both read and written by the lanes (otherwise the re-roll
+        # changes a read-modify-write count). ``step == m*g`` tiles exactly.
+        if step > m * g:
+            return False
+        if step < m * g and self._has_read_modify_write(offsets):
             return False
 
         # Shared boundary access nodes are the loop's external arrays/scalars
@@ -190,34 +209,34 @@ class RerollUnrolledLoops(ppl.Pass):
             if (desc is not None and not desc.transient) or state.in_degree(n) == 0 or state.out_degree(n) == 0:
                 shared.add(n)
 
-        # Group the boundary edges by lane and find each lane's internal nodes.
-        lane_edges: Dict[int, List] = {k: [] for k in range(step)}
+        # Group the boundary edges by lane offset and find each lane's nodes.
+        lane_edges: Dict[int, List] = {d: [] for d in distinct}
         for edge, off in offsets.items():
             lane_edges[off].append(edge)
-        lane_nodes = {k: self._lane_nodes(state, lane_edges[k], shared) for k in range(step)}
+        lane_nodes = {d: self._lane_nodes(state, lane_edges[d], shared) for d in distinct}
 
         # Lanes must be disjoint and structurally identical (same tasklet-code multiset).
         all_internal: Set = set()
         codes: Dict[int, List[str]] = {}
-        for k in range(step):
-            nodes_k = lane_nodes[k]
-            if all_internal & nodes_k:
+        for d in distinct:
+            nodes_d = lane_nodes[d]
+            if all_internal & nodes_d:
                 return False
-            all_internal |= nodes_k
-            codes[k] = sorted(n.code.as_string for n in nodes_k if isinstance(n, nodes.Tasklet))
-        if any(codes[k] != codes[0] for k in range(1, step)):
+            all_internal |= nodes_d
+            codes[d] = sorted(n.code.as_string for n in nodes_d if isinstance(n, nodes.Tasklet))
+        if any(codes[d] != codes[0] for d in distinct[1:]):
             return False
         if not codes[0]:
             return False
 
-        # Re-roll: drop lanes 1 .. step-1 (their internal nodes + boundary edges),
-        # then rewrite the loop to step 1 over the flattened range. Lane 0 keeps
-        # its ``loop_var + 0`` subsets, which now sweep every position.
-        for k in range(1, step):
-            for edge in lane_edges[k]:
+        # Re-roll: drop every lane but offset 0 (their internal nodes + boundary
+        # edges), then rewrite the loop to step ``g``. Lane 0 keeps its
+        # ``loop_var + 0`` subsets, which now sweep every position.
+        for d in distinct[1:]:
+            for edge in lane_edges[d]:
                 if edge in state.edges():
                     state.remove_edge(edge)
-            for n in lane_nodes[k]:
+            for n in lane_nodes[d]:
                 if n in state.nodes():
                     state.remove_node(n)
 
@@ -227,21 +246,37 @@ class RerollUnrolledLoops(ppl.Pass):
             if isinstance(n, nodes.AccessNode) and state.degree(n) == 0:
                 state.remove_node(n)
 
-        self._rewrite_to_unit_step(loop, loop_var, step)
+        self._rewrite_step(loop, loop_var, g, m)
         return True
 
-    def _rewrite_to_unit_step(self, loop: LoopRegion, loop_var: str, step: int) -> None:
-        """Rewrite a step-``S`` loop to step 1 over the flattened position range.
+    def _has_read_modify_write(self, offsets: Dict) -> bool:
+        """Whether any array is both read and written by the lanes.
 
-        The original loop attains ``loop_var`` values ``init, init + S, ...,
-        end``; the kept lane 0 then sweeps positions ``init .. end + S - 1``. The
-        re-rolled loop therefore steps by 1 with the exclusive bound ``end + S``.
+        :param offsets: ``{edge: offset}`` for the loop-variable-indexed edges.
+        :returns: ``True`` if some array appears both as a read source and a
+                  write destination among the lane boundary edges.
+        """
+        reads, writes = set(), set()
+        for edge in offsets:
+            if isinstance(edge.src, nodes.AccessNode):
+                reads.add(edge.src.data)
+            if isinstance(edge.dst, nodes.AccessNode):
+                writes.add(edge.dst.data)
+        return bool(reads & writes)
+
+    def _rewrite_step(self, loop: LoopRegion, loop_var: str, g: int, m: int) -> None:
+        """Rewrite a step-``S`` loop to step ``g`` over the flattened range.
+
+        The original loop attains ``loop_var`` values ``init, ..., end`` and the
+        kept lane 0 sweeps positions ``init .. end + (m - 1) * g``. The re-rolled
+        loop steps by ``g`` with the exclusive bound ``end + m * g``.
 
         :param loop: The loop region to rewrite.
         :param loop_var: The loop variable name.
-        :param step: The original constant step ``S``.
+        :param g: The lane-offset spacing (the new step).
+        :param m: The lane count.
         """
         loop_end = loop_analysis.get_loop_end(loop)
-        new_excl = symbolic.pystr_to_symbolic(loop_end) + step
-        loop.update_statement = dace.properties.CodeBlock(f"{loop_var} = {loop_var} + 1")
+        new_excl = symbolic.pystr_to_symbolic(loop_end) + m * g
+        loop.update_statement = dace.properties.CodeBlock(f"{loop_var} = {loop_var} + {g}")
         loop.loop_condition = dace.properties.CodeBlock(f"{loop_var} < ({symbolic.symstr(new_excl)})")
