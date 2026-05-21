@@ -62,9 +62,10 @@ def _oracle(a, n, m):
 
 def test_coexisting_index_guards_collapse_to_single_nest():
     """Cross-nest fusion of two differently-guarded map nests collapses to
-    a single ``map i / map j`` carrying both ``if i: A`` and ``if j: B``
-    (2 maps total, recursive count). Each guard still depends on its own
-    map index, no guard is hoisted to SDFG top level, and the result is
+    a single 2D ``map[i, j]`` carrying both ``if i: A`` and ``if j: B``
+    (1 map total, recursive count -- the fully-parallel ``i``/``j`` nest
+    folds together). Each guard still depends on its own map index, no
+    guard is hoisted to SDFG top level, and the result is
     value-preserving.
 
     Achieved by running ``UniqueLoopIterators`` with the post-value
@@ -79,7 +80,7 @@ def test_coexisting_index_guards_collapse_to_single_nest():
 
     sdfg = two_guarded_nests.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) == 2
+    assert _nmaps(sdfg) == 1
 
     # Both guards survive (now coexisting inside the single collapsed nest)
     # and neither is hoisted to SDFG top level. The structural detail of

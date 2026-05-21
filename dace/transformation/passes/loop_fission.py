@@ -213,27 +213,39 @@ class LoopFission(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: Number of loops fissioned, or ``None`` if none.
         """
+        # Maximal fission (perfect loop nesting): fissioning an inner loop
+        # turns its parent's body from a single block into several independent
+        # blocks, which then makes the parent itself fissionable. A single
+        # outer-to-inner sweep distributes only the inner loop -- the parent is
+        # visited before its body splits -- so re-sweep until nothing more
+        # fissions. The goal is that every leaf computation ends up enclosed by
+        # its own complete loop nest. Each fission rebuilds the CFG, so restart
+        # the scan after applying one.
         count = 0
-        for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-            if not isinstance(loop, LoopRegion):
-                continue
-            compute = _single_compute_state(loop)
-            if compute is not None:
-                if len(_independent_groups(compute)) < 2:
+        changed = True
+        while changed:
+            changed = False
+            for loop in list(sdfg.all_control_flow_regions(recursive=True)):
+                if not isinstance(loop, LoopRegion):
                     continue
-                self._fission(loop, compute)
+                compute = _single_compute_state(loop)
+                if compute is not None:
+                    if len(_independent_groups(compute)) < 2:
+                        continue
+                    self._fission(loop, compute)
+                else:
+                    groups = _independent_block_groups(loop)
+                    if groups is None:
+                        continue
+                    self._fission_blocks(loop, groups)
                 count += 1
-            else:
-                groups = _independent_block_groups(loop)
-                if groups is None:
-                    continue
-                self._fission_blocks(loop, groups)
-                count += 1
-        if count:
-            # The per-group ``copy.deepcopy(loop)`` clones leave any nested
-            # SDFG inside the body with a stale ``parent_sdfg`` (it still
-            # points away from this root); reattach all nested-SDFG parents.
-            set_nested_sdfg_parent_references(sdfg)
+                changed = True
+                # The per-group ``copy.deepcopy(loop)`` clones leave any nested
+                # SDFG inside the body with a stale ``parent_sdfg`` (it still
+                # points away from this root); reattach all nested-SDFG parents
+                # before the next scan re-reads the CFG.
+                set_nested_sdfg_parent_references(sdfg)
+                break
         return count or None
 
     @staticmethod

@@ -28,6 +28,7 @@ from dace.transformation.passes.minimize_stride_permutation import MinimizeStrid
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
@@ -93,6 +94,8 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     _uniq.assign_loop_iterator_post_value = False
     _uniq2 = UniqueLoopIterators()
     _uniq2.assign_loop_iterator_post_value = False
+    _uniq_fis = UniqueLoopIterators()
+    _uniq_fis.assign_loop_iterator_post_value = False
 
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
@@ -139,8 +142,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # parallelization. Standalone and idempotent -- can be invoked again.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
-    # fission: loop distribution + block-level perfect-loop-nesting.
-    s += [('fission', LoopFission())]
+    # fission: loop distribution + block-level perfect-loop-nesting. Fission
+    # clones a loop into siblings that keep the same ``_loop_it_<N>`` name;
+    # re-running UniqueLoopIterators here disambiguates those duplicates so the
+    # later LoopToMap is not blocked by a sibling appearing to read the shared
+    # iterator after a parallelized loop.
+    s += [('fission', LoopFission()), ('fission', _uniq_fis)]
 
     # normalize: every loop range -> 0:trip:1.
     s += [('normalize', NormalizeLoopsAndMaps())]
@@ -191,6 +198,16 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # that were LoopToMap-eligible). Symbolic-safe: undeducible strides ->
     # no permutation.
     s += [('reorder', MinimizeStridePermutation())]
+
+    # collapse: fold a perfect parallel map nest (``map i: { map j }``, the
+    # shape maximal LoopFission leaves for a fully-parallel statement) into one
+    # multi-dimensional map (``map[i, j]``). This is the canonical form for a
+    # fully-parallel nest, and -- being N-dimensional -- it no longer matches a
+    # sibling 1-D map for horizontal fusion, so the perfect loop nesting that
+    # maximal fission produced for differently-parallel statements (e.g. a
+    # parallel ``map[i, j]`` beside a carried ``map i: { loop j }``) survives
+    # the fuse stage instead of being re-merged into one mixed-parallelism map.
+    s += [('collapse', PatternMatchAndApplyRepeated([MapCollapse()]))]
 
     # fuse: first recombine adjacent identical-condition ConditionalBlocks
     # (ConditionFusion -- the inverse of branch-replicated fission, so maps
