@@ -542,12 +542,51 @@ def test_postamble_preserves_symbol_declaration():
     sdfg.validate()
 
 
+def test_idempotent_skips_already_unique_iterators():
+    """Running the pass twice must be a no-op the second time and must NOT
+    re-rename already-unique ``_loop_it_<N>`` iterators.
+
+    Re-renaming an already-unique iterator that a deeply-nested SDFG
+    imports used to drop the import from the grandchild's
+    ``symbol_mapping`` (the re-key did not survive a second rename),
+    producing "Missing symbols on nested SDFG: ['_loop_it_<N>']". The
+    pass now skips iterators already in ``_loop_it_*`` form. This mirrors
+    the canonicalize pipeline, which runs UniqueLoopIterators twice (the
+    ``clean`` and ``ssa`` stages)."""
+    UniqueLoopIterators._loop_var_counter = 0
+
+    # A map body (nested SDFG) with two nested loops, then a deeper nest --
+    # the shape where a grandchild NSDFG imports the outer iterators.
+    sdfg = nested_loops.to_sdfg(simplify=False)
+
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    names_after_first = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions() if isinstance(lr, LoopRegion))
+    assert all(n.startswith('_loop_it_') for n in names_after_first), names_after_first
+
+    # Second application: the iterators are already unique; nothing changes
+    # and the SDFG stays valid (no "Missing symbols" crash).
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    names_after_second = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions()
+                                if isinstance(lr, LoopRegion))
+    assert names_after_second == names_after_first, \
+        f'second pass re-renamed already-unique iterators: {names_after_first} -> {names_after_second}'
+
+    A = np.random.rand(8, 8)
+    exp = A + 1.0
+    csdfg = sdfg.compile()
+    csdfg(A=A)
+    assert np.allclose(A, exp)
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
     test_nested_loops()
     test_loop_var_in_tasklet_body()
     test_loop_var_on_interstate_edge()
+    test_idempotent_skips_already_unique_iterators()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
     test_large_nested_map_for_for_map_program()
