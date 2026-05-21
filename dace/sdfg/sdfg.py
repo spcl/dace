@@ -176,13 +176,27 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict, desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
+    assignments = DictProperty(
+        key_type=str,
+        value_type=str,
+        desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
+        # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
+        #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
+        #       assignments as symbolic expressions without specialized to/from_json functions.
+        to_json=lambda d: {
+            k: symbolic.serialize_symbolic(symbolic.pystr_to_symbolic(v))
+            for k, v in d.items()
+        },
+        from_json=(lambda d, *args, context=None, **kwargs: {
+            k: str(symbolic.deserialize_symbolic(v))
+            for k, v in d.items()
+        }))
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
-                 assignments: Optional[Dict] = None):
+                 assignments: Optional[Dict[str, str | ast.AST]] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -399,7 +413,6 @@ class InterstateEdge(object):
         return {
             'type': type(self).__name__,
             'attributes': dace.serialize.all_properties_to_json(self),
-            'label': self.label
         }
 
     @staticmethod
@@ -409,24 +422,6 @@ class InterstateEdge(object):
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
-
-    @property
-    def label(self):
-        assignments = ','.join(['%s=%s' % (k, v) for k, v in self.assignments.items()])
-
-        # Edge with assignment only (no condition)
-        if self.condition.as_string == '1':
-            # Edge without conditions or assignments
-            if len(self.assignments) == 0:
-                return ''
-            return assignments
-
-        # Edge with condition only (no assignment)
-        if len(self.assignments) == 0:
-            return self.condition.as_string
-
-        # Edges with assignments and conditions
-        return self.condition.as_string + '; ' + assignments
 
 
 @make_properties
