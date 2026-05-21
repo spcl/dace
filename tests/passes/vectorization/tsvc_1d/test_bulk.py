@@ -449,7 +449,9 @@ def s3111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
 @dace.program
 def s31111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     sum_val = 0.0
-    for base in range(0, LEN_1D, 4):
+    # Unroll-by-4 over a[base..base+3]; the ``- 3`` upper bound keeps the
+    # last group in bounds when LEN_1D is not a multiple of 4.
+    for base in range(0, LEN_1D - 3, 4):
         partial = 0.0
         partial = partial + a[base + 0]
         partial = partial + a[base + 1]
@@ -576,7 +578,9 @@ def s342_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 @dace.program
 def s351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     alpha = c[0]
-    for i in range(0, LEN_1D, 4):
+    # Step-4 unroll over a[i..i+3]; the ``- 3`` upper bound keeps the last
+    # group in bounds when LEN_1D is not a multiple of 4.
+    for i in range(0, LEN_1D - 3, 4):
         a[i] = a[i] + alpha * b[i]
         a[i + 1] = a[i + 1] + alpha * b[i + 1]
         a[i + 2] = a[i + 2] + alpha * b[i + 2]
@@ -585,8 +589,9 @@ def s351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
 @dace.program
 def s352_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[2]):
     dot = 0.0
-    dot = 0.0
-    for i in range(0, LEN_1D, 4):
+    # Window a[i..i+4] (5 elements) with step 5, matching TSVC s352; the
+    # ``- 4`` upper bound keeps the last group's ``a[i+4]`` in bounds.
+    for i in range(0, LEN_1D - 4, 5):
         dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
                      a[i + 4] * b[i + 4])
     c[0] = dot
@@ -613,7 +618,7 @@ def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * 
         flat_2d_array[4 + i] = flat_2d_array[8 + i] + a[i]
 
 @dace.program
-def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
+def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D * LEN_1D]):
     vl = 64
     for i in range(LEN_1D - 1):
         flat_2d_array[i + 1] = flat_2d_array[vl + i] + a[i]
@@ -733,14 +738,31 @@ def _allocate(name: str, n: int) -> np.ndarray:
     return np.random.rand(n).astype(np.float64)
 
 
+def _arg_elem_count(sdfg: dace.SDFG, name: str, len_1d_val: int) -> int:
+    """Element count of argument ``name`` from its declared SDFG shape.
+
+    Allocating by the kernel's own descriptor shape (rather than a flat
+    ``LEN_1D``) keeps arrays whose declared shape is not ``LEN_1D`` —
+    e.g. a flat ``LEN_1D * LEN_1D`` scratch buffer — correctly sized, so
+    in-bounds accesses never read past the end.
+
+    :param sdfg: The kernel's SDFG (its non-transient arrays carry the
+        declared shapes).
+    :param name: Argument name.
+    :param len_1d_val: Concrete value substituted for ``LEN_1D``.
+    :return: Total number of elements to allocate.
+    """
+    total = 1
+    for dim in sdfg.arrays[name].shape:
+        total *= int(dace.symbolic.evaluate(dim, {dace.symbol("LEN_1D"): len_1d_val}))
+    return total
+
+
 _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (64, 65))
 
 
 @pytest.mark.parametrize("kernel,argnames,remainder_strategy,branch_mode,len_1d_val", _MATRIX, ids=_IDS)
 def test_tsvc_1d_bulk(kernel, argnames, remainder_strategy, branch_mode, len_1d_val):
-    arrays_ref = {name: _allocate(name, len_1d_val) for name in argnames}
-    arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}
-
     sdfg_name = f"{kernel.name}_1db_{branch_mode}_{remainder_strategy}_{len_1d_val}"
     # Deep-copy before any mutation: to_sdfg() may return a shared cached
     # SDFG a prior variant already mutated in place.
@@ -749,6 +771,11 @@ def test_tsvc_1d_bulk(kernel, argnames, remainder_strategy, branch_mode, len_1d_
     sdfg.simplify(validate=True, validate_all=True)
     sdfg.apply_transformations_repeated(LoopToMap())
     sdfg.simplify()
+
+    # Allocate each argument by its declared shape so flat scratch buffers
+    # (e.g. ``LEN_1D * LEN_1D``) are sized correctly, not as a flat ``LEN_1D``.
+    arrays_ref = {name: _allocate(name, _arg_elem_count(sdfg, name, len_1d_val)) for name in argnames}
+    arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}
 
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = sdfg_name + "_vec"

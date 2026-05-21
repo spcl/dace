@@ -284,6 +284,61 @@ def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> No
     )
 
 
+def _binary_expr(l_op: str, op: str, r_op: str) -> str:
+    """Build a binary expression string for the scalar/symbol lane paths.
+
+    A named-function op (``int_floor``, ``int_ceil``, ``min``, ``max``, ...)
+    is emitted in call syntax ``op(l, r)``; an operator symbol (``+``, ``<``,
+    ...) is emitted infix ``(l op r)``. Without this a function op was
+    written infix (``LEN_1D int_floor 2``) and later failed to sympify
+    (TSVC s276's ``int_floor(LEN_1D, 2)`` comparison RHS).
+
+    :param l_op: Left operand.
+    :param op: Operator symbol or function name.
+    :param r_op: Right operand.
+    :return: The expression string.
+    """
+    if op.isidentifier():
+        return f"{op}({l_op}, {r_op})"
+    return f"({l_op} {op} {r_op})"
+
+
+def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str,
+                                       vector_map_param: str) -> bool:
+    """Whether input connector ``conn`` reads a single lane-invariant element.
+
+    Inside an already-vectorized inner map, an operand whose memlet covers
+    one element and does not depend on the vectorized map parameter is
+    constant across the W lanes — a scalar value at the C level (a ``T``,
+    not a ``T*``). A binop using it must take the ``vector_*_w_scalar``
+    (broadcast) template rather than the vector-vector one. The motivating
+    case is a loop-invariant array read inside a vectorized map (TSVC s176:
+    ``b[i+m-j-1] * c[j]``, where ``c[j]`` is invariant in the vectorized
+    param and stays a single element).
+
+    The lane-invariance check is required, not incidental: a single-element
+    operand that *does* depend on ``vector_map_param`` would be a vector
+    operand the widening step failed to expand, and broadcasting it would
+    silently corrupt the result — such a case must fall through to the
+    vector path and fail loudly instead.
+
+    :param state: State containing the tasklet.
+    :param node: Tasklet whose input edges are inspected.
+    :param conn: Input connector name.
+    :param vector_map_param: The vectorized map parameter.
+    :return: ``True`` if the connector reads one lane-invariant element.
+    """
+    for ie in state.in_edges(node):
+        if ie.dst_conn == conn and ie.data.data is not None:
+            try:
+                if int(ie.data.subset.num_elements()) != 1:
+                    return False
+            except (TypeError, ValueError):
+                return False
+            return vector_map_param not in {str(s) for s in ie.data.subset.free_symbols}
+    return False
+
+
 def instantiate_tasklet_from_info(state: dace.SDFGState,
                                   node: dace.nodes.Tasklet,
                                   info: dict,
@@ -412,7 +467,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
                                                                   for i in range(vw)]) + "\n",
                                                   language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
-        _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
+        # A binop operand whose connector reads a single (non-vectorized)
+        # element is a scalar value at the C level, not a vector pointer.
+        # Route it through the constant slot so the ``*c`` / ``c*``
+        # ``vector_*_w_scalar`` template is picked instead of the
+        # vector-vector one (TSVC s176: ``b[i+m-j-1] * c[j]`` with
+        # ``c[j]`` invariant in the vectorized param).
+        rhs1_is_scalar = rhs2_is_scalar = False
+        if rhs1 is not None and rhs2 is not None:
+            rhs1_is_scalar = _connector_reads_invariant_scalar(state, node, rhs1, vector_map_param)
+            rhs2_is_scalar = _connector_reads_invariant_scalar(state, node, rhs2, vector_map_param)
+        if rhs2_is_scalar and not rhs1_is_scalar:
+            _set_template(ctx, rhs1, None, None, rhs2, lhs, op)
+        elif rhs1_is_scalar and not rhs2_is_scalar:
+            _set_template(ctx, None, rhs2, rhs1, None, lhs, op)
+        else:
+            _set_template(ctx, rhs1, rhs2, c1, c2, lhs, op)
     elif ttype == tutil.TaskletType.TERNARY_ARRAY:
         # ``_o = merge(_c, _t, _e)`` lowered to ``vector_select<{dtype}, {W}>``.
         # All three operands are arrays, the classifier carries them as
@@ -468,16 +538,16 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         r_op = rhs2 if rhs2 is not None else c2
         c = c1 if c1 is not None else c2
         for i in range(vw):
-            expr = f"({l_op} {op} {r_op})"
+            expr = _binary_expr(l_op, op, r_op)
             if str(c) in symbols:
                 expr = offset_symbol_in_expression(expr, vector_map_param, i, arrays=set(state.sdfg.arrays.keys()))
             else:
                 if l_op == c:
-                    expr = f"({l_op} {op} {r_op})"
+                    expr = _binary_expr(l_op, op, r_op)
                 elif r_op == c:
-                    expr = f"({l_op} {op} {r_op})"
+                    expr = _binary_expr(l_op, op, r_op)
                 else:
-                    expr = f"({l_op} {op} {r_op}_laneid_{i})"
+                    expr = _binary_expr(l_op, op, f"{r_op}_laneid_{i}")
             code_lines.append(f"{lhs}[{i}] = {expr}")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.SCALAR_SCALAR:
@@ -486,7 +556,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         lhs_data = state.sdfg.arrays[out_edges[0].data.data]
         l_op = rhs1 if rhs1 is not None else c1
         r_op = rhs2 if rhs2 is not None else c2
-        expr = f"({l_op} {op} {r_op})"
+        expr = _binary_expr(l_op, op, r_op)
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
                                                   language=dace.Language.Python)
@@ -499,7 +569,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState,
         l_op = rhs1 if rhs1 is not None else c1
         r_op = rhs2 if rhs2 is not None else c2
         c = c1 if c1 is not None else c2
-        expr = f"({l_op} {op} {r_op})"
+        expr = _binary_expr(l_op, op, r_op)
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([
                 f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param, arrays=set(state.sdfg.arrays.keys()))}"

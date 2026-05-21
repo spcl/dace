@@ -488,6 +488,63 @@ def test_split_does_not_treat_merge_as_variable(body: str, inputs: set):
     assert saw_merge_call, "the merge(...) call did not survive splitting"
 
 
+def test_to_ssa_preserves_int_floor_call():
+    """A two-arg ``int_floor(a, b)`` must be split as a function call, not
+    mangled into an infix ``a int_floor b`` or have its divisor dropped.
+    Regression: a comparison RHS ``int_floor(LEN_1D, 2)`` lost the ``2``
+    (TSVC s276 condition ``(i + 1) < int_floor(LEN_1D, 2)``)."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa("_o = merge((i + 1) < int_floor(LEN_1D, 2), _t, _e)")
+    joined = "\n".join(lines)
+    # The whole call (with the divisor) survives as its own statement.
+    assert any("int_floor(LEN_1D, 2)" in ln for ln in lines), joined
+    # The divisor is never dropped to a bare ``< LEN_1D`` comparison.
+    assert "< LEN_1D)" not in joined and "< LEN_1D\n" not in joined, joined
+
+
+def test_to_ssa_temp_names_do_not_collide_with_input():
+    """The temp counter must start past any ``__t<N>`` already in the input.
+    Regression: a fresh ``__t0`` aliased the existing left operand and turned
+    ``__t0 < int_floor(LEN_1D, 2)`` into ``__t0 = int_floor(LEN_1D, 2)`` plus
+    ``__t1 = __t0 < __t0`` — silently comparing the divisor against itself."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa("__t1 = (__t0 < int_floor(LEN_1D, 2))")
+    joined = "\n".join(lines)
+    # The left operand ``__t0`` is never overwritten by an emitted temp.
+    assert not any(ln.strip().startswith("__t0 =") for ln in lines), joined
+    # No self-comparison ``__t0 < __t0``; the divisor keeps its own temp.
+    assert "__t0 < __t0" not in joined, joined
+    assert any("int_floor(LEN_1D, 2)" in ln for ln in lines), joined
+
+
+@pytest.mark.parametrize("code,n_lines", [
+    # A function call with trivial (name/constant) args is NOT split: a
+    # multi-input function ``foo(a, b, c, d)`` stays a single statement.
+    ("out = foo(a, b, c, d)", 1),
+    # Each non-trivial arg is lifted into its own tasklet *before* the call,
+    # so ``foo(a+1, b+1, c+1, d+1)`` needs 4 arg tasklets + the call = 5.
+    ("out = foo(a + 1, b + 1, c + 1, d + 1)", 5),
+    # Only the non-trivial arg is lifted.
+    ("out = foo(a, b + 1, c, d)", 2),
+    # Two-arg builtin function: ``int_floor(a + 1, 2)`` lifts the ``a + 1``.
+    ("out = int_floor(a + 1, 2)", 2),
+    ("out = int_floor(a, b)", 1),
+])
+def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
+    """A function with multiple inputs is split only where its arguments are
+    non-trivial: trivial args (names/constants) keep the call as one
+    statement; each compound arg becomes its own tasklet before the call."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa(code)
+    assert len(lines) == n_lines, f"{code!r} -> {lines}"
+    # The final statement is still the function call over (lifted) operands.
+    func = code.split("=", 1)[1].strip().split("(", 1)[0].strip()
+    assert lines[-1].split("=", 1)[1].strip().startswith(f"{func}("), lines
+
+
 @pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)
 def test_double_tasklet_split(id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, False)

@@ -5,6 +5,7 @@ math replacement."""
 import dace
 from typing import Any, Callable, Dict, Optional, Set
 import ast
+import re
 from dace import SDFG, properties, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
@@ -122,6 +123,13 @@ class DaceCastRemover(ast.NodeTransformer):
 
     def __init__(self, call_name: str):
         self.call_name = call_name
+        # Match exactly the cast names: ``call_name`` optionally followed by a
+        # bit-width (``int``, ``int8``, ``int32``, ``float64``, ...). A bare
+        # ``startswith`` would also catch unrelated builtins such as
+        # ``int_floor`` / ``int_ceil`` and strip them to their first argument,
+        # silently dropping the divisor (TSVC s276: ``int_floor(LEN_1D, 2)``
+        # became ``LEN_1D``).
+        self._is_cast_name = re.compile(rf"{re.escape(call_name)}\d*$").fullmatch
 
     def visit_Call(self, node):
         """Drop a matching dace cast call, returning its first argument.
@@ -134,7 +142,7 @@ class DaceCastRemover(ast.NodeTransformer):
         if isinstance(node.func, ast.Attribute):
             # Handle dace.float64(), dace.float32(), etc.
             if (isinstance(node.func.value, ast.Name) and node.func.value.id == 'dace'
-                    and node.func.attr.startswith(self.call_name)):
+                    and self._is_cast_name(node.func.attr)):
                 # Return the first argument (the value being cast)
                 if node.args:
                     return node.args[0]
@@ -144,7 +152,7 @@ class DaceCastRemover(ast.NodeTransformer):
 
         elif isinstance(node.func, ast.Name):
             # Handle direct calls like float64() if imported
-            if node.func.id.startswith(self.call_name) and len(node.func.id) >= len(self.call_name):
+            if self._is_cast_name(node.func.id):
                 # Return the first argument (the value being cast)
                 if node.args:
                     return node.args[0]

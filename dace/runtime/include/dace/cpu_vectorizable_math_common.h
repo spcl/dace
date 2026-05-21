@@ -276,6 +276,44 @@ inline void vector_select_av_masked(T* __restrict__ out,
 }
 
 // ============================================================================
+// Integer floor/ceil division (``dace::math::int_floor`` / ``int_ceil``).
+// Arch-independent — integer division is not a single SIMD instruction, so
+// these lower to the same per-lane division on every backend. Bodies match
+// the scalar definitions in ``dace/math.h`` (``a / b`` and
+// ``(a + b - 1) / b``) so the vectorized path stays bit-identical to the
+// non-vectorized one (TSVC s276: ``int_floor(LEN_1D, 2)`` lane condition).
+// ============================================================================
+template <typename T, int vector_width>
+inline void vector_int_floor(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = a[i] / b[i];
+}
+
+template <typename T, int vector_width>
+inline void vector_int_floor_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = a[i] / constant;
+}
+
+template <typename T, int vector_width>
+inline void vector_int_floor_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ b) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = constant / b[i];
+}
+
+template <typename T, int vector_width>
+inline void vector_int_ceil(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = (a[i] + b[i] - 1) / b[i];
+}
+
+template <typename T, int vector_width>
+inline void vector_int_ceil_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = (a[i] + constant - 1) / constant;
+}
+
+template <typename T, int vector_width>
+inline void vector_int_ceil_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ b) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = (constant + b[i] - 1) / b[i];
+}
+
+// ============================================================================
 // Horizontal reduction — fold a ``vector_width``-wide buffer to one scalar.
 //
 // ``_dace_horizontal_tree_<op>`` is the portable, arch-independent

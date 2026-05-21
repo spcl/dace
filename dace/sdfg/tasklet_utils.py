@@ -509,6 +509,7 @@ _BINOP_SYMBOLS = {
     ast.Sub: "-",
     ast.Mult: "*",
     ast.Div: "/",
+    ast.FloorDiv: "int_floor",
     ast.And: "and",
     ast.Or: "or",
 }
@@ -572,6 +573,8 @@ _SUPPORTED = {
     'or',
     'not',
     'merge',
+    'int_floor',
+    'int_ceil',
 }
 """Set of all supported operations including functions."""
 
@@ -712,12 +715,18 @@ def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str
         try:
             tree = ast.parse(code_rhs, mode="eval")
             call_node = tree.body
-            if not isinstance(call_node, ast.Call):
+            if isinstance(call_node, ast.Call):
+                args = [ast.get_source_segment(code_rhs, arg).strip() for arg in call_node.args]
+                assert len(args) == 2
+                left_string, right_string = args[0:2]
+            elif isinstance(call_node, ast.BinOp):
+                # Infix form of a function op that never got normalised to a
+                # call — e.g. ``a // b`` for ``int_floor`` in a single-op
+                # tasklet (SplitTasklets only rewrites multi-statement bodies).
+                left_string = ast.get_source_segment(code_rhs, call_node.left).strip()
+                right_string = ast.get_source_segment(code_rhs, call_node.right).strip()
+            else:
                 raise ValueError(f"Expected a function call in expression: {code_rhs}")
-
-            args = [ast.get_source_segment(code_rhs, arg).strip() for arg in call_node.args]
-            left_string, right_string = args[0:2]
-            assert len(args) == 2
         except SyntaxError as e:
             raise ValueError(f"Failed to parse function expression: {code_rhs}") from e
 

@@ -103,7 +103,9 @@ def s353_d_single(
     ip: dace.int32[LEN_1D],
 ):
     alpha = c[0]
-    for i in range(0, LEN_1D, 4):
+    # Step-4 unroll over a[i..i+3]; the ``- 3`` upper bound keeps the last
+    # group in bounds when LEN_1D is not a multiple of 4.
+    for i in range(0, LEN_1D - 3, 4):
         a[i] = a[i] + alpha * b[ip[i]]
         a[i + 1] = a[i + 1] + alpha * b[ip[i + 1]]
         a[i + 2] = a[i + 2] + alpha * b[ip[i + 2]]

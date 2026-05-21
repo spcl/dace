@@ -28,6 +28,12 @@ class ASTSplitter:
         if isinstance(node, ast.BinOp):
             l, r = self.visit(node.left), self.visit(node.right)
             t = self.temp()
+            # Floor division has no infix C++ form; emit it as the
+            # ``int_floor(num, den)`` call the backend recognises (matches
+            # ``dace::math::int_floor`` and the ``vector_int_floor`` intrinsic).
+            if isinstance(node.op, ast.FloorDiv):
+                self.stmts.append(f"{t} = int_floor({l}, {r})")
+                return t
             ops = {
                 ast.Add: '+',
                 ast.Sub: '-',
@@ -115,6 +121,14 @@ class ASTSplitter:
 def to_ssa(code: str) -> List[str]:
     tree = ast.parse(code).body[0]
     ssa = ASTSplitter()
+    # Start the temp counter past any ``__t<N>`` already present in the input
+    # so a re-split (or an input that happens to use these names) does not
+    # collide: a fresh ``__t0`` aliasing an existing operand turned
+    # ``__t0 < int_floor(LEN_1D, 2)`` into ``__t0 = int_floor(LEN_1D, 2);
+    # __t1 = __t0 < __t0``, silently dropping the comparison's left operand.
+    existing = [int(m) for m in re.findall(r"__t(\d+)\b", code)]
+    if existing:
+        ssa.n = max(existing) + 1
     if isinstance(tree, ast.Assign):
         target = tree.targets[0].id if isinstance(tree.targets[0], ast.Name) else ast.unparse(tree.targets[0])
         # Check if RHS is already a simple variable or constant
