@@ -1,7 +1,7 @@
 import dace
 from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
-from typing import Optional, Set, Dict
+from typing import Optional
 import copy
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -9,6 +9,32 @@ from dace.transformation.transformation import explicit_cf_compatible
 @dace.properties.make_properties
 @explicit_cf_compatible
 class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
+    """Clean up the frontend ``A -> A_slice -> tasklet`` pattern.
+
+    The Python frontend lowers a scalar element read into an
+    AccessNode -> AccessNode copy: ``A -[A[slice]]-> A_slice -[A_slice[0]]->
+    tasklet``, where ``A_slice`` is a single-element transient. That
+    AccessNode -> AccessNode copy is emitted as a ``CopyNDDynamic`` call,
+    which is templated on a single element type — so when ``A`` and
+    ``A_slice`` differ in dtype (a mixed-precision read) it fails to
+    compile (``cannot convert 'A_slice' (double*) to 'const float*'``).
+
+    Two cases, decided by whether ``A_slice`` is reused anywhere else in
+    the read/write set (other states or interstate edges):
+
+    - **Not reused** -> remove ``A_slice`` and wire ``A`` straight into
+      the tasklet (``A -[A[slice]]-> tasklet``). The scalar then no longer
+      appears in any read/write set.
+    - **Reused** -> keep ``A_slice`` but replace the AccessNode ->
+      AccessNode copy with an assignment tasklet
+      (``A -[A[slice]]-> assign(`_out = _in`) -[A_slice[0]]-> A_slice``).
+      The dtype change becomes an implicit C++ assignment cast in the
+      tasklet body, which compiles. No map is introduced.
+
+    ``permissive=True`` ignores the reuse check and always removes the
+    scalar (the caller asserts the scalar is dead elsewhere).
+    """
+
     permissive = dace.properties.Property(
         dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states")
 
@@ -16,13 +42,22 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         self.permissive = permissive
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
+        return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet],
-                       access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
+                       access_node: dace.nodes.AccessNode):
+        """Match ``access_node -> A_slice(scalar transient) -> tasklet``.
+
+        :param state: State holding the candidate subgraph.
+        :param out_edge: An out-edge of ``access_node`` (the copy edge).
+        :param access_node: The source array AccessNode.
+        :returns: ``(an1, an2, tasklet)`` on a structural match (reuse is
+            decided separately in :meth:`_apply_recursive`), else
+            ``(None, None, None)``.
+        """
         sdfg = state.sdfg
 
         if not isinstance(access_node, dace.nodes.AccessNode):
@@ -46,6 +81,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         if not (isinstance(desc, dace.data.Scalar) or
                 (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
             return None, None, None
+        if isinstance(desc, dace.data.View):
+            return None, None, None
 
         if state.in_degree(an2) != 1 or state.out_degree(an2) != 1:
             return None, None, None
@@ -58,69 +95,89 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         if e2.data.subset != dace.subsets.Range([(0, 0, 1)]):
             return None, None, None
 
-        # Do not remove if the scalar is read or written in any other state
-        if not self.permissive:
-            if an2.data in used_elsewhere:
-                return None, None, None
-
         return access_node, an2, tasklet
 
-    def _collect_other_state_data(self, sdfg: dace.SDFG, current_state: dace.SDFGState) -> Set[str]:
-        """Collect all data names that appear in any state other than current_state."""
-        names = set()
+    def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, this_state: dace.SDFGState) -> bool:
+        """Return whether ``scalar_name`` appears in the read/write set of
+        any state other than ``this_state``, or in any interstate edge.
+
+        The structural match already guarantees the scalar's only uses in
+        ``this_state`` are the copy write + the single tasklet read, so a
+        reuse can only be in another state's data nodes or an interstate
+        edge's assignments / condition.
+
+        :param sdfg: SDFG to scan.
+        :param scalar_name: The scalar transient's data name.
+        :param this_state: The state the pattern was matched in (excluded).
+        :returns: ``True`` if the scalar is read or written elsewhere.
+        """
         for state in sdfg.all_states():
-            if state is current_state:
+            if state is this_state:
                 continue
             for dn in state.data_nodes():
-                names.add(dn.data)
-        return names
+                if dn.data == scalar_name:
+                    return True
+        for ise in sdfg.all_interstate_edges():
+            if any(str(s) == scalar_name for s in ise.data.free_symbols):
+                return True
+        return False
+
+    def _slice_read_subset(self, e1: MultiConnectorEdge[dace.Memlet], an1: dace.nodes.AccessNode,
+                           an2: dace.nodes.AccessNode):
+        """Recover the ``A[slice]`` read subset from the copy edge ``e1``,
+        which may carry it as ``subset`` (data == ``A``) or as
+        ``other_subset`` (data == ``A_slice``).
+
+        :param e1: The ``an1 -> an2`` copy edge.
+        :param an1: Source array AccessNode.
+        :param an2: Scalar transient AccessNode.
+        :returns: A deep copy of the read subset into ``an1``.
+        """
+        if e1.data.data == an1.data:
+            return copy.deepcopy(e1.data.subset)
+        assert e1.data.data == an2.data and e1.data.other_subset is not None
+        return copy.deepcopy(e1.data.other_subset)
 
     def _apply_recursive(self, sdfg: dace.SDFG):
-        # Pre-compute per-state: which data names appear in other states
-        all_states = list(sdfg.all_states())
-        # Global set of all data names across all states
-        if not self.permissive:
-            global_data: Dict[str, Set[dace.SDFGState]] = {}
-            for state in all_states:
-                for dn in state.data_nodes():
-                    global_data.setdefault(dn.data, set()).add(state)
-
-        for state in all_states:
-            # Data names used in at least one other state
-            if not self.permissive:
-                used_elsewhere = {name for name, states in global_data.items() if states - {state}}
-            else:
-                used_elsewhere = set()
-
+        for state in list(sdfg.all_states()):
             pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
                 if node not in state.nodes():
                     continue
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
-                else:
-                    for e in state.out_edges(node):
-                        an1, an2, tasklet = self._check_pattern(state, e, node, used_elsewhere)
-                        if an1 is not None and an2 is not None and tasklet is not None:
-                            ies = state.in_edges(an2)
-                            oes = state.out_edges(an2)
-                            assert len(oes) == 1 and len(ies) == 1
-                            oe = oes[0]
-                            ie = ies[0]
-                            assert oe.dst == tasklet
-                            state.remove_node(an2)
+                    continue
+                for e in list(state.out_edges(node)):
+                    an1, an2, tasklet = self._check_pattern(state, e, node)
+                    if an1 is None or an2 is None or tasklet is None:
+                        continue
 
-                            # find correct subset
-                            if ie.data.data == an1.data:
-                                new_subset = copy.deepcopy(ie.data.subset)
-                            else:
-                                assert ie.data.data == an2.data
-                                assert ie.data.other_subset is not None
-                                new_subset = copy.deepcopy(ie.data.other_subset)
-                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
-                                           dace.memlet.Memlet(data=an1.data, subset=new_subset))
+                    ie = state.in_edges(an2)[0]
+                    oe = state.out_edges(an2)[0]
+                    assert oe.dst == tasklet
+                    read_subset = self._slice_read_subset(ie, an1, an2)
+
+                    reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, state)
+
+                    if reused:
+                        # Keep the scalar; replace the AccessNode->AccessNode
+                        # copy with an assignment tasklet that casts in its
+                        # body. No map is introduced.
+                        state.remove_edge(ie)
+                        cast = state.add_tasklet(name=f"_assign_in_{an1.data}_to_{an2.data}",
+                                                 inputs={"_in"},
+                                                 outputs={"_out"},
+                                                 code="_out = _in")
+                        state.add_edge(an1, ie.src_conn, cast, "_in",
+                                       dace.memlet.Memlet(data=an1.data, subset=read_subset))
+                        state.add_edge(cast, "_out", an2, None,
+                                       dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])))
+                    else:
+                        # Not reused: drop the scalar and wire the source
+                        # array straight into the tasklet.
+                        state.remove_node(an2)
+                        state.add_edge(an1, ie.src_conn, oe.dst, oe.dst_conn,
+                                       dace.memlet.Memlet(data=an1.data, subset=read_subset))
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        # TODO: add a test involving other subset and then one not involving
-        # TODO: Add a test for multiple edges come out from the src
         self._apply_recursive(sdfg)

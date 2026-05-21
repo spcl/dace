@@ -8,6 +8,9 @@ mismatch where one site composes a name and another parses it differently:
 - ``VecNameScheme`` — vector buffers ``<base>_vec`` / ``<base>_vec_<i>`` /
   ``<base>_vec_k``.
 - ``PackedNameScheme`` — scatter / gather buffers ``<base>_packed``.
+- ``CORE_MAP_PARAM_PREFIX`` — prefix marking outer map parameters minted
+  by the SVE tile-by-cores step (so the loop-conversion pass can find
+  the right outer scope later).
 
 ``_packed`` is reserved for scatter/gather; ``_vec`` is used for everything
 else. Inout connectors must use the same suffix on both directions, so
@@ -15,6 +18,8 @@ callers classify by access kind, not by direction.
 """
 import re
 from typing import Optional, Tuple
+
+CORE_MAP_PARAM_PREFIX = "core"
 
 
 class LaneIdScheme:

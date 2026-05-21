@@ -4,7 +4,7 @@ import dace
 from typing import Iterator, List, Optional, Set
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
-from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
 from dace.transformation.passes import InlineSDFGs
@@ -219,10 +219,28 @@ class VectorizeCPU(ppl.Pipeline):
                              f"{sorted(s for s in _VALID_SVE_STYLE if s is not None)} or None, "
                              f"got {sve_style!r}")
         sve_fixed = False
-        sve_variable = False
         if sve_style is not None:
             if sve_style == "variable":
-                sve_variable = True
+                # Per design pivot 2026-05-20: variable-VL emission
+                # (one opaque CPP tasklet per map with a svwhilelt-
+                # driven while-loop body) is deferred. For SVE hardware
+                # use ``sve_style="fixed"`` with ``vector_width`` matched
+                # to the target SVE register width (W=8 for SVE-512, W=4
+                # for SVE-256, etc.) — the existing fixed chain already
+                # emits svwhilelt + svcntd internally per W-chunk via
+                # cpu_vectorizable_math_arm_sve.h. The exploratory
+                # ``SveStyleVariableFinalize`` class is retained in
+                # vectorize_sve.py as a prototype of the future
+                # "whole map as CPP tasklet" approach (SpMV + axpy +
+                # triad recognisers implemented), but not user-reachable
+                # via this knob.
+                raise NotImplementedError(
+                    "VectorizeCPU: sve_style='variable' is deferred (open task). For SVE "
+                    "hardware use sve_style='fixed' with vector_width matched to the target "
+                    "SVE register width (W=8 for SVE-512, W=4 for SVE-256, etc.); the SVE "
+                    "arch header (cpu_vectorizable_math_arm_sve.h) already uses svwhilelt + "
+                    "svcntd per W-chunk internally. The variable-VL whole-map-to-CPP-tasklet "
+                    "approach is parked in SveStyleVariableFinalize as a prototype.")
             # Branch lowering is forced to the merge path: ``use_fp_factor``
             # defaults True (legacy), so rejecting it would force every
             # sve_style caller to also pass use_fp_factor=False. The
@@ -440,7 +458,7 @@ class VectorizeCPU(ppl.Pipeline):
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),
                 SplitTasklets(),
-                CleanDataToScalarSliceToTaskletPattern(),
+                CleanAccessNodeToScalarSliceToTaskletPattern(),
                 # Normalise direct ``MapEntry -> AccessNode`` / ``AccessNode -> MapExit``
                 # staging edges (produced by python-frontend shifted reads like
                 # ``b[i + 1]``) into 3-node chains with a plain ``_out = _in``
@@ -464,19 +482,6 @@ class VectorizeCPU(ppl.Pipeline):
                                      num_cores=num_cores,
                                      lower_to_intrinsics=lower_to_intrinsics,
                                      eliminate_trivial_vector_map=eliminate_trivial_vector_map))
-                self._applied_before = False
-                super().__init__(passes)
-                return
-            if sve_variable:
-                # SVE-style 'variable': true runtime VL (svwhilelt_b64 +
-                # svcntd outer loop with svld1/svadd/svst1 body). Replaces
-                # each recognised innermost map body with a CPP tasklet
-                # whose body is the SVE while-loop pattern, guarded with
-                # ``#if defined(__ARM_FEATURE_SVE)`` + scalar fallback so
-                # the SDFG compiles on x86 (fallback executes; the SVE
-                # branch is taken on SVE hosts).
-                from dace.transformation.passes.vectorization.vectorize_sve import SveStyleVariableFinalize
-                passes.append(SveStyleVariableFinalize())
                 self._applied_before = False
                 super().__init__(passes)
                 return
@@ -594,7 +599,7 @@ class VectorizeCPU(ppl.Pipeline):
             :param sdfg: The SDFG on which the pipeline is currently being applied
         """
         if self._applied_before is False:
-            CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+            CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
             self._applied_before = True
         for p in self.passes:
             p: Pass
