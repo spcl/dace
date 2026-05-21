@@ -160,13 +160,6 @@ def compound_nest_maps(arr: dace.float64[N, N, N], out: dace.float64[N, N, N], x
             out[i, k, 0] += 1.0
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('The UniqueLoopIterators NSDFG symbol-mapping CRASH on this shape is now fixed '
-                           '(the pass no longer re-renames already-unique ``_loop_it_*`` iterators, which '
-                           'was dropping a deeply-nested SDFG\'s ``symbol_mapping`` import); the SDFG now '
-                           'validates -- see the sibling structural test which passes. A separate, deeper '
-                           'value bug remains: the outer-Map / inner-range / guarded-body shape diverges '
-                           'numerically for x=1 after canonicalize. Pinned to fix.'))
 def test_compound_nest_maps_value_preserving():
     n = 8
     rng = np.random.default_rng(12)

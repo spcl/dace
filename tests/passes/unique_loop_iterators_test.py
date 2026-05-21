@@ -580,6 +580,63 @@ def test_idempotent_skips_already_unique_iterators():
     assert np.allclose(A, exp)
 
 
+N = dace.symbol('N')
+
+
+@dace.program
+def sibling_kbound_loops(out: dace.float64[N, N], arr: dace.float64[N, N], x: dace.int32):
+    """Map body with two sibling ``k``-loops that share the name ``k`` and
+    the same per-``i`` bounds, one of them inside an ``if`` guard. Both
+    accumulate into ``out`` over the same sparse ``[beg:end)`` range."""
+    for i in dace.map[0:N]:
+        beg = i // 2 + 1
+        end = beg + 2
+        for k in range(beg, end):
+            out[i, k] += arr[i, k]
+        if x > 0:
+            for k in range(beg, end):
+                out[i, k] += 2.0 * arr[i, k]
+
+
+def _sibling_kbound_oracle(arr, x, n):
+    out = np.zeros((n, n))
+    for i in range(n):
+        beg, end = i // 2 + 1, i // 2 + 3
+        for k in range(beg, min(end, n)):
+            out[i, k] += arr[i, k]
+        if x > 0:
+            for k in range(beg, min(end, n)):
+                out[i, k] += 2.0 * arr[i, k]
+    return out
+
+
+def test_value_preserving_sibling_kbound_loops():
+    """Renaming two sibling loops that share the iterator name ``k`` must
+    not cross-contaminate their memlets.
+
+    The frontend's ``accesses`` cache hands out the *same* Range object for
+    the identical ``arr[i, k]`` read in both loop bodies, and ``Memlet.simple``
+    stores a Subset by reference, so the two read edges used to share one
+    subset object. Renaming the first loop's ``k`` to ``_loop_it_0`` then
+    rewrote that shared subset in place, leaving the *second* (guarded) loop
+    reading ``arr[i, _loop_it_0]`` while writing ``out[i, _loop_it_1]`` -- a
+    silent value corruption that only manifested when the guard was taken
+    (``x = 1``). With each edge owning its subset the rename is local and the
+    accumulation is preserved. Regression for the frontend slice-subset
+    aliasing surfaced through UniqueLoopIterators."""
+    UniqueLoopIterators._loop_var_counter = 0
+    n = 8
+    rng = np.random.default_rng(1)
+    arr = rng.standard_normal((n, n))
+    for x in (1, 0):
+        sdfg = sibling_kbound_loops.to_sdfg(simplify=True)
+        UniqueLoopIterators().apply_pass(sdfg, {})
+        sdfg.validate()
+        out = np.zeros((n, n))
+        sdfg(out=out, arr=arr.copy(), x=np.int32(x), N=n)
+        assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f'value corrupted for x={x}'
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
