@@ -54,6 +54,9 @@ Offset = TensorIndexOffset
 # ML-related data descriptors
 from dace.data.ml import ParameterArray
 
+# Distributed data descriptors
+from dace.data.distributed import DistributedDescriptor, ProcessGrid, SubArray, RedistrArray
+
 # Descriptor creation and array creation from descriptors
 from dace.data.creation import (
     add_mask,
@@ -102,6 +105,11 @@ __all__ = [
     'Offset',
     # ML descriptors
     'ParameterArray',
+    # Distributed descriptors
+    'DistributedDescriptor',
+    'ProcessGrid',
+    'SubArray',
+    'RedistrArray',
     # Functions
     'add_mask',
     'create_datadescriptor',
