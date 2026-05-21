@@ -83,12 +83,14 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.cond_block)]
 
-    # ---- Helpers ---------------------------------------------------------
-
     @staticmethod
     def _single_meaningful_state(region: ControlFlowRegion) -> Optional[SDFGState]:
-        """Returns the single non-empty SDFGState inside ``region`` if the
-        region's other blocks are all empty SDFGStates, else None."""
+        """Returns the single non-empty ``SDFGState`` inside a region.
+
+        :param region: The control-flow region to inspect.
+        :returns: The single non-empty ``SDFGState`` if every other block is an
+                  empty ``SDFGState``, else ``None``.
+        """
         blocks = list(region.nodes())
         if not blocks:
             return None
@@ -221,8 +223,6 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             scope = outer_state.entry_node(scope)
         return params
 
-    # ---- Pattern matching ------------------------------------------------
-
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         cond_block: ConditionalBlock = self.cond_block
 
@@ -282,8 +282,6 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                     return False
 
         return True
-
-    # ---- Application -----------------------------------------------------
 
     def _rewrite_inner_sdfg(self, cond_block: ConditionalBlock, branch_cond: CodeBlock, enclosing_sdfg: sd.SDFG,
                             inner_nsdfg: NestedSDFG, cond_free_syms: Set[str],
@@ -457,7 +455,8 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         states_to_try_remove: Set[SDFGState] = set()
         for e in in_edges:
             if e.data.is_unconditional() and not e.data.assignments:
-                states_to_try_remove.add(e.src) if isinstance(e.src, SDFGState) else None
+                if isinstance(e.src, SDFGState):
+                    states_to_try_remove.add(e.src)
                 enclosing_sdfg.remove_edge(e)
             else:
                 enclosing_sdfg.add_edge(e.src, new_branch_state, copy.deepcopy(e.data))

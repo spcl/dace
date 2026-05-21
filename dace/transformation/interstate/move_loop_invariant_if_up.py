@@ -28,10 +28,10 @@ Anything else is a no-op. Linear-CFG assumption: the loop body is a plain
 linear chain; blocks may have parents (the pass recurses into all regions).
 """
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
-from dace import properties
+from dace import properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -40,31 +40,44 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def _free(expr: str) -> set:
-    """Free symbol names of a condition / assignment expression string."""
+def _free(expr: str) -> Set[str]:
+    """Free symbol names of a condition / assignment expression string.
+
+    :param expr: A condition or interstate-assignment RHS expression.
+    :returns: The set of free symbol names, empty if ``expr`` cannot be parsed.
+    """
     try:
-        import dace.symbolic as sym
-        return {str(s) for s in sym.pystr_to_symbolic(expr).free_symbols}
+        return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
     except Exception:
         return set()
 
 
-def _written(region) -> set:
-    """Data containers + interstate-assigned symbols written inside ``region``."""
-    w = set()
+def _written(region: ControlFlowRegion) -> Set[str]:
+    """Data containers and interstate-assigned symbols written inside ``region``.
+
+    :param region: The region to scan (recursively).
+    :returns: The set of written data-container and symbol names.
+    """
+    written: Set[str] = set()
     for e in region.all_interstate_edges():
-        w |= set(e.data.assignments.keys())
+        written |= set(e.data.assignments.keys())
     for st in region.all_states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                w.add(n.data)
-    return w
+                written.add(n.data)
+    return written
 
 
 def _linear_order(region: ControlFlowRegion) -> Optional[List]:
-    """Blocks of ``region`` in order iff it is a plain linear chain of
-    unconditional edges (assignments allowed -- they carry condition prep);
-    else ``None``."""
+    """Order the blocks of ``region`` iff it is a plain linear chain.
+
+    Edges must be unconditional (assignments are allowed -- they carry the
+    condition prep).
+
+    :param region: The region to linearize.
+    :returns: The blocks in execution order, or ``None`` if ``region`` is not
+        a plain linear chain of unconditional edges.
+    """
     blocks = list(region.nodes())
     edges = list(region.edges())
     if not blocks or len(edges) != len(blocks) - 1:
@@ -79,12 +92,22 @@ def _linear_order(region: ControlFlowRegion) -> Optional[List]:
     return order if len(order) == len(blocks) else None
 
 
-def _is_empty_state(b) -> bool:
+def _is_empty_state(b: ControlFlowRegion) -> bool:
+    """Whether ``b`` is an ``SDFGState`` carrying no nodes.
+
+    :param b: A block of a control-flow region.
+    :returns: ``True`` iff ``b`` is an empty ``SDFGState``.
+    """
     return isinstance(b, SDFGState) and b.number_of_nodes() == 0
 
 
 def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
-    """Every ``LoopRegion`` strictly enclosing ``loop`` up to the root SDFG."""
+    """Collect every ``LoopRegion`` strictly enclosing ``loop``.
+
+    :param loop: The inner loop whose ancestors are wanted.
+    :param sdfg: The root SDFG (chain walk stops here).
+    :returns: The enclosing loops, innermost first, up to the root SDFG.
+    """
     out: List[LoopRegion] = []
     g = loop.parent_graph
     while g is not None and g is not sdfg:
@@ -94,17 +117,21 @@ def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
     return out
 
 
-def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> set:
-    """Symbols read anywhere in ``loop`` *outside* the conditional block
-    ``cb`` (so: in other body blocks, in iedge conditions and RHSes, and
-    in the loop's own init/condition/update). Used to decide which
-    non-invariant iedge assignments may stay in the loop body when the
-    guard ``cb`` is hoisted out: an assignment ``key = rhs`` whose
-    ``key`` is NOT in ``_reads_outside`` is dead outside ``cb``'s branch,
-    so its per-iteration value would be unused under ``not cond`` and
-    keeping it in the loop body is safe.
+def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> Set[str]:
+    """Symbols read anywhere in ``loop`` outside the conditional block ``cb``.
+
+    Covers other body blocks, iedge conditions and RHSes, and the loop's own
+    init/condition/update. Used to decide which non-invariant iedge
+    assignments may stay in the loop body when the guard ``cb`` is hoisted
+    out: an assignment ``key = rhs`` whose ``key`` is NOT in this set is dead
+    outside ``cb`` s branch, so its per-iteration value would be unused under
+    ``not cond`` and keeping it in the loop body is safe.
+
+    :param loop: The loop being analyzed.
+    :param cb: The guarding conditional block being considered for hoisting.
+    :returns: The set of symbol names read outside ``cb``.
     """
-    reads: set = set()
+    reads: Set[str] = set()
     for blk in loop.nodes():
         if blk is cb:
             continue
@@ -138,7 +165,10 @@ def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> set:
     return reads
 
 
-def _match(sdfg: SDFG, require_full_hoist: bool = False):
+def _match(
+    sdfg: SDFG,
+    require_full_hoist: bool = False
+) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
     """Find a ``LoopRegion`` whose body is ``[empty*; if c; empty*]`` with a
     loop-invariant condition (plus a hoistable invariant assignment chain
     and any per-iteration assignments that are dead outside the branch).
@@ -294,12 +324,18 @@ class MoveLoopInvariantIfUp(ppl.Pass):
 
     @staticmethod
     def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: List[Tuple[str, str]]):
-        """Replace ``loop`` with ``[assign chain]; if cond: { loop' }`` where
-        ``loop'`` is ``loop`` with its conditional block ``cb`` spliced out
-        in place and replaced by ``cb``'s branch body. All other body
-        blocks (and the per-iteration iedge assignments on them) are
-        preserved. ``hoist_assignments`` are the invariant iedge
-        assignments to move onto the outer guard's incoming edge."""
+        """Splice ``loop`` into ``[assign chain]; if cond: { loop' }`` in place.
+
+        ``loop'`` is ``loop`` with its conditional block ``cb`` spliced out and
+        replaced by ``cb`` s branch body. All other body blocks (and the
+        per-iteration iedge assignments on them) are preserved.
+
+        :param loop: The loop whose invariant guard is being hoisted.
+        :param cb: The guarding conditional block inside ``loop``.
+        :param cond: The (invariant) branch condition of ``cb``.
+        :param hoist_assignments: Invariant iedge ``(lhs, rhs)`` assignments to
+            move onto the outer guard's incoming edge.
+        """
         parent = loop.parent_graph
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
@@ -382,7 +418,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
 
         parent.add_node(outer_cb, ensure_unique_name=True)
         # Hoisted invariant assignments go on the edge entering the guard.
-        hoisted = {lhs: rhs for lhs, rhs in hoist_assignments}
+        hoisted = dict(hoist_assignments)
         for e in in_edges:
             data = copy.deepcopy(e.data)
             data.assignments.update(hoisted)

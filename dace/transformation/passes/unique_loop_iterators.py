@@ -10,13 +10,12 @@ and any nested-SDFG symbol mapping that imports it.
 
 ``assign_loop_iterator_post_value`` additionally materializes
 ``<loop_var> = <post_value>`` in a state after the loop, so downstream
-reads of the original name see the counted-DO exit value Fortran programs.
-ON by default as it will not affect Python/SDFG API inputs.
+reads of the original name see the counted-DO exit value that Fortran
+programs leave the iterator at. ON by default as it does not affect
+Python/SDFG API inputs.
 """
 
 from typing import Optional, Union
-
-import sympy as sp
 
 import dace
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
@@ -51,7 +50,7 @@ class UniqueLoopIterators(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str) -> None:
+    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str):
         """Rename ``old_name`` to ``new_name`` inside ``cfg``.
 
         ``replace_dict`` cascades the rename through the region's states,
@@ -86,7 +85,7 @@ class UniqueLoopIterators(ppl.Pass):
                 if old_name in node.sdfg.symbols:
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
-    def _compute_post_value(self, loop: LoopRegion) -> Optional[sp.Basic]:
+    def _compute_post_value(self, loop: LoopRegion) -> Optional[dace.symbolic.SymbolicType]:
         """Counted-DO exit value: one stride past the last attained value.
 
         ``post = init + int_floor(diff, step) * step`` where
@@ -112,7 +111,7 @@ class UniqueLoopIterators(ppl.Pass):
         # Stride unknown: fall back to last-attained value.
         return loop_end
 
-    def _apply_recursive(self, sdfg: dace.SDFG) -> None:
+    def _apply_recursive(self, sdfg: dace.SDFG):
         array_names = frozenset(sdfg.arrays.keys())
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
@@ -166,9 +165,10 @@ class UniqueLoopIterators(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _):
         """Rename every ``LoopRegion`` iterator in ``sdfg`` and its nested SDFGs.
 
         :param sdfg: SDFG to mutate in place.
+        :param _: Pipeline results (unused).
         """
         self._apply_recursive(sdfg)

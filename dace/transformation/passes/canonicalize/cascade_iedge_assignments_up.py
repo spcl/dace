@@ -56,12 +56,12 @@ inward passes that may have buried invariant assignments inside loops, and
 again before the parallelization stage so the ``LoopToMap`` refuse-check
 sees a clean shape.
 """
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -91,65 +91,6 @@ def _region_writes(region: ControlFlowRegion) -> Tuple[Set[str], Set[str]]:
     return asyms, wdata
 
 
-def _region_reads(region: ControlFlowRegion) -> Set[str]:
-    """Symbols read by any interstate edge (assignment RHS or condition)
-    anywhere inside ``region`` and its descendants. Tasklet reads of
-    symbols are also included via ``free_symbols`` on each state.
-    """
-    syms: Set[str] = set()
-    for e in region.all_interstate_edges():
-        for rhs in e.data.assignments.values():
-            syms |= _free(rhs)
-        if not e.data.is_unconditional():
-            try:
-                syms |= {str(s) for s in e.data.condition.get_free_symbols()}
-            except Exception:
-                pass
-    for st in region.all_states():
-        try:
-            syms |= {str(s) for s in st.free_symbols}
-        except Exception:
-            pass
-    return syms
-
-
-def _loop_variables(cfg: ControlFlowRegion, sdfg: SDFG) -> Set[str]:
-    """Every loop variable of every ``LoopRegion`` strictly enclosing
-    ``cfg`` up to (but not including) ``sdfg``."""
-    out: Set[str] = set()
-    g = cfg
-    while g is not None and g is not sdfg:
-        if isinstance(g, LoopRegion) and g.loop_variable:
-            out.add(str(g.loop_variable))
-        g = getattr(g, 'parent_graph', None)
-    return out
-
-
-def _enclosing_loops(cfg: ControlFlowRegion, sdfg: SDFG) -> List[LoopRegion]:
-    """LoopRegions strictly enclosing ``cfg`` (innermost first)."""
-    out: List[LoopRegion] = []
-    g = cfg
-    while g is not None and g is not sdfg:
-        if isinstance(g, LoopRegion):
-            out.append(g)
-        g = getattr(g, 'parent_graph', None)
-    return out
-
-
-def _ancestor_chain(cfg: ControlFlowRegion, sdfg: SDFG) -> List[ControlFlowRegion]:
-    """Chain ``[cfg, cfg.parent_graph, ..., sdfg]`` (inclusive at both ends)
-    or empty if ``cfg`` is not transitively contained in ``sdfg``.
-    """
-    out: List[ControlFlowRegion] = []
-    g = cfg
-    while g is not None:
-        out.append(g)
-        if g is sdfg:
-            return out
-        g = getattr(g, 'parent_graph', None)
-    return []
-
-
 def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: SDFG) -> bool:
     """The all-or-nothing upward rule: ``dest`` must be outside every
     ``LoopRegion`` enclosing ``cfg``. Equivalently: ``dest`` is not a
@@ -162,18 +103,6 @@ def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: S
             return False
         p = getattr(p, 'parent_graph', None)
     return True
-
-
-def _between_regions(parent: ControlFlowRegion, child: ControlFlowRegion) -> List[ControlFlowRegion]:
-    """Regions strictly between ``parent`` and ``child`` in the parent-graph
-    chain (exclusive at both ends). For an immediate child, returns ``[]``.
-    """
-    out: List[ControlFlowRegion] = []
-    g = getattr(child, 'parent_graph', None)
-    while g is not None and g is not parent:
-        out.append(g)
-        g = getattr(g, 'parent_graph', None)
-    return out
 
 
 def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg: SDFG) -> bool:
@@ -189,11 +118,15 @@ def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg
     return False
 
 
-def _predecessors_in(parent: ControlFlowRegion, child) -> Set:
-    """Strict predecessors of ``child`` in ``parent`` (blocks reachable
-    backwards from ``child`` via ``parent``'s edges, excluding ``child``).
+def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Set[ControlFlowBlock]:
+    """Strict predecessors of a block within its parent region.
+
+    :param parent: The region whose edges are walked.
+    :param child: The block whose predecessors are collected.
+    :returns: Blocks reachable backwards from ``child`` via ``parent``'s
+              edges, excluding ``child`` itself.
     """
-    out: Set = set()
+    out: Set[ControlFlowBlock] = set()
     stack = [child]
     while stack:
         cur = stack.pop()
@@ -205,10 +138,14 @@ def _predecessors_in(parent: ControlFlowRegion, child) -> Set:
     return out
 
 
-def _block_reads_symbols(block) -> Set[str]:
-    """All symbols read anywhere inside ``block`` (state, CFR, etc.).
+def _block_reads_symbols(block: ControlFlowBlock) -> Set[str]:
+    """All symbols read anywhere inside a block (state, region, etc.).
+
     Uses ``free_symbols`` where available; falls back to a manual scan of
-    interstate-edge conditions and assignment RHSes for CFRs.
+    interstate-edge conditions and assignment RHSes for regions.
+
+    :param block: The state or region to scan.
+    :returns: The set of symbol names read inside ``block``.
     """
     syms: Set[str] = set()
     if isinstance(block, SDFGState):
@@ -234,10 +171,14 @@ def _block_reads_symbols(block) -> Set[str]:
     return syms
 
 
-def _block_writes(block) -> Tuple[Set[str], Set[str]]:
-    """All ``(symbols-assigned, data-containers-written)`` anywhere inside
-    ``block``. State-only block: tasklet writes to AccessNodes; CFR block:
-    delegate to :func:`_region_writes`.
+def _block_writes(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
+    """All symbols assigned and data containers written anywhere inside a block.
+
+    A state-only block contributes tasklet writes to its AccessNodes; a
+    region block delegates to :func:`_region_writes`.
+
+    :param block: The state or region to scan.
+    :returns: ``(assigned_symbols, written_data)``.
     """
     if isinstance(block, ControlFlowRegion):
         return _region_writes(block)
@@ -250,15 +191,23 @@ def _block_writes(block) -> Tuple[Set[str], Set[str]]:
     return asyms, wdata
 
 
-def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, edge, key: str, rhs: str,
-                         rhs_syms: Set[str], sdfg: SDFG) -> bool:
-    """Predicate: is it legal to take an assignment currently on ``edge``
-    inside ``child`` and place it at the entry of ``parent``? (One step.)
+def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str, rhs_syms: Set[str],
+                         sdfg: SDFG) -> bool:
+    """Decide whether an assignment inside ``child`` may move up one level.
 
     Checks L1 RHS-invariance and L2/L3/L4 (no intervening reads/writes of
-    ``key`` or ``rhs_syms`` between ``parent``'s entry and ``edge``). L5 is
-    handled by the caller's chain check. L6 is handled by refusing to cross
-    SDFG boundaries (``parent_graph`` chain stops at the owning SDFG).
+    ``key`` or ``rhs_syms`` between ``parent``'s entry and the assignment's
+    location inside ``child``). L5 is handled by the caller's chain check.
+    L6 is handled by refusing to cross SDFG boundaries (the ``parent_graph``
+    chain stops at the owning SDFG).
+
+    :param parent: The region the assignment would be placed at the entry of.
+    :param child: The region currently containing the assignment.
+    :param key: The assigned symbol name.
+    :param rhs: The assignment's right-hand-side expression.
+    :param rhs_syms: The free symbols of ``rhs``.
+    :param sdfg: The owning SDFG (the upward walk does not cross it).
+    :returns: ``True`` if placing the assignment at ``parent``'s entry is legal.
     """
     # L1: any new symbol introduced by ``child`` (its loop variable, or any
     # iedge assignment inside ``child`` other than the one being moved) that
@@ -321,7 +270,7 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
             break
         if not isinstance(parent, ControlFlowRegion):
             break  # crossed out of SDFG (would need L6 NSDFG passthrough)
-        if not _legal_to_hoist_into(parent, walker, None, key, rhs, rhs_syms, sdfg):
+        if not _legal_to_hoist_into(parent, walker, key, rhs, rhs_syms, sdfg):
             break
         dest = parent
         walker = parent
@@ -335,7 +284,7 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
     return dest
 
 
-def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> None:
+def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str):
     """Add ``key = rhs`` so it dominates ``child`` inside ``dest``.
 
     Mirrors the placement strategy of
@@ -343,6 +292,11 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
     put the assignment on every in-edge of ``child`` within ``dest``;
     if ``child`` has no in-edges (it is ``dest``'s start block), prepend a
     fresh hoist state with the assignment on its outgoing edge.
+
+    :param dest: The region the assignment is placed in.
+    :param child: The block the assignment must dominate within ``dest``.
+    :param key: The assigned symbol name.
+    :param rhs: The assignment's right-hand-side expression.
     """
     in_edges = list(dest.in_edges(child))
     if in_edges:
@@ -356,10 +310,17 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
         dest.start_block = dest.node_id(pre)
 
 
-def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion) -> None:
-    """If ``key`` is also declared in an inner NestedSDFG inside ``dest``,
-    leave the declaration (we do not cross NSDFG boundaries in v1, so this
-    is a no-op). Kept as a placeholder for the cross-NSDFG extension."""
+def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion):
+    """Placeholder for the cross-NSDFG extension (currently a no-op).
+
+    If ``key`` were also declared in an inner NestedSDFG inside ``dest``,
+    the v2 cross-boundary hoist would drop that declaration. v1 does not
+    cross NSDFG boundaries, so there is nothing to do.
+
+    :param sdfg: The owning SDFG.
+    :param key: The assigned symbol name.
+    :param dest: The region the assignment was hoisted into.
+    """
     return
 
 
@@ -409,7 +370,7 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> Set:
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:

@@ -37,8 +37,9 @@ assignment and emits a loud warning so the dropped opportunity is visible.
 """
 import copy
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import dace.symbolic
 from dace import SDFG
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
@@ -48,7 +49,7 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def _written(region) -> set:
+def _written(region: ControlFlowRegion) -> set:
     """Symbols/data written inside a region (interstate assigns + data writes)."""
     w = set()
     for e in region.all_interstate_edges():
@@ -81,13 +82,12 @@ def _linear_order(region: ControlFlowRegion) -> Optional[List]:
 def _free(expr: str) -> set:
     """Free symbol names of a Python/condition expression string."""
     try:
-        import dace.symbolic as sym
-        return {str(s) for s in sym.pystr_to_symbolic(expr).free_symbols}
+        return {str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
     except Exception:
         return set()
 
 
-def _match(sdfg: SDFG):
+def _match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
     """Find a ``ConditionalBlock`` guarding (loop-invariant prep then) a loop.
 
     :returns: ``(cond_block, condition, region)`` or ``None``.
@@ -115,7 +115,7 @@ def _match(sdfg: SDFG):
         bad = False
         for p in prep:
             acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
-            if lvar in acc or ({d for d in acc if region_state_writes(p, d)} & loop_w):
+            if lvar in acc or (_state_writes(p) & loop_w):
                 bad = True
         for e in region.edges():
             for lhs, rhs in e.data.assignments.items():
@@ -127,17 +127,12 @@ def _match(sdfg: SDFG):
     return None
 
 
-def region_state_writes(st: SDFGState, data: str) -> bool:
-    """Whether ``st`` writes ``data``."""
-    return any(isinstance(n, nodes.AccessNode) and n.data == data and st.in_degree(n) > 0 for n in st.nodes())
-
-
 def _state_writes(st: SDFGState) -> set:
     """Data containers written in ``st``."""
     return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0}
 
 
-def _match_imperfect(sdfg: SDFG):
+def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
     """Find a ``ConditionalBlock`` guarding a *heterogeneous* body: a linear
     chain of ``LoopRegion`` and bare ``SDFGState`` blocks with at least one of
     each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
@@ -246,7 +241,7 @@ class MoveIfIntoLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set:
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
