@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.sdfg import nodes
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 
 N = 10
@@ -122,7 +123,49 @@ def test_trivial_tasklet_with_implicit_cast():
     assert count == 0
 
 
+def test_trivial_tasklet_map_source_preserves_offset_subset():
+    """When the eliminated copy tasklet's source is a ``MapEntry``, the
+    surviving edge must describe the read data and keep its offset subset.
+
+    The edge leaves the map's ``OUT_a`` connector, so its memlet must have
+    ``data == 'a'`` and the offset subset ``a[i + 1]``. Reusing the write
+    memlet left ``data == 'a_idx'`` with the read offset stranded in
+    ``other_subset`` -- an orientation inconsistent with the connector. It
+    still validates and runs at this point, but a later re-lowering that reads
+    ``.subset`` (e.g. ``MapToForLoop``) then drops the offset (``[0]``).
+    """
+    sym_n = dace.symbol('N')
+    sdfg = dace.SDFG('tte_map_offset')
+    sdfg.add_array('a', (sym_n, ), dace.float64)
+    sdfg.add_array('b', (sym_n, ), dace.float64)
+    sdfg.add_scalar('a_idx', dace.float64, transient=True)
+    st = sdfg.add_state()
+    a, b, aidx = st.add_access('a'), st.add_access('b'), st.add_access('a_idx')
+    me, mx = st.add_map('m', dict(i='0:N-1'))
+    copy_tasklet = st.add_tasklet('copy', {'inp'}, {'out'}, 'out = inp')
+    mult = st.add_tasklet('mult', {'inp'}, {'out'}, 'out = inp * 2.0')
+    st.add_memlet_path(a, me, copy_tasklet, dst_conn='inp', memlet=dace.Memlet('a[i + 1]'))
+    st.add_edge(copy_tasklet, 'out', aidx, None, dace.Memlet('a_idx[0]'))
+    st.add_edge(aidx, None, mult, 'inp', dace.Memlet('a_idx[0]'))
+    st.add_memlet_path(mult, mx, b, src_conn='out', memlet=dace.Memlet('b[i]'))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(TrivialTaskletElimination) == 1
+
+    surviving = [
+        e for st in sdfg.states() for e in st.edges()
+        if isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'a_idx'
+    ]
+    assert len(surviving) == 1
+    memlet = surviving[0].data
+    # The edge leaves OUT_a, so it must describe ``a`` and keep the offset.
+    assert memlet.data == 'a', f"surviving edge must describe the read data 'a', got {memlet.data!r}"
+    assert 'i' in {str(s) for s in memlet.subset.free_symbols}, \
+        f"per-iteration offset lost from the subset: {memlet.subset}"
+
+
 if __name__ == '__main__':
     test_trivial_tasklet()
     test_trivial_tasklet_with_map()
     test_trivial_tasklet_with_implicit_cast()
+    test_trivial_tasklet_map_source_preserves_offset_subset()

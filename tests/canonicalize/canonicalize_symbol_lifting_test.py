@@ -362,13 +362,6 @@ def cloudsc_style_range_plus_one(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] * 3.0
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="Post-canonicalize the loop body's ``a[i]`` read folds to a constant index "
-                   "(every iteration reads the same element) -- a per-iteration semantics drift "
-                   "in the ``range(kidia, kfdia + 1)`` lowering. The j-leak / Missing-symbols class "
-                   "is fixed (the SDFG validates and compiles cleanly), but the per-iteration "
-                   "subscript dependency is not yet preserved through the canonicalize pipeline. "
-                   "Deferred to the ``CascadeInterstateEdgeAssignmentsUp`` design effort.")
 def test_cloudsc_style_range_plus_one_value_preserving():
     n = 12
     a = np.random.rand(n)
