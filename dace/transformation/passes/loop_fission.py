@@ -8,11 +8,11 @@ loop; only data-independent groups are separated, so the result is always
 value-preserving. A no-op when the body has a single group.
 """
 import copy
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -33,14 +33,10 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
     :returns: A list of node lists, one per independent group, deterministic.
     """
     order = {n: i for i, n in enumerate(state.nodes())}
-    written = {
-        n.data
-        for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0
-    }
+    written = {n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
     is_input = {
         n
-        for n in state.nodes()
-        if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written
+        for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written
     }
     core = [n for n in state.nodes() if n not in is_input]
     parent: Dict[nodes.Node, nodes.Node] = {n: n for n in core}
@@ -80,9 +76,7 @@ def _independent_groups(state: SDFGState) -> List[List[nodes.Node]]:
     groups = []
     for members in classes.values():
         member_set = set(members)
-        feeders = [
-            n for n in is_input if any(e.dst in member_set for e in state.out_edges(n))
-        ]
+        feeders = [n for n in is_input if any(e.dst in member_set for e in state.out_edges(n))]
         groups.append(sorted(members + feeders, key=lambda n: order[n]))
     return sorted(groups, key=lambda g: order[g[0]])
 
@@ -114,7 +108,7 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     return nonempty[0] if len(nonempty) == 1 else None
 
 
-def _block_rw(block):
+def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
     """Recursively collect (reads, writes) data containers of a CFG block.
 
     :param block: An ``SDFGState`` or control-flow region.
@@ -189,8 +183,7 @@ def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
     classes: Dict = {}
     for b in order:
         classes.setdefault(find(b), []).append(b)
-    groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()),
-                    key=lambda g: pos[g[0]])
+    groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()), key=lambda g: pos[g[0]])
     return groups if len(groups) >= 2 else None
 
 

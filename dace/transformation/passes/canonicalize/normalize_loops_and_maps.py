@@ -1,16 +1,16 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-"""Normalize every map range to canonical ``0:trip:1`` form.
+"""Normalize every map range and loop counter to canonical ``0:trip:1`` form.
 
 ``OffsetLoopsAndMaps`` only shifts by a fixed expression and never changes the
 step, so it cannot produce the canonical zero-based / unit-stride form. This
 pass does: for a map parameter ``p`` with range ``b:e:s`` it substitutes
 ``p -> b + s*p`` in the map's own scope (memlets + tasklets, param-local) and
-sets the range to ``0:(e-b)//s:1``. The substitution is value-preserving, so
-the SDFG result is unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet
-token-replacement helpers.
+sets the range to ``0:(e-b)//s:1``. ``LoopRegion`` counters are normalized the
+same way. The substitution is value-preserving, so the SDFG result is
+unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
 """
 import copy
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import dace
 from dace import properties
@@ -26,11 +26,11 @@ from dace.transformation.passes.analysis import loop_analysis
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
-    """Rewrite map ranges to ``0:trip:1`` (zero-based, unit-stride).
+    """Rewrite map ranges and loop counters to ``0:trip:1`` (zero-based, unit-stride).
 
-    Loop (``LoopRegion``) normalization is a TODO: loops are turned into maps
-    by the pipeline's ``loop_to_map`` stage, so normalizing maps suffices for
-    the canonical form here.
+    Maps are normalized in their own scope via ``_normalize_map`` and
+    ``LoopRegion`` counters via ``_normalize_loop``; both rewrites are
+    value-preserving.
     """
 
     CATEGORY: str = 'Canonicalization'
@@ -46,10 +46,11 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> Set:
         return set()
 
-    def _create_new_memlet(self, edge_data, repldict):
+    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str,
+                                                                               str]) -> Optional[dace.memlet.Memlet]:
         """Subset-substitute a memlet via proper dace symbols.
 
         Overrides the base, which sympifies string values and so mis-parses a
@@ -57,6 +58,11 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         ``other_subset``). The pipeline's preparation ``_cleanup`` removes
         ``other_subset`` copies before this pass runs; the ``other_subset``
         branch below only guards standalone callers that skip that cleanup.
+
+        :param edge_data: The memlet to rewrite.
+        :param repldict: Symbol-name to replacement-expression mapping.
+        :returns: A new memlet with the substituted subsets, or ``None`` if the
+                  input carries no subset.
         """
         if edge_data is None or edge_data.subset is None:
             return None
@@ -81,7 +87,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
         :param state: The state owning the map.
         :param me: The map entry.
-        :return: ``True`` if any parameter was rewritten.
+        :returns: ``True`` if any parameter was rewritten.
         """
         new_ranges = list(me.map.range.ranges)
         repldict: Dict[str, str] = {}
@@ -130,7 +136,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         ``var=0 ; var < n ; var = var+1``.
 
         :param loop: The loop region.
-        :return: ``True`` if the loop was rewritten.
+        :returns: ``True`` if the loop was rewritten.
         """
         var = loop.loop_variable
         start = loop_analysis.get_init_assignment(loop)
@@ -155,7 +161,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         """Normalize every map and loop in ``sdfg`` (recursively).
 
         :param sdfg: The SDFG to normalize in place.
-        :return: The number of maps/loops rewritten, or ``None`` if unchanged.
+        :returns: The number of maps/loops rewritten, or ``None`` if unchanged.
         """
         count = 0
         for node, parent in sdfg.all_nodes_recursive():
