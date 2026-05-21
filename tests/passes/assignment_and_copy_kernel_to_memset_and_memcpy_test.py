@@ -195,6 +195,10 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
+def _get_num_nested_sdfgs(sdfg: dace.SDFG) -> int:
+    return sum(isinstance(node, dace.nodes.NestedSDFG) for node, state in sdfg.all_nodes_recursive())
+
+
 # MemsetLibraryNode and CopyLibraryNode use different impl-name vocabularies.
 # Tests parametrize on the Memset names; map them to the Copy names here.
 _COPY_IMPL_FROM_EXPANSION_TYPE = {
@@ -883,8 +887,7 @@ def test_dynamic_bound_param_uses_symbol_hoist(expansion_type, xp):
 
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 1
-    assert not any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive()), \
-        "a read-only bound must be hoisted, not nested"
+    assert _get_num_nested_sdfgs(sdfg) == 0, "a read-only bound must be hoisted, not nested"
 
     B_IN = xp.ones(DIM_SIZE)
     _expand_and_validate(sdfg, expansion_type)
@@ -934,8 +937,7 @@ def test_dynamic_bound_written_in_state_uses_nesting(expansion_type, xp):
 
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 1
-    assert sum(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive()) == 1, \
-        "an in-state-written bound must be isolated in a nested SDFG"
+    assert _get_num_nested_sdfgs(sdfg) == 1, "an in-state-written bound must be isolated in a nested SDFG"
 
     A_IN = xp.ones(DIM_SIZE)
     _expand_and_validate(sdfg, expansion_type)
