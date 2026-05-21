@@ -16,6 +16,7 @@ single binop tasklet ``__output = __rhs1 OP __rhs2`` (post-
 All lib nodes are placed in the parent state, inside the inner-map
 scope, with mask wiring threaded through.
 """
+import copy
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -42,6 +43,21 @@ _PY_TO_TILEBINOP_OP = {
     "<": "<", "<=": "<=", ">": ">", ">=": ">=", "==": "==", "!=": "!=",
     "and": "&&", "or": "||",
 }
+_ASSIGN_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<inp>\w+)\s*;?\s*$")
+
+
+def _is_assign_tasklet(tasklet: dace.nodes.Tasklet) -> bool:
+    """Return True iff the tasklet body is a trivial ``out = inp`` copy.
+
+    The frontend emits these at the end of multi-tasklet chains (post-
+    ``SplitTasklets``) to route an intermediate transient to the outer
+    access node; they are pass-throughs for the tile-op rewrite.
+
+    :param tasklet: Tasklet to inspect.
+    :returns: True iff ``tasklet.code`` matches ``out = inp``.
+    """
+    body = tasklet.code.as_string.strip().rstrip(";").strip()
+    return _ASSIGN_RE.match(body) is not None
 
 
 def _tile_region_subset(orig_subset: subsets.Range,
@@ -181,8 +197,10 @@ class EmitTileOps(ppl.Pass):
         :param tasklet: The compute tasklet.
         :param conn_name: Input connector name.
         :param spec: Tile spec for the surrounding map.
-        :returns: ``("Tile", (path_edge, dim_strides))`` for Tile,
-            ``("Symbol", (expr_str,))`` for Symbol.
+        :returns: ``("Tile", (source_edge, edge, subset, dim_strides))``
+            for a tile-region access; ``("Scalar", (source_edge, edge))``
+            for a length-1 / ``dace.data.Scalar`` array read (broadcast);
+            ``("Symbol", (expr_str,))`` for a true free-symbol read.
         :raises NotImplementedError: For shapes T5 MVP doesn't handle.
         """
         in_e = [e for e in state.in_edges(tasklet) if e.dst_conn == conn_name]
@@ -208,10 +226,15 @@ class EmitTileOps(ppl.Pass):
         if cls.kind in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
             return "Tile", (source_edge, edge, edge.data.subset, cls.dim_strides)
         if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
-            return "Symbol", (src_data_name,)
+            # A no-tile-dependency access reads either a length-1 / Scalar
+            # array (route through a connector and broadcast) or a true
+            # free symbol (embed inline). The data is an array name in
+            # both cases, but only a genuine Scalar / 1-element array
+            # should be wired; otherwise treat as an inline symbol.
+            return "Scalar", (source_edge, edge)
         raise NotImplementedError(
             f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} access "
-            f"{source_edge.data!r} is {cls.kind.value}; T5 MVP only handles Tile / Symbol"
+            f"{source_edge.data!r} is {cls.kind.value}; T5 MVP only handles Tile / Scalar / Symbol"
         )
 
     def _add_tile_transient(self,
@@ -321,6 +344,104 @@ class EmitTileOps(ppl.Pass):
             if e.dst is map_exit and (e.data is None or e.data.data is None):
                 state.remove_edge(e)
 
+    def _walk_through_assigns(self, state: dace.SDFGState, start_edge, assign_tasklets):
+        """Walk forward from ``start_edge`` skipping trivial-assign
+        tasklets and AccessNode intermediaries until the edge into the
+        ``MapExit`` is reached.
+
+        :param state: Parent state.
+        :param start_edge: The binop tasklet's out-edge.
+        :param assign_tasklets: Body tasklets known to be trivial
+            ``out = inp`` copies (the walk may traverse these).
+        :returns: ``(final_edge, intermediates)`` — the edge whose
+            ``dst`` is the ``MapExit`` (or ``start_edge`` if no chain
+            follows), plus the list of intermediate AccessNodes
+            traversed (so the caller can remove them and never leave an
+            isolated node).
+        """
+        assign_set = set(assign_tasklets)
+        edge = start_edge
+        intermediates = []
+        seen = set()
+        while id(edge) not in seen:
+            seen.add(id(edge))
+            dst = edge.dst
+            if isinstance(dst, dace.nodes.MapExit):
+                return edge, intermediates
+            if isinstance(dst, dace.nodes.AccessNode):
+                nxt = list(state.out_edges(dst))
+                if len(nxt) != 1:
+                    return edge, intermediates
+                intermediates.append(dst)
+                edge = nxt[0]
+                continue
+            if isinstance(dst, dace.nodes.Tasklet) and dst in assign_set:
+                nxt = list(state.out_edges(dst))
+                if len(nxt) != 1:
+                    return edge, intermediates
+                edge = nxt[0]
+                continue
+            return edge, intermediates
+        return edge, intermediates
+
+    def _wire_scalar_operand(self,
+                             state: dace.SDFGState,
+                             binop,
+                             conn: str,
+                             source_edge,
+                             in_edge) -> None:
+        """Wire a Scalar (length-1 / ``dace.data.Scalar``) operand into
+        ``binop`` via its ``_a`` / ``_b`` connector, reusing the original
+        in-edge's source (the MapEntry pass-through) so no connector is
+        orphaned.
+
+        :param state: Parent state.
+        :param binop: The ``TileBinop`` lib node.
+        :param conn: ``"_a"`` or ``"_b"`` — the scalar connector.
+        :param source_edge: Outermost memlet-path edge (its source is
+            the original AccessNode).
+        :param in_edge: The original binop tasklet's in-edge for this
+            operand (carries the MapEntry pass-through source + conn).
+        """
+        state.add_edge(in_edge.src, in_edge.src_conn, binop, conn,
+                       copy.deepcopy(in_edge.data))
+
+    def _drop_dangling_scope_connectors(self, state: dace.SDFGState, map_entry: MapEntry) -> None:
+        """Remove MapEntry / MapExit pass-through connectors that lost
+        their consumer / producer after the body rewrite.
+
+        A ``MapEntry.OUT_<x>`` connector with no outgoing edge (its only
+        reader was the removed tasklet) is dropped together with the
+        matching ``IN_<x>`` connector and its source in-edge. Symmetric
+        for ``MapExit.IN_<x>`` with no incoming edge.
+
+        :param state: Parent state.
+        :param map_entry: Inner map whose scope connectors are cleaned.
+        """
+        map_exit = state.exit_node(map_entry)
+        # MapEntry: drop OUT_<x> with no out-edge + its paired IN_<x>.
+        for out_conn in list(map_entry.out_connectors):
+            if any(e.src_conn == out_conn for e in state.out_edges(map_entry)):
+                continue
+            map_entry.remove_out_connector(out_conn)
+            in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else None
+            if in_conn and in_conn in map_entry.in_connectors:
+                for e in list(state.in_edges(map_entry)):
+                    if e.dst_conn == in_conn:
+                        state.remove_edge(e)
+                map_entry.remove_in_connector(in_conn)
+        # MapExit: drop IN_<x> with no in-edge + its paired OUT_<x>.
+        for in_conn in list(map_exit.in_connectors):
+            if any(e.dst_conn == in_conn for e in state.in_edges(map_exit)):
+                continue
+            map_exit.remove_in_connector(in_conn)
+            out_conn = "OUT_" + in_conn[len("IN_"):] if in_conn.startswith("IN_") else None
+            if out_conn and out_conn in map_exit.out_connectors:
+                for e in list(state.out_edges(map_exit)):
+                    if e.src_conn == out_conn:
+                        state.remove_edge(e)
+                map_exit.remove_out_connector(out_conn)
+
     def _rewrite_one_map(self,
                          state: dace.SDFGState,
                          map_entry: MapEntry,
@@ -333,19 +454,22 @@ class EmitTileOps(ppl.Pass):
         :raises NotImplementedError: For shapes T5 MVP doesn't handle.
         """
         tasklets = self._find_body_tasklets(state, map_entry)
-        if len(tasklets) != 1:
+        non_assigns = [t for t in tasklets if not _is_assign_tasklet(t)]
+        assign_tasklets = [t for t in tasklets if _is_assign_tasklet(t)]
+        if len(non_assigns) != 1:
             raise NotImplementedError(
-                f"EmitTileOps: map {map_entry.label!r} body has {len(tasklets)} tasklets; "
-                f"T5 MVP requires exactly 1. Run SplitTasklets first."
+                f"EmitTileOps: map {map_entry.label!r} body has {len(non_assigns)} non-assign "
+                f"tasklets (plus {len(assign_tasklets)} trivial assigns); "
+                f"T5 MVP requires exactly 1 non-assign (binop) tasklet."
             )
-        tasklet = tasklets[0]
+        tasklet = non_assigns[0]
         out_conn, a_conn, op, b_conn = self._classify_binop_tasklet(tasklet)
         kind_a, info_a = self._operand_kind(state, tasklet, a_conn, spec)
         kind_b, info_b = self._operand_kind(state, tasklet, b_conn, spec)
-        if kind_a == "Symbol" and kind_b == "Symbol":
+        if kind_a != "Tile" and kind_b != "Tile":
             raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} is Symbol/Symbol; "
-                f"belongs outside the tile path."
+                f"EmitTileOps: tasklet {tasklet.label!r} has no Tile operand "
+                f"({kind_a}/{kind_b}); belongs outside the tile path."
             )
 
         out_e = [e for e in state.out_edges(tasklet) if e.src_conn == out_conn]
@@ -354,27 +478,26 @@ class EmitTileOps(ppl.Pass):
                 f"EmitTileOps: tasklet {tasklet.label!r} out {out_conn!r} has "
                 f"{len(out_e)} out-edges; expected exactly 1"
             )
-        out_edge = out_e[0]
-        out_path = state.memlet_path(out_edge)
-        out_sink_edge = out_path[-1]
+        # Walk through any trailing trivial-assign chain to the edge that
+        # writes into the MapExit (the real outer-array destination).
+        # ``intermediate_nodes`` are the transients that only connected
+        # the stripped tasklets — removed below so none is left isolated.
+        out_edge, intermediate_nodes = self._walk_through_assigns(state, out_e[0], assign_tasklets)
         out_dst_name = out_edge.data.data
         out_dst_arr = state.sdfg.arrays[out_dst_name]
         out_promoted_subset = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
 
         mask_name = TileNameScheme.ITER_MASK
+        subset = ", ".join(f"0:{w}" for w in spec.widths)
 
-        a_tile = (
-            self._emit_tile_load(state, tasklet, a_conn, info_a[0], info_a[1], info_a[2], info_a[3],
-                                 spec, mask_name)
-            if kind_a == "Tile" else (None, None)
-        )
-        b_tile = (
-            self._emit_tile_load(state, tasklet, b_conn, info_b[0], info_b[1], info_b[2], info_b[3],
-                                 spec, mask_name)
-            if kind_b == "Tile" else (None, None)
-        )
-        a_tile_name, a_tile_access = a_tile
-        b_tile_name, b_tile_access = b_tile
+        a_tile_name = a_tile_access = None
+        if kind_a == "Tile":
+            a_tile_name, a_tile_access = self._emit_tile_load(
+                state, tasklet, a_conn, info_a[0], info_a[1], info_a[2], info_a[3], spec, mask_name)
+        b_tile_name = b_tile_access = None
+        if kind_b == "Tile":
+            b_tile_name, b_tile_access = self._emit_tile_load(
+                state, tasklet, b_conn, info_b[0], info_b[1], info_b[2], info_b[3], spec, mask_name)
 
         out_tile_name = self._add_tile_transient(
             state.sdfg, "_tile_out", out_dst_arr.dtype, spec.widths,
@@ -394,11 +517,14 @@ class EmitTileOps(ppl.Pass):
         binop = TileBinop(**binop_kwargs)
         state.add_node(binop)
 
-        subset = ", ".join(f"0:{w}" for w in spec.widths)
         if kind_a == "Tile":
             state.add_edge(a_tile_access, None, binop, "_a", dace.Memlet(f"{a_tile_name}[{subset}]"))
+        elif kind_a == "Scalar":
+            self._wire_scalar_operand(state, binop, "_a", info_a[0], info_a[1])
         if kind_b == "Tile":
             state.add_edge(b_tile_access, None, binop, "_b", dace.Memlet(f"{b_tile_name}[{subset}]"))
+        elif kind_b == "Scalar":
+            self._wire_scalar_operand(state, binop, "_b", info_b[0], info_b[1])
         mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
         state.add_edge(mask_access, None, binop, "_mask",
                        dace.Memlet(f"{mask_name}[{subset}]"))
@@ -414,9 +540,15 @@ class EmitTileOps(ppl.Pass):
         state.add_edge(store, "_dst", out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=out_dst_name, subset=out_promoted_subset))
 
-        for e in list(state.in_edges(tasklet)) + list(state.out_edges(tasklet)):
-            state.remove_edge(e)
-        state.remove_node(tasklet)
+        # Remove the stripped tasklets together with the intermediate
+        # transients that only connected them — scoped, so no isolated
+        # node is ever left behind.
+        for node in [tasklet] + list(assign_tasklets) + list(intermediate_nodes):
+            for e in list(state.in_edges(node)) + list(state.out_edges(node)):
+                state.remove_edge(e)
+            if node in state.nodes():
+                state.remove_node(node)
+        self._drop_dangling_scope_connectors(state, map_entry)
         self._drop_mask_placeholder_edge(state, mask_name, map_entry)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:

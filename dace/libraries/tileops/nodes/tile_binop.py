@@ -21,7 +21,8 @@ from .._pure_codegen import nested_loops, tile_offset
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
-_VALID_KINDS = (_TILE, _SYMBOL)
+_SCALAR = "Scalar"
+_VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
 
 _OP_CPP = {
     "+": ("(", " + ", ")"),
@@ -71,8 +72,21 @@ class ExpandTileBinopPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         widths = list(node.widths)
         off = tile_offset(widths)
-        lhs = node.expr_a if node.kind_a == _SYMBOL else f"_a[{off}]"
-        rhs = node.expr_b if node.kind_b == _SYMBOL else f"_b[{off}]"
+        in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
+
+        def _operand_ref(kind, conn, expr):
+            """Return the per-lane C++ reference for one operand."""
+            if kind == _SYMBOL:
+                return f"({expr})"
+            if kind == _TILE:
+                return f"{conn}[{off}]"
+            # Scalar: a length-1 Array reads as ``_x[0]``, a true
+            # dace.data.Scalar is passed by value as ``_x``.
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            return conn if isinstance(desc, dace.data.Scalar) else f"{conn}[0]"
+
+        lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
+        rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
         out_dtype = parent_sdfg.arrays[
             next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data
@@ -138,15 +152,29 @@ class ExpandTileBinopCute(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: A Python-language tasklet with the element-wise body.
         """
-        lhs = node.expr_a if node.kind_a == _SYMBOL else "__rhs1"
-        rhs = node.expr_b if node.kind_b == _SYMBOL else "__rhs2"
+        def _cute_operand(kind, tile_conn, scalar_conn, expr):
+            """cuTile operand reference: inline expr for Symbol, the
+            tile connector for Tile, the scalar connector (broadcasts
+            NumPy-style) for Scalar."""
+            if kind == _SYMBOL:
+                return expr
+            if kind == _TILE:
+                return tile_conn
+            return scalar_conn
+
+        lhs = _cute_operand(node.kind_a, "__rhs1", "__const1", node.expr_a)
+        rhs = _cute_operand(node.kind_b, "__rhs2", "__const2", node.expr_b)
         rhs_expr = _CUTE_OP_EXPR[node.op].format(lhs=lhs, rhs=rhs)
         body = f"__output = {rhs_expr}"
         inputs = set()
         if node.kind_a == _TILE:
             inputs.add("__rhs1")
+        elif node.kind_a == _SCALAR:
+            inputs.add("__const1")
         if node.kind_b == _TILE:
             inputs.add("__rhs2")
+        elif node.kind_b == _SCALAR:
+            inputs.add("__const2")
         return nodes.Tasklet(
             label=f"{node.label}_cute",
             inputs={c: None for c in inputs},
@@ -236,15 +264,17 @@ class TileBinop(nodes.LibraryNode):
         :param op: One of the keys of :data:`_OP_CPP`.
         :param has_mask: When True, declare the ``_mask`` input
             connector.
-        :param kind_a: ``"Tile"`` (default — read via ``_a`` connector)
-            or ``"Symbol"`` (embed ``expr_a`` inline).
-        :param kind_b: ``"Tile"`` or ``"Symbol"``.
+        :param kind_a: ``"Tile"`` (default — read via ``_a`` connector),
+            ``"Symbol"`` (embed ``expr_a`` inline), or ``"Scalar"`` (read
+            a length-1 / ``dace.data.Scalar`` via ``_a``, broadcast to
+            every lane).
+        :param kind_b: ``"Tile"``, ``"Symbol"`` or ``"Scalar"``.
         :param expr_a: Required when ``kind_a == "Symbol"``.
         :param expr_b: Required when ``kind_b == "Symbol"``.
         :param location: Optional DaCe node location override.
         :raises ValueError: On invalid ``op``, ``widths`` length, kind,
-            missing expression for symbol kinds, or symbol/symbol
-            pairs.
+            missing expression for symbol kinds, or a no-Tile-operand
+            pair (at least one operand must be a tile).
         """
         if op not in _OP_CPP:
             raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(_OP_CPP)}")
@@ -253,9 +283,9 @@ class TileBinop(nodes.LibraryNode):
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b)):
             if kind not in _VALID_KINDS:
                 raise ValueError(f"TileBinop: {label} must be one of {_VALID_KINDS}, got {kind!r}")
-        if kind_a == _SYMBOL and kind_b == _SYMBOL:
+        if kind_a != _TILE and kind_b != _TILE:
             raise ValueError(
-                "TileBinop: at least one operand must be 'Tile'; a Symbol/Symbol pair "
+                "TileBinop: at least one operand must be 'Tile'; a non-tile / non-tile pair "
                 "belongs outside the tile path."
             )
         if kind_a == _SYMBOL and not expr_a:
@@ -264,9 +294,9 @@ class TileBinop(nodes.LibraryNode):
             raise ValueError("TileBinop: kind_b='Symbol' requires expr_b")
 
         inputs = set()
-        if kind_a == _TILE:
+        if kind_a in (_TILE, _SCALAR):
             inputs.add("_a")
-        if kind_b == _TILE:
+        if kind_b in (_TILE, _SCALAR):
             inputs.add("_b")
         if has_mask:
             inputs.add("_mask")
@@ -298,14 +328,15 @@ class TileBinop(nodes.LibraryNode):
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
         dtypes_ = {c_arr.dtype}
-        if self.kind_a == _TILE:
-            if "_a" not in in_e:
-                raise ValueError(f"{self.label}: kind_a='Tile' but '_a' not connected")
-            dtypes_.add(sdfg.arrays[in_e["_a"].data.data].dtype)
-        if self.kind_b == _TILE:
-            if "_b" not in in_e:
-                raise ValueError(f"{self.label}: kind_b='Tile' but '_b' not connected")
-            dtypes_.add(sdfg.arrays[in_e["_b"].data.data].dtype)
+        for label, kind in (("_a", self.kind_a), ("_b", self.kind_b)):
+            if kind in (_TILE, _SCALAR):
+                if label not in in_e:
+                    raise ValueError(f"{self.label}: kind={kind!r} but {label!r} not connected")
+                # Only Tile operands must match the output element type;
+                # a Scalar operand of a different dtype broadcasts and
+                # promotes (e.g. an fp64 scale on an fp64 tile is fine).
+                if kind == _TILE:
+                    dtypes_.add(sdfg.arrays[in_e[label].data.data].dtype)
         if len(dtypes_) > 1:
             raise NotImplementedError(
                 f"{self.label}: TileBinop requires uniform dtype across Tile operands and _c "

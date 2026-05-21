@@ -176,3 +176,40 @@ def test_tile_binop_rejects_unknown_kind():
     """Constructor refuses kinds outside the allowed set."""
     with pytest.raises(ValueError, match="kind_a must be one of"):
         TileBinop(name="bad", widths=(8,), op="+", kind_a="NotAKind")
+
+
+def _build_binop_scalar_rhs_sdfg(widths, dtype=dace.float64):
+    """Build a minimal SDFG: tile input + scalar -> TileBinop(kind_b=Scalar) -> tile."""
+    sdfg = dace.SDFG(f"tile_binop_scalar_{'x'.join(str(w) for w in widths)}")
+    sdfg.add_array("A", widths, dtype, transient=False)
+    sdfg.add_scalar("s", dtype, transient=False)
+    sdfg.add_array("C", widths, dtype, transient=False)
+    state = sdfg.add_state("main")
+    a, s, c = state.add_access("A"), state.add_access("s"), state.add_access("C")
+    node = TileBinop(name="tb_scalar", widths=widths, op="*", kind_a="Tile", kind_b="Scalar")
+    state.add_node(node)
+    full = ",".join(f"0:{w}" for w in widths)
+    state.add_edge(a, None, node, "_a", dace.Memlet(f"A[{full}]"))
+    state.add_edge(s, None, node, "_b", dace.Memlet("s"))
+    state.add_edge(node, "_c", c, None, dace.Memlet(f"C[{full}]"))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
+def test_tile_binop_kind_b_scalar_broadcasts(widths):
+    """Scalar-kind RHS (a ``dace.data.Scalar``) broadcasts to every lane."""
+    sdfg = _build_binop_scalar_rhs_sdfg(widths)
+    rng = np.random.default_rng(seed=61)
+    A = rng.random(widths)
+    C = np.zeros(widths)
+    sdfg(A=A, s=2.5, C=C)
+    np.testing.assert_allclose(C, A * 2.5, rtol=0, atol=0)
+
+
+def test_tile_binop_rejects_no_tile_operand():
+    """At least one operand must be a Tile (Scalar/Symbol pair refused)."""
+    with pytest.raises(ValueError, match="at least one operand must be 'Tile'"):
+        TileBinop(name="ss", widths=(8,), op="+",
+                  kind_a="Scalar", kind_b="Symbol", expr_b="b")
