@@ -378,17 +378,27 @@ explicit.
   once. Pinned by `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
   (strict xfail). Value-correct today.
 
-### L-B. Fully-parallel statement not fissioned to a standalone collapsed map
+### L-B. Fully-parallel statement fissioned to a standalone collapsed map (RESOLVED 2026-05-21)
 - **Shape:** one ``for i: for j:`` nest with a fully-parallel statement
   ``A[j,i] = A[j,i]*2`` beside a ``j``-carried ``B[i,j] = B[i,j-1] + B[i,j]``.
-- **Ideal:** fission ``A`` into a standalone collapsed 2D Map ``[i, j]`` and
-  leave ``B`` as ``map i: { loop j }``.
-- **Gap:** today ``A`` and ``B`` keep sharing the outer ``i``-map
-  (``map_param_counts == [1, 1]``) rather than ``A`` becoming a 2-parameter
-  map. Needs fission at the outer-nest level (or a post-LoopToMap
-  map-fission + map-collapse) so ``A``'s full iteration space parallelizes
-  independently. Pinned by `canonicalize_mixed_parallelism_test.py::test_mixed_parallelism_A_becomes_collapsed_2d_map`
-  (strict xfail). Value-correct today.
+- **Ideal (now achieved):** ``A`` fissions into a standalone collapsed 2D Map
+  ``[i, j]`` and ``B`` stays ``map i: { loop j }`` -> ``map_param_counts ==
+  [1, 2]``.
+- **Fix:** two changes deliver the collapsed canonical form for any
+  fully-parallel N-D nest. (1) ``LoopFission`` now fissions to a fixpoint
+  (maximal fission / perfect loop nesting): fissioning an inner loop makes the
+  parent's body multi-block and thus fissionable, so a re-sweep distributes the
+  shared outer loop and every leaf computation lands in its own complete loop
+  nest. (2) A new ``collapse`` pipeline stage (``MapCollapse``, after
+  ``reorder``, before ``fuse``) folds a perfect parallel map nest ``map i: {
+  map j }`` into one ``map[i, j]``; being N-dimensional it no longer matches a
+  sibling 1-D map for horizontal fusion, so the perfect nesting survives the
+  fuse stage. ``UniqueLoopIterators`` re-runs after fission to disambiguate the
+  cloned siblings' iterators before ``LoopToMap``. The real-world structural
+  tests (zqtmst, klev_plus_1, solve_nonhydro, velocity_advection,
+  coexisting_guards) were updated to the collapsed map counts.
+  `canonicalize_mixed_parallelism_test.py::test_mixed_parallelism_A_becomes_collapsed_2d_map`
+  un-xfailed and passing.
 
 ### L-C. Scalars are not map-local — loop-carried scalar reductions need a sequential outer loop
 - **Finding:** a scalar transient declared inside a ``dace.map`` body is NOT
