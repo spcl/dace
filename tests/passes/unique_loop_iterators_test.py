@@ -637,6 +637,57 @@ def test_value_preserving_sibling_kbound_loops():
         assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f'value corrupted for x={x}'
 
 
+@dace.program
+def fission_then_duplicate(A: dace.float64[N, N], B: dace.float64[N, N]):
+    """Outer ``i`` over an inner ``j`` body with a fully-parallel ``A`` write
+    and a ``j``-carried ``B`` recurrence. LoopFission splits the inner ``j``
+    loop into two siblings -- the shape that surfaces the duplicate iterator."""
+    for i in range(N):
+        for j in range(1, N):
+            A[j, i] = A[j, i] * 2.0
+            B[i, j] = B[i, j - 1] + B[i, j]
+
+
+def test_disambiguates_fission_cloned_iterators():
+    """LoopFission clones a loop into siblings that keep the same
+    ``_loop_it_<N>`` name; re-running UniqueLoopIterators must give each its own
+    name (so e.g. LoopToMap is not blocked by a sibling appearing to read the
+    shared iterator). The pass skips *unique* ``_loop_it_*`` names (idempotent)
+    but re-disambiguates duplicates.
+
+    Reproduces ``map i { NestedSDFG { loop j fis0 (_loop_it_1): A[j,i] *= 2;
+    loop j fis1 (_loop_it_1): B[i,j] = B[i,j-1] + B[i,j] } }``."""
+    from dace.transformation.passes.loop_fission import LoopFission
+    UniqueLoopIterators._loop_var_counter = 0
+
+    sdfg = fission_then_duplicate.to_sdfg(simplify=True)
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+
+    LoopFission().apply_pass(sdfg, {})
+    after_fission = [
+        r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)
+    ]
+    assert len(after_fission) != len(set(after_fission)), \
+        f'expected a duplicate iterator after fission, got {after_fission}'
+
+    # Re-running the pass must disambiguate the fission-cloned duplicate.
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    after = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(after) == len(set(after)), f'iterators not disambiguated after re-run: {after}'
+
+    n = 8
+    rng = np.random.default_rng(0)
+    A0, B0 = rng.standard_normal((n, n)), rng.standard_normal((n, n))
+    refA, refB = A0.copy(), B0.copy()
+    ref = fission_then_duplicate.to_sdfg(simplify=True)
+    ref(A=refA, B=refB, N=n)
+    gotA, gotB = A0.copy(), B0.copy()
+    sdfg(A=gotA, B=gotB, N=n)
+    assert np.allclose(gotA, refA) and np.allclose(gotB, refB)
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()

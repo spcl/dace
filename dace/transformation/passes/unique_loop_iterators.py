@@ -113,6 +113,16 @@ class UniqueLoopIterators(ppl.Pass):
 
     def _apply_recursive(self, sdfg: dace.SDFG):
         array_names = frozenset(sdfg.arrays.keys())
+        # Loop-variable names that more than one LoopRegion in THIS SDFG shares.
+        # LoopFission clones a loop into siblings that keep the same
+        # ``_loop_it_<N>`` name, which then aliases (e.g. LoopToMap refuses to
+        # parallelize one sibling because the other "reads" the shared iterator
+        # after it). Such duplicates must be re-disambiguated even though they
+        # are already in ``_loop_it_*`` form.
+        loop_vars = [
+            r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable
+        ]
+        duplicated = {v for v in loop_vars if loop_vars.count(v) > 1}
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -120,14 +130,15 @@ class UniqueLoopIterators(ppl.Pass):
             if not old_name:
                 # while / do-while loops have no induction variable.
                 continue
-            if old_name.startswith(f"{_LOOP_ITER_NAME_PREFIX}_"):
+            if old_name.startswith(f"{_LOOP_ITER_NAME_PREFIX}_") and old_name not in duplicated:
                 # Already a unique ``_loop_it_<N>`` (e.g. this pass ran earlier
-                # in the pipeline). Re-renaming it is pointless and, worse, the
-                # nested-SDFG re-key does not survive a second rename of an
-                # already-imported iterator -> a deeply-nested SDFG ends up
-                # referencing the new name without a ``symbol_mapping`` import
-                # ("Missing symbols on nested SDFG: ['_loop_it_<N>']"). Skipping
-                # makes the pass idempotent and avoids that corruption.
+                # in the pipeline). Re-renaming a unique iterator is pointless
+                # and, worse, the nested-SDFG re-key does not survive a second
+                # rename of an already-imported iterator -> a deeply-nested SDFG
+                # ends up referencing the new name without a ``symbol_mapping``
+                # import ("Missing symbols on nested SDFG: ['_loop_it_<N>']").
+                # Skipping unique names keeps the pass idempotent; duplicated
+                # names (from fission) still fall through to be disambiguated.
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{UniqueLoopIterators._loop_var_counter}"
             self._rename_one_loop_var(cfg, old_name, new_name)
