@@ -39,7 +39,11 @@ class ExpandTileStorePure(ExpandTransformation):
         K = len(widths)
         dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
         dst_arr = parent_sdfg.arrays[dst_edge.data.data]
-        dst_strides = [symstr(s) for s in dst_arr.strides[-K:]]
+        ndim = len(dst_arr.strides)
+        # Step along the array dim each tile dim maps to (``dst_dims``);
+        # default to the last K dims in order (a plain row-major tile).
+        dims = list(node.dst_dims) if node.dst_dims else list(range(ndim - K, ndim))
+        dst_strides = [symstr(dst_arr.strides[d]) for d in dims]
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
         dst_off = offset_via_strides(coeff, dst_strides)
         src_off = tile_offset(widths)
@@ -132,7 +136,15 @@ class TileStore(nodes.LibraryNode):
     dim_strides = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Per-tile-dim stride into the destination view; all 1s ⇒ contiguous.",
+        desc="Per-tile-dim index coefficient; all 1s ⇒ unit step along each tile dim.",
+    )
+    dst_dims = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-tile-dim destination-array dimension the tile dim maps to "
+        "(innermost-last). Empty ⇒ the last K dims in order; a transposed / "
+        "non-last mapping lists the actual array dims so the store steps along "
+        "the correct axis.",
     )
     has_mask = properties.Property(
         dtype=bool,
@@ -145,6 +157,7 @@ class TileStore(nodes.LibraryNode):
                  name: str,
                  widths: Tuple[int, ...],
                  dim_strides: Optional[Tuple[int, ...]] = None,
+                 dst_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
                  location: Optional[str] = None):
         """Construct a ``TileStore`` node.
@@ -168,6 +181,7 @@ class TileStore(nodes.LibraryNode):
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
+        self.dst_dims = list(dst_dims) if dst_dims else []
         self.has_mask = has_mask
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:

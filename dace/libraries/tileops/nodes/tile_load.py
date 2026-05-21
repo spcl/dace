@@ -40,7 +40,11 @@ class ExpandTileLoadPure(ExpandTransformation):
         K = len(widths)
         src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
         src_arr = parent_sdfg.arrays[src_edge.data.data]
-        src_strides = [symstr(s) for s in src_arr.strides[-K:]]
+        ndim = len(src_arr.strides)
+        # Step along the array dim each tile dim maps to (``src_dims``);
+        # default to the last K dims in order (a plain row-major tile).
+        dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
+        src_strides = [symstr(src_arr.strides[d]) for d in dims]
         coeff = list(node.dim_strides) if node.dim_strides else [1] * K
         src_off = offset_via_strides(coeff, src_strides)
         dst_off = tile_offset(widths)
@@ -128,7 +132,15 @@ class TileLoad(nodes.LibraryNode):
     dim_strides = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Per-tile-dim stride into the source view; all 1s ⇒ contiguous.",
+        desc="Per-tile-dim index coefficient; all 1s ⇒ unit step along each tile dim.",
+    )
+    src_dims = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-tile-dim source-array dimension the tile dim maps to "
+        "(innermost-last). Empty ⇒ the last K dims in order; a transposed / "
+        "non-last mapping lists the actual array dims so the load steps along "
+        "the correct axis.",
     )
     has_mask = properties.Property(
         dtype=bool,
@@ -141,6 +153,7 @@ class TileLoad(nodes.LibraryNode):
                  name: str,
                  widths: Tuple[int, ...],
                  dim_strides: Optional[Tuple[int, ...]] = None,
+                 src_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
                  location: Optional[str] = None):
         """Construct a ``TileLoad`` node.
@@ -164,6 +177,7 @@ class TileLoad(nodes.LibraryNode):
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
+        self.src_dims = list(src_dims) if src_dims else []
         self.has_mask = has_mask
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:

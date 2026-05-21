@@ -239,22 +239,13 @@ class EmitTileOps(ppl.Pass):
         )
         path = state.memlet_path(edge)
         source_edge = path[0]
-        if cls.kind == TileAccessKind.CONTIGUOUS:
-            return "Tile", (source_edge, edge, edge.data.subset, cls.dim_strides)
-        if cls.kind == TileAccessKind.STRIDED:
-            # A strided / transposed tile access (the tile dim maps to a
-            # non-unit-stride or non-last array dim, e.g. ``cc[j, i]`` with
-            # tile dim ``j``) currently lowers to an incorrect ``TileLoad``:
-            # the pure expansion addresses ``src`` through ``strides[-K:]``
-            # (a last-K-dims assumption) while ``classify_tile_access`` has
-            # already folded the array stride into ``dim_strides`` — wrong
-            # base + double-handled stride for transposes. Refuse until the
-            # strided-load lowering is fixed (tracked TODO) so we skip rather
-            # than emit silently-wrong results.
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} input {conn_name!r} is a strided / "
-                f"transposed tile access (dim_strides={cls.dim_strides}); strided TileLoad "
-                f"lowering is not yet correct — skipping (TODO: fix transposed strided load)")
+        if cls.kind in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
+            # Both lower to a strided ``TileLoad``: a perfect-box affine
+            # access (each tile dim maps to one distinct array dim) addressed
+            # through ``match_dims`` so a transposed / non-last mapping
+            # (``cc[j, i]``) steps along the correct axis. Non-box accesses
+            # (indirect / diagonal) fall through to GATHER below.
+            return "Tile", (source_edge, edge, edge.data.subset, cls.dim_strides, cls.match_dims)
         if cls.kind == TileAccessKind.BROADCAST_SYMBOL:
             # A no-tile-dependency access reads either a length-1 / Scalar
             # array (route through a connector and broadcast) or a true
@@ -302,6 +293,7 @@ class EmitTileOps(ppl.Pass):
                         in_edge,
                         per_iter_subset: subsets.Range,
                         dim_strides: Tuple[int, ...],
+                        src_dims: Tuple[int, ...],
                         spec: TileDimSpec,
                         mask_name: str) -> str:
         """Insert a :class:`TileLoad` materializing one tile transient.
@@ -328,6 +320,7 @@ class EmitTileOps(ppl.Pass):
             name=f"{tasklet.label}_load_{conn.lstrip('_')}",
             widths=spec.widths,
             dim_strides=tuple(dim_strides),
+            src_dims=tuple(src_dims),
             has_mask=True,
         )
         state.add_node(load)
@@ -610,7 +603,7 @@ class EmitTileOps(ppl.Pass):
                 state.add_edge(info, None, binop, conn, dace.Memlet(f"{info.data}[{subset}]"))
             elif kind == "Tile":
                 tname, tacc = self._emit_tile_load(
-                    state, tasklet, conn[-1], info[0], info[1], info[2], info[3], spec, mask_name)
+                    state, tasklet, conn[-1], info[0], info[1], info[2], info[3], info[4], spec, mask_name)
                 state.add_edge(tacc, None, binop, conn, dace.Memlet(f"{tname}[{subset}]"))
             elif kind == "Scalar":
                 self._wire_scalar_operand(state, binop, conn, info[0], info[1])
@@ -666,8 +659,17 @@ class EmitTileOps(ppl.Pass):
 
         for out_access, out_edge in stores:
             out_dst_name = out_edge.data.data
+            out_arr = state.sdfg.arrays[out_dst_name]
+            out_cls = classify_tile_access(out_edge.data.subset, tuple(out_arr.strides), spec.iter_vars)
+            if out_cls.kind not in (TileAccessKind.CONTIGUOUS, TileAccessKind.STRIDED):
+                # A non-box output (indirect / diagonal scatter) needs a
+                # TileScatter, not a strided store — out of scope here.
+                raise NotImplementedError(
+                    f"EmitTileOps: output {out_dst_name!r} access is {out_cls.kind.value}; "
+                    f"only perfect-box (strided) stores are supported (scatter is TODO)")
             promoted = _tile_region_subset(out_edge.data.subset, spec.iter_vars, spec.widths)
-            store = TileStore(name=f"{out_access.data}_store", widths=spec.widths, has_mask=True)
+            store = TileStore(name=f"{out_access.data}_store", widths=spec.widths,
+                              dim_strides=out_cls.dim_strides, dst_dims=out_cls.match_dims, has_mask=True)
             state.add_node(store)
             state.add_edge(out_access, None, store, "_src",
                            dace.Memlet(f"{out_access.data}[{subset}]"))

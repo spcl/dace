@@ -54,13 +54,16 @@ def test_classify_contiguous_1d():
 
 
 def test_classify_strided_1d_with_array_stride():
-    """``A[i]`` on a non-unit-array-stride dim is :attr:`STRIDED`."""
+    """``A[i]`` on a non-unit *memory*-stride dim is :attr:`STRIDED`. The
+    coefficient is 1 (``dim_strides``); the non-unit stride lives in the
+    array's stride on the matched dim, applied at lowering time."""
     sub = subsets.Range([(dace.symbolic.pystr_to_symbolic("i"),
                           dace.symbolic.pystr_to_symbolic("i+7"),
                           1)])
     cls = classify_tile_access(sub, array_strides=(2,), tile_iter_vars=("i",))
     assert cls.kind == TileAccessKind.STRIDED
-    assert cls.dim_strides == (2,)
+    assert cls.dim_strides == (1,)
+    assert cls.match_dims == (0,)
 
 
 def test_classify_strided_1d_with_linear_coeff():
@@ -84,14 +87,43 @@ def test_classify_broadcast_symbol_1d():
 
 
 def test_classify_contiguous_2d():
-    """``A[i, j]`` 2D contiguous (C-layout) under K=2 tiling."""
+    """``A[i, j]`` 2D contiguous (C-layout) under K=2 tiling: tile dims map
+    to the last 2 array dims in order with unit coefficients and a unit
+    innermost memory stride, so it is :attr:`CONTIGUOUS`. The outer dim's
+    memory stride (8) is applied at lowering via ``match_dims``."""
     sub = subsets.Range([
         (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+3"), 1),
         (dace.symbolic.pystr_to_symbolic("j"), dace.symbolic.pystr_to_symbolic("j+7"), 1),
     ])
     cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("i", "j"))
+    assert cls.kind == TileAccessKind.CONTIGUOUS
+    assert cls.dim_strides == (1, 1)
+    assert cls.match_dims == (0, 1)
+
+
+def test_classify_transposed_2d_is_strided():
+    """``A[j, i]`` with tile dim ``j`` mapping to a 2-D array's FIRST dim is
+    a perfect box but transposed: STRIDED, with ``match_dims=(0,)`` so the
+    lowering steps along the column (stride 8), not the row."""
+    sub = subsets.Range([
+        (dace.symbolic.pystr_to_symbolic("j"), dace.symbolic.pystr_to_symbolic("j+7"), 1),
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i"), 1),
+    ])
+    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("j",))
     assert cls.kind == TileAccessKind.STRIDED
-    assert cls.dim_strides == (8, 1)
+    assert cls.dim_strides == (1,)
+    assert cls.match_dims == (0,)
+
+
+def test_classify_diagonal_is_gather():
+    """``A[i, i]`` (tile var ``i`` in two dims) is NOT a perfect box, so it
+    classifies as :attr:`GATHER` rather than a strided load."""
+    sub = subsets.Range([
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
+    ])
+    cls = classify_tile_access(sub, array_strides=(8, 1), tile_iter_vars=("i",))
+    assert cls.kind == TileAccessKind.GATHER
 
 
 def test_classify_unrecognized_when_tile_var_missing():

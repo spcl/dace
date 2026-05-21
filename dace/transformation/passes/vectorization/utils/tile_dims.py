@@ -91,13 +91,22 @@ class TileAccessClassification:
     :param kind: Bucket the operand falls into.
     :param dim_strides: Per tile dim, the integer coefficient of the
         corresponding iter-var in the subset's begin expression. ``1``
-        means contiguous along that tile dim. Defined for
-        ``CONTIGUOUS`` and ``STRIDED``; ``(0,) * K`` for
-        ``BROADCAST_SYMBOL``; ``()`` for ``GATHER`` / ``UNRECOGNIZED``.
+        means unit step along that tile dim. Defined for ``CONTIGUOUS``
+        and ``STRIDED``; ``(0,) * K`` for ``BROADCAST_SYMBOL``; ``()``
+        for ``GATHER`` / ``UNRECOGNIZED``. This is the index coefficient
+        only — the array's per-dim memory stride is applied separately at
+        lowering time via :attr:`match_dims`.
+    :param match_dims: Per tile dim (innermost-last), the source-array
+        dimension that tile dim maps to. The lowering steps through the
+        array using ``array.strides[match_dims[d]]`` so a transposed /
+        non-last mapping (``cc[j, i]`` with tile dim ``j`` -> array dim 0)
+        is addressed along the correct axis. Same length as
+        ``dim_strides`` for ``CONTIGUOUS`` / ``STRIDED``; ``()`` otherwise.
     """
 
     kind: TileAccessKind
     dim_strides: Tuple[int, ...] = field(default_factory=tuple)
+    match_dims: Tuple[int, ...] = field(default_factory=tuple)
 
 
 def _coeff_of(expr_sym, var_sym) -> Optional[int]:
@@ -190,29 +199,43 @@ def classify_tile_access(
         coeff = _coeff_of(b_sym, tsym)
         if coeff is None:
             return TileAccessClassification(TileAccessKind.UNRECOGNIZED)
-        try:
-            arr_stride = int(array_strides[match_dim])
-        except (TypeError, ValueError):
-            arr_stride = 1
-        per_tile_dim_strides.append(coeff * arr_stride)
+        # Record only the index coefficient; the array's per-dim memory
+        # stride is applied at lowering time via ``match_dims`` (so the
+        # symbolic stride never has to fit in this integer field).
+        per_tile_dim_strides.append(coeff)
         match_dims.append(match_dim)
         used_array_dims.add(match_dim)
 
-    # The pure ``TileLoad`` / ``TileStore`` expansion addresses the source /
-    # dest array through its LAST K strides (``strides[-K:]``) in tile order
-    # (innermost tile var -> last array dim). That is correct only when the
-    # tile dims map to the last K array dims in order. A transposed /
-    # non-last mapping — e.g. ``cc[j, i]`` with tile dim ``j`` mapping to a
-    # 2-D array's first dim — would be addressed along the wrong axis (the
-    # column read would be lowered as a contiguous row read), so mark it
-    # STRIDED. The emitter refuses STRIDED until the general strided/
-    # transposed lowering lands, skipping rather than emitting wrong code.
+    # Perfect box only: every tile-dependent array dim must map 1:1 to a
+    # single tile var. A tile var spanning multiple dims (diagonal
+    # ``a[i, i]``) or a dim mixing two tile vars (``a[i + j]``) leaves a
+    # tile-dependent dim unmatched — that is not a strided box and must be
+    # lowered as a GATHER (an index array per the 1-D path), not a strided
+    # load. Defer GATHER lowering: the emitter skips it for now.
+    tile_dep_dims = {d for d, free in enumerate(free_syms_per_dim) if free & tile_var_names}
+    if tile_dep_dims != used_array_dims:
+        return TileAccessClassification(TileAccessKind.GATHER)
+
+    # CONTIGUOUS = a plain row-major tile: tile dims map to the last K array
+    # dims in order, every coefficient is 1, and the innermost tile dim has
+    # unit memory stride (so the innermost axis is a contiguous vector). Any
+    # transposed / non-last mapping (``cc[j, i]`` -> array dim 0), a non-unit
+    # coefficient (``a[i, 2*j]``), or a non-unit innermost memory stride is
+    # STRIDED. Both lower correctly via ``strides[match_dims[d]]`` scaled by
+    # ``dim_strides[d]``; the distinction only guides a future contiguous-
+    # vector fast path. GATHER (non-box) is handled above.
     ndim = len(array_strides)
-    aligned = all(match_dims[p] == ndim - len(tile_iter_vars) + p for p in range(len(tile_iter_vars)))
+    K = len(tile_iter_vars)
+    aligned = all(match_dims[p] == ndim - K + p for p in range(K))
+    try:
+        innermost_unit_stride = int(array_strides[match_dims[-1]]) == 1
+    except (TypeError, ValueError):
+        innermost_unit_stride = pystr_to_symbolic(str(array_strides[match_dims[-1]] - 1)) == 0
 
     dim_strides = tuple(per_tile_dim_strides)
-    if not aligned or any(s != 1 for s in dim_strides):
-        kind = TileAccessKind.STRIDED
-    else:
+    match_dims_t = tuple(match_dims)
+    if aligned and innermost_unit_stride and all(s == 1 for s in dim_strides):
         kind = TileAccessKind.CONTIGUOUS
-    return TileAccessClassification(kind=kind, dim_strides=dim_strides)
+    else:
+        kind = TileAccessKind.STRIDED
+    return TileAccessClassification(kind=kind, dim_strides=dim_strides, match_dims=match_dims_t)
