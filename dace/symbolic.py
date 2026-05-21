@@ -18,6 +18,10 @@ from dace import dtypes
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
+# Tokens in a Python expression string that require AST-based rewriting before
+# being handed to SymPy (boolean ops, comparisons, bitwise ops, attribute/subscript, etc.).
+_NEEDS_AST_REWRITE = re.compile(
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|[\.]|[\[]|[\]]')
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -1269,6 +1273,53 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+_PYSTR2SYM_locals = {
+    'abs': sympy.Abs,
+    'min': sympy.Min,
+    'max': sympy.Max,
+    'True': sympy.true,
+    'False': sympy.false,
+    'GtE': sympy.Ge,
+    'LtE': sympy.Le,
+    'NotEq': sympy.Ne,
+    'floor': sympy.floor,
+    'ceil': sympy.ceiling,
+    'round': ROUND,
+    # Convert and/or to special sympy functions to avoid boolean evaluation
+    'And': AND,
+    'Or': OR,
+    'var': sympy.Symbol('var'),
+    'root': sympy.Symbol('root'),
+    'arg': sympy.Symbol('arg'),
+    'Is': Is,
+    'IsNot': IsNot,
+    'BitwiseAnd': bitwise_and,
+    'BitwiseOr': bitwise_or,
+    'BitwiseXor': bitwise_xor,
+    'BitwiseNot': bitwise_invert,
+    'bitwise_and': bitwise_and,
+    'bitwise_or': bitwise_or,
+    'bitwise_xor': bitwise_xor,
+    'bitwise_invert': bitwise_invert,
+    'LeftShift': left_shift,
+    'left_shift': left_shift,
+    'RightShift': right_shift,
+    'right_shift': right_shift,
+    'int_floor': int_floor,
+    'int_ceil': int_ceil,
+    'IfExpr': IfExpr,
+    'Mod': sympy.Mod,
+    'Attr': Attr,
+    'Subscript': Subscript,
+    'id': sympy.Symbol('id'),
+    'diag': sympy.Symbol('diag'),
+    'jn': sympy.Symbol('jn'),
+}
+# _clash1 enables all one-letter variables like N as symbols
+# _clash also allows pi, beta, zeta and other common greek letters
+_PYSTR2SYM_locals.update(_sympy_clash)
+
+
 @lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -1291,73 +1342,29 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             return symbol(expr)
 
     symbol_map = symbol_map or {}
-    locals = {
-        'abs': sympy.Abs,
-        'min': sympy.Min,
-        'max': sympy.Max,
-        'True': sympy.true,
-        'False': sympy.false,
-        'GtE': sympy.Ge,
-        'LtE': sympy.Le,
-        'NotEq': sympy.Ne,
-        'floor': sympy.floor,
-        'ceil': sympy.ceiling,
-        'round': ROUND,
-        # Convert and/or to special sympy functions to avoid boolean evaluation
-        'And': AND,
-        'Or': OR,
-        'var': sympy.Symbol('var'),
-        'root': sympy.Symbol('root'),
-        'arg': sympy.Symbol('arg'),
-        'Is': Is,
-        'IsNot': IsNot,
-        'BitwiseAnd': bitwise_and,
-        'BitwiseOr': bitwise_or,
-        'BitwiseXor': bitwise_xor,
-        'BitwiseNot': bitwise_invert,
-        'bitwise_and': bitwise_and,
-        'bitwise_or': bitwise_or,
-        'bitwise_xor': bitwise_xor,
-        'bitwise_invert': bitwise_invert,
-        'LeftShift': left_shift,
-        'left_shift': left_shift,
-        'RightShift': right_shift,
-        'right_shift': right_shift,
-        'int_floor': int_floor,
-        'int_ceil': int_ceil,
-        'IfExpr': IfExpr,
-        'Mod': sympy.Mod,
-        'Attr': Attr,
-        'id': sympy.Symbol('id'),
-        'diag': sympy.Symbol('diag'),
-        'jn': sympy.Symbol('jn'),
-    }
-    # _clash1 enables all one-letter variables like N as symbols
-    # _clash also allows pi, beta, zeta and other common greek letters
-    locals.update(_sympy_clash)
 
     if isinstance(expr, str):
         # Sympy processes "not/and/or" as direct evaluation. Replace with And/Or(x, y), Not(x)
         # Also replaces bitwise operations with user-functions since SymPy does not support bitwise operations.
-        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|[\.]', expr):
+        if _NEEDS_AST_REWRITE.search(expr):
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
-        return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
     except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
         orig_expr = expr
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
         try:
-            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+            return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
         except TypeError:  # Symbol object is not subscriptable
             # Replace instances of "xxx[yyy]" with subscript(xxx, yyy)
             expr = orig_expr
             while _FUNCTION_CALL.search(expr):
                 expr = _FUNCTION_CALL.sub(r'subscript(\1, \2)', expr)
-            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+            return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
 
 
 @lru_cache(maxsize=2048)
