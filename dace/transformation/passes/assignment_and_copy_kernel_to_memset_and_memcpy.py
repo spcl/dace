@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 import warnings
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import dace
 from dace import properties
 from dace.memlet import Memlet
-from dace.sdfg import graph
+from dace.sdfg import graph, utils as sdutils
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes import copy_node, memset_node
 
@@ -310,6 +310,58 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return new_in, new_out, out_length_collapsed
 
+    def _hoist_dynamic_inputs_to_symbols(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                                         used_symbols: Set[str]) -> bool:
+        """Promote dynamic map-input connectors referenced by ``used_symbols`` to in-scope symbols.
+
+        A dynamic map input binds a scalar value to a connector that the map range -- and thus the
+        lifted library node's subset -- references as a symbol. Once the map is removed that binding is
+        gone, so the scalar is read into the same-named symbol on a state inserted before ``state``; the
+        lifted subset already uses the connector name, so no subset rewrite is needed.
+
+        Hoisting is sound only when the source scalar is not written within ``state`` (otherwise the
+        hoisted read would observe a stale value). When it is, the caller falls back to nesting the map
+        in its own SDFG, where the scalar arrives as a read-only input.
+
+        :param state: The state containing the map.
+        :param map_entry: The map entry whose dynamic inputs are promoted.
+        :param used_symbols: Symbol names referenced by the lifted subset.
+        :returns: True if every referenced dynamic input was promoted; False if any source scalar is
+            written in ``state`` (the caller must nest instead).
+        """
+        dynamic_edges = [e for e in sdutils.dynamic_map_inputs(state, map_entry) if e.dst_conn in used_symbols]
+        if not dynamic_edges:
+            return True
+
+        written = state.read_and_write_sets()[1]
+        if any(not isinstance(e.src, dace.nodes.AccessNode) or e.src.data in written for e in dynamic_edges):
+            return False
+
+        sdfg = state.sdfg
+        assignments = {}
+        for e in dynamic_edges:
+            desc = sdfg.arrays[e.src.data]
+            # A Scalar is passed by value (referenced bare, like the frontend's own
+            # range-bound assignments); an Array is indexed by the edge's subset.
+            assignments[e.dst_conn] = e.src.data if isinstance(desc, dace.data.Scalar) else f"{e.src.data}[{e.data.subset}]"
+            if e.dst_conn not in sdfg.symbols:
+                sdfg.add_symbol(e.dst_conn, desc.dtype)
+        state.parent_graph.add_state_before(state, assignments=assignments)
+        for e in dynamic_edges:
+            state.remove_edge(e)
+            if e.dst_conn in map_entry.in_connectors:
+                map_entry.remove_in_connector(e.dst_conn)
+        return True
+
+    @staticmethod
+    def _subset_symbols(*subsets: Optional[List]) -> Set[str]:
+        """Collect free-symbol names referenced by one or more ``(begin, end, step)`` range lists."""
+        used = set()
+        for subset in subsets:
+            if subset:
+                used |= {str(s) for s in dace.subsets.Range(subset).free_symbols}
+        return used
+
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         """Lift every pure element-wise-copy path under map ``node`` to a ``CopyLibraryNode``.
 
@@ -394,6 +446,17 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         f"Skipping memcpy lift in map {map_entry.map.label}: parent SDFG "
                         f"already has arrays {clashes} which would clash with the new "
                         f"CopyLibraryNode's connectors.", UserWarning)
+                continue
+
+            # Dynamic map-range bounds become in-scope symbols (the libnode has no
+            # map to bind them). Skip when a source scalar is written in this state;
+            # the nested-SDFG path handles that case.
+            if not self._hoist_dynamic_inputs_to_symbols(state, map_entry,
+                                                         self._subset_symbols(begin_subset, exit_subset)):
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memcpy lift in map {map_entry.map.label}: a dynamic-range source scalar "
+                        f"is written in the same state; nesting fallback required.", UserWarning)
                 continue
 
             if src_access_node not in state.nodes():
@@ -492,6 +555,16 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         f"already has an array named "
                         f"``{memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}`` which would clash "
                         f"with the new MemsetLibraryNode's connector.", UserWarning)
+                continue
+
+            # Dynamic map-range bounds become in-scope symbols (the libnode has no
+            # map to bind them). Skip when a source scalar is written in this state;
+            # the nested-SDFG path handles that case.
+            if not self._hoist_dynamic_inputs_to_symbols(state, map_entry, self._subset_symbols(exit_subset)):
+                if verbose:
+                    warnings.warn(
+                        f"Skipping memset lift in map {map_entry.map.label}: a dynamic-range source scalar "
+                        f"is written in the same state; nesting fallback required.", UserWarning)
                 continue
 
             tasklet = memset_node.MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
