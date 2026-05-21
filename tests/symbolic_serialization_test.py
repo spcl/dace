@@ -1,4 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Tests for symbolic serialization, including the symbol-dtype consistency problem.
+
+The problem: a map or loop iterator is not registered in ``sdfg.symbols``, and its
+dtype is inferred from its range (int64 for an integer range). A free ``symbol()``,
+however, defaults to ``DEFAULT_SYMBOL_TYPE`` (int32) -- so a memlet index parsed
+from a string (``A[i]``) yields an int32 ``i`` while the same iterator is int64 in
+its scope. Equality is name-based, so symbolic math stays correct (``i - i == 0``),
+but SymPy caches ``Add``/``Min``/``Max`` by a name-based key and conflates the two
+instances. Serialization therefore flips non-deterministically: the in-scope ``i``
+may be saved as bare ``$i`` (int32) or ``symbol($i, dtype=dace.int64)`` depending on
+which instance the cache happened to hold.
+
+The fix does not change the default dtype or symbol equality. Instead, serialization
+resolves each symbol's dtype from the enclosing SDFG scope (``symbols_defined_at``)
+and emits that, so the saved form is a deterministic function of the scope rather
+than of the SymPy cache. These tests pin that down at the SDFG level, where the
+scope authority exists; a bare symbolic expression has no scope and so cannot be
+canonicalized in isolation.
+"""
+
+import filecmp
+import json
+import tempfile
 
 import numpy as np
 import pytest
@@ -417,57 +441,86 @@ def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonica
     assert first == second
 
 
-def _poison_cache_with_typed_symbol(name, dtype):
-    """Seed SymPy's process-global cache with a non-default-typed same-name
-    symbol. SymPy caches ``Add``/``Min``/``Max``/``subs`` by argument equality,
-    so these tests guard against a same-name symbol of a different dtype leaking
-    out of that cache into later default-typed expressions."""
-    return symbolic.symbol(name, dtype=dtype) + symbolic.symbol('lidx')
+def _poison_symbol_cache(name, dtype):
+    """Seed SymPy's process-global cache with a non-default-typed same-name symbol
+    inside compound expressions. SymPy caches ``Add``/``Min``/``Max`` by a
+    name-based key, so this makes a later default-typed ``name`` resolve to the
+    cached non-default instance -- the race that makes serialization flaky."""
+    other = symbolic.symbol('lidx', dtype=dtype)
+    return sympy.Min(10, symbolic.symbol(name, dtype=dtype) + other)
 
 
-@pytest.mark.parametrize('op', [sympy.Min, sympy.Max])
-def test_symbol_dtype_does_not_leak_through_minmax(op):
-    lidx = symbolic.symbol('lidx')
-    _poison_cache_with_typed_symbol('i', dace.int64)
-
-    expr = op(10, symbolic.symbol('i') + lidx)
-    assert symbolic.serialize_symbolic(expr) == f'{op.__name__}(10, $i + $lidx)'
-
-
-def test_symbol_dtype_does_not_leak_through_python_add():
-    lidx = symbolic.symbol('lidx')
-    _poison_cache_with_typed_symbol('i', dace.int64)
-
-    expr = symbolic.symbol('i') + lidx
-    assert symbolic.serialize_symbolic(expr) == '$i + $lidx'
-
-
-def test_symbol_dtype_does_not_leak_through_sympy_add():
-    lidx = symbolic.symbol('lidx')
-    _poison_cache_with_typed_symbol('i', dace.int64)
-
-    expr = sympy.Add(symbolic.symbol('i'), lidx)
-    assert symbolic.serialize_symbolic(expr) == '$i + $lidx'
+def _map_index_sdfg():
+    """A map over an integer range whose body memlet indexes by the iterator.
+    The iterator is int64 in the map scope, but ``A[i]`` parses ``i`` as the
+    int32 default -- the exact same-name/different-dtype situation."""
+    sdfg = dace.SDFG('map_index')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('t',
+                             map_ranges={'i': '0:20'},
+                             inputs={'a': dace.Memlet('A[i]')},
+                             outputs={'b': dace.Memlet('B[i]')},
+                             code='b = a + 1.0',
+                             external_edges=True)
+    return sdfg
 
 
-def test_symbol_dtype_does_not_leak_through_subs():
-    lidx = symbolic.symbol('lidx')
-    _poison_cache_with_typed_symbol('i', dace.int64)
+@pytest.mark.parametrize('cache_dtype', [dace.int32, dace.int64])
+def test_map_iterator_serializes_with_scope_dtype(cache_dtype):
+    """Regardless of which dtype the SymPy cache holds for ``i``, the iterator is
+    serialized with the int64 dtype its map scope declares, not the instance's."""
+    _poison_symbol_cache('i', cache_dtype)
+    sdfg = _map_index_sdfg()
+    js = json.dumps(sdfg.to_json())
+    assert 'symbol($i, dtype=dace.int64)' in js
+    assert '"$i"' not in js and '$i ' not in js
 
-    placeholder = symbolic.deserialize_symbolic('$x + $lidx')
-    x = next(s for s in placeholder.free_symbols if s.name == 'x')
-    substituted = placeholder.subs({x: symbolic.symbol('i')})
-    assert symbolic.serialize_symbolic(substituted) == '$i + $lidx'
+
+def test_sdfg_serialization_independent_of_symbol_cache_order():
+    """The serialized form of an SDFG is a function of its scope, not of the
+    order in which same-name symbols of different dtypes entered the cache."""
+    sdfg = _map_index_sdfg()
+    _poison_symbol_cache('i', dace.int32)
+    first = json.dumps(sdfg.to_json())
+    _poison_symbol_cache('i', dace.int64)
+    second = json.dumps(sdfg.to_json())
+    assert first == second
 
 
-def test_deserialize_does_not_leak_symbol_dtype():
-    """The deserializer's custom parser builds expressions without SymPy's
-    cached canonical constructors, so a default-typed symbol stays bare even
-    after the cache holds a same-name non-default instance."""
-    _poison_cache_with_typed_symbol('i', dace.int64)
+def test_save_load_save_idempotent_under_cache_poisoning():
+    """The codegen save->load->save idempotence check stays byte-stable even when
+    the cache is poisoned with a conflicting same-name dtype between the saves."""
+    sdfg = _map_index_sdfg()
+    with tempfile.TemporaryDirectory() as tmp:
+        sdfg.save(f'{tmp}/a.sdfg', hash=False)
+        loaded = dace.SDFG.from_file(f'{tmp}/a.sdfg')
+        _poison_symbol_cache('i', dace.int64)
+        loaded.save(f'{tmp}/b.sdfg', hash=False)
+        assert filecmp.cmp(f'{tmp}/a.sdfg', f'{tmp}/b.sdfg', shallow=False)
 
-    restored = symbolic.deserialize_symbolic('Min(10, $i + $lidx)')
-    assert symbolic.serialize_symbolic(restored) == 'Min(10, $i + $lidx)'
+
+def test_declared_symbol_dtype_wins_over_array_instance():
+    """A symbol declared int64 in ``sdfg.symbols`` but appearing as the int32
+    default instance inside an array shape must serialize with its declared
+    dtype. ``symbols_defined_at`` lets an array's free-symbol instance dtype
+    shadow the declaration, which is cache-unstable, so the declaration wins."""
+    N = dace.symbol('N', dace.int64)
+    sdfg = dace.SDFG('declared')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('t',
+                             map_ranges={'i': '0:N'},
+                             inputs={'a': dace.Memlet('A[i]')},
+                             outputs={'b': dace.Memlet('B[i]')},
+                             code='b = a',
+                             external_edges=True)
+    _poison_symbol_cache('N', dace.int32)
+    js = json.dumps(sdfg.to_json())
+    assert 'symbol($N, dtype=dace.int64)' in js
+    assert 'symbol($N, dtype=dace.int32)' not in js
 
 
 def test_map_param_dtype_differs_from_default_symbol():
@@ -508,10 +561,11 @@ def test_loop_variable_registered_as_int64_symbol():
 
 
 def test_add_symbol_allows_dtype_collision_with_map_param():
-    """Currently ``add_symbol`` does not detect that ``i`` is already used as an
-    int64 map parameter, so declaring it int32 silently creates an
-    inconsistency (``sdfg.symbols`` disagrees with ``symbols_defined_at``). The
-    planned per-SDFG validation should reject this."""
+    """``add_symbol`` does not see ``i`` as already in use by the int64 map
+    parameter (map params are scope-local, not in ``sdfg.symbols``), so declaring
+    it int32 leaves ``sdfg.symbols`` disagreeing with ``symbols_defined_at``. This
+    is benign for serialization, which resolves each symbol's dtype from its scope
+    (``symbols_defined_at``), not from ``sdfg.symbols``."""
     N = dace.symbol('N')
     sdfg = dace.SDFG('collision')
     sdfg.add_array('A', [N], dace.float64)
@@ -528,6 +582,51 @@ def test_add_symbol_allows_dtype_collision_with_map_param():
     sdfg.add_symbol('i', dace.int32)
     assert sdfg.symbols['i'] == dace.int32
     assert state.symbols_defined_at(t)['i'] == dace.int64
+
+
+def test_dynamic_map_range_connector_serializes_without_crash():
+    """Edge case: a map whose range bounds come from *untyped* dynamic connectors
+    (``start:stop``). ``MapEntry.new_symbols`` reports ``start``/``stop`` with the
+    connector's dtype, which is ``void`` (``type=None``) for an untyped connector.
+    The scope authority must not try to render that unprintable type onto the
+    symbol -- it falls back to the symbol's own dtype, so ``start``/``stop`` stay
+    bare ``$start``/``$stop``."""
+    sdfg = dace.SDFG('dyn_range')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('lo', [1], dace.int32)
+    sdfg.add_array('hi', [1], dace.int32)
+    state = sdfg.add_state()
+    lo, hi, w = state.add_access('lo'), state.add_access('hi'), state.add_access('A')
+    me, mx = state.add_map('m', {'idx': 'start:stop'})
+    me.add_in_connector('start')
+    me.add_in_connector('stop')
+    t = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    state.add_edge(lo, None, me, 'start', dace.Memlet('lo[0]'))
+    state.add_edge(hi, None, me, 'stop', dace.Memlet('hi[0]'))
+    state.add_edge(me, None, t, None, dace.Memlet())
+    state.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[idx]'))
+    state.add_edge(mx, 'OUT_A', w, None, dace.Memlet('A[0:20]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+
+    assert me.new_symbols(sdfg, state, {})['start'].type is None  # the void connector
+    js = json.dumps(sdfg.to_json())  # must not raise on the void type
+    assert '$start' in js and '$stop' in js
+
+
+def test_structure_free_symbols_tolerates_serialized_symbolic_member():
+    """Edge case: a Structure member that is symbolic (``Tensor.value_count``)
+    round-trips back as its serialized string form (``'$nnz'``) rather than a
+    symbol. ``free_symbols`` -- which serialization now calls via
+    ``symbols_defined_at`` -- must recover its symbols instead of assuming every
+    member is a data descriptor."""
+    nnz = dace.symbol('nnz')
+    csr = dace.data.Tensor(dace.float32, (dace.symbol('M'), dace.symbol('N')), [(dace.data.TensorIndexDense(), 0),
+                                                                                (dace.data.TensorIndexCompressed(), 1)],
+                           nnz, 'CSR')
+    restored = dace.data.Tensor.from_json(csr.to_json())
+    assert isinstance(restored.members['value_count'], str)  # the serialized member
+    assert nnz in restored.free_symbols
 
 
 if __name__ == '__main__':

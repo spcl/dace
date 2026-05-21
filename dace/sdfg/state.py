@@ -1485,15 +1485,57 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
 
+        # Resolve the authoritative dtype of every symbol an element may reference,
+        # so serialization emits a deterministic dtype regardless of the symbol
+        # instance's own (cache-stale) dtype. We use ``symbols_defined_at`` rather
+        # than ``sdfg.symbols`` because map iterators are not registered as symbols.
+        scope_dtypes: Dict[nd.Node, Dict[str, dtypes.typeclass]] = {}
+
+        def _scope_symbol_dtypes(node: nd.Node) -> Dict[str, dtypes.typeclass]:
+            # Symbols visible at the node, plus -- if it is a scope entry/exit --
+            # that scope's own parameters, which ``symbols_defined_at`` omits but a
+            # dynamic memlet volume (e.g. depending on the map iterator) may use.
+            if node not in scope_dtypes:
+                try:
+                    syms = dict(self.symbols_defined_at(node))
+                    # ``symbols_defined_at`` lets each array's free symbols override
+                    # declarations with their instance dtype, which is cache-stale;
+                    # the declared ``sdfg.symbols`` dtype is the stable authority.
+                    syms.update(self.sdfg.symbols)
+                    if isinstance(node, nd.EntryNode):
+                        entry = node
+                    elif isinstance(node, nd.ExitNode):
+                        entry = self.entry_node(node)
+                    else:
+                        entry = None
+                    if entry is not None:
+                        syms.update(entry.new_symbols(self.sdfg, self, syms))
+                    scope_dtypes[node] = syms
+                except (RuntimeError, ValueError, KeyError):
+                    scope_dtypes[node] = {}
+            return scope_dtypes[node]
+
+        nodes_json = []
+        for n in self.nodes():
+            with symbolic.serialization_symbol_dtypes(_scope_symbol_dtypes(n)):
+                nodes_json.append(n.to_json(self))
+
+        # An edge's memlet sees the symbols of both endpoints' scopes (the richer
+        # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
+        edges_json = []
+        for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
+            authority = {**_scope_symbol_dtypes(e.src), **_scope_symbol_dtypes(e.dst)}
+            with symbolic.serialization_symbol_dtypes(authority):
+                edges_json.append(e.to_json(self))
+
         ret = {
             'type': type(self).__name__,
             'label': self.name,
             'id': parent.node_id(self) if parent is not None else None,
             'collapsed': self.is_collapsed,
             'scope_dict': scope_dict,
-            'nodes': [n.to_json(self) for n in self.nodes()],
-            'edges':
-            [e.to_json(self) for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or ''))],
+            'nodes': nodes_json,
+            'edges': edges_json,
             'attributes': serialize.all_properties_to_json(self),
         }
 

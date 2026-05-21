@@ -1042,8 +1042,16 @@ class Structure(Data):
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
         result = set()
-        for k, v in self.members.items():
-            result |= v.free_symbols
+        for member in self.members.values():
+            # A member is usually a nested data descriptor, but a symbolic member
+            # (e.g. a value count) may be stored -- or round-trip back -- as a
+            # symbol or its serialized string, both of which carry free symbols.
+            if isinstance(member, str):
+                member = symbolic.deserialize_symbolic(member)
+            if isinstance(member, Data):
+                result |= member.free_symbols
+            elif symbolic.issymbolic(member):
+                result |= set(member.free_symbols)
         return result
 
     def __repr__(self):

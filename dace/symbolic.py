@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import Counter
+import contextlib
 import sympy
 import pickle
 import re
@@ -15,6 +16,44 @@ import packaging.version as packaging_version
 from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
+
+# Authoritative dtype of every symbol visible at the SDFG element currently being
+# serialized (name -> typeclass). ``DaceSympySerializer._print_Symbol`` consults
+# this so the emitted dtype is a deterministic function of the SDFG scope rather
+# than of the symbol instance's own dtype, which SymPy's expression cache can
+# leave stale (it conflates same-named symbols of different dtypes).
+_SERIALIZATION_SYMBOL_DTYPES: Dict[str, 'dtypes.typeclass'] = {}
+
+
+def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
+    """
+    Whether a dtype is a concrete scalar that can override a symbol's serialized
+    dtype: a plain :class:`~dace.dtypes.typeclass` with a real numpy scalar type.
+    Subclasses such as ``pointer``/``callback``/``vector`` are excluded even
+    though their ``.type`` may be a numpy scalar (a pointer's is its target's),
+    as is the typeless ``void`` of an untyped dynamic map-range connector.
+    """
+    return type(dtype) is dtypes.typeclass and dtype.type is not None
+
+
+@contextlib.contextmanager
+def serialization_symbol_dtypes(authority: Optional[Dict[str, 'dtypes.typeclass']]):
+    """
+    Temporarily override the per-symbol dtypes used while serializing symbolic
+    expressions, restoring the previous mapping on exit. Only concrete scalar
+    dtypes are kept; a non-scalar scope dtype leaves the symbol's own dtype intact.
+
+    :param authority: Mapping from symbol name to its authoritative dtype, or
+                      ``None`` to leave each instance's own dtype untouched.
+    """
+    global _SERIALIZATION_SYMBOL_DTYPES
+    previous = _SERIALIZATION_SYMBOL_DTYPES
+    _SERIALIZATION_SYMBOL_DTYPES = {n: dt for n, dt in (authority or {}).items() if _is_scalar_symbol_dtype(dt)}
+    try:
+        yield
+    finally:
+        _SERIALIZATION_SYMBOL_DTYPES = previous
+
 
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
@@ -546,16 +585,12 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
-def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    return symbol(expr.name, dtype=expr.dtype).assumptions0
-
-
-def _symbol_serializer_kwargs(expr: symbol) -> Dict[str, Any]:
+def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
     kwargs = {}
-    if expr.dtype != DEFAULT_SYMBOL_TYPE:
-        kwargs['dtype'] = f'dace.{expr.dtype.to_string()}'
+    if dtype != DEFAULT_SYMBOL_TYPE:
+        kwargs['dtype'] = f'dace.{dtype.to_string()}'
 
-    default_assumptions = _symbol_default_assumptions(expr)
+    default_assumptions = symbol(expr.name, dtype=dtype).assumptions0
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
@@ -1782,7 +1817,12 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         if expr.name == 'NoneSymbol':
             return 'None'
         if isinstance(expr, symbol):
-            kwargs = _symbol_serializer_kwargs(expr)
+            # Prefer the dtype the enclosing SDFG scope declares for this name over
+            # the instance's own (possibly cache-stale) dtype. The authority is
+            # pre-filtered to concrete scalar dtypes, so a name absent from it
+            # (e.g. a non-scalar connector) falls back to the instance's dtype.
+            dtype = _SERIALIZATION_SYMBOL_DTYPES.get(expr.name, expr.dtype)
+            kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f'${expr.name}'
             kwlist = ', '.join(f'{key}={value}' for key, value in kwargs.items())
