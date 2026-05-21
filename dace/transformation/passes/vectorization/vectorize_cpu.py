@@ -434,14 +434,23 @@ class VectorizeCPU(ppl.Pipeline):
             # runs before the M3 passes so the condition variable lives in a
             # tasklet plus a transient array (the vectorizer can then drive
             # it per-lane through the merge tasklet's ``_c`` connector).
+            # Fold the frontend ``A -> A_slice(scalar) -> tasklet`` reads up
+            # front, while ``A -> A_slice`` is still a direct AccessNode edge.
+            # After ``LoopToMap`` the MapEntry sits between ``A`` and its
+            # slice scalar, so the pattern no longer matches — the scalar
+            # would survive into the vectorizer and be widened along the
+            # wrong (contiguous) array dim for a non-contiguous vectorised
+            # access (e.g. C-layout ``bb[i, j]`` with ``i`` innermost).
             if branch_normalization:
                 passes = [
+                    CleanAccessNodeToScalarSliceToTaskletPattern(),
                     LowerInterstateConditionalAssignmentsToTasklets(),
                     BranchNormalizationPipeline(),
                     RemoveRedundantAssignments(),
                 ]
             else:
                 passes = [
+                    CleanAccessNodeToScalarSliceToTaskletPattern(),
                     EliminateBranches(),
                     RemoveRedundantAssignments(),
                     LowerInterstateConditionalAssignmentsToTasklets(),
@@ -458,7 +467,6 @@ class VectorizeCPU(ppl.Pipeline):
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),
                 SplitTasklets(),
-                CleanAccessNodeToScalarSliceToTaskletPattern(),
                 # Normalise direct ``MapEntry -> AccessNode`` / ``AccessNode -> MapExit``
                 # staging edges (produced by python-frontend shifted reads like
                 # ``b[i + 1]``) into 3-node chains with a plain ``_out = _in``
