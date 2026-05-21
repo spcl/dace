@@ -438,83 +438,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :param verbose: Emit warnings for skipped lift opportunities.
         :returns: Number of paths lifted.
         """
-        memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
-        rmed_count = 0
-
-        joined_edges = set()
-
-        for memcpy_path in memcpy_paths:
-            src_access_node = memcpy_path[0].src
-            map_entry = memcpy_path[0].dst
-            tasklet = memcpy_path[1].dst
-            map_exit = memcpy_path[2].dst
-            dst_access_node = memcpy_path[3].dst
-            if src_access_node not in state.nodes() or map_entry not in state.nodes() or tasklet not in state.nodes(
-            ) or map_exit not in state.nodes() or dst_access_node not in state.nodes():
-                warnings.warn(
-                    f"Skipping memcpy removal: map {map_entry.map.label} or its tasklet/exit is no longer "
-                    "in state.", UserWarning)
-                continue
-
-            # If src and dst types are not the same, we can't do memcpy
-            src_desc = state.sdfg.arrays[src_access_node.data]
-            dst_desc = state.sdfg.arrays[dst_access_node.data]
-            if src_desc.dtype != dst_desc.dtype:
-                if verbose:
-                    warnings.warn(f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
-                                  UserWarning)
-                continue
-            if src_desc.storage != dst_desc.storage:
-                if verbose:
-                    warnings.warn(
-                        f"Skipping memcpy removal: storage mismatch ({src_desc.storage} != {dst_desc.storage}).",
-                        UserWarning)
-                continue
-
-            # Must run before the memcpy path is torn down: needs the tasklet's edges.
-            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
-
-            if begin_subset is None and exit_subset is None and copy_length is None:
-                continue
-
-            # Passthrough connectors that, if shared with other tasklets, block the lift:
-            # the entry-side IN_X (source data) and the exit-side IN_X (destination data).
-            if not self._lift_preconditions_ok(
-                    state, map_entry, kind="memcpy",
-                    passthrough_conns=[(memcpy_path[0].dst_conn, map_entry), (memcpy_path[2].dst_conn, map_exit)],
-                    libnode_conn_names={copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                                        copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME},
-                    begin_subset=begin_subset, exit_subset=exit_subset, copy_length=copy_length, verbose=verbose):
-                continue
-
-            if src_access_node not in state.nodes():
-                new_src_access_node = state.add_access(src_access_node.data)
-            else:
-                new_src_access_node = src_access_node
-            if dst_access_node not in state.nodes():
-                new_dst_access_node = state.add_access(dst_access_node.data)
-            else:
-                new_dst_access_node = dst_access_node
-
-            tasklet = copy_node.CopyLibraryNode(
-                name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}", )
-            state.add_node(tasklet)
-            self.rmid += 1
-            state.add_edge(new_src_access_node, None, tasklet, copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                           dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=new_src_access_node.data))
-            state.add_edge(tasklet, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME, new_dst_access_node, None,
-                           dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=new_dst_access_node.data))
-            # Map-entry in-edges are either IN_* data passthroughs (already
-            # handled by the libnode's _cpy_in / _cpy_out) or dynamic map-range
-            # scalars (any non-IN_*, regardless of naming). The libnode doesn't
-            # iterate, so neither belongs on it.
-
-            rmed_count += 1
-            joined_edges.update(memcpy_path)
-
-        self.rm_edges(state, joined_edges)
-
-        return rmed_count
+        return self._lift_paths(state, node, is_memset=False, verbose=verbose)
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
         """Lift every constant-zero-write path under map ``node`` to a ``MemsetLibraryNode``.
@@ -524,60 +448,103 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :param verbose: Emit warnings for skipped lift opportunities.
         :returns: Number of paths lifted.
         """
-        memset_paths = self._detect_contiguous_memset_paths(state, node)
+        return self._lift_paths(state, node, is_memset=True, verbose=verbose)
+
+    def _lift_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry, *, is_memset: bool, verbose: bool) -> int:
+        """Lift every detected pure-copy / constant-zero path under map ``node`` to a library node.
+
+        Both flavours share one skeleton: detect the contiguous
+        ``MapEntry -> tasklet -> MapExit -> AccessNode`` paths, validate each via
+        :meth:`_lift_preconditions_ok`, and replace it with a ``CopyLibraryNode``
+        (memcpy) or ``MemsetLibraryNode`` (memset). A memcpy additionally carries
+        a source AccessNode + input edge and requires matching src/dst dtype and
+        storage; a memset writes a constant and has neither.
+
+        :param state: State containing the map.
+        :param node: Map entry of the kernel to scan.
+        :param is_memset: Lift constant-zero writes when True, element-wise copies when False.
+        :param verbose: Emit warnings for skipped lift opportunities.
+        :returns: Number of paths lifted.
+        """
+        if is_memset:
+            paths = self._detect_contiguous_memset_paths(state, node)
+            libnode_cls, kind = memset_node.MemsetLibraryNode, "memset"
+            libnode_conn_names = {libnode_cls.OUTPUT_CONNECTOR_NAME}
+        else:
+            paths = self._detect_contiguous_memcpy_paths(state, node)
+            libnode_cls, kind = copy_node.CopyLibraryNode, "memcpy"
+            libnode_conn_names = {libnode_cls.INPUT_CONNECTOR_NAME, libnode_cls.OUTPUT_CONNECTOR_NAME}
 
         joined_edges = set()
-
         rmed_count = 0
-        for memset_path in memset_paths:
-            map_entry = memset_path[0].src
-            tasklet = memset_path[0].dst
-            map_exit = memset_path[1].dst
-            dst_access_node = memset_path[2].dst
-            assert isinstance(map_entry, dace.nodes.MapEntry), f"Map entry {map_entry} is not a MapEntry"
-            assert isinstance(tasklet, dace.nodes.Tasklet), f"Tasklet {tasklet} is not a Tasklet"
-            assert isinstance(map_exit, dace.nodes.MapExit), f"Map exit {map_exit} is not a MapExit"
-            assert isinstance(dst_access_node,
-                              dace.nodes.AccessNode), f"Destination access node {dst_access_node} is not an AccessNode"
+        for path in paths:
+            # Read the common tail from the exit side: ``tasklet -> MapExit -> AccessNode``.
+            # A memcpy path additionally prepends ``source AccessNode -> MapEntry`` at ``path[0]``.
+            tasklet = path[-2].src
+            map_exit = path[-2].dst
+            dst_access_node = path[-1].dst
+            src_access_node = None if is_memset else path[0].src
 
-            if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
+            present = [node, tasklet, map_exit, dst_access_node] + ([] if is_memset else [src_access_node])
+            if any(n not in state.nodes() for n in present):
                 warnings.warn(
-                    f"Skipping memset removal: map {map_entry.map.label} or its tasklet/exit is no longer "
+                    f"Skipping {kind} removal: map {node.map.label} or its tasklet/exit is no longer "
                     "in state.", UserWarning)
                 continue
 
-            # Must run before the memset path is torn down: needs the tasklet's edges.
-            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
+            # A memcpy lowers to a byte copy, so source and destination must agree on dtype and storage.
+            if not is_memset:
+                src_desc = state.sdfg.arrays[src_access_node.data]
+                dst_desc = state.sdfg.arrays[dst_access_node.data]
+                if src_desc.dtype != dst_desc.dtype:
+                    if verbose:
+                        warnings.warn(
+                            f"Skipping memcpy removal: dtype mismatch ({src_desc.dtype} != {dst_desc.dtype}).",
+                            UserWarning)
+                    continue
+                if src_desc.storage != dst_desc.storage:
+                    if verbose:
+                        warnings.warn(
+                            f"Skipping memcpy removal: storage mismatch ({src_desc.storage} != {dst_desc.storage}).",
+                            UserWarning)
+                    continue
 
-            if begin_subset is None or exit_subset is None or copy_length is None:
-                if verbose:
+            # Must run before the path is torn down: needs the tasklet's edges. A bail returns all-None.
+            begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, node, tasklet)
+            if copy_length is None:
+                if is_memset and verbose:
                     warnings.warn(
-                        f"Skipping memset removal in map {map_entry.map.label}: subset or copy length "
+                        f"Skipping memset removal in map {node.map.label}: subset or copy length "
                         "could not be determined or is non-contiguous.", UserWarning)
                 continue
 
-            # The exit-side IN_X passthrough (destination data) blocks the lift if shared with
-            # other tasklets writing the same array via the aggregating ``OUT_X`` connector.
-            if not self._lift_preconditions_ok(
-                    state, map_entry, kind="memset",
-                    passthrough_conns=[(memset_path[1].dst_conn, map_exit)],
-                    libnode_conn_names={memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME},
-                    begin_subset=None, exit_subset=exit_subset, copy_length=copy_length, verbose=verbose):
+            # The exit-side IN_X passthrough (destination data) -- and, for memcpy, the entry-side
+            # IN_X (source data) -- block the lift if shared with other tasklets.
+            passthrough_conns = [(path[-2].dst_conn, map_exit)]
+            if not is_memset:
+                passthrough_conns.append((path[0].dst_conn, node))
+            if not self._lift_preconditions_ok(state, node, kind=kind, passthrough_conns=passthrough_conns,
+                                               libnode_conn_names=libnode_conn_names, begin_subset=begin_subset,
+                                               exit_subset=exit_subset, copy_length=copy_length, verbose=verbose):
                 continue
 
-            tasklet = memset_node.MemsetLibraryNode(name=f"memsetLib_{dst_access_node.data}_{self.rmid}", )
-            state.add_node(tasklet)
+            if is_memset:
+                libnode = libnode_cls(name=f"memsetLib_{dst_access_node.data}_{self.rmid}")
+                state.add_node(libnode)
+                state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
+                               dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
+            else:
+                libnode = libnode_cls(name=f"copyLib_{src_access_node.data}_{dst_access_node.data}_{self.rmid}")
+                state.add_node(libnode)
+                state.add_edge(src_access_node, None, libnode, libnode_cls.INPUT_CONNECTOR_NAME,
+                               dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=src_access_node.data))
+                state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
+                               dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             self.rmid += 1
-            state.add_edge(tasklet, memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
-                           dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
-            # Map-entry in-edges are either IN_* data passthroughs or dynamic
-            # map-range scalars (any non-IN_*); neither belongs on the libnode.
-
             rmed_count += 1
-            joined_edges.update(memset_path)
+            joined_edges.update(path)
 
         self.rm_edges(state, joined_edges)
-
         return rmed_count
 
     def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
