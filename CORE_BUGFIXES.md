@@ -118,6 +118,53 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   (1x→(1,2), 2x=3x=4x=(2,2)) WITHOUT touching `preserve_minima`. No code
   change to `helpers.py` / `propagation.py`.
 
+### 10. Python frontend shared a `Subset` object between two memlets
+- **File:** `dace/frontend/python/newast.py` (`ProgramVisitor.make_slice`)
+- **Commit:** `294bc51a5` (pushed `yakup/dev`); **upstream PR #2375** (cherry-pick
+  off `main`).
+- **Bug:** `make_slice` builds the slice-read memlet with
+  `Memlet.simple(array, rng, ...)`. `Memlet.simple` stores a passed-in `Subset`
+  **by reference**, and `rng` is frequently the cached `Range` the per-array
+  `accesses` cache hands back on a repeated read of the same slice. Two sibling
+  reads of e.g. `arr[i, k]` (two loop bodies under a map) produced two distinct
+  edges sharing one subset object — violating the invariant that each memlet
+  owns its subset. Any later in-place subset rewrite (loop-iterator renaming,
+  symbol replacement, offsetting) on one edge silently corrupted the other; it
+  surfaced as a value corruption when a guarded sibling loop's read kept the
+  first loop's renamed iterator while its write used its own.
+- **Fix:** deepcopy `rng` for the slice memlet's subset, mirroring the
+  `other_subset` deepcopy two lines above. Pure object-identity fix — subset
+  values and the generated SDFG are unchanged.
+- **Reproducer test (main-safe):**
+  `tests/python_frontend/slice_subset_aliasing_test.py` — asserts no two memlets
+  in the parsed SDFG share a subset (or other_subset) object, plus an
+  end-to-end value check.
+- **Status:** fixed, pushed, PR #2375 open against `main`.
+
+### 11. `TrivialTaskletElimination` dropped the read offset when the source is a `MapEntry`
+- **File:** `dace/transformation/dataflow/trivial_tasklet_elimination.py` (`apply`, expr_index 1)
+- **Commit:** `6d33f47d2` (pushed `yakup/dev`).
+- **Bug:** when the eliminated copy tasklet's source is a `MapEntry`, the
+  surviving edge leaves the map's `OUT_<read>` connector, so its memlet must
+  describe the read data and its (possibly offset) subset. `apply` reused the
+  *write* memlet for every expr_index, stranding the read offset (e.g.
+  `a[i + 1]`) in `other_subset`; a later `MapToForLoop` re-lowering read only
+  `.subset` (`[0]`) and dropped the offset, yielding an out-of-bounds /
+  wrong-value SDFG. This surfaced as a canonicalize **idempotency** failure (the
+  second `canonicalize` folded `a[i + k]` to `a[0]`).
+- **Fix:** for the `MapEntry`-source case keep the read-side memlet (data +
+  subset) on the surviving edge and carry the write subset in `other_subset`;
+  the AccessNode→AccessNode and AccessNode→MapExit cases are unchanged.
+- **Reproducer test (main-safe):**
+  `tests/transformations/trivial_tasklet_elimination_test.py::test_trivial_tasklet_map_source_preserves_offset_subset`
+  — `MapEntry --a[i+1]--> copy --> a_idx`, eliminate, assert the surviving edge
+  has `memlet.data == 'a'` and keeps the offset subset. Without the fix the edge
+  carries `data == 'a_idx'` (offset stranded in `other_subset`); it still
+  validates and runs, so the assertion targets the connector/memlet-data
+  invariant directly rather than relying on a re-lowering pass.
+- **Status:** fixed, regression-verified (canonicalize 138P/4xf, trivial-tasklet
+  4P), pushed.
+
 ## Open (separate issue, root-caused)
 
 ### 4. Canonicalize structural non-idempotence on the guarded imperfect nest
