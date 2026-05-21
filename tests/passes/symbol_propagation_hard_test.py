@@ -1192,11 +1192,6 @@ def test_three_cycle_rotation_via_temps_api():
     assert np.array_equal(got, expected)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=
-    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
-     ))
 def test_swap_via_temps_acyclic_api():
     """
     Acyclic swap ``{x: tx, y: ty}`` where ``tx = y`` and ``ty = x`` upstream.
@@ -1250,11 +1245,6 @@ def test_swap_via_temps_acyclic_api():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=
-    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
-     ))
 def test_multi_assign_temp_substitution_acyclic_api():
     """
     Acyclic ``{m: t, n: t + 1}`` edge where ``t = m + 2`` is assigned upstream.
@@ -1304,11 +1294,6 @@ def test_multi_assign_temp_substitution_acyclic_api():
         assert np.allclose(got, expected[b]), b
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=
-    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
-     ))
 def test_chained_simultaneous_feeds_index_api():
     """
     Edge ``{idx: tmp, s: base + 10}`` then ``B[idx]``, with ``tmp = base + s`` upstream.
@@ -1721,11 +1706,6 @@ def test_diamond_merge_unequal_must_not_propagate_api():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=
-    ("Deeper SymbolPropagation correctness bug on CYCLIC symbol dependencies (swap / mutual substitution). The same-edge race (per-edge self-collision guard in _update_syms) and the fixpoint non-termination (iteration cap) are now fixed, but the pass still over-substitutes a reassigned symbol's value into downstream use-sites when the symbol participates in a value cycle (e.g. x:tx, tx:y, y:ty, ty:x), yielding wrong indices/values. Pinned to fix."
-     ))
 def test_simultaneous_index_pair_then_use_api():
     """
     Edge ``{lo: clo, hi: chi}`` (index swap via capture temps) with both used as indices.
