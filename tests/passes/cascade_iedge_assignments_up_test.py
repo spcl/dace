@@ -571,5 +571,139 @@ def test_icon_pattern_frontend_value_preserving():
     assert np.allclose(out, exp)
 
 
+# ----------------------------------------------------------------------
+# Hard SDFG-API cases: deeply-nested loops, assignment must cascade all
+# the way up (user request: "the assignment ... should come from a parent
+# CFG, and then we should be able to move it up all the way up").
+# ----------------------------------------------------------------------
+
+
+def _nested_loops(sdfg: dace.SDFG, depth: int, key: str, rhs: str,
+                  loop_vars: List[str]) -> Tuple[LoopRegion, LoopRegion]:
+    """Build ``for v0: for v1: ... for v_{depth-1}: { s_pre -[key=rhs]-> s_post }``
+    directly under ``sdfg``. Returns ``(outermost_loop, innermost_loop)``.
+    """
+    outer = None
+    parent: Any = sdfg
+    inner = None
+    for d in range(depth):
+        lv = loop_vars[d]
+        loop = LoopRegion(f'loop_{lv}',
+                          condition_expr=f'{lv} < N',
+                          loop_var=lv,
+                          initialize_expr=f'{lv} = 0',
+                          update_expr=f'{lv} = {lv} + 1')
+        parent.add_node(loop, is_start_block=(parent is sdfg) or (parent is not sdfg and len(parent.nodes()) == 1))
+        if outer is None:
+            outer = loop
+        parent = loop
+        inner = loop
+    s_pre = inner.add_state('body_pre', is_start_block=True)
+    s_post = inner.add_state('body_post')
+    inner.add_edge(s_pre, s_post, InterstateEdge(assignments={key: rhs}))
+    return outer, inner
+
+
+def _root_assignment_keys(sdfg: dace.SDFG) -> set:
+    return {lhs for e in sdfg.edges() for lhs in e.data.assignments}
+
+
+def test_three_level_nest_invariant_cascades_to_root():
+    """``for i: for j: for k: { kp1 = K + 1 }`` -- ``K`` is an SDFG symbol,
+    invariant w.r.t. all three loop variables, so the assignment cascades
+    all the way up to the SDFG root (clears i, j, k in one move)."""
+    sdfg = dace.SDFG('three_level_nest')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_symbol('kp1', dace.int64)
+    _nested_loops(sdfg, 3, 'kp1', 'K + 1', ['i', 'j', 'k'])
+    assert ('loop_k', 'kp1', 'K + 1') in _assignments_inside_loops(sdfg)
+
+    total = 0
+    for _ in range(6):
+        n = _apply(sdfg)
+        total += n
+        if n == 0:
+            break
+    assert total >= 1
+    assert not _assignments_inside_loops(sdfg), 'assignment did not clear all three loops'
+    assert 'kp1' in _root_assignment_keys(sdfg), 'assignment did not reach the SDFG root'
+
+
+def test_three_level_nest_rhs_from_root_parent_cascades_up():
+    """The assignment's RHS references a symbol assigned by a PARENT CFG
+    (the SDFG root): ``root: s1 = K + 1`` then deep inside ``for i: for j:
+    for k: { s2 = s1 + 1 }``. ``s2`` is invariant (``s1`` is root-defined),
+    so it cascades all the way up to the root, next to ``s1``."""
+    sdfg = dace.SDFG('rhs_from_parent')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_symbol('s1', dace.int64)
+    sdfg.add_symbol('s2', dace.int64)
+    # Root-level parent assignment s1 = K + 1, then the nest.
+    pre = sdfg.add_state('root_pre', is_start_block=True)
+    outer, _inner = _nested_loops(sdfg, 3, 's2', 's1 + 1', ['i', 'j', 'k'])
+    sdfg.add_edge(pre, outer, InterstateEdge(assignments={'s1': 'K + 1'}))
+
+    total = 0
+    for _ in range(6):
+        n = _apply(sdfg)
+        total += n
+        if n == 0:
+            break
+    assert total >= 1
+    assert not _assignments_inside_loops(sdfg), 's2 did not clear all enclosing loops'
+    assert 's2' in _root_assignment_keys(sdfg)
+
+
+def test_four_level_nest_transitive_chain_cascades_to_root():
+    """Four-level nest with a transitive chain in the innermost body:
+    ``a = K + 1; b = a * 2; c = b + 3``. All invariant; the whole chain
+    must cascade to the SDFG root (running to a fixpoint)."""
+    sdfg = dace.SDFG('four_level_chain')
+    sdfg.add_symbol('K', dace.int64)
+    for s in ('a', 'b', 'c'):
+        sdfg.add_symbol(s, dace.int64)
+    parent: Any = sdfg
+    outer = None
+    for d, lv in enumerate(['i', 'j', 'k', 'l']):
+        loop = LoopRegion(f'loop_{lv}',
+                          condition_expr=f'{lv} < N',
+                          loop_var=lv,
+                          initialize_expr=f'{lv} = 0',
+                          update_expr=f'{lv} = {lv} + 1')
+        parent.add_node(loop, is_start_block=True)
+        outer = outer or loop
+        parent = loop
+    s0 = parent.add_state('s0', is_start_block=True)
+    s1 = parent.add_state('s1')
+    s2 = parent.add_state('s2')
+    s3 = parent.add_state('s3')
+    parent.add_edge(s0, s1, InterstateEdge(assignments={'a': 'K + 1'}))
+    parent.add_edge(s1, s2, InterstateEdge(assignments={'b': 'a * 2'}))
+    parent.add_edge(s2, s3, InterstateEdge(assignments={'c': 'b + 3'}))
+
+    total = 0
+    for _ in range(10):
+        n = _apply(sdfg)
+        total += n
+        if n == 0:
+            break
+    assert total >= 3, f'expected the 3-link chain to hoist, got {total}'
+    assert not _assignments_inside_loops(sdfg), 'chain did not clear all four loops'
+    assert {'a', 'b', 'c'} <= _root_assignment_keys(sdfg)
+
+
+def test_three_level_nest_rhs_uses_middle_loop_var_refuses():
+    """``for i: for j: for k: { x = j + 1 }`` -- the RHS reads the MIDDLE
+    loop variable ``j``, so the assignment cannot clear the ``j`` loop;
+    by the all-or-nothing rule it must NOT move at all (it would otherwise
+    stall inside the ``i`` loop)."""
+    sdfg = dace.SDFG('rhs_middle_loopvar')
+    sdfg.add_symbol('x', dace.int64)
+    _nested_loops(sdfg, 3, 'x', 'j + 1', ['i', 'j', 'k'])
+    moved = _apply(sdfg)
+    assert moved == 0
+    assert ('loop_k', 'x', 'j + 1') in _assignments_inside_loops(sdfg)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
