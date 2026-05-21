@@ -1,4 +1,6 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for :class:`MemsetLibraryNode` and its pure / CPU / CUDA expansions."""
+from typing import Optional, Sequence
 
 import dace
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
@@ -7,56 +9,49 @@ import pytest
 import numpy as np
 
 
-def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
-    sdfg = dace.SDFG("memset_sdfg")
-    name = "gpuB" if gpu else "B"
-    sdfg.add_array(name=name,
-                   shape=[
-                       200,
-                   ],
-                   dtype=dace.dtypes.float64,
-                   storage=dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap,
-                   transient=False)
+def _make_memset_sdfg(implementation: Optional[str],
+                      shape: Sequence[int],
+                      subset: str,
+                      gpu: bool = True,
+                      name: str = "memset_sdfg") -> dace.SDFG:
+    """Build an SDFG that memsets a sub-region of a single array.
+
+    :param implementation: ``MemsetLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
+    :param shape: array shape (sequence of dim extents).
+    :param subset: memlet subset string for the memset's output edge.
+    :param gpu: True for ``GPU_Global`` storage, False for ``CPU_Heap``.
+    :param name: SDFG name.
+    :returns: the constructed SDFG.
+    """
+    sdfg = dace.SDFG(name)
+    arr_name = "gpuB" if gpu else "B"
+    storage = dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap
+    sdfg.add_array(name=arr_name, shape=list(shape), dtype=dace.dtypes.float64, storage=storage, transient=False)
 
     state = sdfg.add_state("main")
-
-    b1 = state.add_access(name)
-
-    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={"_out"})
+    out = state.add_access(arr_name)
+    libnode = MemsetLibraryNode(name="memset_libnode")
     if implementation is not None:
         libnode.implementation = implementation
-
-    # Only set a slice
-    state.add_edge(libnode, "_out", b1, None, dace.memlet.Memlet(f"{name}[50:100]"))
-
+    state.add_edge(libnode, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, out, None,
+                   dace.memlet.Memlet(f"{arr_name}[{subset}]"))
     return sdfg
 
 
-def _get_multi_dim_sdfg(implementation, gpu=True) -> dace.SDFG:
-    sdfg = dace.SDFG("memset_sdfg2")
-    name = "gpuB" if gpu else "B"
-    sdfg.add_array(name=name,
-                   shape=[50, 2, 2],
-                   dtype=dace.dtypes.float64,
-                   storage=dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap,
-                   transient=False)
-
-    state = sdfg.add_state("main")
-
-    b1 = state.add_access(name)
-
-    libnode = MemsetLibraryNode(name="copy2", inputs={}, outputs={name})
-    if implementation is not None:
-        libnode.implementation = implementation
-
-    # Only set a slice
-    state.add_edge(libnode, name, b1, None, dace.memlet.Memlet(f"{name}[40:50, 0:2, 0:2]"))
-
-    return sdfg
+def _get_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
+    """1-D slice memset."""
+    return _make_memset_sdfg(implementation, (200, ), "50:100", gpu=gpu, name="memset_sdfg")
 
 
-def test_memset_pure_cpu():
+def _get_multi_dim_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
+    """3-D sub-block memset."""
+    return _make_memset_sdfg(implementation, (50, 2, 2), "40:50, 0:2, 0:2", gpu=gpu, name="memset_sdfg2")
+
+
+def test_memset_pure_1d_cpu():
+    """The ``pure`` expansion zeros the CPU slice and leaves the rest unchanged."""
     sdfg = _get_sdfg("pure", gpu=False)
+    sdfg.name += "_pure_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -70,8 +65,10 @@ def test_memset_pure_cpu():
     assert np.all(B[50:100] == 0)
 
 
-def test_memset_pure_cpu_multi_dim():
+def test_memset_pure_3d_cpu():
+    """The ``pure`` expansion zeros a 3D CPU sub-block and leaves the rest unchanged."""
     sdfg = _get_multi_dim_sdfg("pure", gpu=False)
+    sdfg.name += "_pure_cpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -85,10 +82,12 @@ def test_memset_pure_cpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_pure_gpu():
+def test_memset_pure_1d_gpu():
+    """The ``pure`` expansion zeros the GPU slice and leaves the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_sdfg("pure", gpu=True)
+    sdfg.name += "_pure_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -103,10 +102,12 @@ def test_memset_pure_gpu():
 
 
 @pytest.mark.gpu
-def test_memset_pure_gpu_multi_dim():
+def test_memset_pure_3d_gpu():
+    """The ``pure`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("pure", gpu=True)
+    sdfg.name += "_pure_gpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -120,10 +121,12 @@ def test_memset_pure_gpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_gpu():
+def test_memset_cuda_1d_gpu():
+    """The ``CUDA`` expansion zeros the GPU slice and leaves the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_sdfg("CUDA", gpu=True)
+    sdfg.name += "_cuda_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -138,10 +141,12 @@ def test_memset_cuda_gpu():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_gpu_multi_dim():
+def test_memset_cuda_3d_gpu():
+    """The ``CUDA`` expansion zeros a 3D GPU sub-block and leaves the rest unchanged."""
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("CUDA", gpu=True)
+    sdfg.name += "_cuda_gpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -155,10 +160,10 @@ def test_memset_cuda_gpu_multi_dim():
 
 
 @pytest.mark.gpu
-def test_memset_cuda_cpu():
-    # Test CUDA implementation on CPU arrays
-    # should fail at validation or compilation
+def test_memset_cuda_rejects_cpu_storage():
+    """The ``CUDA`` expansion targeting a CPU array is rejected."""
     sdfg = _get_sdfg("CUDA", gpu=False)
+    sdfg.name += "_cuda_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     with pytest.raises(Exception):
@@ -166,11 +171,40 @@ def test_memset_cuda_cpu():
         sdfg.compile()
 
 
+def test_memset_auto_routes_non_contiguous_to_pure_cpu():
+    """Auto routes a non-contiguous CPU subset to ``pure`` (the single-call ``memset`` would zero outside the region)."""
+    sdfg = _make_memset_sdfg(None, (10, 20), "2:8, 5:15", gpu=False, name="memset_noncontig_cpu_auto")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = sdfg.compile()
+
+    B = np.ones((10, 20), dtype=np.float64)
+    exe(B=B)
+    # The 6x10 sub-block is zeroed; everything else stays 1.
+    expected = np.ones((10, 20), dtype=np.float64)
+    for i in range(2, 8):
+        for j in range(5, 15):
+            expected[i, j] = 0
+    np.testing.assert_array_equal(B, expected)
+
+
+def test_memset_cpu_rejects_non_contiguous_subset():
+    """Explicit ``CPU`` expansion rejects a non-contiguous subset (one ``memset`` would overrun the region)."""
+    sdfg = _make_memset_sdfg("CPU", (10, 20), "2:8, 5:15", gpu=False, name="memset_noncontig_cpu_explicit")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+def test_memset_cuda_rejects_non_contiguous_subset():
+    """Explicit ``CUDA`` expansion rejects a non-contiguous subset (one ``cudaMemsetAsync`` would overrun)."""
+    sdfg = _make_memset_sdfg("CUDA", (10, 20), "2:8, 5:15", gpu=True, name="memset_noncontig_cuda_explicit")
+    sdfg.validate()
+    with pytest.raises(ValueError, match="contiguous"):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == "__main__":
-    test_memset_pure_cpu()
-    test_memset_pure_gpu()
-    test_memset_cuda_gpu()
-    test_memset_cuda_cpu()
-    test_memset_pure_cpu_multi_dim()
-    test_memset_pure_gpu_multi_dim()
-    test_memset_cuda_gpu_multi_dim()
+    pytest.main([__file__])

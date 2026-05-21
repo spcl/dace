@@ -26,8 +26,11 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     e = next(state.out_edges_by_connector(node, cname))
     if cname is None:
         return None
-    scalar = (e.data.subset and e.data.subset.num_elements() == 1
-              and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
+    # ``bool()`` coerces a Range whose ``__bool__`` is False (e.g. single-
+    # element ``CopyLibraryNode`` subset); without it the ``and`` chain
+    # leaks the Range object and the later ``scalar |= ...`` raises TypeError.
+    scalar = bool(e.data.subset and e.data.subset.num_elements() == 1
+                  and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
     else:
@@ -64,7 +67,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                scalar = bool(e.data.subset is not None and e.data.subset.num_elements() == 1)
                 if e.data.data is not None:
                     allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
@@ -250,16 +253,27 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     constraints: Set[dtypes.ScheduleType] = set()
     sdfg = state.parent
     for dname in memlets:
-        if isinstance(sdfg.arrays[dname], data.Scalar):
+        desc = sdfg.arrays[dname]
+        if isinstance(desc, data.Scalar):
             continue  # Skip scalars
 
-        storage = sdfg.arrays[dname].storage
+        storage = desc.storage
         if storage not in dtypes.STORAGEDEFAULT_SCHEDULE:
             continue
         sched = dtypes.STORAGEDEFAULT_SCHEDULE[storage]
         if sched is None:
             continue
         constraints.add(sched)
+
+    # Copy/Memset library nodes are the one class of nodes that legitimately
+    # bridge storage types (CPU->GPU copies, GPU buffer zero-fill, etc.).
+    # If any GPU storage is involved on either side, the node must schedule
+    # as GPU_Device; otherwise fall through to the normal single-constraint
+    # path so pure-CPU copies still land on CPU_Multicore.
+    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+    if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)) and dtypes.ScheduleType.GPU_Device in constraints:
+        return dtypes.ScheduleType.GPU_Device
 
     if not constraints:  # No constraints found
         child_schedule = None
