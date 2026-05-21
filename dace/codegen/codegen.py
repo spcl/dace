@@ -239,6 +239,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     for target in frame.targets:
         target.preprocess(sdfg)
 
+    # Give the allocator a state on each loop / conditional boundary so a
+    # transient whose shape depends on a symbol assigned inside the block is
+    # allocated after that symbol is defined (not at a dominator that precedes
+    # the definition).
+    framecode.pad_control_flow_region_boundaries(sdfg)
+
     # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
