@@ -417,5 +417,118 @@ def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonica
     assert first == second
 
 
+def _poison_cache_with_typed_symbol(name, dtype):
+    """Seed SymPy's process-global cache with a non-default-typed same-name
+    symbol. SymPy caches ``Add``/``Min``/``Max``/``subs`` by argument equality,
+    so these tests guard against a same-name symbol of a different dtype leaking
+    out of that cache into later default-typed expressions."""
+    return symbolic.symbol(name, dtype=dtype) + symbolic.symbol('lidx')
+
+
+@pytest.mark.parametrize('op', [sympy.Min, sympy.Max])
+def test_symbol_dtype_does_not_leak_through_minmax(op):
+    lidx = symbolic.symbol('lidx')
+    _poison_cache_with_typed_symbol('i', dace.int64)
+
+    expr = op(10, symbolic.symbol('i') + lidx)
+    assert symbolic.serialize_symbolic(expr) == f'{op.__name__}(10, $i + $lidx)'
+
+
+def test_symbol_dtype_does_not_leak_through_python_add():
+    lidx = symbolic.symbol('lidx')
+    _poison_cache_with_typed_symbol('i', dace.int64)
+
+    expr = symbolic.symbol('i') + lidx
+    assert symbolic.serialize_symbolic(expr) == '$i + $lidx'
+
+
+def test_symbol_dtype_does_not_leak_through_sympy_add():
+    lidx = symbolic.symbol('lidx')
+    _poison_cache_with_typed_symbol('i', dace.int64)
+
+    expr = sympy.Add(symbolic.symbol('i'), lidx)
+    assert symbolic.serialize_symbolic(expr) == '$i + $lidx'
+
+
+def test_symbol_dtype_does_not_leak_through_subs():
+    lidx = symbolic.symbol('lidx')
+    _poison_cache_with_typed_symbol('i', dace.int64)
+
+    placeholder = symbolic.deserialize_symbolic('$x + $lidx')
+    x = next(s for s in placeholder.free_symbols if s.name == 'x')
+    substituted = placeholder.subs({x: symbolic.symbol('i')})
+    assert symbolic.serialize_symbolic(substituted) == '$i + $lidx'
+
+
+def test_deserialize_does_not_leak_symbol_dtype():
+    """The deserializer's custom parser builds expressions without SymPy's
+    cached canonical constructors, so a default-typed symbol stays bare even
+    after the cache holds a same-name non-default instance."""
+    _poison_cache_with_typed_symbol('i', dace.int64)
+
+    restored = symbolic.deserialize_symbolic('Min(10, $i + $lidx)')
+    assert symbolic.serialize_symbolic(restored) == 'Min(10, $i + $lidx)'
+
+
+def test_map_param_dtype_differs_from_default_symbol():
+    """A map parameter's dtype is inferred from its range bounds (int64 for an
+    integer range), while a free ``symbol()`` defaults to ``DEFAULT_SYMBOL_TYPE``
+    (int32). This is the source of same-name/different-dtype collisions."""
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('map_param_dtype')
+    sdfg.add_array('A', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', {'i': '0:N'})
+    t = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    w = state.add_access('A')
+    state.add_edge(me, None, t, None, dace.Memlet())
+    state.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[i]'))
+    state.add_edge(mx, 'OUT_A', w, None, dace.Memlet('A[0:N]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+
+    assert me.new_symbols(sdfg, state, {})['i'] == dace.int64
+    assert symbolic.symbol('i').dtype == symbolic.DEFAULT_SYMBOL_TYPE
+
+
+def test_loop_variable_registered_as_int64_symbol():
+    """The Python frontend registers a ``range`` loop variable in
+    ``sdfg.symbols`` with an int64 dtype, even though a free ``symbol()`` of the
+    same name defaults to int32."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def loopprog(A: dace.float64[N]):
+        for i in range(N):
+            A[i] = 1.0
+
+    sdfg = loopprog.to_sdfg()
+    assert sdfg.symbols['i'] == dace.int64
+    assert symbolic.symbol('i').dtype == symbolic.DEFAULT_SYMBOL_TYPE
+
+
+def test_add_symbol_allows_dtype_collision_with_map_param():
+    """Currently ``add_symbol`` does not detect that ``i`` is already used as an
+    int64 map parameter, so declaring it int32 silently creates an
+    inconsistency (``sdfg.symbols`` disagrees with ``symbols_defined_at``). The
+    planned per-SDFG validation should reject this."""
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('collision')
+    sdfg.add_array('A', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', {'i': '0:N'})
+    t = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    w = state.add_access('A')
+    state.add_edge(me, None, t, None, dace.Memlet())
+    state.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[i]'))
+    state.add_edge(mx, 'OUT_A', w, None, dace.Memlet('A[0:N]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+
+    sdfg.add_symbol('i', dace.int32)
+    assert sdfg.symbols['i'] == dace.int32
+    assert state.symbols_defined_at(t)['i'] == dace.int64
+
+
 if __name__ == '__main__':
     pytest.main([__file__])
