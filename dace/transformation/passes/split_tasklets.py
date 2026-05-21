@@ -2,7 +2,7 @@
 import copy
 import re
 
-from sympy import Function
+import sympy
 import dace
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -14,17 +14,34 @@ from dace.sdfg.nodes import CodeBlock
 
 
 class ASTSplitter:
+    """
+    Lowers a Python expression AST into a list of single-operation SSA statements.
+
+    Each visited node emits one ``__tN = <op>`` statement and returns the name that
+    holds its result, so a nested expression becomes a flat sequence of primitive ops.
+    """
 
     def __init__(self):
         self.n = 0
         self.stmts = []
 
     def temp(self) -> str:
+        """
+        Allocate a fresh SSA temporary name.
+
+        :returns: A unique ``__tN`` identifier.
+        """
         t = f"__t{self.n}"
         self.n += 1
         return t
 
-    def visit(self, node):
+    def visit(self, node: ast.AST) -> str:
+        """
+        Emit SSA statements for one AST node and return the name holding its value.
+
+        :param node: The expression AST node to lower.
+        :returns: The variable name (or literal) that holds the node's result.
+        """
         if isinstance(node, ast.BinOp):
             l, r = self.visit(node.left), self.visit(node.right)
             t = self.temp()
@@ -113,6 +130,12 @@ class ASTSplitter:
 
 
 def to_ssa(code: str) -> List[str]:
+    """
+    Convert a single Python assignment (or expression) into single-operation SSA lines.
+
+    :param code: The tasklet source, e.g. ``out = a * b + c``.
+    :returns: A list of SSA statements, each performing at most one primitive operation.
+    """
     tree = ast.parse(code).body[0]
     ssa = ASTSplitter()
     if isinstance(tree, ast.Assign):
@@ -133,10 +156,18 @@ def to_ssa(code: str) -> List[str]:
 
 
 def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
+    """
+    Extract the left-hand-side and right-hand-side variable names of an SSA line.
+
+    Function names (built-in user functions, ``log``/``exp`` and boolean keywords) are
+    ignored so they are not mistaken for per-lane input connectors.
+
+    :param ssa_line: A single ``lhs = rhs`` SSA statement.
+    :returns: A tuple ``(lhs_vars, rhs_vars)`` of the assigned name and the read names.
+    """
     lhs, rhs = ssa_line.split(" = ")
     lhs = lhs.strip()
     rhs = rhs.strip()
-    # Also ignore log functions
     function_names = dace.symbolic.builtin_userfunctions().union({
         "log",
         "Log",
@@ -159,6 +190,14 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
 
 @transformation.explicit_cf_compatible
 class SplitTasklets(ppl.Pass):
+    """
+    Splits a multi-operation tasklet into one tasklet per primitive operation.
+
+    Each tasklet body is rewritten into single-operation SSA statements, then the tasklet
+    is replaced by a chain of one-op tasklets connected through register transients. This
+    lets downstream canonicalization and vectorization passes reason about single-op bodies.
+    """
+
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
@@ -173,15 +212,27 @@ class SplitTasklets(ppl.Pass):
     tmp_access_identifier = "_split_"
 
     def token_split_variable_names(self, string_to_check: str) -> Set[str]:
-        # Split while keeping delimiters
+        """
+        Split a code string into identifier tokens, dropping whitespace and brackets.
+
+        Used as a fallback when SymPy cannot parse the tasklet (e.g. nested comparisons).
+
+        :param string_to_check: The tasklet code to tokenize.
+        :returns: The set of identifier-like tokens in the string.
+        """
+        # Keep the delimiters so adjacent identifiers stay separated.
         tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-        # Replace tokens that exactly match src
-        tokens = {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
-
-        return tokens
+        return {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
 
     def _add_missing_symbols(self, sdfg: SDFG):
+        """
+        Register interstate-edge assignment targets that are not yet declared symbols.
+
+        The dtype is inferred from the arrays/symbols referenced on the right-hand side,
+        preferring the widest float and falling back to ``float64`` when nothing matches.
+
+        :param sdfg: The SDFG to scan (recursively into nested SDFGs).
+        """
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
@@ -191,13 +242,12 @@ class SplitTasklets(ppl.Pass):
                 if k not in sdfg.symbols:
                     symexpr = dace.symbolic.SymExpr(v)
                     dtypes = set()
-                    funcs = [a.name for a in symexpr.atoms(Function)]
+                    funcs = [a.name for a in symexpr.atoms(sympy.Function)]
                     for token in funcs:
                         if str(token) in sdfg.arrays:
                             dtypes.add(sdfg.arrays[str(token)].dtype)
                         if str(token) in sdfg.symbols:
                             dtypes.add(sdfg.symbols[str(token)])
-                    ktype = None
                     dtype_priority = [
                         dace.float64,
                         dace.float32,
@@ -231,10 +281,15 @@ class SplitTasklets(ppl.Pass):
                     if ktype is None:
                         ktype = dace.float64
                     sdfg.add_symbol(k, ktype)
-                    print(f"Adding missing symbol, THIS SHOULD NOT HAPPEN AND IT IS NOT MY FAULT FIX THIS")
-                    print(f"Adding missing symbol {k}, deduced type {ktype}")
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+        """
+        Split every multi-operation Python tasklet in the SDFG into single-op tasklets.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Always ``None`` (the result map is not tracked).
+        """
         self._add_missing_symbols(sdfg)
         split_access_counter = 0
 
@@ -265,7 +320,7 @@ class SplitTasklets(ppl.Pass):
                     for free_sym in code_expr_rhs.free_symbols.union(code_expr_lhs.free_symbols):
                         if str(free_sym) in g.sdfg.symbols:
                             input_types.add(g.sdfg.symbols[str(free_sym)])
-                except Exception as e:
+                except Exception:
                     # Nested comparisons might make symexpr / sympify crash
                     code_tokens = self.token_split_variable_names(c.as_string)
                     for free_sym in code_tokens:
@@ -288,7 +343,7 @@ class SplitTasklets(ppl.Pass):
                 elif len(input_types) == 1:
                     input_type = next(iter(input_types))
                 else:
-                    # Default to float it consists purely of constants
+                    # Default to float when the tasklet consists purely of constants.
                     input_type = dace.float64
 
                 if c.language == dace.dtypes.Language.Python:
@@ -321,7 +376,6 @@ class SplitTasklets(ppl.Pass):
                                  for s in state.symbols_defined_at(tasklet)
                                  }.union({str(s)
                                           for s in sdfg.symbols.keys()})
-            syms_defined_at = {str(s) for s in state.symbols_defined_at(tasklet)}
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
@@ -329,13 +383,9 @@ class SplitTasklets(ppl.Pass):
                 assert "True" not in rhs_vars
                 assert "False" not in rhs_vars
 
-                #print("Available symbols", available_symbols)
-                #print("SDFG syms", sdfg.symbols)
-                #print("Symbols defined at", {str(s) for s in syms_defined_at})
+                # Symbols read in the body become inlined values, not input connectors.
                 symbol_rhs_vars = {rhs_var for rhs_var in rhs_vars if rhs_var in available_symbols}
-                #print("Symbol rhs vars", symbol_rhs_vars)
                 rhs_vars = set(rhs_vars) - symbol_rhs_vars
-                #print("Rhs vars", rhs_vars)
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
@@ -344,7 +394,6 @@ class SplitTasklets(ppl.Pass):
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:
-                    assert rhs_var != "ptare"
                     t.add_in_connector(rhs_var)
                 for lhs_var in lhs_vars:
                     t.add_out_connector(lhs_var)
@@ -388,8 +437,6 @@ class SplitTasklets(ppl.Pass):
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
-                            if in_conn == "ptare":
-                                raise Exception(t)
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
                                     name=array_name,
