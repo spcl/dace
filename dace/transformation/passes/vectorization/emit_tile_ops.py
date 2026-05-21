@@ -69,6 +69,25 @@ _BINOP_RE = re.compile(
 )
 
 
+_CONST_STORE_RE = re.compile(r"^\s*(?P<out>\w+)\s*=\s*(?P<val>-?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*;?\s*$")
+
+
+def _constant_store_value(tasklet: dace.nodes.Tasklet) -> Optional[str]:
+    """Return the literal a constant-store tasklet writes, or ``None``.
+
+    A no-binop body ``out = <numeric literal>`` (e.g. ``aa[j, i] = 0.0``) is a
+    broadcast store: every lane gets the same constant. Recognised so it can
+    lower to a constant-fill tile + ``TileStore`` rather than be mis-parsed as
+    a binop.
+
+    :param tasklet: Tasklet to inspect.
+    :returns: The literal string (e.g. ``"0.0"``), or ``None``.
+    """
+    body = tasklet.code.as_string.strip().rstrip(";").strip()
+    m = _CONST_STORE_RE.match(body)
+    return m.group("val") if m else None
+
+
 def _is_numeric_literal(token: str) -> bool:
     """Return True iff ``token`` is a numeric literal (not an identifier).
 
@@ -489,6 +508,41 @@ class EmitTileOps(ppl.Pass):
         state.add_edge(scatter, "_dst", out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=dst_name, subset=subsets.Range.from_string(full)))
 
+    def _emit_const_tile(self,
+                         state: dace.SDFGState,
+                         map_entry: MapEntry,
+                         tasklet: dace.nodes.Tasklet,
+                         val: str,
+                         spec: TileDimSpec) -> Tuple[str, dace.nodes.AccessNode]:
+        """Materialize a tile filled with a constant (for a ``out = <const>``
+        broadcast-store body), returning ``(out_data, tile_access)``.
+
+        :param state: Parent state.
+        :param map_entry: Inner map entry (dependency source for scope).
+        :param tasklet: The constant-store tasklet (its out-edge names the
+            destination data).
+        :param val: The constant literal string.
+        :param spec: Surrounding tile spec.
+        :returns: ``(out_data_name, const_tile_access)``.
+        """
+        sdfg = state.sdfg
+        out_data = self._binop_output_data(state, tasklet)
+        dtype = sdfg.arrays[out_data].dtype
+        tile_name = self._add_tile_transient(sdfg, "_tile_c", dtype, spec.widths)
+        out_subset = ", ".join(f"0:{w}" for w in spec.widths)
+        body = f"_out[{tile_offset(spec.widths)}] = {val};"
+        fill = state.add_tasklet(
+            name=f"const_{tile_name}",
+            inputs=set(),
+            outputs={"_out"},
+            code=nested_loops(spec.widths, body),
+            language=dace.dtypes.Language.CPP,
+        )
+        state.add_nedge(map_entry, fill, dace.Memlet())
+        acc = state.add_access(tile_name)
+        state.add_edge(fill, "_out", acc, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
+        return out_data, acc
+
     def _map_entry_of(self, state: dace.SDFGState, node: dace.nodes.Node) -> MapEntry:
         """Return the MapEntry whose scope contains ``node``.
 
@@ -806,11 +860,12 @@ class EmitTileOps(ppl.Pass):
         :raises NotImplementedError: For shapes T5 MVP doesn't handle.
         """
         tasklets = self._find_body_tasklets(state, map_entry)
-        binops = [t for t in tasklets if not _is_assign_tasklet(t)]
         assign_tasklets = [t for t in tasklets if _is_assign_tasklet(t)]
-        if not binops:
+        const_stores = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is not None]
+        binops = [t for t in tasklets if not _is_assign_tasklet(t) and _constant_store_value(t) is None]
+        if not binops and not const_stores:
             raise NotImplementedError(
-                f"EmitTileOps: map {map_entry.label!r} body has no binop tasklet")
+                f"EmitTileOps: map {map_entry.label!r} body has no binop or constant-store tasklet")
 
         mask_name = self._mask_name_for_map(state, map_entry)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
@@ -822,6 +877,14 @@ class EmitTileOps(ppl.Pass):
         for t in ordered:
             out_e = list(state.out_edges(t))
             out_data, out_access = self._emit_one_binop(state, t, spec, tile_map, mask_name)
+            tile_map[out_data] = (out_access.data, out_access)
+            final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
+            all_intermediates |= set(inters)
+            if isinstance(final_edge.dst, dace.nodes.MapExit):
+                stores.append((out_access, final_edge))
+        for t in const_stores:
+            out_e = list(state.out_edges(t))
+            out_data, out_access = self._emit_const_tile(state, map_entry, t, _constant_store_value(t), spec)
             tile_map[out_data] = (out_access.data, out_access)
             final_edge, inters = self._walk_through_assigns(state, out_e[0], assign_tasklets)
             all_intermediates |= set(inters)
@@ -855,7 +918,7 @@ class EmitTileOps(ppl.Pass):
 
         # Remove the original body tasklets + the intermediate transients
         # that only connected them — scoped, so no isolated node remains.
-        for node in list(binops) + list(assign_tasklets) + list(all_intermediates):
+        for node in list(binops) + list(const_stores) + list(assign_tasklets) + list(all_intermediates):
             for e in list(state.in_edges(node)) + list(state.out_edges(node)):
                 state.remove_edge(e)
             if node in state.nodes():
