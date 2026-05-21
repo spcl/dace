@@ -38,8 +38,7 @@ def _nmaps(sdfg):
 
 
 @dace.program
-def indirect_gather_3nbr(field: dace.float64[N], idx: dace.int32[N, 3], w: dace.float64[N, 3],
-                         out: dace.float64[N]):
+def indirect_gather_3nbr(field: dace.float64[N], idx: dace.int32[N, 3], w: dace.float64[N, 3], out: dace.float64[N]):
     """``out[jc] = sum_k w[jc, k] * field[idx[jc, k]]`` -- 3-neighbor
     gather via an index table. Parallel over ``jc``."""
     for jc in dace.map[0:N]:

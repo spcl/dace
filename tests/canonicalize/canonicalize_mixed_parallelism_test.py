@@ -92,13 +92,13 @@ def test_mixed_parallelism_b_keeps_sequential_j():
 
 @pytest.mark.xfail(strict=True,
                    reason=('Target canonical form not yet reached: the fully-parallel A statement '
-                          '(A[j, i] = A[j, i] * 2.0, independent over both i and j) should fission '
-                          'into a STANDALONE collapsed 2D Map, separate from the j-carried B '
-                          'statement (B -> map i: { loop j }). Today canonicalize keeps A and B '
-                          'sharing the outer i-map (map_param_counts == [1, 1]: an i-map containing '
-                          'an inner A j-map and the B j-loop) instead of fissioning A out to its own '
-                          '2-parameter Map. Value-preserving regardless (see the value test); this '
-                          'pins the structural ideal as a fix target.'))
+                           '(A[j, i] = A[j, i] * 2.0, independent over both i and j) should fission '
+                           'into a STANDALONE collapsed 2D Map, separate from the j-carried B '
+                           'statement (B -> map i: { loop j }). Today canonicalize keeps A and B '
+                           'sharing the outer i-map (map_param_counts == [1, 1]: an i-map containing '
+                           'an inner A j-map and the B j-loop) instead of fissioning A out to its own '
+                           '2-parameter Map. Value-preserving regardless (see the value test); this '
+                           'pins the structural ideal as a fix target.'))
 def test_mixed_parallelism_A_becomes_collapsed_2d_map():
     """Target: the fully-parallel A statement fissions into a single
     collapsed 2D Map (a MapEntry with two parameters)."""
