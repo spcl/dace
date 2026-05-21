@@ -435,6 +435,21 @@ bugs.
   dependence (each lane writes its own ``a[i+k]``). Refuse otherwise.
 - **Goal:** add to canonicalize so ``s353`` and the dense variant become
   parallel maps. (User-requested 2026-05-21.)
+- **TSVC re-roll candidates** (`VectraArtifacts/tsvc_2/tsvc2_core.py`):
+  ``s351`` (dense step-4 saxpy -- the dense case), ``s353`` (indirect step-4
+  sparse saxpy -- the gather case), ``s352`` (step-5 unrolled dot reduction),
+  ``s116`` (step-4), ``s31111`` (step-4 reduction). Pinned by
+  ``tests/canonicalize/canonicalize_reroll_unrolled_test.py``.
+
+### L-G. TODO — broaden loop-distribution (node splitting) coverage
+- **Have:** ``canonicalize_mixed_parallelism_test.py`` (one fully-parallel + one
+  carried statement in a nest) and the ``LoopFission`` pass.
+- **TSVC node-splitting kernels to cover** (splitting the loop body into
+  separate loops exposes parallel/vectorizable sub-loops):
+  ``s211``, ``s212``, ``s221``, ``s222``, ``s231``, ``s232``, ``s233``,
+  ``s243``, ``s244``, ``s126``, ``s1213`` (all in ``tsvc2_core.py``). Survey
+  which already fission+parallelize under canonicalize and which need work;
+  see also L-B. (User-requested 2026-05-21.)
 
 ### L-F. TODO — best-effort loop peeling to expose a parallel middle
 - **Idea:** a best-effort pass that peels up to ``X`` leading and ``Y`` trailing
