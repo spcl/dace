@@ -6,6 +6,24 @@ Each entry: the bug, the file/locus, the fix, and the reproducer unit test.
 The consolidated PR = these fixes, each with its reproducer test, separated
 from the canonicalize-pipeline work.
 
+## Scope — what is actually a fix to `main` code
+
+Only fixes to files/passes that **exist on `origin/main`** belong in the
+consolidated main PR. As of now that set is:
+
+- **Existing-transformation fixes:** `loop_to_map.py` (#1),
+  `map_fission.py` (#7), `trivial_tasklet_elimination.py` (#11).
+- **Core-file fixes:** `sdfg/validation.py` (#9),
+  `frontend/python/newast.py` (#10, already up as **PR #2375**).
+- **Investigated, NOT a bug (no code change):** `helpers.py`
+  `preserve_minima` (#3).
+
+`MoveIfIntoLoop` (#2) and `MoveLoopInvariantIfUp` (#6) are **yakup/dev-only**
+passes — they do **not** exist on `main` (verified: no `class MoveIfIntoLoop`
+/ `class MoveLoopInvariantIfUp` anywhere on `origin/main`). Their entries below
+are kept for history but are **excluded from the consolidated main PR**; they
+are internal pipeline code, fixed in place on `yakup/dev`.
+
 **Reproducer constraint (binding):** every reproducer test must use only
 APIs available on `main` — it must NOT import or depend on the
 canonicalization pass or any not-yet-upstream pipeline code. Build the SDFG
@@ -34,6 +52,7 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   recovery).
 
 ### 2. `MoveIfIntoLoop._move` left stale `NestedSDFG` parent references
+- **Scope: yakup/dev-only — NOT on `main`, excluded from the consolidated PR.**
 - **File:** `dace/transformation/passes/move_if_into_loop.py`
 - **Commit:** `e74237dda` (pushed `yakup/dev`)
 - **Bug:** `_move` deepcopy + re-adds blocks; a nested SDFG carried along
@@ -184,6 +203,8 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   multi-pass usage.
 
 ### 6. `MoveLoopInvariantIfUp` is broken (dead code) — redesign in progress
+- **Scope: yakup/dev-only — NOT on `main`, excluded from the consolidated PR.**
+  (The broken version was yakup/dev's own earlier code, not main's.)
 - **File:** `dace/transformation/interstate/move_loop_invariant_if_up.py`
 - **Bugs:** `expressions()` returns `node_path_graph(cls.loop)` but no
   `loop` PatternNode exists (only `map_state`/`map_entry`/`if_block`) →
