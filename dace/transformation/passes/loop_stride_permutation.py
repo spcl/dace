@@ -10,7 +10,7 @@ proven, symbolic-safe ``MinimizeStridePermutation`` (dependence-free by the
 Map contract). This named slot is kept so a future direct loop-level
 implementation has an honest place; until then the work happens post-L2M.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -29,7 +29,7 @@ class LoopStridePermutation(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> Set:
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
