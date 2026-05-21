@@ -554,7 +554,7 @@ class Vectorize(ppl.Pass):
 
     def _boundary_lane_dims(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                             vector_map_param: str) -> dict:
-        """Map each NSDFG connector to the dim its boundary edge widens for the lane.
+        """Map each NSDFG connector to its lane dim in inner-array coordinates.
 
         The connector name equals the inner array name. For each boundary
         edge, the lane dim is the subset dim whose ``begin`` references
@@ -562,23 +562,52 @@ class Vectorize(ppl.Pass):
         ``i``). Used by ``expand_memlet_expression`` when the inner body
         access has lost the param to a length-1 connector view.
 
+        ``prepare_vectorized_array`` collapses every length-1 boundary
+        subset dim, so the inner connector array can have fewer dims than
+        the boundary subset (e.g. a ``B[i+1, j+1:j+9]`` write whose inner
+        descriptor is the 1-D ``(W,)`` vector). The returned dim is
+        therefore translated into the *collapsed inner-array* coordinates:
+        the count of surviving (non-length-1) boundary dims preceding the
+        param dim. Without this, a stale boundary index (1 for ``B`` above)
+        is out of range for the 1-D inner subset and the lane fallback in
+        ``expand_memlet_expression`` silently never widens the write.
+
         :param state: State holding the NSDFG node.
         :param nsdfg: The nested SDFG node.
         :param vector_map_param: The vectorized map parameter name.
-        :returns: ``{connector_name: lane_dim}`` for connectors whose
-            boundary edge carries the param in exactly one dim.
+        :returns: ``{connector_name: lane_dim}`` (inner-array coordinates)
+            for connectors whose boundary edge carries the param in exactly
+            one dim.
         """
         lane_dims: dict = {}
         for edge, conn in ([(e, e.dst_conn) for e in state.in_edges(nsdfg)] +
                            [(e, e.src_conn) for e in state.out_edges(nsdfg)]):
             if conn is None or edge.data is None or edge.data.subset is None:
                 continue
+            boundary_subset = edge.data.subset
             param_dims = []
-            for d, (b, _e, _s) in enumerate(edge.data.subset):
+            for d, (b, _e, _s) in enumerate(boundary_subset):
                 if hasattr(b, "free_symbols") and vector_map_param in {str(fs) for fs in b.free_symbols}:
                     param_dims.append(d)
-            if len(param_dims) == 1:
-                lane_dims[conn] = param_dims[0]
+            if len(param_dims) != 1:
+                continue
+            param_dim = param_dims[0]
+            inner = nsdfg.sdfg.arrays.get(conn)
+            inner_ndim = len(inner.shape) if inner is not None else len(boundary_subset)
+            if inner_ndim < len(boundary_subset):
+                kept_before = 0
+                for d, (b, e, s) in enumerate(boundary_subset):
+                    if d == param_dim:
+                        break
+                    length = e - b + 1
+                    try:
+                        if dace.symbolic.simplify(length) != 1:
+                            kept_before += 1
+                    except (TypeError, ValueError, AttributeError):
+                        kept_before += 1
+                lane_dims[conn] = kept_before
+            else:
+                lane_dims[conn] = param_dim
         return lane_dims
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
