@@ -7,28 +7,38 @@ The mask lives directly in the parent state (between ``MapEntry`` and
 the body) as a register transient, so downstream :class:`EmitTileOps`
 can wire it into every lib node without crossing a NestedSDFG boundary.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import dace
-from dace import properties, symbolic
+from dace import properties
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileMaskGen
-from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
-def _mask_array_name_for(map_entry: MapEntry) -> str:
-    """Build a per-map mask array name to keep names distinct when
-    several inner maps coexist in the same SDFG.
+def _mask_array_name_for(parent_sdfg: dace.SDFG) -> str:
+    """Build a per-map mask array name, unique within the SDFG.
 
-    :param map_entry: Inner map entry the mask is being attached to.
-    :returns: ``"_tile_iter_mask"`` for the first map, ``"<base>_<n>"``
-        for subsequent ones.
+    Several inner maps can coexist in one state (e.g. jacobi2d's
+    B-update and A-update); each needs its OWN mask transient + access
+    node in its OWN scope, otherwise EmitTileOps would wire one map's
+    mask into another map's (disjoint) scope.
+
+    :param parent_sdfg: SDFG the mask array is added to.
+    :returns: ``"_tile_iter_mask"`` for the first map, then
+        ``"_tile_iter_mask_1"``, ``"_tile_iter_mask_2"``, ... — the
+        first name not already present in ``parent_sdfg.arrays``.
     """
-    return TileNameScheme.ITER_MASK
+    base = TileNameScheme.ITER_MASK
+    if base not in parent_sdfg.arrays:
+        return base
+    idx = 1
+    while f"{base}_{idx}" in parent_sdfg.arrays:
+        idx += 1
+    return f"{base}_{idx}"
 
 
 @properties.make_properties
@@ -106,12 +116,15 @@ class GenerateTileIterationMask(ppl.Pass):
         :param parent_state: State holding the inner map.
         :param map_entry: Inner map entry.
         :param spec: Per-dim tile specification.
-        :returns: ``True`` when a mask was added; ``False`` if a
-            ``_tile_iter_mask`` array already exists (idempotent).
+        :returns: ``True`` when a mask was added; ``False`` if this map
+            already has a ``TileMaskGen`` in its scope (idempotent
+            per-map, not per-SDFG — so multiple maps in one state each
+            get their own mask).
         """
-        mask_name = _mask_array_name_for(map_entry)
-        if mask_name in parent_sdfg.arrays:
+        scope = parent_state.all_nodes_between(map_entry, parent_state.exit_node(map_entry)) or set()
+        if any(isinstance(node, TileMaskGen) for node in scope):
             return False
+        mask_name = _mask_array_name_for(parent_sdfg)
         parent_sdfg.add_array(
             mask_name,
             list(spec.widths),

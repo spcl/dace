@@ -74,7 +74,7 @@ def test_emit_tile_ops_rewrites_k2_axpy_body():
 def test_emit_tile_ops_refuses_without_mask():
     """Without ``GenerateTileIterationMask`` the emitter refuses loudly."""
     sdfg = _build_k2_axpy_sdfg()
-    with pytest.raises(NotImplementedError, match="lacks"):
+    with pytest.raises(NotImplementedError, match="GenerateTileIterationMask"):
         EmitTileOps(widths=(4, 8)).apply_pass(sdfg, {})
 
 
