@@ -34,7 +34,6 @@ class CPUCodeGen(TargetCodeGenerator):
     language = "cpp"
 
     def _define_sdfg_arguments(self, sdfg, arglist):
-
         # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
