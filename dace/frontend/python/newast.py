@@ -5634,8 +5634,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.storage,
                                                   find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
-            # Deepcopy: ``Memlet.simple`` stores the subset by reference and
-            # ``rng`` may be a cached Range shared by sibling slice reads.
+            # ``Memlet.simple`` keeps the subset by reference, but ``rng`` may be a
+            # cached Range shared by sibling slice reads, so give this edge its own copy.
             self.current_state.add_nedge(
                 rnode, wnode,
                 Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
