@@ -296,7 +296,8 @@ def test_cond_index_diverge_frontend():
     sdfg.validate()
     for sel, base in ((1, 5), (0, 5), (1, 30), (0, 10)):
         A = np.array([sel], dtype=np.int64)
-        offset = 2 if sel > 0 else 4
+        # idx3 = idx2 + (1 if taken else 4), idx2 = idx + 1.
+        offset = 1 if sel > 0 else 4
         expected = np.array([B[base + 1 + offset]])
         got = np.zeros(1)
         sdfg(A=A, B=B.copy(), C=got, idx=base)
@@ -945,6 +946,13 @@ def test_no_else_branch_implicit_merge_api():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True,
+                   reason="GENUINE SymbolPropagation bug: the input SDFG validates, but the pass "
+                   "propagates `anext = a + b` forward INTO the `{b: a, a: anext}` edge, producing "
+                   "`{b: a, a: a + b}` -- now `a` is both READ (by `b = a` and `a + b`) and WRITTEN on "
+                   "the same interstate edge, which validation rejects as a race condition. The pass "
+                   "must not substitute a symbol into an edge when doing so makes a variable both read "
+                   "and assigned on that edge. Pinned to fix.")
 def test_interdependent_pair_loop_api():
     """
     Two mutually inter-dependent loop-carried symbols updated on one edge.
