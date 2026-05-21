@@ -69,15 +69,19 @@ def _build_spmv():
     return _spmv_kernel.to_sdfg(simplify=True)
 
 
-def test_classify_tile_access_indirect_returns_unrecognized():
-    """The K-dim classifier currently flags indirect subsets as
-    :attr:`UNRECOGNIZED`: it cannot peel the linear coefficient of a
-    tile iter-var when the subset is gated by an outer-array load."""
+def test_classify_tile_access_indirect_returns_gather():
+    """The unified analysis classifies an indirect subset (``idx[i]``,
+    a data-dependent / non-affine index) as :attr:`GATHER`: it is a
+    non-box access — the index dim is neither an affine bijection of a
+    tile iter-var nor a structured ``int_floor`` of one. (Emission of
+    indirect gather is still refused by ``EmitTileOps`` — see the
+    orchestrator-refusal tests below; only the *classification* lands
+    here.)"""
     from dace import subsets
     from dace.symbolic import pystr_to_symbolic
     indirect = subsets.Range([(pystr_to_symbolic("idx[i]"), pystr_to_symbolic("idx[i]"), 1)])
     cls = classify_tile_access(indirect, array_strides=(1,), tile_iter_vars=("i",))
-    assert cls.kind == TileAccessKind.UNRECOGNIZED
+    assert cls.kind == TileAccessKind.GATHER
 
 
 def test_vectorize_cpu_multi_dim_refuses_1d_indirect_stencil():
