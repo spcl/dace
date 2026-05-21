@@ -71,18 +71,40 @@ def _innermost_map_K(sdfg: dace.SDFG):
     return len(candidates[0].map.params)
 
 
+def _collapsible_innermost_K(sdfg: dace.SDFG):
+    """Return the K an innermost map exposes *after* collapsing nested maps.
+
+    A realistic K-dim kernel (``LoopToMap`` -> ``simplify``) leaves
+    perfectly-nested single-param maps (``for i: for j:`` becomes an ``i``
+    map wrapping a ``j`` map), so a raw param count reports K=1 and the
+    tile arm would silently degrade a 2D kernel to a 1D inner-dim tile.
+    Mirror the orchestrator's front-of-pipeline ``MapCollapse`` on a
+    throwaway copy to report the K the orchestrator will actually tile.
+
+    :param sdfg: SDFG to inspect (not mutated).
+    :returns: ``len(map.params)`` of the innermost map after collapse, or
+        ``None`` when no map is present.
+    """
+    from dace.transformation.dataflow import MapCollapse
+    probe = copy.deepcopy(sdfg)
+    probe.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
+    return _innermost_map_K(probe)
+
+
 def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
     """Pick ``widths`` for ``VectorizeCPUMultiDim`` from the SDFG's
-    innermost map's dimensionality.
+    innermost map's *collapsed* dimensionality.
 
     :param sdfg: SDFG to inspect.
     :param vector_width: Innermost-dim tile width
         (forwarded from the test).
     :returns: ``(vector_width,)`` for K=1, ``(8, vector_width)`` for
         K=2 (or higher). Caps at K=2 — the v2 MVP exercises K=1 and
-        K=2; K=3 is supported by the lib nodes but not auto-picked.
+        K=2; K=3 is supported by the lib nodes but not auto-picked. The K
+        is taken after a probe ``MapCollapse`` so a perfectly-nested 2D
+        kernel picks K=2 (not the un-collapsed-map K=1).
     """
-    K = _innermost_map_K(sdfg)
+    K = _collapsible_innermost_K(sdfg)
     if K is None or K < 1:
         return (vector_width,)
     if K == 1:

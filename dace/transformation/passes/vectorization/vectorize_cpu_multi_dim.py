@@ -119,10 +119,27 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
+        For K >= 2 the K-dim tile is taken over the last ``K`` params of
+        one innermost map. A realistic K-dim kernel
+        (``@dace.program`` -> ``LoopToMap`` -> ``simplify``) instead leaves
+        perfectly-nested *single*-param maps (``for i: for j: ...`` becomes
+        an ``i`` map wrapping a ``j`` map), on which ``MarkTileDims`` would
+        raise ("only 1 param < K") and the kernel would silently degrade to
+        a 1D inner-dim tile. Collapse those nested maps into one K-param map
+        first so the tile genuinely spans K dims and lowers to K-fold scalar
+        loops. ``MapCollapse`` only fires on a perfectly-nested same-schedule
+        pair (its own ``can_be_applied`` guard), so a sequential/carried-dep
+        inner loop (which stays a ``LoopRegion``, not a map) is left alone.
+        K == 1 never collapses (a 2D kernel under ``widths=(W,)`` must keep
+        its outer map separate and tile only the inner dim).
+
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
+        if len(self._widths) >= 2:
+            from dace.transformation.dataflow import MapCollapse
+            sdfg.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
         result = super().apply_pass(sdfg, pipeline_results)
         sdfg.expand_library_nodes()
         assert_no_laneid_in_tile_path(sdfg)
