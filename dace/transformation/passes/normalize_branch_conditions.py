@@ -1,13 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+""" Pass that rewrites :class:`~dace.sdfg.sdfg.ConditionalBlock` branch conditions into a canonical form. """
 
 import sympy
 import dace
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 from dace import SDFG
 from dace.properties import CodeBlock
+from dace.sdfg.graph import Edge
 from dace.sdfg.sdfg import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl, transformation
-from sympy import pycode
 
 
 @transformation.explicit_cf_compatible
@@ -19,12 +20,12 @@ class NormalizeBranchConditions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> Set:
+        return set()
 
     _cond_assignment_state_id = 0
 
-    def _get_in_edge(self, cb: ConditionalBlock, always_create_new_state: bool):
+    def _get_in_edge(self, cb: ConditionalBlock, always_create_new_state: bool) -> Edge:
         g = cb.parent_graph
         if g.in_degree(cb) > 1 or g.in_degree(cb) == 0 or always_create_new_state:
             is_start_block = (g.start_block == cb)
@@ -38,18 +39,20 @@ class NormalizeBranchConditions(ppl.Pass):
         ie = g.in_edges(cb)[0]
         return ie
 
-    def analyze_condition(self, cond_str: str, sdfg: dace.SDFG):
+    def analyze_condition(self, cond_str: str, sdfg: dace.SDFG) -> Optional[Tuple[Optional[str], Optional[str]]]:
         """
-        Analyze a condition string from an if statement.
-        Return None if analysis failes.
-        Else returns the new condition as a string and required interstate assignment
-        Returns None, None if nothing new is necessray
+        Analyze a condition string from an ``if`` statement.
+
+        :param cond_str: The branch condition as a string.
+        :param sdfg: The SDFG owning the branch, used to allocate a fresh symbol when needed.
+        :returns: ``None`` if analysis fails (e.g. multiple ``==`` operators); ``(None, None)`` if the condition is
+                  already normalized; otherwise ``(new_condition, interstate_assignment)`` where the latter may be
+                  ``None`` when no extra assignment is required.
         """
 
         def _is_just_a_variable(symexpr: dace.symbolic.SymExpr, cond_lhs: str) -> bool:
             free_symbols = symexpr.free_symbols
             funcs = list(symexpr.atoms(sympy.Function))
-            print(symexpr, free_symbols, funcs)
             return (len(free_symbols) == 1 and len(funcs) == 0
                     and cond_lhs.strip().replace("(", "").replace(")", "") == str(next(iter(free_symbols))).strip())
 
@@ -87,8 +90,8 @@ class NormalizeBranchConditions(ppl.Pass):
             else:
                 symexpr = dace.symbolic.pystr_to_symbolic(cond_str)
                 if _is_just_a_variable(symexpr, cond_str):
-                    # Found format `if(var)`
-                    new_cond_str = f"{pycode(symexpr).strip()} == 1"
+                    # Found format `if(var)`; ``symexpr`` is a single symbol, so its string is the variable name.
+                    new_cond_str = f"{str(symexpr).strip()} == 1"
                     return (new_cond_str, None)
                 else:
                     # Found format `if(expr)`
@@ -100,15 +103,17 @@ class NormalizeBranchConditions(ppl.Pass):
 
     def _apply(self, sdfg: dace.SDFG):
         """
-        Normalized branch conditions are of form:
-        `if (cond1 == 1)`
-        Where `cond1` is a symbol / variable
+        Normalize branch conditions into the form ``if (cond1 == 1)``, where ``cond1`` is a symbol or variable.
 
         Supported patterns to change are:
-        `if(cond1) -> if(cond1 == 1)`
-        `if((expr) == 1) -> cond1 = expr; if(cond1 == 1)`
-        `if((expr)) -> cond1 = expr; if(cond1 == 1)`
-        Where `expr` does not contain a `==`
+
+        * ``if(cond1) -> if(cond1 == 1)``
+        * ``if((expr) == 1) -> cond1 = expr; if(cond1 == 1)``
+        * ``if((expr)) -> cond1 = expr; if(cond1 == 1)``
+
+        where ``expr`` does not contain a ``==`` operator.
+
+        :param sdfg: The SDFG to normalize, recursing into nested SDFGs.
         """
         for cb in sdfg.all_control_flow_blocks():
             if not isinstance(cb, ConditionalBlock):
@@ -117,7 +122,6 @@ class NormalizeBranchConditions(ppl.Pass):
                 if cond is None or cond.language != dace.dtypes.Language.Python:
                     continue
 
-                new_cond_name = "normalized_condition"
                 analysis = self.analyze_condition(cond.as_string, sdfg)
                 if analysis is None:
                     # Analysis failed (multiple `==` operators, or not Python)
@@ -145,14 +149,11 @@ class NormalizeBranchConditions(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """
-        Normalized branch conditions are of form:
-        `if (cond1 == 1)`
-        Where `cond1` is a symbol / variable
+        Rewrite branch conditions into the canonical form ``if (cond1 == 1)``, where ``cond1`` is a symbol or variable.
 
-        Supported patterns to change are:
-        `if(cond1) -> if(cond1 == 1)`
-        `if((expr) == 1) -> cond1 = expr; if(cond1 == 1)`
-        `if((expr)) -> cond1 = expr; if(cond1 == 1)`
+        :param sdfg: The SDFG to normalize.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: ``None`` (this pass reports no per-element results).
         """
         self._apply(sdfg)
         return None
