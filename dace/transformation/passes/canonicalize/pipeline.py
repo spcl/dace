@@ -32,6 +32,7 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -96,6 +97,12 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # -> the single SimplifyPass (only here and at the end).
     s += [('clean', _uniq), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
+
+    # reroll: re-roll a hand-unrolled lane chain (step ``S`` loop whose body is
+    # ``S`` lanes at offsets 0..S-1) back to a step-1 loop, so the lanes do not
+    # survive normalization as a strided ``S*i + k`` access that blocks
+    # LoopToMap. Runs while the loop is still in step-``S`` form.
+    s += [('reroll', RerollUnrolledLoops())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
     # a conditional per independent output so it can fission later.

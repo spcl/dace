@@ -74,11 +74,6 @@ def test_unrolled_indirect_value_preserving():
     assert np.allclose(got, a0 + alpha * b[ip])
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('Re-roll/un-tile of a manually-unrolled lane chain is not yet implemented '
-                           '(CORE_BUGFIXES.md L-E). Canonicalize normalizes the step-4 loop to step 1 but '
-                           'keeps the 4 lanes ``a[4*i + k]``; LoopToMap then refuses on the multi-lane '
-                           'read-write pattern, so no parallel map appears. Value-correct today.'))
 def test_unrolled_dense_becomes_map():
     n = 16
     sdfg = unrolled_dense.to_sdfg(simplify=True)
@@ -87,9 +82,11 @@ def test_unrolled_dense_becomes_map():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason=('Re-roll/un-tile of a manually-unrolled lane chain is not yet implemented '
-                           '(CORE_BUGFIXES.md L-E). The indirect (gather) ``b[ip[i + k]]`` lanes must also '
-                           're-roll to a step-1 loop before LoopToMap can parallelize. Value-correct today.'))
+                   reason=('The dense case re-rolls (RerollUnrolledLoops), but the indirect ``b[ip[i + k]]`` '
+                           'gather lowers the loop body to TWO states (a slice state + the gather/compute '
+                           'state), and the re-roll matcher currently handles only a single-state body. '
+                           'Cross-state lane matching is the remaining work (CORE_BUGFIXES.md L-E). '
+                           'Value-correct today.'))
 def test_unrolled_indirect_becomes_map():
     n = 16
     sdfg = unrolled_indirect.to_sdfg(simplify=True)

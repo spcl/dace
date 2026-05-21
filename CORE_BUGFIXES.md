@@ -433,8 +433,17 @@ bugs.
 - **Match conditions:** loop step ``S`` equals the lane count; every non-lane-0
   statement is structurally lane-0 with ``i -> i + k``; no cross-lane carried
   dependence (each lane writes its own ``a[i+k]``). Refuse otherwise.
-- **Goal:** add to canonicalize so ``s353`` and the dense variant become
-  parallel maps. (User-requested 2026-05-21.)
+- **Status:** DONE for the **dense** case. ``RerollUnrolledLoops``
+  (``dace/transformation/passes/canonicalize/reroll_unrolled_loops.py``, wired
+  as the ``reroll`` stage after ``clean``) matches a single-state body with
+  ``S`` isomorphic lanes at offsets ``0 .. S-1``, drops lanes ``1 .. S-1``, and
+  rewrites the loop to step 1 over ``[init, end + S)``; LoopToMap then
+  parallelizes (canonicalize 140P, 0 regressions). The **indirect** ``s353``
+  case is still open: the ``b[ip[i + k]]`` gather lowers the body to TWO states
+  (slice + gather/compute), and the matcher only handles a single-state body --
+  cross-state lane matching is the remaining work. Pinned by
+  ``tests/canonicalize/canonicalize_reroll_unrolled_test.py`` (dense passes,
+  indirect strict-xfail).
 - **TSVC re-roll candidates** (`VectraArtifacts/tsvc_2/tsvc2_core.py`):
   ``s351`` (dense step-4 saxpy -- the dense case), ``s353`` (indirect step-4
   sparse saxpy -- the gather case), ``s352`` (step-5 unrolled dot reduction),
