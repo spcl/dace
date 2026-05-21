@@ -928,6 +928,22 @@ class Attr(sympy.Function):
         return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
+class Subscript(sympy.Function):
+    """
+    Represents a subscript expression, equivalent to ``a[i, j, ...]`` in Python.
+
+    The first argument is the subscripted expression; the remaining arguments are
+    the (single-point) indices.
+    """
+
+    def __str__(self):
+        indices = ', '.join(str(a) for a in self.args[1:])
+        return f'{self.args[0]}[{indices}]'
+
+    def _subs(self, *args, **kwargs):
+        return Subscript(*(a.subs(*args, **kwargs) for a in self.args))
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -1258,13 +1274,28 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
     def visit_Subscript(self, node):
-        if isinstance(node.value, ast.Attribute):
-            attr = ast.Subscript(value=ast.Name(id=node.value.attr, ctx=ast.Load()), slice=node.slice, ctx=ast.Load())
-            new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
-                                args=[self.visit(node.value.value), self.visit(attr)],
-                                keywords=[])
-            return ast.copy_location(new_node, node)
-        return self.generic_visit(node)
+        # Collect the index expressions. A tuple slice (``a[i, j]``) becomes
+        # multiple arguments to ``Subscript``; a single index becomes one argument.
+        slice_node = node.slice
+        if isinstance(slice_node, ast.Tuple):
+            indices = list(slice_node.elts)
+        else:
+            indices = [slice_node]
+
+        # Range/slice expressions cannot be represented as symbolic expressions.
+        for idx in indices:
+            if isinstance(idx, ast.Slice):
+                raise SyntaxError(f'Range/slice expressions are not supported in symbolic expressions '
+                                  f'(got slice in subscript of "{ast.unparse(node)}")')
+
+        # Recursively visit the subscripted value (handles attributes and nested
+        # subscripts via visit_Attribute / visit_Subscript).
+        value = self.visit(node.value)
+
+        new_node = ast.Call(func=ast.Name(id='Subscript', ctx=ast.Load),
+                            args=[value] + [self.visit(idx) for idx in indices],
+                            keywords=[])
+        return ast.copy_location(new_node, node)
 
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
@@ -1350,21 +1381,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
-    try:
-        return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
-    except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
-        # Replace subscript expressions with function calls
-        orig_expr = expr
-        expr = expr.replace('[', '(')
-        expr = expr.replace(']', ')')
-        try:
-            return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
-        except TypeError:  # Symbol object is not subscriptable
-            # Replace instances of "xxx[yyy]" with subscript(xxx, yyy)
-            expr = orig_expr
-            while _FUNCTION_CALL.search(expr):
-                expr = _FUNCTION_CALL.sub(r'subscript(\1, \2)', expr)
-            return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
+    return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
 
 
 @lru_cache(maxsize=2048)
@@ -1410,6 +1427,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 attribute = self._print(expr.args[1])
             return f'{self._print(expr.args[0])}{sep}{attribute}'
             # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
+        if str(expr.func) == 'Subscript':
+            indices = ', '.join(self._print(a) for a in expr.args[1:])
+            return f'{self._print(expr.args[0])}[{indices}]'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
