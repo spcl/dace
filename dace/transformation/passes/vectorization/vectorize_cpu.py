@@ -4,7 +4,7 @@ import dace
 from typing import Iterator, List, Optional, Set
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
-from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
 from dace.transformation.passes import InlineSDFGs
@@ -458,7 +458,7 @@ class VectorizeCPU(ppl.Pipeline):
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),
                 SplitTasklets(),
-                CleanDataToScalarSliceToTaskletPattern(),
+                CleanAccessNodeToScalarSliceToTaskletPattern(),
                 # Normalise direct ``MapEntry -> AccessNode`` / ``AccessNode -> MapExit``
                 # staging edges (produced by python-frontend shifted reads like
                 # ``b[i + 1]``) into 3-node chains with a plain ``_out = _in``
@@ -599,7 +599,7 @@ class VectorizeCPU(ppl.Pipeline):
             :param sdfg: The SDFG on which the pipeline is currently being applied
         """
         if self._applied_before is False:
-            CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+            CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
             self._applied_before = True
         for p in self.passes:
             p: Pass

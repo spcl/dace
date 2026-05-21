@@ -2461,8 +2461,8 @@ def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 def test_s1161():
     sdfg = dace_s1161.to_sdfg()
     sdfg.save("s1161.sdfg")
-    from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
-    CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
     sdfg.save("s1161_v2.sdfg")
     be = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}

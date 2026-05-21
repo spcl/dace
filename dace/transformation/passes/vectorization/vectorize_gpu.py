@@ -2,7 +2,7 @@
 from typing import Iterator, List, Optional, Set
 import dace
 from dace.transformation import Pass, pass_pipeline as ppl
-from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
 from dace.transformation.passes import InlineSDFGs
@@ -107,7 +107,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             RemoveMathCall(),
             PowerOperatorExpansion(),
             SplitTasklets(),
-            CleanDataToScalarSliceToTaskletPattern(),
+            CleanAccessNodeToScalarSliceToTaskletPattern(),
             InlineSDFGs(),
             Vectorize(templates={
                 "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
