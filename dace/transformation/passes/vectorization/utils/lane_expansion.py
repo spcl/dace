@@ -280,6 +280,106 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
         edge.data.assignments = new_assignments
 
 
+def _widen_index_connector_to_tile(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
+                                   parent_state: dace.SDFGState, idx_conn: str, vector_width: int,
+                                   tile_iter_var: str) -> None:
+    """Reshape a length-1 index connector to a ``(W,)`` tile and widen its outer edge.
+
+    The frontend loads the per-lane index into a ``(1,)`` connector (``idx[i]``).
+    To gather the ``W`` per-lane indices, the inner connector array is reshaped
+    to ``(W,)`` and its outer edge subset is grown from ``idx[i]`` to the tile
+    region ``idx[i:i+W]`` (the dim whose ``begin`` references the tile var).
+    Idempotent: a connector already of shape ``(W,)`` is left untouched.
+
+    :param inner_sdfg: The tile-body SDFG.
+    :param nsdfg_node: The body NestedSDFG node.
+    :param parent_state: State holding ``nsdfg_node``.
+    :param idx_conn: The index connector name.
+    :param vector_width: Tile width ``W``.
+    :param tile_iter_var: The tile iter-var name.
+    """
+    arr = inner_sdfg.arrays[idx_conn]
+    if tuple(arr.shape) == (vector_width, ):
+        return
+    dtype = arr.dtype
+    inner_sdfg.remove_data(idx_conn, validate=False)
+    inner_sdfg.add_array(idx_conn, [vector_width], dtype, storage=dace.dtypes.StorageType.Register, transient=False)
+    sym = dace.symbolic.symbol(tile_iter_var)
+    for oe in parent_state.in_edges(nsdfg_node):
+        if oe.dst_conn != idx_conn or oe.data is None or oe.data.subset is None:
+            continue
+        new_ranges = []
+        for (b, e, s) in oe.data.subset:
+            b_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
+            if sym in b_syms:
+                new_ranges.append((b, b + (vector_width - 1), 1))
+            else:
+                new_ranges.append((b, e, s))
+        oe.data.subset = dace.subsets.Range(new_ranges)
+
+
+def fan_out_tile_gather_index_symbols(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
+                                      parent_state: dace.SDFGState, vector_width: int,
+                                      tile_iter_var: str) -> Set[str]:
+    """Tile analog of :func:`expand_interstate_assignments_to_lanes` for gather indices.
+
+    A frontend-lowered gather ``src[idx[i]]`` leaves the per-lane index in a
+    length-1 connector ``C_idx`` (``= idx[i]``) consumed by an interstate-edge
+    assignment ``__sym = C_idx`` (the point gather ``src[__sym]`` reads
+    ``__sym``). To gather the ``W`` per-lane indices into an array — the same
+    fan the 1D path builds as ``sym_laneid_<i>`` — this widens ``C_idx`` to a
+    ``(W,)`` tile (``idx[i] -> idx[i:i+W]``) and fans ``__sym`` out into
+    ``__sym_laneid_<l> = C_idx[l]`` per lane. A later collapse pass promotes
+    the per-lane fan into a ``TileGather`` and simplifies the symbols away
+    (the tile mirror of expand-then-``DetectGather``).
+
+    Unlike the 1D helper, a length-1 index connector is NOT treated as a
+    lane-invariant scalar — the tile body has already loaded ``idx`` into it,
+    so it is widened and indexed per lane.
+
+    :param inner_sdfg: The tile-body SDFG whose interstate edges to fan out.
+    :param nsdfg_node: The body NestedSDFG node (for connector names).
+    :param parent_state: State holding ``nsdfg_node`` (for outer edges).
+    :param vector_width: Number of lanes ``W`` (K=1 tile).
+    :param tile_iter_var: The tile iter-var name (the strided map param).
+    :returns: The set of widened index-connector names.
+    """
+    widened: Set[str] = set()
+    for edge in inner_sdfg.all_interstate_edges():
+        assignments = edge.data.assignments
+        new_assignments = {}
+        plain = {}
+        for k, v in assignments.items():
+            if LaneIdScheme.is_laneid(k):
+                new_assignments[k] = v
+            else:
+                plain[k] = v
+        for k, v in plain.items():
+            v_expr = dace.symbolic.SymExpr(v)
+            idx_conns = sorted({
+                str(s)
+                for s in v_expr.free_symbols
+                if str(s) in nsdfg_node.in_connectors and not inner_sdfg.arrays[str(s)].transient
+                and tuple(inner_sdfg.arrays[str(s)].shape) == (1, )
+            })
+            if not idx_conns:
+                new_assignments[k] = v
+                continue
+            for c in idx_conns:
+                _widen_index_connector_to_tile(inner_sdfg, nsdfg_node, parent_state, c, vector_width, tile_iter_var)
+                widened.add(c)
+            for lane in range(vector_width):
+                lane_expr = v_expr
+                for c in idx_conns:
+                    lane_expr = lane_expr.subs(sympy.Symbol(c), dace.symbolic.SymExpr(f"{c}({lane})"))
+                lane_v = DaceSympyPrinter(set(inner_sdfg.arrays.keys())).doprint(lane_expr)
+                new_assignments[LaneIdScheme.make(k, lane)] = lane_v
+                if lane == 0:
+                    new_assignments[k] = lane_v
+        edge.data.assignments = new_assignments
+    return widened
+
+
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
     """
     Demote interstate-edge symbols that do not depend on array data into scalar data nodes.
