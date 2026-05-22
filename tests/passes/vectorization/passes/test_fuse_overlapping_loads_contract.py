@@ -176,21 +176,15 @@ def test_fuse_idempotent_on_jacobi1d():
     no-op: the union window already exists; the pass must not double-
     fuse or invalidate the SDFG."""
     from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
+    # Reuse the canonical jacobi1d kernel (dedup) instead of a local copy.
+    from tests.passes.vectorization.kernels.test_jacobi import jacobi1d
 
     _S = 130
-
-    @dace.program
-    def _jacobi1d_local(A: dace.float64[S], B: dace.float64[S], tsteps: dace.int64):
-        for t in range(tsteps):
-            for i in dace.map[0:S - 2]:
-                B[i + 1] = 0.33333 * (A[i] + A[i + 1] + A[i + 2])
-            for i in dace.map[0:S - 2]:
-                A[i + 1] = 0.33333 * (B[i] + B[i + 1] + B[i + 2])
 
     A = np.random.random(_S)
     B = np.random.random(_S)
     vectorized_sdfg = run_vectorization_test(
-        dace_func=_jacobi1d_local,
+        dace_func=jacobi1d,
         arrays={
             "A": A,
             "B": B

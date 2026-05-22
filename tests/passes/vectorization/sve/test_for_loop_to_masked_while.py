@@ -32,10 +32,8 @@ from dace.transformation.passes.vectorization.for_loop_to_masked_while import Fo
 N = dace.symbol("N")
 
 
-@dace.program
-def _axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-    for i in dace.map[0:N]:
-        c[i] = a[i] + 2.0 * b[i]
+from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy  # noqa: E402 (dedup)
+
 
 
 def _mask_fill_bodies(sdfg):
@@ -49,7 +47,7 @@ def _mask_fill_bodies(sdfg):
 def test_global_mask_formula_keyed_to_iter_var_and_global_ub():
     """``mode='global'`` fills ``mask[l] = (i + l < N)`` — keyed to the
     loop variable and the global exclusive bound, not the map's lb/ub."""
-    sd = _axpy.to_sdfg(simplify=True)
+    sd = axpy.to_sdfg(simplify=True)
     NestInnermostMapBodyIntoNSDFG(vector_width=8).apply_pass(sd, {})
     applied = GenerateIterationMask(vector_width=8, mode="global", global_ub="N").apply_pass(sd, {})
     assert applied == 1
@@ -65,7 +63,7 @@ def test_global_mask_formula_keyed_to_iter_var_and_global_ub():
 def test_global_mode_requires_global_ub_or_core_map():
     """No explicit global_ub AND no enclosing ``core`` map (un-tiled
     kernel) → loud ValueError, not a silent wrong mask."""
-    sd = _axpy.to_sdfg(simplify=True)
+    sd = axpy.to_sdfg(simplify=True)
     NestInnermostMapBodyIntoNSDFG(vector_width=8).apply_pass(sd, {})
     try:
         GenerateIterationMask(vector_width=8, mode="global").apply_pass(sd, {})
@@ -79,7 +77,7 @@ def test_global_mode_auto_derives_from_core_map():
     global_ub derives the bound from the core map (range ``0:N:B`` →
     exclusive end ``N``) and fills ``mask[l] = (i + l < N)``."""
     from dace.transformation.dataflow.tiling import MapTiling
-    sd = _axpy.to_sdfg(simplify=True)
+    sd = axpy.to_sdfg(simplify=True)
     me = [n for n, _ in sd.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
     MapTiling.apply_to(sd,
                        options={
@@ -104,7 +102,7 @@ def test_global_mode_auto_derives_from_core_map():
 def test_default_mask_form_unchanged():
     """``step_w_only`` still fills the legacy ``(lb + l <= ub)`` form —
     the global branch must not regress the default path."""
-    sd = _axpy.to_sdfg(simplify=True)
+    sd = axpy.to_sdfg(simplify=True)
     NestInnermostMapBodyIntoNSDFG(vector_width=8).apply_pass(sd, {})
     # A W-strided map so step_w_only fires.
     for n, _ in sd.all_nodes_recursive():

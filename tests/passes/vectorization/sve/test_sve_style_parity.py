@@ -22,7 +22,7 @@ N = dace.symbol("N")
 
 
 @dace.program
-def _axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+def axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     for i in dace.map[0:N]:
         c[i] = a[i] + b[i]
 
@@ -58,7 +58,7 @@ def _vectorize(prog, NV, style):
 def test_axpy_parity_across_sve_styles(sve_style):
     NV = 64
     a, b = np.random.rand(NV), np.random.rand(NV)
-    sdfg = _vectorize(_axpy, NV, sve_style)
+    sdfg = _vectorize(axpy, NV, sve_style)
     c = np.zeros(NV)
     sdfg.compile()(a=a.copy(), b=b.copy(), c=c, N=NV)
     # Single mul-free add: bit-exact across both styles.

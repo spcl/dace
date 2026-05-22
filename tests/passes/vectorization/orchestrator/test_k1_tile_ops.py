@@ -28,30 +28,20 @@ from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import StrideMapByTileWidths
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
+from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy
+from tests.passes.vectorization.passes.test_nest_innermost_map_body import bare_tasklet_body as scale
+
 N = dace.symbol("N")
 
-
 @dace.program
-def _axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-    for i in dace.map[0:N]:
-        c[i] = a[i] + b[i]
-
-
-@dace.program
-def _scale(a: dace.float64[N], b: dace.float64[N]):
-    for i in dace.map[0:N]:
-        b[i] = a[i] * 2.0
-
-
-@dace.program
-def _triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+def triad(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
     for i in dace.map[0:N]:
         a[i] = b[i] + c[i] * d[i]
 
 
 @dace.program
-def _vbor(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
-          d: dace.float64[N], e: dace.float64[N], x: dace.float64[N]):
+def vbor(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
+         d: dace.float64[N], e: dace.float64[N], x: dace.float64[N]):
     for i in range(N):
         a1 = a[i]; b1 = b[i]; c1 = c[i]; d1 = d[i]; e1 = e[i]; f1 = a[i]
         a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 +
@@ -63,10 +53,10 @@ def _vbor(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
 
 
 _KERNELS = {
-    "axpy": (_axpy, ("a", "b", "c"), "c"),
-    "scale": (_scale, ("a", "b"), "b"),
-    "triad": (_triad, ("a", "b", "c", "d"), "a"),
-    "vbor": (_vbor, ("a", "b", "c", "d", "e", "x"), "x"),
+    "axpy": (axpy, ("a", "b", "c"), "c"),
+    "scale": (scale, ("a", "b"), "b"),
+    "triad": (triad, ("a", "b", "c", "d"), "a"),
+    "vbor": (vbor, ("a", "b", "c", "d", "e", "x"), "x"),
 }
 
 

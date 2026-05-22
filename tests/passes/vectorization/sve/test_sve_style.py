@@ -24,10 +24,9 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 N = dace.symbol("N")
 
 
-@dace.program
-def axpy(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-    for i in dace.map[0:N]:
-        c[i] = a[i] + 2.0 * b[i]
+from tests.passes.vectorization.passes.test_tile_map_by_num_cores import axpy1 as axpy  # noqa: E402 (dedup)
+from tests.passes.vectorization.kernels.test_jacobi import jacobi2d as jacobi2d_sve  # noqa: E402 (dedup)
+
 
 
 @dace.program
@@ -166,17 +165,6 @@ def test_sve_triad(NV, NC):
 S = dace.symbol("S")
 
 
-@dace.program
-def jacobi2d_sve(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):
-    """3-point 2D stencil — multi-dim kernel exercising the SVE chain's
-    analysis-permute-MapExpansion path (the inner contiguous dim is the
-    j axis; outer i map stays parallel, inner j becomes Sequential +
-    W-vectorized + global-masked)."""
-    for t in range(tsteps):
-        for i, j in dace.map[0:S - 2, 0:S - 2]:
-            B[i + 1, j + 1] = 0.2 * (A[i + 1, j + 1] + A[i, j + 1] + A[i + 2, j + 1] + A[i + 1, j] + A[i + 1, j + 2])
-        for i, j in dace.map[0:S - 2, 0:S - 2]:
-            A[i + 1, j + 1] = 0.2 * (B[i + 1, j + 1] + B[i, j + 1] + B[i + 2, j + 1] + B[i + 1, j] + B[i + 1, j + 2])
 
 
 # Multi-dim non-divisible matrix (S-2 is the contiguous dim trip; pick

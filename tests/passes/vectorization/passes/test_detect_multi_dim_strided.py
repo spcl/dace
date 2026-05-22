@@ -74,6 +74,10 @@ def _run_and_check(prog, arrays, params, *, has_load: bool, has_store: bool):
 # --- diagonal load -----------------------------------------------------------
 
 
+from tests.passes.vectorization.kernels.test_strided_gather_scatter import (  # noqa: E402 (dedup)
+    gather_load_2i_i as load_2i_i, scatter_store_2i_i as store_2i_i,
+    gather_load_i_2i as load_i_2i, scatter_store_i_2i as store_i_2i)
+
 @dace.program
 def diag_load(A: dace.float64[8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
     for i, in dace.map[0:8 * N:1]:
@@ -120,10 +124,6 @@ def test_diagonal_store_collapses_to_strided_intrinsic():
 # --- A[2*i, i] load ----------------------------------------------------------
 
 
-@dace.program
-def load_2i_i(A: dace.float64[2 * 8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
-        dst[i] = A[2 * i, i] * scale
 
 
 def test_2i_i_load_collapses_to_strided_intrinsic():
@@ -143,10 +143,6 @@ def test_2i_i_load_collapses_to_strided_intrinsic():
 # --- A[2*i, i] store ---------------------------------------------------------
 
 
-@dace.program
-def store_2i_i(src: dace.float64[8 * N], A: dace.float64[2 * 8 * N, 8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
-        A[2 * i, i] = src[i] * scale
 
 
 def test_2i_i_store_collapses_to_strided_intrinsic():
@@ -166,10 +162,6 @@ def test_2i_i_store_collapses_to_strided_intrinsic():
 # --- A[i, 2*i] load ----------------------------------------------------------
 
 
-@dace.program
-def load_i_2i(A: dace.float64[8 * N, 2 * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
-        dst[i] = A[i, 2 * i] * scale
 
 
 def test_i_2i_load_collapses_to_strided_intrinsic():
@@ -189,10 +181,6 @@ def test_i_2i_load_collapses_to_strided_intrinsic():
 # --- A[i, 2*i] store ---------------------------------------------------------
 
 
-@dace.program
-def store_i_2i(src: dace.float64[8 * N], A: dace.float64[8 * N, 2 * 8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
-        A[i, 2 * i] = src[i] * scale
 
 
 def test_i_2i_store_collapses_to_strided_intrinsic():
