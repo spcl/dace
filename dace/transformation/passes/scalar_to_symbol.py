@@ -86,6 +86,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
+        if isinstance(desc, dt.DistributedDescriptor):
+            continue
         if isinstance(desc, (dt.View, dt.StructureView)):
             continue
         if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
@@ -108,10 +110,6 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             if candidate not in candidates:
                 continue
 
-            # If candidate is read-only, continue normally
-            if state.in_degree(node) == 0:
-                continue
-
             # If candidate is read by a library node, skip
             removed = False
             for oe in state.out_edges(node):
@@ -125,6 +123,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             if removed:
                 continue
             # End of read check
+
+            # If candidate is read-only, continue normally
+            if state.in_degree(node) == 0:
+                continue
 
             # Candidate may only be accessed in a top-level scope
             if state.entry_node(node) is not None:
