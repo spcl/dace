@@ -14,6 +14,7 @@ to a plain Python ``int`` / ``float`` whereas a length-1 ``Array``
 needs a 1-element numpy buffer, so this moves bridge outputs/locals
 from the latter to the former wherever it is safe.
 """
+import re
 from typing import Optional, Set
 
 import dace
@@ -21,6 +22,23 @@ from dace import Memlet, properties
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+
+
+def _strip_elem_zero(expr: str, names: Set[str]) -> str:
+    """Drop the redundant ``[0]`` accessor from references to scalarized ``names`` in ``expr``.
+
+    Only a ``name[0]`` not preceded by a word character or ``.`` is rewritten,
+    so a literal ``[0]`` index on a different, non-scalarized array whose name
+    ends in one of ``names`` (e.g. ``bar[0]`` against scalarized ``ar``) keeps
+    its subscript.
+
+    :param expr: Expression source to rewrite.
+    :param names: Names of the scalarized (now single-value) descriptors.
+    :returns: ``expr`` with the ``[0]`` accessors of ``names`` removed.
+    """
+    for nm in names:
+        expr = re.sub(rf'(?<![\w.]){re.escape(nm)}\[0\]', nm, expr)
+    return expr
 
 
 @properties.make_properties
@@ -72,36 +90,20 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
         # Strip ``[0]`` from interstate-edge assignment RHSs.
         for edge in sdfg.all_interstate_edges():
-            new_assigns = {}
-            for k, v in edge.data.assignments.items():
-                nv = v
-                for nm in scalarized:
-                    if f'{nm}[0]' in nv:
-                        nv = nv.replace(f'{nm}[0]', nm)
-                new_assigns[k] = nv
-            edge.data.assignments = new_assigns
+            edge.data.assignments = {k: _strip_elem_zero(v, scalarized) for k, v in edge.data.assignments.items()}
 
         # Strip ``[0]`` from conditional-block branch guards.
         for node in sdfg.all_control_flow_blocks():
             if isinstance(node, ConditionalBlock):
                 for cond, _body in node.branches:
-                    if cond is None:
-                        continue
-                    src = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
-                    for nm in scalarized:
-                        if f'{nm}[0]' in src:
-                            src = src.replace(f'{nm}[0]', nm)
                     if isinstance(cond, CodeBlock):
-                        cond.as_string = src
+                        cond.as_string = _strip_elem_zero(cond.as_string, scalarized)
 
         # Strip ``[0]`` from loop-region condition expressions.
         for node in sdfg.all_control_flow_regions():
             if isinstance(node, LoopRegion):
                 cond = node.loop_condition
-                src = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
-                for nm in scalarized:
-                    if f'{nm}[0]' in src:
-                        src = src.replace(f'{nm}[0]', nm)
+                src = _strip_elem_zero(cond.as_string if isinstance(cond, CodeBlock) else str(cond), scalarized)
                 if isinstance(cond, CodeBlock):
                     cond.as_string = src
                 else:
@@ -120,7 +122,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                     continue
                 if mem.data not in scalarized:
                     continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr)
+                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
 
         # The offset / dimension symbols that were carried purely for
         # the rewritten arrays are now dead.  Drop them so the signature
@@ -200,7 +202,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 mem = edge.data
                 if mem is None or mem.data is None or mem.data not in arrayized:
                     continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr)
+                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
         if self.recursive:
             for state in sdfg.all_states():
                 for node in state.nodes():
