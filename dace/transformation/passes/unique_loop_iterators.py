@@ -10,13 +10,12 @@ and any nested-SDFG symbol mapping that imports it.
 
 ``assign_loop_iterator_post_value`` additionally materializes
 ``<loop_var> = <post_value>`` in a state after the loop, so downstream
-reads of the original name see the counted-DO exit value Fortran programs.
-ON by default as it will not affect Python/SDFG API inputs.
+reads of the original name see the counted-DO exit value that Fortran
+programs leave the iterator at. ON by default as it does not affect
+Python/SDFG API inputs.
 """
 
 from typing import Optional, Union
-
-import sympy as sp
 
 import dace
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
@@ -51,15 +50,21 @@ class UniqueLoopIterators(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str) -> None:
+    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str):
         """Rename ``old_name`` to ``new_name`` inside ``cfg``.
 
-        ``replace_dict`` cascades the rename through the region's
-        states, edges, memlets, tasklets, and nested-SDFG
-        ``symbol_mapping`` *values*.  It does not rename
-        ``symbol_mapping`` *keys* (the inner symbol names, owned by the
-        inner SDFG), so those are re-keyed here and the inner SDFG is
-        recursed into when its symbol table declares the name.
+        ``replace_dict`` cascades the rename through the region's states,
+        edges, memlets, tasklets, nested-SDFG bodies, and nested-SDFG
+        ``symbol_mapping`` *values* -- recursively, at every depth. It does
+        NOT rename ``symbol_mapping`` *keys* (the inner symbol names, owned
+        by each nested SDFG). Those keys must be re-keyed here for EVERY
+        nested SDFG at any depth that imports the renamed symbol; this
+        re-keying must NOT be gated on ``old_name in node.sdfg.symbols``,
+        because ``replace_dict`` has already renamed that declaration away,
+        so the gate would be false for every nested SDFG and a grandchild's
+        ``symbol_mapping`` key (e.g. ``{i: _loop_it_0}`` whose body now reads
+        ``_loop_it_0``) would be left stale -> "Missing symbols on nested
+        SDFG: ['_loop_it_0']".
 
         :param cfg: Region (or SDFG) to rename within.
         :param old_name: Current iterator symbol name.
@@ -80,7 +85,7 @@ class UniqueLoopIterators(ppl.Pass):
                 if old_name in node.sdfg.symbols:
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
-    def _compute_post_value(self, loop: LoopRegion) -> Optional[sp.Basic]:
+    def _compute_post_value(self, loop: LoopRegion) -> Optional[dace.symbolic.SymbolicType]:
         """Counted-DO exit value: one stride past the last attained value.
 
         ``post = init + int_floor(diff, step) * step`` where
@@ -106,7 +111,7 @@ class UniqueLoopIterators(ppl.Pass):
         # Stride unknown: fall back to last-attained value.
         return loop_end
 
-    def _apply_recursive(self, sdfg: dace.SDFG) -> None:
+    def _apply_recursive(self, sdfg: dace.SDFG):
         array_names = frozenset(sdfg.arrays.keys())
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
@@ -114,6 +119,15 @@ class UniqueLoopIterators(ppl.Pass):
             old_name = cfg.loop_variable
             if not old_name:
                 # while / do-while loops have no induction variable.
+                continue
+            if old_name.startswith(f"{_LOOP_ITER_NAME_PREFIX}_"):
+                # Already a unique ``_loop_it_<N>`` (e.g. this pass ran earlier
+                # in the pipeline). Re-renaming it is pointless and, worse, the
+                # nested-SDFG re-key does not survive a second rename of an
+                # already-imported iterator -> a deeply-nested SDFG ends up
+                # referencing the new name without a ``symbol_mapping`` import
+                # ("Missing symbols on nested SDFG: ['_loop_it_<N>']"). Skipping
+                # makes the pass idempotent and avoids that corruption.
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{UniqueLoopIterators._loop_var_counter}"
             self._rename_one_loop_var(cfg, old_name, new_name)
@@ -127,15 +141,21 @@ class UniqueLoopIterators(ppl.Pass):
                             cfg,
                             f"{_POST_VALUE_STATE_PREFIX}_{UniqueLoopIterators._loop_var_counter}",
                             assignments={old_name: f"({post_value_str})"})
-            elif old_name in sdfg.symbols and old_name not in sdfg.free_symbols:
+            elif old_name in sdfg.symbols and old_name not in sdfg.used_symbols(all_symbols=False):
                 # The rename was scoped to ``cfg`` so the LoopRegion's
                 # body, init/condition/update no longer reference
                 # ``old_name``. Without the post-value epilogue there is
                 # also no surviving inter-state assignment using it, so the
                 # SDFG-level declaration left behind by the frontend leaks
-                # as a phantom free symbol on the enclosing NSDFG boundary
-                # ("Missing symbols on nested SDFG: ['i']"). Drop the dead
-                # declaration so the symbol table reflects actual usage.
+                # as a phantom free symbol on the enclosing NestedSDFG
+                # boundary ("Missing symbols on nested SDFG: ['i']"). Drop
+                # the dead declaration so the symbol table reflects actual
+                # usage. The check uses ``used_symbols(all_symbols=False)``
+                # rather than ``sdfg.free_symbols`` because the latter
+                # unconditionally re-folds ``sdfg.symbols.keys()`` back in
+                # (see ``ControlFlowRegion._used_symbols_internal``), which
+                # would make the declaration appear "used" by virtue of
+                # being declared and prevent its own removal -- circular.
                 sdfg.remove_symbol(old_name)
 
             UniqueLoopIterators._loop_var_counter += 1
@@ -145,9 +165,10 @@ class UniqueLoopIterators(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _):
         """Rename every ``LoopRegion`` iterator in ``sdfg`` and its nested SDFGs.
 
         :param sdfg: SDFG to mutate in place.
+        :param _: Pipeline results (unused).
         """
         self._apply_recursive(sdfg)

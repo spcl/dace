@@ -9,9 +9,14 @@ from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
 
 
-def _flatten_and(expr) -> list:
-    """All conjuncts of a (possibly nested) conjunction, flattened.
-    Accepts dace's own ``AND`` operator as well as ``sympy.And``."""
+def _flatten_and(expr: sympy.Basic) -> list:
+    """Collect all conjuncts of a (possibly nested) conjunction, flattened.
+
+    Accepts dace's own ``AND`` operator as well as ``sympy.And``.
+
+    :param expr: A symbolic expression, conjunction or otherwise.
+    :returns: The flattened conjuncts (the expression itself if not a conjunction).
+    """
     func = getattr(expr, 'func', None)
     if isinstance(expr, sympy.And) or getattr(func, '__name__', '') == 'AND':
         res = []

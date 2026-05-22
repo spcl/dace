@@ -6,6 +6,25 @@ Each entry: the bug, the file/locus, the fix, and the reproducer unit test.
 The consolidated PR = these fixes, each with its reproducer test, separated
 from the canonicalize-pipeline work.
 
+## Scope — what is actually a fix to `main` code
+
+Only fixes to files/passes that **exist on `origin/main`** belong in the
+consolidated main PR. As of now that set is:
+
+- **Existing-transformation/pass fixes:** `loop_to_map.py` (#1),
+  `map_fission.py` (#7), `trivial_tasklet_elimination.py` (#11),
+  `transformation/passes/symbol_propagation.py` (#12).
+- **Core-file fixes:** `sdfg/validation.py` (#9),
+  `frontend/python/newast.py` (#10, already up as **PR #2375**).
+- **Investigated, NOT a bug (no code change):** `helpers.py`
+  `preserve_minima` (#3).
+
+`MoveIfIntoLoop` (#2) and `MoveLoopInvariantIfUp` (#6) are **yakup/dev-only**
+passes — they do **not** exist on `main` (verified: no `class MoveIfIntoLoop`
+/ `class MoveLoopInvariantIfUp` anywhere on `origin/main`). Their entries below
+are kept for history but are **excluded from the consolidated main PR**; they
+are internal pipeline code, fixed in place on `yakup/dev`.
+
 **Reproducer constraint (binding):** every reproducer test must use only
 APIs available on `main` — it must NOT import or depend on the
 canonicalization pass or any not-yet-upstream pipeline code. Build the SDFG
@@ -34,6 +53,7 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   recovery).
 
 ### 2. `MoveIfIntoLoop._move` left stale `NestedSDFG` parent references
+- **Scope: yakup/dev-only — NOT on `main`, excluded from the consolidated PR.**
 - **File:** `dace/transformation/passes/move_if_into_loop.py`
 - **Commit:** `e74237dda` (pushed `yakup/dev`)
 - **Bug:** `_move` deepcopy + re-adds blocks; a nested SDFG carried along
@@ -118,6 +138,94 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   (1x→(1,2), 2x=3x=4x=(2,2)) WITHOUT touching `preserve_minima`. No code
   change to `helpers.py` / `propagation.py`.
 
+### 10. Python frontend shared a `Subset` object between two memlets
+- **File:** `dace/frontend/python/newast.py` (`ProgramVisitor.make_slice`)
+- **Commit:** `294bc51a5` (pushed `yakup/dev`); **upstream PR #2375** (cherry-pick
+  off `main`).
+- **Bug:** `make_slice` builds the slice-read memlet with
+  `Memlet.simple(array, rng, ...)`. `Memlet.simple` stores a passed-in `Subset`
+  **by reference**, and `rng` is frequently the cached `Range` the per-array
+  `accesses` cache hands back on a repeated read of the same slice. Two sibling
+  reads of e.g. `arr[i, k]` (two loop bodies under a map) produced two distinct
+  edges sharing one subset object — violating the invariant that each memlet
+  owns its subset. Any later in-place subset rewrite (loop-iterator renaming,
+  symbol replacement, offsetting) on one edge silently corrupted the other; it
+  surfaced as a value corruption when a guarded sibling loop's read kept the
+  first loop's renamed iterator while its write used its own.
+- **Fix:** deepcopy `rng` for the slice memlet's subset, mirroring the
+  `other_subset` deepcopy two lines above. Pure object-identity fix — subset
+  values and the generated SDFG are unchanged.
+- **Reproducer test (main-safe):**
+  `tests/python_frontend/slice_subset_aliasing_test.py` — asserts no two memlets
+  in the parsed SDFG share a subset (or other_subset) object, plus an
+  end-to-end value check.
+- **Status:** fixed, pushed, PR #2375 open against `main`.
+
+### 11. `TrivialTaskletElimination` dropped the read offset when the source is a `MapEntry`
+- **File:** `dace/transformation/dataflow/trivial_tasklet_elimination.py` (`apply`, expr_index 1)
+- **Commit:** `6d33f47d2` (pushed `yakup/dev`).
+- **Bug:** when the eliminated copy tasklet's source is a `MapEntry`, the
+  surviving edge leaves the map's `OUT_<read>` connector, so its memlet must
+  describe the read data and its (possibly offset) subset. `apply` reused the
+  *write* memlet for every expr_index, stranding the read offset (e.g.
+  `a[i + 1]`) in `other_subset`; a later `MapToForLoop` re-lowering read only
+  `.subset` (`[0]`) and dropped the offset, yielding an out-of-bounds /
+  wrong-value SDFG. This surfaced as a canonicalize **idempotency** failure (the
+  second `canonicalize` folded `a[i + k]` to `a[0]`).
+- **Fix:** for the `MapEntry`-source case keep the read-side memlet (data +
+  subset) on the surviving edge and carry the write subset in `other_subset`;
+  the AccessNode→AccessNode and AccessNode→MapExit cases are unchanged.
+- **Reproducer test (main-safe):**
+  `tests/transformations/trivial_tasklet_elimination_test.py::test_trivial_tasklet_map_source_preserves_offset_subset`
+  — `MapEntry --a[i+1]--> copy --> a_idx`, eliminate, assert the surviving edge
+  has `memlet.data == 'a'` and keeps the offset subset. Without the fix the edge
+  carries `data == 'a_idx'` (offset stranded in `other_subset`); it still
+  validates and runs, so the assertion targets the connector/memlet-data
+  invariant directly rather than relying on a re-lowering pass.
+- **Status:** fixed, regression-verified (canonicalize 138P/4xf, trivial-tasklet
+  4P), pushed.
+
+### 12. `SymbolPropagation` mis-propagated symbols and never converged
+- **File:** `dace/transformation/passes/symbol_propagation.py`
+- **Commits:** `8afc4c6d7`, `e40abc3b8`, `7206d33a8` (pushed `yakup/dev`).
+- **Bugs (forward fixpoint propagating single-valued symbols across interstate
+  edges):**
+  1. **Same-edge read-write race:** a propagated value was substituted into an
+     out-edge assignment RHS without excluding that edge's own keys.
+     Interstate assignments are simultaneous, so substituting ``anext -> a + b``
+     into ``{b: a, a: anext}`` produced ``{b: a, a: a + b}`` (``a`` read and
+     written on one edge) -- a validation race.
+  2. **Cross-CFG assert crash:** ``_get_in_syms`` asserted a start/branch
+     region's edge-accumulated table was empty; on some cross-CFG shapes it
+     already carried symbols, crashing the pass.
+  3. **Non-termination on cyclic value deps:** the inner substitution loop
+     oscillated forever on swaps (``x: tx, tx: y, y: ty, ty: x``).
+  4. **Cyclic over-substitution:** raw edge RHS strings were stored without
+     resolving against the incoming table, so symbol-to-symbol chains formed
+     cycles the final ``replace_dict`` could not resolve (a swap produced no
+     swap; ``m = t`` with ``t = m + 2`` double-counted to ``B[m + 4]``).
+  5. **Dishonest return value:** ``apply_pass`` always returned ``set()``. The
+     pipeline treats any non-None return as "modified" (``Pipeline.apply_pass``),
+     so a ``FixedPointPipeline`` like ``SimplifyPass`` could never converge on
+     this pass.
+- **Fixes:** per-edge self-collision guard (drop substitutions whose value
+  free-symbols intersect that edge's keys); conservative ``_combine_syms`` for
+  start/branch regions instead of the assert; an iteration cap
+  (``len(in)+len(out)+2``) for termination; a ``_resolve`` helper that resolves
+  each edge's RHSes against the pre-edge table (simultaneous semantics) and
+  keeps a value live (``None``) when it references a same-edge key; and
+  ``apply_pass`` now returns the set of symbols actually propagated, or ``None``
+  when nothing changed.
+- **Reproducer tests:** `tests/passes/symbol_propagation_test.py` (7) +
+  `tests/passes/symbol_propagation_hard_test.py` (35) -- race, cyclic-swap,
+  diamond-merge, indirection and inter-dependent-symbol cases; all main-safe
+  (built with the SDFG/LoopRegion API, no canonicalize dependency).
+- **Still deferred (not bugs, refinements):** parse-once memoization;
+  IndexedBase-aware ``_resolve`` (the current ``"["`` string guard already drops
+  array-reads, same outcome); cross-CFG if-else grouping refinement.
+- **Status:** fixed, regression-verified (42 pass; canonicalize + const-prop +
+  DCE + loop-to-map blast radius 218P/2xf), pushed.
+
 ## Open (separate issue, root-caused)
 
 ### 4. Canonicalize structural non-idempotence on the guarded imperfect nest
@@ -137,6 +245,8 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   multi-pass usage.
 
 ### 6. `MoveLoopInvariantIfUp` is broken (dead code) — redesign in progress
+- **Scope: yakup/dev-only — NOT on `main`, excluded from the consolidated PR.**
+  (The broken version was yakup/dev's own earlier code, not main's.)
 - **File:** `dace/transformation/interstate/move_loop_invariant_if_up.py`
 - **Bugs:** `expressions()` returns `node_path_graph(cls.loop)` but no
   `loop` PatternNode exists (only `map_state`/`map_entry`/`if_block`) →
@@ -248,3 +358,118 @@ with core APIs (SDFG/state construction, `LoopToMap`, `MapToForLoop`,
   piping for array-valued conditions without an outer nsdfg. Needs the
   full move_if_into_map + canonicalize regression sweep. Not a bug; an
   ergonomics/architecture improvement.
+
+## Design limitations / known canonicalize gaps
+
+These are not bugs in a transformation; they are pipeline-shape gaps where
+canonicalize is value-correct but does not yet reach the structural ideal, or
+where an input is invalid by DaCe semantics. Tracked so the design effort is
+explicit.
+
+### L-A. `MoveLoopInvariantIfUp` does not hoist a guard out of a parallel MAP nest
+- **Shape:** `for i in dace.map: for j in dace.map: if lim < N: ... else: ...`
+  with the guard reading only outer-scope symbols (``lim``, ``N``).
+- **Ideal:** hoist the guard above the whole ``i, j`` map nest -> one
+  top-level ``ConditionalBlock``, each branch a clean collapsed map.
+- **Gap:** MLIU sifts invariant guards out of LoopRegion nests, but the
+  Python-frontend map-nest shape (guard inside the inner map-body NestedSDFG)
+  is not matched/lifted. All-or-nothing upward (no partial one-level hoist) is
+  a deliberate constraint, so the guard must clear every enclosing scope at
+  once. Pinned by `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
+  (strict xfail). Value-correct today.
+
+### L-B. Fully-parallel statement not fissioned to a standalone collapsed map
+- **Shape:** one ``for i: for j:`` nest with a fully-parallel statement
+  ``A[j,i] = A[j,i]*2`` beside a ``j``-carried ``B[i,j] = B[i,j-1] + B[i,j]``.
+- **Ideal:** fission ``A`` into a standalone collapsed 2D Map ``[i, j]`` and
+  leave ``B`` as ``map i: { loop j }``.
+- **Gap:** today ``A`` and ``B`` keep sharing the outer ``i``-map
+  (``map_param_counts == [1, 1]``) rather than ``A`` becoming a 2-parameter
+  map. Needs fission at the outer-nest level (or a post-LoopToMap
+  map-fission + map-collapse) so ``A``'s full iteration space parallelizes
+  independently. Pinned by `canonicalize_mixed_parallelism_test.py::test_mixed_parallelism_A_becomes_collapsed_2d_map`
+  (strict xfail). Value-correct today.
+
+### L-C. Scalars are not map-local — loop-carried scalar reductions need a sequential outer loop
+- **Finding:** a scalar transient declared inside a ``dace.map`` body is NOT
+  thread-local; it is shared across the parallel map. A per-row reduction with
+  a scalar accumulator (``for i in dace.map: s = 0; for j: s += ...; b[i] =
+  s``) is therefore invalid (a data race / mis-accumulation, wrong even
+  un-canonicalized). The same shape with an array-element accumulator
+  (``b[i] += ...`` or an ``N``-vector ``s[i]``) under a parallel map is
+  likewise mis-lowered by the frontend for the inner loop-carried case.
+- **Valid form:** use a sequential ``range`` outer loop with the scalar
+  accumulator; canonicalize then parallelizes the row-independent work into a
+  map and keeps the loop-carried reduction sequential (``LoopToMap`` refuses it
+  on the write-pattern check). This is the form the canonicalize reduction
+  tests now use after correcting the invalid map-local-scalar kernels.
+
+### L-D. `SymbolPropagation` refinements (see #12)
+Parse-once memoization; IndexedBase-aware ``_resolve`` (replacing the ``"["``
+string guard); cross-CFG if-else grouping refinement. None are correctness
+bugs.
+
+### L-E. TODO — re-roll (untile) a manually-unrolled lane chain
+- **Shape:** a loop with step ``S != 1`` whose body is ``S`` manually-unrolled
+  lanes -- the lane ``k`` statement is the lane-0 statement with every index
+  shifted by ``+k``. TSVC ``s353`` is the direct example (step 4, "unrolled
+  sparse saxpy"):
+
+  .. code-block:: python
+
+      for i in range(0, LEN - 3, 4):
+          a[i]     += alpha * b[ip[i]]
+          a[i + 1] += alpha * b[ip[i + 1]]
+          a[i + 2] += alpha * b[ip[i + 2]]
+          a[i + 3] += alpha * b[ip[i + 3]]
+
+  Both the **indirect** form above (gather ``b[ip[i+k]]``) and the **dense**
+  form (``a[i+k] += alpha * b[i+k]``) must be handled.
+- **Transformation:** detect that the ``S`` lanes are the lane-0 body replicated
+  at offsets ``0..S-1``; keep lane 0, drop the rest, and re-roll the loop to
+  step 1 (``for i in range(0, LEN): a[i] += alpha * b[ip[i]]``). After this
+  flattening, ``LoopToMap`` parallelizes the loop (``a[i]`` independent per
+  ``i``; the indirect read is per-element).
+- **Match conditions:** loop step ``S`` equals the lane count; every non-lane-0
+  statement is structurally lane-0 with ``i -> i + k``; no cross-lane carried
+  dependence (each lane writes its own ``a[i+k]``). Refuse otherwise.
+- **Status:** DONE (dense + indirect). ``RerollUnrolledLoops``
+  (``dace/transformation/passes/canonicalize/reroll_unrolled_loops.py``, wired
+  as the ``reroll`` stage **after the ``lower`` stage** -- right after
+  MapToForLoop, while the loop is still step-``S`` and before ``normalize``)
+  matches a body of one or more states with ``m`` isomorphic lanes at
+  **equally-spaced** offsets ``{0, g, ..., (m-1)g}``, keeps lane 0, drops the
+  rest, and rewrites the loop to **step ``g``** over ``[init, end + m*g)``;
+  ``LoopToMap`` then parallelizes. Generalized, not overfit to ``0..S-1``:
+  handles ``step 2 / offsets {0,1}`` (-> step 1), ``step 2 / offsets {0,2}``
+  (-> step 2, overlapping pure writes), ``s351`` (``step 4 / {0,1,2,3}``), and
+  the **indirect** ``s353`` gather (``b[ip[i+k]]``), whose two-state body and
+  per-lane interstate gather symbols (``ip_index_k = ip[i+k]``) are matched by
+  symbol-aware, cross-state lane tagging. Safety: refuse if ``step > m*g``
+  (gaps) or ``step < m*g`` with a read-modify-write array (overlap would change
+  the RMW count). Verified by ``canonicalize_reroll_unrolled_test.py`` (6 pass)
+  and the full canonicalize suite (144P/2xf, 0 regressions).
+- **TSVC re-roll candidates** (`VectraArtifacts/tsvc_2/tsvc2_core.py`):
+  ``s351`` (dense step-4 saxpy -- the dense case), ``s353`` (indirect step-4
+  sparse saxpy -- the gather case), ``s352`` (step-5 unrolled dot reduction),
+  ``s116`` (step-4), ``s31111`` (step-4 reduction). Pinned by
+  ``tests/canonicalize/canonicalize_reroll_unrolled_test.py``.
+
+### L-G. TODO — broaden loop-distribution (node splitting) coverage
+- **Have:** ``canonicalize_mixed_parallelism_test.py`` (one fully-parallel + one
+  carried statement in a nest) and the ``LoopFission`` pass.
+- **TSVC node-splitting kernels to cover** (splitting the loop body into
+  separate loops exposes parallel/vectorizable sub-loops):
+  ``s211``, ``s212``, ``s221``, ``s222``, ``s231``, ``s232``, ``s233``,
+  ``s243``, ``s244``, ``s126``, ``s1213`` (all in ``tsvc2_core.py``). Survey
+  which already fission+parallelize under canonicalize and which need work;
+  see also L-B. (User-requested 2026-05-21.)
+
+### L-F. TODO — best-effort loop peeling to expose a parallel middle
+- **Idea:** a best-effort pass that peels up to ``X`` leading and ``Y`` trailing
+  iterations of a loop and checks whether the remaining middle iterations are
+  then parallelizable / vectorizable (the boundary iterations carrying the
+  dependence or the special-case access that blocks the whole loop).
+- **Use:** several TSVC benchmarks need front/back peeling before the steady-
+  state middle vectorizes. Try small ``X``, ``Y`` and keep the peeling only if
+  the middle becomes a clean parallel map. (User-requested 2026-05-21.)

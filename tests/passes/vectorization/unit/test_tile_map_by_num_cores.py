@@ -56,12 +56,16 @@ def _run(prog, trip, num_cores):
     a = np.random.rand(trip)
     b = np.random.rand(trip)
 
+    # Unique SDFG names per (prog, trip, num_cores) so parallel ``-n``
+    # workers don't race on a shared ``.dacecache/<name>/`` build dir.
     ref = prog.to_sdfg(simplify=True)
+    ref.name = f"{ref.name}_ref_{trip}_{num_cores}"
     _bake(ref, trip)
     ref_c = np.zeros(trip)
     ref.compile()(a=a.copy(), b=b.copy(), c=ref_c)
 
     sd = prog.to_sdfg(simplify=True)
+    sd.name = f"{sd.name}_tiled_{trip}_{num_cores}"
     _bake(sd, trip)
     TileMapByNumCores(num_cores=num_cores).apply_pass(sd, {})
     sd.validate()

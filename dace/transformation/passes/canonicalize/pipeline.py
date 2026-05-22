@@ -14,6 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -31,10 +32,12 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -53,6 +56,7 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     cannot see them. Both run so single- and multi-state nestings collapse.
 
     :param label: The owning stage label.
+    :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
             (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
@@ -77,9 +81,22 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     """
     s: List[Tuple[str, ppl.Pass]] = []
 
+    # Canonicalization runs UniqueLoopIterators with the post-value epilogue
+    # OFF: it is a Fortran-frontend convenience (materialise ``<i> = post``
+    # so downstream reads of the un-renamed name still see the counted-DO
+    # exit value), but canonicalize already rewrites every use site to the
+    # unique ``_loop_it_<N>`` name, so the epilogue would be a dead-state
+    # assignment that keeps the original symbol declaration live across
+    # NestedSDFG boundaries and re-introduces the alias hazard the pass
+    # exists to remove.
+    _uniq = UniqueLoopIterators()
+    _uniq.assign_loop_iterator_post_value = False
+    _uniq2 = UniqueLoopIterators()
+    _uniq2.assign_loop_iterator_post_value = False
+
     # clean: unique loop iterators -> split tasklets -> drop trivial tasklets
     # -> the single SimplifyPass (only here and at the end).
-    s += [('clean', UniqueLoopIterators()), ('clean', SplitTasklets()),
+    s += [('clean', _uniq), ('clean', SplitTasklets()),
           ('clean', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])), ('clean', SimplifyPass())]
 
     # prep (still maps): push guarding conditionals into maps, then replicate
@@ -97,6 +114,14 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # bare loop -> MoveIfIntoLoop's clean single-loop path applies.
     s += [('lower', EmptyStateElimination())]
 
+    # reroll: re-roll a hand-unrolled lane chain (a step-``S`` loop whose body is
+    # ``m`` lanes at equally-spaced offsets ``{0, g, ..., (m-1)g}``) back to a
+    # step-``g`` loop, so the lanes do not survive normalization as a strided
+    # ``S*i + k`` access that blocks LoopToMap. Runs right after the maps are
+    # lowered to loops, while the loop is still in step-``S`` form (before
+    # normalize rescales it).
+    s += [('reroll', RerollUnrolledLoops())]
+
     # move_if_into_loop: push guarding conditionals into loop bodies. The
     # genuine inner imperfect nest (a bare tasklet beside an inner loop,
     # inside an enclosing loop) takes the free-state path: the bare sibling
@@ -105,6 +130,15 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # 'untrivialize' stage before LoopToMap can mangle it.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
+    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may have buried an
+    # invariant interstate-edge assignment (e.g. ``kfdia_plus_1 = kfdia + 1``,
+    # the Python-frontend bound promotion) inside the loop it pushed the
+    # guard into. Lift it back out *past every enclosing loop* (all-or-
+    # nothing upward, see ``CASCADE_UP_DESIGN.md``) so LoopToMap's
+    # body-assigns-loop-range-symbol refuse-check does not later block
+    # parallelization. Standalone and idempotent -- can be invoked again.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
     # fission: loop distribution + block-level perfect-loop-nesting.
     s += [('fission', LoopFission())]
 
@@ -112,7 +146,7 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     s += [('normalize', NormalizeLoopsAndMaps())]
 
     # reduce / ssa: lift accumulator loops, unique loop iterators.
-    s += [('reduce', LoopToReduce()), ('ssa', UniqueLoopIterators())]
+    s += [('reduce', LoopToReduce()), ('ssa', _uniq2)]
 
     # loop_stride_permutation (before LoopToMap): no-op stub. A loop-level
     # interchange would need a loop-interchange primitive (none exists) and
@@ -129,6 +163,21 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # otherwise turn it into a sticky NestedSDFG that breaks idempotence and
     # re-lowering.
     s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
+
+    # cascade_iedges_up (pre-parallelize): re-run after fission / normalize /
+    # ssa, since each of those rewrites the CFG and may expose new hoisting
+    # opportunities (e.g. an iedge that was previously inside a body block
+    # is now the only block on a clean linear chain). Critically: this MUST
+    # run before LoopToMap so the refuse-check on body-assigned range
+    # symbols sees the cleaned-up shape.
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
+
+    # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired at this
+    # pre-parallelize point. It is the dual of the earlier ``MoveIfIntoLoop``
+    # stage (which pushes guards INTO loops to enable sibling-loop fusion), so
+    # hoisting guards back out here would simply undo that work and ping-pong.
+    # The terminal ``hoist_guards`` stage runs MLIU once, AFTER fuse, where the
+    # fusion it would otherwise undo has already happened.
 
     # parallelize: canonical loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -160,6 +209,17 @@ def _build_stages() -> List[Tuple[str, ppl.Pass]]:
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
 
+    # hoist_guards (terminal): hoist any still-invariant guard out past every
+    # enclosing loop (all-or-nothing upward, ``require_full_hoist=True``). Run
+    # AFTER fuse -- the dual ``MoveIfIntoLoop`` (prep stage) has already pushed
+    # guards in to enable sibling fusion, so a terminal hoist of a guard that
+    # is STILL invariant w.r.t. the whole remaining loop nest does not undo
+    # that fusion; it lifts the surviving config-flag guards (ICON ``istep ==
+    # 1``, cloudsc ``IWARMRAIN`` etc.) to the cheapest scope. MoveLoopInvariantIfUp's
+    # dead-outside-branch match lifts past per-iteration iedge assignments
+    # (``start = jb // 4``), which stay in the now-guarded loop body.
+    s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=True))]
+
     # end: the final SimplifyPass.
     s += [('end', SimplifyPass())]
     return s
@@ -170,11 +230,15 @@ StageFactory = Callable[[], List[ppl.Pass]]
 
 
 def _stage_factory(label: str) -> StageFactory:
-    """Return a factory yielding fresh passes for the named stage."""
+    """Return a factory yielding fresh passes for the named stage.
+
+    :param label: The stage label to filter the recipe by.
+    :returns: A factory that builds that stage's passes in order.
+    """
     return lambda: [p for lbl, p in _build_stages() if lbl == label]
 
 
-#: Backward-compatible grouped view of :func:`_build_stages`: ``(label,
+#: Grouped view of :func:`_build_stages`: ``(label,
 #: factory)`` per stage, in order, where ``factory()`` builds that stage's
 #: fresh passes. ``_build_stages`` (flat ``(label, pass)``) is the source of
 #: truth used by the pipeline; this view exists for callers that iterate

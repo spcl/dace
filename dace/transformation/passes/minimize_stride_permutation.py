@@ -54,7 +54,7 @@ def _to_float(value: object) -> float:
     ``+inf`` (treated as the worst/largest stride and sorted outermost).
 
     :param value: A number or ``sympy`` expression.
-    :return: A finite float, or ``+inf`` for non-numeric symbolic input.
+    :returns: A finite float, or ``+inf`` for non-numeric symbolic input.
     """
     try:
         return float(value)
@@ -84,7 +84,7 @@ class MinimizeStridePermutation(ppl.Pass):
         """Apply the pass to ``sdfg``.
 
         :param sdfg: The SDFG to canonicalize.
-        :return: A mapping ``{state id: number of interchanges applied}`` for
+        :returns: A mapping ``{state id: number of interchanges applied}`` for
                  states that changed, or ``None`` if nothing was modified.
         """
         result: Dict[int, int] = {}
@@ -99,7 +99,7 @@ class MinimizeStridePermutation(ppl.Pass):
 
         :param state: The state to scan.
         :param sdfg: The SDFG owning ``state`` (for data descriptors).
-        :return: The number of adjacent interchanges applied in this state.
+        :returns: The number of adjacent interchanges applied in this state.
         """
         scope_children = state.scope_children()
         applied = 0
@@ -126,7 +126,7 @@ class MinimizeStridePermutation(ppl.Pass):
         :param state: The containing state.
         :param outer: The outermost candidate map entry.
         :param scope_children: Precomputed scope-children mapping for ``state``.
-        :return: The list of map entries from outermost to innermost.
+        :returns: The list of map entries from outermost to innermost.
         """
         nest: List[nodes.MapEntry] = []
         current: Optional[nodes.MapEntry] = outer
@@ -151,7 +151,7 @@ class MinimizeStridePermutation(ppl.Pass):
         :param state: The containing state.
         :param sdfg: The SDFG owning ``state``.
         :param nest: Map entries from outermost to innermost.
-        :return: The number of adjacent interchanges applied.
+        :returns: The number of adjacent interchanges applied.
         """
         params = [me.map.params[0] for me in nest]
         scores = self._score_parameters(state, sdfg, nest, params)
@@ -206,7 +206,7 @@ class MinimizeStridePermutation(ppl.Pass):
         :param sdfg: The SDFG owning the nest.
         :param nest: Map entries (mutated in place on success).
         :param depth: Zero-based depth of the outer of the adjacent pair.
-        :return: True if the interchange was applied, False if it was skipped.
+        :returns: True if the interchange was applied, False if it was skipped.
         """
         outer_entry = nest[depth]
         inner_entry = nest[depth + 1]
@@ -229,7 +229,7 @@ class MinimizeStridePermutation(ppl.Pass):
         :param nest: Map entries from outermost to innermost.
         :param params: The single parameter of each level (parallel to
                        ``nest``).
-        :return: A list of ``(min_indexed_stride, accumulated_abs_offset)``
+        :returns: A list of ``(min_indexed_stride, accumulated_abs_offset)``
                  tuples parallel to ``params``.
         """
         param_set = set(params)
@@ -264,12 +264,12 @@ class MinimizeStridePermutation(ppl.Pass):
                 for pname in present:
                     pidx = index_of[pname]
                     psym = pystr_to_symbolic(pname)
-                    coeff = sympy.sympify(index_expr).coeff(psym, 1)
+                    coeff = index_expr.coeff(psym, 1)
                     if coeff == 0:
                         continue
                     others = {s: 0 for s in index_expr.free_symbols if str(s) in param_set and str(s) != pname}
                     constant = index_expr.subs(others).subs({psym: 0})
-                    offset_sum[pidx] = offset_sum[pidx] + sympy.Abs(sympy.sympify(constant))
+                    offset_sum[pidx] = offset_sum[pidx] + sympy.Abs(constant)
                     if sympy.Abs(coeff) == 1:
                         prev = min_stride[pidx]
                         if prev is _NO_HOME_SCORE:

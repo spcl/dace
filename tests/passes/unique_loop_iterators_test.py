@@ -449,6 +449,71 @@ def test_no_postamble_drops_dead_symbol_declaration():
     sdfg.validate()
 
 
+def test_no_postamble_clears_loop_var_for_inner_accumulator():
+    """Regression: an inner reduction-style accumulator (``s += a[i, j-1] +
+    a[i, j] + a[i, j+1]``) writes the per-iteration scalar ``s`` inside a
+    ``for j: ...`` loop. With ``assign_loop_iterator_post_value = False``
+    the rename must drop the dead ``j`` from ``sdfg.symbols`` of the
+    enclosing NestedSDFG -- otherwise ``j`` lingers as a declared symbol
+    that no longer corresponds to any loop variable, and the validator
+    reports ``Missing symbols on nested SDFG: ['j']`` on the enclosing
+    Map's body NestedSDFG.
+
+    The previous gate ``old_name not in sdfg.free_symbols`` was circular:
+    ``SDFG.free_symbols`` calls ``used_symbols(all_symbols=True)`` which
+    unconditionally folds ``sdfg.symbols.keys()`` back into the "free"
+    set (``ControlFlowRegion._used_symbols_internal``, the ``if
+    all_symbols: free_syms |= set(self.symbols.keys())`` branch). The
+    declared symbol therefore always appeared "free" by virtue of being
+    declared and was never removed. The fix uses
+    ``used_symbols(all_symbols=False)`` which reflects only actual
+    code-generation usage.
+    """
+
+    @dace.program
+    def redux(a: dace.float64[8, 9], b: dace.float64[8]):
+        for i in dace.map[0:8]:
+            s = a[i, 0] + a[i, 8]
+            for j in range(1, 8):
+                s += a[i, j - 1] + a[i, j] + a[i, j + 1]
+            b[i] = s
+
+    sdfg = redux.to_sdfg(simplify=True)
+    # Pre-condition: at least one body NestedSDFG declares ``j`` -- the
+    # frontend leaves it there for the original loop_var.
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert any('j' in n.sdfg.symbols for n in nsdfgs)
+
+    UniqueLoopIterators._loop_var_counter = 0
+    p = UniqueLoopIterators()
+    p.assign_loop_iterator_post_value = False
+    p.apply_pass(sdfg, {})
+
+    # Post-condition: no body NestedSDFG still declares ``j`` -- the
+    # cleanup removed the stale declaration because nothing in the
+    # body (memlets, tasklet code, interstate-edge assignments) actually
+    # uses ``j`` after the rename to ``_loop_it_<N>``.
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    for n in nsdfgs:
+        assert 'j' not in n.sdfg.symbols, \
+            f"NSDFG {n.sdfg.name} still declares 'j'; symbols={sorted(n.sdfg.symbols)}"
+    # And the SDFG validates as a whole (no Missing-symbols error).
+    sdfg.validate()
+
+    # Numerical equivalence against a pure-numpy oracle: the inner
+    # accumulator semantics are preserved by canonicalize.
+    a = np.random.rand(8, 9)
+    b = np.zeros(8)
+    sdfg.compile()(a=a.copy(), b=b)
+    exp = np.zeros(8)
+    for i in range(8):
+        s = a[i, 0] + a[i, 8]
+        for j in range(1, 8):
+            s += a[i, j - 1] + a[i, j] + a[i, j + 1]
+        exp[i] = s
+    assert np.allclose(b, exp)
+
+
 def test_postamble_preserves_symbol_declaration():
     """The dead-symbol cleanup must trigger only when the post-value
     epilogue is disabled. With the default ``assign_loop_iterator_post_value
@@ -477,14 +542,111 @@ def test_postamble_preserves_symbol_declaration():
     sdfg.validate()
 
 
+def test_idempotent_skips_already_unique_iterators():
+    """Running the pass twice must be a no-op the second time and must NOT
+    re-rename already-unique ``_loop_it_<N>`` iterators.
+
+    Re-renaming an already-unique iterator that a deeply-nested SDFG
+    imports used to drop the import from the grandchild's
+    ``symbol_mapping`` (the re-key did not survive a second rename),
+    producing "Missing symbols on nested SDFG: ['_loop_it_<N>']". The
+    pass now skips iterators already in ``_loop_it_*`` form. This mirrors
+    the canonicalize pipeline, which runs UniqueLoopIterators twice (the
+    ``clean`` and ``ssa`` stages)."""
+    UniqueLoopIterators._loop_var_counter = 0
+
+    # A map body (nested SDFG) with two nested loops, then a deeper nest --
+    # the shape where a grandchild NSDFG imports the outer iterators.
+    sdfg = nested_loops.to_sdfg(simplify=False)
+
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    names_after_first = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions() if isinstance(lr, LoopRegion))
+    assert all(n.startswith('_loop_it_') for n in names_after_first), names_after_first
+
+    # Second application: the iterators are already unique; nothing changes
+    # and the SDFG stays valid (no "Missing symbols" crash).
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    names_after_second = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions()
+                                if isinstance(lr, LoopRegion))
+    assert names_after_second == names_after_first, \
+        f'second pass re-renamed already-unique iterators: {names_after_first} -> {names_after_second}'
+
+    A = np.random.rand(8, 8)
+    exp = A + 1.0
+    csdfg = sdfg.compile()
+    csdfg(A=A)
+    assert np.allclose(A, exp)
+
+
+N = dace.symbol('N')
+
+
+@dace.program
+def sibling_kbound_loops(out: dace.float64[N, N], arr: dace.float64[N, N], x: dace.int32):
+    """Map body with two sibling ``k``-loops that share the name ``k`` and
+    the same per-``i`` bounds, one of them inside an ``if`` guard. Both
+    accumulate into ``out`` over the same sparse ``[beg:end)`` range."""
+    for i in dace.map[0:N]:
+        beg = i // 2 + 1
+        end = beg + 2
+        for k in range(beg, end):
+            out[i, k] += arr[i, k]
+        if x > 0:
+            for k in range(beg, end):
+                out[i, k] += 2.0 * arr[i, k]
+
+
+def _sibling_kbound_oracle(arr, x, n):
+    out = np.zeros((n, n))
+    for i in range(n):
+        beg, end = i // 2 + 1, i // 2 + 3
+        for k in range(beg, min(end, n)):
+            out[i, k] += arr[i, k]
+        if x > 0:
+            for k in range(beg, min(end, n)):
+                out[i, k] += 2.0 * arr[i, k]
+    return out
+
+
+def test_value_preserving_sibling_kbound_loops():
+    """Renaming two sibling loops that share the iterator name ``k`` must
+    not cross-contaminate their memlets.
+
+    The frontend's ``accesses`` cache hands out the *same* Range object for
+    the identical ``arr[i, k]`` read in both loop bodies, and ``Memlet.simple``
+    stores a Subset by reference, so the two read edges used to share one
+    subset object. Renaming the first loop's ``k`` to ``_loop_it_0`` then
+    rewrote that shared subset in place, leaving the *second* (guarded) loop
+    reading ``arr[i, _loop_it_0]`` while writing ``out[i, _loop_it_1]`` -- a
+    silent value corruption that only manifested when the guard was taken
+    (``x = 1``). With each edge owning its subset the rename is local and the
+    accumulation is preserved. Regression for the frontend slice-subset
+    aliasing surfaced through UniqueLoopIterators."""
+    UniqueLoopIterators._loop_var_counter = 0
+    n = 8
+    rng = np.random.default_rng(1)
+    arr = rng.standard_normal((n, n))
+    for x in (1, 0):
+        sdfg = sibling_kbound_loops.to_sdfg(simplify=True)
+        UniqueLoopIterators().apply_pass(sdfg, {})
+        sdfg.validate()
+        out = np.zeros((n, n))
+        sdfg(out=out, arr=arr.copy(), x=np.int32(x), N=n)
+        assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f'value corrupted for x={x}'
+
+
 if __name__ == '__main__':
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
     test_nested_loops()
     test_loop_var_in_tasklet_body()
     test_loop_var_on_interstate_edge()
+    test_idempotent_skips_already_unique_iterators()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
     test_large_nested_map_for_for_map_program()
     test_no_postamble_drops_dead_symbol_declaration()
+    test_no_postamble_clears_loop_var_for_inner_accumulator()
     test_postamble_preserves_symbol_declaration()

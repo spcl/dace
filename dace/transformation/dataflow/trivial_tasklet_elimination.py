@@ -73,6 +73,14 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         out_edge = graph.edges_between(tasklet, write)[0]
         graph.remove_edge(in_edge)
         graph.remove_edge(out_edge)
-        out_edge.data.other_subset = in_edge.data.subset
-        graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, out_edge.data)
+        # The surviving edge's memlet must describe the array on the non-tasklet
+        # endpoint's connector. For a MapEntry source (expr_index 1) the edge
+        # leaves ``OUT_<read>`` so the read memlet survives, keeping the read
+        # subset (e.g. an offset access ``a[i + k]``) and carrying the write
+        # subset in ``other_subset``. Reusing the write memlet there would
+        # strand the read offset in ``other_subset`` and drop it when the map is
+        # later re-lowered to a loop. Otherwise the write memlet survives.
+        kept_edge, other_edge = (in_edge, out_edge) if self.expr_index == 1 else (out_edge, in_edge)
+        kept_edge.data.other_subset = other_edge.data.subset
+        graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, kept_edge.data)
         graph.remove_node(tasklet)

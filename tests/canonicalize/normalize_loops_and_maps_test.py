@@ -28,7 +28,11 @@ def offset_stride(A: dace.float64[40], B: dace.float64[40]):
 
 @dace.program
 def negative_step(A: dace.float64[40], B: dace.float64[40]):
-    for i in dace.map[20:1:-2]:
+    # ``range`` (LoopRegion) is the valid input shape for a reverse-iterating
+    # loop. ``dace.map`` would build a Map with a negative step, which is
+    # invalid -- Maps must use a positive step (canonicalize then normalizes
+    # the LoopRegion to ``0:trip:1`` and converts it to a Map).
+    for i in range(20, 1, -2):
         B[i] = A[i] - 3.0
 
 

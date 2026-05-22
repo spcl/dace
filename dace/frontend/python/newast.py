@@ -3630,11 +3630,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (
-                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                (isinstance(result, str) and any(
-                    result in x
-                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                    (isinstance(result, str) and result in self.sdfg.arrays)):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3658,11 +3655,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
-                if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
-                    # NOTE: In previous versions some `pgrid` and subgrid related replacement function,
-                    #   see `dace/frontend/common/distr.py`, created dummy variables with the same name
-                    #   as the entities, such as process grids, they created. Thus the frontend was
-                    #   finding them. Since this is now disallowed, we have to explicitly handle this case.
+                if (isinstance(result, str) and result in self.sdfg.arrays
+                        and isinstance(self.sdfg.arrays[result], data.DistributedDescriptor)):
                     self.variables[name] = result
                     defined_vars[name] = result
                     continue
@@ -5640,8 +5634,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.storage,
                                                   find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            # ``Memlet.simple`` keeps the subset by reference, but ``rng`` may be a
+            # cached Range shared by sibling slice reads, so give this edge its own copy.
             self.current_state.add_nedge(
-                rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
+                rnode, wnode,
+                Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
+                              other_subset_str=other_subset))
         return tmp, other_subset
 
     def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:

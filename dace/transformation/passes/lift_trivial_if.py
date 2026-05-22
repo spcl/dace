@@ -35,6 +35,13 @@ class LiftTrivialIf(ppl.Pass):
         return {}
 
     def _make_unique_names(self, sdfg: dace.SDFG):
+        """Relabel every block so labels are unique across the whole SDFG.
+
+        Lifting a branch up splices its blocks into the parent region, which can
+        collide with existing labels; uniquifying first keeps the result valid.
+
+        :param sdfg: SDFG whose blocks are relabeled in place.
+        """
         all_blocks = {
             n
             for n, _ in sdfg.all_nodes_recursive()
@@ -46,12 +53,18 @@ class LiftTrivialIf(ppl.Pass):
             all_labels.add(new_label)
             n.label = new_label
 
-    def _trivial_cond_check(self, code: CodeBlock, val: bool):
+    def _trivial_cond_check(self, code: CodeBlock, val: bool) -> bool:
+        """Whether ``code`` provably evaluates to the constant truth value ``val``.
+
+        :param code: Branch condition to inspect.
+        :param val: Truth value to test the condition against.
+        :returns: ``True`` only if the condition statically reduces to ``val``.
+        """
         if code.language != dace.dtypes.Language.Python:
             return False
 
         # Primary: pystr_to_symbolic already handles Python and/or/not and
-        # comparison operators, We require a concrete literal back -- bool() of
+        # comparison operators. We require a concrete literal back -- bool() of
         # an unevaluated sympy expression (e.g. ``A[0]`` -> Function(0)) is
         # truthy, which would mis-classify dynamic conditions as trivial.
         try:
@@ -78,10 +91,10 @@ class LiftTrivialIf(ppl.Pass):
             pass
         return False
 
-    def _trivially_true(self, code: CodeBlock):
+    def _trivially_true(self, code: CodeBlock) -> bool:
         return self._trivial_cond_check(code, True)
 
-    def _trivially_false(self, code: CodeBlock):
+    def _trivially_false(self, code: CodeBlock) -> bool:
         return self._trivial_cond_check(code, False)
 
     @staticmethod
@@ -126,7 +139,12 @@ class LiftTrivialIf(ppl.Pass):
                 return True
         return False
 
-    def _detect_and_remove_top_level_trivial_ifs(self, graph: Union[ControlFlowRegion, SDFG]):
+    def _detect_and_remove_top_level_trivial_ifs(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+        """Process the conditionals directly in ``graph`` (one level, no recursion).
+
+        :param graph: Region or SDFG whose top-level conditionals are simplified.
+        :returns: Number of branches/conditionals removed.
+        """
         cfb_to_rm_cfg_to_keep = set()
         rmed_count = 0
         for cfb in graph.nodes():
@@ -172,9 +190,9 @@ class LiftTrivialIf(ppl.Pass):
                                                                              (cond2, cfg2)) if cond1 is not None else
                                                                             ((cond2, cfg2), (cond1, cfg1)))
 
-                    if self._trivially_true(not_none_cond):  #2.1
+                    if self._trivially_true(not_none_cond):  # 2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
-                    elif self._trivially_false(not_none_cond):  #2.2
+                    elif self._trivially_false(not_none_cond):  # 2.2
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
@@ -187,15 +205,20 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
-    def _detect_trivial_ifs_and_rm_cfg(self, graph: Union[ControlFlowRegion, SDFG]):
-        # We might now have trivial control flow blocks at top level, apply in fixpoint
+    def _detect_trivial_ifs_and_rm_cfg(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+        """Simplify trivial conditionals in ``graph`` and all blocks nested below it.
+
+        :param graph: Region or SDFG to simplify recursively.
+        :returns: Total number of branches/conditionals removed.
+        """
+        # Removing a conditional can expose a new trivial one at top level, so iterate to a fixed point.
         rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
         local_rmed_count = rmed_count
         while local_rmed_count > 0:
             local_rmed_count = self._detect_and_remove_top_level_trivial_ifs(graph)
             rmed_count += local_rmed_count
 
-        # Now go one one more level in the node list
+        # Descend one more level into the nested control flow blocks.
         for node in graph.all_control_flow_blocks():
             local_rmed_count = self._detect_and_remove_top_level_trivial_ifs(node)
             rmed_count += local_rmed_count
