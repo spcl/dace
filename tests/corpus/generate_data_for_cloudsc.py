@@ -23,12 +23,14 @@ same values for the shape symbols. The small problem size (``klev = 16``,
 ``klon = 32``) keeps a compiled run fast.
 """
 import copy
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import sympy
 
 import dace
+from dace import dtypes
+from dace.sdfg import nodes
 from tests.corpus.cloudsc import cloudsc_py
 
 #: Concrete values for the CloudSC shape symbols and the named integer scalars
@@ -107,11 +109,36 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     return inputs
 
 
+def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
+    """Force every map and library node to a sequential schedule, in place.
+
+    A numerical-equivalence comparison must be deterministic: CloudSC's
+    parallel (OpenMP) maps reorder floating-point reductions / accumulations
+    run-to-run, so two separately-compiled SDFGs differ by ~1e-5 even when they
+    are the *same* computation. Running sequentially removes that noise so a
+    real numerical difference between a transform and its reference stands out.
+
+    :param sdfg: The SDFG to make sequential (mutated in place).
+    :returns: ``(maps, library_nodes)`` re-scheduled.
+    """
+    n_maps = n_lib = 0
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.schedule = dtypes.ScheduleType.Sequential
+            n_maps += 1
+        elif isinstance(node, nodes.LibraryNode):
+            if hasattr(node, 'schedule'):
+                node.schedule = dtypes.ScheduleType.Sequential
+            n_lib += 1
+    return n_maps, n_lib
+
+
 def run_and_compare(reference: dace.SDFG,
                     candidate: dace.SDFG,
                     seed: int = 0,
                     rtol: float = 1e-9,
                     atol: float = 1e-12,
+                    sequential: bool = True,
                     verbose: bool = False) -> bool:
     """Run two CloudSC SDFGs on identical inputs and compare every shared
     non-transient output array.
@@ -125,9 +152,15 @@ def run_and_compare(reference: dace.SDFG,
     :param seed: Seed for input generation.
     :param rtol: Relative tolerance (``numpy.allclose``).
     :param atol: Absolute tolerance (``numpy.allclose``).
+    :param sequential: Force both SDFGs sequential before running
+        (:func:`make_sequential`) so the comparison is deterministic; leave on
+        unless you specifically want to measure parallel behaviour.
     :param verbose: Print the max/avg difference of each mismatching array.
     :returns: ``True`` iff every shared output array matches within tolerance.
     """
+    if sequential:
+        make_sequential(reference)
+        make_sequential(candidate)
     ref_inputs = generate_cloudsc_inputs(reference, seed)
     cand_inputs = copy.deepcopy(ref_inputs)
     reference(**ref_inputs)
