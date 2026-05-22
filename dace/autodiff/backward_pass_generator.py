@@ -740,11 +740,11 @@ class BackwardPassGenerator:
             # Create a new memlet that copies what memlet is writing to to the tmp
             new_memlet_subset = memlet.subset if memlet.data == forward_node.data else memlet.other_subset
             original_to_tmp_memlet = dace.Memlet(data=backward_node.data,
-                                                 subset=new_memlet_subset,
-                                                 other_subset=new_memlet_subset)
+                                                 subset=copy.deepcopy(new_memlet_subset),
+                                                 other_subset=copy.deepcopy(new_memlet_subset))
 
             # Remove the src_subset of the new memlet and replace the memlet in the edge
-            map_exit_memlet.subset = memlet.subset if memlet.data == forward_node.data else memlet.other_subset
+            map_exit_memlet.subset = copy.deepcopy(new_memlet_subset)
             map_exit_memlet.other_subset = None
             edge.data = map_exit_memlet
 
@@ -1761,14 +1761,15 @@ class BackwardPassGenerator:
                     # Special case for when the two access nodes are the same
                     if forward_node.data == dest_node.data and fwd_memlet.other_subset is not None:
                         new_memlet = dace.Memlet(data=self.reverse_map[forward_node].data,
-                                                 subset=fwd_memlet.other_subset,
-                                                 other_subset=fwd_memlet.subset)
+                                                 subset=copy.deepcopy(fwd_memlet.other_subset),
+                                                 other_subset=copy.deepcopy(fwd_memlet.subset))
                     else:
-                        new_memlet = dace.Memlet(data=self.reverse_map[forward_node].data,
-                                                 subset=fwd_memlet.subset
-                                                 if fwd_memlet.data == forward_node.data else fwd_memlet.other_subset,
-                                                 other_subset=fwd_memlet.other_subset
-                                                 if fwd_memlet.data == forward_node.data else fwd_memlet.subset)
+                        new_memlet = dace.Memlet(
+                            data=self.reverse_map[forward_node].data,
+                            subset=copy.deepcopy(fwd_memlet.subset if fwd_memlet.data ==
+                                                 forward_node.data else fwd_memlet.other_subset),
+                            other_subset=copy.deepcopy(fwd_memlet.other_subset if fwd_memlet.data ==
+                                                       forward_node.data else fwd_memlet.subset))
                     memlet = new_memlet
             if input_conn not in self.result_map[dest_node].required_grad_names:
                 continue
