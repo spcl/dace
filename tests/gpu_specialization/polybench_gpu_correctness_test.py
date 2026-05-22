@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU-offloading correctness tests for npbench polybench kernels: CPU SDFG vs GPU-transformed SDFG
 compared element-wise at small sizes (kernels imported from ``tests/npbench/polybench``)."""
+import importlib.util
 import os
-import sys
 from typing import Callable, Dict
 
 import numpy as np
@@ -10,39 +10,46 @@ import pytest
 
 pytestmark = pytest.mark.new_gpu_codegen_only
 
-_NPBENCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'npbench', 'polybench'))
-if _NPBENCH_DIR not in sys.path:
-    sys.path.insert(0, _NPBENCH_DIR)
+_POLYBENCH_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "npbench", "polybench")
 
-import adi_test  # noqa: E402
-import atax_test  # noqa: E402
-import bicg_test  # noqa: E402
-import correlation_test  # noqa: E402
-import covariance_test  # noqa: E402
-import deriche_test  # noqa: E402
-import doitgen_test  # noqa: E402
-import durbin_test  # noqa: E402
-import fdtd_2d_test  # noqa: E402
-import floyd_warshall_test  # noqa: E402
-import gemm_npbench_test  # noqa: E402
-import gemver_test  # noqa: E402
-import gesummv_test  # noqa: E402
-import gramschmidt_test  # noqa: E402
-import heat_3d_test  # noqa: E402
-import jacobi_1d_test  # noqa: E402
-import jacobi_2d_test  # noqa: E402
-import k2mm_test  # noqa: E402
-import k3mm_test  # noqa: E402
-import lu_test  # noqa: E402
-import ludcmp_test  # noqa: E402
-import mvt_test  # noqa: E402
-import nussinov_test  # noqa: E402
-import seidel_2d_test  # noqa: E402
-import symm_test  # noqa: E402
-import syr2k_test  # noqa: E402
-import syrk_test  # noqa: E402
-import trisolv_test  # noqa: E402
-import trmm_test  # noqa: E402
+
+def _kernel_module(name):
+    """Load an npbench polybench kernel-test module by path (no ``sys.path`` mutation)."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_POLYBENCH_DIR, f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+adi_test = _kernel_module("adi_test")
+atax_test = _kernel_module("atax_test")
+bicg_test = _kernel_module("bicg_test")
+correlation_test = _kernel_module("correlation_test")
+covariance_test = _kernel_module("covariance_test")
+deriche_test = _kernel_module("deriche_test")
+doitgen_test = _kernel_module("doitgen_test")
+durbin_test = _kernel_module("durbin_test")
+fdtd_2d_test = _kernel_module("fdtd_2d_test")
+floyd_warshall_test = _kernel_module("floyd_warshall_test")
+gemm_npbench_test = _kernel_module("gemm_npbench_test")
+gemver_test = _kernel_module("gemver_test")
+gesummv_test = _kernel_module("gesummv_test")
+gramschmidt_test = _kernel_module("gramschmidt_test")
+heat_3d_test = _kernel_module("heat_3d_test")
+jacobi_1d_test = _kernel_module("jacobi_1d_test")
+jacobi_2d_test = _kernel_module("jacobi_2d_test")
+k2mm_test = _kernel_module("k2mm_test")
+k3mm_test = _kernel_module("k3mm_test")
+lu_test = _kernel_module("lu_test")
+ludcmp_test = _kernel_module("ludcmp_test")
+mvt_test = _kernel_module("mvt_test")
+nussinov_test = _kernel_module("nussinov_test")
+seidel_2d_test = _kernel_module("seidel_2d_test")
+symm_test = _kernel_module("symm_test")
+syr2k_test = _kernel_module("syr2k_test")
+syrk_test = _kernel_module("syrk_test")
+trisolv_test = _kernel_module("trisolv_test")
+trmm_test = _kernel_module("trmm_test")
 
 
 def _compare_arrays(cpu_args: Dict[str, np.ndarray], gpu_args: Dict[str, np.ndarray], rtol: float, atol: float) -> None:

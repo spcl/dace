@@ -39,9 +39,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         arrays (default ``False`` -- both signature and local rewrites).
     """
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient arrays.")
@@ -166,9 +164,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         scalars.
     """
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient scalars.")

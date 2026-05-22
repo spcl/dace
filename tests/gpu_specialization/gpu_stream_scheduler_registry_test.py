@@ -16,9 +16,7 @@ from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import 
                                                                                  MonolithicSingleStreamGPUScheduler,
                                                                                  NaiveGPUStreamScheduler)
 
-# ---------------------------------------------------------------------------
-# Pipeline-level config
-# ---------------------------------------------------------------------------
+# Pipeline-level config.
 
 
 def test_pipeline_default_strategy_is_naive():
@@ -52,9 +50,7 @@ def test_pipeline_accepts_user_defined_strategy():
     assert isinstance(pipe._scheduling_strategy, DummyScheduler)
 
 
-# ---------------------------------------------------------------------------
-# Strategy contract
-# ---------------------------------------------------------------------------
+# Strategy contract.
 
 
 def test_abstract_assign_streams_raises():
