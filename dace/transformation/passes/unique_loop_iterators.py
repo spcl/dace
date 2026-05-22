@@ -32,9 +32,14 @@ _POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 @dace.properties.make_properties
 @explicit_cf_compatible
 class UniqueLoopIterators(ppl.Pass):
-    """Rename every LoopRegion's loop variable to a unique ``_loop_it_<N>``."""
+    """Rename every LoopRegion's loop variable to a unique ``_loop_it_<N>``.
 
-    _loop_var_counter = 0
+    The ``<N>`` counter is per-call and seeded just past any iterator already
+    in ``_loop_it_<N>`` form anywhere in the SDFG tree, so renames never
+    collide with existing unique names and the numbering is deterministic for
+    a given SDFG regardless of how many times the pass (or other SDFGs) ran
+    before -- no cross-call global state.
+    """
 
     assign_loop_iterator_post_value = dace.properties.Property(
         dtype=bool,
@@ -140,7 +145,7 @@ class UniqueLoopIterators(ppl.Pass):
                 # Skipping unique names keeps the pass idempotent; duplicated
                 # names (from fission) still fall through to be disambiguated.
                 continue
-            new_name = f"{_LOOP_ITER_NAME_PREFIX}_{UniqueLoopIterators._loop_var_counter}"
+            new_name = f"{_LOOP_ITER_NAME_PREFIX}_{self._next_id}"
             self._rename_one_loop_var(cfg, old_name, new_name)
 
             if self.assign_loop_iterator_post_value:
@@ -148,10 +153,9 @@ class UniqueLoopIterators(ppl.Pass):
                 if post_value is not None:
                     post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names).strip()
                     if post_value_str:
-                        cfg.parent_graph.add_state_after(
-                            cfg,
-                            f"{_POST_VALUE_STATE_PREFIX}_{UniqueLoopIterators._loop_var_counter}",
-                            assignments={old_name: f"({post_value_str})"})
+                        cfg.parent_graph.add_state_after(cfg,
+                                                         f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
+                                                         assignments={old_name: f"({post_value_str})"})
             elif old_name in sdfg.symbols and old_name not in sdfg.used_symbols(all_symbols=False):
                 # The rename was scoped to ``cfg`` so the LoopRegion's
                 # body, init/condition/update no longer reference
@@ -169,12 +173,39 @@ class UniqueLoopIterators(ppl.Pass):
                 # being declared and prevent its own removal -- circular.
                 sdfg.remove_symbol(old_name)
 
-            UniqueLoopIterators._loop_var_counter += 1
+            self._next_id += 1
 
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
+
+    @staticmethod
+    def _first_free_id(sdfg: dace.SDFG) -> int:
+        """Lowest ``<N>`` that no existing ``_loop_it_<N>`` iterator uses.
+
+        Scans every ``LoopRegion`` in the whole SDFG tree (including nested
+        SDFGs) so a fresh rename never collides with an iterator a previous run
+        already produced.
+
+        :param sdfg: The root SDFG.
+        :returns: ``max(existing <N>) + 1``, or ``0`` if there are none.
+        """
+        prefix = f"{_LOOP_ITER_NAME_PREFIX}_"
+        max_id = -1
+        stack = [sdfg]
+        while stack:
+            graph = stack.pop()
+            for cfg in graph.all_control_flow_regions():
+                if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(prefix):
+                    suffix = cfg.loop_variable[len(prefix):]
+                    if suffix.isdigit():
+                        max_id = max(max_id, int(suffix))
+            for state in graph.all_states():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.NestedSDFG):
+                        stack.append(node.sdfg)
+        return max_id + 1
 
     def apply_pass(self, sdfg: dace.SDFG, _):
         """Rename every ``LoopRegion`` iterator in ``sdfg`` and its nested SDFGs.
@@ -182,4 +213,5 @@ class UniqueLoopIterators(ppl.Pass):
         :param sdfg: SDFG to mutate in place.
         :param _: Pipeline results (unused).
         """
+        self._next_id = self._first_free_id(sdfg)
         self._apply_recursive(sdfg)
