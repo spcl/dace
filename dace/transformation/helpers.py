@@ -2114,10 +2114,9 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     graph.remove_node(if_block)
 
 
-def get_parent_map_and_loop_scopes(
-        root_sdfg: SDFG, node: Union[nodes.MapEntry, AbstractControlFlowRegion, nodes.Tasklet, ConditionalBlock,
-                                     nodes.LibraryNode],
-        parent_state: Union[SDFGState, None]) -> List[Union[nodes.MapEntry, LoopRegion]]:
+def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, AbstractControlFlowRegion,
+                                                                nodes.Tasklet, ConditionalBlock, nodes.LibraryNode],
+                                   parent_state: Union[SDFGState, None]) -> List[Union[nodes.MapEntry, LoopRegion]]:
     """
     Collect all parent map entries and loop regions enclosing ``node``,
     traversing upward through scope dicts, control-flow regions, and
