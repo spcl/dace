@@ -156,6 +156,21 @@ def test_classify_diagonal_is_gather():
     assert cls.kind == TileAccessKind.GATHER
 
 
+def test_classify_diagonal_refused_for_K_gt_1():
+    """A diagonal (one tile var spanning >=2 dims) is a valid K=1 GATHER but is
+    refused for K>1: a multi-dim register tile cannot fold one shared tile var
+    across tile dimensions, so it classifies as :attr:`UNRECOGNIZED` (the
+    orchestrator then skips it -- a diagonal is a K=1 pattern)."""
+    # a[i, i, j]: tile var i spans dims 0,1 (diagonal); j in dim 2; both bound.
+    sub = subsets.Range([
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
+        (dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("i+7"), 1),
+        (dace.symbolic.pystr_to_symbolic("j"), dace.symbolic.pystr_to_symbolic("j+7"), 1),
+    ])
+    cls = classify_tile_access(sub, array_strides=(64, 8, 1), tile_iter_vars=("i", "j"))
+    assert cls.kind == TileAccessKind.UNRECOGNIZED
+
+
 def test_classify_unrecognized_when_tile_var_missing():
     """If a tile iter-var is referenced in NO subset dim, classifier
     can't bind it — :attr:`UNRECOGNIZED`."""

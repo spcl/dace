@@ -301,7 +301,16 @@ def classify_tile_access(
     if any(len(ds) == 0 for ds in tilevar_dims.values()):
         return TileAccessClassification(TileAccessKind.UNRECOGNIZED)  # tile var bound to no dim
     if any(len(ds) > 1 for ds in tilevar_dims.values()):
-        return TileAccessClassification(TileAccessKind.GATHER)        # tile var spans ≥2 dims (diagonal)
+        # A tile var spanning ≥2 array dims is a diagonal (``a[i, i]``).
+        # K=1 lowers it via a TileGather over an affine per-dim index map
+        # (one shared lane offset folded into every spanned dim). For K>1 a
+        # diagonal inside a multi-dim register tile is unsupported — the
+        # gather map would have to fold one shared tile var across multiple
+        # tile dimensions, which the K-dim gather emitter does not model —
+        # so refuse (UNRECOGNIZED) and let the orchestrator skip it cleanly.
+        if K > 1:
+            return TileAccessClassification(TileAccessKind.UNRECOGNIZED)
+        return TileAccessClassification(TileAccessKind.GATHER)        # K=1 diagonal
     if any(len(di.dep) > 1 for di in dims):
         return TileAccessClassification(TileAccessKind.GATHER)        # dim mixes ≥2 tile vars (a[i+j])
 
