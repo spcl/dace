@@ -1101,25 +1101,12 @@ def test_copy_single_element_d2h():
     np.testing.assert_allclose(host, cp.asnumpy(dev))
 
 
-# --- Legacy direct-edge miscompile regression pins ----------------------------
-#
-# Each test below builds the same SDFG twice: once with a CopyLibraryNode
-# (which we expand), and once with the canonical DaCe direct AN -> AN edge
-# (``Memlet(data=dst, subset=dst_subset, other_subset=src_subset)``). Ground
-# truth is computed via an explicit Python for-loop on NumPy arrays; both
-# DaCe paths must agree with it. The libnode does; the legacy path either
-# silently miscompiles or fails to compile.
-#
-# Most simple AN -> AN copies (same-rank slices, strided subsets with step,
-# mixed C/F layouts at the same rank) the legacy codegen actually handles
-# correctly when given the canonical memlet form. The libnode's clear
-# advantage is rank-mismatch reshapes with explicit per-side layout strides:
-# the legacy memcpy strategy doesn't bridge a layout-aware flat walk between
-# differently-shaped endpoints.
-#
-# The legacy-fails assertion is informational: if the legacy codegen ever
-# starts producing the correct output for the pattern below, this test will
-# fail and should be deleted (the advantage is gone).
+# Legacy direct-edge miscompile regression pins: each test builds the SDFG twice
+# -- with a CopyLibraryNode and with the canonical direct AN -> AN edge -- and checks
+# both against a NumPy for-loop. The libnode's advantage is rank-mismatch reshapes
+# with per-side layout strides, which the legacy memcpy path miscompiles or fails to
+# compile. The legacy-fails assertions are informational: if legacy ever produces
+# correct output, the test fails and should be deleted (the advantage is gone).
 
 
 def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
