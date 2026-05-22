@@ -7,8 +7,7 @@ import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.transformation.helpers import get_parent_map_and_loop_scopes
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -738,16 +737,12 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
         if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
             raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
 
-        # The collective copy IS the thread-block-level operation; it must
-        # not sit inside an enclosing GPU_ThreadBlock map.
-        root_sdfg = parent_sdfg
-        while root_sdfg.parent_nsdfg_node is not None:
-            root_sdfg = root_sdfg.parent_sdfg
-        parent_scopes = get_parent_map_and_loop_scopes(root_sdfg, node, parent_state)
-        for scope in parent_scopes:
-            if (isinstance(scope, dace.sdfg.nodes.MapEntry) and scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                raise ValueError("SharedMemoryCollective IS the thread-block-level operation "
-                                 "and must not be nested inside a GPU_ThreadBlock map.")
+        # The collective copy IS the thread-block-level operation; it must not
+        # sit inside an enclosing GPU_ThreadBlock map (``is_in_scope`` walks the
+        # scope dict and up through nested SDFGs).
+        if is_in_scope(parent_sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]):
+            raise ValueError("SharedMemoryCollective IS the thread-block-level operation "
+                             "and must not be nested inside a GPU_ThreadBlock map.")
 
         return nodes.Tasklet(node.name,
                              inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},

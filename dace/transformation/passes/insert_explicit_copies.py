@@ -15,18 +15,12 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
-    """Pick the destination subset for a copy memlet that omits its dst side.
+    """Destination subset for a copy memlet that omits it: the full array when the
+    volumes are not provably unequal, else ``src_subset``.
 
-    Implicit copy edges may carry only the source subset. The implicit
-    destination is the whole array whenever the two volumes are equal -- or
-    cannot be proven unequal, which covers symbolic stepped ranges and
-    consecutive-dimension reshapes (e.g. ``[8, 12] -> [96]``, or singleton dims
-    present on one side only). A provably different volume falls back to
-    ``src_subset``, correct when both sides share a shape.
-
-    :param src_subset: the known side of the implicit copy.
-    :param dst_desc: descriptor of the side whose subset is derived.
-    :returns: a :class:`~dace.subsets.Range` for the destination side.
+    :param src_subset: the known (source) side of the copy.
+    :param dst_desc: descriptor whose subset is being derived.
+    :returns: the destination :class:`~dace.subsets.Range`.
     """
     dst_range = subsets.Range.from_array(dst_desc)
     if symbolic.equal(src_subset.num_elements(), dst_range.num_elements()) is not False:
@@ -41,17 +35,13 @@ class InsertExplicitCopies(ppl.Pass):
 
     Detected patterns:
     - ``AccessNode -> AccessNode`` (direct copy edge) -- lifted to a libnode.
-    - a ``View <-> AccessNode`` data-movement edge -- lifted to a libnode with
-      the View as a normal endpoint (a View is an ``Array`` subclass with its
-      own shape / strides). The View's alias (view-defining) edge to its
-      underlying buffer is left untouched, so a round-trip ``AN -> View -> AN``
-      becomes ``AN -> View -> Copy -> AN`` (or the mirror for a dst-side View).
-    - ``AccessNode -> MapEntry -> AccessNode`` (stage-in) -- libnode placed
-      inside the map scope, wired directly to the MapEntry's output
-      connector. Chained MapEntries are followed via ``memlet_path``.
-      Views on the outer side stay in place.
-    - ``AccessNode -> MapExit -> AccessNode`` (stage-out) -- symmetric;
-      libnode inside the map scope, output connector wired directly to
+    - an ``AccessNode <-> View <-> AccessNode`` data-movement edge -- lifted to a libnode with
+      the View as a normal endpoint (treated like an array).
+    - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed
+      inside the innermost map scope, wired directly to the MapEntry's output
+      connector.
+    - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric;
+      libnode inside the map scope, output connector wired directly to the outermost
       MapExit.
     """
 
@@ -111,10 +101,7 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.is_empty():
                 continue
 
-            # WCR edges aren't copies -- they're reductions. Lifting them
-            # into a ``CopyLibraryNode`` would lose the conflict-resolution
-            # semantics (write-without-merge). They're left in place so a
-            # later pass can lower them to a proper reduction node.
+            # WCR edges aren't copies.
             if memlet.wcr is not None:
                 continue
 
@@ -122,49 +109,32 @@ class InsertExplicitCopies(ppl.Pass):
             dst_desc = sdfg.arrays[dst_node.data]
 
             # A view's alias (view-defining) edge references the underlying
-            # buffer rather than moving data -- skip it, and leave it intact so
-            # ``get_view_edge`` keeps resolving the buffer. Any other
-            # View<->Array edge is a real copy: a view is an ``Array`` subclass
-            # with its own shape / strides, so it lifts like any endpoint.
+            # buffer rather than moving data -- skip it.
             if any(
                     isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
                     for an in (src_node, dst_node)):
                 continue
 
-            # CopyLibraryNode expansion queries ``shape`` / ``strides`` /
-            # ``is_packed_fortran_strides`` on both endpoints. ``Array`` and
-            # ``Scalar`` both satisfy that contract (Scalar reports ``shape
-            # = (1,)``, ``strides = [1]``). ``Stream`` (queue) and other
-            # non-shape data classes do not -- leave the natural memlet for
-            # the codegen's stream / custom paths.
+            # We only copy array-like data (Array / Scalar), not streams.
             if not isinstance(src_desc, (data.Array, data.Scalar)) \
                     or not isinstance(dst_desc, (data.Array, data.Scalar)):
                 continue
 
             # Custom-target storages (e.g. TensorCore_A/B/Accumulator from
-            # the tensor_cores sample) are handled by their own
-            # ``TargetCodeGenerator.copy_memory`` hook via wmma intrinsics.
-            # Lifting them into a CopyLibraryNode emits scalar tasklet
-            # assignments that don't compile against opaque fragment types.
+            # the tensor_cores sample) are handled by their own codegen.
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # ``Memlet`` carries ``data`` (which array ``subset`` refers to) plus an
-            # optional ``other_subset``. For self-copies (src_name == dst_name)
-            # ``memlet.data`` matches both endpoints; the DaCe convention there
-            # is that ``subset`` is the destination range, so check dst first.
-            if memlet.data == dst_name:
-                dst_subset = memlet.subset
-                src_subset = memlet.other_subset
-            elif memlet.data == src_name:
-                src_subset = memlet.subset
-                dst_subset = memlet.other_subset
+            # Resolve src and dst subset. Self-copy: subset is the dst side;
+            # otherwise the memlet path maps ``data`` to an endpoint.
+            if src_name == dst_name:
+                src_subset, dst_subset = memlet.other_subset, memlet.subset
             else:
-                src_subset = memlet.subset
-                dst_subset = memlet.other_subset
+                src_subset = memlet.get_src_subset(edge, state)
+                dst_subset = memlet.get_dst_subset(edge, state)
 
             # Fill in either side that wasn't carried by the memlet, deriving
             # a matching range on the absent side from the array shape when
