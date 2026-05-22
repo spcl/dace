@@ -513,6 +513,6 @@ class ConstantPropagation(ppl.Pass):
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
         return {
-            k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue
+            k: v if (not ((symbolic.free_symbols_and_functions(v) | symbolic.arrays(v)) & arrays)) else _UnknownValue
             for k, v in edge.assignments.items()
         }

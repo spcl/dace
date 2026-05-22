@@ -1033,8 +1033,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     def __str__(self):
         if self.edge_id is not None:
             e = self.sdfg.edges()[self.edge_id]
-            edgestr = ' (at edge "%s" (%s -> %s)' % (
-                e.data.label,
+            edgestr = ' (at edge %s -> %s)' % (
                 str(e.src),
                 str(e.dst),
             )

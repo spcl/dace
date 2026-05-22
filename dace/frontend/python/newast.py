@@ -2029,23 +2029,27 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
 
                 for expr in symbolic.swalk(symval):
+                    # An array access in a bound (legacy ``arr(i)`` or ``Subscript(arr, i)``)
+                    # is hoisted to a dynamic-map-input symbol reading the array.
                     if symbolic.is_sympy_userfunction(expr):
-                        # If function contains a function
-                        if any(symbolic.contains_sympy_functions(a) for a in expr.args):
-                            raise DaceSyntaxError(self, node, 'Indirect accesses not supported in map ranges')
-                        arr = expr.func.__name__
-                        newvar = '__%s_%s%d' % (name, vid, ctr)
-                        repldict[arr] = newvar
-                        # Create memlet
-                        args = ','.join([str(a) for a in expr.args])
-                        if arr in self.variables:
-                            arr = self.variables[arr]
-                        if not isinstance(arr, str) or arr not in self.sdfg.arrays:
-                            rng = subsets.Range.from_string(args)
-                            args = str(rng)
-                        map_inputs[newvar] = Memlet.simple(arr, args)
-                        # ','.join([str(a) for a in expr.args]))
-                        ctr += 1
+                        arr, indices = expr.func.__name__, expr.args
+                    elif isinstance(expr, symbolic.Subscript):
+                        arr, indices = str(expr.args[0]), expr.args[1:]
+                    else:
+                        continue
+                    if any(symbolic.contains_sympy_functions(a) for a in indices):
+                        raise DaceSyntaxError(self, node, 'Indirect accesses not supported in map ranges')
+                    newvar = '__%s_%s%d' % (name, vid, ctr)
+                    repldict[arr] = newvar
+                    # Create memlet
+                    args = ','.join([str(a) for a in indices])
+                    if arr in self.variables:
+                        arr = self.variables[arr]
+                    if not isinstance(arr, str) or arr not in self.sdfg.arrays:
+                        rng = subsets.Range.from_string(args)
+                        args = str(rng)
+                    map_inputs[newvar] = Memlet.simple(arr, args)
+                    ctr += 1
                 # Replace functions with new variables
                 for find, replace in repldict.items():
                     val = re.sub(r"%s\(.*?\)" % find, val, replace)
