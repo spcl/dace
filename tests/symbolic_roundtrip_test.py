@@ -5,7 +5,7 @@ NaN, booleans and float precision. """
 import sympy
 
 import dace
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.symbolic import pystr_to_symbolic, symstr, arrays, free_symbols_and_functions, bitwise_or
 
 
@@ -88,6 +88,23 @@ def test_arrays_helper():
     assert arrays('a[i, j, k]') == {'a'}
     assert arrays('A[B[i]]') == {'A', 'B'}
     assert arrays('a + b') == set()
+
+
+def test_struct_member_subscript():
+    # A struct-member array access (``a.b[i]``, nested ``A.B.C[0]``): only the indices
+    # are free symbols, the full member path is reported by ``arrays``, and the struct
+    # root must NOT leak into ``Range.free_symbols`` (which previously caused
+    # ``SympifyError`` when parsing map ranges).
+    e = pystr_to_symbolic('a.b[i]')
+    assert {str(s) for s in e.free_symbols} == {'i'}
+    assert arrays('a.b[i]') == {'a.b'}
+    assert {str(s) for s in subsets.Range([(0, e - 1, 1)]).free_symbols} == {'i'}
+
+    # A is a struct, B a member struct, C a member array.
+    assert pystr_to_symbolic('A.B.C[0]').free_symbols == set()
+    assert arrays('A.B.C[0]') == {'A.B.C'}
+    assert {str(s) for s in pystr_to_symbolic('A.B.C[i]').free_symbols} == {'i'}
+    assert {str(s) for s in subsets.Range([(0, pystr_to_symbolic('A.B.C[i]'), 1)]).free_symbols} == {'i'}
 
 
 def test_free_symbols_and_functions_excludes_arrays():
@@ -176,6 +193,7 @@ if __name__ == '__main__':
     test_subscript_roundtrip()
     test_subscript_free_symbols_excludes_container()
     test_arrays_helper()
+    test_struct_member_subscript()
     test_free_symbols_and_functions_excludes_arrays()
     test_contains_sympy_functions_subscript()
     test_float_precision_preserved()

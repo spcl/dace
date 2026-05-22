@@ -20,9 +20,8 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 # Tokens in a Python expression string that require AST-based rewriting before
 # being handed to SymPy (boolean ops, comparisons, bitwise ops, attribute/subscript, etc.).
-# The ``.`` only matches attribute access (a dot not followed by a digit); a numeric
-# decimal point must not trigger the rewrite, as ``ast.parse`` would round a near-max
-# float literal (e.g. ``HUGE``) up to Python ``inf``, whereas SymPy keeps it finite.
+# The ``.`` matches attribute access only (not a numeric decimal point): routing a float
+# literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
     r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
 
@@ -428,6 +427,12 @@ def symlist(values):
                 # Skip attributes
                 skip.add(atom.args[1])
                 continue
+            if isinstance(atom, Subscript):
+                # Only the indices are free symbols (consistent with
+                # ``Subscript.free_symbols``). Skip the whole head subtree so a compound
+                # head like ``a.b`` in ``a.b[i]`` does not leak ``a``/``b``.
+                skip.update(sympy.preorder_traversal(atom.args[0]))
+                continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -644,8 +649,7 @@ _builtin_userfunctions = {
 def contains_sympy_functions(expr):
     """ Returns True if expression contains Sympy functions. """
     if isinstance(expr, Subscript):
-        # A subscript is a data-container access (the legacy ``arr(idx)`` form was a
-        # user-function, for which this returned True).
+        # A subscript is a data-container access.
         return True
     if is_sympy_userfunction(expr):
         if str(expr.func) in _builtin_userfunctions:
@@ -660,6 +664,16 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    """
+    Return the names of the free symbols and (non-builtin) functions in an expression.
+
+    Data containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``) are NOT
+    reported here, as the container is a data access rather than a free symbol; use
+    :func:`arrays` to obtain those.
+
+    :param expr: The expression (or its string form) to inspect.
+    :return: The set of free-symbol and function names.
+    """
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
@@ -916,11 +930,10 @@ class right_shift(sympy.Function):
             return x >> y
 
 
-# Operator-derived variants of the bitwise and shift functions. The Python operators
-# (``|``, ``<<``, ...) parse to these so ``symstr`` renders them back to the operator;
-# the bare names above keep their ``func(a, b)`` spelling on a Python round-trip (both
-# still lower to the operator in C++). The ``__`` prefix keeps them out of user code,
-# and subclassing preserves ``isinstance`` checks against the bare classes.
+# Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
+# ``symstr`` prints these as the operator, while the bare ``bitwise_or`` etc. print as
+# ``func(a, b)`` (both lower to the operator in C++). They subclass the bare classes so
+# ``isinstance`` checks still match.
 class __bitwise_and(bitwise_and):
     pass
 
@@ -977,9 +990,9 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        # The accessed member is a data access reported as a single ``a.b`` symbol, not
-        # as the free symbols of its parts. An array-access member (``a.b[i]``) is now a
-        # ``Subscript`` wrapping the ``Attr``, so ``args[1]`` is always the plain name.
+        # Report the member as a single ``a.b`` symbol, not the free symbols of its
+        # parts. An array-access member (``a.b[i]``) is a ``Subscript`` wrapping the
+        # ``Attr``, so ``args[1]`` is always the plain attribute name.
         return {sympy.Symbol(f"{self.args[0]}.{self.args[1]}")}
 
     def __str__(self):
@@ -999,8 +1012,8 @@ class Subscript(sympy.Function):
 
     @property
     def free_symbols(self):
-        # The subscripted container is a data access, not a free symbol (as with the
-        # legacy ``arr(idx)`` form); only the indices contribute free symbols.
+        # The subscripted container is a data access, not a free symbol; only the
+        # indices contribute. The container is reported by :func:`arrays` instead.
         return set().union(*(a.free_symbols for a in self.args[1:])) if len(self.args) > 1 else set()
 
     def __str__(self):
@@ -1515,10 +1528,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'Subscript':
             indices = ', '.join(self._print(a) for a in expr.args[1:])
             return f'{self._print(expr.args[0])}[{indices}]'
-        # Render the operator-backed functions back to their operators (identical in
-        # Python and C++). The ``__``-prefixed variants come from the actual operators
-        # and always print as such; the bare names print as the operator only in C++
-        # (in Python they keep their ``func(a, b)`` spelling so they round-trip).
+        # Operator-backed functions: the ``__``-prefixed variants (from the operators)
+        # always print as the operator; the bare names do so only in C++ (Python keeps
+        # the ``func(a, b)`` spelling so it round-trips).
         name = str(expr.func)
         base = name[2:] if name.startswith('__') else name
         as_operator = name.startswith('__') or self.cpp_mode

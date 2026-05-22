@@ -260,7 +260,7 @@ class InterstateEdge(object):
         # Symbols in conditions and assignments
         result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(assign)
+            result |= symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)
 
         return result
 
