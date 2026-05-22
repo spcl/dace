@@ -430,6 +430,23 @@ Parse-once memoization; IndexedBase-aware ``_resolve`` (replacing the ``"["``
 string guard); cross-CFG if-else grouping refinement. None are correctness
 bugs.
 
+### L-H. TODO — `SymbolPropagation` numerical bug on CloudSC (correctness)
+- **Finding (2026-05-22):** applied to the *simplified* inlined CloudSC SDFG,
+  ``SymbolPropagation`` changes floating-point outputs -- 8 arrays differ
+  (``tendency_loc_t``, ``tendency_loc_cld``, ``pfsqlf``, ``pfsqif``, ``pfsqrf``,
+  ``pfsqsf``, ``pfplsn``, ``pfhpsn``) by ~1e-4..1e-6 versus the same simplified
+  SDFG without the pass. The pass rewrites symbolic (integer-exact) quantities
+  only, so it must not change a single float -- this is a genuine correctness
+  bug, not floating-point reassociation (the comparison baseline is
+  simplify-only, so ``simplify``'s own reassociation is excluded).
+- **Repro:** `tests/corpus/cloudsc_symbol_propagation_test.py` (strict xfail);
+  uses the inlined ``cloudsc_py`` and `tests/corpus/generate_data_for_cloudsc.py`
+  (simplify-only reference vs simplify + ``SymbolPropagation`` candidate, run on
+  identical inputs). Un-xfail when fixed.
+- **Next:** bisect which propagation changes a float -- likely a scalar/value
+  symbol propagated into a tasklet (changing the evaluated expression), or a
+  mis-propagation that alters a memlet/index feeding a floating-point read.
+
 ### L-E. TODO — re-roll (untile) a manually-unrolled lane chain
 - **Shape:** a loop with step ``S != 1`` whose body is ``S`` manually-unrolled
   lanes -- the lane ``k`` statement is the lane-0 statement with every index
