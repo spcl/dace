@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``MemsetLibraryNode`` representing 0-memsets over contiguous subsets.
-
-The CUDA expansion emits the ambient ``__dace_current_stream`` symbol; the
-GPU stream scheduler binds it post-expansion (legacy codegen declares it
-directly), so the libnode carries no stream input connector itself.
-"""
+"""``MemsetLibraryNode`` representing 0-memsets."""
 from typing import List, Tuple
 
 import dace
@@ -17,16 +12,15 @@ from .. import environments
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, collapse_shape_and_strides
 
 
-def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
-                          parent_sdfg: dace.SDFG) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
+def _make_memset_skeleton(node: "MemsetLibraryNode",
+                          parent_state: dace.SDFGState) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
     """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
 
     :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node``.
-    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
     :returns: ``(sdfg, state, out_name, out, map_lengths)``.
     """
-    out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
@@ -39,23 +33,21 @@ def _make_memset_skeleton(node: "MemsetLibraryNode", parent_state: dace.SDFGStat
     return sdfg, state, out_name, out, map_lengths
 
 
-def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG, *,
-                         cuda: bool) -> nodes.Tasklet:
+def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
     """Build a direct memset tasklet.
 
     Emits the stream-bound ``cudaMemsetAsync`` form when ``cuda`` is set,
     otherwise plain ``memset``.
 
     :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node``.
-    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
     :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
     :returns: The memset tasklet.
     :raises ValueError: if the output subset is non-contiguous; the single-call
         ``cudaMemsetAsync`` / ``memset`` form would silently zero memory outside
         the subset. Use the ``pure`` expansion (mapped tasklet) for those.
     """
-    out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+    out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     if not out_subset.is_contiguous_subset(out):
         raise ValueError(
             f"MemsetLibraryNode {'CUDA' if cuda else 'CPU'} expansion requires a contiguous subset; "
@@ -75,8 +67,7 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
                          language=dace.Language.CPP)
 
 
-def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState,
-                                 parent_sdfg: dace.SDFG) -> str:
+def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
     Returns ``'pure'`` (Sequential element-zero map) in device scope since
@@ -86,13 +77,12 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     memsets; otherwise ``'CPU'`` (``std::memset``).
 
     :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node``.
-    :param parent_sdfg: The SDFG containing ``parent_state``.
+    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
     :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
     """
-    _out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+    _out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
 
-    if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+    if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'pure'
 
     if not out_subset.is_contiguous_subset(out):
@@ -112,7 +102,7 @@ class ExpandAuto(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        return auto_dispatch(node, parent_state, parent_sdfg, select_memset_implementation, MemsetLibraryNode)
+        return auto_dispatch(node, parent_state, select_memset_implementation, MemsetLibraryNode)
 
 
 @library.expansion
@@ -121,7 +111,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        sdfg, state, out_name, out, map_lengths = _make_memset_skeleton(node, parent_state, parent_sdfg)
+        sdfg, state, out_name, out, map_lengths = _make_memset_skeleton(node, parent_state)
 
         # Inner-tasklet connector. Must not collide with the wrapper SDFG's
         # parameter array, which is named after the libnode's outer connector.
@@ -148,7 +138,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _make_memset_tasklet(node, parent_state, parent_sdfg, cuda=True)
+        return _make_memset_tasklet(node, parent_state, cuda=True)
 
 
 @library.expansion
@@ -157,7 +147,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _make_memset_tasklet(node, parent_state, parent_sdfg, cuda=False)
+        return _make_memset_tasklet(node, parent_state, cuda=False)
 
 
 @library.node
