@@ -7,6 +7,7 @@ import sympy
 import dace
 from dace import subsets, symbolic
 from dace.symbolic import pystr_to_symbolic, symstr, arrays, free_symbols_and_functions, bitwise_or
+from dace.frontend.python.newast import _subset_has_indirection
 
 
 def _roundtrip(s, cpp_mode=False):
@@ -88,6 +89,21 @@ def test_arrays_helper():
     assert arrays('a[i, j, k]') == {'a'}
     assert arrays('A[B[i]]') == {'A', 'B'}
     assert arrays('a + b') == set()
+
+
+def test_array_rename_through_subscript():
+    # replace / replace_dict / subs must rename an array referenced via Subscript -- the
+    # GPU offloading pass relies on this (e.g. A_row -> gpu_A_row).
+    e = dace.InterstateEdge(assignments={'x': 'A_row[i + 1] - A_row[i]'})
+    e.replace('A_row', 'gpu_A_row')
+    assert arrays(e.assignments['x']) == {'gpu_A_row'}
+
+    e2 = dace.InterstateEdge(assignments={'x': 'A_row[i]'})
+    e2.replace_dict({'A_row': 'gpu_A_row'})
+    assert e2.assignments['x'] == 'gpu_A_row[i]'
+
+    renamed = pystr_to_symbolic('A_row[i]').subs(symbolic.symbol('A_row'), symbolic.symbol('gpu_A_row'))
+    assert arrays(renamed) == {'gpu_A_row'}
 
 
 def test_struct_member_subscript():
@@ -197,6 +213,50 @@ def test_boolean_preserved_and_distinct_from_int():
     assert _roundtrip('True', cpp_mode=True) == 'true'
 
 
+def test_map_range_array_bound_is_hoisted():
+    # An array access in a map-range bound must be hoisted to a dynamic-map-input symbol:
+    # the range then carries a symbol (not a raw Subscript) and the array is wired as a
+    # read. Without this, GPU offloading can't see the array and loop_to_map refuses it.
+    N = dace.symbol('N')
+
+    @dace.program
+    def maprange(ptr: dace.uint32[N + 1], data: dace.float32[64], out: dace.float32[N]):
+        for i in dace.map[0:N]:
+
+            @dace.map(_[ptr[i]:ptr[i + 1]])
+            def inner(j):
+                d << data[j]
+                o >> out(1, lambda x, y: x + y)[i]
+                o = d
+
+    sdfg = maprange.to_sdfg()
+    inner = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.map.params == ['j']]
+    assert inner
+    for me in inner:
+        assert 'ptr[' not in str(me.map.range)  # bound hoisted to a symbol, not a raw Subscript
+        assert me.map.range.free_symbols  # the range is symbolic
+
+
+def test_subset_indirection_detects_index_subscript():
+    # An index-position array access (a gather, ``data[A_col[j]]``) is indirection;
+    # a plain index (``data[j]``) is not. With the head excluded from a Subscript's
+    # free_symbols, this detection depends on contains_sympy_functions being
+    # Subscript-aware.
+    gather = subsets.Range.from_indices([pystr_to_symbolic('A_col[j]')])
+    plain = subsets.Range.from_indices([pystr_to_symbolic('j')])
+    assert _subset_has_indirection(gather)
+    assert not _subset_has_indirection(plain)
+    assert pystr_to_symbolic('A_col[j]').free_symbols == {symbolic.symbol('j')}
+
+
+def test_subset_indirection_detects_nested_and_multidim_subscript():
+    # Nested gathers (``data[A[B[j]]]``) and a per-dimension gather (``data[i, A[j]]``)
+    # are both indirection; a fully plain multi-dim subset is not.
+    assert _subset_has_indirection(subsets.Range.from_indices([pystr_to_symbolic('A[B[j]]')]))
+    assert _subset_has_indirection(subsets.Range.from_indices([pystr_to_symbolic('i'), pystr_to_symbolic('A[j]')]))
+    assert not _subset_has_indirection(subsets.Range.from_indices([pystr_to_symbolic('i'), pystr_to_symbolic('j')]))
+
+
 def test_interstate_edge_assignment_roundtrip():
     # Assignments survive save -> load -> save unchanged (idempotent serialization).
     sdfg = dace.SDFG('iedge_roundtrip')
@@ -231,6 +291,7 @@ if __name__ == '__main__':
     test_subscript_roundtrip()
     test_subscript_free_symbols_excludes_container()
     test_arrays_helper()
+    test_array_rename_through_subscript()
     test_struct_member_subscript()
     test_free_symbols_and_functions_excludes_arrays()
     test_scalar_versus_array_needs_descriptors()
@@ -241,4 +302,7 @@ if __name__ == '__main__':
     test_infinity_cpp_lowering()
     test_nan_roundtrip()
     test_boolean_preserved_and_distinct_from_int()
+    test_map_range_array_bound_is_hoisted()
+    test_subset_indirection_detects_index_subscript()
+    test_subset_indirection_detects_nested_and_multidim_subscript()
     test_interstate_edge_assignment_roundtrip()
