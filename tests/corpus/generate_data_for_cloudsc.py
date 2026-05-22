@@ -212,6 +212,16 @@ CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
     'ldcum': (0, 1),
 }
 
+#: Compiler flags for a deterministic IEEE build: ``-O0`` with no fast-math and
+#: no FP contraction (FMA), so the compiler performs no floating-point
+#: reassociation. Under these flags the simplified and reference cloudsc SDFGs
+#: agree **bit-for-bit**, which is why the correctness check (see
+#: :func:`run_and_compare`) uses this build with a ``1e-15`` tolerance. A release
+#: build (``-O3 -ffast-math``) instead approximates the many transcendental
+#: intrinsics (``exp``/``log``/``sqrt``/...) and reorders the flux prefix sums,
+#: so it needs a much looser tolerance (~``1e-12``).
+IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off'
+
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
     """Build a fresh runnable SDFG from the inlined CloudSC program.
@@ -316,8 +326,8 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
 
 def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
                     cand_inputs: Dict[str, Union[np.ndarray, int, float]],
-                    rtol: float = 1e-12,
-                    atol: float = 1e-12,
+                    rtol: float = 1e-15,
+                    atol: float = 1e-15,
                     verbose: bool = False) -> Dict[str, Tuple[float, float, bool]]:
     """Per-array (per-subset) tolerance check between two driven input/output sets.
 
@@ -325,10 +335,14 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
     ``numpy`` array, where ``max_abs`` is the worst absolute difference,
     ``max_rel`` the worst relative difference over the nonzero reference
     elements, and ``ok`` the per-array ``numpy.allclose`` verdict at ``rtol`` /
-    ``atol``. With ``verbose`` it prints one line per array. CloudSC matches the
-    no-transform reference to machine precision; the only arrays that move at
-    all are the vertical-flux prefix scans (``pf*``), where a transform may
-    reorder the running sum by a few ULP -- hence a tight default tolerance.
+    ``atol``. With ``verbose`` it prints one line per array.
+
+    With these physical inputs and an IEEE build (:data:`IEEE_CPU_ARGS`), simplify
+    (and other value-preserving transforms) reproduce the no-transform reference
+    *bit-for-bit*, so the machine-precision ``1e-15`` default is appropriate for
+    a correctness check. A release build (``-O3 -ffast-math``) approximates the
+    transcendental intrinsics and reorders the flux prefix sums, so the caller
+    should pass a looser tolerance (~``1e-12``) there.
 
     :param ref_inputs: The reference run's mutated input/output dict.
     :param cand_inputs: The candidate run's mutated input/output dict.
@@ -357,19 +371,25 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
 def run_and_compare(reference: dace.SDFG,
                     candidate: dace.SDFG,
                     seed: int = 0,
-                    rtol: float = 1e-12,
-                    atol: float = 1e-12,
+                    rtol: float = 1e-15,
+                    atol: float = 1e-15,
                     sequential: bool = True,
+                    ieee_build: bool = True,
                     verbose: bool = False) -> bool:
     """Run two CloudSC SDFGs on identical inputs and compare every shared
     non-transient output array, each at its own ``rtol`` / ``atol``.
 
     Both SDFGs are driven with the same generated inputs (a private deep copy
     each, since the call mutates the buffers in place). Only array outputs are
-    compared; scalar and symbol inputs are not. The default tolerance is tight
-    (``1e-12``): with the physical inputs this harness generates, simplify (and
-    other value-preserving transforms) reproduce the reference to machine
-    precision -- see :func:`compare_outputs`.
+    compared; scalar and symbol inputs are not.
+
+    For a correctness check the default ``ieee_build`` compiles both SDFGs with
+    :data:`IEEE_CPU_ARGS` (``-O0``, no fast-math, no FP contraction), under which
+    a value-preserving transform reproduces the reference *bit-for-bit*, so the
+    default ``1e-15`` tolerance holds. To instead measure a release build, pass
+    ``ieee_build=False`` (leaving the configured ``-O3 -ffast-math`` flags) and a
+    looser tolerance (~``1e-12``), since the transcendental intrinsics are then
+    approximated and the flux prefix sums reordered.
 
     :param reference: The reference SDFG (e.g. un-transformed).
     :param candidate: The SDFG under test.
@@ -379,6 +399,9 @@ def run_and_compare(reference: dace.SDFG,
     :param sequential: Force both SDFGs sequential before running
         (:func:`make_sequential`) so the comparison is deterministic; leave on
         unless you specifically want to measure parallel behaviour.
+    :param ieee_build: Compile with the deterministic IEEE flags
+        (:data:`IEEE_CPU_ARGS`) for the duration of the runs; the prior
+        ``compiler.cpu.args`` setting is restored afterwards.
     :param verbose: Print the per-array ``max_abs`` / ``max_rel`` and verdict.
     :returns: ``True`` iff every shared output array matches within tolerance.
     """
@@ -387,8 +410,15 @@ def run_and_compare(reference: dace.SDFG,
         make_sequential(candidate)
     ref_inputs = generate_cloudsc_inputs(reference, seed)
     cand_inputs = copy.deepcopy(ref_inputs)
-    reference(**ref_inputs)
-    candidate(**cand_inputs)
+
+    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    try:
+        if ieee_build:
+            dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+        reference(**ref_inputs)
+        candidate(**cand_inputs)
+    finally:
+        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
 
     report = compare_outputs(ref_inputs, cand_inputs, rtol=rtol, atol=atol, verbose=verbose)
     return all(ok for _, _, ok in report.values())
