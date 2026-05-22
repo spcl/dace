@@ -87,7 +87,6 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
-
 GPU_RESIDENT_STORAGES = frozenset({
     StorageType.GPU_Global,
     StorageType.GPU_Shared,
