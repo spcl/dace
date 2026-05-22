@@ -1,5 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the use of Reference data descriptors. """
+import json
+import tempfile
+
 import dace
 from dace.sdfg import validation
 from dace.transformation.pass_pipeline import Pipeline
@@ -9,6 +12,17 @@ from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
 import networkx as nx
+
+
+def _assert_roundtrip_json_stable(sdfg):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path1 = f'{tmpdir}/test.sdfg'
+        path2 = f'{tmpdir}/test2.sdfg'
+        sdfg.save(path1, hash=False)
+        dace.SDFG.from_file(path1).save(path2, hash=False)
+
+        with open(path1, 'r') as fp1, open(path2, 'r') as fp2:
+            assert json.load(fp1) == json.load(fp2)
 
 
 def test_frontend_reference():
@@ -524,6 +538,10 @@ def test_scoped(reftoview):
     assert np.allclose(A, ref)
 
 
+def test_scoped_roundtrip_is_stable():
+    _assert_roundtrip_json_stable(_create_scoped_sdfg())
+
+
 @pytest.mark.parametrize('reftoview', (False, True))
 def test_scoped_empty_memlet(reftoview):
     sdfg = _create_scoped_empty_memlet_sdfg()
@@ -786,6 +804,7 @@ if __name__ == '__main__':
     test_multisubset(True)
     test_scoped(False)
     test_scoped(True)
+    test_scoped_roundtrip_is_stable()
     test_scoped_empty_memlet(False)
     test_scoped_empty_memlet(True)
     test_reference_neighbors(False)

@@ -1372,7 +1372,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
 
     location = DictProperty(key_type=str,
-                            value_type=symbolic.pystr_to_symbolic,
+                            value_type=sympy.Basic,
                             desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __repr__(self) -> str:
@@ -1485,15 +1485,51 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
 
+        # Resolve the authoritative dtype of every symbol an element may reference, so
+        # serialization emits a deterministic dtype that depends only on the enclosing
+        # scopes -- never on a symbol instance's own (cache-stale) dtype. The authority
+        # is rebuilt fresh on every serialization (never stored): opening a scope (entry
+        # node) augments the running map with that scope's ``new_symbols`` (its map
+        # iterators and dynamic-input connector symbols), and the parent level is
+        # restored when the recursion returns.
+        authority_by_node: Dict[nd.Node, Dict[str, dtypes.typeclass]] = {}
+        try:
+            scope_children = self.scope_children()
+
+            def _open_scope(scope_entry: Optional[nd.Node], authority: Dict[str, dtypes.typeclass]):
+                for child in scope_children.get(scope_entry, []):
+                    if isinstance(child, nd.EntryNode):
+                        inner = {**authority, **child.new_symbols(self.sdfg, self, authority)}
+                        authority_by_node[child] = inner
+                        _open_scope(child, inner)
+                    else:
+                        authority_by_node[child] = authority
+
+            _open_scope(None, dict(self.sdfg.symbols))
+        except (RuntimeError, ValueError, KeyError):
+            authority_by_node = {}
+
+        nodes_json = []
+        for n in self.nodes():
+            with symbolic.serialization_symbol_dtypes(authority_by_node.get(n, self.sdfg.symbols)):
+                nodes_json.append(n.to_json(self))
+
+        # An edge's memlet sees the symbols of both endpoints' scopes (the richer
+        # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
+        edges_json = []
+        for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
+            authority = {**authority_by_node.get(e.src, {}), **authority_by_node.get(e.dst, {})}
+            with symbolic.serialization_symbol_dtypes(authority):
+                edges_json.append(e.to_json(self))
+
         ret = {
             'type': type(self).__name__,
             'label': self.name,
             'id': parent.node_id(self) if parent is not None else None,
             'collapsed': self.is_collapsed,
             'scope_dict': scope_dict,
-            'nodes': [n.to_json(self) for n in self.nodes()],
-            'edges':
-            [e.to_json(self) for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or ''))],
+            'nodes': nodes_json,
+            'edges': edges_json,
             'attributes': serialize.all_properties_to_json(self),
         }
 
