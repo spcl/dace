@@ -690,14 +690,16 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 
 def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     """
-    Return the names of data containers accessed via ``Subscript`` in an expression.
+    Return the names of the data containers accessed via ``Subscript`` in an expression
+    (e.g. ``A`` in ``A[i]``).
 
-    Both rank-0 (``Subscript(scalar)``) and rank-N (``Subscript(array, i, ...)``)
-    accesses are reported. This complements :func:`free_symbols_and_functions`, which
-    reports symbols and functions but not the accessed containers.
+    Only subscripted accesses are reported. A rank-0 scalar referenced by name (``a``)
+    parses to a plain symbol and cannot be told apart from a free symbol without the
+    SDFG's data descriptors, so it is NOT reported here -- intersect
+    :func:`free_symbols_and_functions` with ``sdfg.arrays`` to recover those.
 
     :param expr: The expression (or its string form) to inspect.
-    :return: The set of accessed container names.
+    :return: The set of subscripted container names.
     """
     if isinstance(expr, str):
         expr = pystr_to_symbolic(expr)

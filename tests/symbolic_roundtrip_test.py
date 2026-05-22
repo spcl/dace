@@ -112,6 +112,18 @@ def test_free_symbols_and_functions_excludes_arrays():
     assert free_symbols_and_functions('A[i] + sin(x)') == {'i', 'x'}
 
 
+def test_scalar_versus_array_needs_descriptors():
+    # A subscripted access is unambiguously a container; a bare name (possibly a rank-0
+    # scalar) is indistinguishable from a symbol, so ``arrays`` reports only the former.
+    # Consumers recover scalars by intersecting ``free_symbols_and_functions`` with the
+    # SDFG's data descriptors.
+    assert arrays('A[i]') == {'A'}
+    assert arrays('s') == set()  # ``s`` could be a scalar or a symbol; not decidable here
+    descriptors = {'A', 's'}  # both are data containers in this hypothetical SDFG
+    referenced = (free_symbols_and_functions('A[i] + s') | arrays('A[i] + s')) & descriptors
+    assert referenced == {'A', 's'}  # arrays() -> A; fsf & descriptors -> s
+
+
 def test_contains_sympy_functions_subscript():
     assert symbolic.contains_sympy_functions(pystr_to_symbolic('A[i]')) is True
     assert symbolic.contains_sympy_functions(pystr_to_symbolic('a + b')) is False
@@ -195,6 +207,7 @@ if __name__ == '__main__':
     test_arrays_helper()
     test_struct_member_subscript()
     test_free_symbols_and_functions_excludes_arrays()
+    test_scalar_versus_array_needs_descriptors()
     test_contains_sympy_functions_subscript()
     test_float_precision_preserved()
     test_infinity_roundtrip()
