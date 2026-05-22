@@ -302,15 +302,34 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         )
         if _skip_reason:
             _pytest.skip(f"tile_nodes arm: {_skip_reason}")
-        from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-            VectorizeCPUMultiDim,
-        )
         widths = _auto_tile_widths(copy_sdfg, vector_width)
-        try:
-            VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(copy_sdfg, {})
-        except NotImplementedError as _e:
-            _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
-        copy_sdfg.validate()
+        if len(widths) == 1:
+            # K=1 -> existing tasklet emission (VectorizeCPU). The tile
+            # libnodes are reserved for genuine K>=2 tiles; a 1D kernel
+            # uses the mature scalar-tasklet path. (VectorizeCPUMultiDim
+            # can still emit 1D tiles — that capability is exercised by
+            # the dedicated 1D-tile-op audit tests, not this arm.)
+            try:
+                VectorizeCPU(vector_width=widths[0],
+                             insert_copies=insert_copies,
+                             apply_on_maps=filter_map,
+                             no_inline=no_inline,
+                             fail_on_unvectorizable=True,
+                             remainder_strategy="scalar",
+                             use_fp_factor=False,
+                             branch_normalization=True).apply_pass(copy_sdfg, {})
+            except NotImplementedError as _e:
+                _pytest.skip(f"tile_nodes arm (K=1 fallback): NotImplementedError ({_e})")
+            copy_sdfg.validate()
+        else:
+            from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
+                VectorizeCPUMultiDim,
+            )
+            try:
+                VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(copy_sdfg, {})
+            except NotImplementedError as _e:
+                _pytest.skip(f"tile_nodes arm: v2 emitter NotImplementedError ({_e})")
+            copy_sdfg.validate()
     else:
         if branch_mode == "fp_factor":
             branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
