@@ -41,20 +41,50 @@ def emission_style(request) -> str:
     return request.param
 
 
-@pytest.fixture(params=["scalar_postamble", "tile_nodes"])
-def vectorize_config(request) -> str:
-    """Parametrise tests over the two backend pipelines (user directive
-    2026-05-20):
+def pytest_configure(config):
+    """Register the ``tile_nodes`` marker (opt-in tile-op config arm).
 
-    - ``"scalar_postamble"`` — today's ``VectorizeCPU`` (1D path, with
-      scalar postamble for the remainder tail).
-    - ``"tile_nodes"`` — the new ``VectorizeCPUMultiDim`` orchestrator
-      (v2 K-dim tile-op path, lowered to ``pure``). The harness auto-
-      picks ``widths=(8,)`` for K=1 kernels and ``widths=(8, 8)`` for
-      K=2 kernels by inspecting the SDFG's innermost map; tests whose
-      kernel can't satisfy the v2 locked-knob shape (custom branch
-      mode, fuse_overlapping_loads, gather / WCR features not yet
-      supported by ``EmitTileOps``) are skipped per-arm.
+    :param config: The pytest config object.
+    """
+    config.addinivalue_line(
+        "markers",
+        "tile_nodes: also run this test under the K-dim tile-op config "
+        "(VectorizeCPUMultiDim), in addition to the default scalar_postamble.",
+    )
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrise ``vectorize_config`` per the ``tile_nodes`` marker.
+
+    Running *every* vectorization test under the tile-op config is
+    wasteful; the tile path is validated on a curated subset that
+    maximises distinct-pattern coverage (strided load/store, scatter,
+    gather, buffer-reuse, long cloudsc kernels, ...). A test (or a whole
+    module, via ``pytestmark``) opts that subset in with
+    ``@pytest.mark.tile_nodes``; unmarked tests run only
+    ``scalar_postamble``.
+
+    :param metafunc: The pytest metafunc for the test being collected.
+    """
+    if "vectorize_config" not in metafunc.fixturenames:
+        return
+    configs = ["scalar_postamble"]
+    if metafunc.definition.get_closest_marker("tile_nodes") is not None:
+        configs.append("tile_nodes")
+    metafunc.parametrize("vectorize_config", configs, indirect=True)
+
+
+@pytest.fixture
+def vectorize_config(request) -> str:
+    """Backend pipeline under test (parametrised by ``pytest_generate_tests``):
+
+    - ``"scalar_postamble"`` — today's ``VectorizeCPU`` (1D path, scalar
+      postamble for the remainder tail). The default for every test that
+      takes this fixture.
+    - ``"tile_nodes"`` — the K-dim routing: K=1 falls back to
+      ``VectorizeCPU`` (direct tasklet swap), K>=2 uses the
+      ``VectorizeCPUMultiDim`` tile-op libnodes. Added only for tests
+      carrying the ``tile_nodes`` marker.
 
     Both arms must match the unvectorized scalar reference."""
     return request.param

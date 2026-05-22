@@ -2,6 +2,7 @@
 import math
 import dace
 import numpy
+import pytest
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     ReplaceSTDExpWithDaCeExp,
     ReplaceSTDLogWithDaCeLog,
@@ -14,6 +15,9 @@ from tests.passes.vectorization.helpers.harness import (
     N,
     S,
 )
+
+# Core elementwise/op kernels — also exercise the K-dim tile-op config.
+pytestmark = pytest.mark.tile_nodes
 
 
 @dace.program

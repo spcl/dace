@@ -10,6 +10,9 @@ from tests.passes.vectorization.helpers.harness import (
     Y,
 )
 
+# Strided / gather / scatter patterns — also exercise the K-dim tile-op config.
+pytestmark = pytest.mark.tile_nodes
+
 
 @dace.program
 def vecscale_unit_stride(src: dace.float64[N], dst: dace.float64[N], scale: dace.float64):

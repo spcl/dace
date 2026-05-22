@@ -8,6 +8,9 @@ from tests.passes.vectorization.helpers.harness import (
     S,
 )
 
+# Core stencil kernels — also exercise the K-dim tile-op config.
+pytestmark = pytest.mark.tile_nodes
+
 
 @dace.program
 def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  #, N, tsteps):

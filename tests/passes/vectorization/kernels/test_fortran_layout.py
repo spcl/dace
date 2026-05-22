@@ -30,10 +30,14 @@ indirect-access subgraph pattern in ``indirect/test_strided_gather_scatter``
 must flow through its own connector / dynamic subset).
 """
 import numpy as np
+import pytest
 
 import dace
 
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
+
+# Fortran-layout (non-last-dim contiguous) — also exercise the tile-op config.
+pytestmark = pytest.mark.tile_nodes
 
 
 def _build_fortran_2d_axpy() -> dace.SDFG:
