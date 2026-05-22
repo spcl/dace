@@ -184,7 +184,7 @@ class InterstateEdge(object):
         #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
         #       assignments as symbolic expressions without specialized to/from_json functions.
         to_json=lambda d: {
-            k: str(symbolic.pystr_to_symbolic(v))
+            k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
             for k, v in d.items()
         },
         from_json=(lambda d, *args, context=None, **kwargs: {
@@ -260,7 +260,7 @@ class InterstateEdge(object):
         # Symbols in conditions and assignments
         result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(assign)
+            result |= symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)
 
         return result
 

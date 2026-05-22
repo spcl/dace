@@ -20,8 +20,10 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 _FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 # Tokens in a Python expression string that require AST-based rewriting before
 # being handed to SymPy (boolean ops, comparisons, bitwise ops, attribute/subscript, etc.).
+# The ``.`` matches attribute access only (not a numeric decimal point): routing a float
+# literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|[\.]|[\[]|[\]]')
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -425,6 +427,12 @@ def symlist(values):
                 # Skip attributes
                 skip.add(atom.args[1])
                 continue
+            if isinstance(atom, Subscript):
+                # Only the indices are free symbols (consistent with
+                # ``Subscript.free_symbols``). Skip the whole head subtree so a compound
+                # head like ``a.b`` in ``a.b[i]`` does not leak ``a``/``b``.
+                skip.update(sympy.preorder_traversal(atom.args[0]))
+                continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -640,6 +648,9 @@ _builtin_userfunctions = {
 
 def contains_sympy_functions(expr):
     """ Returns True if expression contains Sympy functions. """
+    if isinstance(expr, Subscript):
+        # A subscript is a data-container access.
+        return True
     if is_sympy_userfunction(expr):
         if str(expr.func) in _builtin_userfunctions:
             return False
@@ -653,6 +664,16 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    """
+    Return the names of the free symbols and (non-builtin) functions in an expression.
+
+    Data containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``) are NOT
+    reported here, as the container is a data access rather than a free symbol; use
+    :func:`arrays` to obtain those.
+
+    :param expr: The expression (or its string form) to inspect.
+    :return: The set of free-symbol and function names.
+    """
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
@@ -665,6 +686,43 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
         if (is_sympy_userfunction(atom) and str(atom.func) not in _builtin_userfunctions):
             result.add(str(atom.func))
     return result
+
+
+def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
+    """
+    Return the names of the containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``).
+
+    Only subscripted accesses are reported; a rank-0 scalar referenced by name is
+    indistinguishable from a free symbol here, so it is reported by :func:`scalars`.
+
+    :param expr: The expression (or its string form) to inspect.
+    :return: The set of subscripted container names.
+    """
+    if isinstance(expr, str):
+        expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
+    return {str(node.args[0]) for node in expr.atoms(Subscript)}
+
+
+def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[str]:
+    """
+    Return the names of the rank-0 scalar containers referenced by name.
+
+    A bare name is indistinguishable from a free symbol without the data descriptors, so
+    ``descriptors`` (e.g. ``sdfg.arrays``) is required. ``arrays(e) | scalars(e, descriptors)``
+    yields all referenced data containers.
+
+    :param expr: The expression (or its string form) to inspect.
+    :param descriptors: Name-to-descriptor mapping used to identify scalar containers.
+    :return: The set of referenced scalar names.
+    """
+    if isinstance(expr, str):
+        expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
+    from dace import data  # avoid import loop
+    return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
 def is_undefined(expr: Union[SymbolicType, str]) -> bool:
@@ -738,6 +796,13 @@ class int_floor(sympy.Function):
 
     def _eval_is_integer(self):
         return True
+
+
+class __int_floor(int_floor):
+    """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
+        it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
+        ``int_floor(a, b)`` keeps its function spelling. """
+    pass
 
 
 class int_ceil(sympy.Function):
@@ -859,11 +924,12 @@ class left_shift(sympy.Function):
 
         :param x: Value to shift.
         :param y: Value to shift by.
-        :return: Return value (literal or symbolic).
+        :return: The shifted literal if both operands are concrete, else ``None``.
         """
+        # Keep symbolic shifts unevaluated so they round-trip to ``x << y`` rather
+        # than collapsing to the equivalent ``x * 2**y``.
         if x.is_Number and y.is_Number:
             return x << y
-        return x * (2**y)
 
 
 class right_shift(sympy.Function):
@@ -875,11 +941,40 @@ class right_shift(sympy.Function):
 
         :param x: Value to shift.
         :param y: Value to shift by.
-        :return: Return value (literal or symbolic).
+        :return: The shifted literal if both operands are concrete, else ``None``.
         """
+        # Keep symbolic shifts unevaluated so they round-trip to ``x >> y`` rather
+        # than collapsing to ``int_floor(x, 2**y)``.
         if x.is_Number and y.is_Number:
             return x >> y
-        return int_floor(x, (2**y))
+
+
+# Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
+# ``symstr`` prints these as the operator, while the bare ``bitwise_or`` etc. print as
+# ``func(a, b)`` (both lower to the operator in C++). They subclass the bare classes so
+# ``isinstance`` checks still match.
+class __bitwise_and(bitwise_and):
+    pass
+
+
+class __bitwise_or(bitwise_or):
+    pass
+
+
+class __bitwise_xor(bitwise_xor):
+    pass
+
+
+class __bitwise_invert(bitwise_invert):
+    pass
+
+
+class __left_shift(left_shift):
+    pass
+
+
+class __right_shift(right_shift):
+    pass
 
 
 class ROUND(sympy.Function):
@@ -914,12 +1009,10 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
-        if isinstance(self.args[1], sympy.Function):
-            attribute = str(self.args[1].func)
-        else:
-            attribute = str(self.args[1])
-        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
+        # Report the member as a single ``a.b`` symbol, not the free symbols of its
+        # parts. An array-access member (``a.b[i]``) is a ``Subscript`` wrapping the
+        # ``Attr``, so ``args[1]`` is always the plain attribute name.
+        return {sympy.Symbol(f"{self.args[0]}.{self.args[1]}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
@@ -935,6 +1028,12 @@ class Subscript(sympy.Function):
     The first argument is the subscripted expression; the remaining arguments are
     the (single-point) indices.
     """
+
+    @property
+    def free_symbols(self):
+        # The subscripted container is a data access, not a free symbol; only the
+        # indices contribute. The container is reported by :func:`arrays` instead.
+        return set().union(*(a.free_symbols for a in self.args[1:])) if len(self.args) > 1 else set()
 
     def __str__(self):
         indices = ', '.join(str(a) for a in self.args[1:])
@@ -1180,13 +1279,13 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     }
 
     _ast_to_sympy_functions = {
-        ast.BitAnd: 'bitwise_and',
-        ast.BitOr: 'bitwise_or',
-        ast.BitXor: 'bitwise_xor',
-        ast.Invert: 'bitwise_invert',
-        ast.LShift: 'left_shift',
-        ast.RShift: 'right_shift',
-        ast.FloorDiv: 'int_floor',
+        ast.BitAnd: '__bitwise_and',
+        ast.BitOr: '__bitwise_or',
+        ast.BitXor: '__bitwise_xor',
+        ast.Invert: '__bitwise_invert',
+        ast.LShift: '__left_shift',
+        ast.RShift: '__right_shift',
+        ast.FloorDiv: '__int_floor',
     }
 
     def visit_UnaryOp(self, node):
@@ -1316,6 +1415,9 @@ _PYSTR2SYM_locals = {
     'floor': sympy.floor,
     'ceil': sympy.ceiling,
     'round': ROUND,
+    # Resolve infinity/NaN names so they survive inside expressions (e.g. ``a + inf``).
+    'inf': sympy.oo,
+    'nan': sympy.nan,
     # Convert and/or to special sympy functions to avoid boolean evaluation
     'And': AND,
     'Or': OR,
@@ -1332,11 +1434,18 @@ _PYSTR2SYM_locals = {
     'bitwise_or': bitwise_or,
     'bitwise_xor': bitwise_xor,
     'bitwise_invert': bitwise_invert,
+    '__bitwise_and': __bitwise_and,
+    '__bitwise_or': __bitwise_or,
+    '__bitwise_xor': __bitwise_xor,
+    '__bitwise_invert': __bitwise_invert,
     'LeftShift': left_shift,
     'left_shift': left_shift,
     'RightShift': right_shift,
     'right_shift': right_shift,
+    '__left_shift': __left_shift,
+    '__right_shift': __right_shift,
     'int_floor': int_floor,
+    '__int_floor': __int_floor,
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
@@ -1364,8 +1473,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         except ValueError:
             pass
         try:
-            return sympy.Float(float(expr))
-        except ValueError:
+            # Parse the literal directly (SymPy is arbitrary-precision); going via
+            # Python ``float()`` would round a near-max value (e.g. HUGE) up to inf.
+            return sympy.Float(expr)
+        except (ValueError, TypeError):
             pass
         if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
@@ -1381,7 +1492,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
-    return sympy_to_dace(sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify), symbol_map)
+    result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
+    if isinstance(result, bool):
+        # SymPy parses the literals ``True``/``False`` to Python bools; keep them as
+        # SymPy booleans so they stay distinct from the integers ``1``/``0``.
+        result = sympy.true if result else sympy.false
+    return sympy_to_dace(result, symbol_map)
 
 
 @lru_cache(maxsize=2048)
@@ -1397,6 +1513,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
         self.cpp_mode = cpp_mode
+        # Print floats at the shortest precision that round-trips (``3.14`` instead of
+        # ``3.14000000000000``); higher-precision values (e.g. HUGE) still print in full.
+        self._settings['full_prec'] = False
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
@@ -1408,8 +1527,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
-        if self.cpp_mode and str(expr.func) == 'int_floor':
-            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
@@ -1430,6 +1547,27 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'Subscript':
             indices = ', '.join(self._print(a) for a in expr.args[1:])
             return f'{self._print(expr.args[0])}[{indices}]'
+        # Operator-backed functions: the ``__``-prefixed variants (from the operators)
+        # always print as the operator; the bare names do so only in C++ (Python keeps
+        # the ``func(a, b)`` spelling so it round-trips).
+        name = str(expr.func)
+        base = name[2:] if name.startswith('__') else name
+        as_operator = name.startswith('__') or self.cpp_mode
+        if base == 'bitwise_invert' and as_operator:
+            return '(~(%s))' % self._print(expr.args[0])
+        binop = {'bitwise_and': '&', 'bitwise_or': '|', 'bitwise_xor': '^', 'left_shift': '<<', 'right_shift': '>>'}
+        if base in binop and as_operator:
+            return '((%s) %s (%s))' % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
+        # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
+        # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
+        if base == 'int_floor' and as_operator:
+            op = '/' if self.cpp_mode else '//'
+            return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+        if str(expr.func) == 'IfExpr':
+            cond, tval, fval = (self._print(a) for a in expr.args)
+            if self.cpp_mode:
+                return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
+            return '((%s) if (%s) else (%s))' % (tval, cond, fval)
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
@@ -1445,14 +1583,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return '(not (%s))' % self._print(expr.args[0])
 
     def _print_Infinity(self, expr):
-        if self.cpp_mode:
-            return 'INFINITY'
-        return super()._print_Infinity(expr)
+        # Print as ``inf`` so it round-trips back to ``oo`` via ``pystr_to_symbolic``.
+        return 'INFINITY' if self.cpp_mode else 'inf'
 
     def _print_NegativeInfinity(self, expr):
-        if self.cpp_mode:
-            return '-INFINITY'
-        return super()._print_NegativeInfinity(expr)
+        return '-INFINITY' if self.cpp_mode else '-inf'
+
+    def _print_NaN(self, expr):
+        return 'NAN' if self.cpp_mode else 'nan'
+
+    def _print_BooleanTrue(self, expr):
+        return 'true' if self.cpp_mode else 'True'
+
+    def _print_BooleanFalse(self, expr):
+        return 'false' if self.cpp_mode else 'False'
 
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
@@ -1508,6 +1652,13 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
+
+    # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
+    # the first two and booleans are not ``Number``s, so the generic path below would
+    # wrap them in parentheses that no longer round-trip. Print them bare instead.
+    if isinstance(sym, (sympy.core.numbers.Infinity, sympy.core.numbers.NegativeInfinity, sympy.core.numbers.NaN,
+                        sympy.logic.boolalg.BooleanAtom)):
+        return DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
     try:
         sym = sympy_numeric_fix(sym)
