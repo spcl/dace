@@ -271,8 +271,8 @@ def test_three_kernels_dependent_and_independent():
         copy_nodes = [n for n in kernel_state.nodes() if isinstance(n, CopyLibraryNode)]
         assert copy_nodes
         for c in copy_nodes:
-            src = c.src_storage(kernel_state, kernel_state.sdfg)
-            dst = c.dst_storage(kernel_state, kernel_state.sdfg)
+            src = c.src_storage(kernel_state)
+            dst = c.dst_storage(kernel_state)
             crosses = (src == gpu and dst in cpu_like) or (src in cpu_like and dst == gpu)
             assert crosses
 

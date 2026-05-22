@@ -5,6 +5,7 @@ from typing import Optional, Sequence, Tuple
 
 import dace
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_memset_libnode
 
 import pytest
 import numpy as np
@@ -686,6 +687,34 @@ def test_copy_node_storage_defaults_when_unattached():
 
     assert node.src_storage(state) == dace.dtypes.StorageType.Default
     assert node.dst_storage(state) == dace.dtypes.StorageType.Default
+
+
+def test_is_gpu_copy_libnode_detects_gpu_storage():
+    """A copy touching GPU memory is a GPU stream consumer. Regression: the helper
+    resolves src/dst storage live via ``src_storage(state)`` / ``dst_storage(state)``;
+    it must not pass a stale extra ``sdfg`` argument (which raised ``TypeError`` and
+    broke experimental GPU code generation)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.GPU_Global, name="B"),
+        name="gpu_copy_detect",
+        libnode_name="gpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_memset_libnode(node, state.sdfg, state) is True
+
+
+def test_is_gpu_copy_libnode_false_for_cpu_only():
+    """A purely CPU<->CPU copy is not a GPU stream consumer (exercises both the
+    src and dst storage resolution branches)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="B"),
+        name="cpu_copy_detect",
+        libnode_name="cpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_memset_libnode(node, state.sdfg, state) is False
 
 
 def test_copy_cross_storage_validation_rejects_without_flag():

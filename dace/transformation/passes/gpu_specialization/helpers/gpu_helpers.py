@@ -102,8 +102,7 @@ def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state, sdfg) in _GPU_COPY_STORAGES
-                or node.dst_storage(state, sdfg) in _GPU_COPY_STORAGES)
+        return (node.src_storage(state) in _GPU_COPY_STORAGES or node.dst_storage(state) in _GPU_COPY_STORAGES)
     if isinstance(node, MemsetLibraryNode):
         for e in state.out_edges(node):
             if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
