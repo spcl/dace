@@ -50,6 +50,10 @@ class UniqueLoopIterators(ppl.Pass):
             "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"),
     )
 
+    def __init__(self, assign_loop_iterator_post_value: bool = True):
+        super().__init__()
+        self.assign_loop_iterator_post_value = assign_loop_iterator_post_value
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
