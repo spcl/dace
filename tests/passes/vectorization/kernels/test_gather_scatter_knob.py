@@ -35,11 +35,17 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
 LEN_1D = dace.symbol("LEN_1D")
 
-
-@dace.program
-def vag(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
-    for i in range(LEN_1D):
-        a[i] = b[ip[i]]
+# vag / vas / s4113 / s491 / s4115 are TSVC kernels — import the canonical defs
+# from the corpus rather than re-declaring identical bodies (dedup; prefer tsvc).
+from tests.passes.vectorization.tsvc_1d.test_misc import (  # noqa: E402
+    vag_d_single as vag,
+    vas_d_single as vas,
+    s4113_d_single as s4113,
+)
+from tests.passes.vectorization.tsvc_1d.test_selected import (  # noqa: E402
+    dace_s491 as s491,
+    dace_s4115_inner as s4115,
+)
 
 
 @dace.program
@@ -47,33 +53,6 @@ def idx_table_gather(out: dace.float64[LEN_1D], table: dace.float64[LEN_1D], idx
     # Non-TSVC: a plain indirect-index gather from a separate table.
     for i in range(LEN_1D):
         out[i] = table[idx[i]] * 2.0 + 1.0
-
-
-@dace.program
-def vas(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
-    for i in range(LEN_1D):
-        a[ip[i]] = b[i]
-
-
-@dace.program
-def s491(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
-         ip: dace.int32[LEN_1D]):
-    for i in range(LEN_1D):
-        a[ip[i]] = b[i] + c[i] * d[i]
-
-
-@dace.program
-def s4113(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
-    for i in range(LEN_1D):
-        a[ip[i]] = b[ip[i]] + c[i]
-
-
-@dace.program
-def s4115(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D], sum_out: dace.float64[1]):
-    sum_val = 0.0
-    for i in range(LEN_1D):
-        sum_val = sum_val + a[i] * b[ip[i]]
-    sum_out[0] = sum_val
 
 
 _GATHER_KERNELS = {

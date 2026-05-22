@@ -21,16 +21,7 @@ pytestmark = pytest.mark.tile_nodes
 
 
 @dace.program
-def vadds_gpu(A: dace.float64[N, N] @ dace.dtypes.StorageType.GPU_Global,
-              B: dace.float64[N, N] @ dace.dtypes.StorageType.GPU_Global):
-    for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
-        A[i, j] = A[i, j] + B[i, j]
-    for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
-        B[i, j] = 3 * B[i, j]**2.0 + 2.0
-
-
-@dace.program
-def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
+def add_sq_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N]:
@@ -38,7 +29,7 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
-def vabs(A: dace.float64[N, N]):
+def abs_op(A: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = abs(A[i, j])
 
@@ -50,7 +41,7 @@ def unary_symbol(A: dace.float64[N, N]):
 
 
 @dace.program
-def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
+def add_int(A: dace.int64[N, N], B: dace.int64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N]:
@@ -58,7 +49,7 @@ def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
 
 
 @dace.program
-def vadd_with_different_types(A: dace.int64[N, N], B: dace.float64[N, N]):
+def add_mixed_types(A: dace.int64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N]:
@@ -66,7 +57,7 @@ def vadd_with_different_types(A: dace.int64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
-def vadd_int_with_scalars(A: dace.int64[N, N], B: dace.int64[N, N], c1: dace.int64, c2: dace.int64):
+def add_int_scalars(A: dace.int64[N, N], B: dace.int64[N, N], c1: dace.int64, c2: dace.int64):
     for i, j in dace.map[0:N, 0:N]:
         c3 = c1 * c2
         A[i, j] = A[i, j] + B[i, j] + c3
@@ -368,7 +359,7 @@ def test_simple_cpu(remainder_strategy, vectorize_config):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
-    run_vectorization_test(dace_func=vadds_cpu,
+    run_vectorization_test(dace_func=add_sq_cpu,
                            arrays={
                                'A': A,
                                'B': B
@@ -381,7 +372,7 @@ def test_simple_cpu(remainder_strategy, vectorize_config):
 
 
 @dace.program
-def vadd_with_unary_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c: dace.float64):
+def add_unary_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c: dace.float64):
     for i, j in dace.map[0:N, 0:N]:
         c2 = -c
         c3 = B[i, j] + c2
@@ -389,7 +380,7 @@ def vadd_with_unary_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c: 
 
 
 @dace.program
-def vadd_with_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1: dace.float64, c2: dace.float64):
+def add_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1: dace.float64, c2: dace.float64):
     for i, j in dace.map[0:N, 0:N]:
         c3 = -c1
         c4 = c3 * c2
@@ -403,7 +394,7 @@ def test_vadd_with_unary_scalar_cpu(remainder_strategy):
     B = numpy.random.random((N, N))
     c = numpy.float64(0.5)
 
-    run_vectorization_test(dace_func=vadd_with_unary_scalar_cpu,
+    run_vectorization_test(dace_func=add_unary_scalar_cpu,
                            arrays={
                                'A': A,
                                'B': B
@@ -413,7 +404,7 @@ def test_vadd_with_unary_scalar_cpu(remainder_strategy):
                                'c': c
                            },
                            vector_width=8,
-                           sdfg_name="vadd_with_unary_scalar_cpu",
+                           sdfg_name="add_unary_scalar_cpu",
                            remainder_strategy=remainder_strategy)
 
 
@@ -421,7 +412,7 @@ def test_vabs(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=vabs,
+    run_vectorization_test(dace_func=abs_op,
                            arrays={
                                'A': A,
                            },
@@ -429,7 +420,7 @@ def test_vabs(remainder_strategy):
                                'N': N,
                            },
                            vector_width=8,
-                           sdfg_name="vabs",
+                           sdfg_name="abs_op",
                            remainder_strategy=remainder_strategy)
 
 
@@ -456,7 +447,7 @@ def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
     c1 = numpy.float64(0.5)
     c2 = numpy.float64(0.7)
 
-    run_vectorization_test(dace_func=vadd_with_scalar_scalar_cpu,
+    run_vectorization_test(dace_func=add_scalar_scalar_cpu,
                            arrays={
                                'A': A,
                                'B': B
@@ -467,7 +458,7 @@ def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
                                'c2': c2
                            },
                            vector_width=8,
-                           sdfg_name="vadd_with_scalar_scalar_cpu",
+                           sdfg_name="add_scalar_scalar_cpu",
                            remainder_strategy=remainder_strategy)
 
 
@@ -476,14 +467,14 @@ def test_vadd_int(remainder_strategy):
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.int64)
 
-    run_vectorization_test(dace_func=vadd_int,
+    run_vectorization_test(dace_func=add_int,
                            arrays={
                                'A': A,
                                'B': B
                            },
                            params={'N': N},
                            vector_width=8,
-                           sdfg_name="vadd_int",
+                           sdfg_name="add_int",
                            remainder_strategy=remainder_strategy)
 
 
@@ -492,14 +483,14 @@ def test_vadd_with_different_types(remainder_strategy):
     A = numpy.random.random((N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.float64)
 
-    run_vectorization_test(dace_func=vadd_with_different_types,
+    run_vectorization_test(dace_func=add_mixed_types,
                            arrays={
                                'A': A,
                                'B': B
                            },
                            params={'N': N},
                            vector_width=8,
-                           sdfg_name="vadd_with_different_types",
+                           sdfg_name="add_mixed_types",
                            remainder_strategy=remainder_strategy)
 
 
@@ -510,7 +501,7 @@ def test_vadd_with_scalars_int(remainder_strategy):
     c1 = numpy.int64(5)
     c2 = numpy.int64(7)
 
-    run_vectorization_test(dace_func=vadd_int_with_scalars,
+    run_vectorization_test(dace_func=add_int_scalars,
                            arrays={
                                'A': A,
                                'B': B
@@ -521,7 +512,7 @@ def test_vadd_with_scalars_int(remainder_strategy):
                                'c2': c2
                            },
                            vector_width=8,
-                           sdfg_name="vadd_int_with_scalars",
+                           sdfg_name="add_int_scalars",
                            remainder_strategy=remainder_strategy)
 
 
