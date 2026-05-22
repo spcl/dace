@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Small shared helpers for the experimental CUDA codegen (block-size math, schedule checks)."""
 
-from dace import Config, data as dt
+from dace import Config
 from dace.codegen import common
-from dace.codegen.dispatcher import DefinedType
 
 # CUDA / HIP launch grids and blocks have exactly three dimensions
 # (x, y, z); accessor helpers index into that fixed-width tuple.
@@ -28,21 +27,3 @@ def generate_sync_debug_call() -> str:
                      f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
 
     return sync_call
-
-
-def get_defined_type(data: dt.Data) -> DefinedType:
-    """Return the ``DefinedType`` for a data descriptor.
-
-    Only scalars and arrays are supported; extend if others are needed.
-
-    :param data: the data descriptor to classify.
-    :returns: ``DefinedType.Scalar`` for a ``Scalar``, ``DefinedType.Pointer`` for an ``Array``.
-    :raises NotImplementedError: if ``data`` is neither a ``Scalar`` nor an ``Array``.
-    """
-    if isinstance(data, dt.Scalar):
-        return DefinedType.Scalar
-    elif isinstance(data, dt.Array):
-        return DefinedType.Pointer
-    else:
-        raise NotImplementedError(f"Data type '{type(data).__name__}' is not supported for defined type inference."
-                                  "Only Scalars and Arrays are expected for Kernels.")

@@ -35,6 +35,11 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
 
+# Allocation lifetimes that place an array in the program-global scope (declared
+# once and freed at teardown) rather than transiently inside a state or scope.
+_GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                     dtypes.AllocationLifetime.External)
+
 
 @registry.autoregister_params(name='experimental_cuda')
 class ExperimentalCUDACodeGen(TargetCodeGenerator):
@@ -174,11 +179,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
-            pooled = set(
-                filter(
-                    lambda aname: sdfg.arrays[aname].lifetime in
-                    (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
-                     External), pooled))
+            pooled = set(filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled))
 
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
@@ -338,9 +339,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._in_device_code = False
             host_ptrname = cpp.ptr(name, data_desc, sdfg, self._frame)
 
-            is_global: bool = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                     dtypes.AllocationLifetime.Persistent,
-                                                     dtypes.AllocationLifetime.External)
+            is_global: bool = data_desc.lifetime in _GLOBAL_LIFETIMES
             defined_type, ctype = dispatcher.defined_vars.get(host_ptrname, is_global=is_global)
 
             self._in_device_code = True
@@ -770,11 +769,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             dataname = f'({dataname} - {sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(dataname):
-            is_global = nodedesc.lifetime in (
-                dtypes.AllocationLifetime.Global,
-                dtypes.AllocationLifetime.Persistent,
-                dtypes.AllocationLifetime.External,
-            )
+            is_global = nodedesc.lifetime in _GLOBAL_LIFETIMES
             self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
