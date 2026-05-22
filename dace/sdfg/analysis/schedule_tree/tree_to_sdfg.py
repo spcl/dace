@@ -776,13 +776,23 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._ctx.access_cache[cache_key] = {}
         access_cache = self._ctx.access_cache[cache_key]
 
-        # assumption source access may or may not yet exist (in this state)
+        # both, source and target nodes, may or may not exist (in this state)
         src_name = node.memlet.data
-        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
+        if src_name not in access_cache:
+            # cache new read access
+            source_access_node = self._current_state.add_read(src_name)
+            access_cache[src_name] = source_access_node
+        source = access_cache[src_name]
 
-        # assumption: target access node doesn't exist yet
-        assert node.target not in access_cache
-        target = self._current_state.add_write(node.target)
+        target_name = node.target
+        # only re-use cached write-only nodes, e.g. don't create a cycle for
+        # field[5, 0, 0:73] = copy field[0, 0, 0:73]
+        if target_name not in access_cache or self._current_state.out_degree(
+                access_cache[target_name]) > 0 or src_name == target_name:
+            # cache new write access node
+            target_access_node = self._current_state.add_write(node.target)
+            access_cache[node.target] = target_access_node
+        target = access_cache[node.target]
 
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
