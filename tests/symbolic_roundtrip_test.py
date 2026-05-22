@@ -124,6 +124,32 @@ def test_scalar_versus_array_needs_descriptors():
     assert referenced == {'A', 's'}  # arrays() -> A; fsf & descriptors -> s
 
 
+def test_scalar_to_symbol_promotion_moves_scalar_out_of_scalars():
+    # A scalar read on an interstate edge is reported by scalars(); after scalar->symbol
+    # promotion it is a symbol instead, so scalars() no longer reports it (expression unchanged).
+    from dace.transformation.passes import scalar_to_symbol
+
+    sdfg = dace.SDFG('promote_scalar')
+    sdfg.add_scalar('s', dace.int32, transient=True)
+    sdfg.add_array('A', [20], dace.int32)
+    init = sdfg.add_state('init', is_start_block=True)
+    init.add_edge(init.add_tasklet('set', {}, {'o'}, 'o = 7'), 'o', init.add_access('s'), None, dace.Memlet('s[0]'))
+    body = sdfg.add_state('body')
+    sdfg.add_edge(init, body, dace.InterstateEdge(assignments={'i': 's'}))
+    body.add_edge(body.add_tasklet('use', {}, {'o'}, 'o = i'), 'o', body.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.add_symbol('i', dace.int32)
+
+    assign = sdfg.edges()[0].data.assignments['i']
+    assert symbolic.scalars(assign, sdfg.arrays) == {'s'}  # 's' is a scalar read on the edge
+    assert 's' not in sdfg.symbols
+
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+    assert sdfg.edges()[0].data.assignments['i'] == 's'  # expression unchanged
+    assert symbolic.scalars('s', sdfg.arrays) == set()  # no longer a scalar descriptor
+    assert 's' in sdfg.symbols  # now a symbol
+
+
 def test_contains_sympy_functions_subscript():
     assert symbolic.contains_sympy_functions(pystr_to_symbolic('A[i]')) is True
     assert symbolic.contains_sympy_functions(pystr_to_symbolic('a + b')) is False
@@ -208,6 +234,7 @@ if __name__ == '__main__':
     test_struct_member_subscript()
     test_free_symbols_and_functions_excludes_arrays()
     test_scalar_versus_array_needs_descriptors()
+    test_scalar_to_symbol_promotion_moves_scalar_out_of_scalars()
     test_contains_sympy_functions_subscript()
     test_float_precision_preserved()
     test_infinity_roundtrip()

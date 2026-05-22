@@ -690,13 +690,10 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 
 def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     """
-    Return the names of the data containers accessed via ``Subscript`` in an expression
-    (e.g. ``A`` in ``A[i]``).
+    Return the names of the containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``).
 
-    Only subscripted accesses are reported. A rank-0 scalar referenced by name (``a``)
-    parses to a plain symbol and cannot be told apart from a free symbol without the
-    SDFG's data descriptors, so it is NOT reported here -- intersect
-    :func:`free_symbols_and_functions` with ``sdfg.arrays`` to recover those.
+    Only subscripted accesses are reported; a rank-0 scalar referenced by name is
+    indistinguishable from a free symbol here, so it is reported by :func:`scalars`.
 
     :param expr: The expression (or its string form) to inspect.
     :return: The set of subscripted container names.
@@ -706,6 +703,26 @@ def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     if not isinstance(expr, sympy.Basic):
         return set()
     return {str(node.args[0]) for node in expr.atoms(Subscript)}
+
+
+def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[str]:
+    """
+    Return the names of the rank-0 scalar containers referenced by name.
+
+    A bare name is indistinguishable from a free symbol without the data descriptors, so
+    ``descriptors`` (e.g. ``sdfg.arrays``) is required. ``arrays(e) | scalars(e, descriptors)``
+    yields all referenced data containers.
+
+    :param expr: The expression (or its string form) to inspect.
+    :param descriptors: Name-to-descriptor mapping used to identify scalar containers.
+    :return: The set of referenced scalar names.
+    """
+    if isinstance(expr, str):
+        expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
+    from dace import data  # avoid import loop
+    return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
 def is_undefined(expr: Union[SymbolicType, str]) -> bool:
