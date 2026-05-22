@@ -355,30 +355,36 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     return f"cudaMemcpy{src_loc}To{dst_loc}"
 
 
-def _make_cuda_memcpy_expansion(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> nodes.Tasklet:
-    """Build a Tasklet emitting one ``cudaMemcpyAsync``.
+def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
+    """Build a Tasklet emitting one contiguous-block copy.
 
-    The transfer direction (HostToDevice / DeviceToHost / DeviceToDevice /
-    HostToHost) is inferred from endpoint storages; cross-CPU/GPU is allowed.
+    Emits ``cudaMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU is allowed and
+    the direction (HostToDevice / DeviceToHost / DeviceToDevice / HostToHost) is
+    inferred from endpoint storages -- otherwise a same-storage ``std::memcpy``.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the memcpy.
+    :param cuda: emit ``cudaMemcpyAsync`` (else ``memcpy``).
+    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the copy.
+    :raises ValueError: a subset is non-contiguous; the single-call copy form
+        would overrun the region. Use ``MappedTasklet`` for strided subsets.
     """
+    label = "MemcpyCUDA1D" if cuda else "MemcpyCPU"
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
-                                                                        allow_cross_storage=True)
+                                                                        allow_cross_storage=cuda)
     if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-        raise ValueError(f"MemcpyCUDA1D requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
+        raise ValueError(f"{label} requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
                          f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
                          f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
 
-    cp_size = in_subset.num_elements()
-    kind = _memcpy_kind(inp, out)
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    code = (f"cudaMemcpyAsync({out_conn}, {in_conn}, "
-            f"{sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), {kind}, {CURRENT_STREAM_NAME});")
+    nbytes = f"{sym2cpp(in_subset.num_elements())} * sizeof({inp.dtype.ctype})"
+    if cuda:
+        code = f"cudaMemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
+    else:
+        code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
 
     return nodes.Tasklet(node.name,
                          inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
@@ -476,7 +482,7 @@ class ExpandMemcpyCUDA1D(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        return _make_cuda_memcpy_expansion(node, parent_state)
+        return _make_memcpy_tasklet(node, parent_state, cuda=True)
 
 
 @library.expansion
@@ -485,23 +491,8 @@ class ExpandMemcpyCPU(ExpandTransformation):
     environments = [environments.CPU]
 
     @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg,
-                                                                            parent_state,
-                                                                            allow_cross_storage=False)
-        if not (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)):
-            raise ValueError(f"MemcpyCPU requires contiguous subsets; got src '{inp_name}' subset {in_subset} "
-                             f"(shape {inp.shape} strides {inp.strides}) and dst '{out_name}' subset {out_subset} "
-                             f"(shape {out.shape} strides {out.strides}). Use MappedTasklet for strided subsets.")
-
-        cp_size = in_subset.num_elements()
-        in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
-        out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-        return nodes.Tasklet(node.name,
-                             inputs={in_conn: dace.dtypes.pointer(inp.dtype)},
-                             outputs={out_conn: dace.dtypes.pointer(out.dtype)},
-                             code=f"memcpy({out_conn}, {in_conn}, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
-                             language=dace.Language.CPP)
+    def expansion(node, parent_state, parent_sdfg):
+        return _make_memcpy_tasklet(node, parent_state, cuda=False)
 
 
 @library.expansion
