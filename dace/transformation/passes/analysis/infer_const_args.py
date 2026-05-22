@@ -18,10 +18,7 @@ class InferConstantArguments(ppl.Pass):
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.CFG & ppl.Modifies.SDFG & ppl.Modifies.Nodes
-
-    def depends_on(self):
-        return {}
+        return bool(modified & (ppl.Modifies.CFG | ppl.Modifies.Nodes))
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[str, Tuple[Set[str], Set[str]]]:
         """Map each GPU device map / NestedSDFG ``guid`` to its ``(constant_data, constant_symbols)``.

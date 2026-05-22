@@ -174,10 +174,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
-            pooled = filter(
-                lambda aname: sdfg.arrays[aname].lifetime in
-                (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
-                 External), pooled)
+            pooled = set(
+                filter(
+                    lambda aname: sdfg.arrays[aname].lifetime in
+                    (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
+                     External), pooled))
 
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
