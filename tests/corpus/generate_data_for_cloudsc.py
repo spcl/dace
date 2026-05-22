@@ -217,9 +217,10 @@ CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
 #: reassociation. Under these flags the simplified and reference cloudsc SDFGs
 #: agree **bit-for-bit**, which is why the correctness check (see
 #: :func:`run_and_compare`) uses this build with a ``1e-15`` tolerance. A release
-#: build (``-O3 -ffast-math``) instead approximates the many transcendental
-#: intrinsics (``exp``/``log``/``sqrt``/...) and reorders the flux prefix sums,
-#: so it needs a much looser tolerance (~``1e-12``).
+#: build (``-O3 -ffast-math``, run in parallel) instead approximates the many
+#: transcendental intrinsics (``exp``/``log``/``sqrt``/...) and reorders both the
+#: flux prefix sums and the parallel reductions, so the error compounds to
+#: ~``1e-10`` and the release comparison uses a correspondingly looser tolerance.
 IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off'
 
 
@@ -340,9 +341,10 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
     With these physical inputs and an IEEE build (:data:`IEEE_CPU_ARGS`), simplify
     (and other value-preserving transforms) reproduce the no-transform reference
     *bit-for-bit*, so the machine-precision ``1e-15`` default is appropriate for
-    a correctness check. A release build (``-O3 -ffast-math``) approximates the
-    transcendental intrinsics and reorders the flux prefix sums, so the caller
-    should pass a looser tolerance (~``1e-12``) there.
+    a correctness check. A release build (``-O3 -ffast-math``, run in parallel)
+    approximates the transcendental intrinsics and reorders the flux prefix sums
+    and parallel reductions, so the caller should pass a looser tolerance
+    (~``1e-10``) there.
 
     :param ref_inputs: The reference run's mutated input/output dict.
     :param cand_inputs: The candidate run's mutated input/output dict.
@@ -387,9 +389,10 @@ def run_and_compare(reference: dace.SDFG,
     :data:`IEEE_CPU_ARGS` (``-O0``, no fast-math, no FP contraction), under which
     a value-preserving transform reproduces the reference *bit-for-bit*, so the
     default ``1e-15`` tolerance holds. To instead measure a release build, pass
-    ``ieee_build=False`` (leaving the configured ``-O3 -ffast-math`` flags) and a
-    looser tolerance (~``1e-12``), since the transcendental intrinsics are then
-    approximated and the flux prefix sums reordered.
+    ``ieee_build=False`` (leaving the configured ``-O3 -ffast-math`` flags) with
+    ``sequential=False`` and a looser tolerance (~``1e-10``): the transcendental
+    intrinsics are then approximated and the flux prefix sums and parallel
+    reductions reordered.
 
     :param reference: The reference SDFG (e.g. un-transformed).
     :param candidate: The SDFG under test.
