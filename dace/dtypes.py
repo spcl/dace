@@ -87,10 +87,7 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
-# Storage residence partition: where a buffer is physically allocated. Mutually
-# disjoint by side; ``Register`` adopts the side of its enclosing scope and is
-# a member of neither set. ``CPU_Pinned`` is host-allocated even though GPU
-# kernels can read it, so it belongs to the CPU side.
+
 GPU_RESIDENT_STORAGES = frozenset({
     StorageType.GPU_Global,
     StorageType.GPU_Shared,
