@@ -51,6 +51,7 @@ from dace.transformation.passes.vectorization.emit_tile_ops import (
     _tile_region_subset,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     TileDimSpec,
@@ -129,7 +130,7 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
         scope = state.all_nodes_between(map_entry, state.exit_node(map_entry)) or set()
         for node in scope:
             if isinstance(node, TileMaskGen):
-                oe = [e for e in state.out_edges(node) if e.src_conn == "_o"]
+                oe = [e for e in state.out_edges(node) if e.src_conn == TileConnectors.O]
                 if oe:
                     return oe[0].data.data
         raise NotImplementedError(
@@ -254,9 +255,9 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             load = TileLoad(name=f"load_{src_name}", widths=W, dim_strides=tuple(cls.dim_strides),
                             src_dims=tuple(cls.match_dims), has_mask=True)
             istate.add_node(load)
-            istate.add_edge(ed.src, ed.src_conn, load, "_src", dace.Memlet(data=src_name, subset=promoted))
-            istate.add_edge(mask_acc, None, load, "_mask", dace.Memlet(f"{_INNER_MASK}[{subset}]"))
-            istate.add_edge(load, "_dst", ed.dst, ed.dst_conn, dace.Memlet(f"{ed.dst.data}[{subset}]"))
+            istate.add_edge(ed.src, ed.src_conn, load, TileConnectors.SRC, dace.Memlet(data=src_name, subset=promoted))
+            istate.add_edge(mask_acc, None, load, TileConnectors.MASK, dace.Memlet(f"{_INNER_MASK}[{subset}]"))
+            istate.add_edge(load, TileConnectors.DST, ed.dst, ed.dst_conn, dace.Memlet(f"{ed.dst.data}[{subset}]"))
             istate.remove_edge(ed)
 
     def _promote_binops(self, istate: SDFGState, mask_acc: dace.nodes.AccessNode, spec: TileDimSpec) -> None:
@@ -302,11 +303,11 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             binop = TileBinop(**kwargs)
             istate.add_node(binop)
             if kind_a == "Tile":
-                istate.add_edge(info_a, None, binop, "_a", dace.Memlet(f"{info_a.data}[{subset}]"))
+                istate.add_edge(info_a, None, binop, TileConnectors.A, dace.Memlet(f"{info_a.data}[{subset}]"))
             if kind_b == "Tile":
-                istate.add_edge(info_b, None, binop, "_b", dace.Memlet(f"{info_b.data}[{subset}]"))
-            istate.add_edge(mask_acc, None, binop, "_mask", dace.Memlet(f"{_INNER_MASK}[{subset}]"))
-            istate.add_edge(binop, "_c", out_access, out_edge.dst_conn, dace.Memlet(f"{out_access.data}[{subset}]"))
+                istate.add_edge(info_b, None, binop, TileConnectors.B, dace.Memlet(f"{info_b.data}[{subset}]"))
+            istate.add_edge(mask_acc, None, binop, TileConnectors.MASK, dace.Memlet(f"{_INNER_MASK}[{subset}]"))
+            istate.add_edge(binop, TileConnectors.C, out_access, out_edge.dst_conn, dace.Memlet(f"{out_access.data}[{subset}]"))
             for e in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                 istate.remove_edge(e)
             istate.remove_node(t)
@@ -346,9 +347,9 @@ class PromoteNSDFGBodyToTiles(ppl.Pass):
             store = TileStore(name=f"store_{dst_name}", widths=W, dim_strides=tuple(cls.dim_strides),
                               dst_dims=tuple(cls.match_dims), has_mask=True)
             istate.add_node(store)
-            istate.add_edge(src_access, None, store, "_src", dace.Memlet(f"{src_access.data}[{subset}]"))
-            istate.add_edge(mask_acc, None, store, "_mask", dace.Memlet(f"{_INNER_MASK}[{subset}]"))
-            istate.add_edge(store, "_dst", ed.dst, ed.dst_conn, dace.Memlet(data=dst_name, subset=promoted))
+            istate.add_edge(src_access, None, store, TileConnectors.SRC, dace.Memlet(f"{src_access.data}[{subset}]"))
+            istate.add_edge(mask_acc, None, store, TileConnectors.MASK, dace.Memlet(f"{_INNER_MASK}[{subset}]"))
+            istate.add_edge(store, TileConnectors.DST, ed.dst, ed.dst_conn, dace.Memlet(data=dst_name, subset=promoted))
             if to_remove_node is not None:
                 for e in list(istate.in_edges(to_remove_node)) + list(istate.out_edges(to_remove_node)):
                     istate.remove_edge(e)

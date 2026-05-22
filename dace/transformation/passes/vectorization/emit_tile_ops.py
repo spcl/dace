@@ -27,6 +27,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileBinop, TileGather, TileLoad, TileScatter, TileStore
 from dace.libraries.tileops._pure_codegen import nested_loops, tile_offset
 from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+from dace.transformation.passes.vectorization.utils.name_schemes import TileConnectors
 from dace.transformation.passes.vectorization.utils.tile_dims import (
     TileAccessKind,
     TileDimSpec,
@@ -400,14 +401,14 @@ class EmitTileOps(ppl.Pass):
         )
         state.add_node(load)
         promoted_subset = _tile_region_subset(per_iter_subset, spec.iter_vars, spec.widths)
-        state.add_edge(in_edge.src, in_edge.src_conn, load, "_src",
+        state.add_edge(in_edge.src, in_edge.src_conn, load, TileConnectors.SRC,
                        dace.Memlet(data=src_name, subset=promoted_subset))
         mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
         subset = ", ".join(f"0:{w}" for w in spec.widths)
-        state.add_edge(mask_access, None, load, "_mask",
+        state.add_edge(mask_access, None, load, TileConnectors.MASK,
                        dace.Memlet(f"{mask_name}[{subset}]"))
         tile_access = state.add_access(tile_name)
-        state.add_edge(load, "_dst", tile_access, None, dace.Memlet(f"{tile_name}[{subset}]"))
+        state.add_edge(load, TileConnectors.DST, tile_access, None, dace.Memlet(f"{tile_name}[{subset}]"))
         return tile_name, tile_access
 
     def _emit_gather_index_tiles(self,
@@ -485,15 +486,15 @@ class EmitTileOps(ppl.Pass):
                             widths=spec.widths, source_ndim=src_ndim, has_mask=True)
         state.add_node(gather)
         full = ", ".join(f"0:{s}" for s in src_arr.shape)
-        state.add_edge(in_edge.src, in_edge.src_conn, gather, "_src",
+        state.add_edge(in_edge.src, in_edge.src_conn, gather, TileConnectors.SRC,
                        dace.Memlet(data=src_name, subset=subsets.Range.from_string(full)))
         for k, idx_acc in enumerate(idx_accesses):
-            state.add_edge(idx_acc, None, gather, f"_idx_{k}", dace.Memlet(f"{idx_acc.data}[{', '.join(f'0:{w}' for w in spec.widths)}]"))
+            state.add_edge(idx_acc, None, gather, TileConnectors.idx(k), dace.Memlet(f"{idx_acc.data}[{', '.join(f'0:{w}' for w in spec.widths)}]"))
         out_subset = ", ".join(f"0:{w}" for w in spec.widths)
         mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
-        state.add_edge(mask_access, None, gather, "_mask", dace.Memlet(f"{mask_name}[{out_subset}]"))
+        state.add_edge(mask_access, None, gather, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{out_subset}]"))
         tile_access = state.add_access(tile_name)
-        state.add_edge(gather, "_dst", tile_access, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
+        state.add_edge(gather, TileConnectors.DST, tile_access, None, dace.Memlet(f"{tile_name}[{out_subset}]"))
         return tile_name, tile_access
 
     def _emit_scatter_store(self,
@@ -522,12 +523,12 @@ class EmitTileOps(ppl.Pass):
         scatter = TileScatter(name=f"{out_access.data}_scatter", widths=spec.widths,
                               dest_ndim=dst_ndim, has_mask=True)
         state.add_node(scatter)
-        state.add_edge(out_access, None, scatter, "_src", dace.Memlet(f"{out_access.data}[{out_subset}]"))
+        state.add_edge(out_access, None, scatter, TileConnectors.SRC, dace.Memlet(f"{out_access.data}[{out_subset}]"))
         for k, idx_acc in enumerate(idx_accesses):
-            state.add_edge(idx_acc, None, scatter, f"_idx_{k}", dace.Memlet(f"{idx_acc.data}[{out_subset}]"))
-        state.add_edge(mask_access, None, scatter, "_mask", dace.Memlet(f"{mask_access.data}[{out_subset}]"))
+            state.add_edge(idx_acc, None, scatter, TileConnectors.idx(k), dace.Memlet(f"{idx_acc.data}[{out_subset}]"))
+        state.add_edge(mask_access, None, scatter, TileConnectors.MASK, dace.Memlet(f"{mask_access.data}[{out_subset}]"))
         full = ", ".join(f"0:{s}" for s in dst_arr.shape)
-        state.add_edge(scatter, "_dst", out_edge.dst, out_edge.dst_conn,
+        state.add_edge(scatter, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
                        dace.Memlet(data=dst_name, subset=subsets.Range.from_string(full)))
 
     def _emit_const_tile(self,
@@ -609,7 +610,7 @@ class EmitTileOps(ppl.Pass):
         scope = state.all_nodes_between(map_entry, state.exit_node(map_entry)) or set()
         for node in scope:
             if isinstance(node, TileMaskGen):
-                oe = [e for e in state.out_edges(node) if e.src_conn == "_o"]
+                oe = [e for e in state.out_edges(node) if e.src_conn == TileConnectors.O]
                 if oe:
                     return oe[0].data.data
         raise NotImplementedError(
@@ -687,7 +688,7 @@ class EmitTileOps(ppl.Pass):
 
         :param state: Parent state.
         :param binop: The ``TileBinop`` lib node.
-        :param conn: ``"_a"`` or ``"_b"`` — the scalar connector.
+        :param conn: ``TileConnectors.A`` or ``TileConnectors.B`` — the scalar connector.
         :param source_edge: Outermost memlet-path edge (its source is
             the original AccessNode).
         :param in_edge: The original binop tasklet's in-edge for this
@@ -821,8 +822,8 @@ class EmitTileOps(ppl.Pass):
             kind, info = self._operand_kind(state, tasklet, token, spec)
             return kind, info
 
-        kind_a, info_a = _resolve(a_tok, "_a")
-        kind_b, info_b = _resolve(b_tok, "_b")
+        kind_a, info_a = _resolve(a_tok, TileConnectors.A)
+        kind_b, info_b = _resolve(b_tok, TileConnectors.B)
         norm_a = "Tile" if kind_a in ("Tile-existing", "Gather") else kind_a
         norm_b = "Tile" if kind_b in ("Tile-existing", "Gather") else kind_b
         if norm_a != "Tile" and norm_b != "Tile":
@@ -856,12 +857,12 @@ class EmitTileOps(ppl.Pass):
                 self._wire_scalar_operand(state, binop, conn, info[0], info[1])
             # Symbol: nothing to wire (embedded inline).
 
-        _wire(kind_a, info_a, "_a")
-        _wire(kind_b, info_b, "_b")
+        _wire(kind_a, info_a, TileConnectors.A)
+        _wire(kind_b, info_b, TileConnectors.B)
         mask_access = self._find_mask_access(state, mask_name) or state.add_access(mask_name)
-        state.add_edge(mask_access, None, binop, "_mask", dace.Memlet(f"{mask_name}[{subset}]"))
+        state.add_edge(mask_access, None, binop, TileConnectors.MASK, dace.Memlet(f"{mask_name}[{subset}]"))
         out_access = state.add_access(out_tile_name)
-        state.add_edge(binop, "_c", out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
+        state.add_edge(binop, TileConnectors.C, out_access, None, dace.Memlet(f"{out_tile_name}[{subset}]"))
         return self._binop_output_data(state, tasklet), out_access
 
     def _rewrite_one_map(self,
@@ -931,11 +932,11 @@ class EmitTileOps(ppl.Pass):
             store = TileStore(name=f"{out_access.data}_store", widths=spec.widths,
                               dim_strides=out_cls.dim_strides, dst_dims=out_cls.match_dims, has_mask=True)
             state.add_node(store)
-            state.add_edge(out_access, None, store, "_src",
+            state.add_edge(out_access, None, store, TileConnectors.SRC,
                            dace.Memlet(f"{out_access.data}[{subset}]"))
-            state.add_edge(mask_access, None, store, "_mask",
+            state.add_edge(mask_access, None, store, TileConnectors.MASK,
                            dace.Memlet(f"{mask_name}[{subset}]"))
-            state.add_edge(store, "_dst", out_edge.dst, out_edge.dst_conn,
+            state.add_edge(store, TileConnectors.DST, out_edge.dst, out_edge.dst_conn,
                            dace.Memlet(data=out_dst_name, subset=promoted))
 
         # Remove the original body tasklets + the intermediate transients
