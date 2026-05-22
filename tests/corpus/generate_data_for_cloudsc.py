@@ -314,29 +314,72 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
     return n_maps, n_lib
 
 
+def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
+                    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
+                    rtol: float = 1e-12,
+                    atol: float = 1e-12,
+                    verbose: bool = False) -> Dict[str, Tuple[float, float, bool]]:
+    """Per-array (per-subset) tolerance check between two driven input/output sets.
+
+    Returns ``{array_name: (max_abs, max_rel, ok)}`` for every shared
+    ``numpy`` array, where ``max_abs`` is the worst absolute difference,
+    ``max_rel`` the worst relative difference over the nonzero reference
+    elements, and ``ok`` the per-array ``numpy.allclose`` verdict at ``rtol`` /
+    ``atol``. With ``verbose`` it prints one line per array. CloudSC matches the
+    no-transform reference to machine precision; the only arrays that move at
+    all are the vertical-flux prefix scans (``pf*``), where a transform may
+    reorder the running sum by a few ULP -- hence a tight default tolerance.
+
+    :param ref_inputs: The reference run's mutated input/output dict.
+    :param cand_inputs: The candidate run's mutated input/output dict.
+    :param rtol: Per-array relative tolerance.
+    :param atol: Per-array absolute tolerance.
+    :param verbose: Print a ``name max_abs max_rel ok`` line per array.
+    :returns: Mapping from array name to ``(max_abs, max_rel, ok)``.
+    """
+    report: Dict[str, Tuple[float, float, bool]] = {}
+    for name, ref_val in ref_inputs.items():
+        if not isinstance(ref_val, np.ndarray) or ref_val.size == 0:
+            continue
+        cand_val = cand_inputs[name]
+        absd = np.abs(ref_val - cand_val)
+        max_abs = float(np.nanmax(absd))
+        denom = np.abs(ref_val)
+        nz = denom > 0
+        max_rel = float(np.nanmax(absd[nz] / denom[nz])) if np.any(nz) else 0.0
+        ok = bool(np.allclose(ref_val, cand_val, rtol=rtol, atol=atol, equal_nan=True))
+        report[name] = (max_abs, max_rel, ok)
+        if verbose:
+            print(f"{name:24s} max_abs={max_abs:.3e} max_rel={max_rel:.3e} {'ok' if ok else 'FAIL'}")
+    return report
+
+
 def run_and_compare(reference: dace.SDFG,
                     candidate: dace.SDFG,
                     seed: int = 0,
-                    rtol: float = 1e-9,
+                    rtol: float = 1e-12,
                     atol: float = 1e-12,
                     sequential: bool = True,
                     verbose: bool = False) -> bool:
     """Run two CloudSC SDFGs on identical inputs and compare every shared
-    non-transient output array.
+    non-transient output array, each at its own ``rtol`` / ``atol``.
 
     Both SDFGs are driven with the same generated inputs (a private deep copy
     each, since the call mutates the buffers in place). Only array outputs are
-    compared; scalar and symbol inputs are not.
+    compared; scalar and symbol inputs are not. The default tolerance is tight
+    (``1e-12``): with the physical inputs this harness generates, simplify (and
+    other value-preserving transforms) reproduce the reference to machine
+    precision -- see :func:`compare_outputs`.
 
     :param reference: The reference SDFG (e.g. un-transformed).
     :param candidate: The SDFG under test.
     :param seed: Seed for input generation.
-    :param rtol: Relative tolerance (``numpy.allclose``).
-    :param atol: Absolute tolerance (``numpy.allclose``).
+    :param rtol: Per-array relative tolerance (``numpy.allclose``).
+    :param atol: Per-array absolute tolerance (``numpy.allclose``).
     :param sequential: Force both SDFGs sequential before running
         (:func:`make_sequential`) so the comparison is deterministic; leave on
         unless you specifically want to measure parallel behaviour.
-    :param verbose: Print the max/avg difference of each mismatching array.
+    :param verbose: Print the per-array ``max_abs`` / ``max_rel`` and verdict.
     :returns: ``True`` iff every shared output array matches within tolerance.
     """
     if sequential:
@@ -347,14 +390,5 @@ def run_and_compare(reference: dace.SDFG,
     reference(**ref_inputs)
     candidate(**cand_inputs)
 
-    matches = True
-    for name, ref_val in ref_inputs.items():
-        if not isinstance(ref_val, np.ndarray):
-            continue
-        cand_val = cand_inputs[name]
-        if not np.allclose(ref_val, cand_val, rtol=rtol, atol=atol, equal_nan=True):
-            matches = False
-            if verbose:
-                diff = np.abs(ref_val - cand_val)
-                print(f"{name}: max diff = {np.nanmax(diff):.6e}, avg diff = {np.nanmean(diff):.6e}")
-    return matches
+    report = compare_outputs(ref_inputs, cand_inputs, rtol=rtol, atol=atol, verbose=verbose)
+    return all(ok for _, _, ok in report.values())
