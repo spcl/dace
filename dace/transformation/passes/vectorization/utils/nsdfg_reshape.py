@@ -47,6 +47,33 @@ def _iter_mask_name(sdfg: dace.SDFG) -> Optional[str]:
     return None
 
 
+_STRIDED_LOAD_PREP_PREFIX = "_strided_load_prep_"
+_STRIDED_STORE_FINISH_PREFIX = "_strided_store_finish_"
+_MULTI_ELEM_LOAD_PREP_PREFIX = "_multi_elem_load_prep_"
+_MULTI_ELEM_STORE_FINISH_PREFIX = "_multi_elem_store_finish_"
+_STRIDED_AUX_STATE_PREFIXES = (_STRIDED_LOAD_PREP_PREFIX, _STRIDED_STORE_FINISH_PREFIX,
+                               _MULTI_ELEM_LOAD_PREP_PREFIX, _MULTI_ELEM_STORE_FINISH_PREFIX)
+
+
+def _is_strided_aux_state(state: SDFGState) -> bool:
+    """Return whether ``state`` is a strided load/store prep or finish state.
+
+    These auxiliary states are minted by ``_setup_strided_inside_nsdfg`` /
+    ``_setup_multi_element_strided_inside_nsdfg`` to run the boundary
+    ``strided_{load,store}`` against the bbox connector. The body-memlet
+    rename loops must skip them: an inout (RMW) connector is processed
+    twice — ``in`` then ``out`` — and the ``out`` pass would otherwise
+    rename the bbox-connector read inside the ``in`` pass's load-prep
+    state to the W-wide buffer, so the strided load reads the
+    uninitialised buffer instead of the connector (the s2101 diagonal /
+    s2275 column RMW corruption).
+
+    :param state: An inner-SDFG state.
+    :returns: ``True`` if it is a strided prep / finish state.
+    """
+    return any(state.label.startswith(p) for p in _STRIDED_AUX_STATE_PREFIXES)
+
+
 def _compute_subset_union(subsets):
     """Bounding-box union of overlapping subsets and its per-dim shape.
 
@@ -912,6 +939,8 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(vector_width - 1),
                                               dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
+            if _is_strided_aux_state(inner_state):
+                continue
             for inner_edge in inner_state.edges():
                 if inner_edge.data is not None and inner_edge.data.data == inner_conn:
                     inner_edge.data.data = vec_name
@@ -930,7 +959,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         # the new start block.
         old_start = inner_sdfg.start_block
         mask_name = _iter_mask_name(inner_sdfg)
-        prep = inner_sdfg.add_state("_strided_load_prep_" + inner_conn, is_start_block=(mask_name is None))
+        prep = inner_sdfg.add_state(_STRIDED_LOAD_PREP_PREFIX + inner_conn, is_start_block=(mask_name is None))
         bbox_an = prep.add_access(inner_conn)
         vec_an = prep.add_access(vec_name)
         if mask_name is not None:
@@ -974,6 +1003,8 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
         _flatten_range = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(vector_width - 1),
                                               dace.symbolic.SymExpr(1))])
         for inner_state in list(inner_sdfg.states()):
+            if _is_strided_aux_state(inner_state):
+                continue
             for inner_edge in inner_state.edges():
                 if inner_edge.data is not None and inner_edge.data.data == inner_conn:
                     inner_edge.data.data = vec_name
@@ -985,7 +1016,7 @@ def _setup_strided_inside_nsdfg(state: dace.SDFGState,
 
         # Add finish state after every existing sink state.
         sink_states = [s for s in inner_sdfg.states() if len(inner_sdfg.out_edges(s)) == 0]
-        finish = inner_sdfg.add_state("_strided_store_finish_" + inner_conn)
+        finish = inner_sdfg.add_state(_STRIDED_STORE_FINISH_PREFIX + inner_conn)
         vec_an = finish.add_access(vec_name)
         bbox_an = finish.add_access(inner_conn)
         mask_name = _iter_mask_name(inner_sdfg)
@@ -1131,7 +1162,7 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
         # before the masked load runs.
         old_start = inner_sdfg.start_block
         mask_name = _iter_mask_name(inner_sdfg)
-        prep = inner_sdfg.add_state("_multi_elem_load_prep_" + inner_conn, is_start_block=(mask_name is None))
+        prep = inner_sdfg.add_state(_MULTI_ELEM_LOAD_PREP_PREFIX + inner_conn, is_start_block=(mask_name is None))
         bbox_an = prep.add_access(inner_conn)
         for p in range(K):
             vec_an = prep.add_access(phase_names[p])
@@ -1168,7 +1199,7 @@ def _setup_multi_element_strided_inside_nsdfg(state: dace.SDFGState, nsdfg_node:
     else:
         # Finish state: K ``strided_store`` tasklets.
         sink_states = [s for s in inner_sdfg.states() if len(inner_sdfg.out_edges(s)) == 0]
-        finish = inner_sdfg.add_state("_multi_elem_store_finish_" + inner_conn)
+        finish = inner_sdfg.add_state(_MULTI_ELEM_STORE_FINISH_PREFIX + inner_conn)
         bbox_an = finish.add_access(inner_conn)
         mask_name = _iter_mask_name(inner_sdfg)
         for p in range(K):
@@ -1264,6 +1295,19 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                 if bw is not None and bw > 1:
                     wide_dims.append((d, bw))
 
+            # A stride-1 dim that spans more than one element is the SIMD
+            # lane (a unit-stride window). When one is present, never treat
+            # a *different* non-contiguous dim as the strided lane: the
+            # ``wide_dims`` scan drops symbolic-bound dims (``int(ee - b + 1)``
+            # raises on ``0:klon``), so a full passthrough dim with a
+            # concrete size (e.g. cloudsc ``zqx0[0:klon, 0:klev, 0:5]`` —
+            # the size-5 species dim) is the only survivor and would be
+            # mistaken for a strided lane. The contiguous lane dim itself
+            # is symbolic here, so it is detected directly from the subset.
+            contiguous_lane_present = any(
+                not bool(dace.symbolic.simplify(e.data.subset[i][1] - e.data.subset[i][0]) == 0)
+                for i in stride_one_indices)
+
             multi_elem_per_iter = 0  # >0 means K-elements-per-iter (with stride_value)
             if len(wide_dims) == 1 and len(stride_one_indices) == 1 and wide_dims[0][0] == stride_one_indices[0]:
                 # Generalised K-elements-per-iter at inter-lane stride S:
@@ -1299,7 +1343,8 @@ def _process_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, mov
                             f"_process_edges (direction={direction!r}): outer subset on {orig_data} "
                             f"has bbox volume {bbox_vol}; doesn't match (W-1)*S+K for any K in "
                             f"[1, {inner_arr.shape if inner_arr else None}] for vector_width={vector_width}.")
-            elif len(wide_dims) == 1 and vector_width > 1 and orig_arr.strides[wide_dims[0][0]] != 1:
+            elif (len(wide_dims) == 1 and vector_width > 1 and orig_arr.strides[wide_dims[0][0]] != 1
+                  and not contiguous_lane_present):
                 # Single NON-contiguous wide dim: the vectorized (innermost)
                 # map param indexes a non-unit-stride array dim, so the W
                 # lanes sit at memory stride ``orig_arr.strides[d]`` apart --
