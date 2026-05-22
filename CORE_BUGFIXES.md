@@ -366,29 +366,50 @@ canonicalize is value-correct but does not yet reach the structural ideal, or
 where an input is invalid by DaCe semantics. Tracked so the design effort is
 explicit.
 
-### L-A. `MoveLoopInvariantIfUp` does not hoist a guard out of a parallel MAP nest
+### L-A. Hoist a map-invariant guard out of a parallel MAP nest (RESOLVED 2026-05-21)
 - **Shape:** `for i in dace.map: for j in dace.map: if lim < N: ... else: ...`
   with the guard reading only outer-scope symbols (``lim``, ``N``).
-- **Ideal:** hoist the guard above the whole ``i, j`` map nest -> one
-  top-level ``ConditionalBlock``, each branch a clean collapsed map.
-- **Gap:** MLIU sifts invariant guards out of LoopRegion nests, but the
-  Python-frontend map-nest shape (guard inside the inner map-body NestedSDFG)
-  is not matched/lifted. All-or-nothing upward (no partial one-level hoist) is
-  a deliberate constraint, so the guard must clear every enclosing scope at
-  once. Pinned by `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
-  (strict xfail). Value-correct today.
+- **Ideal (now achieved):** hoist the guard above the whole ``i, j`` map nest
+  -> one top-level ``ConditionalBlock``, each branch a clean collapsed map.
+- **Fix:** new ``MoveMapInvariantIfUp`` pass
+  (``dace/transformation/interstate/move_map_invariant_if_up.py``), the map
+  analogue of ``MoveLoopInvariantIfUp`` / the inverse of ``MoveIfIntoMap``. The
+  fully-parallel nest collapses to a single ``map[i, j]`` carrying the guard in
+  its body; the pass lifts the guard out, one map copy per branch
+  (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else { map[i,
+  j]: B }``). Wired terminally in the ``hoist_guards`` stage after
+  ``MoveLoopInvariantIfUp``. Guarded against unsoundness/over-eagerness: the
+  condition's symbols must all be threaded in through ``symbol_mapping`` (none
+  assigned per-element inside the body, e.g. a data-dependent ``if a[i] > thr``
+  mask is refused) and resolve to no map parameter; and only a LEAF perfect
+  nest is hoisted (branches with a nested map -- an imperfect nest where the
+  guard was pushed IN for fusion, e.g. ``map i: { if c: { c[i]; map j } }`` --
+  are left alone, so the dual ``MoveIfIntoMap`` direction is not undone).
+  `canonicalize_branchy_polybench_test.py::test_loop_invariant_guard_over_inner_hoisted_to_top`
+  un-xfailed and passing; unit tests in
+  `tests/transformations/interstate/move_map_invariant_if_up_test.py`.
 
-### L-B. Fully-parallel statement not fissioned to a standalone collapsed map
+### L-B. Fully-parallel statement fissioned to a standalone collapsed map (RESOLVED 2026-05-21)
 - **Shape:** one ``for i: for j:`` nest with a fully-parallel statement
   ``A[j,i] = A[j,i]*2`` beside a ``j``-carried ``B[i,j] = B[i,j-1] + B[i,j]``.
-- **Ideal:** fission ``A`` into a standalone collapsed 2D Map ``[i, j]`` and
-  leave ``B`` as ``map i: { loop j }``.
-- **Gap:** today ``A`` and ``B`` keep sharing the outer ``i``-map
-  (``map_param_counts == [1, 1]``) rather than ``A`` becoming a 2-parameter
-  map. Needs fission at the outer-nest level (or a post-LoopToMap
-  map-fission + map-collapse) so ``A``'s full iteration space parallelizes
-  independently. Pinned by `canonicalize_mixed_parallelism_test.py::test_mixed_parallelism_A_becomes_collapsed_2d_map`
-  (strict xfail). Value-correct today.
+- **Ideal (now achieved):** ``A`` fissions into a standalone collapsed 2D Map
+  ``[i, j]`` and ``B`` stays ``map i: { loop j }`` -> ``map_param_counts ==
+  [1, 2]``.
+- **Fix:** two changes deliver the collapsed canonical form for any
+  fully-parallel N-D nest. (1) ``LoopFission`` now fissions to a fixpoint
+  (maximal fission / perfect loop nesting): fissioning an inner loop makes the
+  parent's body multi-block and thus fissionable, so a re-sweep distributes the
+  shared outer loop and every leaf computation lands in its own complete loop
+  nest. (2) A new ``collapse`` pipeline stage (``MapCollapse``, after
+  ``reorder``, before ``fuse``) folds a perfect parallel map nest ``map i: {
+  map j }`` into one ``map[i, j]``; being N-dimensional it no longer matches a
+  sibling 1-D map for horizontal fusion, so the perfect nesting survives the
+  fuse stage. ``UniqueLoopIterators`` re-runs after fission to disambiguate the
+  cloned siblings' iterators before ``LoopToMap``. The real-world structural
+  tests (zqtmst, klev_plus_1, solve_nonhydro, velocity_advection,
+  coexisting_guards) were updated to the collapsed map counts.
+  `canonicalize_mixed_parallelism_test.py::test_mixed_parallelism_A_becomes_collapsed_2d_map`
+  un-xfailed and passing.
 
 ### L-C. Scalars are not map-local — loop-carried scalar reductions need a sequential outer loop
 - **Finding:** a scalar transient declared inside a ``dace.map`` body is NOT
@@ -408,6 +429,26 @@ explicit.
 Parse-once memoization; IndexedBase-aware ``_resolve`` (replacing the ``"["``
 string guard); cross-CFG if-else grouping refinement. None are correctness
 bugs.
+
+### L-H. `SymbolPropagation` on CloudSC — NOT a bug (was parallel FP nondeterminism, RESOLVED 2026-05-22)
+- **Investigation (2026-05-22):** the apparent "symprop changes 8 CloudSC float
+  arrays by ~1e-4..1e-6" was **not** a SymbolPropagation bug. (1) ``apply_pass``
+  returns ``None`` and a positional diff of the simplified CloudSC SDFG before
+  vs after shows **zero** changes (tasklets, memlets, interstate
+  assignments/conditions, nested ``symbol_mapping`` s) -- symprop is a
+  structural no-op here. (2) Under **sequential** schedules the comparison is
+  exact: simplified-vs-(simplified+symprop) MATCH, and even simplified vs an
+  identical deepcopy (no transform at all) MATCH. The ~1e-5 deltas came purely
+  from CloudSC's 2 parallel (OpenMP) maps reordering floating-point reductions
+  run-to-run between the two separately-compiled binaries.
+- **Fix (test, not production):** ``run_and_compare`` now forces both SDFGs
+  sequential (``make_sequential`` in `tests/corpus/generate_data_for_cloudsc.py`)
+  so the equivalence comparison is deterministic; the symprop test
+  (`tests/corpus/cloudsc_symbol_propagation_test.py`) un-xfailed and PASSES.
+- **LATER (separate):** verify whether ``simplify`` itself changes CloudSC
+  outputs by comparing raw (un-simplified) vs simplify-only **under sequential
+  schedules** (the earlier raw-vs-simplify ~1e-5 was likely the same parallel
+  nondeterminism; a sequential comparison gives a clean signal).
 
 ### L-E. TODO — re-roll (untile) a manually-unrolled lane chain
 - **Shape:** a loop with step ``S != 1`` whose body is ``S`` manually-unrolled

@@ -60,7 +60,7 @@ forcing perfect nesting can never change results. Bare two-level perfect
 nests (no intervening nodes) keep their original fast path unchanged.
 """
 import copy as _copy
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 from dace import memlet as mm, nodes, properties
 from dace.sdfg import SDFG, SDFGState
@@ -123,7 +123,11 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             n for n in inner_state.nodes()
             if inner_state.entry_node(n) is None and isinstance(n, (nodes.MapEntry, nodes.Tasklet))
         ]
-        return len(top_children) >= 2
+        # Each child becomes its own parent-map copy, so the children must be
+        # data-independent: a child map's output is not replicated into the
+        # other copies, so the split is invalid if another child reads or
+        # writes a container that a child map writes.
+        return len(top_children) >= 2 and _children_data_independent(inner_state, top_children, nsdfg)
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         pe = self.parent_entry
@@ -188,6 +192,70 @@ def _direct_io_access_nodes(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapE
     return direct
 
 
+def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[str]]:
+    """The data containers read and written across one top-level child's scope
+    boundary (a child ``MapEntry`` and its body, or a bare ``Tasklet``).
+
+    :param state: The inner state holding the child.
+    :param child: A top-level ``MapEntry`` or ``Tasklet``.
+    :returns: ``(reads, writes)`` data-container name sets.
+    """
+    if isinstance(child, nodes.MapEntry):
+        cx = state.exit_node(child)
+        scope = set(state.all_nodes_between(child, cx)) | {child, cx}
+    else:
+        scope = {child}
+    reads: Set[str] = set()
+    writes: Set[str] = set()
+    for e in state.edges():
+        if e.data is None or e.data.data is None:
+            continue
+        if e.dst in scope and e.src not in scope:
+            reads.add(e.data.data)
+        if e.src in scope and e.dst not in scope:
+            writes.add(e.data.data)
+    return reads, writes
+
+
+def _children_data_independent(state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG) -> bool:
+    """Whether the children can be split into independent parent-map copies.
+
+    Each child becomes its own parent-map copy wrapping a pruned NestedSDFG,
+    wired only with the NestedSDFG's existing in/out connectors plus the
+    replicated producer chain (tasklets / access nodes) feeding it. A child
+    *map*'s output is not replicated. So the split is invalid only when an
+    *internal* container -- one that is not already a NestedSDFG connector --
+    is written by a child map and read or written by another child: it would
+    have to be materialised across the two parent maps, which the duplication
+    does not do. A shared container that is already a NestedSDFG connector
+    stays wired (e.g. two maps doing read-modify-write on an in-out array), and
+    an internal container written by a producer ``Tasklet`` is fine because
+    that producer is replicated into each consuming copy.
+
+    :param state: The inner state holding the children.
+    :param children: The top-level ``MapEntry`` / ``Tasklet`` children.
+    :param nsdfg: The NestedSDFG whose connectors stay wired across the split.
+    :returns: ``True`` if the split preserves every cross-child dependency.
+    """
+    # A reader child can only be re-wired to a container that is a NestedSDFG
+    # *input* connector (its copy reads it from the same outside source). A
+    # container a child map merely writes out (an out-only connector) or an
+    # internal transient cannot reach another child's copy.
+    inputs = set(nsdfg.in_connectors)
+    io = {id(c): _child_data_io(state, c) for c in children}
+    for mc in children:
+        if not isinstance(mc, nodes.MapEntry):
+            continue
+        internal_writes = io[id(mc)][1] - inputs
+        for other in children:
+            if other is mc:
+                continue
+            other_reads, other_writes = io[id(other)]
+            if internal_writes & (other_reads | other_writes):
+                return False
+    return True
+
+
 def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,
                        body: List[nodes.Node]) -> List[nodes.Node]:
     """Return the body nodes that form the intervening chain (everything that
@@ -201,7 +269,12 @@ def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, 
     :returns: The intervening nodes (unordered, may be empty).
     """
     direct = _direct_io_access_nodes(graph, pe, px)
-    return [n for n in body if n is not nsdfg and n not in direct]
+    # ``body`` (nodes whose enclosing scope is ``pe``) includes the parent
+    # ``MapExit`` itself; it is the scope boundary, not intervening
+    # computation, so exclude it -- otherwise a bare perfect nest (whose only
+    # body content is the ``NestedSDFG``) gets a non-empty chain containing the
+    # ``MapExit`` and is wrongly rejected as a non-replicable chain.
+    return [n for n in body if n is not nsdfg and n is not px and n not in direct]
 
 
 def _intervening_chain_is_replicable(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,

@@ -268,6 +268,37 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return False
 
+    def _symbol_required_as_symbol(self, sdfg: dace.SDFG, symbol_name: str) -> bool:
+        """Whether ``symbol_name`` appears where code generation needs a
+        compile-time symbol -- a memlet subset, a map range, an array
+        shape/stride, or a loop bound -- so it must NOT be demoted to a runtime
+        scalar (a scalar cannot index an array, e.g. ``C[__sym_offset]``).
+
+        :param sdfg: The SDFG to scan.
+        :param symbol_name: The candidate symbol.
+        :returns: ``True`` if the symbol is used in a symbol-only context.
+        """
+
+        def _in(*exprs) -> bool:
+            return any(hasattr(x, "free_symbols") and symbol_name in {str(s) for s in x.free_symbols} for x in exprs)
+
+        for state in sdfg.all_states():
+            for edge in state.edges():
+                if edge.data.data is not None and any(_in(b, e, s) for (b, e, s) in edge.data.subset):
+                    return True
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.MapEntry) and any(_in(b, e, s) for (b, e, s) in node.map.range):
+                    return True
+        for arr in sdfg.arrays.values():
+            if any(_in(dim, stride) for dim, stride in zip(arr.shape, arr.strides)):
+                return True
+        for lr in sdfg.all_control_flow_regions():
+            if isinstance(lr, LoopRegion):
+                for code in (lr.init_statement, lr.update_statement, lr.loop_condition):
+                    if code is not None and symbol_name in dace.symbolic.symbols_in_code(code.as_string):
+                        return True
+        return False
+
     def _extract_bracket_content(self, s: str):
         pattern = r"(\w+)\[([^\]]*)\]"
         matches = re.findall(pattern, s)
@@ -599,9 +630,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         for state in graph.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
-                    parent_maps = get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg,
-                                                                       node=node,
-                                                                       parent_state=state)
+                    parent_maps = get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg, node=node, parent_state=state)
                     if len(parent_maps) == 0:
                         return False
 
@@ -1718,8 +1747,8 @@ class BranchElimination(transformation.MultiStateTransformation):
         root_sdfg = self.conditional.sdfg if self.parent_nsdfg_state is None else self.parent_nsdfg_state.sdfg
 
         all_parent_maps_and_loops = get_parent_map_and_loop_scopes(root_sdfg=root_sdfg,
-                                                                         node=self.conditional,
-                                                                         parent_state=None)
+                                                                   node=self.conditional,
+                                                                   parent_state=None)
 
         all_params = set()
         for map_or_loop in all_parent_maps_and_loops:
@@ -2104,10 +2133,23 @@ class BranchElimination(transformation.MultiStateTransformation):
                     assert len(src_nodes) == 1
                     assert len(src_edges) == 1
                     src_edge = src_edges.pop()
-                    for k in {k for k in src_edge.data.assignments.keys()}:
+                    # Only demote symbols that are not needed as compile-time
+                    # symbols. A symbol used in a memlet subset / map range /
+                    # array shape / loop bound (e.g. ``__sym_offset`` indexing
+                    # ``C[__sym_offset]``, materialised from the condition
+                    # assignment) cannot become a runtime scalar; demoting it
+                    # would drop its declaration and leave the index dangling.
+                    demotable = {
+                        k
+                        for k in src_edge.data.assignments if not self._symbol_required_as_symbol(graph.sdfg, k)
+                    }
+                    for k in demotable:
                         sdutil.demote_symbol_to_scalar(graph.sdfg, k)
-                    for k in {k for k in src_edge.data.assignments.keys()}:
-                        del src_edge.data.assignments[k]
+                    for k in demotable:
+                        # ``demote_symbol_to_scalar`` may already have dropped the
+                        # interstate assignment while materialising it, so pop
+                        # idempotently rather than ``del`` (which would KeyError).
+                        src_edge.data.assignments.pop(k, None)
                         assert k not in graph.sdfg.symbols
                     RemoveUnusedSymbols().apply_pass(graph.sdfg, {})
                     RemoveEmptyStates().apply_pass(graph.sdfg, {})
@@ -2119,7 +2161,6 @@ class BranchElimination(transformation.MultiStateTransformation):
                         assert len(src_nodes) == 1
                         src_node = src_nodes.pop()
                         src_edge = src_edges.pop()
-                        print(src_edge.data.assignments, src_edge.data.assignments == dict(), src_node, type(src_node))
                         if src_edge.data.assignments == dict():
                             if not isinstance(src_node, ConditionalBlock):
                                 self._force_fuse(src_node, new_state)

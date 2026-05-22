@@ -90,18 +90,19 @@ def test_mixed_parallelism_b_keeps_sequential_j():
     assert _nmaps(sdfg) >= 1, 'the i axis must be parallelized into a Map'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('Target canonical form not yet reached: the fully-parallel A statement '
-                           '(A[j, i] = A[j, i] * 2.0, independent over both i and j) should fission '
-                           'into a STANDALONE collapsed 2D Map, separate from the j-carried B '
-                           'statement (B -> map i: { loop j }). Today canonicalize keeps A and B '
-                           'sharing the outer i-map (map_param_counts == [1, 1]: an i-map containing '
-                           'an inner A j-map and the B j-loop) instead of fissioning A out to its own '
-                           '2-parameter Map. Value-preserving regardless (see the value test); this '
-                           'pins the structural ideal as a fix target.'))
 def test_mixed_parallelism_A_becomes_collapsed_2d_map():
-    """Target: the fully-parallel A statement fissions into a single
-    collapsed 2D Map (a MapEntry with two parameters)."""
+    """The fully-parallel A statement (``A[j, i] = A[j, i] * 2.0``,
+    independent over both i and j) fissions into a STANDALONE collapsed
+    2D Map (a MapEntry with two parameters), separate from the
+    j-carried B statement (``B -> map i: { loop j }``).
+
+    Maximal loop fission distributes the shared outer i-loop so each
+    statement gets its own perfect nest (``map i: { map j: A }`` and
+    ``map i: { loop j: B }``); the fully-parallel A nest then collapses
+    into a single ``map[i, j]`` (param count 2), while B's carried-j
+    nest stays a 1-parameter i-map -- so ``map_param_counts == [1, 2]``.
+    Being 2-dimensional, A's collapsed map no longer matches B's 1-D
+    i-map for horizontal fusion, so the two stay fissioned apart."""
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()

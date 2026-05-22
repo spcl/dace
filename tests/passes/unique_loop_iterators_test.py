@@ -3,6 +3,7 @@
 
 import dace
 import numpy as np
+import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
@@ -22,7 +23,6 @@ def test_nested_sdfg_symbol_mapping():
     After UniqueLoopIterators, the symbol_mapping should reference the new
     ``_loop_it_<N>`` name, not the original ``i``.
     """
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = foo.to_sdfg(simplify=False)
 
@@ -81,7 +81,6 @@ def test_loop_var_reconstruction():
     so downstream reads see the same value gfortran / ifort / flang
     leave the iterator at after a counted DO exit.
     """
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = loop_var_used_after.to_sdfg(simplify=False)
 
@@ -133,7 +132,6 @@ def test_nested_loops():
     Both should be renamed to distinct unique names (_loop_it_0, _loop_it_1),
     and both should get reconstruction states.
     """
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = nested_loops.to_sdfg(simplify=False)
 
@@ -155,7 +153,6 @@ def test_nested_loops():
 def test_loop_var_in_tasklet_body():
     """The pass must rename the loop iter inside tasklet expressions, not
     just on memlet subsets."""
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('iter_in_tasklet')
     sdfg.add_array('out', [10], dace.int64)
@@ -191,7 +188,6 @@ def test_loop_var_on_interstate_edge():
     """The loop iter is read on an interstate edge inside the loop body.
     The pass must rewrite the edge's assignment / condition to use the
     renamed iterator."""
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('iter_on_edge')
     sdfg.add_array('out', [10], dace.int64)
@@ -230,7 +226,6 @@ def test_loop_bound_with_indirect_array():
     would render the array access as a function call.  The pass must use
     ``arrayexprs=`` so the reconstruction assignment carries the
     Python subscript form."""
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('indirect_bound')
     sdfg.add_array('row_ptr', [11], dace.int64)
@@ -283,7 +278,6 @@ def test_while_loop_no_induction_var():
     ``loop_variable``) has nothing to rename.  The pass must skip it
     cleanly even with the postfix-assignment option on (there's no
     induction variable to leave a post-value for)."""
-    UniqueLoopIterators._loop_var_counter = 0
 
     sdfg = dace.SDFG('whileloop')
     sdfg.add_symbol('flag', dace.int64)
@@ -392,7 +386,6 @@ def test_large_nested_map_for_for_map_program():
     base(A=A, B=out_ref)
 
     sdfg = _big_nested_map_for_for_map.to_sdfg(simplify=False)
-    UniqueLoopIterators._loop_var_counter = 0
     UniqueLoopIterators().apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -429,7 +422,6 @@ def test_no_postamble_drops_dead_symbol_declaration():
     body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('i' in n.sdfg.symbols for n in body_nsdfgs)
 
-    UniqueLoopIterators._loop_var_counter = 0
     p = UniqueLoopIterators()
     p.assign_loop_iterator_post_value = False
     p.apply_pass(sdfg, {})
@@ -484,7 +476,6 @@ def test_no_postamble_clears_loop_var_for_inner_accumulator():
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('j' in n.sdfg.symbols for n in nsdfgs)
 
-    UniqueLoopIterators._loop_var_counter = 0
     p = UniqueLoopIterators()
     p.assign_loop_iterator_post_value = False
     p.apply_pass(sdfg, {})
@@ -533,7 +524,6 @@ def test_postamble_preserves_symbol_declaration():
     body_nsdfgs_before = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('i' in n.sdfg.symbols for n in body_nsdfgs_before)
 
-    UniqueLoopIterators._loop_var_counter = 0
     UniqueLoopIterators().apply_pass(sdfg, {})  # default: post-value ON
 
     # ``i`` declaration stays because the postamble assignments read/write it.
@@ -553,7 +543,6 @@ def test_idempotent_skips_already_unique_iterators():
     pass now skips iterators already in ``_loop_it_*`` form. This mirrors
     the canonicalize pipeline, which runs UniqueLoopIterators twice (the
     ``clean`` and ``ssa`` stages)."""
-    UniqueLoopIterators._loop_var_counter = 0
 
     # A map body (nested SDFG) with two nested loops, then a deeper nest --
     # the shape where a grandchild NSDFG imports the outer iterators.
@@ -624,7 +613,6 @@ def test_value_preserving_sibling_kbound_loops():
     (``x = 1``). With each edge owning its subset the rename is local and the
     accumulation is preserved. Regression for the frontend slice-subset
     aliasing surfaced through UniqueLoopIterators."""
-    UniqueLoopIterators._loop_var_counter = 0
     n = 8
     rng = np.random.default_rng(1)
     arr = rng.standard_normal((n, n))
@@ -637,16 +625,146 @@ def test_value_preserving_sibling_kbound_loops():
         assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f'value corrupted for x={x}'
 
 
+@dace.program
+def fission_then_duplicate(A: dace.float64[N, N], B: dace.float64[N, N]):
+    """Outer ``i`` over an inner ``j`` body with a fully-parallel ``A`` write
+    and a ``j``-carried ``B`` recurrence. LoopFission splits the inner ``j``
+    loop into two siblings -- the shape that surfaces the duplicate iterator."""
+    for i in range(N):
+        for j in range(1, N):
+            A[j, i] = A[j, i] * 2.0
+            B[i, j] = B[i, j - 1] + B[i, j]
+
+
+def test_disambiguates_fission_cloned_iterators():
+    """LoopFission clones a loop into siblings that keep the same
+    ``_loop_it_<N>`` name; re-running UniqueLoopIterators must give each its own
+    name (so e.g. LoopToMap is not blocked by a sibling appearing to read the
+    shared iterator). The pass skips *unique* ``_loop_it_*`` names (idempotent)
+    but re-disambiguates duplicates.
+
+    Reproduces ``map i { NestedSDFG { loop j fis0 (_loop_it_1): A[j,i] *= 2;
+    loop j fis1 (_loop_it_1): B[i,j] = B[i,j-1] + B[i,j] } }``."""
+    from dace.transformation.passes.loop_fission import LoopFission
+
+    sdfg = fission_then_duplicate.to_sdfg(simplify=True)
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+
+    LoopFission().apply_pass(sdfg, {})
+    after_fission = [
+        r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)
+    ]
+    assert len(after_fission) != len(set(after_fission)), \
+        f'expected a duplicate iterator after fission, got {after_fission}'
+
+    # Re-running the pass must disambiguate the fission-cloned duplicate.
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    after = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(after) == len(set(after)), f'iterators not disambiguated after re-run: {after}'
+
+    n = 8
+    rng = np.random.default_rng(0)
+    A0, B0 = rng.standard_normal((n, n)), rng.standard_normal((n, n))
+    refA, refB = A0.copy(), B0.copy()
+    ref = fission_then_duplicate.to_sdfg(simplify=True)
+    ref(A=refA, B=refB, N=n)
+    gotA, gotB = A0.copy(), B0.copy()
+    sdfg(A=gotA, B=gotB, N=n)
+    assert np.allclose(gotA, refA) and np.allclose(gotB, refB)
+
+
+@dace.program
+def triply_nested(A: dace.float64[6, 6, 6]):
+    for i in range(6):
+        for j in range(6):
+            for k in range(6):
+                A[i, j, k] = A[i, j, k] + (i + j + k)
+
+
+def test_triply_nested_loops_unique_and_value_preserving():
+    """Three nested counted loops (``i``, ``j``, ``k``) get three distinct
+    ``_loop_it_<N>`` names, the rename cascades through every nesting depth
+    (memlets, tasklet bodies, nested-SDFG symbol mappings), and the program
+    stays value-preserving."""
+    sdfg = triply_nested.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+
+    loopvars = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(loopvars) == 3
+    assert len(set(loopvars)) == 3 and all(v.startswith('_loop_it_') for v in loopvars), loopvars
+
+    A = np.random.rand(6, 6, 6)
+    exp = A + (np.arange(6)[:, None, None] + np.arange(6)[None, :, None] + np.arange(6)[None, None, :])
+    sdfg.compile()(A=A)
+    assert np.allclose(A, exp)
+
+
+@dace.program
+def descending_loop(A: dace.float64[10], B: dace.float64[10]):
+    for i in range(9, -1, -1):
+        A[i] = 2.0 * B[i] + i
+
+
+def test_negative_step_loop_value_preserving():
+    """A counted DO with a negative step (``range(9, -1, -1)``) is renamed
+    like any other; the post-value epilogue uses the descending exit value and
+    the program stays value-preserving."""
+    sdfg = descending_loop.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, None)  # default: post-value ON
+    sdfg.validate()
+
+    loopvars = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert loopvars and all(v.startswith('_loop_it_') for v in loopvars), loopvars
+
+    A = np.zeros(10)
+    B = np.random.rand(10)
+    sdfg.compile()(A=A, B=B)
+    assert np.allclose(A, 2.0 * B + np.arange(10))
+
+
+def test_seeds_counter_past_existing_loop_it_names():
+    """The per-call counter is seeded past any iterator already in
+    ``_loop_it_<N>`` form, so a freshly-renamed loop never collides with an
+    existing unique name. Here a loop already named ``_loop_it_5`` coexists
+    with a loop named ``i``; ``i`` must become ``_loop_it_6`` (not reuse 0 or
+    collide with 5)."""
+    sdfg = dace.SDFG('seed_past_existing')
+    sdfg.add_array('out', [10], dace.int64)
+
+    # An already-unique iterator (left untouched by the idempotency skip).
+    existing = LoopRegion('existing',
+                          condition_expr='_loop_it_5 < 5',
+                          loop_var='_loop_it_5',
+                          initialize_expr='_loop_it_5 = 0',
+                          update_expr='_loop_it_5 = _loop_it_5 + 1')
+    sdfg.add_node(existing, is_start_block=True)
+    es = existing.add_state('es', is_start_block=True)
+    et = es.add_tasklet('w', set(), {'_o'}, '_o = _loop_it_5')
+    ea = es.add_access('out')
+    es.add_edge(et, '_o', ea, None, dace.Memlet('out[_loop_it_5]'))
+
+    # A fresh loop to be renamed.
+    fresh = LoopRegion('fresh', condition_expr='i < 10', loop_var='i', initialize_expr='i = 5', update_expr='i = i + 1')
+    sdfg.add_node(fresh)
+    sdfg.add_edge(existing, fresh, dace.InterstateEdge())
+    fs = fresh.add_state('fs', is_start_block=True)
+    ft = fs.add_tasklet('w', set(), {'_o'}, '_o = i')
+    fa = fs.add_access('out')
+    fs.add_edge(ft, '_o', fa, None, dace.Memlet('out[i]'))
+
+    p = UniqueLoopIterators()
+    p.assign_loop_iterator_post_value = False
+    p.apply_pass(sdfg, None)
+    sdfg.validate()
+
+    loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    assert '_loop_it_5' in loopvars, f'existing unique iterator must be left alone: {loopvars}'
+    assert '_loop_it_6' in loopvars, f'fresh iterator must seed past the existing max (-> 6): {loopvars}'
+    assert len(loopvars) == 2, loopvars
+
+
 if __name__ == '__main__':
-    test_nested_sdfg_symbol_mapping()
-    test_loop_var_reconstruction()
-    test_nested_loops()
-    test_loop_var_in_tasklet_body()
-    test_loop_var_on_interstate_edge()
-    test_idempotent_skips_already_unique_iterators()
-    test_loop_bound_with_indirect_array()
-    test_while_loop_no_induction_var()
-    test_large_nested_map_for_for_map_program()
-    test_no_postamble_drops_dead_symbol_declaration()
-    test_no_postamble_clears_loop_var_for_inner_accumulator()
-    test_postamble_preserves_symbol_declaration()
+    pytest.main([__file__, '-v'])

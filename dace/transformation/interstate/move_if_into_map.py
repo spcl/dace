@@ -42,12 +42,12 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
     After the transformation, the conditional block at the outer nested SDFG
     level is replaced by ``branch_state`` (so the inner maps become neighbours
-    of the surrounding maps), and a new conditional block with the original
-    condition is placed *inside* every ``inner_nsdfg_k.sdfg`` wrapping its
-    original contents. The condition value is materialised as a symbol on the
-    interstate edge leading to the branch state and passed through to each
-    ``inner_nsdfg_k`` via ``symbol_mapping`` so it is evaluated exactly once,
-    at the outer level where all its free symbols are still in scope.
+    of the surrounding maps), and a copy of the original conditional block is
+    placed *inside* every ``inner_nsdfg_k.sdfg``, wrapping its original
+    contents. The guard's free symbols are threaded into each ``inner_nsdfg_k``
+    via ``symbol_mapping`` (and any arrays it reads are piped in), so the guard
+    is re-evaluated inside the inner map with the same values it had at the
+    outer conditional.
 
     Design -- patterns this transformation accepts and the soundness argument:
 
@@ -57,24 +57,22 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
       The single guard is pushed independently into each sibling map's nested
       SDFG. This is the highest-value extension: it turns ``k`` maps that a
       blocking conditional kept apart into ``k`` adjacent maps that fusion /
-      ``MapCollapse`` can then combine. Soundness holds because the condition
-      is identical for every sibling, evaluated once at the outer interstate
-      edge, and merely replicated as a guard inside each inner body -- the
-      per-map semantics are unchanged.
+      ``MapCollapse`` can then combine. Soundness holds because the guard is
+      identical for every sibling and merely replicated inside each inner body
+      -- the per-map semantics are unchanged.
 
-    Soundness guard (applies to every accepted pattern): the moved condition
-    is evaluated *once*, before the outer map body runs, instead of once per
-    outer-map iteration. That is only equivalent if the condition is invariant
-    with respect to the outer map's parameters. ``can_be_applied`` therefore
-    rejects the match if any free symbol of the condition resolves (through
-    ``outer_nsdfg.symbol_mapping``) to an expression that mentions an
-    outer-map parameter. This both closes a latent unsoundness in the original
-    single-map matcher and is what makes the multi-map extension safe.
+    Soundness: the guard is pushed DOWN into the inner map, not hoisted up out
+    of the outer map. It sits above the inner map, so it never references the
+    inner map's parameters; replicating it inside the inner body therefore
+    evaluates it per inner-map iteration to the identical value it had at the
+    original (per-outer-iteration) position. This holds even when the condition
+    varies with an outer-map parameter (``if i < threshold``): ``i`` is the
+    outer map's parameter, constant across the inner iterations, and threaded
+    in through ``symbol_mapping`` -- so the per-element guard reproduces the
+    original whole-inner-map guard exactly.
 
     Not accepted (deliberately out of scope to keep the change surgical):
-    conditions with an ``else``/``elif`` branch (``len(branches) != 1``) and
-    conditions that depend on the outer map parameters (rejected by the
-    invariance guard above).
+    conditions with an ``else``/``elif`` branch (``len(branches) != 1``).
     """
 
     cond_block = transformation.PatternNode(ConditionalBlock)
@@ -206,23 +204,6 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 continue
             xfh.nest_state_subgraph(enclosing_sdfg, branch_state, SubgraphView(branch_state, body))
 
-    @staticmethod
-    def _outer_map_params(outer_state: SDFGState, outer_nsdfg: NestedSDFG) -> Set[str]:
-        """Collects the parameters of every map enclosing ``outer_nsdfg`` in
-        ``outer_state``.
-
-        :param outer_state: The state containing the outer NestedSDFG.
-        :param outer_nsdfg: The NestedSDFG whose enclosing map scope is queried.
-        :returns: The set of enclosing map parameter names.
-        """
-        params: Set[str] = set()
-        scope = outer_state.entry_node(outer_nsdfg)
-        while scope is not None:
-            if isinstance(scope, MapEntry):
-                params.update(str(p) for p in scope.map.params)
-            scope = outer_state.entry_node(scope)
-        return params
-
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         cond_block: ConditionalBlock = self.cond_block
 
@@ -260,26 +241,20 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         if not self._inner_maps_shape_ok(branch_state):
             return False
 
-        # Soundness: the condition is hoisted out of the per-iteration body of
-        # the outer map and evaluated once. That is only equivalent to the
-        # original program if the condition does not vary with the outer map's
-        # parameters. Resolve each free symbol of the condition through the
-        # outer NestedSDFG's symbol mapping and reject the match if any of them
-        # depends on an enclosing outer-map parameter.
+        # The condition is pushed INTO each inner map's body, where it is
+        # evaluated per inner-map iteration with the outer map's parameters and
+        # symbols threaded in through ``symbol_mapping`` (and any read arrays
+        # piped in). The guard sits above the inner map, so it never references
+        # the inner map's own parameters; per-iteration evaluation inside the
+        # inner map therefore yields the identical result to the original
+        # per-outer-iteration guard -- including when the condition varies with
+        # an outer-map parameter (``if i < threshold``). The only requirement
+        # is that the condition's free symbols can be read at all; a condition
+        # that cannot be parsed is rejected (``apply`` could not thread it).
         try:
-            cond_free_syms = {str(s) for s in branch_cond.get_free_symbols()}
+            branch_cond.get_free_symbols()
         except Exception:
             return False
-        outer_params = self._outer_map_params(outer_state, outer_nsdfg)
-        if outer_params:
-            for sym in cond_free_syms:
-                mapped = outer_nsdfg.symbol_mapping.get(sym, sym)
-                try:
-                    mapped_syms = {str(s) for s in symbolic.pystr_to_symbolic(str(mapped)).free_symbols}
-                except Exception:
-                    mapped_syms = {str(mapped)}
-                if mapped_syms & outer_params:
-                    return False
 
         return True
 

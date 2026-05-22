@@ -149,7 +149,8 @@ def _icon_solve_nonhydro_args(n, m, rng):
 def test_icon_solve_nonhydro_shape_structure():
     """Locked structural contract for the solve_nonhydro shape:
 
-    * The inner ``jk, jc`` body fully parallelises: 6 inner Maps.
+    * The inner ``jk, jc`` body fully parallelises and each nest
+      collapses into one ``map[jk, jc]``: 3 collapsed inner Maps.
     * The outer ``jb`` stays a ``LoopRegion`` (1 surviving loop) -- it
       carries a per-iteration bound (``start = jb // 4``) that pins it
       sequential; no pass should turn it into a Map.
@@ -165,7 +166,7 @@ def test_icon_solve_nonhydro_shape_structure():
     sdfg = icon_solve_nonhydro_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 6, f'expected 6 inner maps after canonicalize, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 3, f'expected 3 collapsed inner maps after canonicalize, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 1, (f'expected exactly 1 surviving LoopRegion (outer jb with per-iteration bound), '
                                 f'got {_nloops(sdfg)}')
     # MoveLoopInvariantIfUp (terminal, require_full_hoist) lifts the
@@ -266,7 +267,8 @@ def test_icon_velocity_advection_istep_shape_structure():
     as solve_nonhydro, with the guard around two of three inner
     siblings.
 
-    * Inner ``jk, jc`` bodies parallelise: 6 Maps.
+    * Inner ``jk, jc`` bodies parallelise and each nest collapses into
+      one ``map[jk, jc]``: 3 collapsed Maps.
     * 2 surviving LoopRegions: the outer per-jb loop and (after the
       MLIU hoist) the per-jb loop carried inside the guarded branch
       that handles only the guarded siblings -- the always-on first
@@ -278,7 +280,7 @@ def test_icon_velocity_advection_istep_shape_structure():
     sdfg = icon_velocity_advection_istep_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 6, f'expected 6 inner maps, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 3, f'expected 3 collapsed inner maps, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 2, f'expected 2 surviving LoopRegions, got {_nloops(sdfg)}'
     # The invariant ``IF istep == 1`` guard is hoisted to the SDFG top level.
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
@@ -432,18 +434,20 @@ def cloudsc_klev_plus_1_shape(pfplsl: dace.float64[N, M], zpfplsx_qr: dace.float
 def test_cloudsc_klev_plus_1_shape_structure():
     """The headline cascade-up success case. After canonicalize:
 
-    * Both loops become Maps (clean parallelism).
+    * Both loops become Maps (clean parallelism), and -- being a
+      fully-parallel ``jk``/``jl`` nest -- collapse into one ``map[jk,
+      jl]``.
     * The promoted ``klev_plus_1 = klev + 1`` iedge assignment lives at
       the **SDFG root** (not inside any LoopRegion / NestedSDFG body).
       This is the cascade-up contract: invariant promoted bounds are
       lifted past every enclosing loop.
-    * The outer Map's range references the promoted symbol cleanly:
-      ``(0, klev_plus_1 - 1, 1)``.
+    * The collapsed Map's ``jk`` range references the promoted symbol
+      cleanly: ``(0, klev_plus_1 - 1, 1)``.
     """
     sdfg = cloudsc_klev_plus_1_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 2, f'expected 2 fully parallel maps, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
     # Promoted symbol must be at SDFG root.
     root_keys = {lhs for e in sdfg.edges() for lhs in e.data.assignments}
@@ -490,15 +494,16 @@ def zqtmst_invariant_scalar_shape(arr: dace.float64[N, M], out: dace.float64[N, 
 
 def test_zqtmst_invariant_scalar_shape_structure():
     """The reciprocal ``zqtmst = 1 / ptsphy`` should be computed ONCE
-    at outer scope and reused. Canonical shape: 2 fully parallel Maps,
-    no surviving LoopRegions, no per-iteration division. The
-    reciprocal's tasklet must NOT live inside either map scope (the
-    map scope's tasklet code must reference ``zqtmst`` as an input
-    symbol or AccessNode read, not recompute it)."""
+    at outer scope and reused. Canonical shape: one collapsed 2D Map
+    (the fully-parallel ``jk``/``jl`` nest folds into a single
+    ``map[jk, jl]``), no surviving LoopRegions, no per-iteration
+    division. The reciprocal's tasklet must NOT live inside the map
+    scope (the map scope's tasklet code must reference ``zqtmst`` as an
+    input symbol or AccessNode read, not recompute it)."""
     sdfg = zqtmst_invariant_scalar_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 2, f'expected 2 fully parallel maps, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
     # No tasklet inside a Map scope should compute ``1.0 / ptsphy`` --
     # the reciprocal should live in the outer state. Conservative test:

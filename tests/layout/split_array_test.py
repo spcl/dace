@@ -334,18 +334,16 @@ def test_melt():
     csdfg = sdfg.compile()
 
     args = dict(**SYM)
-    sdfg_keys = set(sdfg.arrays.keys())
-    if 'zsolqa_0' in sdfg_keys:
-        for i in range(NCLV):
-            args[f'zsolqa_{i}'] = inp_split['zsolqa'][i].copy()
-            args[f'zqxfg_{i}'] = inp_split['zqxfg'][i].copy()
-        for i in range(NCLV):
-            args[f'iphase_{i}'] = inp_split['iphase'][i].copy()
-            args[f'imelt_{i}'] = inp_split['imelt'][i].copy()
-        args['zmeltmax'] = inp_split['zmeltmax']
-        args['zicetot'] = inp_split['zicetot']
-    else:
-        args.update(inp_split)
+    for i in range(NCLV):
+        for j in range(NCLV):
+            args[_make_split_name('zsolqa', i, j)] = inp_split['zsolqa'][i, j].copy()
+    for i in range(NCLV):
+        args[_make_split_name('zqxfg', i)] = inp_split['zqxfg'][i].copy()
+        # imelt is a data-dependent index into the split dimension; each split is
+        # a length-1 array feeding the branch selector ``imelt_index``.
+        args[_make_split_name('imelt', i)] = inp_split['imelt'][i:i + 1].copy()
+    args['zmeltmax'] = inp_split['zmeltmax']
+    args['zicetot'] = inp_split['zicetot']
 
     csdfg(**args)
     _check_split_result(args, inp_ref, NCLV, ['zsolqa', 'zqxfg'])
