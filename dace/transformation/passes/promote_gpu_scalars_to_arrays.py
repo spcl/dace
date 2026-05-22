@@ -10,6 +10,7 @@ is exempt -- thread-local stack). Memlets are rewritten via
 ``Memlet.from_array``, bare-identifier interstate assignments get a ``[0]``
 subscript, and nested SDFGs re-declaring the name are promoted recursively.
 """
+import re
 from typing import Any, Dict, Optional
 
 from dace import data, dtypes, properties
@@ -206,10 +207,9 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         :param sdfg: SDFG whose interstate-edge assignments are rewritten.
         :param name: Promoted descriptor name to subscript.
         """
-        import re as _re
         # Word-boundary regex; subscripted (``name[``) and dotted (``.name``)
         # references are intentionally skipped.
-        pattern = _re.compile(rf'(?<![\w.])({_re.escape(name)})(?!\s*\[)\b')
+        pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
         for cfg in sdfg.all_control_flow_regions():
             for edge in cfg.edges():
                 ise = edge.data

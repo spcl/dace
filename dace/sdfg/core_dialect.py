@@ -113,7 +113,6 @@ class CoreDialectCompliant:
         neither endpoint device-level. ``InsertExplicitGPUGlobalMemoryCopies`` lowers these;
         leftovers after the pipeline are a bug or unsupported pattern."""
         from dace.sdfg.scope import is_devicelevel_gpu
-        from dace import dtypes as _dtypes
         out: List[str] = []
         for sub_sdfg in sdfg.all_sdfgs_recursive():
             for state in sub_sdfg.states():
@@ -129,8 +128,8 @@ class CoreDialectCompliant:
                         continue
                     src_storage = src_desc.storage
                     dst_storage = dst_desc.storage
-                    touches_gpu = (src_storage == _dtypes.StorageType.GPU_Global
-                                   or dst_storage == _dtypes.StorageType.GPU_Global)
+                    touches_gpu = (src_storage == dtypes.StorageType.GPU_Global
+                                   or dst_storage == dtypes.StorageType.GPU_Global)
                     if not touches_gpu:
                         continue
                     if (is_devicelevel_gpu(sub_sdfg, state, edge.src) or is_devicelevel_gpu(sub_sdfg, state, edge.dst)):

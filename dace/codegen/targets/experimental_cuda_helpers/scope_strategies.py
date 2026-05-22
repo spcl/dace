@@ -72,7 +72,7 @@ class ScopeGenerationStrategy(ABC):
 
     @abstractmethod
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         raise NotImplementedError('Abstract class')
 
     def _dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,

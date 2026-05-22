@@ -52,14 +52,14 @@ trisolv_test = _kernel_module("trisolv_test")
 trmm_test = _kernel_module("trmm_test")
 
 
-def _compare_arrays(cpu_args: Dict[str, np.ndarray], gpu_args: Dict[str, np.ndarray], rtol: float, atol: float) -> None:
+def _compare_arrays(cpu_args: Dict[str, np.ndarray], gpu_args: Dict[str, np.ndarray], rtol: float, atol: float):
     for name, cpu_val in cpu_args.items():
         if not isinstance(cpu_val, np.ndarray):
             continue
         np.testing.assert_allclose(gpu_args[name], cpu_val, rtol=rtol, atol=atol, err_msg=f'arg "{name}" mismatch')
 
 
-def _compare_returns(cpu_ret, gpu_ret, rtol: float, atol: float) -> None:
+def _compare_returns(cpu_ret, gpu_ret, rtol: float, atol: float):
     if cpu_ret is None:
         return
     if isinstance(cpu_ret, tuple):
@@ -74,7 +74,7 @@ def _run_gpu_vs_cpu(kernel,
                     symbols: Dict[str, int],
                     *,
                     rtol: float = 1e-10,
-                    atol: float = 1e-12) -> None:
+                    atol: float = 1e-12):
     """Run ``kernel`` on a CPU SDFG and a GPU-transformed SDFG and assert the outputs match."""
     cpu_sdfg = kernel.to_sdfg(simplify=True)
     cpu_args = build_args()

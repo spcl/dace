@@ -9,7 +9,7 @@ identifier. This pass promotes the descriptor to the kernel-owning SDFG,
 wires it through the NestedSDFG via connectors, and adds kernel
 ``MapEntry``/``MapExit`` dependency edges to pin allocation to the kernel.
 """
-import copy as _copy
+import copy
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, SDFGState, dtypes, properties, nodes
@@ -89,7 +89,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
 
         outer_name = self._pick_outer_name(name, outer_sdfg)
         outer_sdfg.add_datadesc(outer_name, inner_desc, find_new_name=False)
-        inner_param_desc = _copy.deepcopy(inner_desc)
+        inner_param_desc = copy.deepcopy(inner_desc)
         inner_param_desc.transient = False
         del inner_sdfg.arrays[name]
         inner_sdfg.add_datadesc(name, inner_param_desc)
@@ -103,13 +103,13 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
             outer_state.add_edge(kernel_entry, None, an_read, None, dependency_edge())
             nsdfg_node.add_in_connector(name, force=True)
             outer_state.add_edge(an_read, None, nsdfg_node, name,
-                                 Memlet(data=outer_name, subset=_copy.deepcopy(full_subset)))
+                                 Memlet(data=outer_name, subset=copy.deepcopy(full_subset)))
 
         if is_written:
             an_write = outer_state.add_access(outer_name)
             nsdfg_node.add_out_connector(name, force=True)
             outer_state.add_edge(nsdfg_node, name, an_write, None,
-                                 Memlet(data=outer_name, subset=_copy.deepcopy(full_subset)))
+                                 Memlet(data=outer_name, subset=copy.deepcopy(full_subset)))
             outer_state.add_edge(an_write, None, kernel_exit, None, dependency_edge())
 
         # Write-only: AN_write has no incoming dep from MapEntry, so anchor it.

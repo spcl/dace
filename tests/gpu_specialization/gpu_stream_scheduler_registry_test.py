@@ -43,7 +43,7 @@ def test_pipeline_accepts_user_defined_strategy():
         def assign_streams(self, sdfg) -> Dict[nodes.Node, int]:
             return {}
 
-        def insert_sync_tasklets(self, sdfg, assignments) -> None:
+        def insert_sync_tasklets(self, sdfg, assignments):
             pass
 
     pipe = GPUStreamPipeline(scheduling_strategy=DummyScheduler())
