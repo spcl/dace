@@ -333,15 +333,26 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             continue
 
                         assignment_expr = dace.symbolic.SymExpr(assignment)
-                        # Define functions to ignore (common arithmetic + piecewise + rounding)
+                        # Define functions to ignore (common arithmetic + piecewise +
+                        # rounding). ``int_floor`` / ``int_ceil`` are dace integer
+                        # arithmetic (e.g. a ``a[i // M]`` replication divisor), not an
+                        # array access — they carry no ``.name`` and must not be read as
+                        # an indirect access.
                         ignored = {
                             sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs, sympy.floor,
                             sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
-                            sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
+                            sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh,
+                            dace.symbolic.int_floor, dace.symbolic.int_ceil
                         }
 
-                        # Collect only user-defined or nonstandard functions - in intersate edge this means array accees
-                        funcs = {f.name for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
+                        # Collect only user-defined or nonstandard functions - in intersate edge this means array accees.
+                        # A surviving function is an array access only if it carries a ``.name`` (the array name);
+                        # any other arithmetic function without a name is not an indirect access.
+                        funcs = {
+                            f.name
+                            for f in assignment_expr.atoms(sympy.Function)
+                            if f.func not in ignored and hasattr(f, "name")
+                        }
                         # Any array on the right-hand-side -> big problem
                         # Check for scalar / array accesses like this too
                         scalars = {str(s)
@@ -349,7 +360,17 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # If scalar is invariant it should be ok?
                         #      {s
                         #       for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars)
-                        if len(funcs) != 0 or len(scalars) != 0:
+                        # A map-param-dependent ``int_floor`` / ``int_ceil`` in a symbol's
+                        # interstate assignment is a lane-replication index (``a[i // D]``)
+                        # that the multiplex path (``detect_halve_index``) did NOT rewrite --
+                        # e.g. a data-dependent divisor buried in a nested SDFG. Reaching here
+                        # means the normal contiguous widening would mis-lower it, so refuse
+                        # (the loop-invariant ``int_floor(const, D)`` case does not reference
+                        # the map param, so it is not flagged).
+                        unhandled_replication = (map_param in {str(s) for s in assignment_expr.free_symbols} and any(
+                            type(f).__name__ in ("int_floor", "int_ceil")
+                            for f in assignment_expr.atoms(sympy.Function)))
+                        if len(funcs) != 0 or len(scalars) != 0 or unhandled_replication:
                             array_is_vectorizable[arr_name] = False
 
             # Go through non unit stride dimensions in case it those dimensions have unstructuredness

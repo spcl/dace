@@ -582,6 +582,71 @@ def test_halve_index_s4117():
     )
 
 
+# Divided-index ``src[i // D]`` replication for arbitrary divisor D: a
+# constant (3, 4 — including D not dividing the vector width W=8) and a
+# loop-invariant symbol. All lower to the contiguous-load + lane-replicate
+# ``multiplex_elements`` (phase-aware: ``out[l] = in[(i % D + l) / D]``).
+
+DV = dace.symbol("DV")
+
+
+@dace.program
+def div_index_const3(src: dace.float64[N], dst: dace.float64[N]):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i // 3]
+
+
+@dace.program
+def div_index_const4(src: dace.float64[N], dst: dace.float64[N]):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i // 4]
+
+
+@dace.program
+def div_index_symbol(src: dace.float64[N], dst: dace.float64[N]):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i // DV]
+
+
+def test_div_index_const3():
+    """``src[i // 3]`` — divisor does NOT divide W=8, so the phase ``i % 3``
+    is non-zero on most tiles; the lane-replicate must account for it."""
+    N_val = 64
+    run_vectorization_test(
+        dace_func=div_index_const3,
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        params={"N": N_val},
+        vector_width=8,
+        sdfg_name="div_index_const3",
+    )
+
+
+def test_div_index_const4():
+    """``src[i // 4]`` — divisor divides W=8 (phase 0)."""
+    N_val = 64
+    run_vectorization_test(
+        dace_func=div_index_const4,
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        params={"N": N_val},
+        vector_width=8,
+        sdfg_name="div_index_const4",
+    )
+
+
+@pytest.mark.parametrize("dv", [2, 3, 5])
+def test_div_index_symbol(dv):
+    """``src[i // DV]`` with a loop-invariant symbol divisor (constant across
+    the lanes, value supplied at call time)."""
+    N_val = 64
+    run_vectorization_test(
+        dace_func=div_index_symbol,
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        params={"N": N_val, "DV": dv},
+        vector_width=8,
+        sdfg_name=f"div_index_symbol_{dv}",
+    )
+
+
 # fp32 variants: templated runtime intrinsics must compile and be
 # correct on a non-double element type (scalar fallback path).
 
