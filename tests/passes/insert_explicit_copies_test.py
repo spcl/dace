@@ -72,8 +72,8 @@ def _assert_copy_storages(sdfg, src_storage, dst_storage):
     found = False
     for n, parent in sdfg.all_nodes_recursive():
         if isinstance(n, CopyLibraryNode):
-            assert n.src_storage(parent, parent.sdfg) == src_storage
-            assert n.dst_storage(parent, parent.sdfg) == dst_storage
+            assert n.src_storage(parent) == src_storage
+            assert n.dst_storage(parent) == dst_storage
             found = True
     assert found, "No CopyLibraryNode found in SDFG"
 
@@ -719,7 +719,6 @@ def test_iec_reinterpret_does_not_lift_view():
 # MapEntries / MapExits are followed via memlet_path. Generated code emits
 # no CopyND template instantiations.
 
-
 _CPU = dace.dtypes.StorageType.CPU_Heap
 _N_STAGE = 128
 _TILE = 32
@@ -842,8 +841,10 @@ def test_lift_stage_out_copy():
 
 
 def _view_an_names(sdfg, state):
-    return [n.data for n in state.nodes()
-            if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)]
+    return [
+        n.data for n in state.nodes()
+        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dace.data.View)
+    ]
 
 
 def test_lift_stage_in_copy_through_view():

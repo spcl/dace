@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
 
 import pytest
 import numpy as np
@@ -99,9 +99,8 @@ def _make_legacy_copy_sdfg(src: _ArraySpec,
     the :class:`CopyLibraryNode` path.
     """
     sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
-    sdfg.start_state.add_edge(
-        src_acc, None, dst_acc, None,
-        dace.memlet.Memlet(data=dst_name, subset=dst_subset, other_subset=src_subset))
+    sdfg.start_state.add_edge(src_acc, None, dst_acc, None,
+                              dace.memlet.Memlet(data=dst_name, subset=dst_subset, other_subset=src_subset))
     return sdfg
 
 
@@ -674,8 +673,8 @@ def test_copy_node_storage_from_edges():
         libnode_name="edges_to_storage",
     )
     state = sdfg.start_state
-    assert node.src_storage(state, sdfg) == dace.dtypes.StorageType.CPU_Heap
-    assert node.dst_storage(state, sdfg) == dace.dtypes.StorageType.GPU_Global
+    assert node.src_storage(state) == dace.dtypes.StorageType.CPU_Heap
+    assert node.dst_storage(state) == dace.dtypes.StorageType.GPU_Global
 
 
 def test_copy_node_storage_defaults_when_unattached():
@@ -685,8 +684,8 @@ def test_copy_node_storage_defaults_when_unattached():
     node = CopyLibraryNode(name="unattached")
     state.add_node(node)
 
-    assert node.src_storage(state, sdfg) == dace.dtypes.StorageType.Default
-    assert node.dst_storage(state, sdfg) == dace.dtypes.StorageType.Default
+    assert node.src_storage(state) == dace.dtypes.StorageType.Default
+    assert node.dst_storage(state) == dace.dtypes.StorageType.Default
 
 
 def test_copy_cross_storage_validation_rejects_without_flag():
@@ -737,6 +736,92 @@ def test_strided_expansions_accept_non_contiguous():
         name="noncontig_MappedTasklet",
     )
     sdfg.expand_library_nodes()
+
+
+# A (1, N) array whose unit leading dim carries a padded stride (here 64) is a
+# non-packed descriptor, so ``is_contiguous_subset`` is False even though the
+# accessed row is one physical run of N elements. The pad sits on an extent-1
+# axis that is never stepped, so a fresh contiguous (1, N) array backs it with
+# no view (``total_size`` only needs to cover the accessed run).
+_PADDED_N = 60
+_PADDED_STRIDE = 64
+
+
+def _padded_unit_spec(storage, name):
+    """``_ArraySpec`` for a (1, ``_PADDED_N``) array with a padded (non-packed) leading stride."""
+    return _ArraySpec(shape=(1, _PADDED_N),
+                      storage=storage,
+                      strides=(_PADDED_STRIDE, 1),
+                      total_size=_PADDED_N,
+                      name=name)
+
+
+def test_copy_padded_unit_dim_same_storage_cpu():
+    """Same-storage CPU copy of a padded (1, N) array: non-packed -> map fallback, exact result."""
+    sdfg, node = _make_copy_sdfg(
+        _padded_unit_spec(dace.dtypes.StorageType.CPU_Heap, "A"),
+        _padded_unit_spec(dace.dtypes.StorageType.CPU_Heap, "B"),
+        name="copy_padded_unit_cpu",
+        libnode_name="cp_padded_cpu",
+    )
+    state = sdfg.start_state
+    _, inp, in_sub, _, out, out_sub = node.validate(state.sdfg, state, allow_cross_storage=True)
+    assert not in_sub.is_contiguous_subset(inp)
+    assert not out_sub.is_contiguous_subset(out)
+    assert select_copy_implementation(node, state) == "MappedTasklet"
+
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = _compile_no_copynd(sdfg)
+
+    A = np.zeros((1, _PADDED_N), dtype=np.float64)  # fresh + contiguous: A.base is None, so no view rejection
+    B = np.zeros((1, _PADDED_N), dtype=np.float64)
+    A[0, :] = np.arange(1, _PADDED_N + 1, dtype=np.float64)
+    exe(A=A, B=B)
+    np.testing.assert_array_equal(B, A)
+
+
+def test_copy_padded_unit_dim_cross_storage_selection():
+    """Cross CPU/GPU copy of a padded (1, N) array routes to the pitched ``cudaMemcpy2D``, not a flat memcpy."""
+    for src_storage, dst_storage in (
+        (dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global),
+        (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Heap),
+    ):
+        sdfg, node = _make_copy_sdfg(
+            _padded_unit_spec(src_storage, "A"),
+            _padded_unit_spec(dst_storage, "B"),
+            name="copy_padded_unit_cross",
+            libnode_name="cp_padded_cross",
+        )
+        state = sdfg.start_state
+        _, inp, in_sub, _, out, out_sub = node.validate(state.sdfg, state, allow_cross_storage=True)
+        assert not in_sub.is_contiguous_subset(inp)
+        assert not out_sub.is_contiguous_subset(out)
+        assert select_copy_implementation(node, state) == "MemcpyCUDA2D"
+
+
+@pytest.mark.gpu
+def test_copy_padded_unit_dim_cross_storage_gpu():
+    """Cross CPU->GPU copy of a padded (1, N) array expands to a pitched copy and is numerically exact."""
+    import cupy as cp
+
+    sdfg, _ = _make_copy_sdfg(
+        _padded_unit_spec(dace.dtypes.StorageType.CPU_Heap, "A"),
+        _padded_unit_spec(dace.dtypes.StorageType.GPU_Global, "B"),
+        name="copy_padded_unit_h2d",
+        libnode_name="cp_padded_h2d",
+    )
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    exe = _compile_no_copynd(sdfg)
+
+    A = np.zeros((1, _PADDED_N), dtype=np.float64)
+    A[0, :] = np.arange(1, _PADDED_N + 1, dtype=np.float64)
+    B = cp.zeros((1, _PADDED_N), dtype=cp.float64)
+    exe(A=A, B=B)
+    cp.testing.assert_array_equal(B, cp.asarray(A))
 
 
 def test_register_copy_expands_with_register_storage():
@@ -1057,10 +1142,7 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
                      storage=dace.dtypes.StorageType.CPU_Heap,
                      strides=(1, 2, 6, 24),
                      total_size=120)
-    dst = _ArraySpec(shape=(6, 20),
-                     storage=dace.dtypes.StorageType.CPU_Heap,
-                     strides=(1, 6),
-                     total_size=120)
+    dst = _ArraySpec(shape=(6, 20), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 6), total_size=120)
     sdfg_lib, _ = _make_copy_sdfg(src, dst, name="legacy_fortran_collapse_lib")
     sdfg_leg = _make_legacy_copy_sdfg(src, dst, name="legacy_fortran_collapse_leg")
 
@@ -1088,9 +1170,8 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
         exe(src=A, dst=out)
         return out
 
-    assert _legacy_fails(sdfg_leg, expected, run), (
-        "Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
-        "remove this test, the libnode advantage is gone.")
+    assert _legacy_fails(sdfg_leg, expected, run), ("Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
+                                                    "remove this test, the libnode advantage is gone.")
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
