@@ -501,6 +501,41 @@ def test_create_map_scope_write():
     sdfg.validate()
 
 
+def test_create_map_scope_read():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("print_i", {"read"}, {}, "print(read)"), {"read": dace.Memlet("A[i]")},
+                                   {})
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    sdfg.validate()
+
+
+def test_create_map_scope_hello_world():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+                children=[tn.TaskletNode(nodes.Tasklet("print_hi", {}, {}, "print('Hello world!')"), {}, {})],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    sdfg.validate()
+
+
 def test_create_map_scope_read_after_write():
     stree = tn.ScheduleTreeRoot(
         name="tester",
@@ -581,6 +616,28 @@ def test_create_map_scope_double_memlet():
                             }, {"out": dace.Memlet("B[i]")})
                         ])
         ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_map_scope_write_in_two_tasklets():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float32, [20]),
+        },
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("assign_i", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("A[i]")}),
+                    tn.TaskletNode(nodes.Tasklet("assign_i", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("B[i]")}),
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -954,10 +1011,13 @@ if __name__ == '__main__':
     test_create_if_elif_else()
     test_create_if_without_else()
     test_create_map_scope_write()
+    test_create_map_scope_read()
+    test_create_map_scope_hello_world()
     test_create_map_scope_read_after_write()
     test_create_map_scope_write_after_read()
     test_create_map_scope_copy()
     test_create_map_scope_double_memlet()
+    test_create_map_scope_write_in_two_tasklets()
     test_create_nested_map_scope()
     test_double_map_with_for_loop()
     test_triple_map_flat_if()

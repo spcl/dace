@@ -161,7 +161,7 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by the given entry node. """
-        raise None
+        return None
 
     ###################################################################
     # Memlet-tracking methods
