@@ -22,9 +22,15 @@ import pytest
 
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.helpers.harness import _auto_tile_widths
 from tests.passes.vectorization.helpers.tsvc_matrix import build_tsvc_matrix
 
 LEN_2D = dace.symbol("LEN_2D")
+
+# 2D TSVC kernels are the primary tile-op (K-dim) proof points: also run them
+# through the K-dim tile path (VectorizeCPUMultiDim) via the tile_nodes config.
+pytestmark = pytest.mark.tile_nodes
 
 
 @dace.program
@@ -281,28 +287,28 @@ def vbor_d_single(
 
 # (kernel, [(argname, shape_class), ...]) entries.
 _KERNELS = [
-    (s1115_d_single, [('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s1119_d_single, [('aa', '1d'), ('bb', '1d')]),
-    (s115_d_single, [('a', '1d'), ('aa', '1d')]),
-    (s118_d_single, [('a', '1d'), ('bb', '1d')]),
-    (s119_d_single, [('aa', '1d'), ('bb', '1d')]),
-    (s125_d_single, [('flat_2d_array', 'flat_2d'), ('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s126_d_single, [('bb', '1d'), ('flat_2d_array', 'flat_2d'), ('cc', '1d')]),
-    (s132_d_single, [('aa', '1d'), ('b', '1d'), ('c', '1d')]),
-    (s141_d_single, [('bb', '1d'), ('flat_2d_array', 'flat_2d')]),
-    (s2101_d_single, [('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s2102_d_single, [('aa', '1d')]),
-    (s2111_d_single, [('aa', '1d')]),
-    (s2233_d_single, [('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s2275_d_single, [('a', '1d'), ('b', '1d'), ('c', '1d'), ('d', '1d'), ('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s231_d_single, [('aa', '1d'), ('bb', '1d')]),
-    (s232_d_single, [('aa', '1d'), ('bb', '1d')]),
-    (s233_d_single, [('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s235_d_single, [('a', '1d'), ('b', '1d'), ('c', '1d'), ('aa', '1d'), ('bb', '1d')]),
-    (s256_d_single, [('a', '1d'), ('aa', '1d'), ('bb', '1d'), ('d', '1d')]),
-    (s257_d_single, [('a', '1d'), ('aa', '1d'), ('bb', '1d')]),
-    (s275_d_single, [('aa', '1d'), ('bb', '1d'), ('cc', '1d')]),
-    (s343_d_single, [('aa', '1d'), ('bb', '1d'), ('flat_2d_array', 'flat_2d')]),
+    (s1115_d_single, [('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s1119_d_single, [('aa', '2d'), ('bb', '2d')]),
+    (s115_d_single, [('a', '1d'), ('aa', '2d')]),
+    (s118_d_single, [('a', '1d'), ('bb', '2d')]),
+    (s119_d_single, [('aa', '2d'), ('bb', '2d')]),
+    (s125_d_single, [('flat_2d_array', 'flat_2d'), ('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s126_d_single, [('bb', '2d'), ('flat_2d_array', 'flat_2d'), ('cc', '2d')]),
+    (s132_d_single, [('aa', '2d'), ('b', '1d'), ('c', '1d')]),
+    (s141_d_single, [('bb', '2d'), ('flat_2d_array', 'flat_2d')]),
+    (s2101_d_single, [('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s2102_d_single, [('aa', '2d')]),
+    (s2111_d_single, [('aa', '2d')]),
+    (s2233_d_single, [('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s2275_d_single, [('a', '1d'), ('b', '1d'), ('c', '1d'), ('d', '1d'), ('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s231_d_single, [('aa', '2d'), ('bb', '2d')]),
+    (s232_d_single, [('aa', '2d'), ('bb', '2d')]),
+    (s233_d_single, [('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s235_d_single, [('a', '1d'), ('b', '1d'), ('c', '1d'), ('aa', '2d'), ('bb', '2d')]),
+    (s256_d_single, [('a', '1d'), ('aa', '2d'), ('bb', '2d'), ('d', '1d')]),
+    (s257_d_single, [('a', '1d'), ('aa', '2d'), ('bb', '2d')]),
+    (s275_d_single, [('aa', '2d'), ('bb', '2d'), ('cc', '2d')]),
+    (s343_d_single, [('aa', '2d'), ('bb', '2d'), ('flat_2d_array', 'flat_2d')]),
     (vbor_d_single, [('a', '1d'), ('b', '1d'), ('c', '1d'), ('d', '1d'), ('e', '1d'), ('x', '1d')]),
 ]
 
@@ -321,12 +327,16 @@ _MATRIX, _IDS = build_tsvc_matrix(_KERNELS, (16, 17))
 
 
 @pytest.mark.parametrize("kernel,params_spec,remainder_strategy,branch_mode,len_2d_val", _MATRIX, ids=_IDS)
-def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_val):
+def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_val, vectorize_config):
+
+    # The tile path is locked to merge + scalar; skip the off-combo arms.
+    if vectorize_config == "tile_nodes" and (branch_mode != "merge" or remainder_strategy != "scalar"):
+        pytest.skip("tile_nodes is locked to branch_mode=merge + remainder=scalar")
 
     arrays_ref = {name: _allocate(shape_class, len_2d_val) for name, shape_class in params_spec}
     arrays_vec = {name: arr.copy() for name, arr in arrays_ref.items()}
 
-    sdfg_name = f"{kernel.name}_2d_{branch_mode}_{remainder_strategy}_{len_2d_val}"
+    sdfg_name = f"{kernel.name}_2d_{vectorize_config}_{branch_mode}_{remainder_strategy}_{len_2d_val}"
     # Isolate each parametrized variant from the @dace.program SDFG
     # cache: to_sdfg() can return a shared cached SDFG that a prior
     # variant already mutated in place (simplify/LoopToMap), so deep-
@@ -341,18 +351,27 @@ def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_va
     vsdfg = copy.deepcopy(sdfg)
     vsdfg.name = sdfg_name + "_vec"
 
-    if branch_mode == "fp_factor":
-        branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
+    if vectorize_config == "tile_nodes":
+        # K-dim tile path: K=2 for a collapsible 2D kernel, K=1 otherwise.
+        # Carried-dep / unsupported shapes raise NotImplementedError -> skip.
+        widths = _auto_tile_widths(vsdfg, 8)
+        try:
+            VectorizeCPUMultiDim(widths=widths, target_isa="SCALAR").apply_pass(vsdfg, {})
+        except NotImplementedError as ex:
+            pytest.skip(f"tile_nodes NotImplementedError on {kernel.name}: {ex}")
     else:
-        branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
+        if branch_mode == "fp_factor":
+            branch_kwargs = dict(use_fp_factor=True, branch_normalization=False)
+        else:
+            branch_kwargs = dict(use_fp_factor=False, branch_normalization=True)
 
-    try:
-        VectorizeCPU(vector_width=8,
-                     fail_on_unvectorizable=False,
-                     remainder_strategy=remainder_strategy,
-                     **branch_kwargs).apply_pass(vsdfg, {})
-    except NotImplementedError as ex:
-        pytest.skip(f"vectorize NotImplementedError on {kernel.name}: {ex}")
+        try:
+            VectorizeCPU(vector_width=8,
+                         fail_on_unvectorizable=False,
+                         remainder_strategy=remainder_strategy,
+                         **branch_kwargs).apply_pass(vsdfg, {})
+        except NotImplementedError as ex:
+            pytest.skip(f"vectorize NotImplementedError on {kernel.name}: {ex}")
 
     c_ref = sdfg.compile()
     c_vec = vsdfg.compile()
@@ -361,5 +380,10 @@ def test_tsvc_2d(kernel, params_spec, remainder_strategy, branch_mode, len_2d_va
     c_vec(**arrays_vec, LEN_2D=len_2d_val)
 
     for name, _ in params_spec:
-        diff = np.max(np.abs(arrays_ref[name] - arrays_vec[name]))
-        assert diff < 1e-10, f"{kernel.name}/{name}: max abs diff = {diff}"
+        ref_a, vec_a = arrays_ref[name], arrays_vec[name]
+        # Some TSVC recurrences diverge on random [0, 1) data (e.g. s232 squares
+        # repeatedly -> +inf); a carried dep keeps them un-vectorized so vec is
+        # bit-identical to ref. ``allclose(equal_nan=True)`` treats matching
+        # inf/nan as equal, where ``max|ref - vec|`` would be a spurious nan.
+        assert np.allclose(ref_a, vec_a, rtol=1e-10, atol=1e-10, equal_nan=True), \
+            f"{kernel.name}/{name}: mismatch (max abs diff = {np.nanmax(np.abs(ref_a - vec_a))})"
