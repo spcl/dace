@@ -195,6 +195,10 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
+def _get_num_nested_sdfgs(sdfg: dace.SDFG) -> int:
+    return sum(isinstance(node, dace.nodes.NestedSDFG) for node, state in sdfg.all_nodes_recursive())
+
+
 # MemsetLibraryNode and CopyLibraryNode use different impl-name vocabularies.
 # Tests parametrize on the Memset names; map them to the Copy names here.
 _COPY_IMPL_FROM_EXPANSION_TYPE = {
@@ -256,7 +260,7 @@ def _prepare_sdfg(sdfg: dace.SDFG, expansion_type: str, name_suffix: str = "") -
     return sdfg
 
 
-def _expand_and_validate(sdfg: dace.SDFG, expansion_type: str) -> None:
+def _expand_and_validate(sdfg: dace.SDFG, expansion_type: str):
     _set_lib_node_type(sdfg, expansion_type)
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
@@ -856,6 +860,109 @@ def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, CopyLibraryNode):
             assert 'Ub_in' not in n.in_connectors
+
+
+# A dynamic map-range bound (a scalar fed into the map entry) becomes a symbol
+# in the lifted library node's subset. Since the updated libnodes reject dynamic
+# input connectors, the pass promotes that scalar to an in-scope symbol. When the
+# scalar is NOT written in the map's state it is hoisted to a preceding-state
+# interstate-edge assignment; when it IS written there the map is nested in its
+# own SDFG (whole arrays passed in, scalar arriving as a read-only input) and
+# lifted inside. Both are automatic end-effects, not configurable.
+
+
+@dace.program
+def _memset_1d_dynamic_bound(kfdia: dace.int32, kidia: dace.int32, zsinksum: dace.float64[D]):
+    for j in dace.map[kidia - 1:kfdia:1]:
+        zsinksum[j] = 0.0
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
+def test_dynamic_bound_param_uses_symbol_hoist(expansion_type, xp):
+    """A read-only scalar bound is hoisted to a symbol on a preceding state; no nested SDFG is created."""
+    sdfg = _prepare_sdfg(_sdfg_from_program(_memset_1d_dynamic_bound), expansion_type, "hoist")
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 1
+    assert _get_num_nested_sdfgs(sdfg) == 0, "a read-only bound must be hoisted, not nested"
+
+    B_IN = xp.ones(DIM_SIZE)
+    _expand_and_validate(sdfg, expansion_type)
+    sdfg(zsinksum=B_IN, kidia=3, kfdia=8, D=DIM_SIZE)
+    expected = xp.ones(DIM_SIZE)
+    expected[2:8] = 0.0
+    assert xp.allclose(B_IN, expected)
+
+
+def _build_in_state_written_bound_sdfg() -> dace.SDFG:
+    """``base`` -> tasklet -> ``bnd_val`` -> (dynamic range) memset map, all in one state.
+
+    The bound scalar ``bnd_val`` is written in the map's own state, so the pass must use the
+    nested-SDFG fallback rather than a preceding-state hoist.
+    """
+    sdfg = dace.SDFG("written_bound")
+    sdfg.add_array("A", [DIM_SIZE], dace.float64)
+    sdfg.add_scalar("base", dace.int64)
+    sdfg.add_scalar("bnd_val", dace.int64, transient=True)
+    sdfg.add_symbol("bound", dace.int64)
+    state = sdfg.add_state("main")
+
+    base = state.add_read("base")
+    bnd = state.add_access("bnd_val")
+    mk = state.add_tasklet("mkbound", {"b"}, {"o"}, "o = b + 5")
+    state.add_edge(base, None, mk, "b", dace.Memlet("base[0]"))
+    state.add_edge(mk, "o", bnd, None, dace.Memlet("bnd_val[0]"))
+
+    a = state.add_write("A")
+    me, mx = state.add_map("m", {"i": "0:bound:1"})
+    zero = state.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+    state.add_edge(me, None, zero, None, dace.Memlet())
+    state.add_edge(zero, "o", mx, "IN_A", dace.Memlet("A[i]"))
+    state.add_edge(mx, "OUT_A", a, None, dace.Memlet("A[0:bound]"))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(bnd, None, me, "bound", dace.Memlet("bnd_val[0]"))
+    me.add_in_connector("bound")
+    return sdfg
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
+def test_dynamic_bound_written_in_state_uses_nesting(expansion_type, xp):
+    """A bound scalar written in the map's own state forces the nested-SDFG fallback."""
+    sdfg = _prepare_sdfg(_build_in_state_written_bound_sdfg(), expansion_type, "nest")
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 1
+    assert _get_num_nested_sdfgs(sdfg) == 1, "an in-state-written bound must be isolated in a nested SDFG"
+
+    A_IN = xp.ones(DIM_SIZE)
+    _expand_and_validate(sdfg, expansion_type)
+    sdfg(A=A_IN, base=4)  # bound = 9
+    expected = xp.ones(DIM_SIZE)
+    expected[0:9] = 0.0
+    assert xp.allclose(A_IN, expected)
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
+def test_dynamic_bound_contiguity_per_overapprox(expansion_type, xp):
+    """Without overapprox only the contiguous (1D) dynamic memset lifts; the 2D partial-inner one is
+    non-contiguous and is left alone until overapprox widens its stride-1 dim to the full extent."""
+    sdfg = _prepare_sdfg(_sdfg_from_program(double_memset_with_dynamic_connectors), expansion_type, "contig")
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 1
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
+    assert _get_num_memset_library_nodes(sdfg) == 2
+
+    A_IN = xp.ones((DIM_SIZE, DIM_SIZE))
+    B_IN = xp.ones(DIM_SIZE)
+    _expand_and_validate(sdfg, expansion_type)
+    sdfg(llindex3=A_IN, zsinksum=B_IN, D=DIM_SIZE, kfdia=DIM_SIZE, kidia=1)
+    assert xp.all(A_IN == 0.0)
+    assert xp.all(B_IN == 0.0)
 
 
 if __name__ == "__main__":

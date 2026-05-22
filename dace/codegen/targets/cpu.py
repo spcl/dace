@@ -34,7 +34,6 @@ class CPUCodeGen(TargetCodeGenerator):
     language = "cpp"
 
     def _define_sdfg_arguments(self, sdfg, arglist):
-
         # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
@@ -1898,6 +1897,16 @@ class CPUCodeGen(TargetCodeGenerator):
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
+
+        # A symbolic step whose sign is not statically known is guarded by
+        # an assert() (a statically-negative step is already rejected by
+        # SDFG validation). Placed before the OpenMP pragma, which must be
+        # immediately followed by its loop.
+        for _, _, _skip in node.map.range:
+            if (_skip > 0) != True:
+                result.write(
+                    'assert((%s) > 0 && "Map %s requires a positive step");\n' % (cpp.sym2cpp(_skip), node.map.label),
+                    cfg, state_id, node)
 
         result.write(map_header, cfg, state_id, node)
 

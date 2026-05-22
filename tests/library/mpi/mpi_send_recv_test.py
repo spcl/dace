@@ -39,6 +39,15 @@ def make_sdfg(dtype):
     return sdfg
 
 
+def test_send_recv_validation_accepts_integer_rank_and_tag_descriptors():
+    sdfg = make_sdfg(np.float64)
+    sdfg.arrays['src'].dtype = dace.int64
+    sdfg.arrays['dest'].dtype = dace.uint32
+    sdfg.arrays['tag'].dtype = dace.int16
+
+    sdfg.validate()
+
+
 ###############################################################################
 
 

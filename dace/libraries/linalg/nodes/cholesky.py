@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace.library
 import dace.properties
@@ -7,7 +7,7 @@ from dace import dtypes
 
 from dace import Memlet
 from dace.libraries.lapack import Potrf
-from dace.libraries.standard import Transpose
+from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments

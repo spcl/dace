@@ -101,7 +101,15 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
-GPU_KERNEL_ACCESSIBLE_STORAGES = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.Register]
+GPU_RESIDENT_STORAGES = frozenset({
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+})
+CPU_RESIDENT_STORAGES = frozenset({
+    StorageType.CPU_Heap,
+    StorageType.CPU_Pinned,
+    StorageType.CPU_ThreadLocal,
+})
 
 
 class ReductionType(Enum):
