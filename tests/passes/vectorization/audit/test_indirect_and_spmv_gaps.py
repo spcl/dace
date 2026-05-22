@@ -86,13 +86,19 @@ def test_classify_tile_access_indirect_returns_gather():
 
 def test_vectorize_cpu_multi_dim_refuses_1d_indirect_stencil():
     """1D indirect stencil ``a[i] = b[idx[i]] + 1.0`` raises
-    ``NotImplementedError`` from ``EmitTileOps`` (T-post ``TileGather``
-    + new operand kind ``Gather`` will flip this green)."""
+    ``NotImplementedError`` (T-post ``TileGather`` + new operand kind
+    ``Gather`` will flip this green).
+
+    The compute lives in a body NSDFG, so ``PromoteNSDFGBodyToTiles``
+    (the flat-body descent) reaches the indirect ``b[idx[i]]`` access
+    first and refuses the non-box load; either that pass or ``EmitTileOps``
+    surfaces the refusal."""
     sdfg = _build_1d_indirect_stencil()
     with pytest.raises(NotImplementedError) as ei:
         VectorizeCPUMultiDim(widths=(8,), target_isa="SCALAR").apply_pass(sdfg, {})
-    assert "EmitTileOps" in str(ei.value) or "Unrecognized" in str(ei.value) \
-           or "is Unrecognized" in str(ei.value) or "input" in str(ei.value)
+    msg = str(ei.value)
+    assert ("EmitTileOps" in msg or "PromoteNSDFGBodyToTiles" in msg or "Unrecognized" in msg
+            or "perfect-box" in msg or "Gather" in msg or "input" in msg)
 
 
 def test_vectorize_cpu_multi_dim_refuses_2d_indirect_stencil():

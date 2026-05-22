@@ -128,6 +128,27 @@ def _is_assign_tasklet(tasklet: dace.nodes.Tasklet) -> bool:
     return _ASSIGN_RE.match(body) is not None
 
 
+def _classify_binop_tasklet_body(tasklet: dace.nodes.Tasklet) -> Optional[Tuple[str, str, str, str]]:
+    """Parse a split binop tasklet ``out = lhs OP rhs``, or ``None``.
+
+    Non-raising counterpart of :meth:`EmitTileOps._classify_binop_tasklet`,
+    so callers can *filter* binop tasklets without try/except.
+
+    :param tasklet: Compute tasklet to inspect.
+    :returns: ``(out_conn, lhs_conn, op, rhs_conn)`` with ``op`` mapped to
+        its TileBinop spelling, or ``None`` if the body is not a binop or
+        the output is not a declared out-connector.
+    """
+    body = tasklet.code.as_string.strip().rstrip(";").strip()
+    m = _BINOP_RE.match(body)
+    if m is None:
+        return None
+    out = m.group("out")
+    if out not in tasklet.out_connectors:
+        return None
+    return out, m.group("a"), _PY_TO_TILEBINOP_OP[m.group("op")], m.group("b")
+
+
 def _tile_region_subset(orig_subset: subsets.Range,
                         iter_vars: Tuple[str, ...],
                         widths: Tuple[int, ...]) -> subsets.Range:
@@ -240,19 +261,14 @@ class EmitTileOps(ppl.Pass):
         :returns: ``(out_conn, lhs_conn, op, rhs_conn)``.
         :raises NotImplementedError: When the body does not match.
         """
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
-        m = _BINOP_RE.match(body)
-        if m is None:
+        parsed = _classify_binop_tasklet_body(tasklet)
+        if parsed is None:
+            body = tasklet.code.as_string.strip().rstrip(";").strip()
             raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} body {body!r} is not 'out = lhs OP rhs'; "
-                f"run SplitTasklets first."
+                f"EmitTileOps: tasklet {tasklet.label!r} body {body!r} is not 'out = lhs OP rhs' "
+                f"with the output in out_connectors; run SplitTasklets first."
             )
-        out = m.group("out")
-        if out not in tasklet.out_connectors:
-            raise NotImplementedError(
-                f"EmitTileOps: tasklet {tasklet.label!r} writes to {out!r} not in out_connectors"
-            )
-        return out, m.group("a"), _PY_TO_TILEBINOP_OP[m.group("op")], m.group("b")
+        return parsed
 
     def _operand_kind(self,
                       state: dace.SDFGState,
@@ -942,12 +958,20 @@ class EmitTileOps(ppl.Pass):
         specs: Optional[Dict[MapEntry, TileDimSpec]] = None
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
+        # Maps whose body NSDFG was already tiled in place by
+        # PromoteNSDFGBodyToTiles: skip them (their flat scope has no binop
+        # tasklet, so _rewrite_one_map would wrongly raise "no binop").
+        handled: set = set()
+        if pipeline_results and "PromoteNSDFGBodyToTiles" in pipeline_results:
+            handled = pipeline_results["PromoteNSDFGBodyToTiles"] or set()
         K = len(self.widths)
         rewritten = 0
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
             if not is_innermost_map(g, n):
+                continue
+            if n in handled:
                 continue
             if specs is not None and n not in specs:
                 continue

@@ -34,6 +34,9 @@ from dace.transformation.passes.vectorization.generate_tile_iteration_mask impor
     GenerateTileIterationMask,
 )
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
+    PromoteNSDFGBodyToTiles,
+)
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths,
 )
@@ -109,6 +112,10 @@ class VectorizeCPUMultiDim(ppl.Pipeline):
             MarkTileDims(widths=widths_t),
             GenerateTileIterationMask(widths=widths_t),
             StrideMapByTileWidths(widths=widths_t),
+            # Tile a flat body-NSDFG (vbor-style scalar chain) in place so
+            # EmitTileOps can skip it; EmitTileOps still raises for un-handled
+            # NSDFG bodies (the carried-dep LoopRegion cases stay clean skips).
+            PromoteNSDFGBodyToTiles(widths=widths_t),
             EmitTileOps(widths=widths_t),
         ]
         super().__init__(passes)
