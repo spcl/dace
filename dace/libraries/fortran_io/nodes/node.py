@@ -51,8 +51,9 @@ class FortranIONode(nodes.LibraryNode):
             for output edges (READ items).
         :returns: ``(connector, descriptor, count, is_value)`` per item, where
             ``count`` is the element-count expression and ``is_value`` marks a
-            true :class:`~dace.data.Scalar` connector (passed by value, so the
-            call site takes its address) vs. an array (a pointer already).
+            connector DaCe emits by value (a true :class:`~dace.data.Scalar` or
+            any single-element memlet, so the call site takes its address) vs.
+            a multi-element array (already a pointer).
         :raises ValueError: if a declared item connector has no edge.
         """
         if edges_in:
@@ -66,7 +67,8 @@ class FortranIONode(nodes.LibraryNode):
             if edge is None:
                 raise ValueError(f"{type(self).__name__} '{self.name}': item connector '{conn}' is not connected")
             desc = sdfg.arrays[edge.data.data]
-            is_value = isinstance(desc, data.Scalar)
+            num_elements = edge.data.subset.num_elements()
+            is_value = isinstance(desc, data.Scalar) or num_elements == 1
             count = "*".join(str(s) for s in edge.data.subset.size_exact()) or "1"
             items.append((conn, desc, count, is_value))
         return items

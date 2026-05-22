@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.fortran_io.nodes.namelist import NamelistRead
 from dace.libraries.fortran_io.nodes.read import Read
 from dace.libraries.fortran_io.nodes.write import Write
 
@@ -69,3 +70,31 @@ def test_write_read_roundtrip_i32(tmp_path):
     _read_sdfg(path, shapes, dace.int32, "_i32")(a0=r0)
 
     np.testing.assert_array_equal(r0, a0)
+
+
+def test_namelist_read(tmp_path):
+    """Read scalar + array members of a namelist group into output arrays."""
+    nml = tmp_path / "phys.nml"
+    nml.write_text("&phys\n  alpha = 1.5,\n  nsteps = 7\n  coef = 10.0, 20.0, 30.0\n/\n")
+
+    members = ["alpha", "nsteps", "coef"]
+    dtypes_ = [dace.float64, dace.int32, dace.float64]
+    shapes = [[1], [1], [3]]
+
+    sdfg = dace.SDFG("fortran_io_namelist")
+    state = sdfg.add_state()
+    node = NamelistRead("nml", filename=str(nml), group="phys", members=members)
+    state.add_node(node)
+    for i, (shape, dt) in enumerate(zip(shapes, dtypes_)):
+        name = f"m{i}"
+        sdfg.add_array(name, shape, dt)
+        state.add_edge(node, f"_out_{i}", state.add_access(name), None, dace.Memlet.from_array(name, sdfg.arrays[name]))
+
+    alpha = np.zeros(1, dtype=np.float64)
+    nsteps = np.zeros(1, dtype=np.int32)
+    coef = np.zeros(3, dtype=np.float64)
+    sdfg(m0=alpha, m1=nsteps, m2=coef)
+
+    np.testing.assert_allclose(alpha, [1.5])
+    np.testing.assert_array_equal(nsteps, [7])
+    np.testing.assert_allclose(coef, [10.0, 20.0, 30.0])

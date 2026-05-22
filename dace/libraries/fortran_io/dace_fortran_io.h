@@ -31,6 +31,16 @@ void dace_fio_write_i32_arr(int unit, const int *x, int n);
 void dace_fio_write_i64(int unit, const long long *x);
 void dace_fio_write_i64_arr(int unit, const long long *x, int n);
 
+/* Generic namelist read: open a (file, group), fetch members by name, close. */
+int dace_nml_open(const char *path, int path_len, const char *group, int group_len);
+void dace_nml_close(int handle);
+void dace_nml_get_f64(int handle, const char *name, int name_len, double *x);
+void dace_nml_get_f64_arr(int handle, const char *name, int name_len, double *x, int n);
+void dace_nml_get_f32(int handle, const char *name, int name_len, float *x);
+void dace_nml_get_f32_arr(int handle, const char *name, int name_len, float *x, int n);
+void dace_nml_get_i32(int handle, const char *name, int name_len, int *x);
+void dace_nml_get_i32_arr(int handle, const char *name, int name_len, int *x, int n);
+
 #ifdef __cplusplus
 }
 #endif
