@@ -179,7 +179,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
-            pooled = set(filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled))
+            # Kept as a lazy ``filter`` to mirror the legacy ``cuda`` target bug-for-bug:
+            # materializing it (``set(...)``) would actually populate ``pool_release``,
+            # but ``deallocate_array`` looks up that dict by ``ptr()``-resolved name while
+            # the keys here are raw names, so a Persistent/External pooled array would be
+            # freed both in ``generate_state`` and in ``deallocate_array``. The filter+key
+            # mismatch is a coupled pre-existing issue to fix in both targets together.
+            pooled = filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled)
 
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
