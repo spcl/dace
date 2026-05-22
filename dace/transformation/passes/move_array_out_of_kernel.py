@@ -106,9 +106,6 @@ class MoveArrayOutOfKernel(Pass):
         # MapEntry chain from the AccessNode up to and including the kernel map entry
         map_entry_chain, _ = self.get_maps_between(kernel_entry, closest_an)
 
-        # Original full-range subset, needed to build the lifted memlets
-        old_subset = [(0, dim - 1, 1) for dim in array_desc.shape]
-
         new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
         array_desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
 
@@ -126,8 +123,6 @@ class MoveArrayOutOfKernel(Pass):
                 next_map_state = self._node_to_state_cache[next_map_exit]
                 next_map_exit.add_in_connector(in_connector)
                 next_map_exit.add_out_connector(out_connector)
-
-                next_entries, _ = self.get_maps_between(kernel_entry, previous_node)
 
                 next_map_state.add_edge(previous_node, previous_out_connector, next_map_exit, in_connector,
                                         Memlet.from_array(array_name, array_desc))
@@ -165,9 +160,6 @@ class MoveArrayOutOfKernel(Pass):
             nsdfg_node = outermost_sdfg.parent_nsdfg_node
             map_entry_chain, _ = self.get_maps_between(kernel_entry, nsdfg_node)
 
-            # Original full-range subset, needed to build the lifted memlets
-            old_subset = [(0, dim - 1, 1) for dim in array_desc.shape]
-
             new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
             array_desc.set_shape(new_shape=new_shape,
                                  strides=new_strides,
@@ -202,16 +194,15 @@ class MoveArrayOutOfKernel(Pass):
                                  "the kernel map's SDFG and is contained within it -- the last entry should "
                                  "be the kernel's parent SDFG.")
 
-            self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy, old_subset)
+            self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy)
 
-    def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry, sdfg_hierarchy: List[SDFG],
-                                        old_subset: List):
+    def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry,
+                                        sdfg_hierarchy: List[SDFG]):
         """Lift a transient array out through each nested SDFG up to the kernel boundary.
 
         :param array_name: Array to lift.
         :param kernel_entry: Innermost GPU kernel MapEntry.
         :param sdfg_hierarchy: Nested SDFGs ordered inner->outer.
-        :param old_subset: Inner array subset used to build the lifted memlets.
         """
         # Lift the array through each nested SDFG up to the kernel boundary
         outer_sdfg = sdfg_hierarchy.pop(0)
@@ -270,8 +261,6 @@ class MoveArrayOutOfKernel(Pass):
                         f"Unsupported destination node type '{type(dst).__name__}' -- expected AccessNode or MapEntry.")
 
                 # 2. Add the edge using the connector names determined in Step 1.
-                next_entries, _ = self.get_maps_between(kernel_entry, src)
-                memlet_subset = Range(self.get_memlet_subset(next_entries, src) + old_subset)
                 nsdfg_parent_state.add_edge(src, src_conn, dst, dst_conn, Memlet.from_array(array_name, new_desc))
 
                 # Continue by setting the dst as source
@@ -291,8 +280,6 @@ class MoveArrayOutOfKernel(Pass):
                 raise NotImplementedError(
                     f"Unsupported source node type '{type(src).__name__}' -- only NestedSDFG or MapExit are expected.")
 
-            next_entries, _ = self.get_maps_between(kernel_entry, src)
-            memlet_subset = Range(self.get_memlet_subset(next_entries, src) + old_subset)
             nsdfg_parent_state.add_edge(src, src_conn, dst, None, Memlet.from_array(array_name, new_desc))
 
         # At the outermost sdfg we set the array descriptor to be transient again,
@@ -503,11 +490,12 @@ class MoveArrayOutOfKernel(Pass):
             if nsdfg_node is None:
                 continue
 
-            for symbol in all_symbols:
-                if str(symbol) not in sdfg.symbols:
-                    sdfg.add_symbol(str(symbol), dace.dtypes.int32)
-                if str(symbol) not in nsdfg_node.symbol_mapping:
-                    nsdfg_node.symbol_mapping[symbol] = dace.symbol(symbol)
+            for sym in all_symbols:
+                name = str(sym)
+                if name not in sdfg.symbols:
+                    sdfg.add_symbol(name, dace.dtypes.int32)
+                if name not in nsdfg_node.symbol_mapping:
+                    nsdfg_node.symbol_mapping[name] = dace.symbol(name)
 
     # Array analysis and metadata functions
     def collect_array_descriptor_usage(
