@@ -250,6 +250,12 @@ class SplitArray(ppl.Pass):
             # Non-split dimensions form the shape of each new array
             filtered_shape = [dim for dim, split in zip(desc.shape, split_config) if split is None]
 
+            # A fully-split element keeps no dimensions; represent it as a
+            # length-1 array so it stays a writable pointer (a by-value scalar
+            # would be read-only), accessed at index 0.
+            if not filtered_shape:
+                filtered_shape = [1]
+
             # Recompute packed strides for the reduced shape
             if desc.is_packed_c_strides():
                 filtered_strides = [1] * len(filtered_shape)
@@ -389,8 +395,6 @@ class SplitArray(ppl.Pass):
 
         if all_data_dependent_dims:
             # Multiple distinct data-dependent symbols would require nested branching
-            if len(all_data_dependent_dims) > 1:
-                sdfg.save("failing.sdfgz", compress=True)
             assert len(all_data_dependent_dims) == 1, (
                 f"Multiple data-dependent dims not supported: {all_data_dependent_dims} in {state}")
             return all_data_dependent_dims.pop(), all_access_exprs
@@ -454,12 +458,16 @@ class SplitArray(ppl.Pass):
                 )
                 g = state.parent_graph
 
-                # Splice cb into the CFG in place of the original state
+                # Splice cb into the CFG in place of the original state. The
+                # incident interstate edges are preserved verbatim: the in-edge
+                # carries the assignment that defines the data-dependent index
+                # (e.g. ``imelt_index = imelt[2]``) which the branch conditions
+                # test, so dropping it would leave that symbol unbound.
                 g.add_node(cb, g.start_block == state)
                 for ie in g.in_edges(state):
-                    g.add_edge(ie.src, cb, dace.InterstateEdge())
+                    g.add_edge(ie.src, cb, copy.deepcopy(ie.data))
                 for oe in g.out_edges(state):
-                    g.add_edge(cb, oe.dst, dace.InterstateEdge())
+                    g.add_edge(cb, oe.dst, copy.deepcopy(oe.data))
                 g.remove_node(state)
 
                 for i in range(extent):
@@ -533,8 +541,10 @@ class SplitArray(ppl.Pass):
             if kept_args:
                 return sp.Function(new_name, commutative=False)(*kept_args)
             else:
-                # All dims split — collapses to a scalar symbol
-                return sp.Symbol(new_name)
+                # All dims split — the element is a length-1 array (see
+                # _split_data_descriptors). Read element 0 so the interstate edge
+                # dereferences the pointer instead of assigning it.
+                return sp.Function(new_name, commutative=False)(sp.Integer(0))
 
         for iedge in sdfg.all_interstate_edges():
             changed = False
@@ -641,6 +651,5 @@ class SplitArray(ppl.Pass):
 
         # Phase 4: Nested SDFG propagation (currently raises not-implemented error)
         self._pass_to_nsdfgs(sdfg, split_map)
-        sdfg.save("split_array_intermediate.sdfgz", compress=True)
         # Phase 5: Cleanup
         self._remove_split_arrays(sdfg, split_map)
