@@ -84,8 +84,7 @@ def test_loop_var_reconstruction():
 
     sdfg = loop_var_used_after.to_sdfg(simplify=False)
 
-    pass_ = UniqueLoopIterators()
-    pass_.assign_loop_iterator_post_value = True
+    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
@@ -254,8 +253,7 @@ def test_loop_bound_with_indirect_array():
     wr2 = inner_body.add_access('acc')
     inner_body.add_edge(t, '_o', wr2, None, dace.Memlet('acc[i]'))
 
-    pass_ = UniqueLoopIterators()
-    pass_.assign_loop_iterator_post_value = True
+    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
@@ -290,8 +288,7 @@ def test_while_loop_no_induction_var():
     a = inner.add_access('out')
     inner.add_edge(t, '_o', a, None, dace.Memlet('out[0]'))
 
-    pass_ = UniqueLoopIterators()
-    pass_.assign_loop_iterator_post_value = True
+    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
 
     recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
@@ -422,8 +419,7 @@ def test_no_postamble_drops_dead_symbol_declaration():
     body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('i' in n.sdfg.symbols for n in body_nsdfgs)
 
-    p = UniqueLoopIterators()
-    p.assign_loop_iterator_post_value = False
+    p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, {})
 
     # Every LoopRegion now has a unique ``_loop_it_<N>`` variable.
@@ -476,8 +472,7 @@ def test_no_postamble_clears_loop_var_for_inner_accumulator():
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('j' in n.sdfg.symbols for n in nsdfgs)
 
-    p = UniqueLoopIterators()
-    p.assign_loop_iterator_post_value = False
+    p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, {})
 
     # Post-condition: no body NestedSDFG still declares ``j`` -- the
@@ -755,8 +750,7 @@ def test_seeds_counter_past_existing_loop_it_names():
     fa = fs.add_access('out')
     fs.add_edge(ft, '_o', fa, None, dace.Memlet('out[i]'))
 
-    p = UniqueLoopIterators()
-    p.assign_loop_iterator_post_value = False
+    p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, None)
     sdfg.validate()
 
